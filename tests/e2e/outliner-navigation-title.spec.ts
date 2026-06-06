@@ -330,7 +330,16 @@ test.describe('outliner navigation and page title parity', () => {
 
     const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
     await titleEditor.click();
-    await page.keyboard.press('Meta+A');
+    await titleEditor.evaluate((element) => {
+      if (element instanceof HTMLElement) element.focus();
+      const target = element.querySelector('p') ?? element;
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
     await page.keyboard.type('Alpha renamed');
     await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
 

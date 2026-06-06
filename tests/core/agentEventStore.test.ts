@@ -88,6 +88,7 @@ describe('agent event store', () => {
       expect(entries).toEqual([{
         id: sessionId,
         title: 'Renamed',
+        members: [],
         createdAt: 1_700_000_000_001,
         updatedAt: 1_700_000_000_004,
         messageCount: 2,

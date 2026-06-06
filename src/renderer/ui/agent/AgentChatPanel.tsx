@@ -487,14 +487,17 @@ export function AgentChatPanel({
     isStreaming,
     clearSteer,
     editMessage,
+    openDefaultConversation,
     pendingToolCallIds,
     regenerateMessage,
     reloadConversation,
     newConversation,
     pendingApproval,
+    pendingUserQuestion,
     revision,
     retryMessage,
     resolveApproval,
+    resolveUserQuestion,
     selectConversation,
     sendMessage: sendRuntimeMessage,
     conversationId,
@@ -827,7 +830,7 @@ export function AgentChatPanel({
     setPendingDeleteConversation(null);
     await api.agentDeleteConversation(target.id);
     if (target.id === conversationId) {
-      await newConversation();
+      await openDefaultConversation();
       setHistoryOpen(false);
     }
     await loadConversations();
@@ -1116,7 +1119,9 @@ export function AgentChatPanel({
         onStop={stop}
         onSteer={handleSteerMessage}
         onResolveApproval={resolveApproval}
+        onResolveUserQuestion={resolveUserQuestion}
         pendingApproval={pendingApproval}
+        pendingUserQuestion={pendingUserQuestion}
         settings={providerSettings}
         slashCommands={slashCommands}
         steeringNote={steeringNote}

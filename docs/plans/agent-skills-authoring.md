@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-05
+updated: 2026-06-06
 ---
 
 # Agent Skills — Structure & Governed Self-Authoring
@@ -42,19 +42,20 @@ cross-plan event taxonomy and the protocol-surface change list this plan depends
 
 ## Current state (shipped vs planned)
 
-**Shipped today** (`docs/spec/agent-skills.md`; `agentSkills.ts`): discovery +
+**Before M1** (`docs/spec/agent-skills.md`; `agentSkills.ts`): discovery +
 invocation from `~/.agents/skills` (source `user`) and `<localFileRoot>/.agents/skills`
 (source `project`) + additional configured dirs + runtime `dynamic` discovery
 (`discoverSkillDirsForPaths`, `agentSkills.ts:702`); path-conditional skills;
 embedded-shell expansion; `allowed-tools` as **run-scoped preapproval, not a
 visibility allowlist** (`agent-skills.md:189`); per-invocation `model` / `effort`
-override; `context: fork`. **The registry is startup-loaded and cached**
-(`agentSubagents.ts:1141,1255`; `agent-skills.md:48`). There are **no built-in
-skills** and **no skill creation/editing** — authoring is documented as planned only
-(`agent-skills.md:116-121`).
+override; `context: fork`.
 
-**This plan adds**: the `built-in` source; governed self-authoring writes; skill
-registry **hot-reload**; provenance / snapshot / rollback; opt-in curation.
+**M1 implementation in this branch adds**: code-registered immutable `built-in`
+skills, slash-only `/skillify`, governed self-authoring through `file_write` /
+`file_edit`, `.agents/skills/**` permission classification (`agent.skill.write`),
+validation and no-escalation guards, registry hot-reload after successful skill
+writes, and `skill.created` / `skill.patched` / `skill.replaced` audit events.
+Rollback UI and opt-in curation remain later work.
 
 ## Design
 
@@ -219,16 +220,20 @@ deliberately conservative (self-modification §8):
 
 ## Build checklist
 
-- [ ] Add `'built-in'` to `SkillDefinition.source` (interface-first, M0) + a
+- [x] Add `'built-in'` to `SkillDefinition.source` (interface-first, M0) + a
       code-registered built-in skill loader (mirrors built-in agents).
-- [ ] Confirm binding semantics: `AgentDefinition.skills` selects over the unified
+- [x] Confirm binding semantics: `AgentDefinition.skills` selects over the unified
       library; document that there is no per-agent storage.
-- [ ] `skillify` + natural-language "save/update this as a skill" handling.
-- [ ] Skill-content write classification for `.agents/skills/**` (permission / audit).
+- [x] Slash-only built-in `/skillify` workflow.
+- [ ] Natural-language "save/update this as a skill" handling.
+- [x] Skill-content write classification for `.agents/skills/**` (permission / audit).
 - [ ] Diff / full-`SKILL.md` preview + confirmation; draft-default for agent-initiated.
-- [ ] Provenance metadata + snapshots + rollback + `skill.*` events.
-- [ ] Skill registry hot-reload (extend `discoverSkillDirsForPaths`).
-- [ ] Allowed-tools no-escalation guard; model-invocable defaults user-only until ratified.
+- [x] Provenance metadata in tool details + `skill.created` / `skill.patched` /
+      `skill.replaced` events.
+- [ ] Snapshot storage + rollback UI.
+- [x] Skill registry hot-reload (extend `discoverSkillDirsForPaths`).
+- [x] Allowed-tools no-escalation guard; model-invocable defaults user-only until ratified.
+- [x] Deny executable-script support files in the self-authoring file-tool path.
 - [ ] Ratify + sandbox gate for executable-script support files.
 - [ ] Curation dry-run reports (agent-created only) — M2.
-- [ ] Spec update: `docs/spec/agent-skills.md` (built-in source + authoring + hot-reload).
+- [x] Spec update: `docs/spec/agent-skills.md` (built-in source + authoring + hot-reload).

@@ -9,6 +9,8 @@ import type {
   AgentApprovalRequestView,
   AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
+  AgentUserQuestionPendingView,
+  AskUserQuestionResult,
 } from '../../../core/agentTypes';
 import {
   MAX_INLINE_IMAGE_BASE64_CHARS,
@@ -67,9 +69,11 @@ interface AgentComposerProps {
     approved: boolean,
     scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
+  onResolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
   onModelChange: (providerId: string, modelId: string) => Promise<void>;
   onReasoningChange: (reasoningLevel: AgentReasoningLevel) => Promise<void>;
   pendingApproval: AgentApprovalRequestView | null;
+  pendingUserQuestion: AgentUserQuestionPendingView | null;
   settings: AgentProviderSettingsView | null;
   slashCommands: AgentSlashCommandView[];
   steeringNote: string | null;
@@ -174,10 +178,12 @@ export function AgentComposer({
   onReasoningChange,
   onCancelSteer,
   onResolveApproval,
+  onResolveUserQuestion,
   onSend,
   onSteer,
   onStop,
   pendingApproval,
+  pendingUserQuestion,
   settings,
   slashCommands,
   steeringNote,
@@ -217,7 +223,7 @@ export function AgentComposer({
   // While settings are still loading (settings === null) stay neutral, so a
   // key-holding user's send button never disables during the load window.
   const providerBlocksSend = settings !== null && !activeProvider;
-  const canSubmit = (pendingApproval ? false : isStreaming
+  const canSubmit = (pendingApproval || pendingUserQuestion ? false : isStreaming
     ? hasDraft && !hasAttachments
     : !sending && (hasDraft || hasAttachments)) && !providerBlocksSend;
   const modelOptions = getModelChoices(settings, activeProvider);
@@ -232,7 +238,7 @@ export function AgentComposer({
     : reasoningOptions[0] ?? 'off';
   const supportsReasoning = !!selectedModel?.reasoning || reasoningOptions.some((level) => level !== 'off');
   const reasoningEnabled = selectedReasoning !== 'off';
-  const configDisabled = isStreaming || !!pendingApproval || configSubmitting || modelOptions.length === 0;
+  const configDisabled = isStreaming || !!pendingApproval || !!pendingUserQuestion || configSubmitting || modelOptions.length === 0;
 
   useEffect(() => {
     if (!modelMenuOpen) {
@@ -644,6 +650,12 @@ export function AgentComposer({
             approval={pendingApproval}
             onResolve={onResolveApproval}
           />
+        ) : pendingUserQuestion ? (
+          <AgentUserQuestionCard
+            key={pendingUserQuestion.requestId}
+            pendingQuestion={pendingUserQuestion}
+            onResolve={onResolveUserQuestion}
+          />
         ) : (
           <>
             <AgentComposerEditor
@@ -808,6 +820,123 @@ function AgentApprovalCard({
           type="button"
         >
           {t.agent.composer.denyOnce}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgentUserQuestionCard({
+  pendingQuestion,
+  onResolve,
+}: {
+  pendingQuestion: AgentUserQuestionPendingView;
+  onResolve: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
+}) {
+  const t = useT();
+  const [submitting, setSubmitting] = useState(false);
+  const [draft, setDraft] = useState<Record<string, { selectedOptionIds: string[]; text: string }>>(() => (
+    Object.fromEntries(pendingQuestion.request.questions.map((question) => [question.id, {
+      selectedOptionIds: [],
+      text: '',
+    }]))
+  ));
+
+  function updateSelection(questionId: string, optionId: string, checked: boolean, multi: boolean) {
+    setDraft((current) => {
+      const value = current[questionId] ?? { selectedOptionIds: [], text: '' };
+      const selectedOptionIds = multi
+        ? checked
+          ? [...new Set([...value.selectedOptionIds, optionId])]
+          : value.selectedOptionIds.filter((id) => id !== optionId)
+        : checked ? [optionId] : [];
+      return { ...current, [questionId]: { ...value, selectedOptionIds } };
+    });
+  }
+
+  function updateText(questionId: string, text: string) {
+    setDraft((current) => {
+      const value = current[questionId] ?? { selectedOptionIds: [], text: '' };
+      return { ...current, [questionId]: { ...value, text } };
+    });
+  }
+
+  const canSubmit = pendingQuestion.request.questions.every((question) => {
+    if (question.required === false) return true;
+    const value = draft[question.id];
+    if (!value) return false;
+    if (question.type === 'free_text') return value.text.trim().length > 0;
+    return value.selectedOptionIds.length > 0 || (question.allowOther && value.text.trim().length > 0);
+  });
+
+  async function submit() {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    try {
+      await onResolve(pendingQuestion.requestId, {
+        requestId: pendingQuestion.requestId,
+        answers: pendingQuestion.request.questions.map((question) => {
+          const value = draft[question.id] ?? { selectedOptionIds: [], text: '' };
+          return {
+            questionId: question.id,
+            selectedOptionIds: question.type === 'free_text' ? undefined : value.selectedOptionIds,
+            text: value.text.trim() || undefined,
+          };
+        }),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="agent-question-card" role="group" aria-label={t.agent.composer.userQuestionTitle}>
+      <div className="agent-question-title">{t.agent.composer.userQuestionTitle}</div>
+      {pendingQuestion.request.questions.map((question) => {
+        const value = draft[question.id] ?? { selectedOptionIds: [], text: '' };
+        const multi = question.type === 'multi_choice';
+        return (
+          <div className="agent-question-item" key={question.id}>
+            {question.header ? <div className="agent-question-header">{question.header}</div> : null}
+            <div className="agent-question-prompt">{question.question}</div>
+            {question.options?.length ? (
+              <div className="agent-question-options">
+                {question.options.map((option) => (
+                  <label className="agent-question-option" key={option.id}>
+                    <input
+                      checked={value.selectedOptionIds.includes(option.id)}
+                      name={`agent-question-${pendingQuestion.requestId}-${question.id}`}
+                      onChange={(event) => updateSelection(question.id, option.id, event.currentTarget.checked, multi)}
+                      type={multi ? 'checkbox' : 'radio'}
+                    />
+                    <span>
+                      <span className="agent-question-option-label">{option.label}</span>
+                      {option.description ? <span className="agent-question-option-description">{option.description}</span> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            {question.type === 'free_text' || question.allowOther ? (
+              <textarea
+                className="agent-question-text"
+                onChange={(event) => updateText(question.id, event.currentTarget.value)}
+                placeholder={question.type === 'free_text' ? t.agent.composer.userQuestionAnswerPlaceholder : t.agent.composer.userQuestionOtherPlaceholder}
+                rows={question.type === 'free_text' ? 3 : 2}
+                value={value.text}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+      <div className="agent-question-actions">
+        <button
+          className="agent-approval-button is-primary"
+          disabled={!canSubmit || submitting}
+          onClick={() => void submit()}
+          type="button"
+        >
+          {pendingQuestion.request.submitLabel ?? t.agent.composer.userQuestionSubmit}
         </button>
       </div>
     </div>

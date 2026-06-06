@@ -56,9 +56,11 @@ async function placeCursor(page: import('@playwright/test').Page, nodeId: string
   const editor = rowEditor(page, nodeId);
   await editor.click();
   await editor.evaluate((element, targetPlacement) => {
+    if (element instanceof HTMLElement) element.focus();
     const selection = window.getSelection();
     const range = document.createRange();
-    range.selectNodeContents(element);
+    const paragraph = element.querySelector('p') ?? element;
+    range.selectNodeContents(paragraph);
     range.collapse(targetPlacement === 'start');
     selection?.removeAllRanges();
     selection?.addRange(range);
@@ -806,13 +808,13 @@ test.describe('outliner trigger parity', () => {
     await invokeMockCommand(page, 'create_node', {
       parentId: ids.today,
       index: null,
-      text: 'See ',
+      text: '',
     });
     const nodeId = await lastTodayChildId(page);
     expect(nodeId).toBeTruthy();
 
-    await placeCursor(page, nodeId!, 'end');
-    await page.keyboard.type('@Al');
+    await rowEditor(page, nodeId!).click();
+    await page.keyboard.type('See @Al');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(rowEditor(page, nodeId!)).toBeFocused();

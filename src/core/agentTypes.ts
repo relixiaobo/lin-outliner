@@ -10,7 +10,11 @@ import type {
   UserMessage,
 } from '@earendil-works/pi-ai';
 import type { AgentRenderProjection } from './agentRenderProjection';
-import type { AgentPayloadRef } from './agentEventLog';
+import type {
+  AgentPayloadRef,
+  AgentUserQuestionRequestView,
+  AskUserQuestionResult,
+} from './agentEventLog';
 import type { NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
@@ -309,6 +313,30 @@ export interface AgentApprovalRequestEvent {
   timestamp: number;
 }
 
+export interface AgentUserQuestionPendingView {
+  requestId: string;
+  conversationId: string;
+  runId: string;
+  toolCallId: string;
+  request: AgentUserQuestionRequestView;
+}
+
+export interface AgentUserQuestionRequestEvent {
+  type: 'user_question_request';
+  conversationId: string;
+  requestId: string;
+  question: AgentUserQuestionPendingView;
+  timestamp: number;
+}
+
+export interface AgentUserQuestionResolvedEvent {
+  type: 'user_question_resolved';
+  conversationId: string;
+  requestId: string;
+  result?: AskUserQuestionResult;
+  timestamp: number;
+}
+
 export type AgentRuntimeEvent =
   | AgentProjectionEvent
   | AgentReadyEvent
@@ -317,4 +345,8 @@ export type AgentRuntimeEvent =
   | AgentToolCallEvent
   | AgentToolResultEvent
   | AgentApprovalRequestEvent
-  | AgentApprovalResolvedEvent;
+  | AgentApprovalResolvedEvent
+  | AgentUserQuestionRequestEvent
+  | AgentUserQuestionResolvedEvent;
+
+export type { AskUserQuestionResult };

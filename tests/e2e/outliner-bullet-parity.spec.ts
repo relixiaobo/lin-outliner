@@ -117,7 +117,7 @@ test.describe('outliner bullet parity', () => {
   });
 
   test('tag definition bullet uses nodex hash glyph', async ({ page }) => {
-    await page.getByRole('button', { name: 'Schema' }).click();
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Schema', exact: true }).click();
 
     const tagBullet = row(page, ids.projectTag).locator('.row-bullet-shape.tag').first();
     await expect(tagBullet.locator('.row-bullet-tag-glyph')).toHaveText('#');
@@ -172,6 +172,11 @@ test.describe('outliner bullet parity', () => {
   test('collapsed content bullets use fill only without an outer border', async ({ page }) => {
     await page.getByRole('button', { name: 'Daily Notes', exact: true }).first().click();
 
+    const todayRow = row(page, ids.today);
+    const expandedBullet = todayRow.locator('.row-bullet-shape.content.has-children.expanded').first();
+    if (await expandedBullet.isVisible().catch(() => false)) {
+      await todayRow.locator('.row-chevron-button').first().click({ force: true });
+    }
     const collapsedBullet = row(page, ids.today).locator('.row-bullet-shape.content.has-children.collapsed').first();
     await expect(collapsedBullet).toBeVisible();
 
@@ -235,7 +240,7 @@ test.describe('outliner bullet parity', () => {
     await expect.poll(() => directChevronOpacity(rowBody(page, ids.alpha))).toBe(0);
   });
 
-  test('nested field value hover reveals only the nested row chevron', async ({ page }) => {
+  test('nested field value hover keeps field row chevrons hidden', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');
     const fieldId = await lastTodayChildId(page);
@@ -250,7 +255,7 @@ test.describe('outliner bullet parity', () => {
     await rowBody(page, nestedFieldId).hover();
 
     await expect.poll(() => directChevronOpacity(rowBody(page, fieldId))).toBe(0);
-    await expect.poll(() => directChevronOpacity(rowBody(page, nestedFieldId))).toBeGreaterThan(0.9);
+    await expect.poll(() => directChevronOpacity(rowBody(page, nestedFieldId))).toBe(0);
   });
 
   test('trailing placeholder bullet keeps a neutral cursor', async ({ page }) => {

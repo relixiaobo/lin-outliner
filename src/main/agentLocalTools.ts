@@ -12,6 +12,11 @@ import {
   type ToolEnvelope,
 } from './agentToolEnvelope';
 import type { AgentSkillRuntime } from './agentSkills';
+import {
+  AgentSkillAuthoringError,
+  validateAgentSkillContentWrite,
+  type AgentSkillWriteAudit,
+} from './agentSkillAuthoring';
 
 interface LocalToolOptions {
   localRoot?: string;
@@ -151,6 +156,7 @@ interface FileEditData {
   structuredPatch: Hunk[];
   userModified: boolean;
   replaceAll: boolean;
+  skillWrite?: AgentSkillWriteAudit;
 }
 
 interface FileWriteParams {
@@ -164,6 +170,7 @@ interface FileWriteData {
   content: string;
   structuredPatch: Hunk[];
   originalFile: string | null;
+  skillWrite?: AgentSkillWriteAudit;
 }
 
 interface Hunk {
@@ -560,6 +567,37 @@ async function notifySuccessfulFileTouch(workspace: WorkspaceContext, filePath: 
   await workspace.skillRuntime?.notifyFileTouched([filePath]);
 }
 
+async function notifySuccessfulSkillContentWrite(workspace: WorkspaceContext, filePath: string): Promise<void> {
+  await workspace.skillRuntime?.notifySkillContentWritten([filePath]);
+}
+
+function validateSkillContentWriteOrThrow(input: {
+  workspace: WorkspaceContext;
+  filePath: string;
+  content: string;
+  previousContent: string | null;
+  operation: 'file_edit' | 'file_write';
+}): AgentSkillWriteAudit | null {
+  try {
+    return validateAgentSkillContentWrite({
+      workspaceRoot: input.workspace.root,
+      filePath: input.filePath,
+      content: input.content,
+      previousContent: input.previousContent,
+      operation: input.operation,
+    });
+  } catch (error) {
+    if (error instanceof AgentSkillAuthoringError) {
+      throw new LocalToolFailure(error.code, error.message, error.instructions);
+    }
+    throw error;
+  }
+}
+
+function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
+  return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback.`;
+}
+
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
   return {
     name: 'file_read',
@@ -870,6 +908,13 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         const nextContent = params.replace_all
           ? current.content.split(params.old_string).join(params.new_string)
           : current.content.replace(params.old_string, params.new_string);
+        const skillWrite = validateSkillContentWriteOrThrow({
+          workspace,
+          filePath,
+          content: nextContent,
+          previousContent: current.content,
+          operation: 'file_edit',
+        });
         await writeTextFile(filePath, nextContent, current);
         const nextStat = await stat(filePath);
         workspace.readFileState.set(filePath, {
@@ -889,9 +934,14 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           structuredPatch: structuredPatch(current.content, nextContent),
           userModified: false,
           replaceAll: params.replace_all === true,
+          ...(skillWrite ? { skillWrite } : {}),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        return agentToolResult(successEnvelope('file_edit', data, { metrics: metrics(started, data) }), visibleFileEdit(data));
+        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath);
+        return agentToolResult(successEnvelope('file_edit', data, {
+          instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
+          metrics: metrics(started, data),
+        }), visibleFileEdit(data));
       } catch (error) {
         return localErrorResult('file_edit', error, started);
       }
@@ -933,6 +983,13 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
             metrics: metrics(started, data),
           }), visibleFileWrite(data));
         }
+        const skillWrite = validateSkillContentWriteOrThrow({
+          workspace,
+          filePath,
+          content: params.content,
+          previousContent: originalContent,
+          operation: 'file_write',
+        });
         await mkdir(path.dirname(filePath), { recursive: true });
         const metadata = { encoding: original?.encoding ?? 'utf8' as const, lineEndings: 'LF' as const, hasBom: false };
         await writeTextFile(filePath, params.content, metadata);
@@ -952,9 +1009,14 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           content: params.content,
           structuredPatch: originalContent === null ? [] : structuredPatch(originalContent, params.content),
           originalFile: originalContent,
+          ...(skillWrite ? { skillWrite } : {}),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        return agentToolResult(successEnvelope('file_write', data, { metrics: metrics(started, data) }), visibleFileWrite(data));
+        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath);
+        return agentToolResult(successEnvelope('file_write', data, {
+          instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
+          metrics: metrics(started, data),
+        }), visibleFileWrite(data));
       } catch (error) {
         return localErrorResult('file_write', error, started);
       }
@@ -2072,6 +2134,7 @@ function visibleFileEdit(data: FileEditData) {
   return {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
+    ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
   };
 }
 
@@ -2116,6 +2179,17 @@ function visibleFileWrite(data: FileWriteData) {
     type: data.type,
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
+    ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+  };
+}
+
+function visibleSkillWrite(skillWrite: AgentSkillWriteAudit) {
+  return {
+    skillName: skillWrite.skillName,
+    source: skillWrite.source,
+    relativePath: skillWrite.relativePath,
+    changeType: skillWrite.changeType,
+    warnings: skillWrite.warnings,
   };
 }
 

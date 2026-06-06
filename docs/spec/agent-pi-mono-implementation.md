@@ -549,9 +549,10 @@ adapter maps envelope errors (`details.ok === false`) to
 - `task_stop` only stops a background task; it is not a generic process manager.
 - Large command output should be persisted and then read through the file tool.
 
-Tenon should not configure `AskUserQuestion` for v1. The assistant can ask the
-user in normal chat when clarification is needed. Web access should instead be
-covered by `web_search` and `web_fetch`.
+Tenon configures a local `ask_user_question` tool for structured clarification.
+The runtime persists pending question events, exposes the pending question to the
+renderer, and resumes the blocked tool call when the user submits an answer.
+Web access is covered by `web_search` and `web_fetch`.
 
 ## Tenon Tool Registry
 
@@ -597,6 +598,11 @@ These agent-level tools are active on top of the P0 local/document surface.
 |---|---|---:|---|---|
 | `past_chats` | nodex `past_chats` | Yes | No | Search and read older Tenon agent conversations. |
 | `memory` | Tenon agent memory store | Yes | No | List, remember, update, or forget durable facts for the local agent. |
+| `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, or free-text user input. |
+| `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
+| `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
+| `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
+| `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is a built-in slash-only workflow. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
 

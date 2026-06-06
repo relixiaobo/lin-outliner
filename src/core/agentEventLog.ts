@@ -465,11 +465,14 @@ export interface AgentEventBase {
 export interface SessionCreatedEvent extends AgentEventBase {
   type: 'session.created';
   title: string | null;
+  members?: AgentPrincipal[];
+  goal?: string;
 }
 
 export interface SessionRenamedEvent extends AgentEventBase {
   type: 'session.renamed';
   title: string | null;
+  goal?: string;
 }
 
 export interface SessionSettingsChangedEvent extends AgentEventBase {
@@ -819,7 +822,7 @@ export interface CompactionCompletedEvent extends AgentEventBase {
   type: 'compaction.completed';
   messageId: string;
   summary: string;
-  compactedThroughMessageId: string;
+  source: AgentCompactionSourceRange;
   trigger: AgentCompactionTrigger;
 }
 
@@ -897,6 +900,8 @@ export type AgentEvent =
 export interface AgentSessionRecord {
   id: string;
   title: string | null;
+  members: AgentPrincipal[];
+  goal?: string;
   createdAt: number;
   updatedAt: number;
   settings: Record<string, unknown>;
@@ -960,9 +965,26 @@ export interface AgentCompactionRecord {
   id: string;
   messageId: string;
   summary: string;
-  compactedThroughMessageId: string;
+  source: AgentCompactionSourceRange;
   trigger: AgentCompactionTrigger;
   createdAt: number;
+}
+
+export interface AgentCompactionSourceRange {
+  fromMessageId: string;
+  throughMessageId: string;
+}
+
+export interface AgentUserQuestionRecord {
+  requestId: string;
+  runId: string;
+  toolCallId: string;
+  request: AgentUserQuestionRequestView;
+  status: 'pending' | 'answered' | 'cancelled';
+  result?: AskUserQuestionResult;
+  reason?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface AgentEventReplayState {
@@ -979,6 +1001,7 @@ export interface AgentEventReplayState {
   runs: Record<string, AgentRunRecord>;
   subagents: Record<string, AgentSubagentRunRecord>;
   compactionsByMessageId: Record<string, AgentCompactionRecord>;
+  userQuestions: Record<string, AgentUserQuestionRecord>;
 }
 
 export interface AgentMessageBranchState {
@@ -1012,6 +1035,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     runs: {},
     subagents: {},
     compactionsByMessageId: {},
+    userQuestions: {},
   };
 }
 
@@ -1183,6 +1207,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.session = {
         id: event.sessionId,
         title: event.title,
+        members: event.members?.slice() ?? [],
+        goal: event.goal,
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
         settings: {},
@@ -1191,6 +1217,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'session.renamed':
       requireSession(state, event);
       state.session!.title = event.title;
+      state.session!.goal = event.goal ?? state.session!.goal;
       state.session!.updatedAt = event.createdAt;
       return;
     case 'session.settings_changed':
@@ -1380,7 +1407,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         id: event.eventId,
         messageId: event.messageId,
         summary: event.summary,
-        compactedThroughMessageId: event.compactedThroughMessageId,
+        source: event.source,
         trigger: event.trigger,
         createdAt: event.createdAt,
       };
@@ -1391,9 +1418,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'tool_call.failed':
     case 'tool.permission.checked':
     case 'tool.permission.resolved':
-    case 'user_question.requested':
-    case 'user_question.answered':
-    case 'user_question.cancelled':
     case 'widget_state.updated':
     case 'approval.requested':
     case 'approval.resolved':
@@ -1414,6 +1438,33 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'checkpoint.created':
     case 'metric.recorded':
       return;
+    case 'user_question.requested':
+      state.userQuestions[event.requestId] = {
+        requestId: event.requestId,
+        runId: event.runId,
+        toolCallId: event.toolCallId,
+        request: event.request,
+        status: 'pending',
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+      };
+      return;
+    case 'user_question.answered': {
+      const question = state.userQuestions[event.requestId];
+      if (!question) return;
+      question.status = 'answered';
+      question.result = event.result;
+      question.updatedAt = event.createdAt;
+      return;
+    }
+    case 'user_question.cancelled': {
+      const question = state.userQuestions[event.requestId];
+      if (!question) return;
+      question.status = 'cancelled';
+      question.reason = event.reason;
+      question.updatedAt = event.createdAt;
+      return;
+    }
   }
 }
 
@@ -1449,7 +1500,7 @@ function appendVisibleTranscriptEntry(
   const compaction = message.role === 'user' ? state.compactionsByMessageId[message.id] ?? null : null;
   if (compaction && !expandingCompactions.has(compaction.messageId)) {
     expandingCompactions.add(compaction.messageId);
-    for (const compactedMessage of pathToMessage(state, compaction.compactedThroughMessageId)) {
+    for (const compactedMessage of pathRangeToMessage(state, compaction.source)) {
       if (compactedMessage.id === message.id) continue;
       appendVisibleTranscriptEntry(state, entries, expandingCompactions, compactedMessage, true);
     }
@@ -1457,6 +1508,15 @@ function appendVisibleTranscriptEntry(
   }
 
   entries.push({ message, archived });
+}
+
+function pathRangeToMessage(
+  state: AgentEventReplayState,
+  source: AgentCompactionSourceRange,
+): AgentEventMessageRecord[] {
+  const path = pathToMessage(state, source.throughMessageId);
+  const startIndex = path.findIndex((message) => message.id === source.fromMessageId);
+  return startIndex >= 0 ? path.slice(startIndex) : path;
 }
 
 function pathToMessage(

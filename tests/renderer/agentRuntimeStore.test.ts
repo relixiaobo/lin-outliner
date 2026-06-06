@@ -7,6 +7,7 @@ import type {
   AgentApprovalResolutionScope,
   AgentRuntimeEvent,
   AgentUserViewContext,
+  AskUserQuestionResult,
   AssistantMessage,
   UserMessage,
 } from '../../src/core/agentTypes';
@@ -183,6 +184,7 @@ function createFakeClient(options: {
     restoreConversation: [] as string[],
     queueFollowUp: [] as Array<{ conversationId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
     resolveApproval: [] as Array<{ conversationId: string; requestId: string; approved: boolean; scope: AgentApprovalResolutionScope | undefined }>,
+    resolveUserQuestion: [] as Array<{ conversationId: string; requestId: string; result: AskUserQuestionResult }>,
     steerConversation: [] as Array<{ conversationId: string; message: string }>,
     sendMessage: [] as Array<{
       conversationId: string;
@@ -226,6 +228,10 @@ function createFakeClient(options: {
     clearSteer: async () => {},
     resolveApproval: async (conversationId, requestId, approved, scope) => {
       calls.resolveApproval.push({ conversationId, requestId, approved, scope });
+      return { resolved: true };
+    },
+    resolveUserQuestion: async (conversationId, requestId, result) => {
+      calls.resolveUserQuestion.push({ conversationId, requestId, result });
       return { resolved: true };
     },
     stopConversation: async () => {},
@@ -375,6 +381,56 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('tracks pending user questions and resolves structured answers', async () => {
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    fake.emit({
+      type: 'user_question_request',
+      conversationId: 'saved',
+      requestId: 'question-1',
+      question: {
+        requestId: 'question-1',
+        conversationId: 'saved',
+        runId: 'run-1',
+        toolCallId: 'tool-question-1',
+        request: {
+          questions: [{
+            id: 'direction',
+            type: 'single_choice',
+            question: 'Which path?',
+            options: [
+              { id: 'a', label: 'A' },
+              { id: 'b', label: 'B' },
+            ],
+          }],
+        },
+      },
+      timestamp: 10,
+    });
+
+    expect(store.getSnapshot().pendingUserQuestion?.requestId).toBe('question-1');
+
+    await store.getSnapshot().resolveUserQuestion('question-1', {
+      requestId: 'question-1',
+      answers: [{ questionId: 'direction', selectedOptionIds: ['b'] }],
+    });
+
+    expect(fake.calls.resolveUserQuestion).toEqual([{
+      conversationId: 'saved',
+      requestId: 'question-1',
+      result: {
+        requestId: 'question-1',
+        answers: [{ questionId: 'direction', selectedOptionIds: ['b'] }],
+      },
+    }]);
+    expect(store.getSnapshot().pendingUserQuestion).toBeNull();
+    unsubscribe();
+  });
+
   test('filters hidden system reminder user rows from the visible conversation', async () => {
     const restored = conversation('saved', projection([
       { nodeId: 'system-notification', message: userMessage(systemReminder('Background subagent completed.')), branches: null },
@@ -416,7 +472,7 @@ describe('agent runtime store', () => {
       id: 'compact-1',
       messageId: 'compact-root',
       summary: 'Visible compact summary.',
-      compactedThroughMessageId: 'a1',
+      source: { fromMessageId: 'u1', throughMessageId: 'a1' },
       trigger: 'auto',
       createdAt: 10,
     };

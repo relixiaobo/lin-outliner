@@ -58,7 +58,7 @@ test.describe('cursor affordances', () => {
     expect(iconButtonCursors.enabled).toBe('default');
     expect(iconButtonCursors.disabled).toBe('default');
 
-    await page.getByRole('button', { name: 'Schema' }).click();
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Schema', exact: true }).click();
     await row(page, ids.projectTag).getByRole('button', { name: 'Open' }).click();
 
     const definitionSwitchCursor = await page.locator('.definition-switch').first().evaluate((element) =>

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
@@ -721,9 +721,9 @@ work that **assumes the full active-path transcript is materialized**:
   makes IDs mismatch → missed slimming / undefined behavior.
 - **Time-based microcompaction** depends on all assistant messages being in the
   active path (`:358-372`).
-- **Compaction** preserves recent messages verbatim and derives
-  `compactedThroughMessageId` from the active path (`:226-229`); skipping events
-  diverges the branch pointer from the materialized messages.
+- **Compaction** preserves recent messages verbatim and records a `source`
+  down-pointer range (`fromMessageId` → `throughMessageId`) from the active path;
+  skipping events diverges the branch pointer from the materialized messages.
 - **Checkpoints** assume a contiguous event log; **prompt cache** prefix stability
   is a hidden downstream constraint a per-turn-varying transcript would thrash
   (quantified in §Prompt cache impact).
@@ -990,17 +990,17 @@ P0 — identity
 
 P1 — conversations + memory v1
 - [x] `session`→`{conversation, run}`: split the message stream (communication) from the run log (execution **incl. `tool_result`**); re-key `sessions/<id>` → `conversations/<id>` + `runs/<id>`; IPC, state map, scopes.
-- [ ] **Mixed-resolution assembly** (PM-ratified): `deriveRuntimePiMessages` joins the recent window's run logs into a valid pi-agent-core transcript and renders old segments as their (compaction) summaries — the agent no longer re-sees old tool outputs verbatim.
+- [x] **Mixed-resolution assembly** (PM-ratified): `deriveRuntimePiMessages` joins the recent window's run logs into a valid pi-agent-core transcript and renders old segments as their (compaction) summaries — the agent no longer re-sees old tool outputs verbatim.
 - [x] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
 - [x] Store `actor` on `AgentEventMessageRecord`; drop implicit `'pi-mono'` by parameterizing runtime-authored agent actors — foundation for task-notification attribution + P3 POV.
-- [ ] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
-- [ ] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
+- [x] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
+- [x] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
-- [ ] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, prompt-free — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
+- [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, prompt-free — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
 - [ ] Inline memory write instructions in the agent prompt.
-- [ ] Memory recall added to the per-turn reminder stack (`agentRuntime.ts:640`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
+- [x] Memory recall added to the per-turn reminder stack (`agentRuntime.ts:640`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
 - [ ] Profile UI: view / edit / forget memory.
-- [ ] M0.5 clean cut: rename/remove remaining agent `session*` protocol/index/API
+- [x] M0.5 clean cut: rename/remove remaining agent `session*` protocol/index/API
   bridge debt, then wipe dev userData (format change, no migration).
 
 P2 — memory v2 + background-task surfacing

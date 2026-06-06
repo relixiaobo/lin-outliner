@@ -39,6 +39,7 @@ import type {
   AgentMessageAttachmentInput,
   AgentSubagentActionResult,
   AgentUserViewContext,
+  AskUserQuestionResult,
 } from '../../core/agentTypes';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -300,6 +301,11 @@ export const api = {
     approved: boolean,
     scope: AgentApprovalResolutionScope = 'once',
   ) => command<{ resolved: boolean }>('agent_resolve_approval', { conversationId, requestId, approved, scope }),
+  agentResolveUserQuestion: (
+    conversationId: string,
+    requestId: string,
+    result: AskUserQuestionResult,
+  ) => command<{ resolved: boolean }>('agent_resolve_user_question', { conversationId, requestId, result }),
   agentStopConversation: (conversationId: string) =>
     command<void>('agent_stop_conversation', { conversationId }),
   agentResetConversation: (conversationId: string) =>

@@ -26,6 +26,24 @@ const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000;
 const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000;
 const SKILL_LISTING_STATE_MARKER = 'The following skills have already been listed to the agent in this session:';
 const execFile = promisify(execFileCallback);
+const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
+  name: 'skillify',
+  description: 'Create or update a local agent skill from an explicit user workflow request.',
+  whenToUse: 'Use when the user asks to save, update, or turn a workflow into a reusable skill.',
+  body: [
+    'Skill authoring workflow:',
+    '',
+    '1. Identify the reusable workflow, the proposed skill name, and whether this is a new skill or an update.',
+    '2. For a new skill, draft a complete SKILL.md under `.agents/skills/<skill-name>/SKILL.md` with YAML frontmatter and concise Markdown instructions.',
+    '3. New agent-authored skills must include `disable-model-invocation: true`; model invocation requires a later explicit promotion.',
+    '4. Do not add broad or mutating `allowed-tools`; use narrow read/search rules only when the skill truly needs them.',
+    '5. For an existing skill, read the current SKILL.md first and prefer a focused file_edit patch over a whole-file rewrite.',
+    '6. Use file_write or file_edit for the final write. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
+    '',
+    'Do not edit built-in skills. Do not write executable support files in this workflow.',
+  ].join('\n'),
+  modelInvocable: false,
+}];
 
 const SKILL_TOOL_PARAMETERS = {
   type: 'object',
@@ -57,9 +75,28 @@ export interface SkillLoadOptions {
   localRoot?: string;
   includeUserSkills?: boolean;
   additionalSkillDirectories?: string[];
+  builtInSkills?: BuiltInSkillInput[];
   sessionId?: string;
   executeSkillShell?: SkillShellExecutor;
   executeForkedSkill?: SkillForkExecutor;
+}
+
+export interface BuiltInSkillInput {
+  name: string;
+  description: string;
+  body: string;
+  whenToUse?: string;
+  userInvocable?: boolean;
+  modelInvocable?: boolean;
+  allowedTools?: string[];
+  argumentHint?: string;
+  argumentNames?: string[];
+  version?: string;
+  model?: string;
+  effort?: string;
+  context?: 'inline' | 'fork';
+  agent?: string;
+  paths?: string[];
 }
 
 export interface SkillShellExecutionInput {
@@ -308,6 +345,12 @@ export class AgentSkillRuntime {
   async notifyFileTouched(filePaths: string[]): Promise<void> {
     const changed = await this.registry.activateForFilePaths(filePaths);
     if (!changed) return;
+    const listing = await this.buildSkillListingMessage();
+    if (listing) this.enqueueSteeringMessage(listing);
+  }
+
+  async notifySkillContentWritten(_filePaths: string[]): Promise<void> {
+    this.registry.reloadAll();
     const listing = await this.buildSkillListingMessage();
     if (listing) this.enqueueSteeringMessage(listing);
   }
@@ -594,6 +637,7 @@ export async function createSlashSkillPrompt(
 class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
+  private readonly builtInSkills: BuiltInSkillInput[];
   private additionalSkillDirectories: string[];
   private loaded = false;
   private readonly skills = new Map<string, SkillDefinition>();
@@ -604,6 +648,7 @@ class SkillRegistry {
   constructor(options: SkillLoadOptions) {
     this.root = path.resolve(options.localRoot ?? process.cwd());
     this.includeUserSkills = options.includeUserSkills ?? true;
+    this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
     this.additionalSkillDirectories = normalizeAdditionalSkillDirectories(options.additionalSkillDirectories, this.root);
   }
 
@@ -611,6 +656,10 @@ class SkillRegistry {
     const normalized = normalizeAdditionalSkillDirectories(directories, this.root);
     if (sameStringList(this.additionalSkillDirectories, normalized)) return;
     this.additionalSkillDirectories = normalized;
+    this.reloadAll();
+  }
+
+  reloadAll(): void {
     this.loaded = false;
     this.skills.clear();
     this.conditionalSkills.clear();
@@ -669,6 +718,9 @@ class SkillRegistry {
     if (this.loaded) return;
     this.loaded = true;
     this.seenSkillFileIds.clear();
+    for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
+      await this.addLoadedSkill(skill);
+    }
     const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
     for (const { dir, source } of roots) {
       const loaded = await loadSkillsFromDir(dir, source);
@@ -679,6 +731,8 @@ class SkillRegistry {
   }
 
   private async addLoadedSkill(skill: SkillDefinition): Promise<boolean> {
+    const existing = this.skills.get(skill.name) ?? this.conditionalSkills.get(skill.name);
+    if (existing?.source === 'built-in') return false;
     const fileId = await skillFileIdentity(skill.skillFile);
     if (this.seenSkillFileIds.has(fileId)) return false;
     this.seenSkillFileIds.add(fileId);
@@ -819,6 +873,32 @@ function createSkillDefinition(input: {
     contentLength: input.body.length,
     body: input.body,
   };
+}
+
+function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition {
+  const frontmatter: Record<string, unknown> = {
+    description: input.description,
+    ...(input.whenToUse ? { when_to_use: input.whenToUse } : {}),
+    ...(input.userInvocable === false ? { 'user-invocable': false } : {}),
+    ...(input.modelInvocable === false ? { 'disable-model-invocation': true } : {}),
+    ...(input.allowedTools?.length ? { 'allowed-tools': input.allowedTools } : {}),
+    ...(input.argumentHint ? { 'argument-hint': input.argumentHint } : {}),
+    ...(input.argumentNames?.length ? { arguments: input.argumentNames.join(' ') } : {}),
+    ...(input.version ? { version: input.version } : {}),
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.context === 'fork' ? { context: 'fork' } : {}),
+    ...(input.agent ? { agent: input.agent } : {}),
+    ...(input.paths?.length ? { paths: input.paths } : {}),
+  };
+  return createSkillDefinition({
+    name: input.name,
+    rootDir: `built-in/${input.name}`,
+    skillFile: `built-in/${input.name}/${SKILL_FILE_NAME}`,
+    source: 'built-in',
+    body: input.body,
+    frontmatter,
+  });
 }
 
 function parseSkillMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {

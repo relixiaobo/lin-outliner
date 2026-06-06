@@ -26,7 +26,13 @@ export type AgentToolActionKind =
   | 'external.message.send'
   | 'task.stop'
   | 'agent.memory.manage'
+  | 'agent.user_question.ask'
+  | 'agent.runtime.status'
+  | 'agent.config.read'
+  | 'agent.config.write'
+  | 'agent.doctor.run'
   | 'agent.skill.invoke'
+  | 'agent.skill.write'
   | 'agent.subagent.spawn'
   | 'agent.subagent.status'
   | 'agent.subagent.send'
@@ -147,7 +153,13 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'external.message.send',
   'task.stop',
   'agent.memory.manage',
+  'agent.user_question.ask',
+  'agent.runtime.status',
+  'agent.config.read',
+  'agent.config.write',
+  'agent.doctor.run',
   'agent.skill.invoke',
+  'agent.skill.write',
   'agent.subagent.spawn',
   'agent.subagent.status',
   'agent.subagent.send',
@@ -243,10 +255,14 @@ const KNOWN_TOOL_NAMES = new Set<string>([
   'agent_send',
   'agent_status',
   'agent_stop',
+  'ask_user_question',
   'bash',
+  'config',
+  'doctor',
   'file_edit',
   'file_write',
   'memory',
+  'runtime_status',
   'node_create',
   'node_delete',
   'node_edit',
@@ -261,6 +277,7 @@ const PLATFORM_HARD_BLOCK_ACTIONS = new Set<AgentToolActionKind>([
 
 const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
   ...PLATFORM_HARD_BLOCK_ACTIONS,
+  'agent.skill.write',
   'agent.subagent.spawn',
   'shell.unknown',
 ]);

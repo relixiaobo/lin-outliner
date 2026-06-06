@@ -81,7 +81,7 @@ export interface AgentRenderCompactionEntity {
   id: string;
   messageId: string;
   summary: string;
-  compactedThroughMessageId: string;
+  source: AgentCompactionRecord['source'];
   trigger: AgentCompactionTrigger;
   createdAt: number;
 }
@@ -292,7 +292,7 @@ function toRenderCompactionEntity(record: AgentCompactionRecord): AgentRenderCom
     id: record.id,
     messageId: record.messageId,
     summary: record.summary,
-    compactedThroughMessageId: record.compactedThroughMessageId,
+    source: record.source,
     trigger: record.trigger,
     createdAt: record.createdAt,
   };

@@ -212,6 +212,101 @@ describe('agent permissions', () => {
     });
   });
 
+  test('agent self-maintenance tools have pinned default decisions', () => {
+    const workspaceRoot = '/tmp/workspace';
+    const runtimeStatus = evaluateAgentToolPermission({
+      toolName: 'runtime_status',
+      args: {},
+      policy: { workspaceRoot },
+    });
+    const doctor = evaluateAgentToolPermission({
+      toolName: 'doctor',
+      args: {},
+      policy: { workspaceRoot },
+    });
+    const configRead = evaluateAgentToolPermission({
+      toolName: 'config',
+      args: { setting: 'agent.runtime.compactEnabled' },
+      policy: { workspaceRoot },
+    });
+    const configWrite = evaluateAgentToolPermission({
+      toolName: 'config',
+      args: { setting: 'agent.runtime.compactEnabled', value: false },
+      policy: { workspaceRoot },
+    });
+
+    expect(runtimeStatus).toMatchObject({
+      behavior: 'allow',
+      access: 'control',
+      descriptor: { actionKind: 'agent.runtime.status' },
+    });
+    expect(doctor).toMatchObject({
+      behavior: 'allow',
+      access: 'control',
+      descriptor: { actionKind: 'agent.doctor.run' },
+    });
+    expect(configRead).toMatchObject({
+      behavior: 'allow',
+      access: 'control',
+      descriptor: { actionKind: 'agent.config.read' },
+    });
+    expect(configWrite).toMatchObject({
+      behavior: 'ask',
+      access: 'control',
+      code: 'agent.config.write',
+      descriptor: { actionKind: 'agent.config.write' },
+    });
+    expect(configWrite.behavior === 'ask' ? configWrite.request.title : undefined)
+      .toBe('Approve agent config change?');
+  });
+
+  test('skill content file writes use the skill-write permission action', () => {
+    const workspaceRoot = '/tmp/workspace';
+    const skillPath = path.join(workspaceRoot, '.agents', 'skills', 'demo', 'SKILL.md');
+    const decision = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: skillPath, content: '---\ndescription: Demo skill\n---\nUse demo.' },
+      policy: { workspaceRoot },
+    });
+    const globallyAllowed = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: skillPath, content: '---\ndescription: Demo skill\n---\nUse demo.' },
+      policy: {
+        workspaceRoot,
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(file.write.allowed_file_area)'],
+          },
+        },
+      },
+    });
+    const config = parseGlobalToolPermissionSettings({
+      permissions: {
+        allow: ['Action(agent.skill.write)'],
+      },
+    });
+
+    expect(decision).toMatchObject({
+      behavior: 'ask',
+      access: 'write',
+      code: 'agent.skill.write',
+      descriptor: { actionKind: 'agent.skill.write' },
+    });
+    expect(decision.behavior === 'ask' ? decision.request.title : undefined)
+      .toBe('Approve skill content write?');
+    expect(globallyAllowed).toMatchObject({
+      behavior: 'ask',
+      descriptor: { actionKind: 'agent.skill.write' },
+    });
+    expect(config.rules).toEqual([]);
+    expect(config.diagnostics).toEqual([{
+      ruleValue: 'Action(agent.skill.write)',
+      decision: 'allow',
+      code: 'forbidden_allow_rule',
+      message: 'Action agent.skill.write cannot be globally allowed.',
+    }]);
+  });
+
   test('matches allowed-tools rules for restricted mode preapproval', () => {
     expect(matchesAgentToolRule('Bash(git diff:*)', 'bash', { command: 'git diff -- src/main.ts' })).toBe(true);
     expect(matchesAgentToolRule('Bash(git diff:*)', 'bash', { command: 'git status --short' })).toBe(false);

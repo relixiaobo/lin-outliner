@@ -9,7 +9,9 @@ import type {
   AgentMessageBranchState,
   AgentRuntimeEvent,
   AgentToolResultWithPayloads,
+  AgentUserQuestionPendingView,
   AgentUserViewContext,
+  AskUserQuestionResult,
   AssistantMessage,
   ImageContent,
   TextContent,
@@ -379,6 +381,11 @@ export interface AgentRuntimeClient {
     approved: boolean,
     scope?: AgentApprovalResolutionScope,
   ) => Promise<{ resolved: boolean }>;
+  resolveUserQuestion: (
+    conversationId: string,
+    requestId: string,
+    result: AskUserQuestionResult,
+  ) => Promise<{ resolved: boolean }>;
   stopConversation: (conversationId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
 }
@@ -399,10 +406,12 @@ export interface LinAgentRuntimeView {
   subagents: Record<string, AgentRenderSubagentEntity>;
   subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity>;
   pendingApproval: AgentApprovalRequestView | null;
+  pendingUserQuestion: AgentUserQuestionPendingView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
   selectConversation: (targetConversationId: string) => Promise<void>;
   newConversation: () => Promise<void>;
+  openDefaultConversation: () => Promise<void>;
   sendMessage: (
     prompt: string,
     attachments?: AgentMessageAttachmentInput[],
@@ -421,6 +430,7 @@ export interface LinAgentRuntimeView {
     approved: boolean,
     scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
+  resolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
   stop: () => void;
   reset: () => void;
   reloadConversation: () => Promise<void>;
@@ -445,6 +455,8 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   clearSteer: (conversationId) => api.agentClearSteer(conversationId),
   resolveApproval: (conversationId, requestId, approved, scope = 'once') =>
     api.agentResolveApproval(conversationId, requestId, approved, scope),
+  resolveUserQuestion: (conversationId, requestId, result) =>
+    api.agentResolveUserQuestion(conversationId, requestId, result),
   stopConversation: (conversationId) => api.agentStopConversation(conversationId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
@@ -456,6 +468,8 @@ export class AgentRuntimeStore {
   private error: string | null = null;
   private readonly pendingApprovals = new Map<string, AgentApprovalRequestView>();
   private pendingApprovalOrder: string[] = [];
+  private readonly pendingUserQuestions = new Map<string, AgentUserQuestionPendingView>();
+  private pendingUserQuestionOrder: string[] = [];
   private restorePromise: Promise<string> | null = null;
   private requestVersion = 0;
   private started = false;
@@ -505,6 +519,26 @@ export class AgentRuntimeStore {
     this.publish();
     try {
       const conversation = await this.client.createConversation();
+      if (!this.isCurrentRequest(requestVersion)) return;
+      this.hydrateConversation(conversation);
+      await this.closePreviousConversation(previousConversationId, conversation.conversationId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  openDefaultConversation = async () => {
+    const previousConversationId = this.conversationId;
+    const requestVersion = this.beginConversationRequest();
+    this.conversationId = null;
+    this.projection = EMPTY_PROJECTION;
+    this.error = null;
+    this.restorePromise = null;
+    this.clearPendingApprovalState();
+    this.publish();
+    try {
+      const conversation = await this.client.restoreLatestConversation();
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
       await this.closePreviousConversation(previousConversationId, conversation.conversationId);
@@ -636,6 +670,21 @@ export class AgentRuntimeStore {
     }
   };
 
+  resolveUserQuestion = async (requestId: string, result: AskUserQuestionResult) => {
+    if (!this.conversationId) return false;
+    try {
+      const resolved = await this.client.resolveUserQuestion(this.conversationId, requestId, result);
+      if (resolved.resolved && this.pendingUserQuestions.has(requestId)) {
+        this.removePendingUserQuestion(requestId);
+        this.publish();
+      }
+      return resolved.resolved;
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
   stop = () => {
     if (!this.conversationId) return;
     void this.client.stopConversation(this.conversationId).catch((caught) => {
@@ -715,6 +764,7 @@ export class AgentRuntimeStore {
     this.projection = conversation.renderProjection;
     this.error = conversation.renderProjection.errorMessage;
     this.clearPendingApprovalState();
+    if (conversation.pendingUserQuestion) this.addPendingUserQuestion(conversation.pendingUserQuestion);
     this.publish();
   }
 
@@ -756,6 +806,25 @@ export class AgentRuntimeStore {
       if (payload.conversationId !== this.conversationId) return;
       if (this.pendingApprovals.has(payload.requestId)) {
         this.removePendingApproval(payload.requestId);
+        this.publish();
+      }
+      return;
+    }
+
+    if (payload.type === 'user_question_request') {
+      if (!this.conversationId) {
+        this.conversationId = payload.conversationId;
+      }
+      if (payload.conversationId !== this.conversationId) return;
+      this.addPendingUserQuestion(payload.question);
+      this.publish();
+      return;
+    }
+
+    if (payload.type === 'user_question_resolved') {
+      if (payload.conversationId !== this.conversationId) return;
+      if (this.pendingUserQuestions.has(payload.requestId)) {
+        this.removePendingUserQuestion(payload.requestId);
         this.publish();
       }
       return;
@@ -823,10 +892,12 @@ export class AgentRuntimeStore {
       subagents,
       subagentsByParentToolCallId,
       pendingApproval: this.currentPendingApproval(),
+      pendingUserQuestion: this.currentPendingUserQuestion(),
       toolResults,
       turnPhase,
       selectConversation: this.selectConversation,
       newConversation: this.newConversation,
+      openDefaultConversation: this.openDefaultConversation,
       sendMessage: this.sendMessage,
       editMessage: this.editMessage,
       regenerateMessage: this.regenerateMessage,
@@ -837,6 +908,7 @@ export class AgentRuntimeStore {
       steer: this.steer,
       clearSteer: this.clearSteer,
       resolveApproval: this.resolveApproval,
+      resolveUserQuestion: this.resolveUserQuestion,
       stop: this.stop,
       reset: this.reset,
       reloadConversation: this.reloadConversation,
@@ -859,6 +931,8 @@ export class AgentRuntimeStore {
   private clearPendingApprovalState() {
     this.pendingApprovals.clear();
     this.pendingApprovalOrder = [];
+    this.pendingUserQuestions.clear();
+    this.pendingUserQuestionOrder = [];
   }
 
   private currentPendingApproval(): AgentApprovalRequestView | null {
@@ -866,6 +940,27 @@ export class AgentRuntimeStore {
       const request = this.pendingApprovals.get(this.pendingApprovalOrder[0]);
       if (request) return request;
       this.pendingApprovalOrder.shift();
+    }
+    return null;
+  }
+
+  private addPendingUserQuestion(question: AgentUserQuestionPendingView) {
+    if (!this.pendingUserQuestions.has(question.requestId)) {
+      this.pendingUserQuestionOrder.push(question.requestId);
+    }
+    this.pendingUserQuestions.set(question.requestId, question);
+  }
+
+  private removePendingUserQuestion(requestId: string) {
+    this.pendingUserQuestions.delete(requestId);
+    this.pendingUserQuestionOrder = this.pendingUserQuestionOrder.filter((id) => id !== requestId);
+  }
+
+  private currentPendingUserQuestion(): AgentUserQuestionPendingView | null {
+    while (this.pendingUserQuestionOrder.length > 0) {
+      const question = this.pendingUserQuestions.get(this.pendingUserQuestionOrder[0]);
+      if (question) return question;
+      this.pendingUserQuestionOrder.shift();
     }
     return null;
   }

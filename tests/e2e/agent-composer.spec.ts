@@ -1140,7 +1140,7 @@ test.describe('agent composer controls', () => {
             id: 'compact-1',
             messageId: 'compact-root',
             summary: 'Primary Request and Intent\n\nContinue implementing the compact UI boundary.',
-            compactedThroughMessageId: 'assistant-before-compact',
+            source: { fromMessageId: 'user-before-compact', throughMessageId: 'assistant-before-compact' },
             trigger: 'manual',
             createdAt: 1_800_000_000_000,
           },
@@ -1443,8 +1443,8 @@ test.describe('agent composer controls', () => {
   test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 620 });
 
-    await page.getByRole('button', { name: 'Show conversations' }).click();
-    const menu = page.getByRole('dialog', { name: 'Conversations' });
+    await page.getByRole('button', { name: 'Show channels' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
     const box = await menu.boundingBox();
@@ -1555,8 +1555,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('keeps conversation rename geometry stable', async ({ page }) => {
-    await page.getByRole('button', { name: 'Show conversations' }).click();
-    const menu = page.getByRole('dialog', { name: 'Conversations' });
+    await page.getByRole('button', { name: 'Show channels' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
     const row = menu.locator('.agent-conversation-row').nth(1);
@@ -1565,8 +1565,8 @@ test.describe('agent composer controls', () => {
     expect(before).toBeTruthy();
 
     await row.hover();
-    await row.getByRole('button', { name: 'Rename conversation' }).click();
-    await expect(row.getByLabel('Conversation title')).toBeVisible();
+    await row.getByRole('button', { name: 'Rename channel' }).click();
+    await expect(row.getByLabel('Channel name')).toBeVisible();
 
     const after = await row.boundingBox();
     expect(after).toBeTruthy();

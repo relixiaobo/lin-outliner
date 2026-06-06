@@ -362,6 +362,18 @@ type AgentEventType =
   | 'approval.resolved'
   | 'follow_up.queued'
   | 'follow_up.applied'
+  | 'task.created'
+  | 'task.completed'
+  | 'notification.created'
+  | 'config.change'
+  | 'review_card.created'
+  | 'skill.created'
+  | 'skill.patched'
+  | 'skill.replaced'
+  | 'skill.enabled'
+  | 'skill.disabled'
+  | 'skill.rolled_back'
+  | 'skill.curation.updated'
   | 'run.started'
   | 'run.completed'
   | 'run.failed'
@@ -375,11 +387,12 @@ type AgentEventType =
   | 'metric.recorded';
 ```
 
-Not every schema event is emitted by the current runtime yet. Approval,
-follow-up, metric, thinking delta, tool-call delta, user-question, widget-state,
-and derived payload events remain schema-reserved so these features can land
-without changing the event-store model. Events that are emitted today still go
-through the same append-only rules.
+Not every schema event is emitted by the current runtime yet. Task,
+notification, review-card, widget-state, skill enable/disable/rollback/curation,
+metric, thinking delta, tool-call delta, and derived payload events remain
+schema-reserved so these features can land without changing the event-store
+model. Events that are emitted today still go through the same append-only
+rules.
 
 ## Message Model
 
@@ -979,6 +992,11 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Shared append-only seq-log internals for conversation/run/memory JSONL tails,
   offsets, queues, and seq caches; memory projection caching keyed by latest seq;
   high-churn memory compaction back to the current projection.
+- Mixed-resolution runtime context assembly: compacted historical ranges render
+  as compaction summaries for the model path while visible transcript replay can
+  still expand archived raw/tool messages.
+- Runtime consumers for `user_question.*`, `config.change`, and `skill.*`
+  events, plus file-tool skill write validation/hot reload.
 
 ### Remaining
 
@@ -988,10 +1006,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
   detail views.
 - Memory consolidation beyond explicit tool writes, including extraction from
   summaries and mixed-resolution memory retrieval.
-- Mixed-resolution context assembly that replaces old conversation segments
-  with distillation summaries.
-- Runtime consumers for the schema-reserved task, notification, config-change,
-  review-card, and skill audit event families.
+- Runtime consumers for the schema-reserved task, notification, and review-card
+  event families.
 - Optional checkpoint retention preferences if real sessions show storage
   pressure.
 

@@ -16,6 +16,8 @@ import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentSubagentTools, normalizeAgentToolNames, type AgentSubagentRuntime } from './agentSubagents';
 import { createMemoryTool, type AgentMemoryToolRuntime } from './agentMemoryTool';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
+import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
+import { createSelfMaintenanceTools, type AgentSelfMaintenanceRuntime } from './agentSelfMaintenanceTools';
 import {
   agentToolResult,
   errorEnvelope,
@@ -183,6 +185,8 @@ export interface AgentToolsOptions {
   subagentRuntime?: AgentSubagentRuntime;
   memory?: AgentMemoryToolRuntime;
   pastChats?: PastChatsToolRuntime;
+  askUserQuestion?: AgentAskUserQuestionRuntime;
+  selfMaintenance?: AgentSelfMaintenanceRuntime;
   allowedTools?: string[];
   disallowedTools?: string[];
 }
@@ -195,6 +199,8 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     createWebFetchTool(options.localFileRoot),
     ...(options.memory ? [createMemoryTool(options.memory)] : []),
     ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
+    ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
+    ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
     ...(options.subagentRuntime ? createAgentSubagentTools(options.subagentRuntime) : []),
   ];

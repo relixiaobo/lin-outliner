@@ -4,7 +4,12 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 
 ## Search Paths
 
-Default skill directories are always enabled:
+Code-registered `built-in` skills load first. They are immutable, ship with the
+app, and cannot be shadowed by mutable local skills with the same name. The
+current built-in skill is `/skillify`, a user-invocable workflow for creating or
+updating local skills through normal file tools.
+
+Default mutable skill directories are always enabled:
 
 - `~/.agents/skills`
 - `<workspace>/.agents/skills`
@@ -68,9 +73,24 @@ When the model calls the `skill` tool for a `context: fork` skill:
 6. The parent receives only the final subagent result or error as the `skill` tool result.
 7. The rendered skill body is not injected into the parent context and is not recorded as an invoked parent skill for compact restore.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` is a built-in runtime command and is handled before slash skill resolution.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` is a built-in runtime command and is handled before slash skill resolution. `/skillify` is a built-in slash-only skill; it is user-invocable but not model-invocable, so it does not appear in the automatic model skill listing.
 
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
+
+File writes under `.agents/skills/<skill>/...` are treated as skill-content
+writes, not generic local file edits. The file-tool gateway asks for the
+`agent.skill.write` permission action, validates `SKILL.md` frontmatter and
+support-file shape, rejects broad/mutating `allowed-tools` escalation, rejects
+secret-looking content, records rollback metadata in the tool details, and
+hot-reloads the skill registry after a successful write. New agent-authored
+skills must set `disable-model-invocation: true`; promotion to automatic model
+invocation is a later explicit review.
+
+Successful skill writes also append a skill audit event beside the completed
+tool call: `skill.created` for a new `SKILL.md`, `skill.replaced` for a whole-file
+replacement, and `skill.patched` for focused edits or support-file writes. The
+event records the skill id, source, tool actor, and hash transition summary; the
+full previous content stays in the file-tool result details for rollback tooling.
 
 ## Reference Alignment
 
@@ -78,23 +98,25 @@ Lin tracks the stable local-skill path from the cc-2.1 reference. cc-2.1 is the
 primary reference for invocation semantics and skillify UX; OpenClaw and Hermes
 are supplemental references for safety, recovery, provenance, and curation.
 
-- directory skills as `<skill-name>/SKILL.md`;
+- immutable code-registered built-in skills plus directory skills as `<skill-name>/SKILL.md`;
 - one model-facing skill invocation tool;
 - user slash invocation for user-invocable skills;
 - `allowed-tools` as run-scoped permission metadata;
 - `model` and `effort` as one-turn overrides;
 - `context: fork` through a sidechain agent;
 - path-conditional activation and dynamic nested skill discovery;
-- post-compact restoration of invoked skill content.
+- post-compact restoration of invoked skill content;
+- `skillify`-style authoring through ordinary `file_write` / `file_edit`.
 
 Lin intentionally uses `.agents/skills` and the lowercase `skill` tool name
 instead of cc-2.1's `.claude/skills` and `Skill` tool name. This is a product
 namespace choice, not a behavioral difference.
 
-Future agent-managed skill edits should follow cc-2.1's smaller tool surface:
+Agent-managed skill edits follow cc-2.1's smaller tool surface:
 `skillify`-style workflows plus ordinary file write/edit tools after review and
-confirmation. Lin should add skill-path permission classification and audit, not
-a separate model-facing skill CRUD tool family.
+confirmation. Lin adds skill-path permission classification, validation, rollback
+metadata, and hot reload instead of a separate model-facing skill CRUD tool
+family.
 
 ## Compatibility Decisions
 
@@ -104,6 +126,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Capability | Lin decision |
 | --- | --- |
 | Directory skills | Supported as `<skill-name>/SKILL.md`. Single-file legacy command skills are intentionally not supported. |
+| Built-in skills | Supported as immutable code-registered skills loaded before mutable skill directories. Mutable local skills cannot shadow a built-in skill with the same name. |
 | Automatic listing | Supported. New model-invocable skills are listed once per session and persisted across compact restore. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, permissions, model, and effort handling. |
 | Embedded shell | Supported for `bash` only, at invocation time, after argument and placeholder substitution. |
@@ -113,11 +136,11 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
 | `context: fork` and `agent` | Supported through the same-session `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Planned for the first self-modification release through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes under `.agents/skills/**` should be classified as skill-content writes for permission, audit, snapshot, and rollback. The current invocation runtime remains read/load only. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes under `.agents/skills/**` are classified as `agent.skill.write`, ask-gated, validated, audit-event-emitting, rollback-metadata-bearing, and registry-hot-reloaded. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
-| Managed/policy skills | Not supported. Lin has user/project/additional skill sources, but no admin-managed skill layer. |
-| `skillify` | Planned for the first self-modification release. It should use the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
+| Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
+| `skillify` | Supported as the built-in slash-only workflow. It uses the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background session review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 

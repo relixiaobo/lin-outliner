@@ -13,6 +13,7 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -195,6 +196,10 @@ function persistedText(content: AgentPersistedContent[]): string {
     .join('\n');
 }
 
+function memoryOriginWorkspace(localRoot: string): string {
+  return `workspace:${createHash('sha256').update(path.resolve(localRoot)).digest('hex').slice(0, 16)}`;
+}
+
 describe('agent runtime past chats integration', () => {
   const roots: string[] = [];
 
@@ -355,5 +360,140 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).toContain('<agent-memory>');
     expect(contextText).toContain('memory-direct-style');
     expect(contextText).toContain('User prefers direct, concise engineering answers.');
+  });
+
+  test('isolated memory mode injects only current-workspace memories', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-data-'));
+    roots.push(localRoot, dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-current-workspace',
+      fact: 'Current workspace uses slate focus rings.',
+      originWorkspace: memoryOriginWorkspace(localRoot),
+      sources: [{ conversationId: 'current-workspace-conversation' }],
+      createdAt: 30,
+    });
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-other-workspace',
+      fact: 'Other workspace uses amber focus rings.',
+      originWorkspace: 'workspace:other',
+      sources: [{ conversationId: 'other-workspace-conversation' }],
+      createdAt: 31,
+    });
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Acknowledged.'))],
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Which focus rings should I use here?');
+    const contextText = contexts.join('\n');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(contextText).toContain('memory-current-workspace');
+    expect(contextText).toContain('Current workspace uses slate focus rings.');
+    expect(contextText).not.toContain('memory-other-workspace');
+    expect(contextText).not.toContain('Other workspace uses amber focus rings.');
+  });
+
+  test('read-only global memory mode blocks new memory writes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-readonly-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-readonly-data-'));
+    roots.push(localRoot, dataRoot);
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('memory', {
+            action: 'remember',
+            fact: 'This workspace should not be persisted.',
+          }, { id: 'tool-memory-remember' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Noted.')),
+      ],
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'read-only-global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Remember this for later.');
+    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
+    const activePath = getAgentEventActivePath(replay);
+    const toolResultText = activePath
+      .filter((message) => message.role === 'toolResult')
+      .map((message) => persistedText(message.content))
+      .join('\n');
+    const memories = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
+      includeInvalidated: true,
+    });
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(toolResultText).toContain('read-only-global');
+    expect(memories).toEqual([]);
+    expect(contexts.join('\n')).toContain('"memory"');
   });
 });

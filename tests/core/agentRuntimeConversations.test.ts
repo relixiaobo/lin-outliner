@@ -1,0 +1,243 @@
+import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Core } from '../../src/core/core';
+import { AGENT_EVENT_VERSION, type AgentEvent } from '../../src/core/agentEventLog';
+import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { AgentEventStore } from '../../src/main/agentEventStore';
+import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+
+const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-runtime-conversations-test-user-data');
+
+mock.module('electron', () => ({
+  app: {
+    getPath: () => electronUserDataRoot,
+    getVersion: () => 'test',
+  },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({
+      clearStorageData: async () => undefined,
+    }),
+  },
+}));
+
+type RuntimeModule = typeof import('../../src/main/agentRuntime');
+
+let runtimeModulePromise: Promise<RuntimeModule> | null = null;
+
+async function loadRuntimeModule() {
+  runtimeModulePromise ??= import('../../src/main/agentRuntime');
+  return runtimeModulePromise;
+}
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+function hostFor(core: Core): OutlinerToolHost {
+  return {
+    getProjection: () => core.projection(),
+    transaction: async (_meta, fn) => fn(),
+    operationHistory: async () => ({ entries: [], count: 0 }),
+    handle: async () => {
+      throw new Error('node tools are not used in this test');
+    },
+  };
+}
+
+function createWindowSink() {
+  const events: AgentRuntimeEvent[] = [];
+  return {
+    events,
+    window: {
+      webContents: {
+        send: (channel: string, event: AgentRuntimeEvent) => {
+          if (channel === LIN_AGENT_EVENT_CHANNEL) events.push(event);
+        },
+      },
+    },
+  };
+}
+
+async function createRuntime(dataRoot: string) {
+  const { AgentRuntime } = await loadRuntimeModule();
+  const sink = createWindowSink();
+  const runtime = new AgentRuntime(
+    () => sink.window as never,
+    hostFor(Core.new()),
+    {
+      agentDataRoot: dataRoot,
+      providerConfigLoader: async () => null,
+      runtimeSettingsLoader: async () => ({
+        permissionMode: 'trusted',
+        automaticSkillsEnabled: false,
+        slashSkillsEnabled: false,
+        compactEnabled: true,
+        additionalSkillDirectories: [],
+        additionalAgentDirectories: [],
+      }),
+    },
+  );
+  return { runtime, sink };
+}
+
+async function expectRejects(fn: () => Promise<unknown>, message: string) {
+  try {
+    await fn();
+  } catch (error) {
+    expect(error instanceof Error ? error.message : String(error)).toContain(message);
+    return;
+  }
+  throw new Error('Expected promise to reject.');
+}
+
+describe('agent runtime conversations', () => {
+  test('restores a deterministic canonical DM and keeps it out of the channel list', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+
+    const first = await runtime.restoreLatestConversation();
+    const secondRuntime = await createRuntime(dataRoot);
+    const second = await secondRuntime.runtime.restoreLatestConversation();
+    const state = await new AgentEventStore(dataRoot).replay(first.conversationId);
+
+    expect(first.conversationId).toMatch(/^lin-agent-dm-/);
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(await runtime.listConversations()).toEqual([]);
+    expect(state.session?.title).toBe('Tenon Assistant');
+    expect(state.session?.goal).toBeUndefined();
+    expect(state.session?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: 'built-in:tenon:assistant' },
+    ]);
+  });
+
+  test('creates, renames, and deletes channels without mutating the canonical DM', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+
+    const dm = await runtime.restoreLatestConversation();
+    const channel = await runtime.createConversation();
+    let channels = await runtime.listConversations();
+
+    expect(channel.conversationId).toMatch(/^lin-agent-channel-/);
+    expect(channels).toHaveLength(1);
+    expect(channels[0]).toMatchObject({
+      id: channel.conversationId,
+      title: 'Untitled',
+      goal: 'Untitled',
+      members: [
+        { type: 'user', userId: 'local-user' },
+        { type: 'agent', agentId: 'built-in:tenon:assistant' },
+      ],
+    });
+
+    const renamed = await runtime.renameConversation(channel.conversationId, 'Project Alpha');
+    channels = await runtime.listConversations();
+
+    expect(renamed).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
+    expect(channels[0]).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
+    await expectRejects(() => runtime.renameConversation(dm.conversationId, 'Renamed DM'), 'cannot be renamed');
+    await expectRejects(() => runtime.deleteConversation(dm.conversationId), 'cannot be deleted');
+
+    await runtime.deleteConversation(channel.conversationId);
+    expect(await runtime.listConversations()).toEqual([]);
+    expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).session?.title).toBe('Tenon Assistant');
+  });
+
+  test('restores and resolves durable pending user questions', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const sessionId = 'lin-agent-channel-question';
+    const events: AgentEvent[] = [
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-1',
+        seq: 1,
+        sessionId,
+        type: 'session.created',
+        createdAt: 1,
+        actor: { type: 'system' },
+        title: 'Question channel',
+        members: [
+          { type: 'user', userId: 'local-user' },
+          { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        ],
+        goal: 'Question channel',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-2',
+        seq: 2,
+        sessionId,
+        type: 'run.started',
+        createdAt: 2,
+        actor: { type: 'system' },
+        runId: 'run-1',
+        agentId: 'built-in:tenon:assistant',
+        kind: 'turn',
+        trigger: { type: 'manual' },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-3',
+        seq: 3,
+        sessionId,
+        type: 'user_question.requested',
+        createdAt: 3,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        requestId: 'question-1',
+        toolCallId: 'tool-question-1',
+        request: {
+          questions: [{
+            id: 'direction',
+            type: 'single_choice',
+            question: 'Which path?',
+            options: [
+              { id: 'a', label: 'A' },
+              { id: 'b', label: 'B' },
+            ],
+          }],
+        },
+      },
+    ];
+    await new AgentEventStore(dataRoot).appendEvents(sessionId, events);
+    const { runtime } = await createRuntime(dataRoot);
+
+    const restored = await runtime.restoreConversation(sessionId);
+    expect(restored.pendingUserQuestion?.requestId).toBe('question-1');
+
+    await runtime.resolveUserQuestion(sessionId, 'question-1', {
+      requestId: 'question-1',
+      answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+    });
+
+    const replay = await new AgentEventStore(dataRoot).replay(sessionId);
+    expect(replay.userQuestions['question-1']).toMatchObject({
+      status: 'answered',
+      result: {
+        requestId: 'question-1',
+        answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+      },
+    });
+  });
+});
