@@ -1347,7 +1347,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   applied. **Two PM-ratified decisions revised:** (1) memory writes go through a **runtime-owned,
   event-sourced append surface** (`memory.entry_added/...`), *not* the privileged `file_write` path —
   reversed because the file tools are realpath-jailed to `workspace.root` (`agentLocalTools.ts:2207`,
-  can't reach `userData/agent-memory`) and whole-file rewrite risks lost-update; (2) memory adds
+  can't reach `userData/agent/`) and whole-file rewrite risks lost-update; (2) memory adds
   **opt-in isolation tiers** (`isolated` / `read-only-global`) + `originWorkspace` over the global
   default, motivated by a cross-project NDA-leak case. **Data-model** also gained: a run-log **retention
   state machine** (`hot→cold-archived→summarized-only→deleted`), `RunMeta.fingerprint` (version boundary

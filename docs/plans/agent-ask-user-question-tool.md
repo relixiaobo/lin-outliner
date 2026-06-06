@@ -501,8 +501,9 @@ when the build is scheduled.
 
 Deferred at the PM's instruction; resolve at build kickoff, not now:
 
-- Do unresolved questions persist across app restart (event replay restores the
-  pending request + valid attachment refs), or are they cancelled on restart?
+- ~~Do unresolved questions persist across app restart?~~ **DECIDED — they persist**
+  (durable run-log `user_question.requested` replays to restore the pending request +
+  attachment refs; see §7 and [[agent-data-model]] §3 `RunEvent`). No longer outstanding.
 - Does historical user-message editing stay text-only this phase (keeps
   `AgentMessageRow.tsx` out of scope), or gain refs/attachments?
 - Is "clarify / discuss" a normal steering message that keeps the question open, or
