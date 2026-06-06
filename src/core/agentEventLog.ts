@@ -55,6 +55,328 @@ export type AgentPersistedContent =
   | { type: 'image'; imageRef: AgentPayloadRef; alt?: string }
   | { type: 'payload_ref'; payload: AgentPayloadRef; label?: string };
 
+// M0 target data-model contracts. These describe the planned conversation/run/memory
+// logs while the current flat session event log remains the runtime format below.
+export type AgentSourceKind = 'built-in' | 'user' | 'project';
+export type AgentId = `${AgentSourceKind}:${string}:${string}`;
+
+export type AgentPrincipal =
+  | { type: 'user'; userId: string }
+  | { type: 'agent'; agentId: string };
+
+export type AgentConversationActor = AgentPrincipal | { type: 'system' };
+
+export interface AgentConversationMeta {
+  id: string;
+  members: AgentPrincipal[];
+  goal?: string;
+  name?: string;
+  createdAt: number;
+}
+
+export interface AgentReadCursors {
+  conversationId: string;
+  byPrincipal: Record<string, number>;
+}
+
+export type AgentConversationEventType =
+  | 'message.created'
+  | 'message.edited'
+  | 'member.added'
+  | 'member.removed'
+  | 'branch.selected'
+  | 'compaction.completed';
+
+export interface AgentConversationEventBase {
+  v: typeof AGENT_EVENT_VERSION;
+  eventId: string;
+  seq: number;
+  conversationId: string;
+  type: AgentConversationEventType;
+  createdAt: number;
+  actor: AgentConversationActor;
+}
+
+export type AgentConversationEvent =
+  | (AgentConversationEventBase & {
+      type: 'message.created';
+      messageId: string;
+      parentMessageId?: string;
+      role: 'user' | 'assistant';
+      addressedTo?: AgentPrincipal[];
+      runId?: string;
+      content: AgentPersistedContent[];
+      forwarded?: {
+        fromConversationId: string;
+        sourceMessageIds: string[];
+        bundleId: string;
+      };
+    })
+  | (AgentConversationEventBase & {
+      type: 'message.edited';
+      messageId: string;
+      content: AgentPersistedContent[];
+    })
+  | (AgentConversationEventBase & {
+      type: 'member.added' | 'member.removed';
+      member: AgentPrincipal;
+    })
+  | (AgentConversationEventBase & {
+      type: 'branch.selected';
+      selectedLeafMessageId: string;
+    })
+  | (AgentConversationEventBase & {
+      type: 'compaction.completed';
+      summaryId: string;
+      source: { fromMessageId: string; throughMessageId: string };
+    });
+
+export type AgentRunKind = 'turn' | 'background' | 'subagent' | 'scheduled';
+export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
+
+export type AgentRunTrigger =
+  | { type: 'message'; messageId: string }
+  | { type: 'node'; nodeId: string }
+  | { type: 'parent-run'; parentRunId: string }
+  | { type: 'manual' | 'system' };
+
+export interface AgentRunFingerprint {
+  appVersion: string;
+  promptHash: string;
+  toolSchemaHash: string;
+  skillBindings: string[];
+  modelConfig: string;
+}
+
+export interface AgentRunMeta {
+  id: string;
+  agentId: string;
+  conversationId: string;
+  parentRunId?: string;
+  kind: AgentRunKind;
+  status: AgentRunStatus;
+  trigger: AgentRunTrigger;
+  usage?: Usage;
+  fingerprint: AgentRunFingerprint;
+  retention: AgentRunRetention;
+  createdAt: number;
+}
+
+export type AgentRunLogEventType =
+  | 'run.started'
+  | 'run.completed'
+  | 'run.failed'
+  | 'run.cancelled'
+  | 'assistant_message.started'
+  | 'assistant_message.delta'
+  | 'assistant_message.completed'
+  | 'thinking.delta'
+  | 'tool_call.started'
+  | 'tool_call.completed'
+  | 'tool_call.failed'
+  | 'tool_result.created'
+  | 'tool.permission.checked'
+  | 'tool.permission.resolved'
+  | 'user_question.requested'
+  | 'user_question.answered'
+  | 'user_question.cancelled'
+  | 'widget_state.updated';
+
+export interface AgentRunEventBase {
+  v: typeof AGENT_EVENT_VERSION;
+  eventId: string;
+  seq: number;
+  runId: string;
+  type: AgentRunLogEventType;
+  createdAt: number;
+}
+
+export type AgentUserQuestionKind = 'single_choice' | 'multi_choice' | 'free_text';
+
+export interface AgentUserQuestionOptionView {
+  id: string;
+  label: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+export interface AgentUserQuestionItemView {
+  id: string;
+  type: AgentUserQuestionKind;
+  header?: string;
+  question: string;
+  required?: boolean;
+  allowOther?: boolean;
+  allowReferences?: boolean;
+  allowAttachments?: boolean;
+  options?: AgentUserQuestionOptionView[];
+}
+
+export interface AgentUserQuestionRequestView {
+  questions: AgentUserQuestionItemView[];
+  submitLabel?: string;
+}
+
+export interface AgentUserQuestionNodeReference {
+  nodeId: string;
+  label?: string;
+}
+
+export interface AgentUserQuestionFileReference {
+  path: string;
+  label?: string;
+  payload?: AgentPayloadRef;
+}
+
+export interface AgentUserQuestionAttachment {
+  payload: AgentPayloadRef;
+  label?: string;
+}
+
+export interface AgentUserQuestionAnswer {
+  questionId: string;
+  selectedOptionIds?: string[];
+  text?: string;
+  notes?: string;
+  nodeRefs?: AgentUserQuestionNodeReference[];
+  fileRefs?: AgentUserQuestionFileReference[];
+  attachments?: AgentUserQuestionAttachment[];
+}
+
+export interface AskUserQuestionResult {
+  requestId: string;
+  answers: AgentUserQuestionAnswer[];
+}
+
+export type AgentRunLogEvent =
+  | (AgentRunEventBase & { type: 'run.started' })
+  | (AgentRunEventBase & { type: 'run.completed'; usage?: Usage })
+  | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string } })
+  | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string })
+  | (AgentRunEventBase & { type: 'assistant_message.started'; messageId: string })
+  | (AgentRunEventBase & { type: 'assistant_message.delta'; messageId: string; delta: AgentPersistedContent })
+  | (AgentRunEventBase & { type: 'assistant_message.completed'; messageId: string; content: AgentPersistedContent[]; usage: Usage })
+  | (AgentRunEventBase & { type: 'thinking.delta'; messageId: string; delta: string })
+  | (AgentRunEventBase & { type: 'tool_call.started'; toolCallId: string; messageId: string; name: string; input: unknown })
+  | (AgentRunEventBase & { type: 'tool_call.completed'; toolCallId: string })
+  | (AgentRunEventBase & { type: 'tool_call.failed'; toolCallId: string; error: { code: string; message: string } })
+  | (AgentRunEventBase & { type: 'tool_result.created'; toolCallId: string; content: AgentPersistedContent[]; isError?: boolean })
+  | (AgentRunEventBase & {
+      type: 'tool.permission.checked';
+      requestId: string;
+      toolCallId: string;
+      toolName: string;
+      primaryActionKind?: string;
+      actionKinds: string[];
+      outcome: 'allow' | 'ask' | 'blocked';
+      source:
+        | 'global_rule'
+        | 'action_default'
+        | 'configured_deny'
+        | 'classifier'
+        | 'classifier_unavailable'
+        | 'safe_allowlist'
+        | 'user'
+        | 'platform_hard_block'
+        | 'runtime';
+      classifierResult?: {
+        outcome: 'allow' | 'block';
+        reason: string;
+        model?: string;
+        unavailable?: boolean;
+      };
+      descriptorRef?: AgentPayloadRef;
+    })
+  | (AgentRunEventBase & {
+      type: 'tool.permission.resolved';
+      requestId: string;
+      toolCallId: string;
+      toolName: string;
+      status: 'approved' | 'denied' | 'aborted';
+      resolvedBy:
+        | 'classifier'
+        | 'safe_allowlist'
+        | 'user_once'
+        | 'allow_rule_update'
+        | 'global_rule'
+        | 'configured_deny'
+        | 'classifier_unavailable'
+        | 'platform_hard_block'
+        | 'runtime'
+        | 'system_abort';
+      updatedRule?: string;
+      deniedReason?: string;
+    })
+  | (AgentRunEventBase & {
+      type: 'user_question.requested';
+      requestId: string;
+      toolCallId: string;
+      request: AgentUserQuestionRequestView;
+    })
+  | (AgentRunEventBase & {
+      type: 'user_question.answered';
+      requestId: string;
+      result: AskUserQuestionResult;
+    })
+  | (AgentRunEventBase & {
+      type: 'user_question.cancelled';
+      requestId: string;
+      reason?: string;
+    })
+  | (AgentRunEventBase & {
+      type: 'widget_state.updated';
+      toolCallId: string;
+      messageId: string;
+      currentState: unknown;
+    });
+
+export interface AgentIdentityRecord {
+  agentId: AgentId;
+  displayName: string;
+  model: string;
+  effort?: string;
+  systemPrompt: string;
+  skills: string[];
+}
+
+export interface AgentMemorySource {
+  conversationId: string;
+  summaryId?: string;
+  messageRange?: [string, string];
+  runId?: string;
+  eventId?: string;
+}
+
+export interface AgentMemoryEntry {
+  id: string;
+  agentId: string;
+  fact: string;
+  originWorkspace?: string;
+  sources: AgentMemorySource[];
+  status: 'active' | 'invalidated';
+  createdAt: number;
+}
+
+export interface AgentMemoryEventBase {
+  v: typeof AGENT_EVENT_VERSION;
+  eventId: string;
+  seq: number;
+  agentId: string;
+  type: AgentMemoryEventType;
+  createdAt: number;
+}
+
+export type AgentMemoryEventType = 'memory.entry_added' | 'memory.entry_updated' | 'memory.entry_removed';
+
+export type AgentMemoryEvent =
+  | (AgentMemoryEventBase & { type: 'memory.entry_added'; entry: AgentMemoryEntry })
+  | (AgentMemoryEventBase & {
+      type: 'memory.entry_updated';
+      entryId: string;
+      patch: Partial<Pick<AgentMemoryEntry, 'fact' | 'sources' | 'status' | 'originWorkspace'>>;
+    })
+  | (AgentMemoryEventBase & { type: 'memory.entry_removed'; entryId: string; reason?: string });
+
 export interface AgentTextDelta {
   type: 'text_delta';
   text: string;
@@ -88,6 +410,10 @@ export type AgentEventType =
   | 'tool_result.replaced'
   | 'tool.permission.checked'
   | 'tool.permission.resolved'
+  | 'user_question.requested'
+  | 'user_question.answered'
+  | 'user_question.cancelled'
+  | 'widget_state.updated'
   | 'approval.requested'
   | 'approval.resolved'
   | 'follow_up.queued'
@@ -311,6 +637,36 @@ export interface ToolPermissionResolvedEvent extends AgentEventBase {
   deniedReason?: string;
 }
 
+export interface UserQuestionRequestedEvent extends AgentEventBase {
+  type: 'user_question.requested';
+  runId: string;
+  requestId: string;
+  toolCallId: string;
+  request: AgentUserQuestionRequestView;
+}
+
+export interface UserQuestionAnsweredEvent extends AgentEventBase {
+  type: 'user_question.answered';
+  runId: string;
+  requestId: string;
+  result: AskUserQuestionResult;
+}
+
+export interface UserQuestionCancelledEvent extends AgentEventBase {
+  type: 'user_question.cancelled';
+  runId: string;
+  requestId: string;
+  reason?: string;
+}
+
+export interface WidgetStateUpdatedEvent extends AgentEventBase {
+  type: 'widget_state.updated';
+  runId: string;
+  toolCallId: string;
+  messageId: string;
+  currentState: unknown;
+}
+
 export interface ApprovalRequestedEvent extends AgentEventBase {
   type: 'approval.requested';
   requestId: string;
@@ -424,6 +780,10 @@ export type AgentEvent =
   | ToolResultReplacedEvent
   | ToolPermissionCheckedEvent
   | ToolPermissionResolvedEvent
+  | UserQuestionRequestedEvent
+  | UserQuestionAnsweredEvent
+  | UserQuestionCancelledEvent
+  | WidgetStateUpdatedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | FollowUpQueuedEvent
@@ -451,6 +811,7 @@ export type AgentEventMessageRole = 'user' | 'assistant' | 'toolResult';
 export interface AgentEventMessageRecord {
   id: string;
   role: AgentEventMessageRole;
+  actor?: AgentActor;
   parentMessageId: string | null;
   replacesMessageId?: string;
   content: AgentPersistedContent[];
@@ -722,6 +1083,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       addMessage(state, {
         id: event.messageId,
         role: 'user',
+        actor: event.actor,
         parentMessageId: event.parentMessageId,
         replacesMessageId: event.replacesMessageId,
         content: cloneContent(event.content),
@@ -743,6 +1105,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       addMessage(state, {
         id: event.messageId,
         role: 'assistant',
+        actor: event.actor,
         parentMessageId: event.parentMessageId,
         content: [],
         createdAt: event.createdAt,
@@ -784,6 +1147,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       addMessage(state, {
         id: event.messageId,
         role: 'toolResult',
+        actor: event.actor,
         parentMessageId: event.parentMessageId,
         content: cloneContent(event.content),
         createdAt: event.createdAt,
@@ -902,6 +1266,10 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'tool_call.failed':
     case 'tool.permission.checked':
     case 'tool.permission.resolved':
+    case 'user_question.requested':
+    case 'user_question.answered':
+    case 'user_question.cancelled':
+    case 'widget_state.updated':
     case 'approval.requested':
     case 'approval.resolved':
     case 'follow_up.queued':

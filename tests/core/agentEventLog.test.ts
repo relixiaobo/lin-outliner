@@ -78,8 +78,10 @@ describe('agent event log', () => {
     ];
 
     const state = replayAgentEvents(events);
+    const activePath = getAgentEventActivePath(state);
 
-    expect(getAgentEventActivePath(state).map((message) => message.id)).toEqual(['user-1', 'assistant-1']);
+    expect(activePath.map((message) => message.id)).toEqual(['user-1', 'assistant-1']);
+    expect(activePath.map((message) => message.actor)).toEqual([userActor, agentActor]);
     expect(getAgentEventConversation(state).map((entry) => entry.messageId)).toEqual(['user-1', 'assistant-1']);
     expect(deriveAgentPiMessages(state).map(textOf)).toEqual(['Question', 'Hello']);
   });
@@ -118,6 +120,53 @@ describe('agent event log', () => {
     expect(state.latestSeq).toBe(3);
     expect(state.payloads['debug-payload-1']).toEqual(debugPayload);
     expect(getAgentEventActivePath(state)).toEqual([]);
+  });
+
+  test('keeps run-scoped interaction and widget events replay-neutral for the flat session projection', () => {
+    const events: AgentEvent[] = [
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(2, 'run.started'), runId: 'run-1' },
+      {
+        ...base(3, 'user_question.requested', agentActor),
+        runId: 'run-1',
+        requestId: 'question-1',
+        toolCallId: 'tool-1',
+        request: {
+          questions: [{
+            id: 'choice',
+            type: 'single_choice',
+            question: 'Pick one',
+            options: [
+              { id: 'a', label: 'A' },
+              { id: 'b', label: 'B' },
+            ],
+          }],
+        },
+      },
+      {
+        ...base(4, 'user_question.answered', userActor),
+        runId: 'run-1',
+        requestId: 'question-1',
+        result: {
+          requestId: 'question-1',
+          answers: [{ questionId: 'choice', selectedOptionIds: ['a'] }],
+        },
+      },
+      {
+        ...base(5, 'widget_state.updated', agentActor),
+        runId: 'run-1',
+        toolCallId: 'tool-2',
+        messageId: 'assistant-1',
+        currentState: { slider: 4 },
+      },
+    ];
+
+    const state = replayAgentEvents(events);
+
+    expect(state.latestSeq).toBe(5);
+    expect(state.runs['run-1']?.status).toBe('running');
+    expect(getAgentEventActivePath(state)).toEqual([]);
+    expect(getAgentEventConversation(state)).toEqual([]);
   });
 
   test('represents edits as sibling branches selected by events', () => {
@@ -348,7 +397,14 @@ describe('agent event log', () => {
       },
     ];
 
-    const messages = deriveAgentPiMessages(replayAgentEvents(events));
+    const state = replayAgentEvents(events);
+    expect(getAgentEventActivePath(state).map((message) => message.actor)).toEqual([
+      userActor,
+      agentActor,
+      { type: 'tool', toolName: 'file_read', toolCallId: 'tool-1' },
+    ]);
+
+    const messages = deriveAgentPiMessages(state);
     const assistant = messages[1];
     const toolResult = messages[2];
 
