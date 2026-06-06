@@ -15,6 +15,10 @@ additional user-provided context before continuing.
 This is a full product/tool design, not an MVP. It intentionally does **not**
 include cc-2.1-style preview single-choice questions.
 
+M0 dependency: build directly on run-scoped `user_question.*` events and the
+conversation/run store. Do not add session-level pending-question state or a
+legacy approval-card compatibility path.
+
 ## Goal
 
 Add a complete `ask_user_question` tool that lets the agent pause for structured

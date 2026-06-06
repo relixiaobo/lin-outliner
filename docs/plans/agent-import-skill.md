@@ -28,14 +28,19 @@ explore the export, talk to the user, and author a suitable parser on the fly.
 - A working ad-hoc parser can be saved as a new adapter (self-extending; see
   [[agent-self-modification]]).
 
+M0/M1 dependency: build this on the target `ask_user_question` interaction
+contract, skill audit events, and command/node mutation surfaces. Do not add a
+temporary plain-turn fallback or importer-specific answer back-channel.
+
 ## Non-goals (MVP)
 
 - Breadth beyond a **Tana** reference adapter. Roam/Obsidian/OPML adapters come
   after the loop is proven. (The Tana adapter DOES implement all fidelity tiers —
   that is the user-facing point of this plan, not a follow-up.)
 - Service/API import (OAuth) — orthogonal; see `agent-oauth-providers.md`.
-- A dedicated import UI panel. MVP fine-tuning is conversational (degrades from
-  `agent-ask-user-question-tool.md` to plain turns until that tool exists — see §2).
+- A dedicated import UI panel. MVP fine-tuning is conversational through
+  `agent-ask-user-question-tool.md`; this plan waits for that contract instead of
+  adding a temporary plain-turn fallback.
 - **Content tier** changes no core protocol. **Medium/Full** need a per-node
   id back-channel that does not exist today — this is a real, called-out decision
   in §2 ("the id-correlation problem"), not a free ride.

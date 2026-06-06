@@ -53,8 +53,8 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   shared M0 dispatch seam; hook execution policy remains later work.
 - **Run-local runtime state** — the active run owns run id, assistant text,
   tool-output payload refs, tool-call message ids, and the last submitted prompt.
-  Session-level state remains only where the current product behavior is
-  intentionally session-scoped.
+  Remaining runtime-session object state is internal bridge debt, not a protocol
+  shape for new consumers.
 - **Compaction** — manual / automatic / reactive + tool-output slimming + recent-file
   restore; `compaction.completed` already records a summary over a **retained**
   range (the distillation backbone).
@@ -63,8 +63,9 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   `model`/`effort` override; `context: fork`. **Registry startup-cached; no `built-in`;
   no authoring** (`docs/spec/agent-skills.md`).
 - **Permissions** — `allow | ask | deny` + platform hard blocks + bash classifier +
-  ask resolver + approval UI + session-scoped allow rules + permission events (#60,
-  `docs/spec/agent-tool-permissions.md`).
+  ask resolver + approval UI + permission events (#60,
+  `docs/spec/agent-tool-permissions.md`). Session-scoped allow rules remain
+  pre-M0 permission debt and are removed by [[agent-tool-permissions-hardening]].
 - **Subagents** — fresh / fork / background runs + sidechain transcripts + background
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
   (`docs/spec/agent-subagent-runtime-plan.md`).
@@ -73,6 +74,27 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
 routing; hook policy/execution; the config tool / runtime_status / doctor; skill
 authoring; `ask_user_question`; durable multi-agent registry/coordinator; a unified
 visible task panel.
+
+## Execution policy — pre-release clean cut
+
+Tenon has not shipped with production agent data. Agent work therefore optimizes for
+the best target design, not persisted-data compatibility.
+
+- **No compatibility layers.** Do not add old-format readers, dual-writes,
+  migration scripts, or legacy session aliases for agent storage/protocol changes.
+  A format change means wiping clone-local dev `userData`.
+- **No new `session` surface.** New APIs, events, docs, tests, and plans use
+  `conversationId`, `runId`, and `agentId`. Existing `sessionId` names are treated
+  as M0 bridge debt and must not be copied into M1+ work.
+- **One source of truth.** Durable event logs are authority. `meta.json`,
+  `cursors.json`, checkpoints, and indexes are projections/caches and must never
+  become a second writable truth.
+- **Build on target seams only.** Consumers use the M0 conversation/run/agent
+  store, domain event bus, principal actors, and active-run state directly. If a
+  consumer would need an interim adapter, clean the seam first.
+- **Delete, don't preserve, incorrect pre-release behavior.** If the current
+  implementation shape is wrong for the target, replace it in the PR that depends
+  on it rather than carrying a compatibility branch.
 
 ## The L0 foundation (M0) — shared seams, interface-first
 
@@ -86,7 +108,7 @@ that consume it — proof it belongs here, not inside one feature plan.
 | F2 | **session → `{conversation, run}` (+ minimal join)** | Storage is re-keyed to conversation/run/agent families, run meta anchors execution to one conversation, conversation meta/cursors are separate files, and the current read seam joins target logs back into the reducer/runtime. Mixed-resolution (old segments → summaries) remains the **M1** enhancement. | conversation-model, scheduled-routines (persistence), past_chats, ask-question (events) |
 | F3 | **`actor` on message records** | `AgentEventMessageRecord.actor` is required; runtime-authored events use the stable assistant principal instead of a hardcoded `'pi-mono'` author | conversation-model (notifications, multi-agent POV, forwarding), task delivery |
 | F4 | **Internal domain-event bus + taxonomy** | The M0 bus exists with persisted-log, renderer-projection, trusted-observer, and hook-interceptor lanes. Consumer-specific notification/hook policy remains later work. | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
-| F5 | **`AgentSessionState` split** | Active-run state is structurally separated from the session and aligns with the F2 run log. Remaining session-scoped product state stays session-scoped until a consumer needs a narrower boundary. | background tasks, scheduled routines, multi-agent channels |
+| F5 | **`AgentSessionState` split** | Active-run state is structurally separated from the runtime session object and aligns with the F2 run log. Remaining session-shaped runtime fields are internal bridge debt, not a protocol shape for new consumers. | background tasks, scheduled routines, multi-agent channels |
 | F6 | **Protocol-surface type adds (consolidated)** | Consolidated event/type reservations landed for task, notification, config, review-card, skill audit, user-question/widget state, run meta, payload scope, and command nodes | all plans |
 
 ### Cross-plan event taxonomy (design ONCE)
@@ -153,6 +175,10 @@ L0 FOUNDATION (M0, interface-first)
    F1 identity · F2 session→{conversation,run}+Principal/members+minimal-join · F3 actor
    · F4 internal domain bus (≠ renderer IPC) + ONE taxonomy · F5 AgentSessionState split · F6 protocol type adds
         │
+L0.5 CLEAN CUT (pre-M1)
+   remove session-named agent protocol/index/API bridge debt · wipe dev userData
+   · verify every active consumer plan targets conversation/run/agent seams directly
+        │
 L1 SINGLE-AGENT CAPABILITY (M1)
    memory v1 (conv-model) · skills self-authoring (skills-authoring)
    · self-observation + config tool (self-mod) · ask_user_question (its plan)
@@ -176,6 +202,7 @@ mostly independent).
 | Milestone | Content | User-visible value |
 |---|---|---|
 | **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
+| **M0.5 — Clean cut** | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; wipe dev userData after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
 | **M1 — Single-agent "self"** | memory v1 (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent **remembers**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
 | **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · memory v2 extraction · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic**, runtime self-heals |
 | **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |

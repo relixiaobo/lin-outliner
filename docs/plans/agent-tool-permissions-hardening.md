@@ -48,16 +48,14 @@ resolver/classifier. The path is reachable: `resolveApproval` pushes
 `suggestedSessionRule` into `permissionSessionAllowRules` for `scope==='session'`,
 and `main.ts` forwards `scope: 'session'` from IPC. The parent plan removes
 session grants as a permission concept (Decision #3; "current session-scoped
-approval runtime support must be removed, hidden, or migrated") and requires
+approval runtime support must be removed") and requires
 that a configured `ask` is never silently relaxed by `allow` (precedence). Not a
 deny/hard-block bypass (those precede it), hence medium.
 
-**Fix:** evaluate configured `deny` AND configured `ask` before honoring
-`sessionApproved` — i.e. move the session short-circuit below global resolution,
-or remove it and keep session infra only as a non-permission compatibility layer
-per the migration notes. **Test:** a configured `ask(Action(...))` plus a
-matching session allow rule must still resolve to `ask`/`needs_user`, not
-`allow`.
+**Fix:** remove session-scoped allow rules from the permission model. Approval
+choices may remain "once" or "always" only; do not keep a hidden session
+compatibility layer. **Test:** a configured `ask(Action(...))` plus any stale
+session-shaped rule fixture must still resolve to `ask`/`needs_user`, not `allow`.
 
 ### 2. `parseGlobalToolPermissionSettings` pre-shaped early-return (MEDIUM, latent)
 

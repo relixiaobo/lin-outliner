@@ -302,15 +302,14 @@ conversation-less runs). Each fire executes with **bounded context** (the brief 
 Opening the conversation to chat is a normal interactive run that *does* see history (you
 can steer it: "make it shorter").
 
-**User visibility — existing UI.** Each fire appends to the routine's
-**conversation** (post-F2: a routine owns one durable conversation that anchors its
-runs — see [agent-data-model.md](agent-data-model.md) §3–§4), which shows up in
+**User visibility — target UI.** Each fire appends to the routine's
+**conversation** (a routine owns one durable conversation that anchors its runs —
+see [agent-data-model.md](agent-data-model.md) §3–§4), which shows up in
 `AgentChatPanel` (`src/renderer/ui/AgentDock.tsx` → `AgentChatPanel`) like any
-other chat. The conversation/channel IPC supersedes the legacy
-`agent_list_sessions` / `agent_restore_session` / `agent_rename_session` /
-`agent_delete_session` calls (`src/main/main.ts:300-345`); until F2 lands those
-names remain as migration aliases over the same store, not a second source of
-truth. The agent can also query its own past work via the `past_chats` tool.
+other chat. This plan builds only on conversation/channel IPC; it must not preserve
+`agent_*_session` aliases or add a scheduled-run compatibility path over the old
+session surface. The agent can also query its own past work via the `past_chats`
+tool.
 
 **Deletion semantics.** Deleting the routine's conversation clears its
 communication history only; the schedule keeps running off `date` +

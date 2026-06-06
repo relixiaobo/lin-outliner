@@ -24,9 +24,9 @@ this doc defines only the durable shapes they read and write.
 Foundation work (AGENTS.md A7): settle the mechanism before layering features. Every
 load-bearing claim below was stress-tested against the real runtime (see the
 *Adversarial review* in [[agent-conversation-model]]); the design here is the
-post-stress-test version. **Pre-release, no back-compat**
-(`storage-format-no-backcompat-prerelease`): change the format, wipe `~/.lin-outliner-*`
-dev userData — no migration scripts.
+post-stress-test version. **Pre-release clean cut:** change the format, wipe
+`~/.lin-outliner-*` dev userData, and delete old readers/aliases instead of
+shipping migrations or compatibility branches.
 
 ## Goal
 
@@ -55,7 +55,8 @@ dev userData — no migration scripts.
 - **Skill structure / authoring** — owned by [[agent-skills-authoring]]. This doc only
   references the skills file tree as a storage family.
 - **Milestone sequencing + the full event taxonomy** — owned by [[agent-program]].
-- **Back-compat / migration** — none (pre-release; wipe dev userData).
+- **Back-compat / migration** — none (pre-release; wipe dev userData and delete
+  old shapes rather than preserving them).
 
 ## Design — the converged data structure
 
@@ -604,17 +605,18 @@ agent.skills[]          ──▶ skills/ file tree
     range. Invalidation is event-sourced (auditable, reversible), excluded from injection,
     and never a silent in-place delete (cf. invariant 13 / gemini#5).
 
-### Real today vs build
+### M0 reality vs next build
 
-- **Already real:** event log + checkpoints; `actor` on every event (hardcoded
-  `'pi-mono'`); `compaction.completed` as a recorded summary over a **retained** range;
-  `AgentDefinitionRegistry`; stateless pi-agent-core + the two seams; subagent
-  own-sessionId.
-- **Mechanical re-partition:** `session` → `{conversation, run}`; parameterize
-  `agentActor()` off `'pi-mono'`; drop stored `kind`; move `tool_result` into the run log.
-- **Greenfield:** the memory line (+ `sources`); `members` / `cursors` / `addressedTo`;
-  the segment / index physical layout; the distillation-ladder consumers + the two-step
-  recall; mixed-resolution assembly (joining the run log).
+- **Already real after M0:** target-oriented conversation/run/agent storage;
+  conversation meta + cursors as projection files; stable built-in agent identity;
+  principal actors on message records; run meta with trigger/fingerprint/retention;
+  scoped payloads; checkpoint replay by `seq`; domain event bus; active-run state
+  isolation; stateless pi-agent-core + the two seams.
+- **M0.5 clean cut:** remove remaining agent protocol/index/API names that still say
+  `session*`; wipe dev `userData`; do not write a legacy `sessions/<id>` reader,
+  adapter, or alias.
+- **M1 build:** the memory line (+ `sources`); `addressedTo`; distillation-ladder
+  consumers + two-step recall; mixed-resolution assembly over old summaries.
 - **PM-ratified (2026-06-05):** canonical DM + user-creatable Channels; split-now +
   mixed-resolution; memory retrieval = global pool, pure relevance.
 - **PM-ratified (2026-06-06, after the codex + gemini design review):** memory writes via a
@@ -628,9 +630,9 @@ agent.skills[]          ──▶ skills/ file tree
 ## Protocol-surface coordination (A4 / A7)
 
 These `src/core/*` additions are the [[agent-program]] **F6 consolidated change list**;
-they land **interface-first** before consumers build on them:
+M0 lands/reserves the surface so consumers build on the target names directly:
 
-- `actor` on `AgentEventMessageRecord` (`agentEventLog.ts`; backward-compatible).
+- `actor` on `AgentEventMessageRecord` (`agentEventLog.ts`).
 - `Principal` type + conversation `members` (`meta.json` = projection of membership events);
   `cursors` as a **separate** per-principal store; `RunMeta` (mandatory `conversationId`
   anchor + `trigger` provenance); **no stored `kind`** (`types.ts`).
