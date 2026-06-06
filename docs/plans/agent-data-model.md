@@ -136,24 +136,25 @@ interface ConversationMeta {            // meta.json = a PROJECTION of the strea
 // objective record (else it churns the event log). Separate per-principal store, last-seen seq:
 interface ReadCursors { conversationId: string; byPrincipal: Record<string, number> }   // principalKey → last-seen seq
 
-interface MessageEvent {                // one line in conversations/<id>/segments/*.jsonl
+interface MessageEventBase {            // one line in conversations/<id>/segments/*.jsonl
   v: 1; eventId: string; seq: number; createdAt: number;   // seq = order · createdAt = wall-clock
   conversationId: string;
-  actor: Actor;
-  type: 'message.created' | 'message.edited'
-      | 'member.added' | 'member.removed'      // membership history = system events on the same stream
-      | 'compaction.completed' | 'branch.selected';
-  messageId?: string; parentMessageId?: string;            // branch tree (DM-only retry)
-  role?: 'user' | 'assistant';          // ★ COMMUNICATION ONLY: the user message + the final visible reply.
-                                         //   Tool calls / tool results are NOT here — they are execution (run log, §3 run).
-  addressedTo?: Principal[];            // who should respond; omitted in a 1:1
-  runId?: string;                       // ↓ which run produced this assistant message
-  forwarded?: {                         // combined/merged forward provenance (preserves "actor = native speaker")
-    fromConversationId: string;         //   actor = who placed the bundle in THIS stream; forwarded.* = where it came from
-    sourceMessageIds: string[]; bundleId: string;
-  };
-  content?: AgentPersistedContent;
+  actor: Actor;                         // actor ∈ members ∪ {system}
 }
+// the conversation stream is a DISCRIMINATED UNION on `type` — each variant carries ONLY its own payload:
+type MessageEvent =
+  | (MessageEventBase & {               // ★ COMMUNICATION: the user message OR the final assistant reply
+      type: 'message.created';
+      messageId: string; parentMessageId?: string;          // branch tree (DM-only retry)
+      role: 'user' | 'assistant';                           // tool calls/results are execution → run log (§3 run), never here
+      addressedTo?: Principal[]; runId?: string;             // runId = which run produced this assistant message
+      content: AgentPersistedContent[];                      // ARRAY (matches AgentEventMessageRecord, agentEventLog.ts:451)
+      forwarded?: { fromConversationId: string; sourceMessageIds: string[]; bundleId: string } })  // combined-forward provenance
+  | (MessageEventBase & { type: 'message.edited'; messageId: string; content: AgentPersistedContent[] })
+  | (MessageEventBase & { type: 'member.added' | 'member.removed'; member: Principal })   // membership history (the authority for meta.json)
+  | (MessageEventBase & { type: 'branch.selected'; selectedLeafMessageId: string })
+  | (MessageEventBase & { type: 'compaction.completed'; summaryId: string;                // → the DistillationNode (§3 below)
+      source: { fromMessageId: string; throughMessageId: string } });
 ```
 
 **The conversation log per turn ≈ 2 events:** the `user` message + the **final**
@@ -202,15 +203,27 @@ interface RunMeta {                     // runs/<id>/meta.json
   createdAt: number;
 }
 
-type RunEventType =                     // runs/<id>/events.jsonl — ★ ALL execution detail lives here
+type RunEventType =                     // runs/<id>/events.jsonl — ★ ALL execution detail lives here, anchored to runId
   | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled'
   | 'assistant_message.started' | 'assistant_message.delta' | 'assistant_message.completed'  // incl. intermediate tool-calling turns
   | 'thinking.delta'
   | 'tool_call.started' | 'tool_call.completed' | 'tool_call.failed'
   | 'tool_result.created'               // ★ tool_result lives ONLY here, never the conversation log
-  | 'tool.permission.checked' | 'tool.permission.resolved';   // canonical names pinned in agent-program M0 taxonomy
-                                                              //   (reconciles today's checked/resolved + approval.* dual-track, keyed by request id)
+  | 'tool.permission.checked' | 'tool.permission.resolved'   // canonical names pinned in agent-program M0 taxonomy
+                                                             //   (reconciles today's checked/resolved + approval.* dual-track, keyed by request id)
+  // ── run-scoped INTERACTION / UI-STATE events (consumed by ask-user + gen-ui; persisted here for restore) ──
+  | 'user_question.requested' | 'user_question.answered' | 'user_question.cancelled'   // [[agent-ask-user-question-tool]]
+  | 'widget_state.updated';             // [[agent-generative-ui]] — emitted during a tool call (carries toolCallId/messageId)
 ```
+
+**Where the interaction / widget events live.** `user_question.*` and `widget_state.updated`
+are **run-scoped** — they occur *during* a run (a paused-for-input run, or a widget-emitting
+tool call), so they persist in the **run log** anchored to `runId` (and transitively to
+`conversationId` via the run anchor + the producing `messageId`/`toolCallId`), and **project
+to renderer UI state** for restore. They are NOT conversation-log events (not communication)
+and NOT a separate store. A blocking `user_question` survives restart because the run log is
+durable; the renderer rebuilds the pending interaction / widget from it. (The program M0
+taxonomy lists these families; this is the anchor decision they were missing.)
 
 There are **no conversation-less runs** — a scheduled routine fired by an outline
 `command` node still anchors to a delivery conversation (the agent's DM, or an
