@@ -59,7 +59,12 @@ privileged `file_write` path was mechanically impossible — file tools are real
 leak); plus version-fingerprint + retention state machine + stable `agentId` tuple +
 `meta`-as-projection + forwarding/permission schemas in `agent-data-model`, F2-minimal-join
 + F4-real-domain-bus + permission-taxonomy in `agent-program`, and the consumer plans
-de-session-ified. **Still pending PM ratification of the overall program before M0 (the
+de-session-ified. **Three review rounds landed (#142/#143/#144);** the final round turned
+the run-log event list into a real `RunEvent` discriminated union with payloads (symmetric
+with `MessageEvent`) and pinned three load-bearing invariants — event log is the sole
+authority (everything else is a rebuildable projection), replay fidelity is gated on
+`RunMeta.retention`, and memory invalidation has one owner (runtime reconciler) + one trigger
+(branch discard/undo). **Still pending PM ratification of the overall program before M0 (the
 interface-first foundation PRs) starts**; remaining needs-PM decisions are lower-priority
 (doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3)). Escalate
 before code.

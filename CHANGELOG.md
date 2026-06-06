@@ -1357,7 +1357,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   source `runId`/`eventId`). **Program** fixed M0/M1 sequencing (F2 ships the minimal run-log join in M0),
   reframed F4 (a real internal domain bus, not the renderer-IPC `emit`), and added a permission-event
   taxonomy row. **Consumer plans** de-session-ified (scheduled-routines / ask-user-question /
-  generative-ui → run/conversation; self-modification consistency note). No code; plans only.
+  generative-ui → run/conversation; self-modification consistency note). **A third round (#144) hardened the contract for the M0
+interface-first PR:** the run-log event list became a real `RunEvent` **discriminated union
+with per-variant payloads** (`RunEventBase` + `runId` anchor, symmetric with `MessageEvent` —
+carries `requestId`/`toolCallId`/`request`/`result`/`usage`/`currentState`), and three
+load-bearing invariants were pinned — the **event-log stream is the sole authority**
+(`meta.json`/checkpoint/`index.json`/render projection are rebuildable projections), **replay
+fidelity is gated on `RunMeta.retention`** (`summarized-only`/`deleted` can't claim verbatim
+replay), and **memory invalidation has one owner** (the runtime reconciler, never the agent)
+**and one trigger** (branch discard/undo, emitted as `memory.entry_updated(status:invalidated)`).
+No code; plans only.
 
 - **Agent data-structure design landed, then extracted into a dedicated `agent-data-model` plan** —
   a multi-pass design conversation converged the agent storage model and was written into the plans
