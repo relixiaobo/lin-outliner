@@ -618,12 +618,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     setNotice(null);
     try {
       const updated = await api.agentUpdateMemory(entry.id, fact);
-      if (updated) {
+      if (!updated) {
+        setError(t.settings.memory.notFoundError);
+      } else {
         setMemoryEntries((current) => current.map((item) => item.id === updated.id ? updated : item));
+        setEditingMemoryId(null);
+        setMemoryDraftFact('');
+        setNotice(t.settings.memory.updatedNotice);
       }
-      setEditingMemoryId(null);
-      setMemoryDraftFact('');
-      setNotice(t.settings.memory.updatedNotice);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -637,11 +639,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     setNotice(null);
     try {
       const forgotten = await api.agentForgetMemory(entry.id);
-      if (forgotten) {
+      if (!forgotten) {
+        setError(t.settings.memory.notFoundError);
+      } else {
         setMemoryEntries((current) => current.map((item) => item.id === forgotten.id ? forgotten : item));
+        if (editingMemoryId === entry.id) cancelEditMemory();
+        setNotice(t.settings.memory.forgottenNotice);
       }
-      if (editingMemoryId === entry.id) cancelEditMemory();
-      setNotice(t.settings.memory.forgottenNotice);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

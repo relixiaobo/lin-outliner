@@ -23,7 +23,10 @@ describe('agent memory tool', () => {
   test('remembers and lists slim model-visible entries', async () => {
     const entries: AgentMemoryEntry[] = [];
     const runtime: AgentMemoryToolRuntime = {
-      list: async ({ limit }) => entries.slice(0, limit),
+      list: async ({ limit }) => ({
+        entries: entries.slice(0, limit),
+        totalEntries: entries.length,
+      }),
       remember: async (fact) => {
         const next = entry('memory-1', fact, 20);
         entries.push(next);
@@ -70,7 +73,7 @@ describe('agent memory tool', () => {
   test('updates, forgets, and reports missing parameters', async () => {
     let current = entry('memory-1', 'Original fact.');
     const runtime: AgentMemoryToolRuntime = {
-      list: async () => [current],
+      list: async () => ({ entries: [current], totalEntries: 1 }),
       remember: async () => current,
       update: async (memoryId, fact) => {
         if (memoryId !== current.id) return null;
@@ -105,6 +108,27 @@ describe('agent memory tool', () => {
     expect(visibleData(invalid)).toEqual({
       ok: false,
       error: { code: 'MISSING_FACT', message: 'Pass fact for remember.' },
+    });
+  });
+
+  test('reports the real total entry count for truncated lists', async () => {
+    const runtime: AgentMemoryToolRuntime = {
+      list: async ({ limit }) => ({
+        entries: Array.from({ length: Math.min(limit ?? 20, 20) }, (_, index) => entry(`memory-${index + 1}`, `Fact ${index + 1}.`, index + 1)),
+        totalEntries: 500,
+      }),
+      remember: async () => entry('memory-1', 'Fact.'),
+      update: async () => null,
+      forget: async () => null,
+    };
+    const tool = createMemoryTool(runtime);
+
+    expect(visibleData(await tool.execute('tool-1', { action: 'list', limit: 20 }))).toMatchObject({
+      ok: true,
+      data: {
+        total_entries: 500,
+        truncated: true,
+      },
     });
   });
 });

@@ -2082,21 +2082,29 @@ not a raw conversation search tool and must not replace `past_chats`.
 
 Actions:
 
-- `list`: return active remembered facts, optionally filtered by `query`.
+- `list`: return active remembered facts, optionally filtered by `query`. The
+  model-visible `total_entries` is the real matched active count, not the capped
+  result length.
 - `remember`: append one concise durable fact.
 - `update`: replace an existing fact by `memory_id`.
 - `forget`: invalidate an existing fact by `memory_id`.
 
-The authoritative store is
-`agents/<agentId>/memory/events.jsonl`. The runtime projects active entries from
-`memory.entry_added`, `memory.entry_updated`, and `memory.entry_removed` events.
-Forgetting appends an invalidation event; it does not rewrite or physically
-delete prior event lines.
+The authoritative store is `agents/<agentId>/memory/events.jsonl`. The runtime
+projects entries from `memory.entry_added`, `memory.entry_updated`, and
+`memory.entry_removed` events. Forgetting is idempotent: the first call appends
+an invalidation event, and later calls return the already invalidated entry
+without adding churn. High-churn memory logs are compacted by rewriting the log
+to the current projection; compaction preserves visible entry ids, facts,
+sources, status, and `createdAt`, but drops superseded intermediate mutation
+events.
 
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
-the active projection. The reminder includes memory ids so the model can update
-or forget stale facts when the user corrects them. Tool results use the shared
-envelope and expose only the slim model-visible projection:
+the active projection. Reminder retrieval ranks by memory-specific relevance
+(phrase/term overlap) and backfills with latest active facts so stale ids remain
+visible when the user corrects related facts. The reminder includes memory ids
+so the model can update or forget stale facts when the user corrects them. Tool
+results use the shared envelope and expose only the slim model-visible
+projection:
 
 ```json
 {

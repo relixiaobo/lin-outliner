@@ -206,6 +206,7 @@ export const en = {
       updatedNotice: 'Memory updated',
       forgottenNotice: 'Memory forgotten',
       emptyFactError: 'Memory fact cannot be empty.',
+      notFoundError: 'Memory entry no longer exists.',
     },
     skills: {
       sectionAriaLabel: 'Skills & Behaviors',

@@ -113,10 +113,13 @@ truth.
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation:
-  - per-agent `agents/<agentId>/memory/events.jsonl` event log
+  - per-agent `agents/<agentId>/memory/events.jsonl` event log using the shared
+    append-only seq-log primitive with conversation/run logs
   - `memory` tool with list/remember/update/forget actions
-  - bounded `<agent-memory>` turn reminder injection
+  - bounded `<agent-memory>` turn reminder injection with relevance ranking and
+    latest-entry backfill
   - Settings Memory pane for list/edit/forget
+  - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as `agent.memory.manage`
 
 ## Next Milestone

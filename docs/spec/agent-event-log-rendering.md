@@ -272,8 +272,8 @@ Clean-cut startup policy:
 - `sessions/` is the obsolete pre-M0 flat layout. The event store never reads or
   migrates it.
 - On first store access, if `sessions/` exists, delete `sessions/` and
-  `indexes/` so stale `session-index.json` entries cannot point runtime restore
-  at unreadable legacy sessions.
+  `indexes/`, and `agents/*/memory/` so stale session indexes or memory logs
+  cannot cross the storage-format cut. Agent identity records are preserved.
 - If a legacy session index survives without matching `conversations/`, treat it as a
   stale projection and rebuild it from the current conversation directories.
 
@@ -286,6 +286,13 @@ then sorts by seq before replay.
 ## Event Store
 
 Each line in `events.jsonl` is one JSON event.
+
+Conversation segments, run logs, and agent memory logs share one append-only
+seq-log primitive for JSONL serialization, per-key write queues, latest-seq
+caches, chunked physical-tail reads, offset-bounded replay, and file-size
+checkpoint guards. Conversation replay still joins the conversation segment with
+its indexed run logs and sorts by `seq`; memory uses the same primitive with its
+own per-agent key.
 
 ```ts
 interface AgentEventBase {
@@ -969,6 +976,9 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Transcript row virtualization and bounded large-output rendering.
 - Agent memory event emission, projection, reminder injection, and Settings
   list/edit/forget management.
+- Shared append-only seq-log internals for conversation/run/memory JSONL tails,
+  offsets, queues, and seq caches; memory projection caching keyed by latest seq;
+  high-churn memory compaction back to the current projection.
 
 ### Remaining
 

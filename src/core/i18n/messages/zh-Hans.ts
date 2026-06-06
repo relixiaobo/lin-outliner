@@ -175,6 +175,7 @@ export const zhHans: PartialMessages = {
       updatedNotice: '记忆已更新',
       forgottenNotice: '记忆已忘记',
       emptyFactError: '记忆事实不能为空。',
+      notFoundError: '记忆条目已不存在。',
     },
     skills: {
       sectionAriaLabel: '技能与行为',

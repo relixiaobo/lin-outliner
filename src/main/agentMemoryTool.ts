@@ -60,7 +60,10 @@ const MEMORY_TOOL_PARAMETERS = {
 };
 
 export interface AgentMemoryToolRuntime {
-  list(options: { query?: string; includeInvalidated?: boolean; limit?: number }): Promise<AgentMemoryEntry[]>;
+  list(options: { query?: string; includeInvalidated?: boolean; limit?: number }): Promise<{
+    entries: AgentMemoryEntry[];
+    totalEntries: number;
+  }>;
   remember(fact: string): Promise<AgentMemoryEntry>;
   update(memoryId: string, fact: string): Promise<AgentMemoryEntry | null>;
   forget(memoryId: string): Promise<AgentMemoryEntry | null>;
@@ -106,17 +109,17 @@ export function createMemoryTool(runtime: AgentMemoryToolRuntime): AgentTool<any
       try {
         if (action === 'list') {
           const limit = clampLimit(numberParam(params.limit), 20, 50);
-          const entries = await runtime.list({
+          const result = await runtime.list({
             query: stringParam(params.query),
             includeInvalidated: params.include_invalidated === true,
-            limit: limit + 1,
+            limit,
           });
-          const visibleEntries = entries.slice(0, limit).map(memoryToolEntry);
+          const visibleEntries = result.entries.slice(0, limit).map(memoryToolEntry);
           return memoryToolResult({
             action: 'list',
             entries: visibleEntries,
-            totalEntries: entries.length,
-            truncated: entries.length > limit,
+            totalEntries: result.totalEntries,
+            truncated: result.totalEntries > visibleEntries.length,
           }, elapsed(started));
         }
 

@@ -89,6 +89,7 @@ import {
 } from './agentDebugProjection';
 import {
   AgentEventStore,
+  MAX_AGENT_MEMORY_FACT_CHARS,
 } from './agentEventStore';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
@@ -434,6 +435,9 @@ export class AgentRuntime {
   async updateMemory(memoryId: string, fact: string): Promise<AgentMemoryEntryView | null> {
     const normalizedFact = fact.trim();
     if (!normalizedFact) throw new Error('Memory fact cannot be empty.');
+    if (normalizedFact.length > MAX_AGENT_MEMORY_FACT_CHARS) {
+      throw new Error(`Memory fact must be ${MAX_AGENT_MEMORY_FACT_CHARS} characters or fewer.`);
+    }
     const entry = await this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact: normalizedFact });
     return entry ? agentMemoryEntryToView(entry) : null;
   }
@@ -1106,7 +1110,7 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           subagentRuntime,
-          memory: this.createMemoryToolRuntime(sessionId, () => sessionRef.current),
+          memory: this.createMemoryToolRuntime(() => sessionId, () => sessionRef.current),
           pastChats: {
             service: this.getPastChatsService(),
             currentConversationId: () => sessionId,
@@ -1257,7 +1261,7 @@ export class AgentRuntime {
       skillRuntime: session.skillRuntime,
       skillToolEnabled: session.runtimeSettings.automaticSkillsEnabled,
       subagentRuntime: session.subagentRuntime,
-      memory: this.createMemoryToolRuntime(session.eventState.session?.id ?? 'unknown', () => session),
+      memory: this.createMemoryToolRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
       pastChats: {
         service: this.getPastChatsService(),
         currentConversationId: () => session.eventState.session?.id ?? null,
@@ -1898,11 +1902,11 @@ export class AgentRuntime {
   }
 
   private createMemoryToolRuntime(
-    sessionId: string,
+    getSessionId: () => string,
     getSession: () => AgentSessionState | null,
   ): AgentMemoryToolRuntime {
     return {
-      list: (options) => this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+      list: (options) => this.getEventStore().queryMemoryEntries(this.agentIdentity.agentId, {
         query: options.query,
         includeInvalidated: options.includeInvalidated,
         limit: options.limit,
@@ -1913,7 +1917,7 @@ export class AgentRuntime {
         return this.getEventStore().addMemoryEntry(this.agentIdentity.agentId, {
           fact,
           originWorkspace: this.memoryOriginWorkspace(),
-          sources: this.memorySources(sessionId, session),
+          sources: this.memorySources(getSessionId(), session),
         });
       },
       update: (memoryId, fact) => this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact }),
@@ -1923,13 +1927,12 @@ export class AgentRuntime {
 
   private async buildMemoryReminder(query: string): Promise<string | null> {
     try {
-      let entries = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+      const relevant = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
         query,
         limit: 8,
       });
-      if (entries.length === 0) {
-        entries = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, { limit: 8 });
-      }
+      const latest = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, { limit: 8 });
+      const entries = uniqueMemoryEntries([...relevant, ...latest]).slice(0, 8);
       return formatMemoryReminder(entries);
     } catch (error) {
       console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
@@ -3121,6 +3124,17 @@ function formatMemoryReminder(entries: readonly AgentMemoryEntry[]): string | nu
     )),
     '</agent-memory>',
   ].join('\n');
+}
+
+function uniqueMemoryEntries(entries: readonly AgentMemoryEntry[]): AgentMemoryEntry[] {
+  const seen = new Set<string>();
+  const result: AgentMemoryEntry[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    result.push(entry);
+  }
+  return result;
 }
 
 function buildOutlinerContextReminder(host: OutlinerToolHost): string | null {
