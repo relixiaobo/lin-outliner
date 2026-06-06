@@ -48,6 +48,17 @@
   mix-blend-mode: normal;
 }
 
+/* The multiply blend above is tuned for a LIGHT backdrop; on the dark content
+   base it crushes the neutral system-page glyph (Library / Schema / Trash /
+   Saved searches) to near-black, i.e. invisible. Drop the blend in dark mode so
+   the icon renders at its intended --muted-2 tone. (The tag case already runs
+   blend-normal in every mode.) */
+@media (prefers-color-scheme: dark) {
+  .panel-header-icon {
+    mix-blend-mode: normal;
+  }
+}
+
 .panel-title-editor {
   display: flex;
   max-width: 720px;
