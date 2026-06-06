@@ -78,8 +78,10 @@ describe('agent event log', () => {
     ];
 
     const state = replayAgentEvents(events);
+    const activePath = getAgentEventActivePath(state);
 
-    expect(getAgentEventActivePath(state).map((message) => message.id)).toEqual(['user-1', 'assistant-1']);
+    expect(activePath.map((message) => message.id)).toEqual(['user-1', 'assistant-1']);
+    expect(activePath.map((message) => message.actor)).toEqual([userActor, agentActor]);
     expect(getAgentEventConversation(state).map((entry) => entry.messageId)).toEqual(['user-1', 'assistant-1']);
     expect(deriveAgentPiMessages(state).map(textOf)).toEqual(['Question', 'Hello']);
   });
@@ -395,7 +397,14 @@ describe('agent event log', () => {
       },
     ];
 
-    const messages = deriveAgentPiMessages(replayAgentEvents(events));
+    const state = replayAgentEvents(events);
+    expect(getAgentEventActivePath(state).map((message) => message.actor)).toEqual([
+      userActor,
+      agentActor,
+      { type: 'tool', toolName: 'file_read', toolCallId: 'tool-1' },
+    ]);
+
+    const messages = deriveAgentPiMessages(state);
     const assistant = messages[1];
     const toolResult = messages[2];
 

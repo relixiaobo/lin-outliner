@@ -55,6 +55,8 @@ export type AgentPersistedContent =
   | { type: 'image'; imageRef: AgentPayloadRef; alt?: string }
   | { type: 'payload_ref'; payload: AgentPayloadRef; label?: string };
 
+// M0 target data-model contracts. These describe the planned conversation/run/memory
+// logs while the current flat session event log remains the runtime format below.
 export type AgentSourceKind = 'built-in' | 'user' | 'project';
 export type AgentId = `${AgentSourceKind}:${string}:${string}`;
 
@@ -325,7 +327,7 @@ export type AgentRunLogEvent =
       type: 'widget_state.updated';
       toolCallId: string;
       messageId: string;
-      currentState: Record<string, unknown> | null;
+      currentState: unknown;
     });
 
 export interface AgentIdentityRecord {
@@ -662,7 +664,7 @@ export interface WidgetStateUpdatedEvent extends AgentEventBase {
   runId: string;
   toolCallId: string;
   messageId: string;
-  currentState: Record<string, unknown> | null;
+  currentState: unknown;
 }
 
 export interface ApprovalRequestedEvent extends AgentEventBase {
@@ -1081,6 +1083,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       addMessage(state, {
         id: event.messageId,
         role: 'user',
+        actor: event.actor,
         parentMessageId: event.parentMessageId,
         replacesMessageId: event.replacesMessageId,
         content: cloneContent(event.content),
@@ -1102,6 +1105,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       addMessage(state, {
         id: event.messageId,
         role: 'assistant',
+        actor: event.actor,
         parentMessageId: event.parentMessageId,
         content: [],
         createdAt: event.createdAt,
@@ -1143,6 +1147,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       addMessage(state, {
         id: event.messageId,
         role: 'toolResult',
+        actor: event.actor,
         parentMessageId: event.parentMessageId,
         content: cloneContent(event.content),
         createdAt: event.createdAt,
