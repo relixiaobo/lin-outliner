@@ -83,8 +83,14 @@ stale `indexes/` on first access (no migration, per the pre-release no-back-comp
 **5-round adversarial review** (#150): the original 10 findings (3 perf regressions undoing the #116/#117
 write-amplification work, 3 correctness, 4 cleanup/altitude) all fixed; a tail-reader P0 introduced by the
 first fix, then fixed + regression-tested; and a runtime clean-cut session-restore failure (stale index →
-unloadable id) fixed with index/`conversations/` reconciliation + scenario tests. **Next: M0.5** — remove
-remaining `session*` protocol/index/API bridge debt, then **M1** (memory v1 · canonical DM + Channels ·
+unloadable id) fixed with index/`conversations/` reconciliation + scenario tests. **M0.5 has now also LANDED
+(#151):** the public protocol/IPC/renderer surface is renamed `session*` → `conversation*` (internal
+event-log key stays `sessionId`, same value), joined by a single explicit translation seam
+(`sessionIdFromConversationId`/`conversationIdFromSessionId` at every public boundary + one
+`emitConversationRuntimeEvent` translator + past-chats `entryConversationId`/`conversationFieldsForEntry`);
+the UI-list `AgentConversationMeta` is renamed `AgentConversationListMeta` to clear the M0-data-model
+collision; the `metricConversation` i18n label, the workspace-layout localStorage key (`v2`→`v3`), and an
+orphaned legacy `session-index.json` sweep are all fixed. **Next: M1** (memory v1 · canonical DM + Channels ·
 mixed-resolution · ask_user_question · config tool · skill self-authoring — the bulk of perceived value).
 Remaining needs-PM decisions are lower-priority (doc snapshot+delta, group default-`addressedTo` (M3),
 who-configures-whom (M3)). Escalate before behavior-changing code.

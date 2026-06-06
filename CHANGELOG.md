@@ -1358,6 +1358,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent M0.5 clean cut landed (PR #151)** — removed the residual `session*` bridge debt now that M0 has
+  shipped. The public protocol/IPC/renderer surface is renamed from `session*` to `conversation*` while the
+  internal event-log key stays `sessionId` (same string value); the two are joined by an explicit, single
+  translation seam — `sessionIdFromConversationId` / `conversationIdFromSessionId` at every public method
+  boundary, one typed `emitConversationRuntimeEvent` translator for the closed/error/approval runtime
+  events, `rendererProjectionEventFromDomain` for the projection lane, and `entryConversationId` /
+  `conversationFieldsForEntry` in past-chats — so the public⇄internal boundary is named in one place instead
+  of ~20 inline remaps. The UI-list shape `AgentConversationMeta` is renamed to `AgentConversationListMeta`
+  to resolve the collision with the M0 data-model `AgentConversationMeta`; the `metricConversation` i18n
+  label is corrected (`Session` → `Conversation`, `会话` → `对话`); the workspace-layout localStorage key is
+  bumped (`:v2` → `:v3`) so pre-rename persisted panes are orphaned rather than half-read; and the
+  store-owned clean-cut now also sweeps an orphaned legacy `indexes/session-index.json`. Review: 1-round
+  high-effort adversarial pass surfaced 5 findings (1 shipped i18n defect, 2 latent altitude issues — the
+  name collision and the missing translation seam, 2 cosmetic), all fixed by codex and re-verified. Gate:
+  typecheck + `test:core` 629/0 + `test:renderer` 354/0 + agent/workspace-layout e2e 59/0. **Next: M1**
+  (memory v1 + canonical DM/Channels + ask-user-question + config tool + skill self-authoring).
 - **Agent M0 foundation landed; agent program PM-ratified (PR #150)** — the full M0 storage/runtime
   foundation shipped after a **5-round adversarial review**. Agent persistence is re-keyed from the flat
   `sessions/<id>/` log into split **`conversations/` + `runs/` + `agents/`** storage with joined replay,
