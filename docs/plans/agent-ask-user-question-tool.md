@@ -341,19 +341,24 @@ in `docs/plans/agent-composer-attachment-path-model.md`.
 Add user-question request and resolution events instead of overloading approval
 events.
 
-Candidate events:
+Events — **canonical dotted taxonomy** (matches the [[agent-program]] M0 taxonomy and the
+[[agent-data-model]] `RunEvent` union). These are **run-log** events anchored to `runId`
+(the run is paused awaiting input), each carrying its payload:
 
 ```ts
-type AgentEvent =
-  | { kind: "user_question_requested"; request: AgentUserQuestionRequestView }
-  | { kind: "user_question_answered"; requestId: string; result: AskUserQuestionResult }
-  | { kind: "user_question_cancelled"; requestId: string; reason?: string };
+type UserQuestionRunEvent =
+  | { type: "user_question.requested"; runId: string; requestId: string; toolCallId: string;
+      request: AgentUserQuestionRequestView }
+  | { type: "user_question.answered";  runId: string; requestId: string;
+      result: AskUserQuestionResult }
+  | { type: "user_question.cancelled"; runId: string; requestId: string; reason?: string };
 ```
 
-The implementation must decide whether pending user questions survive app
-restart. If they do, event replay must restore the unresolved request and keep
-attachment/resource references valid. If they do not, restart behavior must
-write a terminal cancellation event or otherwise unblock the runtime.
+**Restart — DECIDED (data-model): a pending question survives restart.** Because these are
+durable run-log events anchored to `runId`, replay restores the unresolved
+`user_question.requested` and the renderer rebuilds the pending interaction from it (no
+cancel-on-restart); attachment/resource references must stay valid across replay. See
+[[agent-data-model]] §3 (RunEvent) — this is no longer an implementation choice.
 
 ### 8. Edit-user-message alignment
 
@@ -435,8 +440,9 @@ reference model first, then build the user-question UI on top of it.
 
 ## Open Questions
 
-- Should unresolved user questions persist across app restart, or be cancelled on
-  restart?
+- ~~Should unresolved user questions persist across app restart?~~ **DECIDED
+  ([[agent-data-model]]): they persist** — durable run-log events replay to restore the
+  pending interaction; no cancel-on-restart.
 - Should cancellation be exposed to the user, or should the user always answer /
   clarify?
 - Should partial answers be allowed when only some questions are marked

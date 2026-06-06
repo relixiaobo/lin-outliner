@@ -301,16 +301,21 @@ conversation-less runs). Each fire executes with **bounded context** (the brief 
 Opening the conversation to chat is a normal interactive run that *does* see history (you
 can steer it: "make it shorter").
 
-**User visibility — existing UI.** The session shows up in `AgentChatPanel`
-(`src/renderer/ui/AgentDock.tsx` → `AgentChatPanel`) like any other chat. IPC
-already exposes `agent_list_sessions` / `agent_restore_session` /
-`agent_rename_session` / `agent_delete_session` (`src/main/main.ts:300-345`).
-The agent can also query its own past work via the `past_chats` tool.
+**User visibility — existing UI.** Each fire appends to the routine's
+**conversation** (post-F2: a routine owns one durable conversation that anchors its
+runs — see [agent-data-model.md](agent-data-model.md) §3–§4), which shows up in
+`AgentChatPanel` (`src/renderer/ui/AgentDock.tsx` → `AgentChatPanel`) like any
+other chat. The conversation/channel IPC supersedes the legacy
+`agent_list_sessions` / `agent_restore_session` / `agent_rename_session` /
+`agent_delete_session` calls (`src/main/main.ts:300-345`); until F2 lands those
+names remain as migration aliases over the same store, not a second source of
+truth. The agent can also query its own past work via the `past_chats` tool.
 
-**Deletion semantics.** Deleting the session clears history only; the schedule
-keeps running off `date` + `sys:lastRunAt`. The scheduler tolerates
-a missing session and recreates one on the next fire. To stop the command,
-clear its `date` or trash the node.
+**Deletion semantics.** Deleting the routine's conversation clears its
+communication history only; the schedule keeps running off `date` +
+`sys:lastRunAt`. The scheduler tolerates a missing conversation and
+find-or-creates one on the next fire (canonical-anchor semantics, not a fresh
+session each time). To stop the command, clear its `date` or trash the node.
 
 ## Smart convert
 
