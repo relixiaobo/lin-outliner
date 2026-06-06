@@ -73,10 +73,21 @@ protocol types landed interface-first (#147)** — `AgentConversationEvent`/`Age
 610/0). **F2a read seam landed next (#149):** replay exposes `getAgentEventConversationPath()`
 (communication only) vs `getAgentEventRuntimeTranscriptPath()` (joined pi-agent-core transcript ≡
 active path today), and `tool_result.created/replaced` gained a `runId` join key (legacy events infer
-it from the parent assistant). Behaviorally a no-op until the renderer adopts the conversation seam;
-remaining M0 work wires consumers onto these contracts. Remaining needs-PM decisions are
-lower-priority (doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3)).
-Escalate before behavior-changing code.
+it from the parent assistant). Behaviorally a no-op until the renderer adopts the conversation seam.
+**The agent program is now PM-ratified (2026-06-06) and M0 has LANDED (#150):** the full M0 foundation
+shipped — agent persistence re-keyed into `conversations/` + `runs/` + `agents/` split storage with
+joined replay, scoped payloads, run meta + fingerprints + usage, seq checkpoints (byte-offset bounded),
+stable identity records, the internal domain event bus (single-dispatch, IPC as a lane subscriber),
+active-run state isolation, and a **store-owned clean-cut** that auto-deletes pre-M0 `agent/sessions/` +
+stale `indexes/` on first access (no migration, per the pre-release no-back-compat policy). It cleared a
+**5-round adversarial review** (#150): the original 10 findings (3 perf regressions undoing the #116/#117
+write-amplification work, 3 correctness, 4 cleanup/altitude) all fixed; a tail-reader P0 introduced by the
+first fix, then fixed + regression-tested; and a runtime clean-cut session-restore failure (stale index →
+unloadable id) fixed with index/`conversations/` reconciliation + scenario tests. **Next: M0.5** — remove
+remaining `session*` protocol/index/API bridge debt, then **M1** (memory v1 · canonical DM + Channels ·
+mixed-resolution · ask_user_question · config tool · skill self-authoring — the bulk of perceived value).
+Remaining needs-PM decisions are lower-priority (doc snapshot+delta, group default-`addressedTo` (M3),
+who-configures-whom (M3)). Escalate before behavior-changing code.
 
 ### Command surface & capture
 

@@ -1358,6 +1358,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent M0 foundation landed; agent program PM-ratified (PR #150)** — the full M0 storage/runtime
+  foundation shipped after a **5-round adversarial review**. Agent persistence is re-keyed from the flat
+  `sessions/<id>/` log into split **`conversations/` + `runs/` + `agents/`** storage with joined replay,
+  run-scoped payloads, `AgentRunMeta` (fingerprint + usage + retention), byte-offset-bounded seq
+  checkpoints, stable identity records, an **internal domain event bus** (single publish; the renderer IPC
+  send is just a lane subscriber, not a parallel dispatch), active-run state isolation, and the
+  run-scoped-vs-conversation event split derived from run-scoping intent (events carrying a `runId` route
+  to the run log). A **store-owned clean-cut** auto-deletes obsolete pre-M0 `agent/sessions/` + stale
+  `indexes/` on first access and reconciles the session index against `conversations/` (no legacy reader,
+  no migration — per the pre-release no-back-compat policy), so existing dev installs self-heal instead of
+  needing a manual userData wipe. Review trail: the original 10 findings (3 perf regressions that had
+  re-introduced the #116/#117 write-amplification, 3 correctness — failed/cancelled-run usage loss,
+  checkpoint truncation guard, reactive-compaction prompt loss — 4 cleanup/altitude) all fixed; a
+  tail-reader P0 (`readLastNonEmptyLine` truncating lines > 4 KB) introduced by the first fix, then fixed +
+  regression-tested; and a runtime clean-cut session-restore failure (stale index pointing at unloadable
+  ids) fixed with index reconciliation + scenario tests. Gate: typecheck + `test:core` 628/0 +
+  `test:renderer` 354/0. **The agent program is now ratified — M0.5** (remove residual `session*` bridge
+  debt) **then M1** (memory + DM/Channels + ask-user-question + config + skill authoring) follow.
+  ([#150](https://github.com/relixiaobo/lin-outliner/pull/150))
+
 - **Agent M0 F2a run-log join read seam (PR #149)** — replay now exposes two named read seams over the
   still-flat session log: `getAgentEventConversationPath()` returns communication only (user messages +
   final assistant replies, excluding run-scoped execution — tool-result messages and assistant turns whose
