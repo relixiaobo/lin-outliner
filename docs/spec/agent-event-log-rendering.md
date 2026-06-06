@@ -7,10 +7,10 @@ data, debug, persistence, and rendering model.
 
 Tenon uses an event-sourced agent runtime.
 
-The single durable product source of truth is the **Agent Session Event Store**:
+The durable product source of truth is the **Agent event-log family**:
 
 ```txt
-events.jsonl + referenced payload files
+conversation segments + run events + agent identity/memory logs + referenced payload files
 ```
 
 Everything else is derived:
@@ -75,11 +75,17 @@ persisted product state.
 
 The current main branch implements this architecture through these modules:
 
-- `src/main/agentRuntime.ts`: owns session lifecycle, pi-agent-core execution,
-  Tenon event append, projection emission, attachment persistence, debug capture,
-  and checkpoint writes.
-- `src/main/agentEventStore.ts`: owns the filesystem event store, payload files,
-  write queues, rebuildable indexes, checkpoint replay, and checkpoint retention.
+- `src/main/agentRuntime.ts`: owns session lifecycle, stable runtime agent
+  identity, active-run state, pi-agent-core execution, Tenon event append,
+  projection emission, attachment persistence, debug capture, and checkpoint
+  writes.
+- `src/main/agentEventStore.ts`: owns the filesystem event store split into
+  conversation and run logs, scoped payload files, agent identity records, write
+  queues, rebuildable indexes, seq-based checkpoint replay, and checkpoint
+  retention.
+- `src/main/agentDomainEvents.ts`: owns the internal domain-event bus. It is
+  separate from renderer IPC and exposes persisted-log, renderer-projection,
+  trusted-observer, and hook-interceptor lanes.
 - `src/core/agentEventLog.ts`: owns event DTOs, replay reducers, parent-linked
   branch state, active-path derivation, and pi-ai message projection helpers.
 - `src/core/agentRenderProjection.ts`: derives the compact renderer projection
@@ -219,15 +225,28 @@ Current filesystem layout:
 
 ```txt
 <userData>/agent/
-  sessions/
-    <sessionId>/
-      events.jsonl
+  agents/
+    <agentId>/
+      identity.json
+      memory/
+        events.jsonl
+  conversations/
+    <conversationId>/
+      meta.json
+      cursors.json
+      runs.json
+      segments/
+        000001.jsonl
       payloads/
-        <payloadId>.json
-        <payloadId>.txt
-        <payloadId>.bin
+        <payloadId>.<ext>
       checkpoints/
         checkpoint-<seq>.json
+  runs/
+    <runId>/
+      meta.json
+      events.jsonl
+      payloads/
+        <payloadId>.<ext>
   indexes/
     session-index.json
     search-index.json
@@ -235,16 +254,33 @@ Current filesystem layout:
 
 Authoritative:
 
-- `events.jsonl`
+- `conversations/<id>/segments/*.jsonl`
+- `runs/<id>/events.jsonl`
+- `agents/<id>/identity.json`
+- `agents/<id>/memory/events.jsonl` once memory emission lands
 - payload files referenced by event payload refs
 
 Derived and rebuildable:
 
 - `checkpoints/*.json`
 - `indexes/*.json`
+- `conversations/<id>/meta.json`
+- `conversations/<id>/runs.json`
 
-The directory name helps locate the session. The session creation event defines
-the actual session identity and metadata.
+Clean-cut startup policy:
+
+- `sessions/` is the obsolete pre-M0 flat layout. The event store never reads or
+  migrates it.
+- On first store access, if `sessions/` exists, delete `sessions/` and
+  `indexes/` so stale `session-index.json` entries cannot point runtime restore
+  at unreadable legacy sessions.
+- If a session index survives without matching `conversations/`, treat it as a
+  stale projection and rebuild it from the current conversation directories.
+
+The renderer still uses `sessionId` in command payloads. In storage, that id is
+the conversation id. `AgentEventStore.readEvents(sessionId)` joins the
+conversation segment and the run logs listed in `conversations/<id>/runs.json`,
+then sorts by seq before replay.
 
 ## Event Store
 
@@ -463,10 +499,9 @@ interface ToolResultReplacedEvent extends AgentEventBase {
 }
 ```
 
-Runtime-emitted `tool_result.created` events carry `runId` so run-log assembly
-has an explicit join key. Legacy flat events may omit it; replay infers the run
-from the parent assistant message when available. Replacement events preserve
-the existing run ownership unless they provide a more explicit `runId`.
+Runtime-emitted execution events carry `runId` so run-log assembly has an
+explicit join key. Replacement events preserve the existing run ownership unless
+they provide a more explicit `runId`.
 
 The pi-mono projection reconstructs pi-ai messages as:
 
@@ -480,20 +515,18 @@ single process block.
 
 ## Conversation vs Runtime Transcript Projections
 
-The current on-disk store is still a flat session log, but replay exposes two
-separate read seams:
+The on-disk store is physically split, and replay exposes two read seams:
 
 - `getAgentEventConversationPath()` returns communication messages: user
   messages and final assistant replies. It excludes run-scoped execution
   messages: tool-result messages and assistant messages whose completed content
   is a tool call (`stopReason: 'toolUse'` or persisted `toolCall` content).
 - `getAgentEventRuntimeTranscriptPath()` returns the joined pi-agent-core
-  transcript. Today it is the active parent-linked path, including both
-  communication messages and run-scoped execution messages. The future physical
-  `conversation`/`run` split can replace this implementation without changing
-  runtime consumers.
+  transcript. `AgentEventStore.readEvents()` performs the physical
+  conversation/run join before reducer replay, so runtime consumers still read a
+  valid parent-linked transcript.
 
-This is the M0 F2a read seam: product conversation views can stop treating tool
+This is the M0 F2 seam: product conversation views can stop treating tool
 execution as communication, while pi-mono still receives a valid transcript with
 assistant tool calls followed by matching tool results.
 
@@ -509,6 +542,8 @@ interface AgentPayloadRef {
   mimeType: string;
   byteLength: number;
   sha256: string;
+  scope?: { type: 'conversation'; conversationId: string }
+    | { type: 'run'; conversationId: string; runId: string };
   role?: AgentPayloadRole;
   summary?: string;
   truncated?: boolean;
@@ -792,7 +827,7 @@ Checkpoint content:
 
 - latest included `seq`
 - latest included event id
-- latest included event file byte offset
+- target file byte offsets for the conversation segment and each run log
 - replay state needed to rebuild active branch, render/debug projections, and
   pi-mono messages
 
@@ -800,15 +835,17 @@ Restore:
 
 ```txt
 load latest checkpoint
-  -> replay events after checkpoint.seq from checkpoint byte offset
+  -> verify target offsets are not past the physical file tails
+  -> read the conversation segment and indexed run logs from checkpoint offsets
+  -> replay events after checkpoint.seq
   -> rebuild projections
   -> hydrate pi-agent-core when execution starts
 ```
 
-If checkpoint load fails, replay `events.jsonl` from the beginning.
+If checkpoint load fails, replay the joined target logs from the beginning.
 Checkpoint writes only commit when the supplied replay state matches the current
-event-log tail `seq` and event id; stale replay state must not write a byte
-offset checkpoint.
+event-log tail `seq` and event id; stale replay state must not write a
+checkpoint.
 
 ## Large Session Performance
 
@@ -825,9 +862,10 @@ The hot path must never do these things:
 Open-session policy:
 
 - The session list reads `session-index.json`, not every session log.
-- Opening a session loads the latest checkpoint, then replays only events after
-  the checkpoint byte offset.
-- If no usable checkpoint exists, replay falls back to the full event log; a
+- Opening a session loads the latest checkpoint, reads the conversation segment
+  and indexed run logs from the checkpoint target offsets, then replays only
+  events after the checkpoint `seq`.
+- If no usable checkpoint exists, replay falls back to the full joined log; a
   background progress UI can be added later if very large cold sessions need it.
 - The active transcript starts from the render projection and uses row
   virtualization for long sessions.
@@ -873,8 +911,8 @@ user sends prompt
 
 ```txt
 open app
-  -> scan agent/sessions
-  -> load session-index cache if valid
+  -> clean obsolete agent/sessions + derived indexes if present
+  -> load session-index cache if it matches conversations/
   -> load selected session checkpoint
   -> replay later events
   -> derive render projection
@@ -907,16 +945,25 @@ The current renderer contract is `AgentRenderProjection`, carried by
 
 ### Landed
 
-- Per-session `events.jsonl` and payload directory layout.
+- Split conversation/run filesystem layout with conversation segments,
+  run-local `events.jsonl`, run meta, scoped payloads, and agent identity
+  records.
 - Strict append ordering, per-session write queues, and replay reducers.
 - Parent-linked message chain with active branch projection.
-- pi-ai `Message[]` derivation from the active event path.
+- pi-ai `Message[]` derivation from the joined conversation/run active event
+  path.
+- Stable built-in runtime agent identity (`built-in:tenon:assistant`) on
+  agent-authored events and message records.
+- Internal domain-event bus lanes for persisted-log, renderer-projection,
+  trusted-observer, and hook-interceptor consumers.
+- Run-scoped runtime state (`activeRun`) for active assistant text, tool output
+  payload refs, tool-call message mapping, and the last submitted prompt.
 - `AgentRenderProjection` IPC instead of full chat snapshots.
 - Provider debug payload refs and event-derived debug history/totals.
 - Large tool output payload refs with bounded model-visible labels.
 - Session index, search index, and user-message index as rebuildable projections.
-- Checkpoint writer/loader with tail replay, corrupt-checkpoint fallback, atomic
-  writes, stale-state guards, and best-effort retention of the latest three
+- Checkpoint writer/loader with target-offset + seq tail replay,
+  corrupt-checkpoint fallback, atomic writes, stale-state guards, and best-effort retention of the latest three
   valid checkpoints.
 - Transcript row virtualization and bounded large-output rendering.
 
@@ -926,18 +973,17 @@ The current renderer contract is `AgentRenderProjection`, carried by
   projection, IPC bytes, render commits, and long transcript behavior.
 - Richer non-text media previews and lazy full-payload loading in render/debug
   detail views.
-- Persisted approval/follow-up/compaction event emission for the schema-reserved
-  event types that are not yet active runtime events.
-- Self-maintenance event families for `runtime_status` diagnostics,
-  `doctor` diagnostics, config write approvals, config writes, config rollback,
-  hook execution/failure, skill write previews, skill creates, skill patches,
-  skill rollbacks, skill curation reports, and config recovery.
+- Full memory event emission and memory retrieval.
+- Mixed-resolution context assembly that replaces old conversation segments
+  with distillation summaries.
+- Runtime consumers for the schema-reserved task, notification, config-change,
+  review-card, and skill audit event families.
 - Optional checkpoint retention preferences if real sessions show storage
   pressure.
 
 ## Success Criteria
 
-- There is exactly one durable product truth: the session event store.
+- There is exactly one durable product truth: the agent event-log family.
 - Deleting checkpoints and indexes does not lose agent state.
 - Deleting render/debug projections does not lose agent state.
 - pi-mono can be rehydrated from event-derived messages.

@@ -69,10 +69,11 @@ export interface AgentRuntimeContextSession {
     };
     continue(): Promise<void>;
   };
+  activeRun: AgentRuntimeActiveRunState | null;
+  lastRun: AgentRuntimeActiveRunState | null;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
-  lastSubmittedUserPrompt: UserMessage | null;
   reactiveCompactRequested: boolean;
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
@@ -80,8 +81,13 @@ export interface AgentRuntimeContextSession {
     createAgentListingStateReminder(): UserMessage | null;
   };
   localWorkspace: AgentLocalWorkspaceContext;
-  toolOutputPayloads: Map<string, { payload: AgentPayloadRef; label: string }>;
   toolResultBudgetState: ToolResultBudgetState;
+}
+
+export interface AgentRuntimeActiveRunState {
+  id: string;
+  lastSubmittedUserPrompt: UserMessage | null;
+  toolOutputPayloads: Map<string, { payload: AgentPayloadRef; label: string }>;
 }
 
 export type AgentRuntimeContextEventInput = {
@@ -144,7 +150,7 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
       return undefined;
     }
-    session.toolOutputPayloads.set(toolCallId, persisted);
+    session.activeRun?.toolOutputPayloads.set(toolCallId, persisted);
     return {
       content: [{ type: 'text', text: persisted.label }],
     };
@@ -219,9 +225,9 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       if (
         options.trigger === 'reactive'
         && compactPlan.messagesToKeep.length === 0
-        && session.lastSubmittedUserPrompt
+        && (session.activeRun?.lastSubmittedUserPrompt ?? session.lastRun?.lastSubmittedUserPrompt)
       ) {
-        compactPlan.messagesToKeep.push(session.lastSubmittedUserPrompt);
+        compactPlan.messagesToKeep.push((session.activeRun?.lastSubmittedUserPrompt ?? session.lastRun?.lastSubmittedUserPrompt)!);
       }
       const compactedThroughMessageId = compactedThroughMessageIdForPlan(
         getAgentEventActivePath(session.eventState),

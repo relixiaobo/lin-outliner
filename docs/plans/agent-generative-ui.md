@@ -229,7 +229,8 @@ Lin decisions:
 
 - Match the high-level architecture: tool call plus isolated UI resource.
 - Do not depend on Claude-specific names beyond `visualize_read_me` and
-  `show_widget` unless the PM explicitly wants closer compatibility.
+  `show_widget`. Pre-release clean-cut policy means Lin ships its target tool
+  protocol, not a Claude-compatibility layer.
 - Treat Claude's implementation as evidence that this feature should be
   isolated and resource-based, not direct host DOM injection.
 
@@ -268,7 +269,7 @@ Lin decisions:
 
 ### CodePilot and Open WebUI inline visualizer
 
-Secondary references for compatibility and alternatives.
+Secondary references for alternatives.
 
 Local research paths:
 
@@ -284,8 +285,9 @@ Lin decisions:
 
 - Do not use either as the primary implementation because Lin already has real
   tool-call streaming.
-- Consider a future fallback parser only if model/provider compatibility becomes
-  a practical blocker.
+- Do not build a fallback parser in the initial implementation; if a provider
+  cannot use the tool-call protocol, fix the provider/tool seam rather than adding
+  a second widget authority.
 
 ## Product Scenarios
 
@@ -731,7 +733,7 @@ Tasks:
 - Add both tool surfaces — `show_widget` and `visualize_read_me` (names, parameter
   schemas, results). The rich guidance-module CONTENT is authored in the guidance
   workstream (Phase 6), but both tools exist from here.
-- Add tool filtering compatibility with existing allowed/disallowed tool rules.
+- Integrate tool filtering with the current allowed/disallowed tool rules.
 - Ensure `show_widget` returns a concise model-visible result.
 - Add a summary/icon for `show_widget` in `AgentToolCallBlock`.
 

@@ -13,6 +13,7 @@ function assistant(id: string, toolCallIds: string[]): AgentEventMessageRecord {
   return {
     id,
     role: 'assistant',
+    actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
     parentMessageId: null,
     content: toolCallIds.map((toolCallId) => ({
       type: 'toolCall',
@@ -30,6 +31,7 @@ function toolResult(id: string, toolCallId: string, text: string): AgentEventMes
   return {
     id,
     role: 'toolResult',
+    actor: { type: 'tool', toolName: 'bash', toolCallId },
     parentMessageId: 'assistant-1',
     content: [{ type: 'text', text }],
     createdAt: 2,

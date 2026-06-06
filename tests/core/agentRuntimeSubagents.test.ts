@@ -13,11 +13,12 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -864,11 +865,7 @@ describe('agent runtime subagents', () => {
     const session = await firstRuntime.createSession();
     await sendMessageApprovingAgent(firstRuntime, session.sessionId, 'Start a restorable background subagent.', firstSink);
     firstRuntime.closeSession(session.sessionId);
-    const rawEvents = await readFile(path.join(dataRoot, 'sessions', session.sessionId, 'events.jsonl'), 'utf8');
-    const transcriptPayloadEvents = rawEvents
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { type?: string; payload?: { role?: string; sha256?: string } })
+    const transcriptPayloadEvents = (await new AgentEventStore(dataRoot).readEvents(session.sessionId))
       .filter((event) => event.type === 'payload.created' && event.payload?.role === 'subagent_transcript');
     expect(new Set(transcriptPayloadEvents.map((event) => event.payload?.sha256)).size)
       .toBe(transcriptPayloadEvents.length);

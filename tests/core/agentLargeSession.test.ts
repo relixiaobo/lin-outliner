@@ -177,7 +177,7 @@ describe('large agent sessions', () => {
       expect(await store.listUserMessageIndexEntries(sessionId)).toHaveLength(195);
       expect((await store.searchMessages('marker 194', { sessionId })).map((entry) => entry.messageId)).toContain('assistant-194');
 
-      const rawEventLog = await readFile(store.paths(sessionId).eventsPath, 'utf8');
+      const rawEventLog = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
       expect(rawEventLog).not.toContain(firstTurns.largePayloadNeedle);
       expect(rawEventLog).not.toContain(tailTurns.largePayloadNeedle);
     });

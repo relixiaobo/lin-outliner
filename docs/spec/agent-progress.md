@@ -75,8 +75,8 @@ truth.
 - [x] Lin-specific stable system prompt module for agent identity, tool
   boundaries, dynamic reminder handling, and safety posture.
 - [x] Event-sourced agent runtime foundation:
-  - per-session `events.jsonl`
-  - payload directory layout
+  - target-oriented conversation/run/agent event-log family
+  - scoped payload directory layout
   - replay reducer, branches, and active-path projection
   - event-derived pi-mono `Message[]`
   - compact render projection IPC instead of chat snapshots
@@ -92,11 +92,11 @@ truth.
   - on-demand full text loading and bounded rendering for large tool output
   - transcript row virtualization for long agent sessions
   - payload-aware assistant turn copy for persisted tool output
-  - run-end checkpoint projection with tail replay and corrupt-checkpoint
-    fallback
+  - run-end checkpoint projection with target-offset tail replay and
+    corrupt-checkpoint fallback
   - atomic checkpoint writes with best-effort retention of the latest three
     valid checkpoint files per session
-  - checkpoint tail guards against stale replay state before writing byte offsets
+  - checkpoint tail guards against stale replay state before writing checkpoints
   - derived session/search/user-message indexes with event-log rebuild
   - large-session regression coverage for checkpoint replay, indexes, render
     projection, and payload-bounded JSONL

@@ -681,16 +681,21 @@ Current storage shape:
 
 ```text
 agent/
-  sessions/
-    <session-id>/
+  conversations/
+    <conversation-id>/
+      segments/000001.jsonl
+      payloads/
+  runs/
+    <run-id>/
       events.jsonl
       payloads/
 ```
 
-The parent session event log remains the product source of truth for user-visible
-conversation state. The sidechain transcript is stored as immutable JSON payload
-snapshots and referenced by the subagent run record. This keeps the parent model
-context clean while still allowing status, restore, debug, and continuation.
+The parent conversation plus its run logs remain the product source of truth for
+user-visible conversation state. The sidechain transcript is stored as immutable
+JSON payload snapshots and referenced by the subagent run record. This keeps the
+parent model context clean while still allowing status, restore, debug, and
+continuation.
 
 ## Compaction And Resume
 

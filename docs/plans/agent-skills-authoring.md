@@ -122,7 +122,7 @@ fix the skill that failed
   `file_write` / `file_edit`; prefer `file_edit` for existing skills, `file_write` only
   for new skills / major rewrites / unpatchable malformed files.
 - Generate or update a concrete `SKILL.md` in the stable shape of
-  `docs/spec/agent-skills.md`; write only to `.agents/skills`-compatible locations.
+  `docs/spec/agent-skills.md`; write only to standard `.agents/skills` roots.
 - **Allow writes only to `user`-local and workspace (`project`) skills.** Additional
   configured dirs are read-only unless explicitly marked writable. **Never `built-in`.**
 - Classify any `file_write` / `file_edit` under `.agents/skills/**` as a
@@ -200,8 +200,9 @@ deliberately conservative (self-modification §8):
   classification; provenance / snapshot / rollback; registry **hot-reload**;
   draft-default for agent-initiated writes.
 - **M2 (off-floor + extension)** — opt-in curation **dry-run reports** (agent-created
-  only). Skill-declared hooks register as **session-scoped** only and ride the hooks
-  work in [[agent-self-modification]] (on the program event bus).
+  only). Skill-declared hooks register as run-scoped or conversation-scoped
+  transients and ride the hooks work in [[agent-self-modification]] (on the
+  program event bus).
 
 ## Open questions
 

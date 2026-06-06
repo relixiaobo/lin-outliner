@@ -134,7 +134,7 @@ src/main/agentRuntime.ts
   # forwarding
 
 src/main/agentEventStore.ts
-  # per-session events.jsonl and payload/checkpoint path layout
+  # target-oriented agent event-log storage and payload/checkpoint layout
 
 src/preload/index.ts
   # exposes typed command and event bridge to the renderer

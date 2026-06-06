@@ -35,6 +35,10 @@ export interface AgentPayloadDisplayMetadata {
   pageCount?: number;
 }
 
+export type AgentPayloadScope =
+  | { type: 'conversation'; conversationId: string }
+  | { type: 'run'; conversationId: string; runId: string };
+
 export interface AgentPayloadRef {
   kind: 'payload_ref';
   id: string;
@@ -42,6 +46,7 @@ export interface AgentPayloadRef {
   mimeType: string;
   byteLength: number;
   sha256: string;
+  scope?: AgentPayloadScope;
   role?: AgentPayloadRole;
   summary?: string;
   truncated?: boolean;
@@ -251,8 +256,8 @@ export interface AskUserQuestionResult {
 export type AgentRunLogEvent =
   | (AgentRunEventBase & { type: 'run.started' })
   | (AgentRunEventBase & { type: 'run.completed'; usage?: Usage })
-  | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string } })
-  | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string })
+  | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string }; usage?: Usage })
+  | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string; usage?: Usage })
   | (AgentRunEventBase & { type: 'assistant_message.started'; messageId: string })
   | (AgentRunEventBase & { type: 'assistant_message.delta'; messageId: string; delta: AgentPersistedContent })
   | (AgentRunEventBase & { type: 'assistant_message.completed'; messageId: string; content: AgentPersistedContent[]; usage: Usage })
@@ -418,6 +423,18 @@ export type AgentEventType =
   | 'approval.resolved'
   | 'follow_up.queued'
   | 'follow_up.applied'
+  | 'task.created'
+  | 'task.completed'
+  | 'notification.created'
+  | 'config.change'
+  | 'review_card.created'
+  | 'skill.created'
+  | 'skill.patched'
+  | 'skill.replaced'
+  | 'skill.enabled'
+  | 'skill.disabled'
+  | 'skill.rolled_back'
+  | 'skill.curation.updated'
   | 'run.started'
   | 'run.completed'
   | 'run.failed'
@@ -692,15 +709,86 @@ export interface FollowUpAppliedEvent extends AgentEventBase {
   messageId: string;
 }
 
+export interface TaskCreatedEvent extends AgentEventBase {
+  type: 'task.created';
+  taskId: string;
+  title: string;
+  assignedTo?: AgentPrincipal;
+  sourceRunId?: string;
+}
+
+export interface TaskCompletedEvent extends AgentEventBase {
+  type: 'task.completed';
+  taskId: string;
+  result?: string;
+}
+
+export interface NotificationCreatedEvent extends AgentEventBase {
+  type: 'notification.created';
+  notificationId: string;
+  title: string;
+  body?: string;
+  target: AgentPrincipal;
+}
+
+export interface AgentConfigChange {
+  target: 'runtime' | 'agent' | 'skill' | 'hook';
+  key: string;
+  before?: unknown;
+  after?: unknown;
+  reason?: string;
+}
+
+export interface ConfigChangeEvent extends AgentEventBase {
+  type: 'config.change';
+  changeId: string;
+  status: 'proposed' | 'applied' | 'reverted' | 'failed';
+  change: AgentConfigChange;
+}
+
+export interface AgentReviewCard {
+  id: string;
+  title: string;
+  body: string;
+  status: 'pending' | 'approved' | 'rejected' | 'applied';
+  payloadRef?: AgentPayloadRef;
+}
+
+export interface ReviewCardCreatedEvent extends AgentEventBase {
+  type: 'review_card.created';
+  card: AgentReviewCard;
+}
+
+export interface SkillAuditEvent extends AgentEventBase {
+  type:
+    | 'skill.created'
+    | 'skill.patched'
+    | 'skill.replaced'
+    | 'skill.enabled'
+    | 'skill.disabled'
+    | 'skill.rolled_back'
+    | 'skill.curation.updated';
+  skillId: string;
+  source: AgentSourceKind | 'dynamic';
+  summary?: string;
+  payloadRef?: AgentPayloadRef;
+}
+
 export interface RunStartedEvent extends AgentEventBase {
   type: 'run.started';
   runId: string;
+  agentId?: string;
+  kind?: AgentRunKind;
+  trigger?: AgentRunTrigger;
+  fingerprint?: AgentRunFingerprint;
+  retention?: AgentRunRetention;
 }
 
 export interface RunTerminalEvent extends AgentEventBase {
   type: 'run.completed' | 'run.failed' | 'run.cancelled';
   runId: string;
   errorMessage?: string;
+  usage?: Usage;
 }
 
 export interface SubagentRunStartedEvent extends AgentEventBase {
@@ -790,6 +878,12 @@ export type AgentEvent =
   | ApprovalResolvedEvent
   | FollowUpQueuedEvent
   | FollowUpAppliedEvent
+  | TaskCreatedEvent
+  | TaskCompletedEvent
+  | NotificationCreatedEvent
+  | ConfigChangeEvent
+  | ReviewCardCreatedEvent
+  | SkillAuditEvent
   | RunStartedEvent
   | RunTerminalEvent
   | SubagentRunStartedEvent
@@ -813,7 +907,7 @@ export type AgentEventMessageRole = 'user' | 'assistant' | 'toolResult';
 export interface AgentEventMessageRecord {
   id: string;
   role: AgentEventMessageRole;
-  actor?: AgentActor;
+  actor: AgentActor;
   parentMessageId: string | null;
   replacesMessageId?: string;
   content: AgentPersistedContent[];
@@ -836,10 +930,12 @@ export interface AgentEventMessageRecord {
 
 export interface AgentRunRecord {
   id: string;
+  agentId?: string;
   status: AgentRunStatus;
   startedAt: number;
   updatedAt: number;
   errorMessage?: string;
+  usage?: Usage;
 }
 
 export interface AgentSubagentRunRecord {
@@ -1205,6 +1301,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'run.started':
       state.runs[event.runId] = {
         id: event.runId,
+        agentId: event.agentId,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
@@ -1226,6 +1323,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
           : 'cancelled';
       run.updatedAt = event.createdAt;
       run.errorMessage = event.errorMessage;
+      run.usage = event.usage ?? run.usage;
       state.runs[event.runId] = run;
       return;
     }
@@ -1301,6 +1399,18 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'approval.resolved':
     case 'follow_up.queued':
     case 'follow_up.applied':
+    case 'task.created':
+    case 'task.completed':
+    case 'notification.created':
+    case 'config.change':
+    case 'review_card.created':
+    case 'skill.created':
+    case 'skill.patched':
+    case 'skill.replaced':
+    case 'skill.enabled':
+    case 'skill.disabled':
+    case 'skill.rolled_back':
+    case 'skill.curation.updated':
     case 'checkpoint.created':
     case 'metric.recorded':
       return;

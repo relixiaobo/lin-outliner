@@ -139,8 +139,9 @@ Useful patterns:
   preflight, and retry on conflicts.
 - Healthy config snapshots are promoted to last-known-good and corrupt/suspicious
   reads can recover from that backup.
-- Doctor preflight can migrate, repair, recover, and then continue with
-  best-effort config when appropriate.
+- Doctor preflight can validate, repair, recover, and then continue with
+  best-effort config when appropriate. Pre-release schema changes remain
+  clean-cut; do not build versioned migration paths for agent config.
 - Startup/session hooks are runtime owned and tied to workspace/session context.
 
 Lin decisions:
@@ -461,19 +462,20 @@ Hook sources should mirror cc-2.1's source split where useful:
 - user-level hooks;
 - project-level hooks;
 - local project hooks;
-- session hooks;
+- conversation/run-scoped transient hooks;
 - skill-declared hooks;
 - plugin hooks, if Lin later supports plugins;
 - admin/system hooks, if Lin later has a managed policy layer.
 
-Skill-declared hooks should register as session-scoped hooks only after the
-skill has been invoked or explicitly enabled. They must not silently persist
-beyond the session unless the user accepts a project/user hook write.
+Skill-declared hooks should register as run-scoped or conversation-scoped
+transient hooks only after the skill has been invoked or explicitly enabled. They
+must not silently persist beyond that scope unless the user accepts a
+project/user hook write.
 
 Hook precedence should mirror config trust:
 
 ```text
-system/admin > user > project > skill > model-suggested session hook
+system/admin > user > project > skill > model-suggested run hook
 ```
 
 Lower-trust hooks must not override higher-trust denials.

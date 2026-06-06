@@ -117,6 +117,10 @@ toggles the owner node's done state.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. See `src/core/loroDocument.ts`.
+- `NodeType` reserves `command` plus `CommandNode.command`,
+  `CommandNode.commandSchedule`, `CommandNode.sysLastRunAt`, and
+  `NodeBase.protectedFields` for scheduled-routines work. They are protocol
+  surface only until the scheduler ships.
 - When adding or renaming a command, update `DOCUMENT_COMMANDS` or
   `AGENT_COMMANDS` and the matching dispatcher in `src/main/documentService.ts`
   (and `src/main/agentRuntime.ts` for agent commands). Update this category

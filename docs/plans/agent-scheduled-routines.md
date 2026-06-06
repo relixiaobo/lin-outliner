@@ -277,16 +277,17 @@ query, and the command node stays clean across N occurrences.
 ## History (conversation + run, post-F2)
 
 Run transcripts live in the **existing event-store infrastructure** (no new sidecar).
-Under today's flat layout that is `sessions/<sessionId>/`; **after the program's F2 split
-this re-keys to `conversations/<id>` (the delivery thread) + `runs/<id>` (each fire's
-execution)** — see [[agent-data-model]]. This plan is sequenced at **M2**, on top of that
-split, so it is written against the conversation/run model, not `session`.
+M0 stores the delivery thread under `conversations/<id>` and each execution under
+`runs/<id>` — see [[agent-data-model]]. This plan is sequenced at **M2**, on top of that
+split, so it is written against the conversation/run model, not the old flat
+`session` directory.
 
 ```
-${userData}/agent/                                          # today (pre-F2)  →  after F2
-  sessions/<sessionId>/        ← per-session event log       →  conversations/<id>/ + runs/<id>/
-  indexes/SESSION_INDEX_FILE   ← session list                →  conversation list
-  indexes/SEARCH_INDEX_FILE    ← full-text recall index       →  unchanged
+${userData}/agent/
+  conversations/<id>/       # delivery conversation
+  runs/<id>/                # one execution log per fire
+  indexes/session-index.json
+  indexes/search-index.json
 ```
 
 Code: `src/main/agentEventStore.ts`, rooted at `${userData}/agent/` (see
@@ -301,15 +302,14 @@ conversation-less runs). Each fire executes with **bounded context** (the brief 
 Opening the conversation to chat is a normal interactive run that *does* see history (you
 can steer it: "make it shorter").
 
-**User visibility — existing UI.** Each fire appends to the routine's
-**conversation** (post-F2: a routine owns one durable conversation that anchors its
-runs — see [agent-data-model.md](agent-data-model.md) §3–§4), which shows up in
+**User visibility — target UI.** Each fire appends to the routine's
+**conversation** (a routine owns one durable conversation that anchors its runs —
+see [agent-data-model.md](agent-data-model.md) §3–§4), which shows up in
 `AgentChatPanel` (`src/renderer/ui/AgentDock.tsx` → `AgentChatPanel`) like any
-other chat. The conversation/channel IPC supersedes the legacy
-`agent_list_sessions` / `agent_restore_session` / `agent_rename_session` /
-`agent_delete_session` calls (`src/main/main.ts:300-345`); until F2 lands those
-names remain as migration aliases over the same store, not a second source of
-truth. The agent can also query its own past work via the `past_chats` tool.
+other chat. This plan builds only on conversation/channel IPC; it must not preserve
+`agent_*_session` aliases or add a scheduled-run compatibility path over the old
+session surface. The agent can also query its own past work via the `past_chats`
+tool.
 
 **Deletion semantics.** Deleting the routine's conversation clears its
 communication history only; the schedule keeps running off `date` +
