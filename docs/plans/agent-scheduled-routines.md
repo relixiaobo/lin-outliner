@@ -274,27 +274,32 @@ day just moves `lastSuccessAt` forward.
 A Result node carries `producedBy:: [[command]]` so the command's history is a
 query, and the command node stays clean across N occurrences.
 
-## Sessions and history
+## History (conversation + run, post-F2)
 
-Run transcripts live in **the existing session infrastructure**, not in any new
-sidecar:
+Run transcripts live in the **existing event-store infrastructure** (no new sidecar).
+Under today's flat layout that is `sessions/<sessionId>/`; **after the program's F2 split
+this re-keys to `conversations/<id>` (the delivery thread) + `runs/<id>` (each fire's
+execution)** — see [[agent-data-model]]. This plan is sequenced at **M2**, on top of that
+split, so it is written against the conversation/run model, not `session`.
 
 ```
-${userData}/agent/
-  sessions/<sessionId>/        ← per-session event log + payloads
-  indexes/SESSION_INDEX_FILE   ← session list
-  indexes/SEARCH_INDEX_FILE    ← full-text index over sessions
+${userData}/agent/                                          # today (pre-F2)  →  after F2
+  sessions/<sessionId>/        ← per-session event log       →  conversations/<id>/ + runs/<id>/
+  indexes/SESSION_INDEX_FILE   ← session list                →  conversation list
+  indexes/SEARCH_INDEX_FILE    ← full-text recall index       →  unchanged
 ```
 
 Code: `src/main/agentEventStore.ts`, rooted at `${userData}/agent/` (see
-`agentRuntime.ts:1494`). Per-clone isolation via `ELECTRON_USER_DATA_DIR`
-(CLAUDE.md).
+`agentRuntime.ts:1494`). Per-clone isolation via `ELECTRON_USER_DATA_DIR` (CLAUDE.md).
 
-**One session per command.** All fires of a command append to the same session
-(one thread, one entry in the chat list). Each fire executes with **bounded
-context** (the brief + `lastSuccessAt`), *not* a replay of the full transcript
-— otherwise cost grows with history. Opening the session to chat is a normal
-interactive run that *does* see history (you can steer it: "make it shorter").
+**One delivery conversation per command; each fire is a Run.** All fires of a command post
+into the **same delivery conversation** (one thread, one entry in the list); each fire is a
+`Run` with `trigger:{type:'node', nodeId}` anchored to that conversation
+([[agent-data-model]] — the node is the *trigger*, the conversation is the *home*; no
+conversation-less runs). Each fire executes with **bounded context** (the brief +
+`lastSuccessAt`), *not* a full-transcript replay — otherwise cost grows with history.
+Opening the conversation to chat is a normal interactive run that *does* see history (you
+can steer it: "make it shorter").
 
 **User visibility — existing UI.** The session shows up in `AgentChatPanel`
 (`src/renderer/ui/AgentDock.tsx` → `AgentChatPanel`) like any other chat. IPC

@@ -393,7 +393,11 @@ Permission:
 
 ### Runtime streaming state
 
-Add transient runtime state to `AgentSessionState`:
+Add transient runtime state **per run, not on the session singleton**. The program's F5
+splits the `AgentSessionState` bundle precisely so parallel runs don't clobber shared
+transient state, so widget streaming state must hang off the executing `Run`
+([[agent-program]] F5 / [[agent-data-model]]) — otherwise two concurrent runs emitting
+widgets would overwrite each other. Shape:
 
 ```ts
 interface StreamingVisualWidgetState {
