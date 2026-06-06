@@ -64,10 +64,15 @@ the run-log event list into a real `RunEvent` discriminated union with payloads 
 with `MessageEvent`) and pinned three load-bearing invariants — event log is the sole
 authority (everything else is a rebuildable projection), replay fidelity is gated on
 `RunMeta.retention`, and memory invalidation has one owner (runtime reconciler) + one trigger
-(branch discard/undo). **Still pending PM ratification of the overall program before M0 (the
-interface-first foundation PRs) starts**; remaining needs-PM decisions are lower-priority
-(doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3)). Escalate
-before code.
+(branch discard/undo). A fourth round (#145) mirrored the real permission-event fields into the
+`RunEvent` union and unified the residual memory paths. **M0 has now started: the data-model
+protocol types landed interface-first (#147)** — `AgentConversationEvent`/`AgentRunLogEvent`/
+`AgentMemoryEvent` unions + `AgentRunMeta`/`AgentIdentityRecord`/`AgentMemoryEntry` declared in
+`agentEventLog.ts`, the flat session log gained `user_question.*`/`widget_state.updated`
+(replay-neutral) + optional `actor`, all spec-aligned and replay-neutral (typecheck + `test:core`
+610/0). Remaining M0 work wires consumers onto these contracts. Remaining needs-PM decisions are
+lower-priority (doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3)).
+Escalate before behavior-changing code.
 
 ### Command surface & capture
 

@@ -567,6 +567,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Workspace tree rows are text-only (PR #146)** — the navigation tree no longer renders a per-node icon
+  (neither a node's own emoji nor the fixed fallback glyph the system roots Daily notes / Library / Schema /
+  Saved searches / Trash carried); those icons still show in the outliner/canvas and on the primary-nav
+  entries + workspace-root avatar, but the tree omits them so the list stays scannable. Drops
+  `renderSidebarNodeIcon`/`systemIconForNode` and the `.workspace-tree-label-icon`/`-emoji` CSS; the
+  `workspace-layout.spec.ts` guard was updated to the new DOM (15/15). Gate: typecheck + that e2e guard.
+  ([#146](https://github.com/relixiaobo/lin-outliner/pull/146))
+
 - **Agent: "Used N tools" summary glyph → chart-no-axes-gantt (PR #139)** — the collapsed process summary
   that lists tool usage swapped its `ListChecks` glyph (generic "options list") for lucide
   `ChartNoAxesGantt` (staggered bars, a "steps / process" feel), via a new `UsedToolsIcon` alias used only
@@ -986,6 +994,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Page-header icon stays visible in dark mode (PR #148)** — the neutral system-page header icons
+  (Library / Schema / Trash / Saved searches), rendered in a `.panel-header-icon` chip styled with
+  `mix-blend-mode: multiply` (tuned for a light backdrop), crushed to near-black on the dark content base
+  and read as missing (user-reported on Library). A `@media (prefers-color-scheme: dark)` override now
+  drops the blend to `normal` so the glyph renders at its intended `--muted-2` tone — the same blend-normal
+  the tagDef header icon already used. One isolated override in `panel.css`; the tag `:has()` case (higher
+  specificity, already normal) is unaffected. Gate: typecheck + CSS-specificity verification.
+  ([#148](https://github.com/relixiaobo/lin-outliner/pull/148))
+
 - **Agent stop button + streaming indicators look right (PR #137)** — the composer **stop button**
   rendered a 10px filled square inside the 28px inverse-fill disc — undersized, and near-white-on-dark
   felt off; the StopIcon is now 14px so the rounded square sits proportionally in the disc (light + dark).
@@ -1340,6 +1357,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   ([#24](https://github.com/relixiaobo/lin-outliner/pull/24))
 
 ### Internal
+
+- **Agent M0 data-model protocol types landed (interface-first, replay-neutral) (PR #147)** — the target
+  conversation/run/memory contracts from `docs/plans/agent-data-model.md` are now declared in
+  `src/core/agentEventLog.ts`: `AgentPrincipal`/`AgentId` (template-literal `sourceKind:instance:name`
+  tuple), `AgentConversationEvent` + `AgentRunLogEvent` + `AgentMemoryEvent` discriminated unions (payloads
+  per variant, incl. the full `tool.permission.checked/resolved` audit fields mirroring the real
+  `ToolPermission*Event`), `AgentRunMeta` (fingerprint + retention + trigger), `AgentIdentityRecord`,
+  `AgentMemoryEntry`. The **current flat session log** gains the `user_question.*` + `widget_state.updated`
+  event types and an optional `actor` on `AgentEventMessageRecord`; the new events replay **neutrally**
+  (bump `latestSeq`, no conversation/active-path effect) until consumers emit/project them.
+  `SkillDefinition.source` gains `'built-in'`. Pure additive contract + minimal wiring; no behavior change.
+  Gate (no `/code-review ultra` available to the agent): full manual protocol review + `typecheck` clean +
+  `test:core` 610/0 (incl. a new replay-neutral test + actor assertions), verified spec-aligned with the
+  round-4 data-model. ([#147](https://github.com/relixiaobo/lin-outliner/pull/147))
 
 - **Agent design plans adversarially reviewed (codex + gemini) and the findings closed (docs-only)** —
   the agent plan set (`agent-data-model` / `agent-conversation-model` / `agent-program` + consumers)
