@@ -1341,6 +1341,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent design plans adversarially reviewed (codex + gemini) and the findings closed (docs-only)** —
+  the agent plan set (`agent-data-model` / `agent-conversation-model` / `agent-program` + consumers)
+  was reviewed by two independent agents; the valid findings were verified against the real code and
+  applied. **Two PM-ratified decisions revised:** (1) memory writes go through a **runtime-owned,
+  event-sourced append surface** (`memory.entry_added/...`), *not* the privileged `file_write` path —
+  reversed because the file tools are realpath-jailed to `workspace.root` (`agentLocalTools.ts:2207`,
+  can't reach `userData/agent-memory`) and whole-file rewrite risks lost-update; (2) memory adds
+  **opt-in isolation tiers** (`isolated` / `read-only-global`) + `originWorkspace` over the global
+  default, motivated by a cross-project NDA-leak case. **Data-model** also gained: a run-log **retention
+  state machine** (`hot→cold-archived→summarized-only→deleted`), `RunMeta.fingerprint` (version boundary
+  for "same-fingerprint replay"), a stable `agentId` tuple (`sourceKind:sourceInstanceId:name`, no
+  cross-project collision), `meta.json` as a **projection** (+ `cursors` split out), `MessageEvent.forwarded`
+  provenance, canonical `tool.permission.*` names, and `MemoryEntry` undo-invalidation (`status` +
+  source `runId`/`eventId`). **Program** fixed M0/M1 sequencing (F2 ships the minimal run-log join in M0),
+  reframed F4 (a real internal domain bus, not the renderer-IPC `emit`), and added a permission-event
+  taxonomy row. **Consumer plans** de-session-ified (scheduled-routines / ask-user-question /
+  generative-ui → run/conversation; self-modification consistency note). No code; plans only.
+
 - **Agent data-structure design landed, then extracted into a dedicated `agent-data-model` plan** —
   a multi-pass design conversation converged the agent storage model and was written into the plans
   (docs-only; no code); the authoritative shape now lives in its own **`docs/plans/agent-data-model.md`**

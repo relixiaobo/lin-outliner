@@ -51,10 +51,18 @@ references it), with `agent-program` F2/F3/F5/F6 + the event taxonomy + protocol
 list updated to match. **Four
 foundational decisions PM-ratified (2026-06-05):** canonical DM + user-creatable Channels ·
 split-now + mixed-resolution replay (execution incl. `tool_result` in the run log) · memory
-= one global pool, pure-relevance · memory writes via a privileged `agent-memory/` path.
-**Still pending PM ratification of the overall program before M0 (the interface-first
-foundation PRs) starts**; remaining needs-PM decisions are lower-priority (doc snapshot+delta,
-group default-`addressedTo` (M3), who-configures-whom (M3)). Escalate before code.
+= global-default retrieval · memory writes via a runtime-owned surface. **The agent plans
+were then adversarially reviewed (codex + gemini, 2026-06-06) and the findings closed:**
+two decisions revised — **memory writes = runtime-owned event-sourced append surface** (the
+privileged `file_write` path was mechanically impossible — file tools are realpath-jailed to
+`workspace.root`) and **memory adds opt-in isolation tiers** over the global default (NDA
+leak); plus version-fingerprint + retention state machine + stable `agentId` tuple +
+`meta`-as-projection + forwarding/permission schemas in `agent-data-model`, F2-minimal-join
++ F4-real-domain-bus + permission-taxonomy in `agent-program`, and the consumer plans
+de-session-ified. **Still pending PM ratification of the overall program before M0 (the
+interface-first foundation PRs) starts**; remaining needs-PM decisions are lower-priority
+(doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3)). Escalate
+before code.
 
 ### Command surface & capture
 
