@@ -203,17 +203,40 @@ interface RunMeta {                     // runs/<id>/meta.json
   createdAt: number;
 }
 
-type RunEventType =                     // runs/<id>/events.jsonl — ★ ALL execution detail lives here, anchored to runId
-  | 'run.started' | 'run.completed' | 'run.failed' | 'run.cancelled'
-  | 'assistant_message.started' | 'assistant_message.delta' | 'assistant_message.completed'  // incl. intermediate tool-calling turns
-  | 'thinking.delta'
-  | 'tool_call.started' | 'tool_call.completed' | 'tool_call.failed'
-  | 'tool_result.created'               // ★ tool_result lives ONLY here, never the conversation log
-  | 'tool.permission.checked' | 'tool.permission.resolved'   // canonical names pinned in agent-program M0 taxonomy
-                                                             //   (reconciles today's checked/resolved + approval.* dual-track, keyed by request id)
-  // ── run-scoped INTERACTION / UI-STATE events (consumed by ask-user + gen-ui; persisted here for restore) ──
-  | 'user_question.requested' | 'user_question.answered' | 'user_question.cancelled'   // [[agent-ask-user-question-tool]]
-  | 'widget_state.updated';             // [[agent-generative-ui]] — emitted during a tool call (carries toolCallId/messageId)
+interface RunEventBase {                // one line in runs/<id>/events.jsonl
+  v: 1; eventId: string; seq: number; createdAt: number;   // seq = order · createdAt = wall-clock
+  runId: string;                        // the anchor — every run event carries it (→ conversationId via RunMeta)
+}
+// ★ ALL execution detail lives here; a DISCRIMINATED UNION on `type` — each variant carries ONLY its own payload
+// (symmetric with MessageEvent above). The M0 interface-first PR ships THIS, not a bare event-name list.
+type RunEvent =
+  // ── run lifecycle ──
+  | (RunEventBase & { type: 'run.started' })
+  | (RunEventBase & { type: 'run.completed'; usage?: Usage })                       // run-level Σ → RunMeta.usage (§9)
+  | (RunEventBase & { type: 'run.failed'; error: { code: string; message: string } })
+  | (RunEventBase & { type: 'run.cancelled'; reason?: string })
+  // ── assistant message (incl. intermediate tool-calling turns; deltas stream, completed is the durable one) ──
+  | (RunEventBase & { type: 'assistant_message.started'; messageId: string })
+  | (RunEventBase & { type: 'assistant_message.delta'; messageId: string; delta: AgentPersistedContent })
+  | (RunEventBase & { type: 'assistant_message.completed';
+      messageId: string; content: AgentPersistedContent[]; usage: Usage })          // per-message token + cost (§9)
+  | (RunEventBase & { type: 'thinking.delta'; messageId: string; delta: string })
+  // ── tool call / result (the pair BOTH live here — §8 tool-pair safety) ──
+  | (RunEventBase & { type: 'tool_call.started'; toolCallId: string; messageId: string; name: string; input: unknown })
+  | (RunEventBase & { type: 'tool_call.completed'; toolCallId: string })
+  | (RunEventBase & { type: 'tool_call.failed'; toolCallId: string; error: { code: string; message: string } })
+  | (RunEventBase & { type: 'tool_result.created';                                  // ★ tool_result lives ONLY here, never the conversation log
+      toolCallId: string; content: AgentPersistedContent[]; isError?: boolean })
+  // ── permission (canonical names pinned in agent-program M0 taxonomy; keyed by requestId, reconciles checked/resolved + approval.* dual-track) ──
+  | (RunEventBase & { type: 'tool.permission.checked'; requestId: string; toolCallId: string; name: string; input: unknown })
+  | (RunEventBase & { type: 'tool.permission.resolved'; requestId: string; decision: 'allow' | 'deny'; scope?: 'once' | 'always' })
+  // ── run-scoped INTERACTION / UI-STATE (consumed by ask-user + gen-ui; persisted here so a paused run / widget restores) ──
+  | (RunEventBase & { type: 'user_question.requested';                              // [[agent-ask-user-question-tool]] §7 UserQuestionRunEvent
+      requestId: string; toolCallId: string; request: AgentUserQuestionRequestView })
+  | (RunEventBase & { type: 'user_question.answered'; requestId: string; result: AskUserQuestionResult })
+  | (RunEventBase & { type: 'user_question.cancelled'; requestId: string; reason?: string })
+  | (RunEventBase & { type: 'widget_state.updated';                                 // [[agent-generative-ui]] — emitted during a tool call
+      toolCallId: string; messageId: string; currentState: unknown });
 ```
 
 **Where the interaction / widget events live.** `user_question.*` and `widget_state.updated`
@@ -549,8 +572,26 @@ agent.skills[]          ──▶ skills/ file tree
 13. Memory retrieval is **global by default** with per-agent opt-in isolation tiers;
     `originWorkspace` is on every entry; a `MemoryEntry` whose source branch is
     discarded/undone is **invalidated**, not silently kept.
-14. `meta.json` is a **projection** of membership/rename events (the event log is the
-    authority); `cursors` are per-principal UI state, outside the objective record.
+14. **The event-log stream is the sole authority; everything else is a rebuildable
+    projection.** `meta.json`, the checkpoint/snapshot, `index.json`, the render
+    projection, and the in-memory pending-interaction/widget state are all caches derived
+    from `(conversation segments ∪ run events ∪ memory events)` — discardable and
+    rebuildable from the log. A consumer never treats a projection as truth, and a writer
+    never mutates a projection without an event behind it. `cursors` are per-principal UI
+    state, outside the objective record entirely (not even a projection of it).
+15. **Replay fidelity is gated on `RunMeta.retention`; never promised unconditionally.**
+    A run is byte-faithfully replayable (within its `fingerprint` version boundary) **only
+    while `hot` or `cold-archived`**; once `summarized-only` or `deleted` the verbatim
+    request is gone *by design* and only the distillation summary survives. Any consumer
+    claiming "replay" or "full audit" MUST read `retention` first and degrade to the
+    summary otherwise — §9's fidelity and §10's self-clean are reconciled by this gate,
+    not in tension.
+16. **Memory invalidation has one owner and one trigger.** When a conversation branch is
+    discarded or a turn is undone, the **runtime memory reconciler** (the D1 append-surface
+    owner, never the agent) emits `memory.entry_updated` flipping `status` to `invalidated`
+    for every `MemoryEntry` whose `source.runId`/`source.eventId` falls in the orphaned
+    range. Invalidation is event-sourced (auditable, reversible), excluded from injection,
+    and never a silent in-place delete (cf. invariant 13 / gemini#5).
 
 ### Real today vs build
 

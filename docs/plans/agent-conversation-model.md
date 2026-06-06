@@ -237,8 +237,9 @@ memory (accumulated)   the memory line — visible, editable, deletable
   express (multi-section prompt `agentSystemPrompt.ts:15`; per-turn reminders
   `agentRuntime.ts:640`; permission classifier + approval handler ~`:3310,3345`;
   context manager 8-callback `:302`; provider/model/OAuth (`createConfiguredAgent :3276`); compaction + `/compact`
-  `:388,625`). What v1 needs is far smaller: **a stable identity record** (a `name`)
-  that the memory line attaches to. Promoting the main agent to a real on-disk
+  `:388,625`). What v1 needs is far smaller: **a stable identity record** (the `agentId`
+  tuple `sourceKind:sourceInstanceId:name`, not a bare display name — [[agent-data-model]]
+  §3) that the memory line attaches to. Promoting the main agent to a real on-disk
   definition is deferred to P3 (when there is genuinely more than one agent).
 - **Memory is not in `.agents/`.** Agent definitions there are read-only, loaded
   once at startup and cached (`agentSubagents.ts:1141,1255`), and may be
@@ -777,7 +778,8 @@ reactive retry + main-loop steering (`:388,625,3496`). Estimated ~1–2k LoC,
 <30% reusable.
 
 **Response:** v1 does **not** do this. The actual need is "the main agent has a
-stable identity (a `name`) the memory line attaches to" — a tiny change. The full
+stable identity (the `agentId` tuple, not a bare `name`) the memory line attaches to" — a
+tiny change. The full
 registry unification is **moved to P3**, where it pays for itself (multiple real
 agents). Genuinely reusable today: the permission system, compaction, and tool
 factory are already shared/parameterized.
@@ -805,10 +807,11 @@ Dream — not a full `tools:['*']` fork.)
 and dual-scoped (user vs project). Putting mutable memory there conflicts (no
 reload; config pollution; ambiguous "global" home; file-permission questions).
 
-**Response:** memory lives in `userData/agent/agent-memory/<source>_<name>/`
-(runtime, mutable), separate from read-only config, keyed by an explicit identity
-tuple. `past_chats` stays transcript-shaped (just sessions→conversations); the
-memory line is a separate store. No migration — wipe dev data.
+**Response:** memory lives in `userData/agent/agents/<agentId>/memory/events.jsonl`
+(runtime, mutable, **event-sourced**), separate from read-only config, keyed by the stable
+`agentId` tuple (`sourceKind:sourceInstanceId:name`). `past_chats` stays transcript-shaped
+(just sessions→conversations); the memory line is a separate store. No migration — wipe dev
+data.
 
 ## Code mapping (current → target)
 
@@ -824,7 +827,7 @@ pi-agent-core.
 scope); conversation gains `Principal`-based `members` (`cursors` is a **separate**
 per-principal store, not a conversation field) (**no stored
 `kind`**); `RunMeta` (anchor + `trigger`); the main agent gets a stable identity record
-(a `name`), **without** the registry refactor.
+(the `agentId` tuple, not a bare `name`), **without** the registry refactor.
 
 **BUILD** — the memory line: `agent-memory/<identity>/` store + a memory tool +
 profile UI (view/edit/forget) + the v1 inline-write prompt + reminder-stack
