@@ -343,10 +343,9 @@ test.describe('workspace layout resizing', () => {
       const rootAvatar = document.querySelector('.sidebar-root-avatar');
       const firstRow = tree.querySelector('.workspace-tree-row');
       const firstChevron = firstRow?.querySelector('.workspace-tree-chevron-button');
-      const firstContent = firstRow?.querySelector('.workspace-tree-label-icon, .workspace-tree-label-text');
-      // The row's label TEXT specifically — its colour is the de-emphasis baseline
-      // the chevron is compared against (the leading label-icon now shares the
-      // chevron's muted tone, so it is not a useful contrast probe).
+      // Tree rows are text-only (no node icon), so the label text is the leading
+      // content and doubles as the de-emphasis baseline the chevron compares against.
+      const firstContent = firstRow?.querySelector('.workspace-tree-label-text');
       const firstLabelText = firstRow?.querySelector('.workspace-tree-label-text');
       const sidebarDock = document.querySelector('.sidebar-dock');
       const activePanel = document.querySelector('.outline-panel-surface.active-panel');
@@ -456,15 +455,14 @@ test.describe('workspace layout resizing', () => {
     await expect(workspaceTree).toContainText('2026-05-13');
   });
 
-  test('system workspace nodes render their fixed fallback icon', async ({ page }) => {
+  test('workspace tree rows are text-only (no node icon)', async ({ page }) => {
     const workspaceTree = page.getByLabel('Workspace root tree');
-    // System roots carry no icon of their own, so each falls back to a fixed glyph
-    // matching its primary-nav shortcut (calendar on Daily Notes, library / schema /
-    // search / trash on the others).
+    // Tree rows intentionally omit the node icon (system fallback glyph or the
+    // node's own emoji) to stay scannable; the icon still renders in the outliner.
     for (const name of ['Daily Notes', 'Library', 'Schema', 'Saved searches', 'Trash']) {
       const row = workspaceTree.locator('.workspace-tree-row', { hasText: name }).first();
       await expect(row).toBeVisible();
-      await expect(row.locator('.workspace-tree-label-icon')).toHaveCount(1);
+      await expect(row.locator('.workspace-tree-label-icon')).toHaveCount(0);
     }
   });
 

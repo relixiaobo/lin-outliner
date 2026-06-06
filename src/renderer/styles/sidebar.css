@@ -311,21 +311,6 @@
   text-align: left;
 }
 
-.workspace-tree-label-icon {
-  width: var(--sidebar-tree-icon-size);
-  height: var(--sidebar-tree-icon-size);
-  flex: 0 0 var(--sidebar-tree-icon-size);
-  color: var(--text-faint);
-}
-
-.workspace-tree-label-emoji {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--font-ui-sm);
-  line-height: var(--sidebar-tree-icon-size);
-}
-
 .workspace-tree-label-text {
   min-width: 0;
   overflow: hidden;

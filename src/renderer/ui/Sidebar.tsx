@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
@@ -9,11 +9,8 @@ import {
   LibraryIcon,
   PinIcon,
   RecentsIcon,
-  SearchIcon,
   SettingsIcon,
   SupertagIcon,
-  TrashIcon,
-  type AppIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
@@ -78,7 +75,6 @@ export function Sidebar(props: SidebarProps) {
     const expanded = props.expandedIds.has(node.id);
     const active = props.rootId === node.id || props.rootId === presentation.navigateId;
     const label = presentation.label;
-    const nodeIcon = renderSidebarNodeIcon(childParent, props.projection);
     const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
 
     return (
@@ -100,13 +96,12 @@ export function Sidebar(props: SidebarProps) {
             )}
           </ButtonControl>
           <ButtonControl
-            className={`workspace-tree-label ${nodeIcon ? 'has-icon' : 'no-icon'}`}
+            className="workspace-tree-label"
             onClick={(event) => {
               if (event.altKey) props.onOpenPanel(presentation.navigateId);
               else props.onNavigateRoot(presentation.navigateId);
             }}
           >
-            {nodeIcon}
             <span className="workspace-tree-label-text">{label}</span>
           </ButtonControl>
         </div>
@@ -265,40 +260,9 @@ function sidebarChildren(
     ));
 }
 
-// Workspace-tree items show a node's own icon when it has one; the system roots
-// (Daily notes, Library, Schema, Saved searches, Trash) carry no icon of their
-// own, so they fall back to a fixed glyph that matches their primary-nav shortcut.
-function renderSidebarNodeIcon(node: NodeProjection, projection: DocumentProjection): ReactNode {
-  const icon = nodeIconOf(node);
-  if (icon) {
-    return (
-      <span className="workspace-tree-label-icon workspace-tree-label-emoji" aria-hidden="true">
-        {icon}
-      </span>
-    );
-  }
-
-  const SystemIcon = systemIconForNode(node.id, projection);
-  if (!SystemIcon) return null;
-  return (
-    <SystemIcon
-      aria-hidden="true"
-      className="workspace-tree-label-icon"
-      size={ICON_SIZE.menu}
-      strokeWidth={1.75}
-    />
-  );
-}
-
-function systemIconForNode(nodeId: NodeId, projection: DocumentProjection): AppIcon | null {
-  if (nodeId === projection.dailyNotesId) return CalendarIcon;
-  if (nodeId === projection.libraryId) return LibraryIcon;
-  if (nodeId === projection.schemaId) return SupertagIcon;
-  if (nodeId === projection.searchesId) return SearchIcon;
-  if (nodeId === projection.trashId) return TrashIcon;
-  return null;
-}
-
+// Workspace-tree rows are text-only. A node's icon (its own emoji, or the fixed
+// glyph the system roots fall back to) renders in the outliner/canvas, but the
+// tree intentionally omits it so the navigation list stays scannable.
 function nodeIconOf(node: NodeProjection) {
   const icon = node.icon;
   return typeof icon === 'string' && icon.trim() ? icon.trim() : null;

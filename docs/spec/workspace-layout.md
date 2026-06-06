@@ -119,13 +119,16 @@ workspace root outline. Recents is a saved search node rather than bespoke
 sidebar logic; the root outline renders all real root children (Daily notes,
 Library, Schema, Saved searches, Trash, Settings — none hidden). The current
 workspace root itself is a clickable row with a compact avatar. Sidebar rows
-share one content axis for text and icons; tree chevrons sit in the auxiliary
-gutter before that axis, so they never push the main content inward. The content
-axis starts `20px` from the sidebar edge; rows extend to the sidebar edge so the
-only visual gap to the canvas is the standard shell gap. Chevrons use a compact
-`16px` hit area that starts `4px` from the sidebar edge. Sidebar rows use a
-slightly roomier navigation rhythm than dense controls, with a 28px row height
-and 16px icon slots. Chevrons stay low-contrast. Primary sidebar entries use the
+share one content axis; primary-nav entries and the workspace-root avatar sit on
+it with a 16px icon, but workspace-tree rows are text-only — a node's icon (its
+own emoji, or the fixed fallback glyph for the system roots) renders in the
+outliner, not in the tree, so the navigation list stays scannable. Tree chevrons
+sit in the auxiliary gutter before that axis, so they never push the main content
+inward. The content axis starts `20px` from the sidebar edge; rows extend to the
+sidebar edge so the only visual gap to the canvas is the standard shell gap.
+Chevrons use a compact `16px` hit area that starts `4px` from the sidebar edge.
+Sidebar rows use a slightly roomier navigation rhythm than dense controls, with a
+28px row height. Chevrons stay low-contrast. Primary sidebar entries use the
 shared neutral control hover fill; the workspace root outline stays
 background-free on hover and only deepens the row text/icon color.
 
