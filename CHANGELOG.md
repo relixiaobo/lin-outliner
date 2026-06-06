@@ -1358,6 +1358,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent M1 memory v1 landed (PR #152)** — first M1 slice: an event-sourced, per-agent durable memory layer.
+  Adds a `memory` agent tool (list/remember/update/forget), three IPC commands
+  (`agent_list_memory`/`agent_update_memory`/`agent_forget_memory`), a bounded `<agent-memory>` reminder injected
+  per turn (score-ranked relevant facts merged with the latest, deduped to 8), and a renderer Memory settings UI
+  (edit/forget with provenance). `past_chats` stays raw-transcript recall; memory is the durable-fact layer. As
+  part of landing it, the three agent event-log families (conversation, run, memory) were **unified onto one
+  `AppendOnlySeqLog<TEvent>` primitive** — single-sourced JSONL serialize/read/tail (the #150
+  `readLastNonEmptyLine` chunk-boundary bug class now lives in exactly one place), seq allocation + per-key write
+  queue + seq cache, and offset-bounded reads — replacing the duplicated per-family scaffolding. Memory gets a
+  projected-state cache (no whole-log re-read/re-sort on the per-turn prompt path), churn-based log compaction
+  (`atomicWriteFile` rewrite, gated ≥64 events and ≥2× churn), and is brought under the store-owned clean-cut.
+  Review: high-effort adversarial pass (7 finder angles) surfaced 7 correctness findings + the altitude call to
+  generalize rather than ship a third parallel log; PM ratified generalizing in-cycle; codex fixed all and
+  re-verified. Gate: typecheck + `test:core` 636/0 + `test:renderer` 355/0 + agent/workspace-layout e2e 78/0
+  (runtime restore/chat path included since the generalization touched the conversation/run logs). **Next: the
+  rest of M1** — canonical DM/Channels, mixed-resolution memory retrieval, ask_user_question, config tool, skill
+  self-authoring.
 - **Agent M0.5 clean cut landed (PR #151)** — removed the residual `session*` bridge debt now that M0 has
   shipped. The public protocol/IPC/renderer surface is renamed from `session*` to `conversation*` while the
   internal event-log key stays `sessionId` (same string value); the two are joined by an explicit, single

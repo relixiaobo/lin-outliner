@@ -90,10 +90,16 @@ event-log key stays `sessionId`, same value), joined by a single explicit transl
 `emitConversationRuntimeEvent` translator + past-chats `entryConversationId`/`conversationFieldsForEntry`);
 the UI-list `AgentConversationMeta` is renamed `AgentConversationListMeta` to clear the M0-data-model
 collision; the `metricConversation` i18n label, the workspace-layout localStorage key (`v2`→`v3`), and an
-orphaned legacy `session-index.json` sweep are all fixed. **Next: M1** (memory v1 · canonical DM + Channels ·
-mixed-resolution · ask_user_question · config tool · skill self-authoring — the bulk of perceived value).
-Remaining needs-PM decisions are lower-priority (doc snapshot+delta, group default-`addressedTo` (M3),
-who-configures-whom (M3)). Escalate before behavior-changing code.
+orphaned legacy `session-index.json` sweep are all fixed. **M1 has STARTED — memory v1 LANDED (#152):** the
+first M1 slice ships an event-sourced per-agent durable memory layer — `memory` tool (list/remember/update/
+forget), 3 IPC commands, a per-turn bounded `<agent-memory>` reminder (score-ranked relevant ∪ latest, deduped
+to 8), and a Memory settings UI. Per a PM scope call, the three event-log families (conversation/run/memory)
+were **unified onto one `AppendOnlySeqLog<TEvent>` primitive** (single-sourced serialize/read/tail — the #150
+tail-bug class now lives in one place — + seq/queue/cache + offset reads), and memory got a projected-state
+cache + churn-based compaction + clean-cut coverage. **Next: rest of M1** (canonical DM + Channels ·
+mixed-resolution memory retrieval · ask_user_question · config tool · skill self-authoring — the bulk of
+perceived value). Remaining needs-PM decisions are lower-priority (doc snapshot+delta, group
+default-`addressedTo` (M3), who-configures-whom (M3)). Escalate before behavior-changing code.
 
 ### Command surface & capture
 
