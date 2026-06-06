@@ -674,6 +674,24 @@ export interface AgentConversationListMeta {
   messageCount: number;
 }
 
+export interface AgentMemorySourceView {
+  conversationId: string;
+  summaryId?: string;
+  messageRange?: [string, string];
+  runId?: string;
+  eventId?: string;
+}
+
+export interface AgentMemoryEntryView {
+  id: string;
+  agentId: string;
+  fact: string;
+  originWorkspace?: string;
+  sources: AgentMemorySourceView[];
+  status: 'active' | 'invalidated';
+  createdAt: number;
+}
+
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';

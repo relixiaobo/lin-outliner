@@ -8,6 +8,7 @@ import type {
   AgentProviderSettingsView,
   AgentReasoningLevel,
   AgentDefinition,
+  AgentMemoryEntryView,
   AgentToolPermissionSettingsView,
   SkillDefinition,
 } from '../../api/types';
@@ -18,10 +19,14 @@ import {
   BrainIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CheckIcon,
+  CloseIcon,
   DatabaseIcon,
   ICON_SIZE,
   PasswordIcon,
+  PencilIcon,
   SettingsIcon,
+  TrashIcon,
   WarningIcon,
 } from '../icons';
 import type { ThemeMode } from '../../../core/theme';
@@ -50,7 +55,7 @@ interface AgentSettingsViewProps {
   conversationId?: string;
 }
 
-type SettingsCategory = 'general' | 'providers' | 'permissions' | 'skills' | 'agents';
+type SettingsCategory = 'general' | 'providers' | 'permissions' | 'memory' | 'skills' | 'agents';
 type SettingsRoute =
   | { type: 'category'; category: SettingsCategory }
   | { type: 'agent-detail'; agentName: string };
@@ -158,11 +163,12 @@ const EMPTY_DRAFT: DraftConfig = {
 // Theme segment values and category rail order; their visible labels + hints are
 // localized at render (settings.general.theme* and settings.categories.*).
 const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
-const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'permissions', 'skills', 'agents'];
+const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'permissions', 'memory', 'skills', 'agents'];
 const SETTINGS_CATEGORY_ICONS = {
   general: SettingsIcon,
   providers: DatabaseIcon,
   permissions: PasswordIcon,
+  memory: BrainIcon,
   skills: BrainIcon,
   agents: AgentIcon,
 } satisfies Record<SettingsCategory, AppIcon>;
@@ -241,6 +247,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinition[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
+  const [memoryEntries, setMemoryEntries] = useState<AgentMemoryEntryView[]>([]);
+  const [loadingMemory, setLoadingMemory] = useState(false);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [memoryDraftFact, setMemoryDraftFact] = useState('');
+  const [memorySavingId, setMemorySavingId] = useState<string | null>(null);
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
@@ -383,6 +394,21 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
         })
         .finally(() => {
           if (isCurrentRequest(id)) setLoadingSkills(false);
+        });
+    } else if (category === 'memory') {
+      const id = beginRequest();
+      setLoadingMemory(true);
+      setError(null);
+      setNotice(null);
+      api.agentListMemory({ includeInvalidated: true, limit: 200 })
+        .then((entries) => {
+          if (isCurrentRequest(id)) setMemoryEntries(entries);
+        })
+        .catch((caught) => {
+          if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
+        })
+        .finally(() => {
+          if (isCurrentRequest(id)) setLoadingMemory(false);
         });
     } else if (category === 'agents') {
       const id = beginRequest();
@@ -567,6 +593,65 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
       return { ...current, disabledAgents: disabled };
     });
   };
+
+  function startEditMemory(entry: AgentMemoryEntryView) {
+    if (entry.status !== 'active') return;
+    setEditingMemoryId(entry.id);
+    setMemoryDraftFact(entry.fact);
+    setError(null);
+    setNotice(null);
+  }
+
+  function cancelEditMemory() {
+    setEditingMemoryId(null);
+    setMemoryDraftFact('');
+  }
+
+  async function saveMemory(entry: AgentMemoryEntryView) {
+    const fact = memoryDraftFact.trim();
+    if (!fact) {
+      setError(t.settings.memory.emptyFactError);
+      return;
+    }
+    setMemorySavingId(entry.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await api.agentUpdateMemory(entry.id, fact);
+      if (!updated) {
+        setError(t.settings.memory.notFoundError);
+      } else {
+        setMemoryEntries((current) => current.map((item) => item.id === updated.id ? updated : item));
+        setEditingMemoryId(null);
+        setMemoryDraftFact('');
+        setNotice(t.settings.memory.updatedNotice);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setMemorySavingId(null);
+    }
+  }
+
+  async function forgetMemory(entry: AgentMemoryEntryView) {
+    setMemorySavingId(entry.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const forgotten = await api.agentForgetMemory(entry.id);
+      if (!forgotten) {
+        setError(t.settings.memory.notFoundError);
+      } else {
+        setMemoryEntries((current) => current.map((item) => item.id === forgotten.id ? forgotten : item));
+        if (editingMemoryId === entry.id) cancelEditMemory();
+        setNotice(t.settings.memory.forgottenNotice);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setMemorySavingId(null);
+    }
+  }
 
   // Open the per-provider config in its OWN native window (a modal child of
   // settings — the macOS idiom), not an in-renderer overlay. Clicking a row or
@@ -782,6 +867,85 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                     ))}
                   </InsetGroup>
                 ) : null}
+              </section>
+            ) : category === 'memory' ? (
+              <section className="agent-settings-section settings-memory-section" aria-label={t.settings.memory.sectionAriaLabel}>
+                {loadingMemory ? (
+                  <div className="agent-settings-empty">{t.settings.memory.loading}</div>
+                ) : memoryEntries.length === 0 ? (
+                  <div className="agent-settings-empty">{t.settings.memory.empty}</div>
+                ) : (
+                  <InsetGroup ariaLabel={t.settings.memory.entriesAriaLabel} label={t.settings.memory.entriesGroup}>
+                    {memoryEntries.map((entry) => {
+                      const isEditing = editingMemoryId === entry.id;
+                      const isSavingMemory = memorySavingId === entry.id;
+                      const disabled = entry.status !== 'active';
+                      return (
+                        <InsetRow
+                          disabled={disabled}
+                          key={entry.id}
+                          label={isEditing ? (
+                            <textarea
+                              aria-label={t.settings.memory.editFactLabel}
+                              className="settings-memory-editor"
+                              onChange={(event) => setMemoryDraftFact(event.target.value)}
+                              rows={3}
+                              value={memoryDraftFact}
+                            />
+                          ) : (
+                            <span className="settings-memory-fact">{entry.fact}</span>
+                          )}
+                          sublabel={(
+                            <span className="settings-memory-meta">
+                              <span className="settings-chip">{memoryStatusLabel(entry, t)}</span>
+                              <span>{t.settings.memory.createdAt({ date: formatSettingsDate(entry.createdAt) })}</span>
+                            </span>
+                          )}
+                          trailing={disabled ? undefined : isEditing ? (
+                            <span className="settings-memory-actions">
+                              <IconButton
+                                disabled={isSavingMemory}
+                                icon={CheckIcon}
+                                iconSize={ICON_SIZE.menu}
+                                label={t.settings.memory.saveEdit}
+                                onClick={() => void saveMemory(entry)}
+                                variant="panel"
+                              />
+                              <IconButton
+                                disabled={isSavingMemory}
+                                icon={CloseIcon}
+                                iconSize={ICON_SIZE.menu}
+                                label={t.settings.memory.cancelEdit}
+                                onClick={cancelEditMemory}
+                                variant="panel"
+                              />
+                            </span>
+                          ) : (
+                            <span className="settings-memory-actions">
+                              <IconButton
+                                disabled={isSavingMemory}
+                                icon={PencilIcon}
+                                iconSize={ICON_SIZE.menu}
+                                label={t.settings.memory.editEntry}
+                                onClick={() => startEditMemory(entry)}
+                                variant="panel"
+                              />
+                              <IconButton
+                                disabled={isSavingMemory}
+                                icon={TrashIcon}
+                                iconSize={ICON_SIZE.menu}
+                                label={t.settings.memory.forgetEntry}
+                                onClick={() => void forgetMemory(entry)}
+                                variant="panel"
+                              />
+                            </span>
+                          )}
+                          wrap
+                        />
+                      );
+                    })}
+                  </InsetGroup>
+                )}
               </section>
             ) : category === 'skills' ? (
               <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
@@ -1089,6 +1253,21 @@ function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
   if (!provider.enabled) return s.disabled;
   if (!provider.hasCredential) return s.needsKey;
   return provider.active ? s.active : s.ready;
+}
+
+function memoryStatusLabel(entry: AgentMemoryEntryView, t: Messages): string {
+  return entry.status === 'active' ? t.settings.memory.activeStatus : t.settings.memory.invalidatedStatus;
+}
+
+function formatSettingsDate(timestamp: number): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(timestamp));
+  } catch {
+    return new Date(timestamp).toLocaleString();
+  }
 }
 
 function preferredProviderIndex(providerId: string): number {

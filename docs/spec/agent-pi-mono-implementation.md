@@ -589,13 +589,14 @@ one tool per UI command. Tag, field, reference, move, and merge behavior
 belong inside `node_create` and `node_edit` semantics, not separate `node_tag`,
 `node_field`, or `node_move` tools.
 
-### P1 Tools
+### P1 Agent Tools
 
-Add these after the active tool surface remains reliable in real workflows.
+These agent-level tools are active on top of the P0 local/document surface.
 
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `past_chats` | nodex `past_chats` | Yes | No | Search and read older Tenon agent conversations. |
+| `memory` | Tenon agent memory store | Yes | No | List, remember, update, or forget durable facts for the local agent. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
 
@@ -626,6 +627,7 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `bash` for shell execution.
 - `task_stop` for stopping background commands created by `bash`.
 - `past_chats` for conversation history.
+- `memory` for explicit durable agent facts.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:
@@ -636,8 +638,9 @@ Do not use:
   `node_batch`: they force the model to learn a second mini-protocol and make
   permission boundaries less clear.
 
-The current implementation configures the P0 tools listed above. Additional
-tools should be added by product need, not because a reference project has them.
+The current implementation configures the P0 tools and the P1 agent tools listed
+above. Additional tools should be added by product need, not because a reference
+project has them.
 
 ## TypeScript Tool Commands
 
@@ -694,6 +697,7 @@ Likely immediate tools:
 - Read outliner nodes with `node_read`.
 - Search outliner content with `node_search`.
 - List operation history.
+- Read or update explicit local agent memory with `memory`.
 - Read files under the workspace when permission mode allows it.
 - Search or fetch the web when web access is enabled.
 

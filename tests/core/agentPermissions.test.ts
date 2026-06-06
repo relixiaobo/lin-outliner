@@ -179,6 +179,7 @@ describe('agent permissions', () => {
       ['node_edit', { node_id: 'node:1', old_string: 'a', new_string: 'b' }, 'allow', undefined],
       ['node_delete', { node_id: 'node:1' }, 'ask', 'outline.delete'],
       ['file_write', { file_path: '/tmp/workspace/a.txt', content: 'a' }, 'allow', undefined],
+      ['memory', { action: 'remember', fact: 'User prefers direct answers.' }, 'allow', undefined],
       ['bash', { command: 'npm publish --dry-run' }, 'ask', 'deploy_or_publish'],
     ] as const;
 
@@ -198,6 +199,17 @@ describe('agent permissions', () => {
       policy: { workspaceRoot },
     });
     expect(permissionWrite).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+
+    const memory = evaluateAgentToolPermission({
+      toolName: 'memory',
+      args: { action: 'remember', fact: 'User prefers direct answers.' },
+      policy: { mode: 'restricted', workspaceRoot },
+    });
+    expect(memory).toMatchObject({
+      behavior: 'allow',
+      access: 'control',
+      descriptor: { actionKind: 'agent.memory.manage' },
+    });
   });
 
   test('matches allowed-tools rules for restricted mode preapproval', () => {

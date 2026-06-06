@@ -59,6 +59,8 @@ import {
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentIdentityRecord,
+  type AgentMemoryEntry,
+  type AgentMemorySource,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentRunFingerprint,
@@ -87,6 +89,7 @@ import {
 } from './agentDebugProjection';
 import {
   AgentEventStore,
+  MAX_AGENT_MEMORY_FACT_CHARS,
 } from './agentEventStore';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
@@ -166,8 +169,10 @@ import type {
   AgentReasoningLevel,
   AgentRuntimeSettings,
   AgentConversationListMeta,
+  AgentMemoryEntryView,
   AgentSlashCommandView,
 } from '../core/types';
+import type { AgentMemoryToolRuntime } from './agentMemoryTool';
 import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
@@ -417,6 +422,29 @@ export class AgentRuntime {
 
   listConversations() {
     return this.listEventConversations();
+  }
+
+  async listMemory(options: { includeInvalidated?: boolean; limit?: number } = {}): Promise<AgentMemoryEntryView[]> {
+    const entries = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+      includeInvalidated: options.includeInvalidated,
+      limit: options.limit ?? 200,
+    });
+    return entries.map(agentMemoryEntryToView);
+  }
+
+  async updateMemory(memoryId: string, fact: string): Promise<AgentMemoryEntryView | null> {
+    const normalizedFact = fact.trim();
+    if (!normalizedFact) throw new Error('Memory fact cannot be empty.');
+    if (normalizedFact.length > MAX_AGENT_MEMORY_FACT_CHARS) {
+      throw new Error(`Memory fact must be ${MAX_AGENT_MEMORY_FACT_CHARS} characters or fewer.`);
+    }
+    const entry = await this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact: normalizedFact });
+    return entry ? agentMemoryEntryToView(entry) : null;
+  }
+
+  async forgetMemory(memoryId: string): Promise<AgentMemoryEntryView | null> {
+    const entry = await this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'user');
+    return entry ? agentMemoryEntryToView(entry) : null;
   }
 
   async listSlashCommands(conversationId: string): Promise<AgentSlashCommandView[]> {
@@ -691,8 +719,10 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
+      const memoryReminder = await this.buildMemoryReminder(messageText);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
+        memoryReminder,
         outlinerContext,
         userViewReminderText,
       ]);
@@ -706,6 +736,7 @@ export class AgentRuntime {
         ? null
         : await this.buildAgentListingReminder(session);
       const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, attachments, {
+        memoryReminder,
         outlinerContext,
         userViewContextReminder: userViewReminderText,
         skillListingReminder,
@@ -842,6 +873,7 @@ export class AgentRuntime {
     session.queuedFollowUpSkillListingReservation = skillListingReservation;
     const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
     session.agent.followUp(buildUserPromptMessage(text, [], {
+      memoryReminder: await this.buildMemoryReminder(text),
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder,
       skillListingReminder: skillListingReservation?.text ?? null,
@@ -1078,6 +1110,7 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           subagentRuntime,
+          memory: this.createMemoryToolRuntime(() => sessionId, () => sessionRef.current),
           pastChats: {
             service: this.getPastChatsService(),
             currentConversationId: () => sessionId,
@@ -1228,6 +1261,7 @@ export class AgentRuntime {
       skillRuntime: session.skillRuntime,
       skillToolEnabled: session.runtimeSettings.automaticSkillsEnabled,
       subagentRuntime: session.subagentRuntime,
+      memory: this.createMemoryToolRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
       pastChats: {
         service: this.getPastChatsService(),
         currentConversationId: () => session.eventState.session?.id ?? null,
@@ -1865,6 +1899,61 @@ export class AgentRuntime {
   private getPastChatsService() {
     this.pastChatsService ??= new AgentPastChatsService(this.getEventStore());
     return this.pastChatsService;
+  }
+
+  private createMemoryToolRuntime(
+    getSessionId: () => string,
+    getSession: () => AgentSessionState | null,
+  ): AgentMemoryToolRuntime {
+    return {
+      list: (options) => this.getEventStore().queryMemoryEntries(this.agentIdentity.agentId, {
+        query: options.query,
+        includeInvalidated: options.includeInvalidated,
+        limit: options.limit,
+      }),
+      remember: (fact) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        return this.getEventStore().addMemoryEntry(this.agentIdentity.agentId, {
+          fact,
+          originWorkspace: this.memoryOriginWorkspace(),
+          sources: this.memorySources(getSessionId(), session),
+        });
+      },
+      update: (memoryId, fact) => this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact }),
+      forget: (memoryId) => this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'agent'),
+    };
+  }
+
+  private async buildMemoryReminder(query: string): Promise<string | null> {
+    try {
+      const relevant = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+        query,
+        limit: 8,
+      });
+      const latest = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, { limit: 8 });
+      const entries = uniqueMemoryEntries([...relevant, ...latest]).slice(0, 8);
+      return formatMemoryReminder(entries);
+    } catch (error) {
+      console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  private memorySources(sessionId: string, session: AgentSessionState): AgentMemorySource[] {
+    const source: AgentMemorySource = { conversationId: conversationIdFromSessionId(sessionId) };
+    const messageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
+    if (messageId) source.messageRange = [messageId, messageId];
+    const runId = this.activeRunId(session);
+    if (runId) source.runId = runId;
+    if (session.eventState.latestEventId) source.eventId = session.eventState.latestEventId;
+    return [source];
+  }
+
+  private memoryOriginWorkspace(): string | undefined {
+    const localRoot = this.options.localFileRoot?.trim();
+    if (!localRoot) return undefined;
+    return `workspace:${createHash('sha256').update(path.resolve(localRoot)).digest('hex').slice(0, 16)}`;
   }
 
   private getActiveProviderConfig() {
@@ -2839,6 +2928,7 @@ function buildUserPromptMessage(
   message: string,
   attachments: AgentMessageAttachmentInput[],
   context: {
+    memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
     skillListingReminder?: string | null;
@@ -2978,6 +3068,7 @@ function stripDataUrlPrefix(data: string): string {
 function buildTurnReminderBlocks(
   attachments: AgentMessageAttachmentInput[],
   context: {
+    memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
     skillListingReminder?: string | null;
@@ -2988,6 +3079,7 @@ function buildTurnReminderBlocks(
   const blocks: TextContent[] = [];
   const reminder = joinReminderParts([
     buildEnvironmentContextReminder(now),
+    context.memoryReminder,
     context.outlinerContext,
     context.userViewContextReminder,
     context.skillListingReminder,
@@ -3019,6 +3111,30 @@ function buildEnvironmentContextReminder(now: Date): string {
     resolved.locale ? `Locale: ${escapeReminderText(resolved.locale)}` : '',
     '</environment-context>',
   ].filter(Boolean).join('\n');
+}
+
+function formatMemoryReminder(entries: readonly AgentMemoryEntry[]): string | null {
+  const activeEntries = entries.filter((entry) => entry.status === 'active').slice(0, 8);
+  if (activeEntries.length === 0) return null;
+  return [
+    '<agent-memory>',
+    'Durable remembered facts for this agent. Use them as background context, and update or forget entries with the memory tool when the user corrects them.',
+    ...activeEntries.map((entry) => (
+      `- id=${escapeReminderText(entry.id)} fact="${escapeReminderText(entry.fact)}"`
+    )),
+    '</agent-memory>',
+  ].join('\n');
+}
+
+function uniqueMemoryEntries(entries: readonly AgentMemoryEntry[]): AgentMemoryEntry[] {
+  const seen = new Set<string>();
+  const result: AgentMemoryEntry[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    result.push(entry);
+  }
+  return result;
 }
 
 function buildOutlinerContextReminder(host: OutlinerToolHost): string | null {
@@ -3255,6 +3371,24 @@ function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationL
     createdAt: eventState.session.createdAt,
     updatedAt: eventState.session.updatedAt,
     messageCount: Object.keys(eventState.messages).length,
+  };
+}
+
+function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
+  return {
+    id: entry.id,
+    agentId: entry.agentId,
+    fact: entry.fact,
+    originWorkspace: entry.originWorkspace,
+    sources: entry.sources.map((source) => ({
+      conversationId: source.conversationId,
+      summaryId: source.summaryId,
+      messageRange: source.messageRange,
+      runId: source.runId,
+      eventId: source.eventId,
+    })),
+    status: entry.status,
+    createdAt: entry.createdAt,
   };
 }
 
@@ -3499,6 +3633,7 @@ function createConfiguredAgent(
     skillToolEnabled?: boolean;
     skillRuntime?: AgentSkillRuntime;
     subagentRuntime?: AgentSubagentRuntime;
+    memory?: AgentToolsOptions['memory'];
     pastChats?: AgentToolsOptions['pastChats'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: string[];
@@ -3545,6 +3680,7 @@ function createConfiguredAgent(
         skillRuntime,
         skillToolEnabled: options.skillToolEnabled,
         subagentRuntime: options.subagentRuntime,
+        memory: options.memory,
         pastChats: options.pastChats,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,

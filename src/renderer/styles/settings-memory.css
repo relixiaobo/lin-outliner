@@ -1,0 +1,40 @@
+.settings-memory-section .inset-row-main {
+  min-width: 0;
+}
+
+.settings-memory-fact {
+  overflow-wrap: anywhere;
+}
+
+.settings-memory-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.settings-memory-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.settings-memory-editor {
+  box-sizing: border-box;
+  width: min(100%, 34rem);
+  min-height: 68px;
+  resize: vertical;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  box-shadow: var(--inset-hairline);
+  color: var(--text-strong);
+  font: inherit;
+  line-height: var(--line-ui-sm);
+  padding: var(--space-3) var(--space-4);
+}
+
+.settings-memory-editor:focus-visible {
+  outline: none;
+  box-shadow: var(--outline-focus);
+}

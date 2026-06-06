@@ -7,6 +7,7 @@ import type {
   AgentRuntimeSettingsInput,
   AgentConversation,
   AgentConversationListMeta,
+  AgentMemoryEntryView,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
   AgentToolPermissionSettingsView,
@@ -246,6 +247,12 @@ export const api = {
     command<AgentConversationListMeta | null>('agent_rename_conversation', { conversationId, title }),
   agentDeleteConversation: (conversationId: string) =>
     command<void>('agent_delete_conversation', { conversationId }),
+  agentListMemory: (options: { includeInvalidated?: boolean; limit?: number } = {}) =>
+    command<AgentMemoryEntryView[]>('agent_list_memory', options),
+  agentUpdateMemory: (memoryId: string, fact: string) =>
+    command<AgentMemoryEntryView | null>('agent_update_memory', { memoryId, fact }),
+  agentForgetMemory: (memoryId: string) =>
+    command<AgentMemoryEntryView | null>('agent_forget_memory', { memoryId }),
   agentDebugSnapshot: (conversationId: string) =>
     command<AgentDebugSnapshot | null>('agent_debug_snapshot', { conversationId }),
   agentDebugHistory: (conversationId: string) =>

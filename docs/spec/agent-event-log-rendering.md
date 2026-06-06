@@ -257,7 +257,7 @@ Authoritative:
 - `conversations/<id>/segments/*.jsonl`
 - `runs/<id>/events.jsonl`
 - `agents/<id>/identity.json`
-- `agents/<id>/memory/events.jsonl` once memory emission lands
+- `agents/<id>/memory/events.jsonl`
 - payload files referenced by event payload refs
 
 Derived and rebuildable:
@@ -272,8 +272,8 @@ Clean-cut startup policy:
 - `sessions/` is the obsolete pre-M0 flat layout. The event store never reads or
   migrates it.
 - On first store access, if `sessions/` exists, delete `sessions/` and
-  `indexes/` so stale `session-index.json` entries cannot point runtime restore
-  at unreadable legacy sessions.
+  `indexes/`, and `agents/*/memory/` so stale session indexes or memory logs
+  cannot cross the storage-format cut. Agent identity records are preserved.
 - If a legacy session index survives without matching `conversations/`, treat it as a
   stale projection and rebuild it from the current conversation directories.
 
@@ -286,6 +286,13 @@ then sorts by seq before replay.
 ## Event Store
 
 Each line in `events.jsonl` is one JSON event.
+
+Conversation segments, run logs, and agent memory logs share one append-only
+seq-log primitive for JSONL serialization, per-key write queues, latest-seq
+caches, chunked physical-tail reads, offset-bounded replay, and file-size
+checkpoint guards. Conversation replay still joins the conversation segment with
+its indexed run logs and sorts by `seq`; memory uses the same primitive with its
+own per-agent key.
 
 ```ts
 interface AgentEventBase {
@@ -967,6 +974,11 @@ The current renderer contract is `AgentRenderProjection`, carried by
   corrupt-checkpoint fallback, atomic writes, stale-state guards, and best-effort retention of the latest three
   valid checkpoints.
 - Transcript row virtualization and bounded large-output rendering.
+- Agent memory event emission, projection, reminder injection, and Settings
+  list/edit/forget management.
+- Shared append-only seq-log internals for conversation/run/memory JSONL tails,
+  offsets, queues, and seq caches; memory projection caching keyed by latest seq;
+  high-churn memory compaction back to the current projection.
 
 ### Remaining
 
@@ -974,7 +986,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
   projection, IPC bytes, render commits, and long transcript behavior.
 - Richer non-text media previews and lazy full-payload loading in render/debug
   detail views.
-- Full memory event emission and memory retrieval.
+- Memory consolidation beyond explicit tool writes, including extraction from
+  summaries and mixed-resolution memory retrieval.
 - Mixed-resolution context assembly that replaces old conversation segments
   with distillation summaries.
 - Runtime consumers for the schema-reserved task, notification, config-change,

@@ -298,4 +298,62 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).toContain('Cobalt blue is the recorded focus-ring choice.');
     expect(finalAssistantText).toBe('We chose cobalt blue for focus rings.');
   });
+
+  test('injects remembered facts into the next user prompt context', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-data-'));
+    roots.push(localRoot, dataRoot);
+    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-direct-style',
+      fact: 'User prefers direct, concise engineering answers.',
+      sources: [{ conversationId: 'past-conversation' }],
+      createdAt: 30,
+    });
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Acknowledged.'))],
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Please answer directly.');
+    const contextText = contexts.join('\n');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(contextText).toContain('"memory"');
+    expect(contextText).toContain('<agent-memory>');
+    expect(contextText).toContain('memory-direct-style');
+    expect(contextText).toContain('User prefers direct, concise engineering answers.');
+  });
 });

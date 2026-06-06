@@ -5,6 +5,7 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
   AgentIcon,
+  BrainIcon,
   CheckIcon,
   CopyIcon,
   FileTextIcon,
@@ -83,6 +84,7 @@ export function getToolIcon(toolCall: ToolCall) {
     if (mode === 'search') return SearchIcon;
     return RecentsIcon;
   }
+  if (toolCall.name === 'memory') return BrainIcon;
   if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
   if (toolCall.name === 'node_delete') {
     return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
@@ -104,11 +106,18 @@ function pickSubject(args: Record<string, unknown>, ...keys: string[]): string |
 }
 
 type PastChatsMode = 'recent' | 'search' | 'read';
+type MemoryMode = 'list' | 'remember' | 'update' | 'forget';
 
 function pastChatsMode(args: Record<string, unknown>): PastChatsMode {
   if (pickSubject(args, 'message_id')) return 'read';
   if (pickSubject(args, 'query')) return 'search';
   return 'recent';
+}
+
+function memoryMode(args: Record<string, unknown>): MemoryMode {
+  const action = typeof args.action === 'string' ? args.action : '';
+  if (action === 'remember' || action === 'update' || action === 'forget') return action;
+  return 'list';
 }
 
 type ToolCallLabels = Messages['agent']['toolCall'];
@@ -152,6 +161,19 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
       return withSubject(verbByStatus(verbs.searchPastChats, status, labels), subject, labels);
     }
     return verbByStatus(verbs.listRecentPastChats, status, labels);
+  }
+  if (toolCall.name === 'memory') {
+    const mode = memoryMode(args);
+    if (mode === 'remember') {
+      return withSubject(verbByStatus(verbs.rememberMemory, status, labels), pickSubject(args, 'fact'), labels);
+    }
+    if (mode === 'update') {
+      return withSubject(verbByStatus(verbs.updateMemory, status, labels), pickSubject(args, 'memory_id', 'fact'), labels);
+    }
+    if (mode === 'forget') {
+      return withSubject(verbByStatus(verbs.forgetMemory, status, labels), pickSubject(args, 'memory_id'), labels);
+    }
+    return withSubject(verbByStatus(verbs.listMemory, status, labels), pickSubject(args, 'query'), labels);
   }
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');

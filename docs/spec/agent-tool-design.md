@@ -52,13 +52,15 @@ These tools are required for the first useful local agent.
 | `web_search` | web | No | Depends | Search the web for current external information. |
 | `web_fetch` | web | No | Depends | Fetch and read a specific URL with pagination or snippet search. |
 
-### P1 Tools
+### P1 Agent Tools
 
-These should be added after P0 approval rendering and undo are stable.
+These agent-level tools are active on top of the core local/document tool
+surface.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
 | `past_chats` | agent | No | No | Search and read older Lin agent conversations. |
+| `memory` | agent | Yes, local agent memory | No | List, remember, update, or forget durable facts for the local agent. |
 
 ### Deferred Tools
 
@@ -74,6 +76,8 @@ permission behavior harder to reason about.
 - Use `bash` for shell execution.
 - Use `task_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
+- Use `memory` for explicit durable agent facts; keep raw conversation recall in
+  `past_chats`.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -2071,6 +2075,51 @@ indexes are derived and rebuildable, and text ranking never bypasses active
 branch visibility, conversation/date/current-conversation filters, or read-mode
 context bounds.
 
+### `memory`
+
+`memory` is the explicit durable-fact tool for the local agent identity. It is
+not a raw conversation search tool and must not replace `past_chats`.
+
+Actions:
+
+- `list`: return active remembered facts, optionally filtered by `query`. The
+  model-visible `total_entries` is the real matched active count, not the capped
+  result length.
+- `remember`: append one concise durable fact.
+- `update`: replace an existing fact by `memory_id`.
+- `forget`: invalidate an existing fact by `memory_id`.
+
+The authoritative store is `agents/<agentId>/memory/events.jsonl`. The runtime
+projects entries from `memory.entry_added`, `memory.entry_updated`, and
+`memory.entry_removed` events. Forgetting is idempotent: the first call appends
+an invalidation event, and later calls return the already invalidated entry
+without adding churn. High-churn memory logs are compacted by rewriting the log
+to the current projection; compaction preserves visible entry ids, facts,
+sources, status, and `createdAt`, but drops superseded intermediate mutation
+events.
+
+Each normal user turn receives a bounded `<agent-memory>` reminder built from
+the active projection. Reminder retrieval ranks by memory-specific relevance
+(phrase/term overlap) and backfills with latest active facts so stale ids remain
+visible when the user corrects related facts. The reminder includes memory ids
+so the model can update or forget stale facts when the user corrects them. Tool
+results use the shared envelope and expose only the slim model-visible
+projection:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "entry": {
+      "memory_id": "memory-1",
+      "fact": "User prefers direct answers.",
+      "status": "active",
+      "created_at": 1800000000000
+    }
+  }
+}
+```
+
 ## Self-Maintenance Controls
 
 Canonical contracts for `runtime_status`, the cc-2.1-style `config` tool,
@@ -2139,6 +2188,10 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `file_grep`
 - `past_chats`
 - `operation_history(action: "list")`
+
+Runtime-owned local state tools run immediately by default:
+
+- `memory`
 
 Web tools are also read-only, but may require host or offline-mode approval:
 
