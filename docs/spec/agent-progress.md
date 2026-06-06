@@ -92,8 +92,8 @@ truth.
   - on-demand full text loading and bounded rendering for large tool output
   - transcript row virtualization for long agent sessions
   - payload-aware assistant turn copy for persisted tool output
-  - run-end checkpoint projection with tail replay and corrupt-checkpoint
-    fallback
+  - run-end checkpoint projection with target-offset tail replay and
+    corrupt-checkpoint fallback
   - atomic checkpoint writes with best-effort retention of the latest three
     valid checkpoint files per session
   - checkpoint tail guards against stale replay state before writing checkpoints

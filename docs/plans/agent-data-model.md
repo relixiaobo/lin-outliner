@@ -361,6 +361,7 @@ userData/agent/
   conversations/<conversationId>/
     meta.json                      # PROJECTION of membership/rename events: members / goal / name (NOT authority)
     cursors.json                   # per-principal read state (UI state, kept out of the objective stream)
+    runs.json                      # PROJECTION: run ids anchored to this conversation
     segments/000001.jsonl …        # message stream (≈1 event/msg), append-only, segmented
     summaries/                     # DistillationNode (per sealed segment + roll-ups)
     checkpoints/  index.json       # tail-load snapshot + seq/time → segment (backward paging)
@@ -610,8 +611,9 @@ agent.skills[]          ──▶ skills/ file tree
 - **Already real after M0:** target-oriented conversation/run/agent storage;
   conversation meta + cursors as projection files; stable built-in agent identity;
   principal actors on message records; run meta with trigger/fingerprint/retention;
-  scoped payloads; checkpoint replay by `seq`; domain event bus; active-run state
-  isolation; stateless pi-agent-core + the two seams.
+  scoped payloads; per-conversation run index; checkpoint replay by target offsets
+  + `seq`; domain event bus; active-run state isolation; stateless pi-agent-core +
+  the two seams.
 - **M0.5 clean cut:** remove remaining agent protocol/index/API names that still say
   `session*`; wipe dev `userData`; do not write a legacy `sessions/<id>` reader,
   adapter, or alias.

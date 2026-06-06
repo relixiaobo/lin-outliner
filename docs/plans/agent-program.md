@@ -41,9 +41,10 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
 
 - **Event-sourced persistence** — target-oriented agent event-log family with
   `conversations/<id>`, `runs/<id>`, `agents/<id>`, and derived `indexes/`;
-  payloads are scoped to conversation or run storage, checkpoints replay by
-  `seq`, and `AgentEventStore.readEvents()` is the minimal join seam back to the
-  current reducer/runtime (`docs/spec/agent-event-log-rendering.md`).
+  payloads are scoped to conversation or run storage, `runs.json` indexes the
+  runs anchored to each conversation, checkpoints replay from per-target offsets
+  plus `seq`, and `AgentEventStore.readEvents()` is the minimal join seam back to
+  the current reducer/runtime (`docs/spec/agent-event-log-rendering.md`).
 - **Stable runtime identity** — the built-in assistant has a persisted
   `AgentIdentityRecord`, run meta carries `agentId`/trigger/fingerprint/retention,
   and message records carry a principal actor instead of the old implicit

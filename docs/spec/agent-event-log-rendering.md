@@ -234,6 +234,7 @@ Current filesystem layout:
     <conversationId>/
       meta.json
       cursors.json
+      runs.json
       segments/
         000001.jsonl
       payloads/
@@ -264,10 +265,11 @@ Derived and rebuildable:
 - `checkpoints/*.json`
 - `indexes/*.json`
 - `conversations/<id>/meta.json`
+- `conversations/<id>/runs.json`
 
 The renderer still uses `sessionId` in command payloads. In storage, that id is
 the conversation id. `AgentEventStore.readEvents(sessionId)` joins the
-conversation segment and every run whose `meta.json.conversationId` matches,
+conversation segment and the run logs listed in `conversations/<id>/runs.json`,
 then sorts by seq before replay.
 
 ## Event Store
@@ -815,6 +817,7 @@ Checkpoint content:
 
 - latest included `seq`
 - latest included event id
+- target file byte offsets for the conversation segment and each run log
 - replay state needed to rebuild active branch, render/debug projections, and
   pi-mono messages
 
@@ -822,7 +825,8 @@ Restore:
 
 ```txt
 load latest checkpoint
-  -> read the conversation segment plus matching run logs
+  -> verify target offsets are not past the physical file tails
+  -> read the conversation segment and indexed run logs from checkpoint offsets
   -> replay events after checkpoint.seq
   -> rebuild projections
   -> hydrate pi-agent-core when execution starts
@@ -848,8 +852,9 @@ The hot path must never do these things:
 Open-session policy:
 
 - The session list reads `session-index.json`, not every session log.
-- Opening a session loads the latest checkpoint, joins the conversation segment
-  with matching run logs, then replays only events after the checkpoint `seq`.
+- Opening a session loads the latest checkpoint, reads the conversation segment
+  and indexed run logs from the checkpoint target offsets, then replays only
+  events after the checkpoint `seq`.
 - If no usable checkpoint exists, replay falls back to the full joined log; a
   background progress UI can be added later if very large cold sessions need it.
 - The active transcript starts from the render projection and uses row
@@ -947,8 +952,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Provider debug payload refs and event-derived debug history/totals.
 - Large tool output payload refs with bounded model-visible labels.
 - Session index, search index, and user-message index as rebuildable projections.
-- Checkpoint writer/loader with seq-based tail replay, corrupt-checkpoint fallback, atomic
-  writes, stale-state guards, and best-effort retention of the latest three
+- Checkpoint writer/loader with target-offset + seq tail replay,
+  corrupt-checkpoint fallback, atomic writes, stale-state guards, and best-effort retention of the latest three
   valid checkpoints.
 - Transcript row virtualization and bounded large-output rendering.
 

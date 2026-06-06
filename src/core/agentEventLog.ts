@@ -256,8 +256,8 @@ export interface AskUserQuestionResult {
 export type AgentRunLogEvent =
   | (AgentRunEventBase & { type: 'run.started' })
   | (AgentRunEventBase & { type: 'run.completed'; usage?: Usage })
-  | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string } })
-  | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string })
+  | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string }; usage?: Usage })
+  | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string; usage?: Usage })
   | (AgentRunEventBase & { type: 'assistant_message.started'; messageId: string })
   | (AgentRunEventBase & { type: 'assistant_message.delta'; messageId: string; delta: AgentPersistedContent })
   | (AgentRunEventBase & { type: 'assistant_message.completed'; messageId: string; content: AgentPersistedContent[]; usage: Usage })

@@ -259,7 +259,6 @@ interface AgentSessionState {
   agent: Agent;
   activeRun: AgentActiveRunState | null;
   lastRun: AgentActiveRunState | null;
-  runStates: Map<string, AgentActiveRunState>;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
@@ -318,6 +317,16 @@ export class AgentRuntime {
   ) {
     this.agentIdentity = options.agentIdentity ?? createDefaultAgentIdentity();
     this.domainEvents = options.domainEvents ?? new AgentDomainEventBus();
+    this.domainEvents.subscribeLane('renderer-projection', (event) => {
+      this.emit({
+        type: 'projection',
+        sessionId: event.sessionId,
+        lastEventType: event.lastEventType,
+        revision: event.revision,
+        renderProjection: event.projection,
+        timestamp: event.createdAt,
+      });
+    });
     this.contextManager = new AgentRuntimeContextManager<AgentSessionState>({
       refreshRuntimeSettings: (session) => this.refreshRuntimeSettings(session),
       deriveRuntimePiMessages: (sessionId, eventState) => this.deriveRuntimePiMessages(sessionId, eventState),
@@ -358,7 +367,7 @@ export class AgentRuntime {
       },
       startReactiveRetryRun: async (sessionId, session) => {
         this.beginDebugQuery(session);
-        await this.startRun(sessionId, session);
+        await this.startRun(sessionId, session, session.lastRun?.lastSubmittedUserPrompt ?? null);
       },
       completeSimpleFn: this.options.completeSimpleFn,
     });
@@ -880,7 +889,6 @@ export class AgentRuntime {
       session.autoCompactConsecutiveFailures = 0;
       session.activeRun = null;
       session.lastRun = null;
-      session.runStates.clear();
       session.pendingSubagentNotifications.length = 0;
       session.queuedFollowUpSkillListingReservation = null;
       session.reactiveCompactRequested = false;
@@ -1083,7 +1091,6 @@ export class AgentRuntime {
       agent,
       activeRun: null,
       lastRun: null,
-      runStates: new Map(),
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
       eventState,
@@ -1761,14 +1768,6 @@ export class AgentRuntime {
       projection: renderProjection,
       createdAt: timestamp,
     });
-    this.emit({
-      type: 'projection',
-      sessionId,
-      lastEventType,
-      revision: session.revision,
-      renderProjection,
-      timestamp,
-    });
   }
 
   private publishPersistedEvents(sessionId: string, events: readonly AgentEvent[]) {
@@ -2251,7 +2250,6 @@ export class AgentRuntime {
     };
     session.activeRun = runState;
     session.lastRun = null;
-    session.runStates.set(runId, runState);
     await this.appendSessionEvents(sessionId, session, [{
       type: 'run.started',
       actor: systemActor(),
