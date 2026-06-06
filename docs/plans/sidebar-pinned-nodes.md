@@ -3,7 +3,7 @@ status: draft
 priority: P2
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-06
 ---
 
 # Sidebar Pinned Nodes
@@ -19,7 +19,7 @@ there is no data model or command).
 
 > **Dependency:** this plan builds on
 > `workspace-tabs-to-single-pane.md` (Plan A). Pins are stored in the renderer
-> workspace-layout state, which Plan A rewrites to the v2 single-layout shape,
+> workspace-layout state, which Plan A rewrites to the current single-layout shape,
 > and the Pinned UI lives next to the sidebar tree / context menu that Plan A
 > also edits. **Sequence Pin after Plan A merges** and rebase, to avoid
 > collisions on `Sidebar.tsx` + `NodeContextMenu.tsx` + `useWorkspaceTabs`.
@@ -38,8 +38,8 @@ there is no data model or command).
 
 Mirror how the workspace layout persists (the `useWorkspaceTabs` /
 post-Plan-A `useWorkspaceLayout` localStorage pattern). Add a `pinnedNodeIds:
-NodeId[]` either to the v2 layout object or a sibling key
-(`lin-outliner:workspace-layout:v2:pinned`). On load, **validate against the live
+NodeId[]` either to the v3 layout object or a sibling key
+(`lin-outliner:workspace-layout:v3:pinned`). On load, **validate against the live
 projection** and drop ids that no longer exist (same sanitization as panes).
 
 Rationale: pins are transient per-workspace UI state, exactly like tabs/pane

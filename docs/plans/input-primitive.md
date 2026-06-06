@@ -184,7 +184,7 @@ rows carry no deferral — every row below ships in one wave with the primitive.
 | 9 | `.agent-profile-prompt-preview` (readOnly) | `settings-agents.css:80` | 120 / `--border-subtle` / none / n/a / n/a | `<Textarea boxed>` (readOnly) |
 | 10 | `.agent-subagent-followup textarea` | `agent-subagent.css:213` | 42–140 / `--border-subtle`→**`--agent-accent`** / **brand-accent border** / none / bg+color swap | `<Textarea boxed>` (removes accent focus — coordinate with `design-system-consistency` §3) |
 | 11 | `.settings-sheet-row-input` | `settings-provider-sheet.css:107` | row / 0 / parent `:focus-within` `--outline-focus` / none / none | `bare` |
-| 12 | `.agent-session-title-input` | `agent-dock.css:361` | 32 / 0 / global ring / none / none | `bare` |
+| 12 | `.agent-conversation-title-input` | `agent-dock.css:361` | 32 / 0 / global ring / none / none | `bare` |
 | 13 | `.agent-user-edit-input` (textarea) | `agent-message.css:161` | 72 / 0 / none (card border) / none / none | `<Textarea bare>` |
 | 14 | `.agent-composer-input` (textarea) | `agent-composer.css:305` | 32–160 / 0 / none / `--text-faint` / none | **token-only** (bespoke composer surface; point placeholder at `--input-placeholder`) |
 | 15 | `.command-input` | `overlay-palette.css:19` | 40 / bottom-1px only / none / `--muted-2` / none | `bare` (keep bottom rule on palette container) |
@@ -199,7 +199,7 @@ rows carry no deferral — every row below ships in one wave with the primitive.
 | 24 | `.typed-field-date-time-input` | `outliner.css:1474` | min 32 / `--outline-faint`→`--outline-muted` / **box-shadow (hover==focus)** / `color-mix(text 28%)` / none | **token-only** (keep micro-input box-shadow; placeholder only) |
 | 25 | `.select-popup-input` | `controls.css:137` | auto / 0 / popup chrome / n/a / **opacity 0.45** | **leave** (compliant popup select; transparent at rest after #118) |
 | 26 | `.view-toolbar-add-field select` | `outliner.css:503` | 24 / 0 / global ring / n/a / none | `boxed sm` *(or leave — toolbar bespoke; decide at build)* |
-| 27 | `.agent-session-select` | `agent-dock.css:313` | `<button>`, not a field | **leave** (button, not input) |
+| 27 | `.agent-conversation-select` | `agent-dock.css:313` | `<button>`, not a field | **leave** (button, not input) |
 
 **Collapse targets summary:**
 - ~6 boxed text fields (#1,3,4,5/6,7,26) → `<Input boxed>`, 1 height / 1 border /

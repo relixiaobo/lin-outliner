@@ -83,16 +83,17 @@ toggles the owner node's done state.
 ### Document — history
 `undo`, `redo`.
 
-### Agent — sessions and persistence
-`agent_restore_latest_session`, `agent_restore_session`, `agent_create_session`,
-`agent_list_sessions`, `agent_rename_session`, `agent_delete_session`,
-`agent_close_session`, `agent_reset_session`.
+### Agent — conversations and persistence
+`agent_restore_latest_conversation`, `agent_restore_conversation`,
+`agent_create_conversation`, `agent_list_conversations`,
+`agent_rename_conversation`, `agent_delete_conversation`,
+`agent_close_conversation`, `agent_reset_conversation`.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,
 `agent_retry_message`, `agent_switch_branch`, `agent_queue_follow_up`,
-`agent_clear_follow_up`, `agent_steer_session`, `agent_clear_steer`,
-`agent_stop_session`.
+`agent_clear_follow_up`, `agent_steer_conversation`, `agent_clear_steer`,
+`agent_stop_conversation`.
 
 ### Agent — subagents
 `agent_subagent_status`, `agent_subagent_send`, `agent_subagent_stop`.

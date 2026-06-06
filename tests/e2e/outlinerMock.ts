@@ -444,8 +444,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const debugSnapshot = {
       id: 'debug-snapshot-1',
       source: 'provider_payload',
-      sessionId: 'mock-agent-session',
-      sessionTitle: 'conversation',
+      conversationId: 'mock-agent-session',
+      conversationTitle: 'conversation',
       turnIndex: 1,
       queryIndex: 1,
       capturedAt: 1_800_000_000_100,
@@ -512,7 +512,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       queries: 1,
       rounds: 1,
     };
-    const agentSessions = [
+    const agentConversations = [
       {
         id: 'mock-agent-session',
         title: 'Agent System',
@@ -1355,13 +1355,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
-        if (cmd === 'agent_create_session' || cmd === 'agent_restore_latest_session' || cmd === 'agent_restore_session') {
+        if (cmd === 'agent_create_conversation' || cmd === 'agent_restore_latest_conversation' || cmd === 'agent_restore_conversation') {
           return clone({
-            sessionId: 'mock-agent-session',
+            conversationId: 'mock-agent-session',
             renderProjection: {
-              sessionId: 'mock-agent-session',
+              conversationId: 'mock-agent-session',
               revision: 1,
-              sessionTitle: 'Agent System',
+              conversationTitle: 'Agent System',
               activeRunId: null,
               activeCompaction: null,
               isStreaming: false,
@@ -1378,18 +1378,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }) as T;
         }
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
-        if (cmd === 'agent_list_sessions') return clone(agentSessions) as T;
-        if (cmd === 'agent_rename_session') {
-          const target = agentSessions.find((session) => session.id === args.sessionId);
+        if (cmd === 'agent_list_conversations') return clone(agentConversations) as T;
+        if (cmd === 'agent_rename_conversation') {
+          const target = agentConversations.find((session) => session.id === args.conversationId);
           if (target) {
             target.title = String(args.title ?? '');
             target.updatedAt = now += 1;
           }
           return clone({ ok: true }) as T;
         }
-        if (cmd === 'agent_delete_session') {
-          const index = agentSessions.findIndex((session) => session.id === args.sessionId);
-          if (index >= 0) agentSessions.splice(index, 1);
+        if (cmd === 'agent_delete_conversation') {
+          const index = agentConversations.findIndex((session) => session.id === args.conversationId);
+          if (index >= 0) agentConversations.splice(index, 1);
           return clone({ ok: true }) as T;
         }
         if (cmd === 'agent_upsert_provider_config') {
@@ -1558,10 +1558,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return undefined as T;
         }
         if (cmd === 'agent_debug_snapshot') {
-          return clone(String(args.sessionId) === 'mock-agent-session' ? debugSnapshot : null) as T;
+          return clone(String(args.conversationId) === 'mock-agent-session' ? debugSnapshot : null) as T;
         }
         if (cmd === 'agent_debug_history') {
-          return clone(String(args.sessionId) === 'mock-agent-session' ? [debugSnapshot] : []) as T;
+          return clone(String(args.conversationId) === 'mock-agent-session' ? [debugSnapshot] : []) as T;
         }
         if (cmd === 'agent_debug_totals') {
           return clone(debugTotals) as T;
@@ -1635,7 +1635,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ]) as T;
         }
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
-        if (cmd === 'agent_steer_session') return clone({ queued: true }) as T;
+        if (cmd === 'agent_steer_conversation') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projectionSnapshot());
         if (cmd === 'create_node') {
@@ -2353,7 +2353,7 @@ export async function resolveOAuthLogin(page: Page, providerId: string) {
   }, providerId);
 }
 
-export async function emitAgentProjection(page: Page, sessionId: string, state: Record<string, any>, revision = 1) {
+export async function emitAgentProjection(page: Page, conversationId: string, state: Record<string, any>, revision = 1) {
   const entities: Record<string, any> = {};
   const compactions: Record<string, any> = {};
   const rows: Array<{ id: string; kind: string; messageId: string; compactionId?: string }> = [];
@@ -2493,13 +2493,13 @@ export async function emitAgentProjection(page: Page, sessionId: string, state: 
 
   await emitAgentEvent(page, {
     type: 'projection',
-    sessionId,
+    conversationId,
     lastEventType: null,
     revision,
     renderProjection: {
-      sessionId,
+      conversationId,
       revision,
-      sessionTitle: state.sessionTitle ?? null,
+      conversationTitle: state.conversationTitle ?? null,
       activeRunId: state.isStreaming ? 'run-e2e' : null,
       activeCompaction: state.activeCompaction ?? null,
       isStreaming: !!state.isStreaming,

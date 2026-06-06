@@ -44,7 +44,7 @@ interface AgentProcessBlockProps {
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   sealed: boolean;
-  sessionId?: string | null;
+  conversationId?: string | null;
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
@@ -135,7 +135,7 @@ export function AgentProcessBlock({
   pendingToolCallIds,
   results,
   sealed,
-  sessionId,
+  conversationId,
   subagentsByParentToolCallId,
   turnActive,
   turnFailedWithoutProse,
@@ -208,7 +208,7 @@ export function AgentProcessBlock({
           onOpenSubagentTranscript={onOpenSubagentTranscript}
           pendingToolCallIds={pendingToolCallIds}
           results={results}
-          sessionId={sessionId}
+          conversationId={conversationId}
           subagentsByParentToolCallId={subagentsByParentToolCallId}
           turnActive={turnActive}
         />

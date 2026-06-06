@@ -177,7 +177,7 @@ interface OutlinePanelState extends WorkspacePanelBase {
 
 interface AgentDebugPanelState extends WorkspacePanelBase {
   type: 'agent-debug';
-  sessionId: string | null;
+  conversationId: string | null;
 }
 
 type WorkspacePanelState = OutlinePanelState | AgentDebugPanelState;
@@ -191,7 +191,7 @@ interface WorkspaceLayout {
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
-(`lin-outliner:workspace-layout:v2`). It is UI state; document content remains in
+(`lin-outliner:workspace-layout:v3`). It is UI state; document content remains in
 the TypeScript-backed document model.
 
 The canvas is always anchored by at least one outliner pane — it carries the

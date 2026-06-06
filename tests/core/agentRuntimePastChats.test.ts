@@ -262,10 +262,10 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'What did we decide last time about focus rings?');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'What did we decide last time about focus rings?');
 
-    const replay = await new AgentEventStore(dataRoot).replay(created.sessionId);
+    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
     const activePath = getAgentEventActivePath(replay);
     const toolCalls = activePath.flatMap((message) => (
       message.content

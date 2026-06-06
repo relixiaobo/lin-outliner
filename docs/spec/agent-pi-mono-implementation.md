@@ -158,7 +158,7 @@ Responsibilities:
 
 - Electron main process: create and configure the pi-mono `Agent`.
 - Electron main process: set the active model, system prompt, and tool list.
-- Electron main process: start sessions, route prompts, stop runs, and manage runtime lifecycle.
+- Electron main process: start conversations, route prompts, stop runs, and manage runtime lifecycle.
 - Electron main process: resolve API keys at stream time.
 - Electron main process: execute or reject every local tool call.
 - Electron main process: subscribe to Agent events and append normalized Tenon events.
@@ -169,18 +169,18 @@ Conceptual shape:
 
 ```ts
 interface AgentRuntimeClient {
-  restoreLatestSession(): Promise<AgentSession>;
-  restoreSession(sessionId: string): Promise<AgentSession>;
-  createSession(): Promise<AgentSession>;
-  closeSession(sessionId: string): Promise<void>;
-  sendMessage(sessionId: string, message: string, attachments?: AgentMessageAttachmentInput[]): Promise<void>;
-  editMessage(sessionId: string, nodeId: string, message: string): Promise<void>;
-  regenerateMessage(sessionId: string, nodeId: string): Promise<void>;
-  retryMessage(sessionId: string, nodeId: string): Promise<void>;
-  switchBranch(sessionId: string, nodeId: string): Promise<void>;
-  queueFollowUp(sessionId: string, message: string): Promise<{ queued: boolean }>;
-  clearFollowUp(sessionId: string): Promise<void>;
-  stopSession(sessionId: string): Promise<void>;
+  restoreLatestConversation(): Promise<AgentConversation>;
+  restoreConversation(conversationId: string): Promise<AgentConversation>;
+  createConversation(): Promise<AgentConversation>;
+  closeConversation(conversationId: string): Promise<void>;
+  sendMessage(conversationId: string, message: string, attachments?: AgentMessageAttachmentInput[]): Promise<void>;
+  editMessage(conversationId: string, nodeId: string, message: string): Promise<void>;
+  regenerateMessage(conversationId: string, nodeId: string): Promise<void>;
+  retryMessage(conversationId: string, nodeId: string): Promise<void>;
+  switchBranch(conversationId: string, nodeId: string): Promise<void>;
+  queueFollowUp(conversationId: string, message: string): Promise<{ queued: boolean }>;
+  clearFollowUp(conversationId: string): Promise<void>;
+  stopConversation(conversationId: string): Promise<void>;
   onEvent(listener: (event: AgentRuntimeEvent) => void): (() => void) | null;
 }
 ```

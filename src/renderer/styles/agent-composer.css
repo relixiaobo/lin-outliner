@@ -492,7 +492,7 @@
 .agent-composer-model-menu {
   z-index: var(--z-agent-menu);
   overflow-y: auto;
-  /* Canonical menu/popover radius (--radius-overlay-sm = 10), shared with the session
+  /* Canonical menu/popover radius (--radius-overlay-sm = 10), shared with the conversation
      menu, outliner context menu, and settings menus — not --radius-lg (12), which left
      this popover the odd one out. B9 / native consistency. */
   border-radius: var(--radius-overlay-sm);

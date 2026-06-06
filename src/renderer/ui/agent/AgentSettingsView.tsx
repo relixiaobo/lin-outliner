@@ -47,7 +47,7 @@ import { defaultReasoningLevel } from './settingsReasoning';
 interface AgentSettingsViewProps {
   onClose: () => void;
   onApplied: () => Promise<void>;
-  sessionId?: string;
+  conversationId?: string;
 }
 
 type SettingsCategory = 'general' | 'providers' | 'permissions' | 'skills' | 'agents';
@@ -212,7 +212,7 @@ function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
     : left.agentName === (right as Extract<SettingsRoute, { type: 'agent-detail' }>).agentName;
 }
 
-export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettingsViewProps) {
+export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [permissionSettings, setPermissionSettings] = useState<AgentToolPermissionSettingsView | null>(null);
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
@@ -374,7 +374,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       setLoadingSkills(true);
       setError(null);
       setNotice(null);
-      api.agentListAllSkills(sessionId || 'workspace')
+      api.agentListAllSkills(conversationId || 'workspace')
         .then((skills) => {
           if (isCurrentRequest(id)) setAllSkills(skills);
         })
@@ -389,7 +389,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       setLoadingAgents(true);
       setError(null);
       setNotice(null);
-      api.agentListAllDefinitions(sessionId || 'workspace')
+      api.agentListAllDefinitions(conversationId || 'workspace')
         .then((agents) => {
           if (isCurrentRequest(id)) setAllAgents(agents);
         })

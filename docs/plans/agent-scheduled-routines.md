@@ -286,7 +286,7 @@ split, so it is written against the conversation/run model, not the old flat
 ${userData}/agent/
   conversations/<id>/       # delivery conversation
   runs/<id>/                # one execution log per fire
-  indexes/session-index.json
+  indexes/conversation-index.json
   indexes/search-index.json
 ```
 

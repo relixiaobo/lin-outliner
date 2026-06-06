@@ -83,12 +83,12 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const oauth = await service.search({ query: 'OAuth', includeCurrentSession: true });
+      const oauth = await service.search({ query: 'OAuth', includeCurrentConversation: true });
       expect(oauth.mode).toBe('search');
       if (oauth.mode !== 'search') throw new Error('Expected search result');
       expect(oauth.hits).toEqual([]);
 
-      const apiKeys = await service.search({ query: 'API keys', includeCurrentSession: true });
+      const apiKeys = await service.search({ query: 'API keys', includeCurrentConversation: true });
       expect(apiKeys.mode).toBe('search');
       if (apiKeys.mode !== 'search') throw new Error('Expected search result');
       expect(apiKeys.hits.map((hit) => hit.messageId)).toEqual(['assistant-edited', 'user-edited']);
@@ -108,14 +108,14 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const hidden = await service.search({ query: 'graphite' }, { currentSessionId: sessionId });
+      const hidden = await service.search({ query: 'graphite' }, { currentConversationId: sessionId });
       expect(hidden.mode).toBe('search');
       if (hidden.mode !== 'search') throw new Error('Expected search result');
       expect(hidden.hits).toEqual([]);
 
       const shown = await service.search(
-        { query: 'graphite', includeCurrentSession: true },
-        { currentSessionId: sessionId },
+        { query: 'graphite', includeCurrentConversation: true },
+        { currentConversationId: sessionId },
       );
       expect(shown.mode).toBe('search');
       if (shown.mode !== 'search') throw new Error('Expected search result');
@@ -146,7 +146,7 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const result = await service.search({ query: 'sqlite checkpoint', includeCurrentSession: true });
+      const result = await service.search({ query: 'sqlite checkpoint', includeCurrentConversation: true });
       expect(result.mode).toBe('search');
       if (result.mode !== 'search') throw new Error('Expected search result');
       expect(result.hits.map((hit) => hit.messageId)).toEqual(['older-phrase', 'newer-loose']);
@@ -166,7 +166,7 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const result = await service.search({ query: '成都 天气', includeCurrentSession: true });
+      const result = await service.search({ query: '成都 天气', includeCurrentConversation: true });
       expect(result.mode).toBe('search');
       if (result.mode !== 'search') throw new Error('Expected search result');
       expect(result.hits.map((hit) => hit.messageId)).toEqual(['user-cjk-spaced']);
@@ -213,12 +213,12 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const blocked = await service.read({ messageId: 'user-before-compact' }, { currentSessionId: sessionId });
-      expect(blocked).toMatchObject({ mode: 'error', code: 'SESSION_IS_CURRENT' });
+      const blocked = await service.read({ messageId: 'user-before-compact' }, { currentConversationId: sessionId });
+      expect(blocked).toMatchObject({ mode: 'error', code: 'CONVERSATION_IS_CURRENT' });
 
       const read = await service.read(
-        { messageId: 'user-before-compact', includeCurrentSession: true },
-        { currentSessionId: sessionId },
+        { messageId: 'user-before-compact', includeCurrentConversation: true },
+        { currentConversationId: sessionId },
       );
       expect(read.mode).toBe('read');
       if (read.mode !== 'read') throw new Error('Expected read result');
@@ -258,7 +258,7 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const read = await service.read({ messageId: 'tool-result-1', includeCurrentSession: true });
+      const read = await service.read({ messageId: 'tool-result-1', includeCurrentConversation: true });
       expect(read.mode).toBe('read');
       if (read.mode !== 'read') throw new Error('Expected read result');
       expect(read.messages.find((message) => message.messageId === 'tool-result-1')).toMatchObject({
@@ -271,7 +271,7 @@ describe('agent past chats', () => {
   test('recent returns visible user message anchors with system reminders stripped', async () => {
     await withStore(async (store, service) => {
       const sessionId = 'session-recent';
-      const currentSessionId = 'session-current-recent';
+      const currentConversationId = 'session-current-recent';
       const longUserText = `Please continue the agent-past-chats API plan. ${'detail '.repeat(80)}`.trim();
       await store.appendEvents(sessionId, [
         { ...base(sessionId, 1, 'session.created'), title: 'Recent history' },
@@ -299,10 +299,10 @@ describe('agent past chats', () => {
           content: [{ type: 'text', text: 'Continuing the plan.' }],
         },
       ]);
-      await store.appendEvents(currentSessionId, [
-        { ...base(currentSessionId, 1, 'session.created'), title: 'Current' },
+      await store.appendEvents(currentConversationId, [
+        { ...base(currentConversationId, 1, 'session.created'), title: 'Current' },
         {
-          ...base(currentSessionId, 2, 'user_message.created', userActor),
+          ...base(currentConversationId, 2, 'user_message.created', userActor),
           messageId: 'user-current-recent',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Do not show this current-session message' }],
@@ -311,7 +311,7 @@ describe('agent past chats', () => {
 
       const recent = await service.recent(
         { maxMessageChars: 80 },
-        { currentSessionId },
+        { currentConversationId },
       );
       expect(recent.mode).toBe('recent');
       if (recent.mode !== 'recent') throw new Error('Expected recent result');
@@ -321,7 +321,7 @@ describe('agent past chats', () => {
       expect(recent.items[0]?.text).not.toContain('hidden runtime context');
       expect(recent.items[0]?.textTruncated).toBe(true);
 
-      const read = await service.read({ messageId: 'user-recent', includeCurrentSession: true });
+      const read = await service.read({ messageId: 'user-recent', includeCurrentConversation: true });
       expect(read.mode).toBe('read');
       if (read.mode !== 'read') throw new Error('Expected read result');
       const readText = read.messages.map((message) => message.text).join('\n');
@@ -344,7 +344,7 @@ describe('agent past chats', () => {
 
   test('tool wrapper returns structured mode errors without data when no recovery anchors', async () => {
     await withStore(async (_store, service) => {
-      const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
+      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
       const result = await (tool.execute as any)('tool-call-1', { query: 'x', message_id: 'm_x' });
       const details = result.details as ToolEnvelope;
 
@@ -385,7 +385,7 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
+      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
       const result = await (tool.execute as any)('tool-call-1', { query: 'sqlite checkpoints' });
       const first = result.content[0];
       if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
@@ -419,7 +419,7 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
+      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
       const result = await (tool.execute as any)('tool-call-1', { recent: true, max_message_chars: 20 });
       const first = result.content[0];
       if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
@@ -430,7 +430,7 @@ describe('agent past chats', () => {
         truncated: false,
         items: [{
           message_id: 'user-wrapper',
-          session_id: sessionId,
+          conversation_id: sessionId,
           text_truncated: true,
         }],
       });
@@ -455,14 +455,14 @@ describe('agent past chats', () => {
         },
       ]);
 
-      const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
+      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
       const result = await (tool.execute as any)('tool-call-1', { message_id: 'user-read' });
       const first = result.content[0];
       if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
       const visible = JSON.parse(first.text);
 
       expect(visible.ok).toBe(true);
-      expect(visible.data).toMatchObject({ session: { id: sessionId, title: 'Read wrapper' } });
+      expect(visible.data).toMatchObject({ conversation: { id: sessionId, title: 'Read wrapper' } });
       expect(visible.data.messages.some((message: { message_id: string }) => message.message_id === 'user-read')).toBe(true);
       expect(visible.data).toHaveProperty('total_chars');
       expect(visible.data).toHaveProperty('output_truncated');
@@ -476,7 +476,7 @@ describe('agent past chats', () => {
 
   test('tool wrapper guides empty search without claiming missing history', async () => {
     await withStore(async (_store, service) => {
-      const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
+      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
       const result = await (tool.execute as any)('tool-call-1', {
         query: 'conversation history topics discussed',
       });

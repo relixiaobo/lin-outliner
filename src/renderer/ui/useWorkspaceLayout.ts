@@ -9,7 +9,7 @@ import type {
 } from './workspaceLayoutTypes';
 
 let nextWorkspaceId = 0;
-const STORAGE_KEY = 'lin-outliner:workspace-layout:v2';
+const STORAGE_KEY = 'lin-outliner:workspace-layout:v3';
 const MAX_PERSISTED_PANELS = 4;
 const MAX_PANEL_PAGE_HISTORY = 50;
 
@@ -42,8 +42,8 @@ function outlinerPanel(id: string, rootId: NodeId, size = 1): OutlinePanelState 
   return { id, type: 'outliner', rootId, size, pageBackStack: [], pageForwardStack: [] };
 }
 
-function agentDebugPanel(id: string, sessionId: string | null, size = 1): AgentDebugPanelState {
-  return { id, type: 'agent-debug', sessionId, size };
+function agentDebugPanel(id: string, conversationId: string | null, size = 1): AgentDebugPanelState {
+  return { id, type: 'agent-debug', conversationId, size };
 }
 
 function navigateOutlinerPanel(panel: OutlinePanelState, rootId: NodeId): OutlinePanelState {
@@ -73,7 +73,7 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
       id: value.id,
       type: 'agent-debug',
       size,
-      sessionId: typeof value.sessionId === 'string' ? value.sessionId : null,
+      conversationId: typeof value.conversationId === 'string' ? value.conversationId : null,
     };
   }
   if (typeof value.rootId !== 'string' || !nodeIds.has(value.rootId)) return null;
@@ -291,7 +291,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
     };
     if (panels.length >= MAX_PERSISTED_PANELS) {
       // At the cap, repurpose an existing outliner pane (rightmost first) so a
-      // debug session is never silently dropped — symmetric with how
+      // debug conversation is never silently dropped — symmetric with how
       // openAgentDebugPanel reverse-finds a debug pane. Falls back to the last
       // pane only if somehow none is an outliner.
       const replacePanel = [...panels].reverse().find(isOutlinerPanel) ?? panels.at(-1);
@@ -308,22 +308,22 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
     focusNode(nodeId);
   }, [focusNode, panels, rootId]);
 
-  const openAgentDebugPanel = useCallback((sessionId: string | null) => {
+  const openAgentDebugPanel = useCallback((conversationId: string | null) => {
     const existing = panels.find((panel) => (
-      panel.type === 'agent-debug' && panel.sessionId === sessionId
+      panel.type === 'agent-debug' && panel.conversationId === conversationId
     ));
     if (existing) {
       setActivePanelId(existing.id);
       return;
     }
 
-    const emptyDebugPanel = sessionId
-      ? panels.find((panel) => panel.type === 'agent-debug' && panel.sessionId === null)
+    const emptyDebugPanel = conversationId
+      ? panels.find((panel) => panel.type === 'agent-debug' && panel.conversationId === null)
       : null;
     if (emptyDebugPanel) {
       setActivePanelId(emptyDebugPanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, sessionId, panel.size) : panel
+        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size) : panel
       )));
       return;
     }
@@ -333,14 +333,14 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       if (!replacePanel) return;
       setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === replacePanel.id ? agentDebugPanel(panel.id, sessionId, panel.size) : panel
+        panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size) : panel
       )));
       return;
     }
 
     const panelId = nextId('panel');
     setActivePanelId(panelId);
-    setPanels((prev) => [...prev, agentDebugPanel(panelId, sessionId)]);
+    setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId)]);
   }, [panels]);
 
   const resizePanelPair = useCallback((

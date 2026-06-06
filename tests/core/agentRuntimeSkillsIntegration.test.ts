@@ -259,9 +259,9 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Check provider stream settings.');
-    await runtime.sendMessage(created.sessionId, '/compact');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Check provider stream settings.');
+    await runtime.sendMessage(created.conversationId, '/compact');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(providerOptions[0]).toMatchObject({
@@ -320,12 +320,12 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'First request before manual compact.');
-    await runtime.sendMessage(created.sessionId, '/compact');
-    await runtime.sendMessage(created.sessionId, 'Second request after manual compact.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'First request before manual compact.');
+    await runtime.sendMessage(created.conversationId, '/compact');
+    await runtime.sendMessage(created.conversationId, 'Second request after manual compact.');
 
-    const payloadSnapshots = (await runtime.debugHistory(created.sessionId))
+    const payloadSnapshots = (await runtime.debugHistory(created.conversationId))
       .filter((snapshot) => snapshot.source === 'provider_payload');
     expect(payloadSnapshots.map((snapshot) => snapshot.queryIndex)).toEqual([1, 2, 3]);
   });
@@ -391,8 +391,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Please do the automatic skill integration check.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Please do the automatic skill integration check.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(script.pendingCount()).toBe(0);
@@ -400,19 +400,19 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts.join('\n')).toContain('AUTO_SKILL_BODY');
     expect(contextTexts.join('\n')).toContain(`Base directory for this skill: ${skillDir}`);
 
-    const beforeCompact = await runtime.restoreSession(created.sessionId);
+    const beforeCompact = await runtime.restoreConversation(created.conversationId);
     const textsBeforeCompact = projectionTexts(beforeCompact.renderProjection).join('\n');
     expect(textsBeforeCompact).toContain('The following skills are available for use with the skill tool');
     expect(textsBeforeCompact).toContain('Launching skill: auto-skill');
     expect(textsBeforeCompact).toContain('Skill instruction applied.');
 
-    await runtime.sendMessage(created.sessionId, '/compact keep the skill context');
+    await runtime.sendMessage(created.conversationId, '/compact keep the skill context');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    const compactionEvent = (await new AgentEventStore(dataRoot).readEvents(created.sessionId))
+    const compactionEvent = (await new AgentEventStore(dataRoot).readEvents(created.conversationId))
       .find((event) => event.type === 'compaction.completed');
     expect(compactionEvent?.summary).toBe('Kept the skill outcome.');
 
-    const restored = await runtime.restoreSession(created.sessionId);
+    const restored = await runtime.restoreConversation(created.conversationId);
     expect(restored.renderProjection.rows).toHaveLength(1);
     expect(restored.renderProjection.transcriptRows.length).toBeGreaterThan(restored.renderProjection.rows.length);
     const [rootRow] = restored.renderProjection.rows;
@@ -461,10 +461,10 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Create compactable context.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Create compactable context.');
 
-    const compactPromise = runtime.sendMessage(created.sessionId, '/compact');
+    const compactPromise = runtime.sendMessage(created.conversationId, '/compact');
     await waitFor(() => latestActiveProjectedCompaction(sink.events)?.trigger === 'manual');
     expect(latestActiveProjectedCompaction(sink.events)).toMatchObject({ trigger: 'manual' });
 
@@ -545,8 +545,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Use the fork skill.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Use the fork skill.');
 
     expect(script.pendingCount()).toBe(0);
     expect(childContexts.join('\n')).toContain('FORK_SKILL_BODY for target-doc.');
@@ -604,8 +604,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Use the unknown agent fork skill.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Use the unknown agent fork skill.');
 
     expect(script.pendingCount()).toBe(0);
     const parentText = parentContexts.join('\n');
@@ -665,8 +665,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Please load the shell skill.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Please load the shell skill.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(script.pendingCount()).toBe(0);
@@ -725,8 +725,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const sendPromise = runtime.sendMessage(created.sessionId, 'Please load the shell approval skill.');
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Please load the shell approval skill.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
       event.type === 'approval_request'
@@ -737,7 +737,7 @@ describe('agent runtime skill integration', () => {
     expect(approvalEvent.request.toolCallId).toStartWith('skill-shell-');
     expect(approvalEvent.request.target).toContain(outsideTarget);
 
-    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, true);
+    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
     await sendPromise;
 
     expect(script.pendingCount()).toBe(0);
@@ -793,22 +793,22 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const sendPromise = runtime.sendMessage(created.sessionId, 'Try the dry-run push.');
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Try the dry-run push.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
       event.type === 'approval_request'
     ));
     if (!approvalEvent) throw new Error('Expected approval request event.');
 
-    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, false);
+    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, false);
     await sendPromise;
 
     const contextText = followUpContexts.join('\n');
     expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
     expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
 
-    const events = await new AgentEventStore(dataRoot).readEvents(created.sessionId);
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => event.type === 'tool.permission.checked' && event.outcome === 'ask')).toBe(true);
     expect(events.some((event) => (
       event.type === 'tool.permission.resolved'
@@ -870,8 +870,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const sendPromise = runtime.sendMessage(created.sessionId, 'Clean build output.');
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Clean build output.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
       event.type === 'approval_request'
@@ -880,7 +880,7 @@ describe('agent runtime skill integration', () => {
 
     expect(approvalEvent.request.alwaysAllowRule).toBe('Action(file.delete.allowed_file_area)');
 
-    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, true, 'always');
+    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true, 'always');
     await sendPromise;
 
     const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), 'utf8')) as {
@@ -888,7 +888,7 @@ describe('agent runtime skill integration', () => {
     };
     expect(settings.permissions?.allow).toContain('Action(file.delete.allowed_file_area)');
 
-    const events = await new AgentEventStore(dataRoot).readEvents(created.sessionId);
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
       event.type === 'tool.permission.resolved'
       && event.status === 'approved'
@@ -941,8 +941,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const sendPromise = runtime.sendMessage(created.sessionId, 'Clean build output.');
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Clean build output.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
       event.type === 'approval_request'
@@ -952,7 +952,7 @@ describe('agent runtime skill integration', () => {
     await rm(electronUserDataRoot, { recursive: true, force: true });
     await writeFile(electronUserDataRoot, 'not-a-directory');
 
-    await expect(runtime.resolveApproval(created.sessionId, approvalEvent.requestId, true, 'always')).resolves.toEqual({ resolved: true });
+    await expect(runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true, 'always')).resolves.toEqual({ resolved: true });
     await sendPromise;
 
     expect(sink.events.some((event) => (
@@ -965,7 +965,7 @@ describe('agent runtime skill integration', () => {
       && event.scope === 'once'
     ))).toBe(true);
 
-    const events = await new AgentEventStore(dataRoot).readEvents(created.sessionId);
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
       event.type === 'tool.permission.resolved'
       && event.status === 'approved'
@@ -1024,11 +1024,11 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Clean build output without prompting.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Clean build output without prompting.');
 
     expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
-    const events = await new AgentEventStore(dataRoot).readEvents(created.sessionId);
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
       event.type === 'tool.permission.checked'
       && event.outcome === 'allow'
@@ -1088,8 +1088,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const sendPromise = runtime.sendMessage(created.sessionId, 'Try the dry-run push before close.')
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Try the dry-run push before close.')
       .catch(() => undefined);
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -1097,7 +1097,7 @@ describe('agent runtime skill integration', () => {
     ));
     if (!approvalEvent) throw new Error('Expected approval request event.');
 
-    runtime.closeSession(created.sessionId);
+    runtime.closeConversation(created.conversationId);
     await waitFor(() => sink.events.some((event) => (
       event.type === 'approval_resolved'
       && event.requestId === approvalEvent.requestId
@@ -1106,7 +1106,7 @@ describe('agent runtime skill integration', () => {
 
     const store = new AgentEventStore(dataRoot);
     await waitFor(async () => {
-      const events = await store.readEvents(created.sessionId);
+      const events = await store.readEvents(created.conversationId);
       return events.some((event) => (
         event.type === 'approval.resolved'
         && event.requestId === approvalEvent.requestId
@@ -1161,13 +1161,13 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, '/compact should be a normal prompt');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, '/compact should be a normal prompt');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(callTexts.join('\n')).toContain('/compact should be a normal prompt');
     expect(callTexts.join('\n')).not.toContain('The following skills are available');
-    const restored = await runtime.restoreSession(created.sessionId);
+    const restored = await runtime.restoreConversation(created.conversationId);
     expect(restored.renderProjection.rows).toHaveLength(2);
   });
 
@@ -1223,15 +1223,15 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'First turn before extra skills are configured.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'First turn before extra skills are configured.');
     expect(callTexts[0]).not.toContain('extra-skill');
 
     runtimeSettings = {
       ...runtimeSettings,
       additionalSkillDirectories: [extraSkillDir],
     };
-    await runtime.sendMessage(created.sessionId, 'Second turn after extra skills are configured.');
+    await runtime.sendMessage(created.conversationId, 'Second turn after extra skills are configured.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(callTexts[1]).toContain('extra-skill');
@@ -1309,12 +1309,12 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const firstSend = runtime.sendMessage(created.sessionId, 'Start without any configured skills.');
+    const created = await runtime.createConversation();
+    const firstSend = runtime.sendMessage(created.conversationId, 'Start without any configured skills.');
     await firstStreamStarted;
     additionalSkillDirectories = [path.join(extraRoot, '.agents', 'skills')];
-    await runtime.queueFollowUp(created.sessionId, 'Queue after adding a skill directory.');
-    runtime.clearFollowUp(created.sessionId);
+    await runtime.queueFollowUp(created.conversationId, 'Queue after adding a skill directory.');
+    runtime.clearFollowUp(created.conversationId);
 
     const finalFirstMessage = normalizeAssistantMessage(fauxAssistantMessage(fauxText('First done.')), firstModel!);
     firstStream!.push({
@@ -1325,7 +1325,7 @@ describe('agent runtime skill integration', () => {
     firstStream!.end(finalFirstMessage);
     await firstSend;
 
-    await runtime.sendMessage(created.sessionId, 'Now send after clearing the queued follow-up.');
+    await runtime.sendMessage(created.conversationId, 'Now send after clearing the queued follow-up.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(contextTexts).toHaveLength(2);
@@ -1392,11 +1392,11 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const send = runtime.sendMessage(created.sessionId, 'Read the notes file first.');
+    const created = await runtime.createConversation();
+    const send = runtime.sendMessage(created.conversationId, 'Read the notes file first.');
     await firstStreamStarted;
 
-    expect(runtime.steerSession(created.sessionId, steerText)).toEqual({ queued: true });
+    expect(runtime.steerConversation(created.conversationId, steerText)).toEqual({ queued: true });
 
     const finalFirstMessage = normalizeAssistantMessage(
       fauxAssistantMessage([
@@ -1417,7 +1417,7 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts[0]).not.toContain(steerText);
     expect(contextTexts[1]).toContain('tool-read-steer');
     expect(contextTexts[1]).toContain(steerText);
-    expect(runtime.steerSession(created.sessionId, 'idle steer')).toEqual({ queued: false });
+    expect(runtime.steerConversation(created.conversationId, 'idle steer')).toEqual({ queued: false });
   });
 
   test('slims large live tool results before the follow-up model call', async () => {
@@ -1459,8 +1459,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Read the large file.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Read the large file.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(contextTexts[1]).toContain('<persisted-output>');
@@ -1527,9 +1527,9 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Start a small context.');
-    await runtime.sendMessage(created.sessionId, `Please continue after this large context.\n\n${'z'.repeat(90_000)}`);
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Start a small context.');
+    await runtime.sendMessage(created.conversationId, `Please continue after this large context.\n\n${'z'.repeat(90_000)}`);
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(contextTexts[1]).toContain('Conversation compacted.');
@@ -1590,8 +1590,8 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Trigger a context length retry.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Trigger a context length retry.');
 
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts[1]).toContain('Conversation compacted.');
@@ -1650,15 +1650,15 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'First request before compact.');
-    await runtime.sendMessage(created.sessionId, 'Second request before compact.');
-    await runtime.sendMessage(created.sessionId, '/compact');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'First request before compact.');
+    await runtime.sendMessage(created.conversationId, 'Second request before compact.');
+    await runtime.sendMessage(created.conversationId, '/compact');
 
     expect(compactCalls).toBe(2);
     expect(compactRequests[1]).not.toContain('First request before compact.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    const restored = await runtime.restoreSession(created.sessionId);
+    const restored = await runtime.restoreConversation(created.conversationId);
     expect(projectionTexts(restored.renderProjection).join('\n')).toContain('Retry compact summary.');
   });
 
@@ -1702,12 +1702,12 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Read notes before compact.');
-    await runtime.sendMessage(created.sessionId, '/compact');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Read notes before compact.');
+    await runtime.sendMessage(created.conversationId, '/compact');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    const restored = await runtime.restoreSession(created.sessionId);
+    const restored = await runtime.restoreConversation(created.conversationId);
     const compactText = projectionTexts(restored.renderProjection).join('\n');
     expect(compactText).toContain('Recent file context restored after compaction');
     expect(compactText).toContain(filePath);
@@ -1764,9 +1764,9 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Earlier context to summarize.');
-    await runtime.sendMessage(created.sessionId, 'Latest prompt must stay verbatim.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Earlier context to summarize.');
+    await runtime.sendMessage(created.conversationId, 'Latest prompt must stay verbatim.');
 
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts[2]).toContain('Conversation compacted.');
@@ -1833,9 +1833,9 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Read the file initially.');
-    await runtime.sendMessage(created.sessionId, 'Read it again, then continue.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Read the file initially.');
+    await runtime.sendMessage(created.conversationId, 'Read it again, then continue.');
 
     expect(script.pendingCount()).toBe(0);
     const retryContext = contextTexts.at(-1) ?? '';

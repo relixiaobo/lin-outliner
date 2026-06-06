@@ -146,7 +146,7 @@ interface ErrorStateProps {
 | `AgentSubagentDetailsPanel.tsx:312-318` | `agent-subagent-empty` + `LoaderIcon` | `<EmptyState role=status icon=Loader>` (loading) | — |
 | `AgentSubagentDetailsPanel.tsx:320-327` | `agent-subagent-empty is-error` + retry | `<ErrorState onRetry>` | — |
 | `AgentSubagentDetailsPanel.tsx:329-330` | `agent-subagent-empty` | `<EmptyState size="panel">` | — |
-| `AgentChatPanel.tsx:964-967` | `agent-session-empty` (loading / "No conversations") | `<EmptyState>` (+`role=status` on loading) | — |
+| `AgentChatPanel.tsx:964-967` | `agent-conversation-empty` (loading / "No conversations") | `<EmptyState>` (+`role=status` on loading) | — |
 | `AgentChatPanel.tsx:1058-1062` | `agent-message-error` (chat banner) | keep `AgentMessageError`; align icon only | — |
 | `AgentDebugPanel.tsx:309-318` | `agent-debug-empty` | `<EmptyState>` | — |
 | `AgentDebugPanel.tsx:341` (`agent-debug-error`, css `agent-debug.css:621`) | text, **no icon** | `<ErrorState>` (adds `WarningIcon`) | — |

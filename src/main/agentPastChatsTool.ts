@@ -21,11 +21,11 @@ When to call:
 
 Three modes (chosen by parameters):
 
-RECENT - pass recent: true plus optional after/before/session_ids/limit/max_message_chars.
+RECENT - pass recent: true plus optional after/before/conversation_ids/limit/max_message_chars.
   Returns recent visible user messages only, with message_id anchors. System reminders are stripped. Use this when the user asks what you discussed before but gives no concrete keywords.
 
-SEARCH - pass query plus optional after/before/session_ids/limit.
-  Returns hits across past sessions with [message_id] anchors.
+SEARCH - pass query plus optional after/before/conversation_ids/limit.
+  Returns hits across past conversations with [message_id] anchors.
   Search is keyword recall, not a topic inventory. Do not search generic meta phrases like "conversation history topics discussed"; use concrete words, names, decisions, file paths, or concepts from the user's request.
 
 READ - pass message_id from a search hit, plus optional before_context/after_context/max_chars.
@@ -35,7 +35,7 @@ Typical flow: SEARCH to find relevant messages, then READ the most relevant hit 
 
 Important: the user does NOT see your tool output. You must restate any recalled facts in your reply. You may use message_id anchors when referring back to specific moments.
 
-After compaction of the current session, pass include_current_session: true to recall earlier turns that are no longer in your working context.`;
+After compaction of the current conversation, pass include_current_conversation: true to recall earlier turns that are no longer in your working context.`;
 
 const PAST_CHATS_PARAMETERS = {
   type: 'object',
@@ -63,11 +63,11 @@ const PAST_CHATS_PARAMETERS = {
       maxLength: 80,
       description: 'Inclusive ISO 8601 upper bound for message creation time.',
     },
-    session_ids: {
+    conversation_ids: {
       type: 'array',
       maxItems: 20,
       items: { type: 'string', minLength: 1, maxLength: 200 },
-      description: 'Optional session ids to search within.',
+      description: 'Optional conversation ids to search within.',
     },
     limit: {
       type: 'integer',
@@ -75,9 +75,9 @@ const PAST_CHATS_PARAMETERS = {
       maximum: 50,
       description: 'Result limit. Search default 10/max 20; recent default 20/max 50.',
     },
-    include_current_session: {
+    include_current_conversation: {
       type: 'boolean',
-      description: 'Default false. Set true only after compaction when earlier current-session turns are no longer in context. Do not use for ordinary current-session lookup.',
+      description: 'Default false. Set true only after compaction when earlier current-conversation turns are no longer in context. Do not use for ordinary current-conversation lookup.',
     },
     message_id: {
       type: 'string',
@@ -114,7 +114,7 @@ const PAST_CHATS_PARAMETERS = {
 
 export interface PastChatsToolRuntime {
   service: AgentPastChatsService;
-  currentSessionId: () => string | null;
+  currentConversationId: () => string | null;
 }
 
 export function createPastChatsTool(runtime: PastChatsToolRuntime): AgentTool<any, ToolEnvelope<PastChatsResult>> {
@@ -130,7 +130,7 @@ export function createPastChatsTool(runtime: PastChatsToolRuntime): AgentTool<an
       const hasRecent = params.recent === true;
       const hasQuery = typeof params.query === 'string' && params.query.trim().length > 0;
       const hasMessageId = typeof params.message_id === 'string' && params.message_id.trim().length > 0;
-      const context = { currentSessionId: runtime.currentSessionId() };
+      const context = { currentConversationId: runtime.currentConversationId() };
       const modeCount = Number(hasRecent) + Number(hasQuery) + Number(hasMessageId);
 
       let result: PastChatsResult;
@@ -142,19 +142,19 @@ export function createPastChatsTool(runtime: PastChatsToolRuntime): AgentTool<an
         result = await runtime.service.recent({
           after: stringParam(params.after),
           before: stringParam(params.before),
-          sessionIds: stringArrayParam(params.session_ids),
+          conversationIds: stringArrayParam(params.conversation_ids),
           limit: numberParam(params.limit),
           maxMessageChars: numberParam(params.max_message_chars),
-          includeCurrentSession: booleanParam(params.include_current_session),
+          includeCurrentConversation: booleanParam(params.include_current_conversation),
         }, context);
       } else if (hasQuery) {
         result = await runtime.service.search({
           query: String(params.query),
           after: stringParam(params.after),
           before: stringParam(params.before),
-          sessionIds: stringArrayParam(params.session_ids),
+          conversationIds: stringArrayParam(params.conversation_ids),
           limit: numberParam(params.limit),
-          includeCurrentSession: booleanParam(params.include_current_session),
+          includeCurrentConversation: booleanParam(params.include_current_conversation),
         }, context);
       } else {
         result = await runtime.service.read({
@@ -162,7 +162,7 @@ export function createPastChatsTool(runtime: PastChatsToolRuntime): AgentTool<an
           beforeContext: numberParam(params.before_context),
           afterContext: numberParam(params.after_context),
           maxChars: numberParam(params.max_chars),
-          includeCurrentSession: booleanParam(params.include_current_session),
+          includeCurrentConversation: booleanParam(params.include_current_conversation),
         }, context);
       }
 
@@ -221,7 +221,7 @@ function pastChatsInstructions(result: Exclude<PastChatsResult, PastChatsErrorRe
 // Model-visible return value. Each mode is self-contained — the agent reads
 // everything it needs from this JSON (search snippets, full read message text),
 // so no parallel markdown block is emitted. Bulky/rarely-actionable fields
-// (session_title, total_chars) stay out of the model's view; boolean flags are
+// (conversation_title, total_chars) stay out of the model's view; boolean flags are
 // only included when true to keep the payload lean.
 function visiblePastChatsResult(result: PastChatsResult): unknown {
   // `mode` echoes the model's own arg; `returned_*`/`message_count` equal the
@@ -234,7 +234,7 @@ function visiblePastChatsResult(result: PastChatsResult): unknown {
       truncated: result.truncated,
       items: result.items.map((item) => ({
         message_id: item.messageId,
-        session_id: item.sessionId,
+        conversation_id: item.conversationId,
         created_at: item.createdAt,
         text: item.text,
         ...(item.textTruncated ? { text_truncated: true } : {}),
@@ -248,7 +248,7 @@ function visiblePastChatsResult(result: PastChatsResult): unknown {
       truncated: result.truncated,
       hits: result.hits.map((hit) => ({
         message_id: hit.messageId,
-        session_id: hit.sessionId,
+        conversation_id: hit.conversationId,
         role: hit.role,
         created_at: hit.createdAt,
         snippet: hit.snippet,
@@ -257,11 +257,11 @@ function visiblePastChatsResult(result: PastChatsResult): unknown {
   }
   if (result.mode === 'read') {
     return {
-      session: {
-        id: result.session.id,
-        title: result.session.title,
-        created_at: result.session.createdAt,
-        updated_at: result.session.updatedAt,
+      conversation: {
+        id: result.conversation.id,
+        title: result.conversation.title,
+        created_at: result.conversation.createdAt,
+        updated_at: result.conversation.updatedAt,
       },
       total_chars: result.totalChars,
       output_truncated: result.outputTruncated,

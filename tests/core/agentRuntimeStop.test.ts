@@ -118,11 +118,11 @@ describe('agent runtime stop', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    const send = runtime.sendMessage(created.sessionId, 'Start and wait.');
+    const created = await runtime.createConversation();
+    const send = runtime.sendMessage(created.conversationId, 'Start and wait.');
     await streamStarted;
 
-    runtime.stopSession(created.sessionId);
+    runtime.stopConversation(created.conversationId);
     await send;
 
     const projection = latestProjection(sink.events);
@@ -180,8 +180,8 @@ describe('agent runtime stop', () => {
       },
     );
 
-    const created = await runtime.createSession();
-    await runtime.sendMessage(created.sessionId, 'Trigger a provider error.');
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Trigger a provider error.');
 
     const projection = latestProjection(sink.events);
     const lastRow = projection.rows.at(-1);

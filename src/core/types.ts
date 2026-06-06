@@ -661,12 +661,12 @@ export interface SearchHit {
   score: number;
 }
 
-export interface AgentSession {
-  sessionId: string;
+export interface AgentConversation {
+  conversationId: string;
   renderProjection: AgentRenderProjection;
 }
 
-export interface AgentSessionMeta {
+export interface AgentConversationListMeta {
   id: string;
   title: string | null;
   createdAt: number;

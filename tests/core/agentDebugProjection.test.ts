@@ -126,12 +126,12 @@ describe('agent debug projection', () => {
       const projection = await deriveAgentDebugProjectionFromEvents({
         events: await restoredStore.readEvents(sessionId),
         readPayload: (payload) => restoredStore.readPayload(sessionId, payload),
-        sessionId,
+        conversationId: sessionId,
       });
 
       expect(projection.history).toHaveLength(2);
       expect(projection.history[0]?.id).toBe('debug-1');
-      expect(projection.history[0]?.sessionTitle).toBe('Restored debug session');
+      expect(projection.history[0]?.conversationTitle).toBe('Restored debug session');
       expect(projection.history[0]?.status).toBe('completed');
       expect(projection.history[0]?.wire.json).toBeUndefined();
       expect(projection.history[0]?.messages[0]?.summary).toContain('Summarize the restored session');

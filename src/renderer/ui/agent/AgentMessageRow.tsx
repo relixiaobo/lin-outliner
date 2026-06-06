@@ -73,7 +73,7 @@ interface AgentMessageRowProps {
   onOpenSubagentTranscript?: (subagentId: string) => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
-  sessionId?: string | null;
+  conversationId?: string | null;
   streaming?: boolean;
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
@@ -343,7 +343,7 @@ function renderAssistantBlocks(
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler | undefined,
   onOpenSubagentTranscript: ((subagentId: string) => void) | undefined,
   pendingToolCallIds: ReadonlySet<string>,
-  sessionId: string | null | undefined,
+  conversationId: string | null | undefined,
   streaming: boolean,
   subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity> | undefined,
   toolResults: Map<string, AgentToolResultWithPayloads>,
@@ -413,7 +413,7 @@ function renderAssistantBlocks(
             onOpenSubagentTranscript={onOpenSubagentTranscript}
             pendingToolCallIds={pendingToolCallIds}
             result={toolResults.get(toolCall.id)}
-            sessionId={sessionId}
+            conversationId={conversationId}
             subagent={subagentsByParentToolCallId?.get(toolCall.id)}
             toolCall={toolCall}
             turnActive={turnActive}
@@ -433,7 +433,7 @@ function renderAssistantBlocks(
             pendingToolCallIds={pendingToolCallIds}
             results={toolResults}
             sealed={segmentSealed}
-            sessionId={sessionId}
+            conversationId={conversationId}
             subagentsByParentToolCallId={subagentsByParentToolCallId}
             turnActive={turnActive}
             turnFailedWithoutProse={turnFailedWithoutProse}
@@ -476,7 +476,7 @@ export function AgentMessageRow({
   onOpenSubagentTranscript,
   onSwitchBranch,
   pendingToolCallIds,
-  sessionId,
+  conversationId,
   streaming: streamingOverride,
   subagentsByParentToolCallId,
   toolResults,
@@ -660,7 +660,7 @@ export function AgentMessageRow({
     onNodeReferenceOpen,
     onOpenSubagentTranscript,
     pendingToolCallIds,
-    sessionId,
+    conversationId,
     streaming,
     subagentsByParentToolCallId,
     toolResults,

@@ -99,9 +99,9 @@ export interface AgentRenderEntities {
 }
 
 export interface AgentRenderProjection {
-  sessionId: string;
+  conversationId: string;
   revision: number;
-  sessionTitle: string | null;
+  conversationTitle: string | null;
   activeRunId: string | null;
   activeCompaction: AgentRenderActiveCompaction | null;
   isStreaming: boolean;
@@ -161,9 +161,9 @@ export function buildAgentRenderProjection(
     });
 
   return {
-    sessionId: state.session.id,
+    conversationId: state.session.id,
     revision: options.revision,
-    sessionTitle: state.session.title,
+    conversationTitle: state.session.title,
     activeRunId: options.activeRunId ?? null,
     activeCompaction: options.activeCompaction ?? null,
     isStreaming: options.isStreaming ?? !!streaming,

@@ -36,7 +36,7 @@ function askDecision(overrides: Partial<AgentPermissionAskDecision> = {}): Agent
     code: 'file.edit.allowed_file_area',
     reason: descriptor.consequence,
     preapproved: false,
-    sessionApproved: false,
+    conversationApproved: false,
     permissionSource: 'default',
     descriptor,
     request: {

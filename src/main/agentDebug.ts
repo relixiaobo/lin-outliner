@@ -26,8 +26,8 @@ export interface CreateAgentDebugSnapshotInput {
   wirePayload?: AgentDebugPayloadEnvelope;
   wirePayloadRef?: AgentPayloadRef;
   queryIndex: number;
-  sessionId: string;
-  sessionTitle: string | null;
+  conversationId: string;
+  conversationTitle: string | null;
   source: AgentDebugSnapshot['source'];
   capturedAt?: number;
   id?: string;
@@ -77,10 +77,10 @@ export function createAgentDebugSnapshot(input: CreateAgentDebugSnapshotInput): 
   const contextWindow = typeof input.model.contextWindow === 'number' ? input.model.contextWindow : null;
 
   return {
-    id: input.id ?? `${input.sessionId}:${input.turnIndex}:${Date.now()}`,
+    id: input.id ?? `${input.conversationId}:${input.turnIndex}:${Date.now()}`,
     source: input.source,
-    sessionId: input.sessionId,
-    sessionTitle: input.sessionTitle,
+    conversationId: input.conversationId,
+    conversationTitle: input.conversationTitle,
     turnIndex: input.turnIndex,
     queryIndex: input.queryIndex,
     capturedAt: input.capturedAt ?? Date.now(),
@@ -127,8 +127,8 @@ export function createRuntimeStateDebugSnapshot(input: {
   messages: AgentMessage[];
   model: Model<any>;
   queryIndex: number;
-  sessionId: string;
-  sessionTitle: string | null;
+  conversationId: string;
+  conversationTitle: string | null;
   systemPrompt: string;
   thinkingLevel: string;
   tools: unknown[];
@@ -149,8 +149,8 @@ export function createRuntimeStateDebugSnapshot(input: {
     },
     model: input.model,
     queryIndex: input.queryIndex,
-    sessionId: input.sessionId,
-    sessionTitle: input.sessionTitle,
+    conversationId: input.conversationId,
+    conversationTitle: input.conversationTitle,
     source: 'runtime_state',
     turnIndex: 0,
   });

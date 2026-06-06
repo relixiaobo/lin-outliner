@@ -1100,8 +1100,8 @@ commandPalette: {
   // localized; the raw protocol it mirrors (message role names, part kinds like
   // `tool_call`/`json`, wire hashes) stays verbatim by design.
   agentDebug: {
-    loadingSession: 'Loading latest agent session...',
-    noSession: 'No active agent session.',
+    loadingConversation: 'Loading latest agent conversation...',
+    noConversation: 'No active agent conversation.',
     title: 'Agent Debug',
     refreshTitle: 'Refresh',
     refreshLabel: 'Refresh agent debug',
@@ -1111,7 +1111,7 @@ commandPalette: {
     noRuntimeData: 'No runtime data available.',
     unknown: 'unknown',
     overviewAriaLabel: 'Agent debug overview',
-    metricSession: 'Session',
+    metricConversation: 'Conversation',
     metricModel: 'Model',
     metricContext: 'Context',
     metricStatus: 'Status',

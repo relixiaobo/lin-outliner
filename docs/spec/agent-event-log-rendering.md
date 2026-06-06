@@ -248,7 +248,7 @@ Current filesystem layout:
       payloads/
         <payloadId>.<ext>
   indexes/
-    session-index.json
+    conversation-index.json
     search-index.json
 ```
 
@@ -274,10 +274,11 @@ Clean-cut startup policy:
 - On first store access, if `sessions/` exists, delete `sessions/` and
   `indexes/` so stale `session-index.json` entries cannot point runtime restore
   at unreadable legacy sessions.
-- If a session index survives without matching `conversations/`, treat it as a
+- If a legacy session index survives without matching `conversations/`, treat it as a
   stale projection and rebuild it from the current conversation directories.
 
-The renderer still uses `sessionId` in command payloads. In storage, that id is
+Renderer IPC uses `conversationId` in command payloads. The lower-level event
+schema still names the delivery log key `sessionId`; in storage that value is
 the conversation id. `AgentEventStore.readEvents(sessionId)` joins the
 conversation segment and the run logs listed in `conversations/<id>/runs.json`,
 then sorts by seq before replay.
@@ -674,9 +675,9 @@ The renderer consumes compact rows, not raw events.
 
 ```ts
 interface AgentRenderProjection {
-  sessionId: string;
+  conversationId: string;
   revision: number;
-  sessionTitle: string | null;
+  conversationTitle: string | null;
   activeRunId: string | null;
   isStreaming: boolean;
   model: Record<string, unknown>;
@@ -859,14 +860,14 @@ The hot path must never do these things:
 - inline large tool/media payloads into render rows
 - re-lex completed markdown blocks during streaming
 
-Open-session policy:
+Open-conversation policy:
 
-- The session list reads `session-index.json`, not every session log.
-- Opening a session loads the latest checkpoint, reads the conversation segment
+- The conversation list reads `conversation-index.json`, not every conversation log.
+- Opening a conversation loads the latest checkpoint, reads the conversation segment
   and indexed run logs from the checkpoint target offsets, then replays only
   events after the checkpoint `seq`.
 - If no usable checkpoint exists, replay falls back to the full joined log; a
-  background progress UI can be added later if very large cold sessions need it.
+  background progress UI can be added later if very large cold conversations need it.
 - The active transcript starts from the render projection and uses row
   virtualization for long sessions.
 
@@ -904,7 +905,7 @@ user sends prompt
   -> on failure, append assistant_message.failed for the terminal assistant turn
   -> append run.completed or run.failed
   -> write checkpoint
-  -> update render/debug/session index projections
+  -> update render/debug/conversation index projections
 ```
 
 ### Restore
@@ -912,8 +913,8 @@ user sends prompt
 ```txt
 open app
   -> clean obsolete agent/sessions + derived indexes if present
-  -> load session-index cache if it matches conversations/
-  -> load selected session checkpoint
+  -> load conversation-index cache if it matches conversations/
+  -> load selected conversation checkpoint
   -> replay later events
   -> derive render projection
   -> hydrate pi-mono only when a run is started or continued

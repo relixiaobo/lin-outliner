@@ -7,10 +7,10 @@ import {
   openMockedApp,
 } from './outlinerMock';
 
-async function waitForAgentSession(page: import('@playwright/test').Page) {
+async function waitForAgentConversation(page: import('@playwright/test').Page) {
   await expect.poll(async () => {
     const calls = await commandCalls(page);
-    return calls.some((call) => call.cmd === 'agent_restore_latest_session');
+    return calls.some((call) => call.cmd === 'agent_restore_latest_conversation');
   }).toBe(true);
 }
 
@@ -32,7 +32,7 @@ async function invokeDocumentCommand(page: Page, cmd: string, args: Record<strin
 test.describe('agent composer controls', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
-    await waitForAgentSession(page);
+    await waitForAgentConversation(page);
   });
 
   test('sends from the primary action', async ({ page }) => {
@@ -45,7 +45,7 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_send_message')?.args;
     }).toMatchObject({
       message: 'Summarize current outline.',
-      sessionId: 'mock-agent-session',
+      conversationId: 'mock-agent-session',
     });
   });
 
@@ -215,7 +215,7 @@ test.describe('agent composer controls', () => {
     const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-user-with-attachments',
@@ -907,7 +907,7 @@ test.describe('agent composer controls', () => {
     });
 
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-user-with-ref',
@@ -955,7 +955,7 @@ test.describe('agent composer controls', () => {
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-assistant-inline-ref',
@@ -1078,7 +1078,7 @@ test.describe('agent composer controls', () => {
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
         id: 'active-compact-1',
@@ -1094,7 +1094,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {
@@ -1543,9 +1543,9 @@ test.describe('agent composer controls', () => {
     });
   });
 
-  test('renders node reference session titles without node ids', async ({ page }) => {
+  test('renders node reference conversation titles without node ids', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
+      conversationTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [],
     });
@@ -1559,7 +1559,7 @@ test.describe('agent composer controls', () => {
     const menu = page.getByRole('dialog', { name: 'Conversations' });
     await expect(menu).toBeVisible();
 
-    const row = menu.locator('.agent-session-row').nth(1);
+    const row = menu.locator('.agent-conversation-row').nth(1);
     await expect(row).toBeVisible();
     const before = await row.boundingBox();
     expect(before).toBeTruthy();
@@ -1575,7 +1575,7 @@ test.describe('agent composer controls', () => {
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
       thinkingLevel: 'medium',
@@ -1600,7 +1600,7 @@ test.describe('agent composer controls', () => {
     await page.getByRole('button', { name: 'Stop agent' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.some((call) => call.cmd === 'agent_stop_session');
+      return calls.some((call) => call.cmd === 'agent_stop_conversation');
     }).toBe(true);
 
     await page.getByLabel('Agent message').fill('Compare tag layout stability.');
@@ -1608,10 +1608,10 @@ test.describe('agent composer controls', () => {
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.find((call) => call.cmd === 'agent_steer_session')?.args;
+      return calls.find((call) => call.cmd === 'agent_steer_conversation')?.args;
     }).toMatchObject({
       message: 'Compare tag layout stability.',
-      sessionId: 'mock-agent-session',
+      conversationId: 'mock-agent-session',
     });
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
@@ -1633,7 +1633,7 @@ test.describe('agent composer controls', () => {
     };
 
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: 'Agent System',
+      conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {
@@ -1711,14 +1711,14 @@ test.describe('agent composer controls', () => {
         args: {
           agentId: 'subagent-1',
           message: 'Continue with layout risks.',
-          sessionId: 'mock-agent-session',
+          conversationId: 'mock-agent-session',
         },
       },
       {
         cmd: 'agent_subagent_stop',
         args: {
           agentId: 'subagent-1',
-          sessionId: 'mock-agent-session',
+          conversationId: 'mock-agent-session',
         },
       },
     ]);

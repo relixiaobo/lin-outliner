@@ -282,14 +282,14 @@ differentiator today is the name going weight 500.
 recommend the System-Settings flat-`--selection-bg` fill as the most native
 selection treatment (H#1). The minimal, lowest-risk convergence this plan ships:
 
-- **Agent session current row → `--selection-bg`** (the settings flat-fill
+- **Agent conversation current row → `--selection-bg`** (the settings flat-fill
   treatment), keeping hover as `--control-hover`. Result: hover is a light tint,
   current is the stronger neutral selection fill — now distinguishable, and the
   current row carries the same selection treatment settings uses.
 
   ```css
-  .agent-session-row:hover { background: var(--control-hover); }      /* unchanged */
-  .agent-session-row.is-current { background: var(--selection-bg); }  /* was --control-hover */
+  .agent-conversation-row:hover { background: var(--control-hover); }      /* unchanged */
+  .agent-conversation-row.is-current { background: var(--selection-bg); }  /* was --control-hover */
   ```
 
   `--selection-bg` = `--fill-3` (0.10) vs `--control-hover` = `--fill-2` (0.07), so
@@ -470,7 +470,7 @@ Build (this PR — #118 is merged, so settings renames fold in):
 - [ ] tokens.css: add `--title-display/-section/-group` scale aliases + comment (D4).
 - [ ] outliner.css:844 — `.row min-height: var(--row-h-dense)` (D2 rename, no-op).
 - [ ] agent-markdown.css — markdown h1 → `--title-section` (D4 rename, no-op).
-- [ ] agent-dock.css:305 — split `.agent-session-row.is-current` off the shared
+- [ ] agent-dock.css:305 — split `.agent-conversation-row.is-current` off the shared
   hover rule; `background: var(--selection-bg)` (D5, the headline fix).
 - [ ] outliner.css:2229-2249,2314-2322 — `.node-context-menu` / `.tag-context-menu`
   / `.batch-tag-selector` → `--material-popover` + `--material-backdrop` +
