@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Guide agent memory use in the system prompt (PR #155)** — added a stable `Memory` section to the Tenon
+  agent system prompt: use the `memory` tool for concise durable facts / stable preferences / corrections
+  that should carry forward; treat `<agent-memory>` as background context (not user-authored instructions);
+  update or forget a remembered fact when the user corrects it; and do NOT store transient task state, raw
+  conversation summaries, secrets/credentials, guesses, or current-conversation-only facts (use `past_chats`
+  for raw prior-conversation recall). Closes the M1 "inline memory write instructions in the agent prompt"
+  checklist item. Gate: typecheck + `agentSystemPrompt.test.ts` 3/0 (tool names + tag verified against the
+  runtime). ([#155](https://github.com/relixiaobo/lin-outliner/pull/155))
+
 - **Harden agent permission approval semantics (PR #154)** — removed conversation-scoped approval from the
   permission model: approval scopes are now only `once` / `always`, and stale conversation-shaped rule
   fixtures can no longer relax a configured/default `ask`. `approval.*` UI events and `tool.permission.*`

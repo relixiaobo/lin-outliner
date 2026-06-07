@@ -334,6 +334,12 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-memory-prompt-guidance** (codex, PR #155) — added a stable `Memory` section to the agent system
+  prompt (when to remember/update/forget durable facts; `<agent-memory>` is background context; route raw
+  prior-conversation recall to `past_chats`; never store transient/secret/current-only facts). Closes the M1
+  agent-conversation-model "inline memory write instructions in the agent prompt" checklist item. Gate:
+  typecheck + `agentSystemPrompt.test.ts` 3/0.
+
 - **agent-tool-permissions-hardening** (codex, PR #154) — hardened agent permission approval: removed
   conversation-scoped approval (scopes now `once`/`always` only), unified `approval.*` + `tool.permission.*`
   onto one `permission-<uuid>` join id (skill-shell now emits the full checked/resolved pair), and
