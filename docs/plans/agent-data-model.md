@@ -52,8 +52,8 @@ the same change, per AGENTS.md A6.
 - **The conversation/DM/Channel experience** (find-or-create DM, Channel creation,
   coordinator routing, `@`-addressing UX) — owned by [[agent-conversation-model]].
   This doc defines `ConversationMeta`; the rendering rules are there.
-- **The memory write authority** (foreground-agent bootstrap tool vs Settings/Dream
-  runtime writers, extraction, and offline consolidation) — owned by
+- **The memory write authority** (Settings/Profile UI + runtime-owned Dream/extraction
+  writers, plus offline consolidation) — owned by
   [[agent-conversation-model]] §Memory model. This doc
   defines the `MemoryEntry` shape + the runtime-owned append-surface *contract* (§3), not
   the write machinery.
@@ -358,10 +358,11 @@ raw messages (conversation log, leaves)
 
 Consumers **beyond context injection**: navigation (summary spine = thread
 table-of-contents); **hierarchical recall** — `recall.overview(query)` → matching
-summaries *with addresses*, then `recall.expand(summaryId)` → the raw span (coarse layer
-above `past_chats`, which stays the raw/fine layer); **Dream candidate location**
-(summaries/search identify spans to inspect, raw messages/run events supply the
-evidence); titling; re-entry briefs.
+summaries *with addresses*, then `recall.expand(summaryId)` → the raw span; the
+raw/fine layer is an internal conversation/run evidence search service, not a
+model-visible `past_chats` tool; **Dream candidate location** (summaries/search
+identify spans to inspect, raw messages/run events supply the evidence); titling;
+re-entry briefs.
 
 ### 5. On-disk layout (target)
 
@@ -642,9 +643,12 @@ agent.skills[]          ──▶ skills/ file tree
   risks lost-update; plus an **opt-in isolation tier** (`isolated` / `read-only-global`)
   over the global default, with `originWorkspace` recorded. (Rationale in
   [[agent-conversation-model]] §Memory model.)
-- **PM-ratified (2026-06-07):** the model-visible inline memory tool is a bootstrap,
-  not the target writer. Dream/extraction must use summaries/search only as locators
-  and must read raw conversation/run records before writing long-term memory.
+- **PM-ratified (2026-06-07):** because Lin has not shipped, use a clean cut:
+  remove the foreground model-visible memory write tool and the model-visible
+  `past_chats` tool rather than preserving compatibility aliases. The target
+  model-facing retrieval surface is read-only recall/evidence; Dream/extraction
+  must use summaries/search only as locators and must read raw conversation/run
+  records before writing long-term memory.
 
 ## Protocol-surface coordination (A4 / A7)
 
@@ -686,7 +690,9 @@ These are data-model-local; the experience/sequencing OQs live in
 - **Run-log retention thresholds** — the state machine is fixed (§10); open is the *trigger
   policy* for each transition (age / count / distilled-yet? / disk pressure), tied to the
   compaction trigger.
-- **Memory write-API surface — DECIDED for target architecture** — the runtime
-  append primitive stays; the foreground model-callable memory tool is not the
-  target writer. Settings/Profile UI and Dream/extraction callbacks drive writes.
-  Open detail: exact Dream scheduling/throttle policy and review surface.
+- **Memory/recall tool surface — DECIDED for target architecture** — the runtime
+  append primitive stays; the foreground model-callable memory write tool is not
+  the target writer, and `past_chats` is not a target model-visible tool.
+  Settings/Profile UI and Dream/extraction callbacks drive writes; foreground
+  model access is read-only recall/evidence. Open detail: exact Dream
+  scheduling/throttle policy and review surface.

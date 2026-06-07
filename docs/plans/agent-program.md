@@ -107,7 +107,7 @@ that consume it — proof it belongs here, not inside one feature plan.
 | # | Seam | What | Consumers |
 |---|---|---|---|
 | F1 | **Agent identity record** | Stable `agentId` + persisted identity record exist for the built-in assistant; registry unification and multi-agent identity management stay in M3 | conversation-model (memory), self-modification (config/status), skills (binding) |
-| F2 | **session → `{conversation, run}` (+ minimal join)** | Storage is re-keyed to conversation/run/agent families, run meta anchors execution to one conversation, conversation meta/cursors are separate files, and the current read seam joins target logs back into the reducer/runtime. Mixed-resolution (old segments → summaries) remains the **M1** enhancement. | conversation-model, scheduled-routines (persistence), past_chats, ask-question (events) |
+| F2 | **session → `{conversation, run}` (+ minimal join)** | Storage is re-keyed to conversation/run/agent families, run meta anchors execution to one conversation, conversation meta/cursors are separate files, and the current read seam joins target logs back into the reducer/runtime. Mixed-resolution (old segments → summaries) remains the **M1** enhancement. | conversation-model, scheduled-routines (persistence), recall/evidence search, ask-question (events) |
 | F3 | **`actor` on message records** | `AgentEventMessageRecord.actor` is required; runtime-authored events use the stable assistant principal instead of a hardcoded `'pi-mono'` author | conversation-model (notifications, multi-agent POV, forwarding), task delivery |
 | F4 | **Internal domain-event bus + taxonomy** | The M0 bus exists with persisted-log, renderer-projection, trusted-observer, and hook-interceptor lanes. Consumer-specific notification/hook policy remains later work. | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
 | F5 | **`AgentSessionState` split** | Active-run state is structurally separated from the runtime session object and aligns with the F2 run log. Remaining session-shaped runtime fields are internal bridge debt, not a protocol shape for new consumers. | background tasks, scheduled routines, multi-agent channels |
@@ -184,13 +184,14 @@ L0.5 CLEAN CUT (pre-M1)
    · verify every active consumer plan targets conversation/run/agent seams directly
         │
 L1 SINGLE-AGENT CAPABILITY (M1)
-   memory v1 (conv-model) · skills self-authoring (skills-authoring)
+   memory foundation (conv-model) · skills self-authoring (skills-authoring)
    · self-observation + config tool (self-mod) · ask_user_question (its plan)
         │
 L2 OFF-FLOOR + EXTENSION (M2)
    background task panel + notifications + needs-input (conv-model)
-   · prompt-only hooks (self-mod) · memory v2 Dream extraction (raw-record evidence,
-     no foreground inline memory tool) · config recovery + curation
+   · prompt-only hooks (self-mod) · recall clean cut + Dream extraction
+     (raw-record evidence, no foreground inline memory writer, no model-visible past_chats)
+   · config recovery + curation
         │
 L3 MULTI-AGENT (M3)
    sequential Channels + coordinator (conv-model) · per-agent POV derivation
@@ -208,8 +209,8 @@ mostly independent).
 |---|---|---|
 | **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
 | **M0.5 — Clean cut** | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
-| **M1 — Single-agent "self"** | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection; the shipped inline tool is a bootstrap, not the target writer) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
-| **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators, and removal of the foreground inline memory tool · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals |
+| **M1 — Single-agent "self"** | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
+| **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · read-only recall/evidence surface backed by durable memory + internal conversation/run search · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals |
 | **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
 
 ## How this reorg changes the member plans

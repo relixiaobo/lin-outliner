@@ -311,7 +311,8 @@ A DM never converts in place. Adding a second agent **spawns a new, seeded Chann
 each other, and the 1:1 stream stays private. This is cheap in our model because a
 new Channel is a **warm start, not a cold one**: the agent's memory line + the
 ambient outline already carry the context — only the verbatim DM transcript stays
-behind (a record, recallable via `past_chats`).
+behind (a record, reachable only through internal evidence search / explicit
+provenance expansion, not a public `past_chats` tool).
 
 A newly added agent onboards from **shared substrates only — never the private DM
 transcript** — via a toolkit, each for a different need:
@@ -445,19 +446,21 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   `MemoryEntry` set; profile-visible/editable. Satisfies the trust affordances
   (inspect / edit / forget) that "retain everything" requires. (Shape: [[agent-data-model]]
   §3, §5.)
-- **Write authority, revised after PM review (2026-06-07):** the model-visible
-  inline `memory` tool is a shipped bootstrap, not the target architecture. The
-  durable memory line should be written by **runtime-owned** writers only:
+- **Write authority, revised after PM review (2026-06-07):** because Lin has not
+  shipped, cut directly to the target architecture: remove the model-visible
+  inline `memory` write tool instead of preserving, wrapping, or aliasing it. The
+  durable memory line is written by **runtime-owned** writers only:
   Settings/Profile UI for explicit user edits, and a later Dream/extraction
   worker for automatic long-term consolidation. The foreground main agent consumes
-  `<agent-memory>` but should not own a general-purpose "permanently remember
-  this now" tool. **Why:** the foreground turn is optimized for solving the current
-  task, so letting it decide long-term writes overfits transient context, encourages
-  over-memory, and mixes short-term problem solving with durable state management.
-  Update/forget also requires dedupe, conflict checks, provenance review, and
-  workspace-scope enforcement — all better handled by a serialized runtime writer.
-  The append surface remains the right primitive: event-sourced, schema-checked,
-  serialized, audited, and not `file_write`/`edit`.
+  `<agent-memory>` and read-only recall evidence, but should not own a
+  general-purpose "permanently remember this now" tool. **Why:** the foreground
+  turn is optimized for solving the current task, so letting it decide long-term
+  writes overfits transient context, encourages over-memory, and mixes short-term
+  problem solving with durable state management. Update/forget also requires
+  dedupe, conflict checks, provenance review, and workspace-scope enforcement —
+  all better handled by a serialized runtime writer. The append surface remains
+  the right primitive: event-sourced, schema-checked, serialized, audited, and not
+  `file_write`/`edit`.
 - **Dream / extraction writer (M2).** A dedicated runtime-owned worker may use a
   restricted model call, but it is **not** the main agent's inline tool and **not**
   the implicit `fork` (which is `tools:['*']`, inherits the parent prompt,
@@ -490,14 +493,16 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   cc-2.1 needs them only because Claude Code lacks a structured store).
 - **What not to save:** anything the outline already records (else memory and the
   document duplicate and pollute each other).
-- **`past_chats` stays as raw-transcript recall** (rename sessions→conversations
-  only) — but it becomes the **fine/raw layer** under the distillation ladder's
-  **coarse** layer (§Data structure): `recall.overview` matches *summaries* with
-  addresses, then `recall.expand` (or `past_chats`) drills to the raw span. It stays
-  session/transcript-shaped by construction (search-index keyed by `sessionId:messageId`,
-  `agentEventStore.ts:807`); the memory line remains a **separate** runtime-owned store
-  — don't "rewire past_chats into memory." Three distinct things: raw recall
-  (fine) → segment summaries (coarse, addressable) → distilled memory.
+- **No model-visible `past_chats` in the target architecture.** Raw transcript
+  search remains necessary, but only as an **internal evidence search** service
+  over conversation messages and run events. The model-facing read tool should be
+  a memory/evidence-oriented `recall` surface that can return durable memory
+  entries, raw conversation spans, relevant run evidence, and provenance. The
+  memory line remains a **separate** runtime-owned store — do not rename
+  `past_chats` into memory and do not expose transcript-shaped chat history as
+  the public agent tool. Three distinct layers stay separate: raw evidence
+  search (fine/internal) → segment summaries (coarse, addressable) → durable
+  memory entries (agent-owned).
 - **Dream evidence = raw conversation/run record; summaries are locators, not
   evidence.** Distillation summaries are lossy objective compression. They are
   useful as a map to find likely spans and bound cost, but Dream must read the
@@ -552,8 +557,8 @@ you address an agent in a conversation
            + live outline state (ambient)
  → pi-agent-core runs the loop
  → outputs: (1) reply → stream   (2) outline mutations → commands(origin:'agent')
- → (bootstrap shipped) inline memory writes may exist temporarily
- → (target) Settings/Profile + Dream write the memory line; the main agent consumes it
+ → optional read-only recall returns memory + raw evidence with provenance
+ → Settings/Profile + Dream write the memory line; the main agent consumes it
 ```
 
 "session" == the assembly step: built per turn, discarded, invisible.
@@ -803,12 +808,12 @@ one-shot, **not** isolated. cc-2.1's `runForkedAgent` pattern does not map.
 
 **Response:** Dream/extraction is a **dedicated runtime-owned worker** with a
 restricted model surface, plus a host callback that feeds bounded raw
-conversation/run spans and enforces throttling. The shipped inline memory tool
-was useful to prove the store and UI, but it is not the target write authority:
-the main foreground agent should consume memory, not directly curate durable
-memory. (Confirmed by prior art: both hermes and cc-2.1 run background memory
-work as a restricted surface — hermes whitelists memory+skill tools, cc-2.1's
-Dream — not a full `tools:['*']` fork.)
+conversation/run spans and enforces throttling. Since Lin has not shipped, remove
+the foreground inline memory writer cleanly instead of keeping a compatibility
+path: the main foreground agent should consume memory, not directly curate
+durable memory. (Confirmed by prior art: both hermes and cc-2.1 run background
+memory work as a restricted surface — hermes whitelists memory+skill tools,
+cc-2.1's Dream — not a full `tools:['*']` fork.)
 
 ### §5 — Memory storage location & scope — UNDERSPECIFIED, fixed
 
@@ -818,8 +823,9 @@ reload; config pollution; ambiguous "global" home; file-permission questions).
 
 **Response:** memory lives in `userData/agent/agents/<agentId>/memory/events.jsonl`
 (runtime, mutable, **event-sourced**), separate from read-only config, keyed by the stable
-`agentId` tuple (`sourceKind:sourceInstanceId:name`). `past_chats` stays transcript-shaped
-over conversations; the memory line is a separate store. No migration — wipe dev data.
+`agentId` tuple (`sourceKind:sourceInstanceId:name`). Raw conversation/run logs stay
+transcript-shaped as internal evidence; the memory line is a separate store. No
+migration — wipe dev data.
 
 ## Code mapping (current → target)
 
@@ -839,9 +845,10 @@ Conversation meta gains `Principal`-based `members`
 stable identity record, **without** the registry refactor.
 
 **BUILD** — the memory line: `agents/<agentId>/memory/` store + profile UI
-(view/edit/forget) + reminder-stack injection; retire the model-visible inline
-memory tool before building more memory consumers; then add Dream/extraction
-and consolidation as the only automatic writers. **The task
+(view/edit/forget) + reminder-stack injection; clean-cut remove the
+model-visible inline memory writer and model-visible `past_chats`; expose a
+read-only recall/evidence surface; then add Dream/extraction and consolidation
+as the only automatic writers. **The task
 plane:** a visible per-agent task panel + conversation-scoped notification
 (generalize `pendingSubagentNotifications`) + `needs-input`; the trigger modeled as
 a typed event for a future hooks consumer (§Background tasks). **Skills structure +
@@ -869,7 +876,7 @@ target surface directly; do not preserve old session-shaped protocol branches.
 |---|---|---|
 | **P0** | Give the main agent a stable identity record — the `sourceKind:sourceInstanceId:name` **tuple** ([[agent-data-model]] §3), not a bare `name` — that memory keys off. **Not** the registry refactor. Pinning the full tuple here is what avoids the cross-project same-name memory collision (a bare `name` would reintroduce it). | small (incl. the tuple decision) |
 | **P1** | **mixed-resolution assembly** in `deriveRuntimePiMessages` — join run logs for the recent window, render old segments as their (compaction) summaries; **canonical DM + user-creatable Channels** (conversation-list surface; DM find-or-create); **memory foundation** (runtime-owned event-sourced append surface — *not* `file_write`; **global-default + opt-in isolation** retrieval; profile UI; reminder-stack injection). Single-member only. | memory storage/UI/recall + channel UX on top of M0/M0.5 |
-| **P2** | **Memory v2 Dream** — remove the main agent's model-visible inline memory tool; add a runtime-owned Dream/extraction writer that uses summaries/search only to locate candidate spans, then reads raw conversation/run evidence before add/update/forget; host callback + throttling + provenance tagging. | real build (~400–600 LoC) |
+| **P2** | **Memory v2 Dream + recall clean cut** — remove the main agent's model-visible inline memory tool and model-visible `past_chats`; add a read-only recall/evidence surface backed by durable memory plus internal conversation/run evidence search; add a runtime-owned Dream/extraction writer that uses summaries/search only to locate candidate spans, then reads raw conversation/run evidence before add/update/forget; host callback + throttling + provenance tagging. | real build (~500–700 LoC) |
 | **P3** | **Sequential multi-member Channels** — per-agent POV derivation + per-member `agentId` (on the P1 `actor` field), **coordinator-based turn-taking routing** (§Channel routing), rooms-are-linear; **the main-agent registry unification**; deeper memory consolidation. | the big subsystem |
 
 Single-member conversations (DM + a Channel staffed with one agent) deliver most
@@ -1002,7 +1009,7 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
 P0 — identity
 - [x] Give the main agent a stable `agentId` **tuple** (`sourceKind:sourceInstanceId:name`, not a bare `name`); thread it where memory will key off it.
 
-P1 — conversations + memory v1
+P1 — conversations + memory foundation
 - [x] `session`→`{conversation, run}`: split the message stream (communication) from the run log (execution **incl. `tool_result`**); re-key `sessions/<id>` → `conversations/<id>` + `runs/<id>`; IPC, state map, scopes.
 - [x] **Mixed-resolution assembly** (PM-ratified): `deriveRuntimePiMessages` joins the recent window's run logs into a valid pi-agent-core transcript and renders old segments as their (compaction) summaries — the agent no longer re-sees old tool outputs verbatim.
 - [x] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
@@ -1011,7 +1018,9 @@ P1 — conversations + memory v1
 - [x] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
 - [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, audited — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
-- [x] Inline memory write instructions in the agent prompt shipped as a bootstrap, but are no longer the target write architecture.
+- [x] Inline memory write instructions in the agent prompt shipped during the
+  M1 foundation, but are no longer the target write architecture and should be
+  removed cleanly before further memory consumers.
 - [x] Memory recall added to the per-turn reminder stack (`agentRuntime.ts:640`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
 - [x] Profile UI: view / edit / forget memory.
 - [x] M0.5 clean cut: rename/remove remaining agent `session*` protocol/index/API
@@ -1019,6 +1028,9 @@ P1 — conversations + memory v1
 
 P2 — memory v2 + background-task surfacing
 - [ ] Remove the main agent's model-visible inline `memory` tool and prompt guidance; keep Settings/Profile UI and `<agent-memory>` consumption.
+- [ ] Remove the model-visible `past_chats` tool; replace it with a read-only
+  recall/evidence tool backed by durable memory plus internal conversation/run
+  evidence search.
 - [ ] Runtime-owned Dream/extraction worker with a restricted model surface and host callback.
 - [ ] Use distillation summaries/search only to locate candidate spans; read raw conversation messages and relevant run events before writing memory.
 - [ ] Throttle; dedupe/conflict-check against existing memory; append add/update/forget events with raw provenance tags (conversation/message range/run/event/workspace).
