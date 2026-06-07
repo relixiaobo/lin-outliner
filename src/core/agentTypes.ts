@@ -11,6 +11,7 @@ import type {
 } from '@earendil-works/pi-ai';
 import type { AgentRenderProjection } from './agentRenderProjection';
 import type {
+  AgentNotificationKind,
   AgentPayloadRef,
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
@@ -339,6 +340,25 @@ export interface AgentUserQuestionResolvedEvent {
   timestamp: number;
 }
 
+/**
+ * Per-conversation unread/attention signal for the off-floor task plane. Emitted
+ * whenever a conversation's folded unread count changes (a task delivered a
+ * notification off-floor, or the user opened the conversation and cleared it).
+ * Threaded to the renderer's conversation list independently of the active-
+ * conversation projection, so badges update across all conversations.
+ */
+export interface AgentConversationAttentionEvent {
+  type: 'conversation_attention';
+  conversationId: string;
+  unreadCount: number;
+  lastNotification?: {
+    notificationId: string;
+    kind: AgentNotificationKind;
+    title: string;
+  };
+  timestamp: number;
+}
+
 export type AgentRuntimeEvent =
   | AgentProjectionEvent
   | AgentReadyEvent
@@ -349,6 +369,7 @@ export type AgentRuntimeEvent =
   | AgentApprovalRequestEvent
   | AgentApprovalResolvedEvent
   | AgentUserQuestionRequestEvent
-  | AgentUserQuestionResolvedEvent;
+  | AgentUserQuestionResolvedEvent
+  | AgentConversationAttentionEvent;
 
 export type { AskUserQuestionResult };

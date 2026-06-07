@@ -68,6 +68,8 @@ import {
   type AgentIdentityRecord,
   type AgentMemoryEntry,
   type AgentMemoryEvent,
+  type AgentNotificationKind,
+  type AgentNotificationRecord,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentPrincipal,
@@ -405,12 +407,15 @@ interface AgentDreamRunResult {
 }
 
 type AgentEventInput = AgentRuntimeContextEventInput;
+/** Opt-in OS-notification sink, wired by main.ts (owns the native Electron Notification). */
+export type OsNotifier = (input: { title: string; body?: string; conversationId: string }) => void;
 type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
 type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
 type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
 export class AgentRuntime {
   private sessions = new Map<string, AgentSessionState>();
+  private osNotifier?: OsNotifier;
   private debugProjectionCache = new Map<string, {
     history: AgentDebugSnapshot[];
     latestSeq: number;
@@ -516,7 +521,30 @@ export class AgentRuntime {
     if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
+    // Opening a conversation reads it: durably clear its off-floor attention.
+    await this.clearConversationAttention(sessionId, session);
     return this.conversationResponse(sessionId, session);
+  }
+
+  /**
+   * Durably clear a conversation's unread attention (the user opened/read it).
+   * Appends a notification.read cursor through the current tail and re-emits the
+   * folded count. A no-op when nothing is unread so the log does not grow on every
+   * open.
+   */
+  private async clearConversationAttention(sessionId: string, session: AgentSessionState): Promise<void> {
+    const conversationId = conversationIdFromSessionId(sessionId);
+    const attention = session.eventState.attentionByConversationId[conversationId];
+    if (!attention || attention.unreadCount === 0) return;
+    const throughSeq = session.eventState.latestSeq;
+    if (throughSeq <= attention.lastReadThroughSeq) return;
+    await this.appendSessionEvents(sessionId, session, [{
+      type: 'notification.read',
+      actor: userActor(),
+      conversationId,
+      throughSeq,
+    }]);
+    this.emitConversationAttention(sessionId, session);
   }
 
   private async restoreOrCreateDefaultDm() {
@@ -1646,9 +1674,62 @@ export class AgentRuntime {
     snapshot: AgentSubagentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
+    // Durable per-conversation delivery: emit the attention/OS signal as a
+    // notification.created event anchored to the origin conversation. This is the
+    // restart-safe record (the in-memory model-injection below is the live-session
+    // composed-turn layer; it is best-effort and not the durability guarantee).
+    await this.emitTaskNotification(sessionId, session, {
+      notificationId: `notification-${snapshot.id}`,
+      kind: subagentNotificationKind(snapshot.status),
+      title: subagentNotificationTitle(snapshot),
+      body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
+      source: { type: 'subagent', subagentRunId: snapshot.id },
+      actor: snapshot.parentToolCallId
+        ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
+        : systemActor(),
+    });
     session.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
     void this.flushSubagentNotifications(sessionId, session).catch((error) => {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+    });
+  }
+
+  /**
+   * Append a durable notification.created event anchored to the session's origin
+   * conversation, then surface it (projection + opt-in OS notification). Idempotent
+   * on notificationId so a re-emitted terminal snapshot does not double-count.
+   */
+  private async emitTaskNotification(
+    sessionId: string,
+    session: AgentSessionState,
+    input: {
+      notificationId: string;
+      kind: AgentNotificationKind;
+      title: string;
+      body?: string;
+      source?: { type: 'run'; runId: string } | { type: 'subagent'; subagentRunId: string };
+      actor?: AgentActor;
+    },
+  ): Promise<void> {
+    if (session.eventState.notifications[input.notificationId]) return;
+    const conversationId = conversationIdFromSessionId(sessionId);
+    await this.appendSessionEvents(sessionId, session, [{
+      type: 'notification.created',
+      actor: input.actor ?? systemActor(),
+      notificationId: input.notificationId,
+      conversationId,
+      kind: input.kind,
+      target: this.userPrincipal(),
+      title: input.title,
+      body: input.body ? truncateNotificationBody(input.body) : undefined,
+      source: input.source,
+    }]);
+    this.emitProjection(sessionId, 'notification.created', 'coalesce');
+    this.emitConversationAttention(sessionId, session);
+    this.deliverOsNotification(sessionId, session, input.notificationId, {
+      title: input.title,
+      body: input.body,
+      conversationId,
     });
   }
 
@@ -2579,6 +2660,64 @@ export class AgentRuntime {
       type: 'error',
       error: message,
     });
+  }
+
+  /**
+   * Push the conversation's folded unread count to the renderer's conversation
+   * list. Threaded independently of the active-conversation projection so badges
+   * on other conversations update too.
+   */
+  private emitConversationAttention(sessionId: string, session: AgentSessionState) {
+    const conversationId = conversationIdFromSessionId(sessionId);
+    const attention = session.eventState.attentionByConversationId[conversationId];
+    const latest = this.latestUnreadNotification(session, conversationId);
+    this.emit({
+      type: 'conversation_attention',
+      conversationId,
+      unreadCount: attention?.unreadCount ?? 0,
+      lastNotification: latest
+        ? { notificationId: latest.notificationId, kind: latest.kind, title: latest.title }
+        : undefined,
+      timestamp: Date.now(),
+    });
+  }
+
+  private latestUnreadNotification(
+    session: AgentSessionState,
+    conversationId: string,
+  ): AgentNotificationRecord | undefined {
+    let latest: AgentNotificationRecord | undefined;
+    for (const record of Object.values(session.eventState.notifications)) {
+      if (record.conversationId !== conversationId || record.read) continue;
+      if (!latest || record.seq > latest.seq) latest = record;
+    }
+    return latest;
+  }
+
+  /**
+   * Set the opt-in OS-notification sink. main.ts owns the native Electron
+   * Notification (and window-focus suppression + the user opt-in gate); the
+   * runtime only forwards the signal. Left unset means OS notifications are off
+   * (the default) — the durable in-app delivery is unaffected.
+   */
+  setOsNotifier(notifier: OsNotifier | undefined): void {
+    this.osNotifier = notifier;
+  }
+
+  private deliverOsNotification(
+    sessionId: string,
+    session: AgentSessionState,
+    notificationId: string,
+    input: { title: string; body?: string; conversationId: string },
+  ): void {
+    void sessionId;
+    void session;
+    void notificationId;
+    try {
+      this.osNotifier?.(input);
+    } catch (error) {
+      this.emitError(input.conversationId, error instanceof Error ? error.message : String(error));
+    }
   }
 
   private emitConversationRuntimeEvent(sessionId: string, input: PublicConversationRuntimeEventInput) {
@@ -5290,12 +5429,30 @@ function resolveSkillEffortOverride(
   return supported[0] ?? currentThinkingLevel;
 }
 
+const NOTIFICATION_BODY_MAX_LENGTH = 280;
+
+function truncateNotificationBody(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length <= NOTIFICATION_BODY_MAX_LENGTH) return trimmed;
+  return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+function subagentNotificationKind(
+  status: AgentSubagentRunSnapshot['status'],
+): AgentNotificationKind {
+  if (status === 'failed') return 'task_failed';
+  if (status === 'stopped') return 'task_stopped';
+  return 'task_completed';
+}
+
+function subagentNotificationTitle(snapshot: AgentSubagentRunSnapshot): string {
+  if (snapshot.status === 'failed') return `Subagent "${snapshot.description}" failed.`;
+  if (snapshot.status === 'stopped') return `Subagent "${snapshot.description}" was stopped.`;
+  return `Subagent "${snapshot.description}" completed.`;
+}
+
 function formatSubagentNotification(snapshot: AgentSubagentRunSnapshot): string {
-  const summary = snapshot.status === 'completed'
-    ? `Subagent "${snapshot.description}" completed.`
-    : snapshot.status === 'failed'
-      ? `Subagent "${snapshot.description}" failed.`
-      : `Subagent "${snapshot.description}" was stopped.`;
+  const summary = subagentNotificationTitle(snapshot);
   return [
     '<subagent-notification>',
     `<agent_id>${escapeXml(snapshot.id)}</agent_id>`,

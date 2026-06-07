@@ -1032,6 +1032,27 @@ describe('agent runtime subagents', () => {
     expect(notificationText).toContain('bg-notify');
     expect(notificationText).toContain('Background notification result.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+
+    // Durable per-conversation delivery: the detached-subagent terminal raises a
+    // folded attention signal anchored to its origin conversation.
+    const attentionEvents = sink.events.filter(
+      (event): event is Extract<AgentRuntimeEvent, { type: 'conversation_attention' }> =>
+        event.type === 'conversation_attention',
+    );
+    expect(attentionEvents.length).toBeGreaterThan(0);
+    const raised = attentionEvents[attentionEvents.length - 1]!;
+    expect(raised.conversationId).toBe(session.conversationId);
+    expect(raised.unreadCount).toBeGreaterThanOrEqual(1);
+    expect(raised.lastNotification?.kind).toBe('task_completed');
+
+    // Opening (restoring) the conversation reads it: attention clears to zero and
+    // survives a reload from the durable event log.
+    await runtime.restoreConversation(session.conversationId);
+    const afterOpen = sink.events.filter(
+      (event): event is Extract<AgentRuntimeEvent, { type: 'conversation_attention' }> =>
+        event.type === 'conversation_attention',
+    );
+    expect(afterOpen[afterOpen.length - 1]?.unreadCount).toBe(0);
   });
 
   test('exposes runtime commands for subagent follow-up and status refresh', async () => {
