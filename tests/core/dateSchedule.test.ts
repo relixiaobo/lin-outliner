@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 import {
   formatDateRecurrenceRule,
   formatDateSchedule,
@@ -35,6 +37,9 @@ describe('date schedules', () => {
     expect(parseDateSchedule('2026-05-20 RRULE:FREQ=WEEKLY;BYDAY=MO,MO')).toBeNull();
     expect(parseDateSchedule('2026-05-20 RRULE:FREQ=WEEKLY;COUNT=3')).toBeNull();
     expect(parseDateRecurrenceRule('FREQ=DAILY;INTERVAL=0')).toBeNull();
+    expect(parseDateRecurrenceRule('FREQ=DAILY;INTERVAL=1E1')).toBeNull();
+    expect(parseDateRecurrenceRule('FREQ=DAILY;INTERVAL=0X2')).toBeNull();
+    expect(parseDateRecurrenceRule('FREQ=DAILY;INTERVAL=+2')).toBeNull();
   });
 
   test('fires a one-off schedule once after its anchor', () => {
@@ -82,6 +87,21 @@ describe('date schedules', () => {
     expect(formatDue('2026-01-31T09:00 RRULE:FREQ=MONTHLY', localDate(2026, 3, 31, 12))).toBe('2026-03-31T09:00');
     expect(formatDue('2024-02-29T09:00 RRULE:FREQ=YEARLY', localDate(2027, 3, 1, 12))).toBe('2024-02-29T09:00');
     expect(formatDue('2024-02-29T09:00 RRULE:FREQ=YEARLY', localDate(2028, 3, 1, 12))).toBe('2028-02-29T09:00');
+  });
+
+  test('keeps monthly occurrences that roll through a daylight-saving spring-forward gap', () => {
+    const result = spawnSync(process.execPath, ['--eval', `
+      import { mostRecentDateScheduleDue } from './src/core/dateSchedule.ts';
+      import { isoLocalDateTime } from './src/core/localDate.ts';
+      const due = mostRecentDateScheduleDue('2026-02-08T02:30 RRULE:FREQ=MONTHLY', new Date(2026, 2, 20, 12));
+      process.stdout.write(due ? isoLocalDateTime(due) : 'null');
+    `], {
+      cwd: path.resolve(import.meta.dir, '../..'),
+      encoding: 'utf8',
+      env: { ...process.env, TZ: 'America/New_York' },
+    });
+    if (result.status !== 0) throw new Error(result.stderr || `DST regression subprocess exited with ${result.status}`);
+    expect(result.stdout).toBe('2026-03-08T03:30');
   });
 
   test('honors inclusive UNTIL endpoints', () => {

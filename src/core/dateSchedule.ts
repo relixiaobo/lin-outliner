@@ -30,6 +30,7 @@ export interface DateScheduleFireDecision {
 }
 
 const RRULE_SEPARATOR_PATTERN = /\s+RRULE:/i;
+const DECIMAL_INTEGER_PATTERN = /^[0-9]+$/;
 const WEEKDAYS: readonly DateScheduleWeekday[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
 const WEEKDAY_SET = new Set<DateScheduleWeekday>(WEEKDAYS);
 const JS_DAY_TO_WEEKDAY: readonly DateScheduleWeekday[] = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
@@ -74,7 +75,9 @@ export function parseDateRecurrenceRule(raw: string): DateRecurrenceRule | null 
   const frequency = parseFrequency(values.get('FREQ'));
   if (!frequency) return null;
 
-  const interval = values.has('INTERVAL') ? Number(values.get('INTERVAL')) : 1;
+  const intervalValue = values.get('INTERVAL');
+  if (intervalValue !== undefined && !DECIMAL_INTEGER_PATTERN.test(intervalValue)) return null;
+  const interval = intervalValue !== undefined ? Number(intervalValue) : 1;
   if (!Number.isSafeInteger(interval) || interval < 1) return null;
 
   const byDay = values.has('BYDAY') ? parseByDay(values.get('BYDAY') ?? '') : undefined;
@@ -265,8 +268,6 @@ function localDateOrNull(year: number, monthIndex: number, day: number, hour: nu
   return date.getFullYear() === expectedYear
     && date.getMonth() === expectedMonth
     && date.getDate() === day
-    && date.getHours() === hour
-    && date.getMinutes() === minute
     ? date
     : null;
 }
