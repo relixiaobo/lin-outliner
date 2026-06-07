@@ -518,6 +518,7 @@ export type AgentEventType =
   | 'task.created'
   | 'task.completed'
   | 'notification.created'
+  | 'notification.read'
   | 'config.change'
   | 'review_card.created'
   | 'skill.created'
@@ -800,12 +801,49 @@ export interface TaskCompletedEvent extends AgentEventBase {
   result?: string;
 }
 
+export type AgentNotificationKind =
+  | 'task_completed'
+  | 'task_failed'
+  | 'task_stopped'
+  | 'needs_input'
+  | 'status';
+
+/**
+ * Provenance for a notification: the off-floor run whose terminal state (or
+ * needs-input pause) produced it. Orthogonal to the delivery anchor
+ * (`conversationId`) — a run anchored to conversation X still reports there.
+ */
+export type AgentTaskSource =
+  | { type: 'run'; runId: string }
+  | { type: 'subagent'; subagentRunId: string };
+
 export interface NotificationCreatedEvent extends AgentEventBase {
   type: 'notification.created';
   notificationId: string;
+  /**
+   * Origin conversation the notification is delivered to. Mandatory — there are
+   * no conversation-less notifications (a background run always anchors to a
+   * delivery conversation).
+   */
+  conversationId: string;
+  kind: AgentNotificationKind;
+  target: AgentPrincipal;
   title: string;
   body?: string;
-  target: AgentPrincipal;
+  /** The off-floor run/subagent that produced this notification, when any. */
+  source?: AgentTaskSource;
+}
+
+/**
+ * Durable attention-clear. Marks every `notification.created` in `conversationId`
+ * with `seq <= throughSeq` as read. A conversation's unread count is the number of
+ * its notifications with `seq > lastReadThroughSeq` — folded per conversation,
+ * restart-safe, cleared when the user opens the conversation.
+ */
+export interface NotificationReadEvent extends AgentEventBase {
+  type: 'notification.read';
+  conversationId: string;
+  throughSeq: number;
 }
 
 export interface AgentConfigChange {
@@ -981,6 +1019,7 @@ export type AgentEvent =
   | TaskCreatedEvent
   | TaskCompletedEvent
   | NotificationCreatedEvent
+  | NotificationReadEvent
   | ConfigChangeEvent
   | ReviewCardCreatedEvent
   | SkillAuditEvent
@@ -1105,6 +1144,26 @@ export interface AgentUserQuestionRecord {
   updatedAt: number;
 }
 
+export interface AgentNotificationRecord {
+  notificationId: string;
+  conversationId: string;
+  kind: AgentNotificationKind;
+  target: AgentPrincipal;
+  title: string;
+  body?: string;
+  source?: AgentTaskSource;
+  seq: number;
+  createdAt: number;
+  read: boolean;
+}
+
+export interface AgentConversationAttention {
+  conversationId: string;
+  unreadCount: number;
+  lastReadThroughSeq: number;
+  lastNotificationSeq: number;
+}
+
 export interface AgentEventReplayState {
   session: AgentSessionRecord | null;
   latestSeq: number;
@@ -1121,6 +1180,8 @@ export interface AgentEventReplayState {
   compactionsByMessageId: Record<string, AgentCompactionRecord>;
   dreamsByMessageId: Record<string, AgentDreamRecord>;
   userQuestions: Record<string, AgentUserQuestionRecord>;
+  notifications: Record<string, AgentNotificationRecord>;
+  attentionByConversationId: Record<string, AgentConversationAttention>;
 }
 
 export interface AgentMessageBranchState {
@@ -1156,6 +1217,8 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     compactionsByMessageId: {},
     dreamsByMessageId: {},
     userQuestions: {},
+    notifications: {},
+    attentionByConversationId: {},
   };
 }
 
@@ -1567,7 +1630,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'follow_up.applied':
     case 'task.created':
     case 'task.completed':
-    case 'notification.created':
     case 'config.change':
     case 'review_card.created':
     case 'skill.created':
@@ -1607,7 +1669,51 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       question.updatedAt = event.createdAt;
       return;
     }
+    case 'notification.created': {
+      if (state.notifications[event.notificationId]) return;
+      const attention = ensureConversationAttention(state, event.conversationId);
+      const read = event.seq <= attention.lastReadThroughSeq;
+      state.notifications[event.notificationId] = {
+        notificationId: event.notificationId,
+        conversationId: event.conversationId,
+        kind: event.kind,
+        target: event.target,
+        title: event.title,
+        body: event.body,
+        source: event.source,
+        seq: event.seq,
+        createdAt: event.createdAt,
+        read,
+      };
+      attention.lastNotificationSeq = Math.max(attention.lastNotificationSeq, event.seq);
+      if (!read) attention.unreadCount += 1;
+      return;
+    }
+    case 'notification.read': {
+      const attention = ensureConversationAttention(state, event.conversationId);
+      attention.lastReadThroughSeq = Math.max(attention.lastReadThroughSeq, event.throughSeq);
+      let unread = 0;
+      for (const record of Object.values(state.notifications)) {
+        if (record.conversationId !== event.conversationId) continue;
+        if (record.seq <= attention.lastReadThroughSeq) record.read = true;
+        else unread += 1;
+      }
+      attention.unreadCount = unread;
+      return;
+    }
   }
+}
+
+function ensureConversationAttention(
+  state: AgentEventReplayState,
+  conversationId: string,
+): AgentConversationAttention {
+  let attention = state.attentionByConversationId[conversationId];
+  if (!attention) {
+    attention = { conversationId, unreadCount: 0, lastReadThroughSeq: 0, lastNotificationSeq: 0 };
+    state.attentionByConversationId[conversationId] = attention;
+  }
+  return attention;
 }
 
 function touchSessionUpdatedAt(state: AgentEventReplayState, event: AgentEvent) {

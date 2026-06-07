@@ -365,6 +365,7 @@ type AgentEventType =
   | 'task.created'
   | 'task.completed'
   | 'notification.created'
+  | 'notification.read'
   | 'config.change'
   | 'review_card.created'
   | 'skill.created'
@@ -389,11 +390,38 @@ type AgentEventType =
 ```
 
 Not every schema event is emitted by the current runtime yet. Task,
-notification, review-card, widget-state, skill enable/disable/rollback/curation,
+review-card, widget-state, skill enable/disable/rollback/curation,
 metric, thinking delta, tool-call delta, and derived payload events remain
 schema-reserved so these features can land without changing the event-store
 model. Events that are emitted today still go through the same append-only
 rules.
+
+### Notification + attention projection
+
+`notification.created` and `notification.read` carry the off-floor task plane's
+delivery + attention signal (M2 — [[agent-conversation-model]] §Background tasks).
+A `notification.created` is **anchored to exactly one conversation**
+(`conversationId`, mandatory — there are no conversation-less notifications) and
+carries a `kind` (`task_completed` / `task_failed` / `task_stopped` /
+`needs_input` / `status`) plus an optional `source`
+(`{ type: 'run' | 'subagent'; … }`) naming the off-floor run that produced it.
+`needs-input` reuses the run-log `user_question.*` lifecycle for the actual
+pause/answer/resume; the notification only routes the attention signal to the
+origin conversation.
+
+Replay projects two derived structures on `AgentEventReplayState`:
+
+- `notifications: Record<notificationId, AgentNotificationRecord>` — each record
+  carries its `seq` and a derived `read` flag; `notification.created` is
+  idempotent on `notificationId`.
+- `attentionByConversationId: Record<conversationId, AgentConversationAttention>`
+  — a **folded** per-conversation `unreadCount` with a `lastReadThroughSeq`
+  cursor. Unread = notifications in that conversation with `seq >
+  lastReadThroughSeq`. `notification.read { conversationId, throughSeq }` advances
+  the cursor (monotonically) and marks matching notifications read; it scopes to
+  its own conversation only. Because the whole model is event-sourced, an
+  undelivered/unseen notification survives restart, and a notification appended
+  after a read cursor re-counts as unread.
 
 Agent-owned memory events live in the separate per-agent memory log.
 `memory.entry_*` events project to editable durable memory entries;
@@ -1013,6 +1041,11 @@ The current renderer contract is `AgentRenderProjection`, carried by
   still expand archived raw/tool messages.
 - Runtime consumers for `user_question.*`, `config.change`, and `skill.*`
   events, plus file-tool skill write validation/hot reload.
+- Notification + attention replay projection: `notification.created` /
+  `notification.read` fold into per-conversation `attentionByConversationId`
+  unread counts and per-notification `read` flags (the M2 off-floor delivery
+  signal's durable substrate; runtime emitters + renderer surfaces are the
+  remaining consumer work).
 
 ### Remaining
 
@@ -1022,8 +1055,11 @@ The current renderer contract is `AgentRenderProjection`, carried by
   detail views.
 - Memory consolidation beyond explicit tool writes, including extraction from
   summaries and mixed-resolution memory retrieval.
-- Runtime consumers for the schema-reserved task, notification, and review-card
-  event families.
+- Runtime consumers for the schema-reserved task and review-card event families.
+- Notification **delivery**: emitting `notification.created` on off-floor task
+  terminal/needs-input states, the durable per-conversation in-stream message,
+  the unread badge in the conversation list, and the opt-in OS notification
+  (M2 — [[agent-conversation-model]] §Background tasks).
 - Optional checkpoint retention preferences if real sessions show storage
   pressure.
 
