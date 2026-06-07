@@ -152,13 +152,18 @@ member reorg is drafted; pending PM ratification before M0 starts.**
   runtime). Owns the detailed design of the M0 seams it analyzed (identity, `actor`,
   session→conversation, `AgentSessionState` split). See
   `docs/plans/agent-conversation-model.md`.
-- **agent-dream-memory** (P2, M2, plan drafted) — durable memory write-back as a
-  **scheduled "Dream"** pass (time + activity + lock gated), not per-turn: awake =
-  read-only `<agent-memory>`/`recall`, sleep = Dream reorganizes. **Redirects #159's
-  per-turn trigger** (reuses its worker/isolation/provenance internals) and folds
-  extraction + consolidation into one scheduled sweep — the detailed design for
-  conversation-model's `Offline consolidation` item. PM-directed (2026-06-07);
-  another dev agent to build. See `docs/plans/agent-dream-memory.md`.
+- **agent-dream-memory** (P2, M2, plan drafted) — durable memory write-back modeled
+  as the agent's **reflective `run`** (no-tools, agent-level anchor, writes memory),
+  triggered by a **`date` schedule** (reusing scheduled-routines' machinery) plus a
+  manual **`/dream`**; not per-turn, no idle detection. Awake = read-only
+  `<agent-memory>`/`recall`; sleep = one pass that extracts + consolidates. Gates:
+  hard `lock`/`canRun`, plus a `DREAM_MIN_VOLUME` heuristic on the auto path
+  (`/dream` bypasses → consolidate-only if nothing new). **Redirects #159's per-turn
+  trigger** (reuses its worker/isolation/provenance internals). Headline protocol
+  decision: generalize `RunMeta`'s conversation anchor to an agent-level run
+  (interface-first). Detailed design for conversation-model's `Offline consolidation`
+  item. PM-directed (2026-06-07); another dev agent to build. See
+  `docs/plans/agent-dream-memory.md`.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
