@@ -52,8 +52,9 @@ the same change, per AGENTS.md A6.
 - **The conversation/DM/Channel experience** (find-or-create DM, Channel creation,
   coordinator routing, `@`-addressing UX) — owned by [[agent-conversation-model]].
   This doc defines `ConversationMeta`; the rendering rules are there.
-- **The memory write pipeline tiers** (v1 inline / v2 extraction subagent / v3 offline
-  consolidation) — owned by [[agent-conversation-model]] §Memory model. This doc
+- **The memory write authority** (Settings/Profile UI + runtime-owned Dream/extraction
+  writers, plus offline consolidation) — owned by
+  [[agent-conversation-model]] §Memory model. This doc
   defines the `MemoryEntry` shape + the runtime-owned append-surface *contract* (§3), not
   the write machinery.
 - **Skill structure / authoring** — owned by [[agent-skills-authoring]]. This doc only
@@ -333,7 +334,8 @@ raw messages (conversation log, leaves)
    └─distill→ segment summary       ┐
                 └─roll up→ conversation summary ┘  ← per-conversation: the conversation's objective record, compressed
                           ═══════════════ ownership boundary ═══════════════
-                          │ the agent actively distills
+                          │ Dream uses summaries/search as locators,
+                          │ then reads raw conversation/run evidence
                           ▼
                        MemoryEntry        ← per-agent: the agent's subjective memory, across conversations
 ```
@@ -343,19 +345,25 @@ raw messages (conversation log, leaves)
   a `source` down-pointer range (`fromMessageId` → `throughMessageId`) over a
   **retained** raw span (`agentEventLog.ts:822-826,968-978`), non-destructive; the
   change is to recognize it as a *multi-consumer* node.
-- **The top rung crosses ownership.** Segment/conversation summaries are the
-  *conversation's* objective compression; the agent then distills **its own**
-  `MemoryEntry` from them. Conversations/channels hold no memory; a "channel summary" is
-  a participating agent's `MemoryEntry` tagged with `sources` provenance.
+- **The ownership boundary crosses at evidence, not at summaries.**
+  Segment/conversation summaries are the *conversation's* objective compression
+  and are intentionally lossy. Dream may use them as a map to find candidate
+  spans, but a durable `MemoryEntry` must be extracted from raw conversation
+  messages and relevant run events. Conversations/channels hold no memory; a
+  "channel summary" becomes durable only when a participating agent's memory
+  writer records a `MemoryEntry` with raw `sources` provenance.
 - **Lossy in content, lossless in addressability.** Every summary / `MemoryEntry` keeps
   a `source(s)` down-pointer; raw is retained permanently, so any distilled claim can be
   drilled back to ground truth — the contamination guard the LoCoMo ceiling demands.
 
 Consumers **beyond context injection**: navigation (summary spine = thread
-table-of-contents); **hierarchical recall** — `recall.overview(query)` → matching
-summaries *with addresses*, then `recall.expand(summaryId)` → the raw span (coarse layer
-above `past_chats`, which stays the raw/fine layer); **memory feedstock** (segment
-summaries are the memory line's input); titling; re-entry briefs.
+table-of-contents); **single-tool recall** — model-visible `recall(query,
+include_evidence?, max_chars?)` returns active `MemoryEntry` results and may
+nest raw excerpts under each entry only by expanding that entry's `sources`; the
+raw/fine layer is an internal conversation/run evidence search service, not a
+model-visible `past_chats` tool or second recall tool; **Dream candidate
+location** (summaries/search identify spans to inspect, raw messages/run events
+supply the evidence); titling; re-entry briefs.
 
 ### 5. On-disk layout (target)
 
@@ -636,6 +644,16 @@ agent.skills[]          ──▶ skills/ file tree
   risks lost-update; plus an **opt-in isolation tier** (`isolated` / `read-only-global`)
   over the global default, with `originWorkspace` recorded. (Rationale in
   [[agent-conversation-model]] §Memory model.)
+- **PM-ratified (2026-06-07):** because Lin has not shipped, use a clean cut:
+  remove the foreground model-visible memory write tool and the model-visible
+  `past_chats` tool rather than preserving compatibility aliases. The target
+  model-facing retrieval surface is the single read-only `recall` tool.
+  `include_evidence` defaults to false; evidence is nested under memory entries,
+  never returned as sibling ranked items; raw logs expand only through
+  `MemoryEntry.sources`; retrieval excludes `status:'invalidated'`, enforces the
+  agent's isolation tier, and respects `max_chars`. Dream/extraction must use
+  summaries/search only as locators and must read raw conversation/run records
+  before writing long-term memory.
 
 ## Protocol-surface coordination (A4 / A7)
 
@@ -664,8 +682,8 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 These are data-model-local; the experience/sequencing OQs live in
 [[agent-conversation-model]] and [[agent-program]].
 
-- **Memory internal format** — markdown topic files + index (simple, agent-writable) vs
-  a structured store. Lean markdown.
+- **Memory internal format — DECIDED** — structured event-sourced store, not markdown
+  topic files. Memory is runtime-owned state, not an agent-writable file tree.
 - **Per-turn memory injection budget** — whole index vs top-N by recency/salience; bound
   it (cc-2.1 caps MEMORY.md at 200 lines / 25KB).
 - **Recursive summary roll-up** (`DistillationNode.source.childSummaryIds`) — deferred
@@ -677,6 +695,10 @@ These are data-model-local; the experience/sequencing OQs live in
 - **Run-log retention thresholds** — the state machine is fixed (§10); open is the *trigger
   policy* for each transition (age / count / distilled-yet? / disk pressure), tied to the
   compaction trigger.
-- **Memory write-API surface** — the exact shape of the runtime memory-append primitive
-  (a tool the model calls vs a host-side callback the extraction path drives), and how the
-  isolation tier is configured per agent (D2). Pin when memory v1 lands.
+- **Memory/recall tool surface — DECIDED for target architecture** — the runtime
+  append primitive stays; the foreground model-callable memory write tool is not
+  the target writer, and `past_chats` is not a target model-visible tool.
+  Settings/Profile UI and Dream/extraction callbacks drive writes; foreground
+  model access is the single read-only `recall` tool over active memory entries,
+  with optional nested evidence expansion. Open detail: exact Dream
+  scheduling/throttle policy and review surface.
