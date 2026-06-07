@@ -758,6 +758,75 @@ describe('agent runtime past chats integration', () => {
     expect(other?.fact).toBe('Other workspace prefers terse answers.');
   });
 
+  test('dream extraction treats same-key updates as no-ops', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-noop-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-noop-data-'));
+    roots.push(localRoot, dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-style',
+      fact: 'User prefers concise engineering answers.',
+      originWorkspace: memoryOriginWorkspace(localRoot),
+      sources: [{ conversationId: 'old-conversation' }],
+      createdAt: 30,
+    });
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Concise engineering answers still apply.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => normalizeAssistantMessage(
+          fauxAssistantMessage(JSON.stringify({
+            actions: [{
+              type: 'update',
+              memory_id: 'memory-style',
+              fact: 'User prefers concise engineering answers.',
+            }],
+          })),
+          model as Model<Api>,
+        ),
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Keep answers concise.');
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    const events = await new AgentEventStore(dataRoot).readMemoryEvents('built-in:tenon:assistant');
+    const entry = await new AgentEventStore(dataRoot).getMemoryEntry('built-in:tenon:assistant', 'memory-style');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(events.map((event) => event.type)).toEqual(['memory.entry_added']);
+    expect(entry?.sources).toEqual([{ conversationId: 'old-conversation' }]);
+  });
+
   test('dream extraction is disabled for read-only-global memory isolation', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-data-'));

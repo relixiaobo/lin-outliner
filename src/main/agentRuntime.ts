@@ -1863,8 +1863,10 @@ export class AgentRuntime {
         continue;
       }
 
+      const currentFactKey = memoryFactKey(current.fact);
       const nextFactKey = memoryFactKey(action.fact);
-      if (nextFactKey !== memoryFactKey(current.fact) && activeFactKeys.has(nextFactKey)) continue;
+      if (nextFactKey === currentFactKey) continue;
+      if (activeFactKeys.has(nextFactKey)) continue;
       const updated = await this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, current.id, {
         fact: action.fact,
         originWorkspace: current.originWorkspace ?? task.originWorkspace,
@@ -1872,7 +1874,7 @@ export class AgentRuntime {
       });
       if (!updated) continue;
       entriesById.set(updated.id, updated);
-      activeFactKeys.delete(memoryFactKey(current.fact));
+      activeFactKeys.delete(currentFactKey);
       activeFactKeys.add(memoryFactKey(updated.fact));
     }
   }

@@ -46,8 +46,8 @@ export function buildDreamMemoryExtractionSpan(
   const lastRunMessageIndex = findLastRunMessageIndex(activePath, runId);
   if (lastRunMessageIndex < 0) return null;
   const firstRunMessageIndex = findFirstRunMessageIndex(activePath, runId);
-  const fromIndex = findPrecedingUserMessageIndex(activePath, firstRunMessageIndex);
-  const slice = activePath.slice(fromIndex >= 0 ? fromIndex : firstRunMessageIndex, lastRunMessageIndex + 1);
+  const fromIndex = findCurrentTurnStartIndex(activePath, firstRunMessageIndex);
+  const slice = activePath.slice(fromIndex, lastRunMessageIndex + 1);
   const from = slice[0];
   const through = slice.at(-1);
   if (!from || !through) return null;
@@ -191,11 +191,10 @@ function findLastRunMessageIndex(messages: readonly AgentEventMessageRecord[], r
   return -1;
 }
 
-function findPrecedingUserMessageIndex(messages: readonly AgentEventMessageRecord[], fromIndex: number): number {
-  for (let index = fromIndex - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === 'user') return index;
-  }
-  return -1;
+function findCurrentTurnStartIndex(messages: readonly AgentEventMessageRecord[], firstRunMessageIndex: number): number {
+  const previous = messages[firstRunMessageIndex - 1];
+  if (previous?.role === 'user') return firstRunMessageIndex - 1;
+  return firstRunMessageIndex;
 }
 
 function normalizeDreamMemoryAction(value: unknown): DreamMemoryAction | null {
