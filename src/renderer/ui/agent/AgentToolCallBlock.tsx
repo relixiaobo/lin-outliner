@@ -133,7 +133,7 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
   }
   if (toolCall.name === 'dream') {
-    return withSubject(verbByStatus(verbs.dreamMemory, status, labels), pickSubject(args, 'reason'), labels);
+    return verbByStatus(verbs.dreamMemory, status, labels);
   }
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');

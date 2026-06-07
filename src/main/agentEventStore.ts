@@ -1817,6 +1817,7 @@ function isRunLogEvent(event: AgentEvent): boolean {
     case 'follow_up.queued':
     case 'follow_up.applied':
     case 'compaction.completed':
+    case 'dream.finished':
     case 'checkpoint.created':
       return false;
     default:

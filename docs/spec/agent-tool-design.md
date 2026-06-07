@@ -2108,9 +2108,9 @@ visible memory entries. It returns structured add/update/forget proposals only;
 the runtime performs dedupe/scope checks, appends `memory.entry_*` events with
 source provenance, records `dream.completed`, advances per-conversation
 watermarks and per-agent-run transcript watermarks, and projects foreground and
-owner-anchored Dream runs as read-only task-panel rows. Manual `/dream` also
-writes a conversation-side `dream.finished` marker so the chat stream shows
-running/completed feedback.
+owner-anchored Dream runs as read-only task-panel rows. Manual `/dream` and
+foreground `dream` tool triggers also write a conversation-side `dream.finished`
+marker so the chat stream shows running/completed feedback.
 Per-agent-run watermarks bind `messageCount` to a transcript `payloadId`; if the
 payload id changes after compaction or a new transcript snapshot, Dream treats
 the new payload as a new address space and does not skip it merely because an old

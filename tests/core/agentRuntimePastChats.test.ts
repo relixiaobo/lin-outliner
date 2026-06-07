@@ -289,7 +289,7 @@ describe('agent runtime past chats integration', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('dream', { reason: 'test Dream memory' }, { id: 'tool-dream-test' }),
+          fauxToolCall('dream', {}, { id: 'tool-dream-test' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Dream test completed.')),
       ],
@@ -358,13 +358,15 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(toolCalls).toEqual([{ name: 'dream', arguments: { reason: 'test Dream memory' } }]);
+    expect(toolCalls).toEqual([{ name: 'dream', arguments: {} }]);
     expect(toolResults.map((message) => message.toolName)).toEqual(['dream']);
     expect(persistedText(toolResults[0]?.content ?? [])).toContain('"status": "completed"');
     expect(persistedText(toolResults[0]?.content ?? [])).toContain('"run_id": "dream-run-');
     expect(entries.map((entry) => entry.fact)).toEqual(['User is testing the Dream memory feature.']);
     expect(dreamRequests.join('\n')).toContain('I want to test the Dream feature.');
     expect(dreamRequests.join('\n')).toContain('"tools":[]');
+    const dreamRow = latestProjectionEvent(sink.events)?.renderProjection.transcriptRows.find((row) => row.kind === 'dream');
+    expect(dreamRow?.kind).toBe('dream');
   });
 
   test('recalls durable memory with nested source evidence', async () => {
@@ -786,6 +788,75 @@ describe('agent runtime past chats integration', () => {
         changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
       });
     }
+  });
+
+  test('manual /dream skips cleanly when the same agent is already dreaming', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-conflict-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-conflict-data-'));
+    roots.push(localRoot, dataRoot);
+    let completeCalls = 0;
+    let resolveFirstDreamReady: () => void = () => undefined;
+    let releaseFirstDream: () => void = () => undefined;
+    const firstDreamReady = new Promise<void>((resolve) => {
+      resolveFirstDreamReady = resolve;
+    });
+    const firstDreamBlocker = new Promise<void>((resolve) => {
+      releaseFirstDream = resolve;
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: scriptedStream([], () => undefined).streamFn,
+        completeSimpleFn: async (model) => {
+          completeCalls += 1;
+          resolveFirstDreamReady();
+          await firstDreamBlocker;
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({ actions: [] })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    const firstDream = runtime.sendMessage(created.conversationId, '/dream');
+    await firstDreamReady;
+    await runtime.sendMessage(created.conversationId, '/dream');
+    releaseFirstDream();
+    await firstDream;
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
+    const dreamStatuses = Object.values(replay.dreamsByMessageId).map((dream) => dream.status);
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(completeCalls).toBe(1);
+    expect(dreamStatuses).toContain('skipped');
+    expect(dreamStatuses).toContain('completed');
   });
 
   test('scheduled dream skips thin evidence while manual /dream forces it', async () => {

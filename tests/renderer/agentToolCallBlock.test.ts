@@ -33,9 +33,9 @@ describe('agent tool call block', () => {
   });
 
   test('uses memory icon and summarizes Dream', () => {
-    expect(getToolIcon(dreamToolCall({ reason: 'test Dream' }))).toBe(BrainIcon);
-    expect(summarizeToolCall(dreamToolCall({ reason: 'test Dream' }), 'pending', labels)).toBe('Dreaming memory "test Dream"');
-    expect(summarizeToolCall(dreamToolCall({ reason: 'test Dream' }), 'done', labels)).toBe('Dreamed memory "test Dream"');
-    expect(summarizeToolCall(dreamToolCall({ reason: 'test Dream' }), 'error', labels)).toBe('Failed to dream memory "test Dream"');
+    expect(getToolIcon(dreamToolCall({}))).toBe(BrainIcon);
+    expect(summarizeToolCall(dreamToolCall({}), 'pending', labels)).toBe('Dreaming memory');
+    expect(summarizeToolCall(dreamToolCall({}), 'done', labels)).toBe('Dreamed memory');
+    expect(summarizeToolCall(dreamToolCall({}), 'error', labels)).toBe('Failed to dream memory');
   });
 });

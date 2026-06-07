@@ -218,6 +218,7 @@ import {
   normalizeRuntimeSettingPatch,
   readRuntimeSetting,
   type AgentSelfMaintenanceRuntime,
+  type DreamToolData,
   type DoctorDiagnostic,
 } from './agentSelfMaintenanceTools';
 import {
@@ -351,6 +352,7 @@ interface AgentSessionState {
   currentDebugQueryIndex: number;
   nextDebugQueryIndex: number;
   nextDebugTurnIndex: number;
+  pendingDreamFinishedMarkers: AgentDreamRunResult[];
   pendingSubagentNotifications: string[];
   pendingEventAppend: Promise<void>;
   pendingProjectionLastEventType: string | null;
@@ -374,9 +376,20 @@ interface AgentDreamMemoryExtractionTask {
   startedAt: number;
   dueAt?: number;
   span: DreamMemoryExtractionSpan;
+  batches: AgentDreamMemoryExtractionBatch[];
+  watermark: AgentDreamWatermark;
+}
+
+interface AgentDreamMemoryExtractionBatch {
+  span: DreamMemoryExtractionSpan;
   originWorkspace?: string;
   originWorkspaceFilter?: string;
-  watermark: AgentDreamWatermark;
+}
+
+interface AgentDreamMemoryScope {
+  readOnly: boolean;
+  originWorkspace?: string;
+  originWorkspaceFilter?: string;
 }
 
 interface AgentDreamRunResult {
@@ -1328,6 +1341,7 @@ export class AgentRuntime {
       currentDebugQueryIndex: 0,
       nextDebugQueryIndex: debugCounters.nextQueryIndex,
       nextDebugTurnIndex: debugCounters.nextTurnIndex,
+      pendingDreamFinishedMarkers: [],
       pendingSubagentNotifications: [],
       pendingEventAppend: Promise.resolve(),
       pendingProjectionLastEventType: null,
@@ -1862,10 +1876,19 @@ export class AgentRuntime {
     session: AgentSessionState,
     options: { flushSubagentNotifications?: boolean } = {},
   ) {
+    await this.flushPendingDreamFinishedEvents(sessionId, session);
     session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
     this.emitProjection(sessionId, 'agent_idle');
     if (options.flushSubagentNotifications !== false) {
       await this.flushSubagentNotifications(sessionId, session);
+    }
+  }
+
+  private async flushPendingDreamFinishedEvents(sessionId: string, session: AgentSessionState): Promise<void> {
+    while (session.pendingDreamFinishedMarkers.length > 0) {
+      const result = session.pendingDreamFinishedMarkers.shift();
+      if (!result) continue;
+      await this.appendDreamFinishedEvent(sessionId, session, result);
     }
   }
 
@@ -1927,8 +1950,9 @@ export class AgentRuntime {
 
   private async fireDreamForAgent(agentId: string, trigger: AgentDreamTrigger, now: Date): Promise<AgentDreamRunResult | null> {
     if (this.dreamingAgentIds.has(agentId)) {
-      if (trigger === 'manual') throw new Error('Dream is already running for this agent.');
-      return null;
+      return trigger === 'manual'
+        ? skippedDreamRunResult(agentId, trigger, now, 'Dream is already running for this agent.')
+        : null;
     }
     this.dreamingAgentIds.add(agentId);
     try {
@@ -1964,12 +1988,6 @@ export class AgentRuntime {
         })))
       : [];
     const agentRunInputs = await this.collectDreamAgentRunInputs(agentId, dreamState.watermark, conversationIds);
-    const agentRunOriginWorkspaces = uniqueDefinedStrings(agentRunInputs.map((input) => input.originWorkspace));
-    const agentRunOriginWorkspace = conversationInputs.length === 0 && agentRunOriginWorkspaces.length === 1
-      ? agentRunOriginWorkspaces[0]
-      : undefined;
-    const taskOriginWorkspace = agentRunOriginWorkspace ?? memoryScope.originWorkspace;
-    const taskOriginWorkspaceFilter = agentRunOriginWorkspace ?? memoryScope.originWorkspaceFilter;
     const evidenceSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, {
       conversations: conversationInputs,
       agentRuns: agentRunInputs,
@@ -1981,6 +1999,17 @@ export class AgentRuntime {
       ? buildConsolidateOnlyDreamMemoryExtractionSpan(runId)
       : null);
     if (!span) return null;
+    const batches = evidenceSpan
+      ? this.buildDreamMemoryExtractionBatches(runId, memoryScope, {
+          conversations: conversationInputs,
+          agentRuns: agentRunInputs,
+        })
+      : [{
+          span,
+          originWorkspace: memoryScope.originWorkspace,
+          originWorkspaceFilter: memoryScope.originWorkspaceFilter,
+        }];
+    if (batches.length === 0) return null;
 
     return {
       runId,
@@ -1989,10 +2018,49 @@ export class AgentRuntime {
       startedAt: Date.now(),
       dueAt: scheduleDecision.dueAt?.getTime(),
       span,
-      originWorkspace: taskOriginWorkspace,
-      originWorkspaceFilter: taskOriginWorkspaceFilter,
+      batches,
       watermark: dreamWatermarkFromSpan(dreamState.watermark, span.sourceRanges),
     };
+  }
+
+  private buildDreamMemoryExtractionBatches(
+    runId: string,
+    memoryScope: AgentDreamMemoryScope,
+    inputs: {
+      conversations: readonly {
+        conversationId: string;
+        events: readonly AgentEvent[];
+        fromSeqExclusive: number;
+      }[];
+      agentRuns: readonly DreamMemoryExtractionAgentRunInput[];
+    },
+  ): AgentDreamMemoryExtractionBatch[] {
+    const batches: AgentDreamMemoryExtractionBatch[] = [];
+    const conversationSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, {
+      conversations: inputs.conversations,
+      agentRuns: [],
+    });
+    if (conversationSpan) {
+      batches.push({
+        span: conversationSpan,
+        originWorkspace: memoryScope.originWorkspace,
+        originWorkspaceFilter: memoryScope.originWorkspaceFilter,
+      });
+    }
+
+    for (const group of groupDreamAgentRunInputsByOriginWorkspace(inputs.agentRuns)) {
+      const span = buildDreamMemoryExtractionSpanFromEvidence(runId, {
+        conversations: [],
+        agentRuns: group.inputs,
+      });
+      if (!span) continue;
+      batches.push({
+        span,
+        originWorkspace: group.originWorkspace ?? memoryScope.originWorkspace,
+        originWorkspaceFilter: group.originWorkspace ?? memoryScope.originWorkspaceFilter,
+      });
+    }
+    return batches;
   }
 
   private async listDreamAgentIds(): Promise<string[]> {
@@ -2075,35 +2143,38 @@ export class AgentRuntime {
       await this.writeDreamRunMeta(task, 'running', model);
       const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
       const runtimeSettings = await this.getRuntimeSettings();
-      const existingMemories = await this.getEventStore().listMemoryEntries(task.agentId, {
-        limit: 50,
-        originWorkspace: task.originWorkspaceFilter,
-      });
-      const request = buildDreamMemoryExtractionRequest({
-        span: task.span,
-        existingMemories,
-        originWorkspace: task.originWorkspace,
-      });
-      const response = await (this.options.completeSimpleFn ?? completeSimple)(model, {
-        messages: [request],
-        tools: [],
-      }, {
-        ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
-        apiKey,
-        maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
-        sessionId: `${task.agentId}:dream:${task.runId}`,
-      });
-      if (response.stopReason === 'error' || response.stopReason === 'aborted') {
-        throw new Error(response.errorMessage || 'Dream memory extraction failed.');
+      const changes = emptyDreamChanges();
+      for (const [index, batch] of task.batches.entries()) {
+        const existingMemories = await this.getEventStore().listMemoryEntries(task.agentId, {
+          limit: 50,
+          originWorkspace: batch.originWorkspaceFilter,
+        });
+        const request = buildDreamMemoryExtractionRequest({
+          span: batch.span,
+          existingMemories,
+          originWorkspace: batch.originWorkspace,
+        });
+        const response = await (this.options.completeSimpleFn ?? completeSimple)(model, {
+          messages: [request],
+          tools: [],
+        }, {
+          ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
+          apiKey,
+          maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
+          sessionId: `${task.agentId}:dream:${task.runId}:${index + 1}`,
+        });
+        if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+          throw new Error(response.errorMessage || 'Dream memory extraction failed.');
+        }
+        const actions = parseDreamMemoryActions(assistantMessageText(response));
+        const currentMemories = await this.getEventStore().listMemoryEntries(task.agentId, {
+          limit: 50,
+          originWorkspace: batch.originWorkspaceFilter,
+        });
+        addDreamChanges(changes, actions.length > 0
+          ? await this.applyDreamMemoryActions(task, batch, actions, currentMemories)
+          : emptyDreamChanges());
       }
-      const actions = parseDreamMemoryActions(assistantMessageText(response));
-      const currentMemories = await this.getEventStore().listMemoryEntries(task.agentId, {
-        limit: 50,
-        originWorkspace: task.originWorkspaceFilter,
-      });
-      const changes = actions.length > 0
-        ? await this.applyDreamMemoryActions(task, actions, currentMemories)
-        : emptyDreamChanges();
       const completed = await this.getEventStore().appendDreamCompleted(task.agentId, {
         runId: task.runId,
         trigger: task.trigger,
@@ -2119,6 +2190,7 @@ export class AgentRuntime {
         changes,
       });
       await this.writeDreamRunMeta(task, 'completed', model);
+      this.clearSubagentMemoryReminderCaches();
       return {
         agentId: task.agentId,
         runId: task.runId,
@@ -2215,6 +2287,7 @@ export class AgentRuntime {
 
   private async applyDreamMemoryActions(
     task: AgentDreamMemoryExtractionTask,
+    batch: AgentDreamMemoryExtractionBatch,
     actions: readonly DreamMemoryAction[],
     initialEntries: readonly AgentMemoryEntry[],
   ): Promise<AgentDreamCompletedChanges> {
@@ -2223,7 +2296,7 @@ export class AgentRuntime {
     const activeFactKeys = new Set(initialEntries.map((entry) => memoryFactKey(entry.fact)));
     for (const action of actions) {
       if (action.type === 'add') {
-        if (task.span.sources.length === 0) {
+        if (batch.span.sources.length === 0) {
           changes.skipped += 1;
           continue;
         }
@@ -2234,8 +2307,8 @@ export class AgentRuntime {
         }
         const entry = await this.getEventStore().addMemoryEntry(task.agentId, {
           fact: action.fact,
-          originWorkspace: task.originWorkspace,
-          sources: task.span.sources,
+          originWorkspace: batch.originWorkspace,
+          sources: batch.span.sources,
         });
         entriesById.set(entry.id, entry);
         activeFactKeys.add(memoryFactKey(entry.fact));
@@ -2268,8 +2341,8 @@ export class AgentRuntime {
       }
       const updated = await this.getEventStore().updateMemoryEntry(task.agentId, current.id, {
         fact: action.fact,
-        originWorkspace: current.originWorkspace ?? task.originWorkspace,
-        sources: mergeMemorySources(current.sources, task.span.sources),
+        originWorkspace: current.originWorkspace ?? batch.originWorkspace,
+        sources: mergeMemorySources(current.sources, batch.span.sources),
       });
       if (!updated) {
         changes.skipped += 1;
@@ -2748,28 +2821,16 @@ export class AgentRuntime {
         };
       },
       dream: async () => {
-        const result = await this.fireDreamForAgent(this.agentIdentity.agentId, 'manual', new Date());
-        if (!result) {
-          return {
-            status: 'skipped',
-            processed: undefined,
-            changes: undefined,
-            errorMessage: 'Dream is unavailable for the current memory/provider configuration.',
-          };
-        }
-        return {
-          status: result.status,
-          runId: result.runId,
-          processed: result.processed
-            ? {
-                totalMessageCount: result.processed.totalMessageCount,
-                totalCharCount: result.processed.totalCharCount,
-                consolidateOnly: result.processed.consolidateOnly,
-              }
-            : undefined,
-          changes: result.changes,
-          errorMessage: result.errorMessage,
-        };
+        const startedAt = new Date();
+        const result = await this.fireDreamForAgent(this.agentIdentity.agentId, 'manual', startedAt)
+          ?? skippedDreamRunResult(
+            this.agentIdentity.agentId,
+            'manual',
+            startedAt,
+            'Dream is unavailable for the current memory/provider configuration.',
+          );
+        getSession()?.pendingDreamFinishedMarkers.push(result);
+        return dreamToolDataFromRunResult(result);
       },
     };
   }
@@ -2978,11 +3039,7 @@ export class AgentRuntime {
     return this.options.dreamMemoryExtractionEnabled === true;
   }
 
-  private async dreamMemoryScope(): Promise<{
-    readOnly: boolean;
-    originWorkspace?: string;
-    originWorkspaceFilter?: string;
-  }> {
+  private async dreamMemoryScope(): Promise<AgentDreamMemoryScope> {
     const runtimeSettings = await this.getRuntimeSettings();
     const isolation = runtimeSettings.memoryIsolation ?? 'global';
     if (isolation === 'read-only-global') return { readOnly: true };
@@ -3018,6 +3075,12 @@ export class AgentRuntime {
     } catch (error) {
       console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
       return null;
+    }
+  }
+
+  private clearSubagentMemoryReminderCaches(): void {
+    for (const session of this.sessions.values()) {
+      session.subagentRuntime.clearMemoryReminderCache();
     }
   }
 
@@ -4271,8 +4334,20 @@ function uniqueMemoryEntries(entries: readonly AgentMemoryEntry[]): AgentMemoryE
   return result;
 }
 
-function uniqueDefinedStrings(values: readonly (string | undefined)[]): string[] {
-  return [...new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0))];
+function groupDreamAgentRunInputsByOriginWorkspace(
+  inputs: readonly DreamMemoryExtractionAgentRunInput[],
+): Array<{ originWorkspace?: string; inputs: DreamMemoryExtractionAgentRunInput[] }> {
+  const groups = new Map<string, { originWorkspace?: string; inputs: DreamMemoryExtractionAgentRunInput[] }>();
+  for (const input of inputs) {
+    const key = input.originWorkspace ?? '';
+    let group = groups.get(key);
+    if (!group) {
+      group = { originWorkspace: input.originWorkspace, inputs: [] };
+      groups.set(key, group);
+    }
+    group.inputs.push(input);
+  }
+  return [...groups.values()];
 }
 
 function buildOutlinerContextReminder(host: OutlinerToolHost): string | null {
@@ -5444,6 +5519,46 @@ function dreamProcessedAgentRuns(
 
 function emptyDreamChanges(): AgentDreamCompletedChanges {
   return { added: 0, updated: 0, forgotten: 0, skipped: 0 };
+}
+
+function addDreamChanges(target: AgentDreamCompletedChanges, next: AgentDreamCompletedChanges): AgentDreamCompletedChanges {
+  target.added += next.added;
+  target.updated += next.updated;
+  target.forgotten += next.forgotten;
+  target.skipped += next.skipped;
+  return target;
+}
+
+function skippedDreamRunResult(
+  agentId: string,
+  trigger: AgentDreamTrigger,
+  startedAt: Date,
+  errorMessage: string,
+): AgentDreamRunResult {
+  return {
+    agentId,
+    trigger,
+    status: 'skipped',
+    startedAt: startedAt.getTime(),
+    completedAt: Date.now(),
+    errorMessage,
+  };
+}
+
+function dreamToolDataFromRunResult(result: AgentDreamRunResult): DreamToolData {
+  return {
+    status: result.status,
+    runId: result.runId,
+    processed: result.processed
+      ? {
+          totalMessageCount: result.processed.totalMessageCount,
+          totalCharCount: result.processed.totalCharCount,
+          consolidateOnly: result.processed.consolidateOnly,
+        }
+      : undefined,
+    changes: result.changes,
+    errorMessage: result.errorMessage,
+  };
 }
 
 function createAssistantBase(model: Model<Api>): AssistantMessage {

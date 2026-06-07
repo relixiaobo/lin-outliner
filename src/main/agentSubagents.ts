@@ -329,6 +329,12 @@ export class AgentSubagentRuntime {
     this.disabledAgents = disabledAgents;
   }
 
+  clearMemoryReminderCache(): void {
+    for (const run of this.runs.values()) {
+      run.memoryReminderCache = undefined;
+    }
+  }
+
   async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
     return this.registry.listAgents();
   }
@@ -546,9 +552,7 @@ export class AgentSubagentRuntime {
     const memoryOwnerAgentId = contextMode === 'fork'
       ? this.memoryOwnerAgentId
       : executingAgentId;
-    const memoryOriginWorkspace = memoryWorkspaceIdForRoot(
-      contextMode === 'fork' ? this.localRoot : definition.rootDir,
-    );
+    const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
     let childRuntime: AgentSubagentRuntime;
     const runtimeSettings = await this.host.getRuntimeSettings();
     const skillRuntime = new AgentSkillRuntime({

@@ -240,7 +240,7 @@ describe('agent permissions', () => {
     });
     const dream = evaluateAgentToolPermission({
       toolName: 'dream',
-      args: { reason: 'test memory extraction' },
+      args: {},
       policy: { workspaceRoot },
     });
     const configWriteWithGlobalAllow = evaluateAgentToolPermission({

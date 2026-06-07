@@ -89,6 +89,10 @@ function projectAgentId(agentDir: string, name: string): string {
   return `project:${createHash('sha256').update(path.resolve(agentFile)).digest('hex').slice(0, 16)}:${name}`;
 }
 
+function memoryOriginWorkspace(localRoot: string): string {
+  return `workspace:${createHash('sha256').update(path.resolve(localRoot)).digest('hex').slice(0, 16)}`;
+}
+
 function createWindowSink() {
   const events: AgentRuntimeEvent[] = [];
   return {
@@ -457,9 +461,7 @@ describe('agent runtime subagents', () => {
     expect(researcherEntries.map((entry) => entry.fact)).toEqual([
       'Researcher agent uses teal source notes for synthesis.',
     ]);
-    expect(researcherEntries[0]?.originWorkspace).toBe(
-      `workspace:${createHash('sha256').update(path.resolve(researcherDir)).digest('hex').slice(0, 16)}`,
-    );
+    expect(researcherEntries[0]?.originWorkspace).toBe(memoryOriginWorkspace(localRoot));
     expect(parentEntries).toEqual([]);
     expect(dreamTask).toMatchObject({
       kind: 'dream',
@@ -497,6 +499,152 @@ describe('agent runtime subagents', () => {
       request.includes('## Agent Run')
       && request.includes('Researcher durable note: use teal source notes')
     ))).toBe(true);
+  });
+
+  test('scheduled Dream batches same-owner subagent runs by origin workspace', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-workspace-root-'));
+    const otherRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-other-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-workspace-data-'));
+    roots.push(localRoot, otherRoot, dataRoot);
+
+    const ownerAgentId = 'built-in:tenon:researcher';
+    const currentWorkspace = memoryOriginWorkspace(localRoot);
+    const otherWorkspace = memoryOriginWorkspace(otherRoot);
+    const currentEvidence = `Current workspace durable note: prefer teal synthesis notes. ${'current evidence '.repeat(90)}`;
+    const otherEvidence = `Other workspace durable note: prefer amber synthesis notes. ${'other evidence '.repeat(90)}`;
+    const dreamRequests: string[] = [];
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: scriptedStream([], () => undefined).streamFn,
+        completeSimpleFn: async (model, context) => {
+          const request = textFromContext(context);
+          dreamRequests.push(request);
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [
+                ...(request.includes('Current workspace durable note')
+                  ? [{ type: 'add', fact: 'Researcher prefers teal synthesis notes in the current workspace.' }]
+                  : []),
+                ...(request.includes('Other workspace durable note')
+                  ? [{ type: 'add', fact: 'Researcher prefers amber synthesis notes in the other workspace.' }]
+                  : []),
+              ],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const session = await runtime.createConversation();
+    const store = new AgentEventStore(dataRoot);
+    const replay = await store.replay(session.conversationId);
+    const seedSubagentRun = async (
+      runId: string,
+      toolCallId: string,
+      originWorkspace: string,
+      evidence: string,
+      seqOffset: number,
+    ) => {
+      const payload = await store.writePayload(session.conversationId, {
+        id: `subagent-transcript-${runId}`,
+        data: JSON.stringify({
+          v: 1,
+          runId,
+          messageCount: 1,
+          messages: [fauxAssistantMessage(fauxText(evidence))],
+        }),
+        mimeType: 'application/json',
+        role: 'subagent_transcript',
+        summary: `Transcript for ${runId}`,
+      });
+      await store.appendEvents(session.conversationId, [
+        {
+          v: 1,
+          eventId: `test-payload-${runId}`,
+          seq: replay.latestSeq + seqOffset,
+          sessionId: session.conversationId,
+          createdAt: Date.now() + seqOffset,
+          actor: { type: 'system' },
+          type: 'payload.created',
+          payload,
+        },
+        {
+          v: 1,
+          eventId: `test-subagent-start-${runId}`,
+          seq: replay.latestSeq + seqOffset + 1,
+          sessionId: session.conversationId,
+          createdAt: Date.now() + seqOffset + 1,
+          actor: { type: 'tool', toolName: 'Agent', toolCallId },
+          type: 'subagent_run.started',
+          subagentRunId: runId,
+          parentToolCallId: toolCallId,
+          executingAgentId: ownerAgentId,
+          memoryOwnerAgentId: ownerAgentId,
+          memoryOriginWorkspace: originWorkspace,
+          description: `seeded ${runId}`,
+          prompt: `Seed ${runId}`,
+          subagentType: 'researcher',
+          contextMode: 'fresh',
+          transcriptPayload: payload,
+          transcriptMessageCount: 1,
+        },
+        {
+          v: 1,
+          eventId: `test-subagent-complete-${runId}`,
+          seq: replay.latestSeq + seqOffset + 2,
+          sessionId: session.conversationId,
+          createdAt: Date.now() + seqOffset + 2,
+          actor: { type: 'tool', toolName: 'Agent', toolCallId },
+          type: 'subagent_run.updated',
+          subagentRunId: runId,
+          status: 'completed',
+          completedAt: Date.now() + seqOffset + 2,
+          result: 'done',
+          transcriptPayload: payload,
+          transcriptMessageCount: 1,
+        },
+      ]);
+    };
+
+    await seedSubagentRun('subagent-current-workspace', 'tool-current-workspace', currentWorkspace, currentEvidence, 1);
+    await seedSubagentRun('subagent-other-workspace', 'tool-other-workspace', otherWorkspace, otherEvidence, 10);
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+
+    const entries = await store.listMemoryEntries(ownerAgentId);
+    const entriesByFact = new Map(entries.map((entry) => [entry.fact, entry]));
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(entriesByFact.get('Researcher prefers teal synthesis notes in the current workspace.')?.originWorkspace).toBe(currentWorkspace);
+    expect(entriesByFact.get('Researcher prefers amber synthesis notes in the other workspace.')?.originWorkspace).toBe(otherWorkspace);
+    expect(dreamRequests.filter((request) => request.includes('## Agent Run')).length).toBe(2);
+    expect(dreamRequests.some((request) => (
+      request.includes('Current workspace durable note') && request.includes('Other workspace durable note')
+    ))).toBe(false);
   });
 
   test('omitting subagent_type creates a fork with parent context and placeholder tool results', async () => {

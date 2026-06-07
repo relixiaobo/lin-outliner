@@ -185,7 +185,9 @@ The model can also call the foreground `dream` tool when the user asks to run,
 test, refresh, or consolidate Memory Dream. This tool is trigger-only and
 permission-gated. It cannot supply memory facts, select another agent, or bypass
 the runtime-owned extraction worker; it only requests the current agent's Dream
-path and returns status/counts to the model.
+path and returns status/counts to the model. Tool-triggered Dreams record the
+same `dream.finished` marker after the tool turn settles, so the chat stream
+shows the same Dream boundary row as `/dream`.
 
 ### Reference Alignment
 

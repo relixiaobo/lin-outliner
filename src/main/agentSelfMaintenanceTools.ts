@@ -55,7 +55,7 @@ export interface AgentSelfMaintenanceRuntime {
   readConfig(setting: string): Promise<ConfigToolData>;
   writeConfig(setting: string, value: unknown): Promise<ConfigToolData>;
   doctor(): Promise<DoctorData>;
-  dream(reason?: string): Promise<DreamToolData>;
+  dream(): Promise<DreamToolData>;
 }
 
 const RUNTIME_STATUS_PARAMETERS = {
@@ -83,9 +83,7 @@ const DOCTOR_PARAMETERS = {
 const DREAM_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  properties: {
-    reason: { type: 'string', minLength: 1, maxLength: 240 },
-  },
+  properties: {},
 } as const;
 
 export function createSelfMaintenanceTools(runtime: AgentSelfMaintenanceRuntime): AgentTool<any>[] {
@@ -130,11 +128,10 @@ export function createSelfMaintenanceTools(runtime: AgentSelfMaintenanceRuntime)
       description: 'Request a runtime-owned Memory Dream for the current Tenon agent. This trigger cannot specify memory facts; the background extractor decides changes from recorded evidence.',
       parameters: DREAM_PARAMETERS,
       executionMode: 'sequential',
-      execute: async (_toolCallId, rawParams: unknown) => {
+      execute: async () => {
         const started = Date.now();
-        const params = isRecord(rawParams) ? rawParams : {};
         try {
-          const data = await runtime.dream(typeof params.reason === 'string' ? params.reason.trim() : undefined);
+          const data = await runtime.dream();
           if (data.status === 'failed') {
             return selfMaintenanceError<DreamToolData>('dream', 'DREAM_FAILED', data.errorMessage ?? 'Dream failed.', started, data);
           }
