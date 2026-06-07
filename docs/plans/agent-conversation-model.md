@@ -468,6 +468,12 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   reads bounded raw conversation/run spans, proposes add/update/forget memory
   events, dedupes/conflict-checks against the current memory line, and appends
   through the same runtime memory API with provenance.
+- **Implemented first slice:** per-turn Dream extraction follows cc-2.1's
+  `extractMemories` stop-hook shape: it runs after a completed foreground turn,
+  uses a no-tools model call over the raw current turn plus visible memory, and
+  lets the runtime append memory events. It intentionally does not use cc-2.1's
+  file-writing extraction agent because Tenon's clean write boundary is the
+  event-sourced memory store.
 - **Offline consolidation ("reflect").** Gated merge/dedupe/prune/
   contradiction-resolve. Gate = time + activity + lock (cheapest first), the
   `autoDream` shape (`cc-2.1 .../autoDream.ts`), but grounded in Lin's raw
@@ -1043,9 +1049,16 @@ P2 — memory v2 + background-task surfacing
 - [x] Make the no-backfill consequence explicit in implementation notes and UI
   copy where relevant: old conversations without a `MemoryEntry` are not
   foreground-recallable by design.
-- [ ] Runtime-owned Dream/extraction worker with a restricted model surface and host callback.
-- [ ] Use distillation summaries/search only to locate candidate spans; read raw conversation messages and relevant run events before writing memory.
-- [ ] Throttle; dedupe/conflict-check against existing memory; append add/update/forget events with raw provenance tags (conversation/message range/run/event/workspace).
+- [x] Runtime-owned per-turn Dream extraction worker with a restricted no-tools
+  model surface and runtime host callback.
+- [x] Read raw current-turn conversation messages and relevant run evidence
+  before writing memory. Distillation summary/search remains a future locator
+  for offline consolidation only.
+- [x] Dedupe/conflict-check against existing visible memory; append
+  add/update/forget events with raw provenance tags
+  (conversation/message range/run/event/workspace). Throttling is currently the
+  per-turn completion gate plus a serial runtime queue; time/activity/lock gates
+  remain for offline consolidation.
 - [ ] Visible per-agent task panel (runs aggregated across conversations, cancelable).
 - [ ] Generalize `pendingSubagentNotifications` → conversation-scoped delivery (reusing the P1 `actor` field) + first-class task-update messages + rate-limiting/folding. (DM delivery; Channel/coordinator delivery is P3.)
 

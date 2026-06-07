@@ -2077,13 +2077,21 @@ it. Runtime setting `agent.runtime.memoryIsolation` controls recall visibility:
 - `isolated`: recall reads only entries whose `originWorkspace` matches the
   current workspace.
 - `read-only-global`: recall reads the global active memory pool. The foreground
-  tool surface is read-only in every mode.
+  tool surface is read-only in every mode. Runtime-owned Dream extraction also
+  skips writes in this mode, so facts learned in the workspace do not enter the
+  global memory pool.
 
 Explicit memory management is not a foreground model tool. The Settings/Profile
 UI can list, edit, and forget memory through IPC-backed runtime methods, and the
 runtime-owned Dream/extraction path can write memory after it verifies raw
-conversation/run evidence. The foreground model must not claim it saved, updated,
-or forgot durable memory through a tool call.
+conversation/run evidence. After each completed foreground run, the runtime may
+send a bounded, no-tools extraction prompt containing the raw user/assistant/tool
+evidence from that run plus the currently visible memory entries. The model
+returns structured add/update/forget proposals only; the runtime performs
+dedupe/scope checks and appends `memory.entry_*` events with
+`conversationId`/`runId`/`messageRange`/`eventId` provenance. The foreground
+model must not claim it saved, updated, or forgot durable memory through a tool
+call.
 
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
 the active projection. Reminder retrieval ranks by memory-specific relevance
