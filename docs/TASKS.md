@@ -336,6 +336,18 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-dream-extraction** (codex, PR #159) — the automatic write half of the #157 M2 write authority:
+  runtime-owned per-turn Dream extraction. After each completed foreground run, a fire-and-forget worker sends
+  the raw turn evidence + visible memory through a bounded no-tools model call and applies add/update/forget to
+  the durable memory store with full provenance. Write-path isolation enforced (`read-only-global` extracts
+  nothing; `isolated` stays scoped to `originWorkspace`); failures never touch the foreground turn; bounded
+  (≤5 actions, fact clamp, char budgets); no self-feedback loop. Secret capture is prompt-guarded only — a
+  PM-accepted prompt-level decision, code guard backlogged as `agent-dream-secret-redaction` (P3). Per-turn
+  slice only; offline `autoDream` consolidation + task panel remain later P2/P3. Gate: typecheck + `test:core`
+  661/0 (isolation/`read-only-global`/no-op-update regression tests + new `agentDreamExtraction` suite); two
+  high-effort finder passes cleared; two low findings (provenance run-boundary, no-op update churn) fixed
+  before merge.
+
 - **agent-recall-clean-cut** (codex, PR #158) — implements the #157 M2 read/write surface decision. Removes the
   model-visible `memory` CRUD tool and `past_chats` tool from the foreground agent pool and replaces them with
   a single read-only `recall` tool over active durable memory: `status:'active'`-only, `memoryIsolation`-tier

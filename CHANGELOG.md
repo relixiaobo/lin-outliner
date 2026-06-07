@@ -36,6 +36,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Runtime-owned Dream memory extraction, per-turn slice (PR #159)** — the automatic half of the #157 M2
+  write authority. After each completed foreground run, a runtime-owned worker (`agentDreamExtraction.ts` +
+  `AgentRuntime` wiring) sends the raw current-turn evidence (user/assistant/tool messages, not summaries)
+  plus the currently visible memory through a bounded no-tools model completion, then applies the proposed
+  add/update/forget actions to the durable memory event store with `conversationId`/`messageRange`/`runId`/
+  `eventId` provenance. It is fire-and-forget after the turn emits idle (a Dream failure can never break the
+  foreground turn), serialized on one runtime queue, and bounded (≤5 actions, fact-length clamp, transcript
+  char budgets). Isolation is enforced on the write path: `read-only-global` runs no extraction (facts learned
+  in a workspace don't enter the global pool), `isolated` only reads/updates/forgets memory scoped to the
+  session's `originWorkspace`, and `add` tags the originWorkspace while `update` preserves the entry's own.
+  Injected `<agent-memory>` reminders are filtered out of the evidence (no self-feedback loop). The secret/
+  credential capture surface is guarded only by the extractor prompt — a PM-accepted, prompt-level decision
+  (2026-06-07) matching the runtime-owned write design, with a defense-in-depth code guard backlogged as
+  `agent-dream-secret-redaction` (P3). This is the per-turn slice only; time/activity/lock-gated offline
+  consolidation (`autoDream`) and the task panel remain later P2/P3 work. Gate: typecheck + `test:core` 661/0
+  (incl. runtime isolation/`read-only-global`/no-op-update regression tests + a new `agentDreamExtraction`
+  unit suite); two high-effort finder passes (security + correctness) cleared, two low correctness findings
+  (provenance run-boundary, no-op update churn) fixed before merge. ([#159](https://github.com/relixiaobo/lin-outliner/pull/159))
+
 - **Agent memory recall clean cut: one read-only `recall` tool (PR #158)** — implements the #157 M2 decision.
   Removed the two model-visible memory tools from the foreground agent pool — the `memory` CRUD tool
   (`agentMemoryTool.ts`, deleted) and the `past_chats` tool (`agentPastChatsTool.ts`, deleted) — and replaced
