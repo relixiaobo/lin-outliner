@@ -12,6 +12,15 @@ import type {
 
 export const AGENT_EVENT_VERSION = 1;
 
+export type AgentPermissionDeniedReason =
+  | 'configured_deny'
+  | 'classifier_blocked'
+  | 'classifier_unavailable'
+  | 'platform_hard_block'
+  | 'run_aborted'
+  | 'runtime'
+  | 'user_denied';
+
 export type AgentActor =
   | { type: 'user'; userId: string }
   | { type: 'agent'; agentId: string }
@@ -310,7 +319,7 @@ export type AgentRunLogEvent =
         | 'runtime'
         | 'system_abort';
       updatedRule?: string;
-      deniedReason?: string;
+      deniedReason?: AgentPermissionDeniedReason;
     })
   | (AgentRunEventBase & {
       type: 'user_question.requested';
@@ -656,7 +665,7 @@ export interface ToolPermissionResolvedEvent extends AgentEventBase {
     | 'runtime'
     | 'system_abort';
   updatedRule?: string;
-  deniedReason?: string;
+  deniedReason?: AgentPermissionDeniedReason;
 }
 
 export interface UserQuestionRequestedEvent extends AgentEventBase {

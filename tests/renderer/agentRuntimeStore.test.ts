@@ -317,20 +317,19 @@ describe('agent runtime store', () => {
         target: 'git push origin codex/foo',
         reason: 'This changes external state on a git remote.',
         details: [{ label: 'Command', value: 'git push origin codex/foo' }],
-        suggestedConversationRule: 'Bash(git push origin codex/foo)',
       },
       timestamp: 10,
     });
 
     expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
 
-    await store.getSnapshot().resolveApproval('approval-1', true, 'conversation');
+    await store.getSnapshot().resolveApproval('approval-1', true, 'once');
 
     expect(fake.calls.resolveApproval).toEqual([{
       conversationId: 'saved',
       requestId: 'approval-1',
       approved: true,
-      scope: 'conversation',
+      scope: 'once',
     }]);
     expect(store.getSnapshot().pendingApproval).toBeNull();
     unsubscribe();

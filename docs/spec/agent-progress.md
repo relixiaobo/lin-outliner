@@ -143,8 +143,8 @@ Finish runtime polish on top of the event log and subagent foundation.
 - [x] Permission approvals wired end to end: `allow | ask | deny` policy
   computed in TypeScript, `ask` suspends the tool call and requests user
   approval (composer card, subagent + skill-shell bubbling, pending-request
-  queue), session-scoped allow rules, and `approval.requested` /
-  `approval.resolved` events persisted to the log (PR #51).
+  queue), and joinable `tool.permission.*` plus `approval.*` events persisted to
+  the log (PR #51, hardened after M1).
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user sessions show unusual

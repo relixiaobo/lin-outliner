@@ -1,14 +1,8 @@
+import type { AgentPermissionDeniedReason } from '../core/agentEventLog';
 import type { AgentPermissionAskDecision, AgentPermissionClassifierProjection } from './agentPermissions';
 import { isSafeAutoAllowToolName, type ToolPermissionClassifierResult } from './agentToolPermissionRules';
 
-export type PermissionDeniedReason =
-  | 'configured_deny'
-  | 'classifier_blocked'
-  | 'classifier_unavailable'
-  | 'hard_block'
-  | 'run_aborted'
-  | 'runtime'
-  | 'user';
+export type PermissionDeniedReason = AgentPermissionDeniedReason;
 
 export type AgentPermissionAskResolverOutcome =
   | { outcome: 'allow'; source: 'safe_allowlist' | 'classifier' }

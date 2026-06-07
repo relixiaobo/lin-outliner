@@ -892,12 +892,23 @@ describe('agent runtime skill integration', () => {
     expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.some((event) => event.type === 'tool.permission.checked' && event.outcome === 'ask')).toBe(true);
-    expect(events.some((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.status === 'denied'
-      && event.resolvedBy === 'user_once'
-    ))).toBe(true);
+    const persistedApprovalRequest = events.find((event) => event.type === 'approval.requested');
+    const persistedApprovalResolution = events.find((event) => event.type === 'approval.resolved');
+    const permissionChecked = events.find((event) => event.type === 'tool.permission.checked');
+    const permissionResolved = events.find((event) => event.type === 'tool.permission.resolved');
+    expect(approvalEvent.requestId.startsWith('permission-')).toBe(true);
+    expect(persistedApprovalRequest).toMatchObject({ requestId: approvalEvent.requestId });
+    expect(persistedApprovalResolution).toMatchObject({ requestId: approvalEvent.requestId, approved: false });
+    expect(permissionChecked).toMatchObject({
+      requestId: approvalEvent.requestId,
+      outcome: 'ask',
+    });
+    expect(permissionResolved).toMatchObject({
+      requestId: approvalEvent.requestId,
+      status: 'denied',
+      resolvedBy: 'user_once',
+      deniedReason: 'user_denied',
+    });
     const deniedToolResult = events.find((event) => (
       event.type === 'tool_result.created'
       && event.toolCallId === 'tool-denied-push'

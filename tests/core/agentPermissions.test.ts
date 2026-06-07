@@ -5,6 +5,7 @@ import {
   matchesAgentToolRule,
   toPermissionClassifierInput,
 } from '../../src/main/agentPermissions';
+import { permissionDeniedToolResultMessage } from '../../src/main/agentPermissionEvents';
 import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermissionRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
 
@@ -381,7 +382,7 @@ describe('agent permissions', () => {
     expect(blocked).toMatchObject({ behavior: 'deny', code: 'tool_not_preapproved' });
   });
 
-  test('asks for external bash side effects and can allow an exact conversation rule', () => {
+  test('stale conversation-shaped rules do not approve external bash side effects', () => {
     const command = 'git push origin codex/foo';
     const asked = evaluateAgentToolPermission({
       toolName: 'bash',
@@ -393,12 +394,14 @@ describe('agent permissions', () => {
       args: { command },
       policy: {
         workspaceRoot: '/tmp/workspace',
+        // Simulates an old persisted/fixture shape. Conversation-scoped approval
+        // is no longer part of the permission model and must not widen access.
         conversationAllowRules: [`Bash(${command})`],
-      },
+      } as any,
     });
 
     expect(asked).toMatchObject({ behavior: 'ask', code: 'external_git_push' });
-    expect(allowed).toMatchObject({ behavior: 'allow', conversationApproved: true, visibility: 'important' });
+    expect(allowed).toMatchObject({ behavior: 'ask', code: 'external_git_push' });
   });
 
   test('approval requests expose validated always-allow rules', () => {
@@ -487,11 +490,11 @@ describe('agent permissions', () => {
     expect(compound).toMatchObject({ behavior: 'ask', code: 'external_git_push' });
   });
 
-  test('conversation rules do not approve execution mode upgrades', () => {
+  test('stale conversation-shaped rules do not approve execution mode upgrades', () => {
     const policy = {
       workspaceRoot: '/tmp/workspace',
       conversationAllowRules: ['Bash(npm test)'],
-    };
+    } as any;
 
     const sandboxOverride = evaluateAgentToolPermission({
       toolName: 'bash',
@@ -504,10 +507,8 @@ describe('agent permissions', () => {
       policy,
     });
 
-    expect(sandboxOverride).toMatchObject({ behavior: 'ask', code: 'sandbox_override', conversationApproved: true });
-    expect(background).toMatchObject({ behavior: 'ask', code: 'background_process', conversationApproved: true });
-    expect(sandboxOverride.behavior === 'ask' ? sandboxOverride.request.suggestedConversationRule : undefined).toBeUndefined();
-    expect(background.behavior === 'ask' ? background.request.suggestedConversationRule : undefined).toBeUndefined();
+    expect(sandboxOverride).toMatchObject({ behavior: 'ask', code: 'sandbox_override' });
+    expect(background).toMatchObject({ behavior: 'ask', code: 'background_process' });
   });
 
   test('global rules use deny over ask over allow precedence', () => {
@@ -717,6 +718,37 @@ describe('agent permissions', () => {
       message: 'Unsupported capability: external_messaging.',
     }]);
     expect(decision).toMatchObject({ behavior: 'deny', code: 'configured_deny' });
+  });
+
+  test('permission denied tool results use canonical reasons and recoverability', () => {
+    const configuredDeny = JSON.parse(permissionDeniedToolResultMessage({
+      toolName: 'bash',
+      reason: 'configured_deny',
+      message: 'A global permission rule denied shell execution.',
+    }));
+    const platformHardBlock = JSON.parse(permissionDeniedToolResultMessage({
+      toolName: 'bash',
+      reason: 'platform_hard_block',
+      message: 'Sensitive data cannot be sent to an external sink.',
+    }));
+    const userDenied = JSON.parse(permissionDeniedToolResultMessage({
+      toolName: 'bash',
+      reason: 'user_denied',
+      message: 'User denied permission.',
+    }));
+
+    expect(configuredDeny.error).toMatchObject({
+      recoverable: false,
+      details: { reason: 'configured_deny' },
+    });
+    expect(platformHardBlock.error).toMatchObject({
+      recoverable: false,
+      details: { reason: 'platform_hard_block' },
+    });
+    expect(userDenied.error).toMatchObject({
+      recoverable: true,
+      details: { reason: 'user_denied' },
+    });
   });
 
   test('classifier projections keep only bounded stable tool inputs', () => {

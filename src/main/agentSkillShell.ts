@@ -1,4 +1,5 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
+import { randomUUID } from 'node:crypto';
 import type { AgentPermissionMode } from '../core/types';
 import type { AgentApprovalResolutionScope } from '../core/agentTypes';
 import { evaluateAgentToolPermission, type AgentPermissionAskDecision, type GlobalToolPermissionConfig } from './agentPermissions';
@@ -6,6 +7,7 @@ import { resolveAgentPermissionAsk } from './agentPermissionAskResolver';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 
 export interface AgentSkillShellApprovalInput {
+  requestId: string;
   toolCall: ToolCall;
   args: { command: string };
   decision: AgentPermissionAskDecision;
@@ -15,7 +17,6 @@ export interface AgentSkillShellApprovalResolution {
   approved: boolean;
   deniedBy?: 'abort' | 'runtime' | 'user';
   scope?: AgentApprovalResolutionScope;
-  conversationRule?: string;
 }
 
 export interface AgentSkillShellCommandInput {
@@ -24,7 +25,6 @@ export interface AgentSkillShellCommandInput {
   localRoot?: string;
   permissionMode?: AgentPermissionMode;
   allowedTools?: readonly string[];
-  conversationAllowRules?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   signal?: AbortSignal;
   toolCallId?: string;
@@ -48,7 +48,6 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       mode: input.permissionMode,
       workspaceRoot: input.localRoot,
       preapprovedToolRules: input.allowedTools ?? [],
-      conversationAllowRules: input.conversationAllowRules ?? [],
       globalPermissions: input.globalPermissions,
     },
   });
@@ -72,6 +71,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
         );
       }
       const approval = await input.approvalHandler({
+        requestId: `permission-${randomUUID()}`,
         toolCall: {
           type: 'toolCall',
           id: input.toolCallId ?? 'skill-shell-bash',

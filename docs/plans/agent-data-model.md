@@ -242,7 +242,9 @@ type RunEvent =
       status: 'approved' | 'denied' | 'aborted';
       resolvedBy: 'classifier' | 'safe_allowlist' | 'user_once' | 'allow_rule_update' | 'global_rule'
                 | 'configured_deny' | 'classifier_unavailable' | 'platform_hard_block' | 'runtime' | 'system_abort';
-      updatedRule?: string; deniedReason?: string })                               // deniedReason + resolvedBy = the recoverability/audit trail
+      updatedRule?: string;
+      deniedReason?: 'configured_deny' | 'classifier_blocked' | 'classifier_unavailable'
+                   | 'platform_hard_block' | 'run_aborted' | 'runtime' | 'user_denied' }) // deniedReason + resolvedBy = the recoverability/audit trail
   // ── run-scoped INTERACTION / UI-STATE (consumed by ask-user + gen-ui; persisted here so a paused run / widget restores) ──
   | (RunEventBase & { type: 'user_question.requested';                              // [[agent-ask-user-question-tool]] §7 UserQuestionRunEvent
       requestId: string; toolCallId: string; request: AgentUserQuestionRequestView })

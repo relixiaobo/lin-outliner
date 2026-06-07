@@ -29,61 +29,19 @@ All line numbers are against `main` at the time of writing (post-#60,
 
 ## Items
 
-### 1. `sessionApproved` short-circuits to allow before configured-ask (MEDIUM)
+### 1. `sessionApproved` short-circuits to allow before configured-ask — RESOLVED
 
-`src/main/agentPermissions.ts:311` — after `configured_deny` (good) and the
-restricted-mode check, but **before** configured-ask / global-allow / global-ask
-resolution, a session-scoped approval returns `allow` for every action kind
-except `shell.sandbox_override` / `shell.background_process`:
+Resolved by removing conversation-scoped approval from the permission model.
+Approval choices are now only `once` or `always`; stale conversation-shaped rule
+fixtures are ignored and cannot relax configured/default `ask` decisions. Skill
+`allowed-tools` remains as run-scoped preapproval and is separate from user
+approval scope.
 
-```ts
-if (sessionApproved && !descriptors.some((d) =>
-    d.actionKind === 'shell.sandbox_override' || d.actionKind === 'shell.background_process')) {
-  return allow(access, preapproved, sessionApproved, 'Allowed by a session permission rule.', ...);
-}
-```
+### 2. `parseGlobalToolPermissionSettings` pre-shaped early-return — RESOLVED
 
-This silently relaxes a configured `ask` rule and skips the ask
-resolver/classifier. The path is reachable: `resolveApproval` pushes
-`suggestedConversationRule` into `permissionConversationAllowRules` for
-`scope==='conversation'`, and `main.ts` forwards `scope: 'conversation'` from
-IPC. The parent plan removes conversation grants as a permission concept
-(Decision #3; "current conversation-scoped approval runtime support must be
-removed") and requires
-that a configured `ask` is never silently relaxed by `allow` (precedence). Not a
-deny/hard-block bypass (those precede it), hence medium.
-
-**Fix:** remove session-scoped allow rules from the permission model. Approval
-choices may remain "once" or "always" only; do not keep a hidden conversation
-compatibility layer. **Test:** a configured `ask(Action(...))` plus any stale
-conversation-shaped rule fixture must still resolve to `ask`/`needs_user`, not `allow`.
-
-### 2. `parseGlobalToolPermissionSettings` pre-shaped early-return (MEDIUM, latent)
-
-`src/main/agentToolPermissionRules.ts:257` —
-
-```ts
-export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPermissionConfig {
-  if (isGlobalToolPermissionConfig(input)) return input;   // <-- returns verbatim, no re-validation
-  ...
-}
-```
-
-`isGlobalToolPermissionConfig` returns true for any record with `rules` and
-`diagnostics` arrays, so a pre-shaped object is returned verbatim, skipping
-`parseGlobalToolPermissionRule` (ALLOW_FORBIDDEN_ACTIONS, arbitrary-code list,
-agent-spawn ban, capability deny-only). A crafted
-`{rules:[{ruleValue:'Action(agent.permission.modify)',decision:'allow',...}],diagnostics:[]}`
-would be honored, relaxing a hard block. Not reachable in the current call graph
-(the production loader passes the grouped `{permissions:{allow,ask,deny}}` string
-form, which IS validated), but it is a fragile trust boundary on an exported
-`unknown`-typed function.
-
-**Fix:** remove the fast-path, or re-run every `rule.ruleValue` through
-`parseGlobalToolPermissionRule` even when a pre-parsed config is supplied. Treat
-the grouped string form as the only authoritative input. **Test:** a pre-shaped
-config carrying an `allow` for a forbidden action is stripped to the built-in
-default, never honored.
+Resolved in the M1 review-fix commit. Pre-shaped permission configs are
+re-validated from `ruleValue` instead of being trusted verbatim, and forbidden
+global allows such as `Action(agent.config.write)` are stripped with diagnostics.
 
 ### 3. Exfil redline misses interpreter / ssh sinks and bare SSH-key variants — RESOLVED
 
@@ -99,41 +57,18 @@ mention plus any such sink is a `platform_hard_block` (tests in
 Deferred: the broader **structural** rule (sensitive-read + ANY external segment
 → hard block, instead of enumerating sinks) remains a possible future tightening.
 
-### 4. Dual event vocabulary left live (MEDIUM, observability)
+### 4. Dual event vocabulary left live — RESOLVED
 
-`src/core/agentEventLog.ts` + emit sites in `src/main/agentRuntime.ts`. The PR
-added `tool.permission.checked` / `tool.permission.resolved` but still actively
-emits `approval.requested` / `approval.resolved` for the SAME decision, under a
-different requestId space (`approval` uses bare `randomUUID()`; permission uses
-`` `permission-${randomUUID()}` ``), so the two records of one decision cannot be
-joined. Parent plan checklist #16 explicitly asked NOT to leave two parallel
-vocabularies.
+Resolved by using one `permission-<uuid>` request id for the policy decision,
+approval UI events, and transient approval IPC. `tool.permission.*` is the policy
+decision record; `approval.*` is the UI-surface record, joinable by `requestId`.
 
-**Fix:** pick one. Either make `tool.permission.*` the sole persisted permission
-record and demote `approval.*` to transient renderer IPC only, OR share one
-`requestId` across both and document `approval.*` = UI-surface vs
-`tool.permission.*` = policy-decision. **Test:** one resolved approval produces a
-single joinable permission record (assert the requestId correlation).
+### 5. Denied-reason literals diverge from the plan contract — RESOLVED
 
-### 5. Denied-reason literals diverge from the plan contract (LOW)
-
-`src/main/agentPermissionAskResolver.ts` (reason union) and
-`src/main/agentPermissionEvents.ts`. The PR uses `'hard_block'` (plan:
-`'platform_hard_block'`), `'user'` (plan: `'user_denied'`), and adds a non-spec
-`'runtime'` bucket; `agentPermissionEvents.ts` `recoverable: reason !==
-'hard_block'` marks a durable `configured_deny` as recoverable. All six
-conceptual reasons are produced and distinguishable, so this is a wire-format /
-label mismatch, not fail-open — but it will bite any consumer coded against the
-plan's literal strings.
-
-**Fix:** rename to match the plan (`platform_hard_block`, `user_denied`) or
-ratify the implemented names in `agent-tool-permissions.md`; keep one canonical
-reason enum shared by resolver, event log, and the tool-result message. Drive
-`recoverable` off an explicit set: `configured_deny` and any
-`platformHardBlock`/redline → `recoverable: false`; only
-`classifier_blocked`/`classifier_unavailable`/`user`/`run_aborted` → `true`.
-**Test:** assert the structured `permission_denied` shape uses the canonical
-reason strings and `recoverable` flags `configured_deny` false.
+Resolved by making `platform_hard_block` and `user_denied` the canonical
+wire-level reason strings. The denied tool result now drives `recoverable` from
+an explicit set: `configured_deny` and `platform_hard_block` are not recoverable;
+classifier/runtime/user/abort outcomes are recoverable fallback paths.
 
 ## Out of scope
 

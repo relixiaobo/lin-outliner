@@ -40,7 +40,7 @@ export interface AgentToolPermissionLogInput {
     status: 'approved' | 'denied' | 'aborted';
     resolvedBy: AgentToolPermissionResolvedBy;
     updatedRule?: string;
-    deniedReason?: string;
+    deniedReason?: PermissionDeniedReason;
   };
 }
 
@@ -59,7 +59,7 @@ export function permissionPrimaryActionKind(
 
 export function permissionDeniedReasonForDecision(decision: AgentPermissionDenyDecision): PermissionDeniedReason {
   if (decision.code === 'configured_deny') return 'configured_deny';
-  if (decision.redline || decision.descriptor?.platformHardBlock) return 'hard_block';
+  if (decision.redline || decision.descriptor?.platformHardBlock) return 'platform_hard_block';
   return 'runtime';
 }
 
@@ -89,11 +89,11 @@ export function permissionResolvedByForDeniedReason(reason: PermissionDeniedReas
       return 'classifier';
     case 'classifier_unavailable':
       return 'classifier_unavailable';
-    case 'hard_block':
+    case 'platform_hard_block':
       return 'platform_hard_block';
     case 'run_aborted':
       return 'system_abort';
-    case 'user':
+    case 'user_denied':
       return 'user_once';
     case 'runtime':
     default:
@@ -113,11 +113,25 @@ export function permissionDeniedToolResultMessage(input: {
     error: {
       code: 'permission_denied',
       message: input.message,
-      recoverable: input.reason !== 'hard_block',
+      recoverable: isRecoverablePermissionDeniedReason(input.reason),
       details: {
         reason: input.reason,
       },
     },
     instructions: 'Treat this as a normal denied tool result. Continue with a safe fallback or explain the blocker.',
   }, null, 2);
+}
+
+function isRecoverablePermissionDeniedReason(reason: PermissionDeniedReason): boolean {
+  switch (reason) {
+    case 'classifier_blocked':
+    case 'classifier_unavailable':
+    case 'run_aborted':
+    case 'runtime':
+    case 'user_denied':
+      return true;
+    case 'configured_deny':
+    case 'platform_hard_block':
+      return false;
+  }
 }
