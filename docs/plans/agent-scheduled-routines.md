@@ -497,8 +497,10 @@ Resequenced to match the converged model — kernel first, polish next:
    the user-only-write enforcement at the node-tool gateway. Without this,
    nothing is safe to ship.
 2. **`date` value carries an optional `RRULE`** + `mostRecentDue(date, now)` and
-   `formatRecurrence` in core, unit-tested. (A one-off date with no rule is
-   enough to ship the kernel; the rule can land a cut later.)
+   `formatRecurrence` in core, unit-tested. The shared pure schedule primitive
+   now exists in `src/core/dateSchedule.ts`; wiring it into generic date field
+   parsing, the date picker, search tolerance, and command-node scheduling is
+   still part of this plan.
 3. **`sys:lastRunAt` system field** on command nodes (system-managed, like
    `sys:updatedAt`).
 4. **Anacron scheduler** (tick + `mostRecentDue` + the fire condition). Verify
