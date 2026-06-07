@@ -2076,8 +2076,10 @@ created it. Conversation sources carry `conversationId` plus optional
 `runId`/`messageRange`/`eventId`. Agent-run sources carry
 `kind: "agent_run"`, the parent `conversationId`, `agentId`,
 `subagentRunId`/`runId`, synthetic transcript `messageRange`, optional
-`parentToolCallId`, and the transcript payload id as `eventId`. Runtime setting
-`agent.runtime.memoryIsolation` controls recall visibility:
+`parentToolCallId`, and the transcript payload id as `eventId`. Evidence reads
+for agent-run sources are payload-bound: if `eventId` is present, the runtime
+reads that exact transcript payload instead of the run's current payload. Runtime
+setting `agent.runtime.memoryIsolation` controls recall visibility:
 
 - `global` (default): recall can read the agent's full active memory pool.
 - `isolated`: recall reads only entries whose `originWorkspace` matches the
@@ -2099,9 +2101,12 @@ currently visible memory entries. It returns structured add/update/forget
 proposals only; the runtime performs dedupe/scope checks, appends
 `memory.entry_*` events with source provenance, records `dream.completed`,
 advances per-conversation watermarks and per-agent-run transcript watermarks, and
-projects the foreground agent's Dream run as a read-only task-panel row. The
-foreground model must not claim it saved, updated, or forgot durable memory
-through a tool call.
+projects foreground and owner-anchored Dream runs as read-only task-panel rows.
+Per-agent-run watermarks bind `messageCount` to a transcript `payloadId`; if the
+payload id changes after compaction or a new transcript snapshot, Dream treats
+the new payload as a new address space and does not skip it merely because an old
+message count is larger. The foreground model must not claim it saved, updated,
+or forgot durable memory through a tool call.
 
 Subagent memory ownership is explicit. A fresh typed subagent runs as the called
 agent definition: its `<agent-memory>` reminder and `recall` tool read that
@@ -2110,8 +2115,12 @@ agent. The parent agent's Dream sees only the parent conversation surface, such
 as the `Agent` tool call and compact result projection, not the full fresh
 subagent transcript. A fork subagent keeps the parent agent as both execution
 identity and memory owner; its sidechain transcript can become Dream evidence for
-the parent, but Dream skips the copied parent-context prefix and starts at the
-fork directive.
+the parent, but Dream uses the persisted fork evidence boundary instead of
+scanning marker text. Legacy fork transcripts without a persisted boundary are
+skipped rather than replayed from index 0. In isolated memory mode, fresh
+subagent reminders, recall, and Dream writes use the called agent definition's
+origin workspace. Agent-definition `tools` remain an allow-list: `recall` is not
+injected into a fresh subagent that explicitly omits it.
 
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
 the active projection. Reminder retrieval ranks by memory-specific relevance

@@ -875,11 +875,13 @@ export interface SubagentRunStartedEvent extends AgentEventBase {
   executingAgentId?: AgentId | string;
   parentAgentId?: AgentId | string;
   memoryOwnerAgentId?: AgentId | string;
+  memoryOriginWorkspace?: string;
   name?: string;
   description: string;
   prompt: string;
   subagentType: string;
   contextMode: 'fresh' | 'fork';
+  dreamEvidenceStartMessageIndex?: number;
   transcriptPayload?: AgentPayloadRef;
   transcriptMessageCount: number;
 }
@@ -891,6 +893,7 @@ export interface SubagentRunUpdatedEvent extends AgentEventBase {
   completedAt?: number;
   result?: string;
   error?: string;
+  dreamEvidenceStartMessageIndex?: number;
   transcriptPayload?: AgentPayloadRef;
   transcriptMessageCount: number;
 }
@@ -1030,6 +1033,8 @@ export interface AgentSubagentRunRecord {
   executingAgentId?: string;
   parentAgentId?: string;
   memoryOwnerAgentId?: string;
+  memoryOriginWorkspace?: string;
+  dreamEvidenceStartMessageIndex?: number;
   status: AgentSubagentRunStatus;
   startedAt: number;
   updatedAt: number;
@@ -1446,6 +1451,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         executingAgentId: event.executingAgentId,
         parentAgentId: event.parentAgentId,
         memoryOwnerAgentId: event.memoryOwnerAgentId,
+        memoryOriginWorkspace: event.memoryOriginWorkspace,
+        dreamEvidenceStartMessageIndex: event.dreamEvidenceStartMessageIndex,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
@@ -1468,6 +1475,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         run.error = event.error;
       }
       run.updatedAt = event.createdAt;
+      run.dreamEvidenceStartMessageIndex = event.dreamEvidenceStartMessageIndex ?? run.dreamEvidenceStartMessageIndex;
       run.transcriptPayloadId = event.transcriptPayload?.id ?? run.transcriptPayloadId;
       run.transcriptMessageCount = event.transcriptMessageCount;
       if (event.transcriptPayload) state.payloads[event.transcriptPayload.id] = event.transcriptPayload;

@@ -11,6 +11,10 @@ import {
 } from '../core/agentEventLog';
 import type { AgentMessage, UserMessage } from '../core/agentTypes';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
+import {
+  agentRunMessageId,
+  isRecordableRuntimeMessage,
+} from './agentSubagentTranscript';
 
 const DREAM_TRANSCRIPT_CHAR_BUDGET = 60_000;
 const DREAM_MESSAGE_CONTENT_CHAR_BUDGET = 12_000;
@@ -62,6 +66,7 @@ export interface DreamMemoryExtractionAgentRunInput {
   subagentRunId: string;
   parentToolCallId?: string;
   transcriptPayloadId?: string | null;
+  originWorkspace?: string;
   transcriptMessages: readonly AgentMessage[];
   fromMessageCountExclusive: number;
 }
@@ -417,15 +422,6 @@ function isDreamEvidenceEvent(event: AgentEvent): boolean {
 
 function messageIdsFromEvidenceEvent(event: AgentEvent): string[] {
   return typeof event.messageId === 'string' ? [event.messageId] : [];
-}
-
-function agentRunMessageId(runId: string, index: number): string {
-  return `${runId}:message:${index + 1}`;
-}
-
-function isRecordableRuntimeMessage(message: unknown): message is AgentMessage {
-  return isRecord(message)
-    && (message.role === 'user' || message.role === 'assistant' || message.role === 'toolResult');
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

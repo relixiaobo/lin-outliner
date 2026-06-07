@@ -624,6 +624,7 @@ export class AgentEventStore {
         watermark: normalizeDreamWatermark(input.watermark),
         processed: {
           conversations: normalizeDreamProcessedConversations(input.processed.conversations),
+          agentRuns: normalizeDreamProcessedAgentRuns(input.processed.agentRuns),
           totalMessageCount: Math.max(0, Math.trunc(input.processed.totalMessageCount)),
           totalCharCount: Math.max(0, Math.trunc(input.processed.totalCharCount)),
           consolidateOnly: input.processed.consolidateOnly,

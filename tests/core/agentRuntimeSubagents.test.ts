@@ -21,6 +21,7 @@ import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentPastChatsService } from '../../src/main/agentPastChats';
+import { subagentDreamEvidenceStartMessageIndex } from '../../src/main/agentSubagentTranscript';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -104,6 +105,10 @@ function createWindowSink() {
 
 function latestProjection(events: AgentRuntimeEvent[]) {
   return [...events].reverse().find((event) => event.type === 'projection')?.renderProjection ?? null;
+}
+
+async function flushProjectionCoalescing() {
+  await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 1000) {
@@ -216,6 +221,12 @@ describe('agent runtime subagents', () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
+  test('fork Dream evidence uses persisted boundaries and skips legacy unknown boundaries', () => {
+    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fresh' }, 5)).toBe(0);
+    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork', dreamEvidenceStartMessageIndex: 3 }, 5)).toBe(3);
+    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork' }, 5)).toBe(5);
+  });
+
   test('runs a fresh subagent from an AGENT.md definition and returns only the compact result to the parent', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-data-'));
@@ -293,7 +304,7 @@ describe('agent runtime subagents', () => {
     const childContext = contexts.find((text) => text.includes('RESEARCHER_AGENT_BODY')) ?? '';
     expect(childContext).toContain('memory-researcher-own');
     expect(childContext).toContain('Researcher agent prefers teal source notes.');
-    expect(childContext).toContain('"recall"');
+    expect(childContext).not.toContain('"recall"');
     expect(childContext).not.toContain('memory-parent-only');
     expect(childContext).not.toContain('Parent agent prefers amber planning notes.');
   });
@@ -348,7 +359,7 @@ describe('agent runtime subagents', () => {
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,
-          memoryIsolation: 'global',
+          memoryIsolation: 'isolated',
           additionalSkillDirectories: [],
           additionalAgentDirectories: [],
         }),
@@ -371,6 +382,7 @@ describe('agent runtime subagents', () => {
     const session = await runtime.createConversation();
     await sendMessageApprovingAgent(runtime, session.conversationId, 'Use the researcher agent.', sink);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    await flushProjectionCoalescing();
 
     const store = new AgentEventStore(dataRoot);
     const researcherEntries = await store.listMemoryEntries(researcherAgentId);
@@ -381,13 +393,85 @@ describe('agent runtime subagents', () => {
     const evidence = source
       ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
       : null;
+    const projection = latestProjection(sink.events);
+    const dreamTask = projection?.taskIds
+      .map((taskId) => projection.entities.tasks[taskId])
+      .find((task) => task?.kind === 'dream' && task.runId === dreamState.lastCompleted?.runId);
+    const replacementPayload = runId
+      ? await store.writePayload(session.conversationId, {
+          id: `subagent-transcript-${runId}-replacement`,
+          data: JSON.stringify({
+            v: 1,
+            runId,
+            messageCount: 1,
+            messages: [fauxAssistantMessage(fauxText(
+              `Replacement transcript text that must not satisfy old provenance. ${'replacement evidence '.repeat(90)}`,
+            ))],
+          }),
+          mimeType: 'application/json',
+          role: 'subagent_transcript',
+          summary: 'Replacement subagent transcript',
+        })
+      : null;
+    const replayBeforeReplacement = await store.replay(session.conversationId);
+    const runBeforeReplacement = runId ? replayBeforeReplacement.subagents[runId] : null;
+    if (runId && replacementPayload && runBeforeReplacement) {
+      await store.appendEvents(session.conversationId, [
+        {
+          v: 1,
+          eventId: `test-payload-replacement-${runId}`,
+          seq: replayBeforeReplacement.latestSeq + 1,
+          sessionId: session.conversationId,
+          createdAt: Date.now(),
+          actor: { type: 'system' },
+          type: 'payload.created',
+          payload: replacementPayload,
+        },
+        {
+          v: 1,
+          eventId: `test-subagent-replacement-${runId}`,
+          seq: replayBeforeReplacement.latestSeq + 2,
+          sessionId: session.conversationId,
+          createdAt: Date.now(),
+          actor: { type: 'tool', toolName: 'Agent', toolCallId: runBeforeReplacement.parentToolCallId ?? 'tool-agent-1' },
+          type: 'subagent_run.updated',
+          subagentRunId: runId,
+          status: runBeforeReplacement.status,
+          completedAt: runBeforeReplacement.completedAt,
+          result: runBeforeReplacement.result,
+          error: runBeforeReplacement.error,
+          dreamEvidenceStartMessageIndex: 0,
+          transcriptPayload: replacementPayload,
+          transcriptMessageCount: 1,
+        },
+      ]);
+    }
+    const evidenceAfterPayloadReplacement = source
+      ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
+      : null;
+    await runtime.runScheduledDreamsForTest(new Date(Date.now() + 48 * 60 * 60 * 1000));
+    const dreamStateAfterPayloadReplacement = await new AgentEventStore(dataRoot).readDreamState(researcherAgentId);
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(researcherEntries.map((entry) => entry.fact)).toEqual([
       'Researcher agent uses teal source notes for synthesis.',
     ]);
+    expect(researcherEntries[0]?.originWorkspace).toBe(
+      `workspace:${createHash('sha256').update(path.resolve(researcherDir)).digest('hex').slice(0, 16)}`,
+    );
     expect(parentEntries).toEqual([]);
+    expect(dreamTask).toMatchObject({
+      kind: 'dream',
+      status: 'completed',
+      trigger: 'schedule',
+      runId: dreamState.lastCompleted?.runId,
+      processed: { consolidateOnly: false },
+      changes: { added: 1 },
+    });
+    expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.totalMessageCount : 0).toBeGreaterThan(0);
+    expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.agentRuns?.[runId!]?.transcriptPayloadId : null)
+      .toBe(source?.eventId);
     expect(source).toMatchObject({
       kind: 'agent_run',
       conversationId: session.conversationId,
@@ -401,6 +485,14 @@ describe('agent runtime subagents', () => {
       message.messageId.startsWith(`${runId}:message:`)
       && message.text.includes('Researcher durable note: use teal source notes')
     )) : false).toBe(true);
+    expect(evidenceAfterPayloadReplacement?.mode === 'evidence' ? evidenceAfterPayloadReplacement.messages.some((message) => (
+      message.text.includes('Researcher durable note: use teal source notes')
+    )) : false).toBe(true);
+    expect(evidenceAfterPayloadReplacement?.mode === 'evidence' ? evidenceAfterPayloadReplacement.messages.some((message) => (
+      message.text.includes('Replacement transcript text')
+    )) : false).toBe(false);
+    expect(dreamRequests.some((request) => request.includes('Replacement transcript text that must not satisfy old provenance.'))).toBe(true);
+    expect(dreamStateAfterPayloadReplacement.watermark.agentRuns?.[runId!]?.payloadId).toBe(replacementPayload?.id);
     expect(dreamRequests.some((request) => (
       request.includes('## Agent Run')
       && request.includes('Researcher durable note: use teal source notes')

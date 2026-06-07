@@ -135,7 +135,9 @@ truth.
     per agent and projected into the task panel
   - fresh typed subagents use their own agent identity for `<agent-memory>`,
     `recall`, and sidechain-transcript Dream evidence; fork subagents inherit the
-    parent agent's memory owner
+    parent agent's memory owner and use a persisted Dream evidence boundary;
+    agent-run memory sources bind evidence to the recorded transcript payload id,
+    and owner-anchored Dream tasks appear in the shared task projection
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as read-only `agent.memory.recall`
   - prompt guidance that foreground memory writes are handled by Settings/Profile

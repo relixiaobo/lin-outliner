@@ -17,6 +17,12 @@ import type {
   AgentConversationIndexEntry,
   AgentEventStore,
 } from './agentEventStore';
+import {
+  agentRunMessageId,
+  agentRunSourceMessageWindow,
+  parseSubagentTranscriptEnvelope,
+  type SubagentTranscriptEnvelope,
+} from './agentSubagentTranscript';
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -402,24 +408,30 @@ export class AgentPastChatsService {
 
     const state = await this.eventStore.replay(source.conversationId);
     const run = state.subagents[runId];
-    if (!run?.transcriptPayloadId) {
+    const payloadId = source.eventId ?? run?.transcriptPayloadId;
+    if (!payloadId) {
       return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
     }
-    const payload = state.payloads[run.transcriptPayloadId];
+    const payload = state.payloads[payloadId];
     if (!payload) {
       return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
     }
 
-    const messages = await this.readSubagentTranscriptPayload(source.conversationId, payload);
-    const [fromMessageId, throughMessageId] = source.messageRange;
-    const startIndex = agentRunMessageIndex(runId, fromMessageId);
-    if (startIndex < 0 || startIndex >= messages.length) {
-      return pastChatsError('SOURCE_NOT_FOUND', `The source message ${fromMessageId} was not found in agent run ${runId}.`);
+    const envelope = await this.readSubagentTranscriptEnvelope(source.conversationId, payload);
+    if (!envelope || envelope.runId !== runId) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
     }
-    const throughIndex = agentRunMessageIndex(runId, throughMessageId);
-    const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
+    const window = agentRunSourceMessageWindow(source, runId, envelope.messages.length);
+    if (!window) {
+      return pastChatsError('SOURCE_NOT_FOUND', `The source message range was not found in agent run ${runId}.`);
+    }
     const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    const assembled = clampRuntimeReadMessages(runId, messages.slice(startIndex, endIndex + 1), maxChars, startIndex);
+    const assembled = clampRuntimeReadMessages(
+      runId,
+      envelope.messages.slice(window.startIndex, window.endIndex + 1),
+      maxChars,
+      window.startIndex,
+    );
 
     return {
       mode: 'evidence',
@@ -436,17 +448,15 @@ export class AgentPastChatsService {
     };
   }
 
-  private async readSubagentTranscriptPayload(
+  private async readSubagentTranscriptEnvelope(
     sessionId: string,
     payload: AgentPayloadRef,
-  ): Promise<AgentMessage[]> {
+  ): Promise<SubagentTranscriptEnvelope | null> {
     try {
       const raw = await this.eventStore.readPayload(sessionId, payload);
-      const parsed = JSON.parse(raw.toString('utf8')) as unknown;
-      if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.messages)) return [];
-      return parsed.messages.filter(isRecordableRuntimeMessage).map((message) => JSON.parse(JSON.stringify(message)) as AgentMessage);
+      return parseSubagentTranscriptEnvelope(raw);
     } catch {
-      return [];
+      return null;
     }
   }
 
@@ -643,23 +653,6 @@ function runtimeMessageRole(message: AgentMessage): PastChatsRole {
 
 function runtimeMessageTimestamp(message: AgentMessage): number {
   return typeof message.timestamp === 'number' ? message.timestamp : Date.now();
-}
-
-function agentRunMessageId(runId: string, index: number): string {
-  return `${runId}:message:${index + 1}`;
-}
-
-function agentRunMessageIndex(runId: string, messageId: string): number {
-  const prefix = `${runId}:message:`;
-  if (!messageId.startsWith(prefix)) return -1;
-  const numeric = Number(messageId.slice(prefix.length));
-  if (!Number.isInteger(numeric) || numeric <= 0) return -1;
-  return numeric - 1;
-}
-
-function isRecordableRuntimeMessage(message: unknown): message is AgentMessage {
-  return isRecord(message)
-    && (message.role === 'user' || message.role === 'assistant' || message.role === 'toolResult');
 }
 
 function cleanUserMessageText(text: string): string {
