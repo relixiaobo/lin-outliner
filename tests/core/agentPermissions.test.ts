@@ -5,7 +5,10 @@ import {
   matchesAgentToolRule,
   toPermissionClassifierInput,
 } from '../../src/main/agentPermissions';
-import { permissionDeniedToolResultMessage } from '../../src/main/agentPermissionEvents';
+import {
+  permissionDeniedReasonForDecision,
+  permissionDeniedToolResultMessage,
+} from '../../src/main/agentPermissionEvents';
 import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermissionRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
 
@@ -721,10 +724,24 @@ describe('agent permissions', () => {
   });
 
   test('permission denied tool results use canonical reasons and recoverability', () => {
+    const restrictedDeny = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'echo not-preapproved' },
+      policy: {
+        mode: 'restricted',
+        workspaceRoot: '/tmp/workspace',
+      },
+    });
+    if (restrictedDeny.behavior !== 'deny') throw new Error('Expected restricted policy deny.');
     const configuredDeny = JSON.parse(permissionDeniedToolResultMessage({
       toolName: 'bash',
       reason: 'configured_deny',
       message: 'A global permission rule denied shell execution.',
+    }));
+    const policyDenied = JSON.parse(permissionDeniedToolResultMessage({
+      toolName: 'bash',
+      reason: permissionDeniedReasonForDecision(restrictedDeny),
+      message: restrictedDeny.reason,
     }));
     const platformHardBlock = JSON.parse(permissionDeniedToolResultMessage({
       toolName: 'bash',
@@ -740,6 +757,10 @@ describe('agent permissions', () => {
     expect(configuredDeny.error).toMatchObject({
       recoverable: false,
       details: { reason: 'configured_deny' },
+    });
+    expect(policyDenied.error).toMatchObject({
+      recoverable: false,
+      details: { reason: 'policy_denied' },
     });
     expect(platformHardBlock.error).toMatchObject({
       recoverable: false,

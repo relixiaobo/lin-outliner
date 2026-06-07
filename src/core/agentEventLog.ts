@@ -14,12 +14,38 @@ export const AGENT_EVENT_VERSION = 1;
 
 export type AgentPermissionDeniedReason =
   | 'configured_deny'
+  | 'policy_denied'
   | 'classifier_blocked'
   | 'classifier_unavailable'
   | 'platform_hard_block'
   | 'run_aborted'
   | 'runtime'
   | 'user_denied';
+
+export type AgentToolPermissionEventSource =
+  | 'global_rule'
+  | 'action_default'
+  | 'configured_deny'
+  | 'policy_denied'
+  | 'classifier'
+  | 'classifier_unavailable'
+  | 'safe_allowlist'
+  | 'user'
+  | 'platform_hard_block'
+  | 'runtime';
+
+export type AgentToolPermissionResolvedBy =
+  | 'classifier'
+  | 'safe_allowlist'
+  | 'user_once'
+  | 'allow_rule_update'
+  | 'global_rule'
+  | 'configured_deny'
+  | 'policy_denied'
+  | 'classifier_unavailable'
+  | 'platform_hard_block'
+  | 'runtime'
+  | 'system_abort';
 
 export type AgentActor =
   | { type: 'user'; userId: string }
@@ -283,16 +309,7 @@ export type AgentRunLogEvent =
       primaryActionKind?: string;
       actionKinds: string[];
       outcome: 'allow' | 'ask' | 'blocked';
-      source:
-        | 'global_rule'
-        | 'action_default'
-        | 'configured_deny'
-        | 'classifier'
-        | 'classifier_unavailable'
-        | 'safe_allowlist'
-        | 'user'
-        | 'platform_hard_block'
-        | 'runtime';
+      source: AgentToolPermissionEventSource;
       classifierResult?: {
         outcome: 'allow' | 'block';
         reason: string;
@@ -307,17 +324,7 @@ export type AgentRunLogEvent =
       toolCallId: string;
       toolName: string;
       status: 'approved' | 'denied' | 'aborted';
-      resolvedBy:
-        | 'classifier'
-        | 'safe_allowlist'
-        | 'user_once'
-        | 'allow_rule_update'
-        | 'global_rule'
-        | 'configured_deny'
-        | 'classifier_unavailable'
-        | 'platform_hard_block'
-        | 'runtime'
-        | 'system_abort';
+      resolvedBy: AgentToolPermissionResolvedBy;
       updatedRule?: string;
       deniedReason?: AgentPermissionDeniedReason;
     })
@@ -628,16 +635,7 @@ export interface ToolPermissionCheckedEvent extends AgentEventBase {
   primaryActionKind?: string;
   actionKinds: string[];
   outcome: 'allow' | 'ask' | 'blocked';
-  source:
-    | 'global_rule'
-    | 'action_default'
-    | 'configured_deny'
-    | 'classifier'
-    | 'classifier_unavailable'
-    | 'safe_allowlist'
-    | 'user'
-    | 'platform_hard_block'
-    | 'runtime';
+  source: AgentToolPermissionEventSource;
   classifierResult?: {
     outcome: 'allow' | 'block';
     reason: string;
@@ -653,17 +651,7 @@ export interface ToolPermissionResolvedEvent extends AgentEventBase {
   toolCallId: string;
   toolName: string;
   status: 'approved' | 'denied' | 'aborted';
-  resolvedBy:
-    | 'classifier'
-    | 'safe_allowlist'
-    | 'user_once'
-    | 'allow_rule_update'
-    | 'global_rule'
-    | 'configured_deny'
-    | 'classifier_unavailable'
-    | 'platform_hard_block'
-    | 'runtime'
-    | 'system_abort';
+  resolvedBy: AgentToolPermissionResolvedBy;
   updatedRule?: string;
   deniedReason?: AgentPermissionDeniedReason;
 }

@@ -72,7 +72,6 @@ interface AgentPermissionDecisionBase {
 
 export interface AgentPermissionAllowDecision extends AgentPermissionDecisionBase {
   behavior: 'allow';
-  visibility?: 'normal' | 'important';
 }
 
 export interface AgentPermissionAskDecision extends AgentPermissionDecisionBase {
@@ -330,7 +329,6 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       globalResolution.source === 'configured_allow'
         ? `Allowed by global rule ${globalResolution.rule?.ruleValue ?? globalResolution.descriptor.actionKind}.`
         : undefined,
-      undefined,
       {
         descriptor: globalResolution.descriptor,
         descriptors,
@@ -352,7 +350,6 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   return allow(
     access,
     preapproved,
-    undefined,
     undefined,
     { descriptors },
   );
@@ -1701,10 +1698,9 @@ function allow(
   access: AgentPermissionAccess,
   preapproved: boolean,
   reason?: string,
-  visibility?: 'normal' | 'important',
   options: Pick<AgentPermissionAllowDecision, 'descriptor' | 'descriptors' | 'permissionSource'> = {},
 ): AgentPermissionAllowDecision {
-  return { behavior: 'allow', access, preapproved, reason, visibility, ...options };
+  return { behavior: 'allow', access, preapproved, reason, ...options };
 }
 
 function ask(

@@ -826,6 +826,32 @@ describe('agent runtime skill integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts.join('\n')).toContain('Shell output: skill-shell-approved');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    expect(events.find((event) => event.type === 'approval.requested')).toMatchObject({
+      requestId: approvalEvent.requestId,
+    });
+    expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
+      requestId: approvalEvent.requestId,
+      approved: true,
+    });
+    expect(events.find((event) => (
+      event.type === 'tool.permission.checked'
+      && event.requestId === approvalEvent.requestId
+    ))).toMatchObject({
+      requestId: approvalEvent.requestId,
+      toolCallId: approvalEvent.request.toolCallId,
+      outcome: 'ask',
+    });
+    expect(events.find((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.requestId === approvalEvent.requestId
+    ))).toMatchObject({
+      requestId: approvalEvent.requestId,
+      toolCallId: approvalEvent.request.toolCallId,
+      status: 'approved',
+      resolvedBy: 'user_once',
+    });
   });
 
   test('reports rejected approvals as user-denied tool results', async () => {
@@ -1208,6 +1234,17 @@ describe('agent runtime skill integration', () => {
       ));
     });
     await sendPromise;
+
+    const events = await store.readEvents(created.conversationId);
+    expect(events.find((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.requestId === approvalEvent.requestId
+    ))).toMatchObject({
+      requestId: approvalEvent.requestId,
+      status: 'denied',
+      resolvedBy: 'runtime',
+      deniedReason: 'runtime',
+    });
   });
 
   test('honors runtime switches for automatic skills and compact', async () => {

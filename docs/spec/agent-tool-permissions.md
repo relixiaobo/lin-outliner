@@ -148,10 +148,11 @@ Two event families are persisted today (the runtime emits both):
 
 The denied tool result is `{ ok: false, error: { code: 'permission_denied',
 recoverable, details: { reason } } }`. Reasons use the canonical permission
-contract strings (`configured_deny`, `classifier_blocked`,
+contract strings (`configured_deny`, `policy_denied`, `classifier_blocked`,
 `classifier_unavailable`, `platform_hard_block`, `run_aborted`, `runtime`,
-`user_denied`). `configured_deny` and `platform_hard_block` are not recoverable;
-the other reasons are recoverable fallback/interaction outcomes.
+`user_denied`). `configured_deny`, `policy_denied`, and
+`platform_hard_block` are not recoverable; the other reasons are recoverable
+fallback/interaction outcomes.
 
 ## UI surfaces
 

@@ -67,8 +67,9 @@ decision record; `approval.*` is the UI-surface record, joinable by `requestId`.
 
 Resolved by making `platform_hard_block` and `user_denied` the canonical
 wire-level reason strings. The denied tool result now drives `recoverable` from
-an explicit set: `configured_deny` and `platform_hard_block` are not recoverable;
-classifier/runtime/user/abort outcomes are recoverable fallback paths.
+an explicit set: `configured_deny`, `policy_denied`, and
+`platform_hard_block` are not recoverable; classifier/runtime/user/abort
+outcomes are recoverable fallback paths.
 
 ## Out of scope
 
