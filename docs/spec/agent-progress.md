@@ -126,9 +126,11 @@ truth.
     latest-entry backfill
   - runtime `memoryIsolation` modes: global, isolated, and read-only-global
   - Settings Memory pane for list/edit/forget
-  - runtime-owned Dream extraction after completed foreground turns; it reads raw
-    turn evidence, proposes bounded add/update/forget actions through a no-tools
-    model call, and appends memory events with source provenance
+  - runtime-owned Dream write-back as a scheduled/manual reflective run: the
+    automatic path uses the shared `date` schedule primitive plus a minimum-volume
+    gate, `/dream` forces the same no-tools path, raw evidence is read since the
+    Dream watermark, `dream.completed` records the processed range, and run meta
+    is agent-anchored instead of conversation-anchored
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as read-only `agent.memory.recall`
   - prompt guidance that foreground memory writes are handled by Settings/Profile

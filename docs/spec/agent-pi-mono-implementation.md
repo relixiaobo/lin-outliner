@@ -633,10 +633,14 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `task_stop` for stopping background commands created by `bash`.
 - `recall` for durable agent memory. Raw conversation-history lookup is internal
   to runtime-owned evidence expansion, Dream/extraction, and diagnostics.
-- Runtime-owned Dream extraction runs after completed foreground turns. It uses a
-  bounded no-tools completion over raw turn evidence and visible memory, then the
-  runtime appends scoped `memory.entry_*` events with provenance. It is not a
-  model-visible write tool and not the future multi-session autoDream task panel.
+- Runtime-owned Dream runs are scheduled/manual reflective runs, not foreground
+  tools. The automatic path uses the shared `date` schedule primitive plus a
+  minimum-evidence gate; `/dream` forces the same no-tools path and consolidates
+  existing memory when there is no new evidence. Dream reads raw conversation/run
+  events since its per-conversation watermark, appends scoped `memory.entry_*`
+  events with provenance, records `dream.completed` in the agent memory log, and
+  writes an agent-anchored reflective run meta entry. It is not a model-visible
+  write tool.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

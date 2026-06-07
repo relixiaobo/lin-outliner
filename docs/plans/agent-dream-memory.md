@@ -100,7 +100,8 @@ A reflective run is *usually* `schedule`-triggered, but `/dream` makes it
 ### Trigger — `date` schedule (+ manual `/dream`)
 
 - **Automatic**: a per-agent `date` schedule, reusing the `date` (when + repeat)
-  machinery from [[agent-scheduled-routines]]. Default cadence TBD (e.g. daily).
+  machinery from [[agent-scheduled-routines]]. The first implementation uses a
+  built-in daily cadence; a user-facing schedule setting remains future work.
   Dream and a scheduled routine are **siblings under the `schedule(date)`
   trigger but distinct run-types** — Dream is **not** a built-in routine (a
   routine is a full agent run with tools; Dream is the restricted reflective run).
@@ -160,12 +161,12 @@ One runtime scheduler, per-agent state — agent A can Dream while agent B is bu
 | state | meaning |
 |---|---|
 | `dreamSchedule` (`date`) | this agent's Dream cadence |
-| `dreamWatermark` (eventId) | last evidence event a successful Dream processed |
+| `dreamWatermark` (per-conversation cursor map) | last evidence event a successful Dream processed for each conversation |
 | `dreaming` (bool) | the lock |
 
-`experienceVolumeSince(watermark)` measures un-slept evidence — unit (chars vs.
-completed turns) is an open question; chars correlate best with extraction
-cost/value.
+`experienceVolumeSince(watermark)` measures un-slept evidence in rendered raw
+evidence chars. The first implementation uses a 1,000-character automatic
+minimum; `/dream` bypasses that heuristic.
 
 ### Output / observability
 
@@ -215,22 +216,24 @@ protocol boundary.
 #159's `agentDreamExtraction` worker — span builder, extraction prompt, action
 parser, `applyDreamMemoryActions` (isolation/provenance/dedup) — is **kept**.
 What changes: the **trigger** (per-turn → `schedule(date)` + `/dream`), the
-**evidence range** (last run → since-watermark, bounded/chunked), and adding the
-**consolidation** half to the prompt + action schema.
+**evidence range** (last run → since-watermark, bounded first pass), and adding
+the **consolidation** half to the prompt + action schema.
 
-## Open questions (tuning + one protocol decision)
+## Open questions (tuning + follow-up polish)
 
-- **`RunMeta` anchor generalization** (the protocol decision): optional
-  `conversationId`, or a distinct agent-level run variant? Interface-first.
-- **`date` default cadence** — daily? every N hours? per-agent configurable
-  surface (a Settings field vs. a `date` like routines).
-- **`DREAM_MIN_VOLUME`** — value + unit (new chars vs. completed turns).
-- **Watermark granularity** — per agent vs. aggregating several conversations
-  touched since the last sleep; backlog chunking / per-pass budget for a large gap.
+- **Per-agent schedule configuration** — the first build uses a built-in daily
+  schedule. Future work should expose a Settings field or the shared `date`
+  routine surface.
+- **`DREAM_MIN_VOLUME` tuning** — currently 1,000 rendered raw-evidence chars.
+  Tune after real usage.
+- **Backlog chunking / per-pass budget** — the first build is bounded by the
+  Dream transcript budget but does not yet iterate through a large historical
+  backlog in multiple passes.
 - **`consolidateOnly` cadence** — also run a periodic full-set re-consolidation
   independent of new evidence (vs. only via `/dream`)?
-- **`/dream` surface** — a slash command / skill vs. a Settings action; what it
-  reports back (it has no conversation output of its own).
+- **Manual Dream reporting** — `/dream` is the first command surface. It
+  currently has no transcript output of its own; the task panel can surface
+  `dream.completed` later.
 - **Dream visibility** — surface `dream.completed` in the M2 per-agent task panel?
 
 ## Rejected alternatives (path not taken — kept for the record)
@@ -270,22 +273,25 @@ What changes: the **trigger** (per-turn → `schedule(date)` + `/dream`), the
 - [x] Decide the `RunMeta` anchor generalization (agent-level run); land it
   interface-first (protocol surface, PM ratify). **Landed PR #162** — `AgentRunMeta.anchor:
   AgentRunAnchor` (`conversation` | `agent`) + `conversationIdOfRun`, behavior-neutral.
-- [ ] Add per-agent Dream state: `dreamSchedule` (`date`), `dreamWatermark`,
+- [x] Add per-agent Dream state: `dreamSchedule` (`date`), `dreamWatermark`,
   `dreaming` lock; reuse `agent-scheduled-routines` `date` machinery for the
-  scheduler.
-- [ ] Implement `fire(agent, source)` with the hard `lock`/`canRun` gates, the
+  scheduler. **Landed PR #163** — schedule is the current built-in daily Dream
+  schedule; watermark is persisted as a per-conversation cursor map in
+  `dream.completed`; lock is in runtime memory.
+- [x] Implement `fire(agent, source)` with the hard `lock`/`canRun` gates, the
   `DREAM_MIN_VOLUME` heuristic on the automatic path, and `consolidateOnly` for
   `/dream` with no new evidence.
-- [ ] Remove the per-turn `queueDreamMemoryExtractionAfterTurn` call sites;
+- [x] Remove the per-turn `queueDreamMemoryExtractionAfterTurn` call sites;
   repurpose `dreamMemoryExtractionEnabled` for the scheduled trigger.
-- [ ] Generalize the evidence range to "since watermark" (bounded, chunked);
-  keep provenance shape. Exclude `memory.*`/`dream.*` from `has-new-experience`.
-- [ ] Run as the reflective run: agent persona as system prompt, no tools; one
+- [x] Generalize the evidence range to "since watermark" (bounded first pass;
+  deeper backlog chunking remains follow-up); keep provenance shape. Exclude
+  `memory.*`/`dream.*` from `has-new-experience`.
+- [x] Run as the reflective run: agent persona as system prompt, no tools; one
   pass = extract + consolidate; keep `applyDreamMemoryActions` invariants.
-- [ ] `/dream` command surface.
-- [ ] Emit `dream.completed` (taxonomy add; coordinate A4/A7).
-- [ ] Tests: schedule fires a Dream (not per turn); `DREAM_MIN_VOLUME` skips a
+- [x] `/dream` command surface.
+- [x] Emit `dream.completed` (taxonomy add; coordinate A4/A7).
+- [x] Tests: schedule fires a Dream (not per turn); `DREAM_MIN_VOLUME` skips a
   thin auto run; `/dream` forces; `/dream` with no new evidence consolidates;
   watermark advances and isn't reprocessed; isolation/`read-only-global`/no-op
   invariants hold; foreground never blocked.
-- [ ] Spec updates + flip the conversation-model offline-consolidation item.
+- [x] Spec updates + flip the conversation-model offline-consolidation item.

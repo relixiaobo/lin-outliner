@@ -394,6 +394,11 @@ schema-reserved so these features can land without changing the event-store
 model. Events that are emitted today still go through the same append-only
 rules.
 
+Agent-owned memory events live in the separate per-agent memory log, not the
+conversation render projection. `memory.entry_*` events project to editable
+durable memory entries; `dream.completed` projects the latest Dream watermark
+and audit summary for future task-panel observability.
+
 ## Message Model
 
 Persisted message identity is Tenon-owned.

@@ -2063,10 +2063,11 @@ Parameters:
 
 The authoritative store remains `agents/<agentId>/memory/events.jsonl`. The
 runtime projects entries from `memory.entry_added`, `memory.entry_updated`, and
-`memory.entry_removed` events. Forgetting remains idempotent through the
-Settings/Profile management path. High-churn memory logs are compacted by
-rewriting the log to the current projection; compaction preserves visible entry
-ids, facts, sources, status, and `createdAt`, but drops superseded intermediate
+`memory.entry_removed` events, and projects Dream state from `dream.completed`.
+Forgetting remains idempotent through the Settings/Profile management path.
+High-churn memory logs are compacted by rewriting the log to the current
+projection; compaction preserves visible entry ids, facts, sources, status,
+`createdAt`, and the latest Dream watermark, but drops superseded intermediate
 mutation events.
 
 Each entry records `originWorkspace` when a local file root is available and
@@ -2083,13 +2084,16 @@ it. Runtime setting `agent.runtime.memoryIsolation` controls recall visibility:
 
 Explicit memory management is not a foreground model tool. The Settings/Profile
 UI can list, edit, and forget memory through IPC-backed runtime methods, and the
-runtime-owned Dream/extraction path can write memory after it verifies raw
-conversation/run evidence. After each completed foreground run, the runtime may
-send a bounded, no-tools extraction prompt containing the raw user/assistant/tool
-evidence from that run plus the currently visible memory entries. The model
+runtime-owned Dream path can write memory after it verifies raw conversation/run
+evidence. Dream is not fired after every foreground turn. Automatic Dream uses a
+per-agent `date` schedule and skips thin evidence below its minimum-volume gate;
+manual `/dream` bypasses that heuristic and runs a consolidate-only pass when
+there is no new raw evidence. The no-tools model call receives raw evidence
+since the last Dream watermark plus the currently visible memory entries. It
 returns structured add/update/forget proposals only; the runtime performs
-dedupe/scope checks and appends `memory.entry_*` events with
-`conversationId`/`runId`/`messageRange`/`eventId` provenance. The foreground
+dedupe/scope checks, appends `memory.entry_*` events with
+`conversationId`/`runId`/`messageRange`/`eventId` provenance, records
+`dream.completed`, and advances the per-conversation watermark. The foreground
 model must not claim it saved, updated, or forgot durable memory through a tool
 call.
 

@@ -1047,6 +1047,32 @@ describe('agent event store', () => {
   test('compacts high-churn memory logs to the current projection', async () => {
     await withStore(async (store) => {
       const agentId = 'built-in:tenon:assistant';
+      await store.appendDreamCompleted(agentId, {
+        runId: 'dream-run-before-churn',
+        trigger: 'schedule',
+        startedAt: 40,
+        completedAt: 50,
+        watermark: {
+          conversations: {
+            'conversation-1': { seq: 12, eventId: 'event-12' },
+          },
+        },
+        processed: {
+          conversations: {
+            'conversation-1': {
+              fromSeqExclusive: 0,
+              throughSeq: 12,
+              throughEventId: 'event-12',
+              messageCount: 2,
+              charCount: 200,
+            },
+          },
+          totalMessageCount: 2,
+          totalCharCount: 200,
+          consolidateOnly: false,
+        },
+        changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+      });
       await store.addMemoryEntry(agentId, {
         id: 'memory-churn',
         fact: 'Version 0.',
@@ -1062,6 +1088,42 @@ describe('agent event store', () => {
       expect(await store.listMemoryEntries(agentId)).toMatchObject([
         { id: 'memory-churn', fact: 'Version 70.' },
       ]);
+      expect((await store.readDreamState(agentId)).watermark.conversations['conversation-1']).toEqual({
+        seq: 12,
+        eventId: 'event-12',
+      });
+    });
+  });
+
+  test('persists agent-anchored reflective run meta for Dream runs', async () => {
+    await withStore(async (store) => {
+      await store.writeRunMeta({
+        v: 1,
+        id: 'dream-run-1',
+        agentId: 'built-in:tenon:assistant',
+        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        kind: 'reflective',
+        status: 'completed',
+        trigger: { type: 'schedule', schedule: '2026-01-01T03:00 RRULE:FREQ=DAILY', dueAt: 1_800_000_000_000 },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'no-tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+        createdAt: 100,
+        updatedAt: 120,
+        latestSeq: 0,
+      });
+
+      await expect(store.readRunMetaProjection('dream-run-1')).resolves.toMatchObject({
+        id: 'dream-run-1',
+        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        kind: 'reflective',
+        trigger: { type: 'schedule' },
+      });
     });
   });
 });

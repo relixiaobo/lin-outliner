@@ -171,13 +171,14 @@ export type AgentConversationEvent =
       source: { fromMessageId: string; throughMessageId: string };
     });
 
-export type AgentRunKind = 'turn' | 'background' | 'subagent' | 'scheduled';
+export type AgentRunKind = 'turn' | 'background' | 'subagent' | 'scheduled' | 'reflective';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
 
 export type AgentRunTrigger =
   | { type: 'message'; messageId: string }
   | { type: 'node'; nodeId: string }
   | { type: 'parent-run'; parentRunId: string }
+  | { type: 'schedule'; schedule: string; dueAt?: number }
   | { type: 'manual' | 'system' };
 
 export interface AgentRunFingerprint {
@@ -386,6 +387,32 @@ export interface AgentMemoryEntry {
   createdAt: number;
 }
 
+export type AgentDreamTrigger = 'schedule' | 'manual';
+
+export interface AgentDreamWatermarkCursor {
+  seq: number;
+  eventId: string | null;
+}
+
+export interface AgentDreamWatermark {
+  conversations: Record<string, AgentDreamWatermarkCursor>;
+}
+
+export interface AgentDreamProcessedConversation {
+  fromSeqExclusive: number;
+  throughSeq: number;
+  throughEventId: string | null;
+  messageCount: number;
+  charCount: number;
+}
+
+export interface AgentDreamCompletedChanges {
+  added: number;
+  updated: number;
+  forgotten: number;
+  skipped: number;
+}
+
 export interface AgentMemoryEventBase {
   v: typeof AGENT_EVENT_VERSION;
   eventId: string;
@@ -395,7 +422,11 @@ export interface AgentMemoryEventBase {
   createdAt: number;
 }
 
-export type AgentMemoryEventType = 'memory.entry_added' | 'memory.entry_updated' | 'memory.entry_removed';
+export type AgentMemoryEventType =
+  | 'memory.entry_added'
+  | 'memory.entry_updated'
+  | 'memory.entry_removed'
+  | 'dream.completed';
 
 export type AgentMemoryEvent =
   | (AgentMemoryEventBase & { type: 'memory.entry_added'; entry: AgentMemoryEntry })
@@ -404,7 +435,23 @@ export type AgentMemoryEvent =
       entryId: string;
       patch: Partial<Pick<AgentMemoryEntry, 'fact' | 'sources' | 'status' | 'originWorkspace'>>;
     })
-  | (AgentMemoryEventBase & { type: 'memory.entry_removed'; entryId: string; reason?: string });
+  | (AgentMemoryEventBase & { type: 'memory.entry_removed'; entryId: string; reason?: string })
+  | (AgentMemoryEventBase & {
+      type: 'dream.completed';
+      dreamId: string;
+      runId: string;
+      trigger: AgentDreamTrigger;
+      startedAt: number;
+      completedAt: number;
+      watermark: AgentDreamWatermark;
+      processed: {
+        conversations: Record<string, AgentDreamProcessedConversation>;
+        totalMessageCount: number;
+        totalCharCount: number;
+        consolidateOnly: boolean;
+      };
+      changes: AgentDreamCompletedChanges;
+    });
 
 export interface AgentTextDelta {
   type: 'text_delta';
