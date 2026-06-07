@@ -234,15 +234,17 @@ type RunEvent =
   | (RunEventBase & { type: 'tool.permission.checked'; requestId: string; toolCallId: string; toolName: string;
       primaryActionKind?: string; actionKinds: string[];
       outcome: 'allow' | 'ask' | 'blocked';
-      source: 'global_rule' | 'action_default' | 'configured_deny' | 'classifier'
+      source: 'global_rule' | 'action_default' | 'configured_deny' | 'policy_denied' | 'classifier'
             | 'classifier_unavailable' | 'safe_allowlist' | 'user' | 'platform_hard_block' | 'runtime';
       classifierResult?: { outcome: 'allow' | 'block'; reason: string; model?: string; unavailable?: boolean };
       descriptorRef?: AgentPayloadRef })                                            // tool descriptor (name+input) offloaded to payloads/ (§5)
   | (RunEventBase & { type: 'tool.permission.resolved'; requestId: string; toolCallId: string; toolName: string;
       status: 'approved' | 'denied' | 'aborted';
       resolvedBy: 'classifier' | 'safe_allowlist' | 'user_once' | 'allow_rule_update' | 'global_rule'
-                | 'configured_deny' | 'classifier_unavailable' | 'platform_hard_block' | 'runtime' | 'system_abort';
-      updatedRule?: string; deniedReason?: string })                               // deniedReason + resolvedBy = the recoverability/audit trail
+                | 'configured_deny' | 'policy_denied' | 'classifier_unavailable' | 'platform_hard_block' | 'runtime' | 'system_abort';
+      updatedRule?: string;
+      deniedReason?: 'configured_deny' | 'policy_denied' | 'classifier_blocked' | 'classifier_unavailable'
+                   | 'platform_hard_block' | 'run_aborted' | 'runtime' | 'user_denied' }) // deniedReason + resolvedBy = the recoverability/audit trail
   // ── run-scoped INTERACTION / UI-STATE (consumed by ask-user + gen-ui; persisted here so a paused run / widget restores) ──
   | (RunEventBase & { type: 'user_question.requested';                              // [[agent-ask-user-question-tool]] §7 UserQuestionRunEvent
       requestId: string; toolCallId: string; request: AgentUserQuestionRequestView })

@@ -276,7 +276,7 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'conversation' | 'always';
+export type AgentApprovalResolutionScope = 'once' | 'always';
 
 export interface AgentApprovalRequestDetail {
   label: string;
@@ -292,7 +292,6 @@ export interface AgentApprovalRequestView {
   target: string;
   reason: string;
   details: AgentApprovalRequestDetail[];
-  suggestedConversationRule?: string;
   alwaysAllowRule?: string;
 }
 

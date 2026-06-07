@@ -142,12 +142,17 @@ Evaluated first; sourced from descriptors and the bash hard-deny rules
 Two event families are persisted today (the runtime emits both):
 
 - **Policy decision** — `tool.permission.checked` / `tool.permission.resolved`
-  (`src/core/agentEventLog.ts`), request-id space `permission-<uuid>`.
+  (`src/core/agentEventLog.ts`).
 - **UI surface** — `approval.requested` / `approval.resolved` plus transient
-  approval IPC, request-id space bare `<uuid>`.
+  approval IPC.
 
 The denied tool result is `{ ok: false, error: { code: 'permission_denied',
-recoverable, details: { reason } } }`.
+recoverable, details: { reason } } }`. Reasons use the canonical permission
+contract strings (`configured_deny`, `policy_denied`, `classifier_blocked`,
+`classifier_unavailable`, `platform_hard_block`, `run_aborted`, `runtime`,
+`user_denied`). `configured_deny`, `policy_denied`, and
+`platform_hard_block` are not recoverable; the other reasons are recoverable
+fallback/interaction outcomes.
 
 ## UI surfaces
 
@@ -172,7 +177,8 @@ recoverable, details: { reason } } }`.
   `evaluateAgentToolPermission` and routes an `ask` decision through the shared
   `resolveAgentPermissionAsk`, so the safe-allowlist, classifier-eligibility
   veto, and unattended fail-safe apply the same as the main runtime. (It still
-  honors session allow rules via the shared evaluator.)
+  honors skill `allowed-tools` as run-scoped preapproval through the shared
+  evaluator.)
 
 ## Known divergences from the plan (shipped-state honesty)
 
@@ -183,16 +189,7 @@ ways (tracked in `agent-tool-permissions-hardening.md`):
    descriptor sets `classifierAutoAllowEligible: false`, so the LLM classifier is
    reachable only in tests; in the app the only live auto-allow is the
    safe-allowlist, and every other `ask` becomes `needs_user`.
-2. **`sessionApproved` short-circuit still live** — a session-approved tool
-   returns `allow` *before* configured-ask/global-ask resolution, silently
-   relaxing a configured `ask`.
-3. **Dual event vocabulary unreconciled** — the two families above use different
-   request-id spaces and cannot be joined into one decision record.
-4. **Denied-reason literals diverge from the plan** — code uses `hard_block` /
-   `user` / `runtime` (plan: `platform_hard_block` / `user_denied`), and
-   `recoverable` is computed as `reason !== 'hard_block'`, so a durable
-   `configured_deny` is marked recoverable.
-5. **No symlink/realpath resolution** — `resolvePermissionPath` is lexical only.
-6. **`external.message.send` / `payment.purchase` / `agent.permission.modify`**
+2. **No symlink/realpath resolution** — `resolvePermissionPath` is lexical only.
+3. **`external.message.send` / `payment.purchase` / `agent.permission.modify`**
    exist as action kinds + forbidden-rule guardrails but have no descriptor
    resolver (no tool surface produces them yet).

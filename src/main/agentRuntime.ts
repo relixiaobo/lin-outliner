@@ -133,6 +133,7 @@ import {
 import {
   resolveAgentPermissionAsk,
   type AgentPermissionClassifier,
+  type PermissionDeniedReason,
 } from './agentPermissionAskResolver';
 import {
   buildPermissionClassifierContextRecords,
@@ -142,8 +143,10 @@ import {
   permissionActionKinds,
   permissionDeniedReasonForDecision,
   permissionDeniedToolResultMessage,
+  permissionEventSourceForDeniedReason,
   permissionEventSourceForDecision,
   permissionPrimaryActionKind,
+  permissionResolutionStatusForDeniedReason,
   permissionResolvedByForAllowDecision,
   permissionResolvedByForDeniedReason,
   type AgentToolPermissionLogInput,
@@ -257,6 +260,7 @@ interface AgentRuntimeOptions {
 }
 
 interface AgentToolApprovalInput {
+  requestId: string;
   toolCall: ToolCall;
   args: unknown;
   decision: AgentPermissionAskDecision;
@@ -264,9 +268,8 @@ interface AgentToolApprovalInput {
 
 interface AgentToolApprovalResolution {
   approved: boolean;
-  deniedBy?: 'abort' | 'runtime' | 'user';
+  deniedReason?: PermissionDeniedReason;
   scope?: AgentApprovalResolutionScope;
-  conversationRule?: string;
   alwaysAllowRule?: string;
 }
 
@@ -319,7 +322,6 @@ interface AgentSessionState {
   subagentRuntime: AgentSubagentRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
   toolResultBudgetState: ToolResultBudgetState;
-  permissionConversationAllowRules: string[];
   unsubscribe: (() => void) | null;
 }
 
@@ -340,7 +342,6 @@ export class AgentRuntime {
   private pendingApprovals = new Map<string, {
     sessionId: string;
     request: AgentApprovalRequestView;
-    suggestedConversationRule?: string;
     alwaysAllowRule?: string;
     resolve: (resolution: AgentToolApprovalResolution) => void;
   }>();
@@ -532,10 +533,6 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return { resolved: false };
 
-    const conversationRule = approved && scope === 'conversation' ? pending.suggestedConversationRule : undefined;
-    if (conversationRule && !session.permissionConversationAllowRules.includes(conversationRule)) {
-      session.permissionConversationAllowRules.push(conversationRule);
-    }
     let resolvedScope = scope;
     let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
     if (approved && scope === 'always' && !alwaysAllowRule) {
@@ -571,9 +568,8 @@ export class AgentRuntime {
     } finally {
       pending.resolve({
         approved,
-        deniedBy: approved ? undefined : 'user',
+        deniedReason: approved ? undefined : 'user_denied',
         scope: resolvedScope,
-        conversationRule,
         alwaysAllowRule,
       });
     }
@@ -1054,7 +1050,7 @@ export class AgentRuntime {
         requestId,
         approved: false,
       });
-      pending.resolve({ approved: false, deniedBy: 'runtime' });
+      pending.resolve({ approved: false, deniedReason: 'runtime' });
     }
     if (resolvedEvents.length > 0) {
       await this.appendSessionEvents(sessionId, session, resolvedEvents);
@@ -1102,8 +1098,11 @@ export class AgentRuntime {
           localRoot: this.options.localFileRoot,
           permissionMode: this.options.permissionMode ?? activeSettings.permissionMode,
           allowedTools: skill.allowedTools,
-          conversationAllowRules: current?.permissionConversationAllowRules ?? [],
           globalPermissions,
+          permissionEventHandler: (input) => {
+            const currentSession = sessionRef.current;
+            return currentSession ? this.appendToolPermissionEvent(sessionId, currentSession, input) : Promise.resolve();
+          },
           toolCallId: `skill-shell-${randomUUID()}`,
         });
       },
@@ -1188,10 +1187,9 @@ export class AgentRuntime {
             const current = sessionRef.current;
             return current ? this.appendToolPermissionEvent(sessionId, current, input) : Promise.resolve();
           },
-          conversationAllowRules: () => sessionRef.current?.permissionConversationAllowRules ?? [],
           approvalHandler: (input, signal) => {
             const current = sessionRef.current;
-            if (!current) return Promise.resolve({ approved: false, deniedBy: 'runtime' });
+            if (!current) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
             return this.requestToolApproval(sessionId, current, input, signal);
           },
           afterToolResult: (toolCallId, toolName, result, isError) => {
@@ -1241,7 +1239,6 @@ export class AgentRuntime {
       subagentRuntime,
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
-      permissionConversationAllowRules: [],
       unsubscribe: null,
     };
     sessionRef.current = session;
@@ -1376,10 +1373,9 @@ export class AgentRuntime {
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
-      conversationAllowRules: () => parentSessionRef.current?.permissionConversationAllowRules ?? [],
       approvalHandler: (approvalInput, signal) => {
         const parentSession = parentSessionRef.current;
-        if (!parentSession) return Promise.resolve({ approved: false, deniedBy: 'runtime' });
+        if (!parentSession) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
         return this.requestToolApproval(parentSessionId, parentSession, approvalInput, signal);
       },
       afterToolResult: input.afterToolResult,
@@ -2519,9 +2515,9 @@ export class AgentRuntime {
     input: AgentToolApprovalInput,
     signal?: AbortSignal,
   ): Promise<AgentToolApprovalResolution> {
-    if (signal?.aborted) return { approved: false, deniedBy: 'abort' };
+    if (signal?.aborted) return { approved: false, deniedReason: 'run_aborted' };
 
-    const requestId = randomUUID();
+    const requestId = input.requestId;
     const request: AgentApprovalRequestView = {
       requestId,
       conversationId: conversationIdFromSessionId(sessionId),
@@ -2531,7 +2527,6 @@ export class AgentRuntime {
       target: input.decision.request.target,
       reason: input.decision.reason,
       details: input.decision.request.details,
-      suggestedConversationRule: input.decision.request.suggestedConversationRule,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
     };
     const payload = await this.getEventStore().writePayload(sessionId, {
@@ -2591,13 +2586,12 @@ export class AgentRuntime {
           requestId,
           approved: false,
         });
-        resolve({ approved: false, deniedBy: 'abort' });
+        resolve({ approved: false, deniedReason: 'run_aborted' });
       };
 
       this.pendingApprovals.set(requestId, {
         sessionId,
         request,
-        suggestedConversationRule: request.suggestedConversationRule,
         alwaysAllowRule: request.alwaysAllowRule,
         resolve: (resolution) => {
           signal?.removeEventListener('abort', onAbort);
@@ -4186,25 +4180,27 @@ async function continueFromActivePath(agent: Agent) {
 }
 
 function approvalDeniedToolResultMessage(toolName: string, approval: AgentToolApprovalResolution): string {
-  switch (approval.deniedBy) {
-    case 'user':
-      return permissionDeniedToolResultMessage({
-        toolName,
-        reason: 'user',
-        message: 'User denied permission. The requested tool call was not executed.',
-      });
-    case 'abort':
-      return permissionDeniedToolResultMessage({
-        toolName,
-        reason: 'run_aborted',
-        message: 'Permission request was cancelled before approval. The requested tool call was not executed.',
-      });
-    default:
-      return permissionDeniedToolResultMessage({
-        toolName,
-        reason: 'runtime',
-        message: 'Permission request was not approved. The requested tool call was not executed.',
-      });
+  const reason = approval.deniedReason ?? 'runtime';
+  return permissionDeniedToolResultMessage({
+    toolName,
+    reason,
+    message: approvalDeniedMessage(reason),
+  });
+}
+
+function approvalDeniedMessage(reason: PermissionDeniedReason): string {
+  switch (reason) {
+    case 'user_denied':
+      return 'User denied permission. The requested tool call was not executed.';
+    case 'run_aborted':
+      return 'Permission request was cancelled before approval. The requested tool call was not executed.';
+    case 'configured_deny':
+    case 'policy_denied':
+    case 'classifier_blocked':
+    case 'classifier_unavailable':
+    case 'platform_hard_block':
+    case 'runtime':
+      return 'Permission request was not approved. The requested tool call was not executed.';
   }
 }
 
@@ -4232,7 +4228,6 @@ function createConfiguredAgent(
     allowedTools?: string[];
     disallowedTools?: string[];
     preapprovedToolRules?: string[];
-    conversationAllowRules?: () => readonly string[];
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
@@ -4305,7 +4300,6 @@ function createConfiguredAgent(
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
           ],
-          conversationAllowRules: options.conversationAllowRules?.() ?? [],
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;
@@ -4362,9 +4356,9 @@ function createConfiguredAgent(
             decision,
             outcome: 'blocked',
             includeChecked: false,
-            source: askResolution.reason === 'classifier_unavailable' ? 'classifier_unavailable' : 'classifier',
+            source: permissionEventSourceForDeniedReason(askResolution.reason),
             resolved: {
-              status: askResolution.reason === 'run_aborted' ? 'aborted' : 'denied',
+              status: permissionResolutionStatusForDeniedReason(askResolution.reason),
               resolvedBy: permissionResolvedByForDeniedReason(askResolution.reason),
               deniedReason: askResolution.reason,
             },
@@ -4379,19 +4373,27 @@ function createConfiguredAgent(
           };
         }
         if (options.approvalHandler) {
-          const approval = await options.approvalHandler({ toolCall, args, decision }, signal);
+          const approval = await options.approvalHandler({
+            requestId: permissionRequestId,
+            toolCall,
+            args,
+            decision,
+          }, signal);
+          const deniedReason = approval.deniedReason ?? 'runtime';
           await options.permissionEventHandler?.({
             requestId: permissionRequestId,
             toolCall,
             decision,
             outcome: approval.approved ? 'allow' : 'blocked',
             includeChecked: false,
-            source: approval.approved ? 'user' : 'user',
+            source: approval.approved ? 'user' : permissionEventSourceForDeniedReason(deniedReason),
             resolved: {
-              status: approval.approved ? 'approved' : approval.deniedBy === 'abort' ? 'aborted' : 'denied',
-              resolvedBy: approval.approved && approval.scope === 'always' ? 'allow_rule_update' : approval.deniedBy === 'abort' ? 'system_abort' : 'user_once',
+              status: approval.approved ? 'approved' : permissionResolutionStatusForDeniedReason(deniedReason),
+              resolvedBy: approval.approved
+                ? approval.scope === 'always' ? 'allow_rule_update' : 'user_once'
+                : permissionResolvedByForDeniedReason(deniedReason),
               updatedRule: approval.alwaysAllowRule,
-              deniedReason: approval.approved ? undefined : approval.deniedBy ?? 'user',
+              deniedReason: approval.approved ? undefined : deniedReason,
             },
           });
           if (approval.approved) return undefined;

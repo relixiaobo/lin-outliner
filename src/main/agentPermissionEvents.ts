@@ -1,33 +1,75 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import type {
+  AgentToolPermissionEventSource,
+  AgentToolPermissionResolvedBy,
+} from '../core/agentEventLog';
+import type {
   AgentPermissionAllowDecision,
   AgentPermissionAskDecision,
   AgentPermissionDenyDecision,
 } from './agentPermissions';
 import type { PermissionDeniedReason } from './agentPermissionAskResolver';
 
-export type AgentToolPermissionEventSource =
-  | 'global_rule'
-  | 'action_default'
-  | 'configured_deny'
-  | 'classifier'
-  | 'classifier_unavailable'
-  | 'safe_allowlist'
-  | 'user'
-  | 'platform_hard_block'
-  | 'runtime';
+export type {
+  AgentToolPermissionEventSource,
+  AgentToolPermissionResolvedBy,
+} from '../core/agentEventLog';
 
-export type AgentToolPermissionResolvedBy =
-  | 'classifier'
-  | 'safe_allowlist'
-  | 'user_once'
-  | 'allow_rule_update'
-  | 'global_rule'
-  | 'configured_deny'
-  | 'classifier_unavailable'
-  | 'platform_hard_block'
-  | 'runtime'
-  | 'system_abort';
+const PERMISSION_DENIED_CONTRACT: Record<PermissionDeniedReason, {
+  recoverable: boolean;
+  resolvedBy: AgentToolPermissionResolvedBy;
+  source: AgentToolPermissionEventSource;
+  status: 'denied' | 'aborted';
+}> = {
+  configured_deny: {
+    recoverable: false,
+    resolvedBy: 'configured_deny',
+    source: 'configured_deny',
+    status: 'denied',
+  },
+  policy_denied: {
+    recoverable: false,
+    resolvedBy: 'policy_denied',
+    source: 'policy_denied',
+    status: 'denied',
+  },
+  classifier_blocked: {
+    recoverable: true,
+    resolvedBy: 'classifier',
+    source: 'classifier',
+    status: 'denied',
+  },
+  classifier_unavailable: {
+    recoverable: true,
+    resolvedBy: 'classifier_unavailable',
+    source: 'classifier_unavailable',
+    status: 'denied',
+  },
+  platform_hard_block: {
+    recoverable: false,
+    resolvedBy: 'platform_hard_block',
+    source: 'platform_hard_block',
+    status: 'denied',
+  },
+  run_aborted: {
+    recoverable: true,
+    resolvedBy: 'system_abort',
+    source: 'runtime',
+    status: 'aborted',
+  },
+  runtime: {
+    recoverable: true,
+    resolvedBy: 'runtime',
+    source: 'runtime',
+    status: 'denied',
+  },
+  user_denied: {
+    recoverable: true,
+    resolvedBy: 'user_once',
+    source: 'user',
+    status: 'denied',
+  },
+};
 
 export interface AgentToolPermissionLogInput {
   requestId: string;
@@ -40,7 +82,7 @@ export interface AgentToolPermissionLogInput {
     status: 'approved' | 'denied' | 'aborted';
     resolvedBy: AgentToolPermissionResolvedBy;
     updatedRule?: string;
-    deniedReason?: string;
+    deniedReason?: PermissionDeniedReason;
   };
 }
 
@@ -59,7 +101,8 @@ export function permissionPrimaryActionKind(
 
 export function permissionDeniedReasonForDecision(decision: AgentPermissionDenyDecision): PermissionDeniedReason {
   if (decision.code === 'configured_deny') return 'configured_deny';
-  if (decision.redline || decision.descriptor?.platformHardBlock) return 'hard_block';
+  if (decision.redline || decision.descriptor?.platformHardBlock) return 'platform_hard_block';
+  if (decision.code === 'tool_denied' || decision.code === 'tool_not_preapproved') return 'policy_denied';
   return 'runtime';
 }
 
@@ -67,9 +110,7 @@ export function permissionEventSourceForDecision(
   decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision,
 ): AgentToolPermissionEventSource {
   if (decision.behavior === 'deny') {
-    if (decision.code === 'configured_deny') return 'configured_deny';
-    if (decision.redline || decision.descriptor?.platformHardBlock) return 'platform_hard_block';
-    return 'runtime';
+    return permissionEventSourceForDeniedReason(permissionDeniedReasonForDecision(decision));
   }
   if (decision.permissionSource === 'configured_allow' || decision.permissionSource === 'configured_ask') {
     return 'global_rule';
@@ -82,23 +123,19 @@ export function permissionResolvedByForAllowDecision(decision: AgentPermissionAl
 }
 
 export function permissionResolvedByForDeniedReason(reason: PermissionDeniedReason): AgentToolPermissionResolvedBy {
-  switch (reason) {
-    case 'configured_deny':
-      return 'configured_deny';
-    case 'classifier_blocked':
-      return 'classifier';
-    case 'classifier_unavailable':
-      return 'classifier_unavailable';
-    case 'hard_block':
-      return 'platform_hard_block';
-    case 'run_aborted':
-      return 'system_abort';
-    case 'user':
-      return 'user_once';
-    case 'runtime':
-    default:
-      return 'runtime';
-  }
+  return PERMISSION_DENIED_CONTRACT[reason].resolvedBy;
+}
+
+export function permissionEventSourceForDeniedReason(reason: PermissionDeniedReason): AgentToolPermissionEventSource {
+  return PERMISSION_DENIED_CONTRACT[reason].source;
+}
+
+export function permissionResolutionStatusForDeniedReason(reason: PermissionDeniedReason): 'denied' | 'aborted' {
+  return PERMISSION_DENIED_CONTRACT[reason].status;
+}
+
+export function permissionRecoverableForDeniedReason(reason: PermissionDeniedReason): boolean {
+  return PERMISSION_DENIED_CONTRACT[reason].recoverable;
 }
 
 export function permissionDeniedToolResultMessage(input: {
@@ -113,7 +150,7 @@ export function permissionDeniedToolResultMessage(input: {
     error: {
       code: 'permission_denied',
       message: input.message,
-      recoverable: input.reason !== 'hard_block',
+      recoverable: permissionRecoverableForDeniedReason(input.reason),
       details: {
         reason: input.reason,
       },
