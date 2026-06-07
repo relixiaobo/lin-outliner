@@ -96,6 +96,15 @@ import {
   AgentEventStore,
   MAX_AGENT_MEMORY_FACT_CHARS,
 } from './agentEventStore';
+import {
+  buildDreamMemoryExtractionRequest,
+  buildDreamMemoryExtractionSpan,
+  memoryFactKey,
+  mergeMemorySources,
+  parseDreamMemoryActions,
+  type DreamMemoryAction,
+  type DreamMemoryExtractionSpan,
+} from './agentDreamExtraction';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
 import {
@@ -256,6 +265,7 @@ interface AgentRuntimeOptions {
   providerModelResolver?: (providerConfig: AgentProviderRuntimeConfig) => Model<Api>;
   streamFn?: StreamFn;
   permissionClassifier?: AgentPermissionClassifier;
+  dreamMemoryExtractionEnabled?: boolean;
 }
 
 interface AgentToolApprovalInput {
@@ -324,6 +334,12 @@ interface AgentSessionState {
   unsubscribe: (() => void) | null;
 }
 
+interface AgentDreamMemoryExtractionTask {
+  span: DreamMemoryExtractionSpan;
+  originWorkspace?: string;
+  originWorkspaceFilter?: string;
+}
+
 type AgentEventInput = AgentRuntimeContextEventInput;
 type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
 type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
@@ -346,6 +362,7 @@ export class AgentRuntime {
   }>();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextSessionId = 1;
+  private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
   private readonly agentIdentity: AgentIdentityRecord;
@@ -409,6 +426,10 @@ export class AgentRuntime {
 
   ready() {
     this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
+  }
+
+  async drainDreamMemoryExtractionForTest(): Promise<void> {
+    await this.dreamMemoryExtractionTail;
   }
 
   async restoreLatestConversation() {
@@ -792,6 +813,7 @@ export class AgentRuntime {
       await session.agent.prompt(prompt);
       await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
+      this.queueDreamMemoryExtractionAfterTurn(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
     }
@@ -823,6 +845,7 @@ export class AgentRuntime {
       await session.agent.continue();
       await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
+      this.queueDreamMemoryExtractionAfterTurn(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
     }
@@ -850,6 +873,7 @@ export class AgentRuntime {
       await continueFromActivePath(session.agent);
       await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
+      this.queueDreamMemoryExtractionAfterTurn(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
     }
@@ -876,6 +900,7 @@ export class AgentRuntime {
       await continueFromActivePath(session.agent);
       await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
+      this.queueDreamMemoryExtractionAfterTurn(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
     }
@@ -1740,6 +1765,115 @@ export class AgentRuntime {
     this.emitProjection(sessionId, 'agent_idle');
     if (options.flushSubagentNotifications !== false) {
       await this.flushSubagentNotifications(sessionId, session);
+    }
+  }
+
+  private queueDreamMemoryExtractionAfterTurn(sessionId: string, session: AgentSessionState) {
+    const task = this.createDreamMemoryExtractionTask(sessionId, session);
+    if (!task) return;
+    this.dreamMemoryExtractionTail = this.dreamMemoryExtractionTail
+      .catch(() => undefined)
+      .then(() => this.runDreamMemoryExtractionTask(task));
+  }
+
+  private createDreamMemoryExtractionTask(
+    sessionId: string,
+    session: AgentSessionState,
+  ): AgentDreamMemoryExtractionTask | null {
+    if (!this.options.dreamMemoryExtractionEnabled) return null;
+    if (this.memoryIsolation(session) === 'read-only-global') return null;
+    const runId = session.lastRun?.id;
+    if (!runId) return null;
+    const span = buildDreamMemoryExtractionSpan(sessionId, session.eventState, runId);
+    if (!span) return null;
+    return {
+      span,
+      originWorkspace: this.memoryOriginWorkspaceForSession(session),
+      originWorkspaceFilter: this.memoryOriginWorkspaceFilter(session),
+    };
+  }
+
+  private async runDreamMemoryExtractionTask(task: AgentDreamMemoryExtractionTask) {
+    try {
+      const providerConfig = await this.getActiveProviderConfig();
+      if (!providerConfig) return;
+      const model = this.resolveProviderModel(providerConfig);
+      const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
+      const runtimeSettings = await this.getRuntimeSettings();
+      const existingMemories = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+        limit: 50,
+        originWorkspace: task.originWorkspaceFilter,
+      });
+      const request = buildDreamMemoryExtractionRequest({
+        span: task.span,
+        existingMemories,
+        originWorkspace: task.originWorkspace,
+      });
+      const response = await (this.options.completeSimpleFn ?? completeSimple)(model, {
+        messages: [request],
+        tools: [],
+      }, {
+        ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
+        apiKey,
+        maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
+        sessionId: `${task.span.conversationId}:dream:${task.span.runId}`,
+      });
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+        throw new Error(response.errorMessage || 'Dream memory extraction failed.');
+      }
+      const actions = parseDreamMemoryActions(assistantMessageText(response));
+      if (actions.length === 0) return;
+      const currentMemories = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+        limit: 50,
+        originWorkspace: task.originWorkspaceFilter,
+      });
+      await this.applyDreamMemoryActions(task, actions, currentMemories);
+    } catch (error) {
+      console.warn(`Dream memory extraction skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async applyDreamMemoryActions(
+    task: AgentDreamMemoryExtractionTask,
+    actions: readonly DreamMemoryAction[],
+    initialEntries: readonly AgentMemoryEntry[],
+  ) {
+    const entriesById = new Map(initialEntries.map((entry) => [entry.id, entry]));
+    const activeFactKeys = new Set(initialEntries.map((entry) => memoryFactKey(entry.fact)));
+    for (const action of actions) {
+      if (action.type === 'add') {
+        const key = memoryFactKey(action.fact);
+        if (activeFactKeys.has(key)) continue;
+        const entry = await this.getEventStore().addMemoryEntry(this.agentIdentity.agentId, {
+          fact: action.fact,
+          originWorkspace: task.originWorkspace,
+          sources: [task.span.source],
+        });
+        entriesById.set(entry.id, entry);
+        activeFactKeys.add(memoryFactKey(entry.fact));
+        continue;
+      }
+
+      const current = entriesById.get(action.memoryId);
+      if (!current) continue;
+      if (action.type === 'forget') {
+        await this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, current.id, action.reason ?? 'dream');
+        entriesById.delete(current.id);
+        activeFactKeys.delete(memoryFactKey(current.fact));
+        continue;
+      }
+
+      const nextFactKey = memoryFactKey(action.fact);
+      if (nextFactKey !== memoryFactKey(current.fact) && activeFactKeys.has(nextFactKey)) continue;
+      const updated = await this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, current.id, {
+        fact: action.fact,
+        originWorkspace: current.originWorkspace ?? task.originWorkspace,
+        sources: mergeMemorySources(current.sources, task.span.source),
+      });
+      if (!updated) continue;
+      entriesById.set(updated.id, updated);
+      activeFactKeys.delete(memoryFactKey(current.fact));
+      activeFactKeys.add(memoryFactKey(updated.fact));
     }
   }
 

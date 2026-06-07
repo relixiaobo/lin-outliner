@@ -601,4 +601,221 @@ describe('agent runtime past chats integration', () => {
     expect(postRecallContext).not.toContain('Invalidated recall fact mentions orange focus rings.');
   });
 
+  test('dream extraction saves durable memory from raw completed turn evidence', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-data-'));
+    roots.push(localRoot, dataRoot);
+    const dreamRequests: string[] = [];
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('I will keep future engineering answers concise.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model, context) => {
+          dreamRequests.push(textFromContext(context));
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [{ type: 'add', fact: 'User prefers concise engineering answers.' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Please keep engineering answers concise from now on.');
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+    const source = entries[0]?.sources[0];
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(entries.map((entry) => entry.fact)).toEqual(['User prefers concise engineering answers.']);
+    expect(entries[0]?.originWorkspace).toBe(memoryOriginWorkspace(localRoot));
+    expect(source?.conversationId).toBe(created.conversationId);
+    expect(typeof source?.runId).toBe('string');
+    expect(typeof source?.eventId).toBe('string');
+    expect(source?.messageRange?.length).toBe(2);
+    expect(dreamRequests.join('\n')).toContain('Please keep engineering answers concise from now on.');
+    expect(dreamRequests.join('\n')).toContain('I will keep future engineering answers concise.');
+    expect(dreamRequests.join('\n')).toContain('"tools":[]');
+  });
+
+  test('dream extraction only updates memory visible to the current isolation tier', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-data-'));
+    roots.push(localRoot, dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-current-style',
+      fact: 'Current workspace prefers verbose answers.',
+      originWorkspace: memoryOriginWorkspace(localRoot),
+      sources: [{ conversationId: 'old-current-conversation' }],
+      createdAt: 30,
+    });
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-other-style',
+      fact: 'Other workspace prefers terse answers.',
+      originWorkspace: 'workspace:other',
+      sources: [{ conversationId: 'old-other-conversation' }],
+      createdAt: 31,
+    });
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('This workspace now prefers short answers.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => normalizeAssistantMessage(
+          fauxAssistantMessage(JSON.stringify({
+            actions: [
+              {
+                type: 'update',
+                memory_id: 'memory-current-style',
+                fact: 'Current workspace prefers short answers.',
+              },
+              {
+                type: 'forget',
+                memory_id: 'memory-other-style',
+                reason: 'not visible in this isolated workspace',
+              },
+            ],
+          })),
+          model as Model<Api>,
+        ),
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'For this workspace, prefer short answers.');
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
+      includeInvalidated: true,
+      limit: 10,
+    });
+    const current = entries.find((entry) => entry.id === 'memory-current-style');
+    const other = entries.find((entry) => entry.id === 'memory-other-style');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(current?.fact).toBe('Current workspace prefers short answers.');
+    expect(current?.sources.some((source) => source.conversationId === created.conversationId)).toBe(true);
+    expect(other?.status).toBe('active');
+    expect(other?.fact).toBe('Other workspace prefers terse answers.');
+  });
+
+  test('dream extraction is disabled for read-only-global memory isolation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-data-'));
+    roots.push(localRoot, dataRoot);
+    let dreamCalls = 0;
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Understood.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'read-only-global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => {
+          dreamCalls += 1;
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [{ type: 'add', fact: 'This should not be saved.' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Do not write memories in this workspace.');
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(dreamCalls).toBe(0);
+    expect(entries).toEqual([]);
+  });
+
 });

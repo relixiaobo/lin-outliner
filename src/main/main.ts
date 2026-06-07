@@ -143,6 +143,7 @@ const pendingLocalFileThumbnailLoads = new Map<string, Promise<string | null>>()
 const agentLocalFileRoot = process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd();
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
+  dreamMemoryExtractionEnabled: true,
 });
 
 documentService.onProjectionChanged((event) => {
