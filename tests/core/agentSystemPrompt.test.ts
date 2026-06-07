@@ -33,10 +33,10 @@ describe('agent system prompt', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_edit');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_search');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_fetch');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('memory tool');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Use recall for durable facts');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<agent-memory>');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('update or forget the stale memory');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Use past_chats for raw prior-conversation recall');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('do not claim you saved, updated, or forgot memory');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Use past_chats');
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Text attachments are included');
   });
 

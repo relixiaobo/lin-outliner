@@ -63,7 +63,6 @@ import {
   type AgentEventReplayState,
   type AgentIdentityRecord,
   type AgentMemoryEntry,
-  type AgentMemorySource,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentPrincipal,
@@ -125,6 +124,7 @@ import {
 } from './agentSubagents';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
+import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
 import {
   evaluateAgentToolPermission,
   toPermissionClassifierInput,
@@ -183,7 +183,6 @@ import type {
   AgentMemoryEntryView,
   AgentSlashCommandView,
 } from '../core/types';
-import type { AgentMemoryToolRuntime } from './agentMemoryTool';
 import { ASK_USER_QUESTION_TOOL_NAME, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import {
   normalizeRuntimeSettingPatch,
@@ -1172,11 +1171,7 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           subagentRuntime,
-          memory: this.createMemoryToolRuntime(() => sessionId, () => sessionRef.current),
-          pastChats: {
-            service: this.getPastChatsService(),
-            currentConversationId: () => sessionId,
-          },
+          recall: this.createRecallToolRuntime(() => sessionId, () => sessionRef.current),
           askUserQuestion: this.createAskUserQuestionRuntime(() => sessionId, () => sessionRef.current),
           selfMaintenance: this.createSelfMaintenanceRuntime(() => sessionId, () => sessionRef.current),
           streamFn: this.options.streamFn,
@@ -1328,11 +1323,7 @@ export class AgentRuntime {
       skillRuntime: session.skillRuntime,
       skillToolEnabled: session.runtimeSettings.automaticSkillsEnabled,
       subagentRuntime: session.subagentRuntime,
-      memory: this.createMemoryToolRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
-      pastChats: {
-        service: this.getPastChatsService(),
-        currentConversationId: () => session.eventState.session?.id ?? null,
-      },
+      recall: this.createRecallToolRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
       askUserQuestion: this.createAskUserQuestionRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
       selfMaintenance: this.createSelfMaintenanceRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
     });
@@ -2017,47 +2008,72 @@ export class AgentRuntime {
     return this.pastChatsService;
   }
 
-  private createMemoryToolRuntime(
-    getSessionId: () => string,
+  private createRecallToolRuntime(
+    _getSessionId: () => string,
     getSession: () => AgentSessionState | null,
-  ): AgentMemoryToolRuntime {
+  ): AgentRecallToolRuntime {
     return {
-      list: async (options) => {
+      recall: async (options) => {
         const session = getSession();
         const result = await this.getEventStore().queryMemoryEntries(this.agentIdentity.agentId, {
           query: options.query,
-          includeInvalidated: options.includeInvalidated,
           limit: options.limit,
           originWorkspace: this.memoryOriginWorkspaceFilter(session),
         });
+
+        if (!options.includeEvidence) {
+          return {
+            entries: result.entries.map((entry) => ({ entry })),
+            totalEntries: result.totalEntries,
+          };
+        }
+
+        let remainingChars = Math.max(0, options.maxChars ?? 0);
+        const entries: AgentRecallRuntimeEntry[] = [];
+        for (const entry of result.entries) {
+          const evidence: AgentRecallEvidence[] = [];
+          let evidenceTruncated = false;
+          for (const source of entry.sources) {
+            if (remainingChars <= 0) {
+              evidenceTruncated = true;
+              break;
+            }
+            const sourceEvidence = await this.getPastChatsService().readMemorySourceEvidence({
+              source,
+              maxChars: remainingChars,
+            });
+            if (sourceEvidence.mode !== 'evidence') continue;
+            evidenceTruncated ||= sourceEvidence.outputTruncated;
+            for (const message of sourceEvidence.messages) {
+              evidence.push({
+                source,
+                conversationId: sourceEvidence.conversation.id,
+                messageId: message.messageId,
+                role: message.role,
+                createdAt: message.createdAt,
+                text: message.text,
+                toolName: message.toolName,
+                isError: message.isError,
+                messageTruncated: message.messageTruncated,
+              });
+              remainingChars = Math.max(0, remainingChars - message.text.length);
+              if (remainingChars <= 0) {
+                evidenceTruncated = true;
+                break;
+              }
+            }
+          }
+          entries.push({
+            entry,
+            evidence: evidence.length > 0 ? evidence : undefined,
+            evidenceTruncated,
+          });
+        }
+
         return {
-          entries: result.entries,
+          entries,
           totalEntries: result.totalEntries,
         };
-      },
-      remember: (fact) => {
-        const session = getSession();
-        if (!session) throw new Error('Agent session is not ready.');
-        if (this.memoryIsolation(session) === 'read-only-global') {
-          throw new Error('Memory writes are disabled while agent.runtime.memoryIsolation is read-only-global.');
-        }
-        return this.getEventStore().addMemoryEntry(this.agentIdentity.agentId, {
-          fact,
-          originWorkspace: this.memoryOriginWorkspaceForSession(session),
-          sources: this.memorySources(getSessionId(), session),
-        });
-      },
-      update: async (memoryId, fact) => {
-        const session = getSession();
-        if (!session) throw new Error('Agent session is not ready.');
-        await this.assertMemoryMutationAllowed(session, memoryId);
-        return this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact });
-      },
-      forget: async (memoryId) => {
-        const session = getSession();
-        if (!session) throw new Error('Agent session is not ready.');
-        await this.assertMemoryMutationAllowed(session, memoryId);
-        return this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'agent');
       },
     };
   }
@@ -2395,33 +2411,9 @@ export class AgentRuntime {
     return this.memoryOriginWorkspaceForSession(session);
   }
 
-  private memorySources(sessionId: string, session: AgentSessionState): AgentMemorySource[] {
-    const source: AgentMemorySource = { conversationId: conversationIdFromSessionId(sessionId) };
-    const messageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
-    if (messageId) source.messageRange = [messageId, messageId];
-    const runId = this.activeRunId(session);
-    if (runId) source.runId = runId;
-    if (session.eventState.latestEventId) source.eventId = session.eventState.latestEventId;
-    return [source];
-  }
-
   private memoryOriginWorkspaceForSession(session: AgentSessionState): string | undefined {
     if (this.memoryIsolation(session) === 'global') return this.memoryOriginWorkspace() ?? undefined;
     return this.memoryOriginWorkspace() ?? '__no_workspace__';
-  }
-
-  private async assertMemoryMutationAllowed(session: AgentSessionState, memoryId: string) {
-    const isolation = this.memoryIsolation(session);
-    if (isolation === 'read-only-global') {
-      throw new Error('Memory writes are disabled while agent.runtime.memoryIsolation is read-only-global.');
-    }
-    if (isolation !== 'isolated') return;
-    const entry = await this.getEventStore().getMemoryEntry(this.agentIdentity.agentId, memoryId);
-    if (!entry) throw new Error(`Unknown memory entry: ${memoryId}`);
-    const workspace = this.memoryOriginWorkspaceForSession(session);
-    if (entry.originWorkspace !== workspace) {
-      throw new Error('Cannot mutate memory outside the current isolated workspace.');
-    }
   }
 
   private memoryOriginWorkspace(): string | undefined {
@@ -3597,7 +3589,7 @@ function formatMemoryReminder(entries: readonly AgentMemoryEntry[]): string | nu
   if (activeEntries.length === 0) return null;
   return [
     '<agent-memory>',
-    'Durable remembered facts for this agent. Use them as background context, and update or forget entries with the memory tool when the user corrects them.',
+    'Durable remembered facts for this agent. Use them as background context. Durable memory writes are handled by Settings/Profile UI and runtime-owned extraction, not by a foreground tool.',
     ...activeEntries.map((entry) => (
       `- id=${escapeReminderText(entry.id)} fact="${escapeReminderText(entry.fact)}"`
     )),
@@ -4220,8 +4212,7 @@ function createConfiguredAgent(
     skillToolEnabled?: boolean;
     skillRuntime?: AgentSkillRuntime;
     subagentRuntime?: AgentSubagentRuntime;
-    memory?: AgentToolsOptions['memory'];
-    pastChats?: AgentToolsOptions['pastChats'];
+    recall?: AgentToolsOptions['recall'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
     localWorkspace?: AgentLocalWorkspaceContext;
@@ -4268,8 +4259,7 @@ function createConfiguredAgent(
         skillRuntime,
         skillToolEnabled: options.skillToolEnabled,
         subagentRuntime: options.subagentRuntime,
-        memory: options.memory,
-        pastChats: options.pastChats,
+        recall: options.recall,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
         allowedTools: options.allowedTools,

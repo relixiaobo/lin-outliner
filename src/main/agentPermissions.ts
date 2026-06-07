@@ -119,8 +119,7 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'file_grep',
   'web_search',
   'web_fetch',
-  'past_chats',
-  'memory',
+  'recall',
   'ask_user_question',
   'runtime_status',
   'config',
@@ -149,9 +148,7 @@ const TOOL_ALIASES = new Map<string, string>([
   ['web_fetch', 'web_fetch'],
   ['websearch', 'web_search'],
   ['web_search', 'web_search'],
-  ['pastchats', 'past_chats'],
-  ['past_chats', 'past_chats'],
-  ['memory', 'memory'],
+  ['recall', 'recall'],
   ['ask_user_question', 'ask_user_question'],
   ['askuserquestion', 'ask_user_question'],
   ['runtime_status', 'runtime_status'],
@@ -422,12 +419,12 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'memory') {
-    return [descriptor(toolName, 'agent.memory.manage', {
+  if (toolName === 'recall') {
+    return [descriptor(toolName, 'agent.memory.recall', {
       accessScope: 'none',
-      title: 'agent memory',
-      summary: 'Read or update durable facts remembered by the local agent.',
-      consequence: 'This changes local agent memory only; it does not edit documents or contact external systems.',
+      title: 'agent memory recall',
+      summary: 'Read active durable facts remembered by the local agent.',
+      consequence: 'This reads local agent memory and optional cited local evidence without changing it.',
       defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
@@ -500,7 +497,7 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history' || toolName === 'past_chats') {
+  if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') {
     return [descriptor(toolName, 'outline.read', {
       accessScope: 'allowed_file_area',
       title: 'local document read',
@@ -1217,8 +1214,7 @@ export function toPermissionClassifierInput(toolNameInput: string, args: unknown
     case 'node_edit':
     case 'node_delete':
     case 'operation_history':
-    case 'past_chats':
-    case 'memory':
+    case 'recall':
     case 'ask_user_question':
     case 'runtime_status':
     case 'config':
@@ -1598,9 +1594,9 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'memory' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') return 'read';
+  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') return 'read';
   return 'unknown';
 }
 

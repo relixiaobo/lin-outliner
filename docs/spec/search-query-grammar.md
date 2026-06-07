@@ -97,12 +97,13 @@ without hiding a full rebuild behind `Core.revision()`.
 The text normalization, query analysis, CJK/Latin tokenization, snippet building,
 and label ranking described above are one shared pure module
 (`src/core/textSearchAnalyzer.ts`), consumed by the node text index, the agent
-`past_chats` search, and the renderer field/slash/file pickers so every surface
-agrees on whitespace, punctuation, CJK grams, and stop-word handling. Node lookups
-go through a single indexed evaluator path — document search and agent `node_search`
-both call the main-side `NodeRetrievalService` around `runSearchExpr` plus the live
-index, so there is no second competing node ranker. Heavier retrieval machinery
-(persisted index, WAND/block-max top-k pruning, SQLite/FTS, or embedding reranking)
-is intentionally absent: it is added only when a probe against a real workspace shows
-a concrete miss (broad 10k/50k query latency, cold-rebuild startup cost, a memory
-budget overrun, or a semantic-recall need lexical search cannot satisfy).
+internal conversation-history lookup, and the renderer field/slash/file pickers
+so every surface agrees on whitespace, punctuation, CJK grams, and stop-word
+handling. Node lookups go through a single indexed evaluator path -- document
+search and agent `node_search` both call the main-side `NodeRetrievalService`
+around `runSearchExpr` plus the live index, so there is no second competing node
+ranker. Heavier retrieval machinery (persisted index, WAND/block-max top-k
+pruning, SQLite/FTS, or embedding reranking) is intentionally absent: it is added
+only when a probe against a real workspace shows a concrete miss (broad 10k/50k
+query latency, cold-rebuild startup cost, a memory budget overrun, or a semantic
+recall need lexical search cannot satisfy).

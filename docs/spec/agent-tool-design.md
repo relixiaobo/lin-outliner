@@ -59,8 +59,7 @@ surface.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
-| `past_chats` | agent | No | No | Search and read older Lin agent conversations. |
-| `memory` | agent | Yes, local agent memory | No | List, remember, update, or forget durable facts for the local agent. |
+| `recall` | agent | No | No | Read active durable memory entries, with optional nested source evidence. |
 
 ### Deferred Tools
 
@@ -76,8 +75,8 @@ permission behavior harder to reason about.
 - Use `bash` for shell execution.
 - Use `task_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
-- Use `memory` for explicit durable agent facts; keep raw conversation recall in
-  `past_chats`.
+- Use `recall` for durable agent memory. Raw conversation search is internal to
+  runtime-owned evidence expansion and Dream/extraction, not a model-visible tool.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -193,7 +192,7 @@ from the tool + args (`kind`, `action`, `mode`, file-read `type`), a count equal
 to a sibling array's length (`returned_items`, `numLines`, `message_count`), an
 echo of an input arg (`task_id`, `anchor_message_id`, `replaceAll`), a constant
 (`userModified`), an internal path (pdf `outputDir`), or a cross-field duplicate
-(past_chats error `code`/`message` already in `error`; notebook `cells` vs the
+  (tool-envelope error `code`/`message` already in `error`; notebook `cells` vs the
 rendered `content`). `data` is omitted from the visible envelope whenever
 `modelData` is `undefined` (the default) — the safe path is the natural one, so
 there is no sentinel and no accidental fallback to the full runtime payload. To
@@ -2045,88 +2044,93 @@ Example read result data:
 }
 ```
 
-## Conversation Tools
+## Agent Memory Recall
 
-### `past_chats`
+### `recall`
 
-`past_chats` is a single read-only conversation-history tool. It has three
-parameter-selected modes:
+`recall` is the single model-visible long-term recall tool. It reads active
+durable memory entries for the local agent identity. It does not write, update,
+or forget memory, and it does not expose a raw conversation-history search mode.
 
-- `recent`: `recent: true` returns recent visible user messages with
-  `message_id` anchors. It is ordered by user-message recency and strips system
-  reminders. Use it when the user asks about prior conversations but gives no
-  concrete keywords.
-- `search`: `query` searches visible messages across older conversations. The
-  derived event-store search index provides candidates only; the service then
-  replays each candidate conversation, checks that the message is on the active
-  visible branch, verifies the visible message text with shared text-search
-  analysis, and sorts by relevance before conversation/message recency. Search
-  snippets are navigation aids, not citation context.
-- `read`: `message_id` reads bounded visible conversation context around a
-  `recent` or `search` anchor.
+Parameters:
 
-All modes support optional `after`, `before`, `conversation_ids`, and `limit`
-filters where applicable. The current conversation is excluded by default;
-agents may pass `include_current_conversation: true` only after compaction when
-earlier turns from the same conversation are no longer in working context.
+- `query`: optional keyword query over active memory facts. Omit it to list recent
+  active memories.
+- `limit`: maximum returned entries, default 8, max 20.
+- `include_evidence`: when true, expand bounded raw evidence from each matched
+  memory entry's recorded `sources`.
+- `max_chars`: total evidence character budget, default 4000, max 12000.
 
-The event store remains the source of truth. Conversation, search, and user-message
-indexes are derived and rebuildable, and text ranking never bypasses active
-branch visibility, conversation/date/current-conversation filters, or read-mode
-context bounds.
-
-### `memory`
-
-`memory` is the explicit durable-fact tool for the local agent identity. It is
-not a raw conversation search tool and must not replace `past_chats`.
-
-Actions:
-
-- `list`: return active remembered facts, optionally filtered by `query`. The
-  model-visible `total_entries` is the real matched active count, not the capped
-  result length.
-- `remember`: append one concise durable fact.
-- `update`: replace an existing fact by `memory_id`.
-- `forget`: invalidate an existing fact by `memory_id`.
-
-The authoritative store is `agents/<agentId>/memory/events.jsonl`. The runtime
-projects entries from `memory.entry_added`, `memory.entry_updated`, and
-`memory.entry_removed` events. Forgetting is idempotent: the first call appends
-an invalidation event, and later calls return the already invalidated entry
-without adding churn. High-churn memory logs are compacted by rewriting the log
-to the current projection; compaction preserves visible entry ids, facts,
-sources, status, and `createdAt`, but drops superseded intermediate mutation
-events.
+The authoritative store remains `agents/<agentId>/memory/events.jsonl`. The
+runtime projects entries from `memory.entry_added`, `memory.entry_updated`, and
+`memory.entry_removed` events. Forgetting remains idempotent through the
+Settings/Profile management path. High-churn memory logs are compacted by
+rewriting the log to the current projection; compaction preserves visible entry
+ids, facts, sources, status, and `createdAt`, but drops superseded intermediate
+mutation events.
 
 Each entry records `originWorkspace` when a local file root is available and
 keeps `sources` down-pointers to the conversation/run/message/event that created
-it. Runtime setting `agent.runtime.memoryIsolation` controls retrieval and
-write behavior:
+it. Runtime setting `agent.runtime.memoryIsolation` controls recall visibility:
 
-- `global` (default): read and write the agent's full memory pool.
-- `isolated`: read only entries whose `originWorkspace` matches the current
-  workspace and write new entries with that origin.
-- `read-only-global`: read the global pool but reject `remember` writes, so the
-  current workspace cannot add durable facts to the shared pool.
+- `global` (default): recall can read the agent's full active memory pool.
+- `isolated`: recall reads only entries whose `originWorkspace` matches the
+  current workspace.
+- `read-only-global`: recall reads the global active memory pool. The foreground
+  tool surface is read-only in every mode.
+
+Explicit memory management is not a foreground model tool. The Settings/Profile
+UI can list, edit, and forget memory through IPC-backed runtime methods, and the
+runtime-owned Dream/extraction path can write memory after it verifies raw
+conversation/run evidence. The foreground model must not claim it saved, updated,
+or forgot durable memory through a tool call.
 
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
 the active projection. Reminder retrieval ranks by memory-specific relevance
 (phrase/term overlap) and backfills with latest active facts so stale ids remain
-visible when the user corrects related facts. The reminder includes memory ids
-so the model can update or forget stale facts when the user corrects them. Tool
-results use the shared envelope and expose only the slim model-visible
+visible when the user corrects related facts. The reminder is background context;
+the foreground model can call `recall` when the reminder or current context is
+insufficient.
+
+Evidence expansion is always nested under a returned memory entry. The runtime
+expands only that entry's `MemoryEntry.sources` through the internal conversation
+evidence service, verifies the retained active branch, and clamps output by
+`max_chars`. Older conversations that have not been distilled into active memory
+entries are intentionally not foreground-recallable. Internal summary search and
+raw conversation/run reads remain available to runtime-owned Dream/extraction
+and diagnostics, not as public model tools.
+
+Tool results use the shared envelope and expose only the slim model-visible
 projection:
 
 ```json
 {
   "ok": true,
   "data": {
-    "entry": {
-      "memory_id": "memory-1",
-      "fact": "User prefers direct answers.",
-      "status": "active",
-      "created_at": 1800000000000
-    }
+    "entries": [
+      {
+        "memory_id": "memory-1",
+        "fact": "User prefers direct answers.",
+        "status": "active",
+        "created_at": 1800000000000,
+        "sources": [
+          {
+            "conversation_id": "conversation-1",
+            "message_range": ["user-1", "assistant-1"]
+          }
+        ],
+        "evidence": [
+          {
+            "conversation_id": "conversation-1",
+            "message_id": "user-1",
+            "role": "user",
+            "created_at": "2026-01-01T00:00:00.000Z",
+            "text": "Please keep answers direct."
+          }
+        ]
+      }
+    ],
+    "total_entries": 1
   }
 }
 ```
@@ -2200,12 +2204,8 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `file_read`
 - `file_glob`
 - `file_grep`
-- `past_chats`
+- `recall`
 - `operation_history(action: "list")`
-
-Runtime-owned local state tools run immediately by default:
-
-- `memory`
 
 Web tools are also read-only, but may require host or offline-mode approval:
 
