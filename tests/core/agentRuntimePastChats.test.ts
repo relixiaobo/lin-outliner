@@ -485,4 +485,120 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).not.toContain('Other workspace uses amber focus rings.');
   });
 
+  test('recall tool respects isolated workspace and invalidated memory', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-isolated-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-isolated-data-'));
+    roots.push(localRoot, dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-current-recall',
+      fact: 'Current workspace recall fact mentions teal focus rings.',
+      originWorkspace: memoryOriginWorkspace(localRoot),
+      sources: [{ conversationId: 'current-recall-conversation' }],
+      createdAt: 30,
+    });
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-other-recall',
+      fact: 'Other workspace recall fact mentions amber focus rings.',
+      originWorkspace: 'workspace:other',
+      sources: [{ conversationId: 'other-recall-conversation' }],
+      createdAt: 31,
+    });
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-unscoped-recall',
+      fact: 'Unscoped recall fact mentions violet focus rings.',
+      sources: [{ conversationId: 'unscoped-recall-conversation' }],
+      createdAt: 32,
+    });
+    await store.addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-invalidated-recall',
+      fact: 'Invalidated recall fact mentions orange focus rings.',
+      originWorkspace: memoryOriginWorkspace(localRoot),
+      sources: [{ conversationId: 'invalidated-recall-conversation' }],
+      createdAt: 33,
+    });
+    await store.removeMemoryEntry('built-in:tenon:assistant', 'memory-invalidated-recall', 'test');
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('recall', {
+            query: 'focus rings',
+            include_evidence: true,
+          }, { id: 'tool-recall-isolated' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          contexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Only the current workspace memory applies.'));
+        },
+      ],
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Recall focus-ring memories for this workspace.');
+
+    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
+    const activePath = getAgentEventActivePath(replay);
+    const toolResults = activePath.filter((message) => message.role === 'toolResult');
+    const recallResult = JSON.parse(persistedText(toolResults[0]?.content ?? [])) as {
+      data?: {
+        entries?: Array<{ memory_id?: string; fact?: string }>;
+        total_entries?: number;
+      };
+    };
+    const postRecallContext = contexts.at(-1) ?? '';
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(toolResults.map((message) => message.toolName)).toEqual(['recall']);
+    expect(recallResult.data?.total_entries).toBe(1);
+    expect(recallResult.data?.entries?.map((entry) => ({
+      memory_id: entry.memory_id,
+      fact: entry.fact,
+    }))).toEqual([{
+      memory_id: 'memory-current-recall',
+      fact: 'Current workspace recall fact mentions teal focus rings.',
+    }]);
+    expect(postRecallContext).toContain('memory-current-recall');
+    expect(postRecallContext).toContain('Current workspace recall fact mentions teal focus rings.');
+    expect(postRecallContext).not.toContain('memory-other-recall');
+    expect(postRecallContext).not.toContain('Other workspace recall fact mentions amber focus rings.');
+    expect(postRecallContext).not.toContain('memory-unscoped-recall');
+    expect(postRecallContext).not.toContain('Unscoped recall fact mentions violet focus rings.');
+    expect(postRecallContext).not.toContain('memory-invalidated-recall');
+    expect(postRecallContext).not.toContain('Invalidated recall fact mentions orange focus rings.');
+  });
+
 });
