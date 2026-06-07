@@ -901,7 +901,7 @@ function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition
   });
 }
 
-function parseSkillMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+export function parseSkillMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
   const normalized = raw.replace(/^\uFEFF/, '');
   if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) {
     return { frontmatter: {}, body: normalized };
@@ -1319,7 +1319,7 @@ function parsePathsFrontmatter(value: unknown): string[] | undefined {
   return patterns;
 }
 
-function parseToolListFromFrontmatter(value: unknown): string[] {
+export function parseToolListFromFrontmatter(value: unknown): string[] {
   const tools = splitFrontmatterList(value);
   const result: string[] = [];
   for (const toolString of tools) {

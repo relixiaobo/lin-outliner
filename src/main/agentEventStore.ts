@@ -546,6 +546,12 @@ export class AgentEventStore {
     });
   }
 
+  async getMemoryEntry(agentId: string, entryId: string): Promise<AgentMemoryEntry | null> {
+    await this.ensureStorageLayout();
+    const projection = await this.getMemoryProjection(agentId);
+    return projection.entries.get(entryId) ?? null;
+  }
+
   async listMemoryEntries(
     agentId: string,
     options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},

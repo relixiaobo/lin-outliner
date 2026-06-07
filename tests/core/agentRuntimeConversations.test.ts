@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
-import { AGENT_EVENT_VERSION, type AgentEvent } from '../../src/core/agentEventLog';
+import { AGENT_EVENT_VERSION, getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
@@ -201,8 +201,55 @@ describe('agent runtime conversations', () => {
         eventId: 'event-3',
         seq: 3,
         sessionId,
-        type: 'user_question.requested',
+        type: 'assistant_message.started',
         createdAt: 3,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        messageId: 'assistant-question-1',
+        parentMessageId: null,
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-4',
+        seq: 4,
+        sessionId,
+        type: 'tool_call.started',
+        createdAt: 4,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        messageId: 'assistant-question-1',
+        toolCallId: 'tool-question-1',
+        name: 'ask_user_question',
+        inputSummary: '{"questions":[{"id":"direction"}]}',
+        args: { questions: [{ id: 'direction' }] },
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-5',
+        seq: 5,
+        sessionId,
+        type: 'assistant_message.completed',
+        createdAt: 5,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        messageId: 'assistant-question-1',
+        stopReason: 'toolUse',
+        content: [{
+          type: 'toolCall',
+          id: 'tool-question-1',
+          name: 'ask_user_question',
+          arguments: { questions: [{ id: 'direction' }] },
+        }],
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-6',
+        seq: 6,
+        sessionId,
+        type: 'user_question.requested',
+        createdAt: 6,
         actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
         runId: 'run-1',
         requestId: 'question-1',
@@ -226,6 +273,14 @@ describe('agent runtime conversations', () => {
     const restored = await runtime.restoreConversation(sessionId);
     expect(restored.pendingUserQuestion?.requestId).toBe('question-1');
 
+    await expectRejects(
+      () => runtime.resolveUserQuestion(sessionId, 'question-1', {
+        requestId: 'question-1',
+        answers: [{ questionId: 'direction', selectedOptionIds: [] }],
+      }),
+      'Question direction is required.',
+    );
+
     await runtime.resolveUserQuestion(sessionId, 'question-1', {
       requestId: 'question-1',
       answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
@@ -239,5 +294,25 @@ describe('agent runtime conversations', () => {
         answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
       },
     });
+    const toolResult = getAgentEventActivePath(replay).find(
+      (message) => message.role === 'toolResult' && message.toolCallId === 'tool-question-1',
+    );
+    expect(toolResult).toMatchObject({
+      role: 'toolResult',
+      actor: { type: 'tool', toolName: 'ask_user_question', toolCallId: 'tool-question-1' },
+      parentMessageId: 'assistant-question-1',
+      toolName: 'ask_user_question',
+      isError: false,
+    });
+    expect(toolResult?.content).toEqual([{
+      type: 'text',
+      text: JSON.stringify({
+        ok: true,
+        data: {
+          requestId: 'question-1',
+          answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+        },
+      }),
+    }]);
   });
 });

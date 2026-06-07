@@ -234,6 +234,36 @@ describe('agent permissions', () => {
       args: { setting: 'agent.runtime.compactEnabled', value: false },
       policy: { workspaceRoot },
     });
+    const configWriteWithGlobalAllow = evaluateAgentToolPermission({
+      toolName: 'config',
+      args: { setting: 'agent.runtime.compactEnabled', value: false },
+      policy: {
+        workspaceRoot,
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(agent.config.write)'],
+          },
+        },
+      },
+    });
+    const configWriteWithPreParsedAllow = evaluateAgentToolPermission({
+      toolName: 'config',
+      args: { setting: 'agent.runtime.compactEnabled', value: false },
+      policy: {
+        workspaceRoot,
+        globalPermissions: {
+          rules: [{
+            ruleValue: 'Action(agent.config.write)',
+            decision: 'allow',
+            target: { kind: 'action', value: 'agent.config.write' },
+          }],
+          diagnostics: [],
+        },
+      },
+    });
+    const configGlobalAllow = parseGlobalToolPermissionSettings({
+      permissions: { allow: ['Action(agent.config.write)'] },
+    });
 
     expect(runtimeStatus).toMatchObject({
       behavior: 'allow',
@@ -258,6 +288,21 @@ describe('agent permissions', () => {
     });
     expect(configWrite.behavior === 'ask' ? configWrite.request.title : undefined)
       .toBe('Approve agent config change?');
+    expect(configWriteWithGlobalAllow).toMatchObject({
+      behavior: 'ask',
+      descriptor: { actionKind: 'agent.config.write' },
+    });
+    expect(configWriteWithPreParsedAllow).toMatchObject({
+      behavior: 'ask',
+      descriptor: { actionKind: 'agent.config.write' },
+    });
+    expect(configGlobalAllow.rules).toEqual([]);
+    expect(configGlobalAllow.diagnostics).toEqual([{
+      ruleValue: 'Action(agent.config.write)',
+      decision: 'allow',
+      code: 'forbidden_allow_rule',
+      message: 'Action agent.config.write cannot be globally allowed.',
+    }]);
   });
 
   test('skill content file writes use the skill-write permission action', () => {

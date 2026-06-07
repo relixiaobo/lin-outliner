@@ -1336,6 +1336,8 @@ export class AgentRuntime {
         service: this.getPastChatsService(),
         currentConversationId: () => session.eventState.session?.id ?? null,
       },
+      askUserQuestion: this.createAskUserQuestionRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
+      selfMaintenance: this.createSelfMaintenanceRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
     });
   }
 
@@ -2045,12 +2047,22 @@ export class AgentRuntime {
         }
         return this.getEventStore().addMemoryEntry(this.agentIdentity.agentId, {
           fact,
-          originWorkspace: this.memoryOriginWorkspace(),
+          originWorkspace: this.memoryOriginWorkspaceForSession(session),
           sources: this.memorySources(getSessionId(), session),
         });
       },
-      update: (memoryId, fact) => this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact }),
-      forget: (memoryId) => this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'agent'),
+      update: async (memoryId, fact) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        await this.assertMemoryMutationAllowed(session, memoryId);
+        return this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact });
+      },
+      forget: async (memoryId) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        await this.assertMemoryMutationAllowed(session, memoryId);
+        return this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'agent');
+      },
     };
   }
 
@@ -2193,6 +2205,12 @@ export class AgentRuntime {
         reject,
       };
       this.pendingUserQuestions.set(requestId, pending);
+      this.emitConversationRuntimeEvent(sessionId, {
+        type: 'user_question_request',
+        requestId,
+        question: this.userQuestionView(sessionId, pending),
+      });
+      this.emitProjection(sessionId, 'user_question.requested');
       const abort = () => {
         void this.cancelUserQuestion(requestId, 'aborted')
           .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
@@ -2202,12 +2220,6 @@ export class AgentRuntime {
       } else {
         signal?.addEventListener('abort', abort, { once: true });
       }
-      this.emitConversationRuntimeEvent(sessionId, {
-        type: 'user_question_request',
-        requestId,
-        question: this.userQuestionView(sessionId, pending),
-      });
-      this.emitProjection(sessionId, 'user_question.requested');
     });
   }
 
@@ -2221,13 +2233,17 @@ export class AgentRuntime {
     const pending = this.pendingUserQuestions.get(requestId) ?? this.pendingUserQuestionFromReplay(sessionId, session, requestId);
     if (!pending || pending.sessionId !== sessionId) return { resolved: false };
     const result = normalizeAskUserQuestionResult(requestId, pending.request, resultInput);
-    await this.appendSessionEvents(sessionId, session, [{
+    const validationError = this.validateUserQuestionResult(pending.request, result);
+    if (validationError) throw new Error(validationError);
+    const events: AgentEventInput[] = [{
       type: 'user_question.answered',
       actor: userActor(),
       runId: pending.runId,
       requestId,
       result,
-    }]);
+    }];
+    if (!pending.resolve) events.push(this.replayedUserQuestionToolResultInput(session, pending, result));
+    await this.appendSessionEvents(sessionId, session, events);
     this.pendingUserQuestions.delete(requestId);
     this.emitConversationRuntimeEvent(sessionId, {
       type: 'user_question_resolved',
@@ -2235,8 +2251,52 @@ export class AgentRuntime {
       result,
     });
     this.emitProjection(sessionId, 'user_question.answered');
-    pending.resolve?.(result);
+    if (pending.resolve) {
+      pending.resolve(result);
+    }
     return { resolved: true };
+  }
+
+  private validateUserQuestionResult(
+    request: AgentUserQuestionRequestView,
+    result: AskUserQuestionResult,
+  ): string | null {
+    const answers = new Map(result.answers.map((answer) => [answer.questionId, answer]));
+    for (const question of request.questions) {
+      if (question.required === false) continue;
+      const answer = answers.get(question.id);
+      if (!answer) return `Question ${question.id} is required.`;
+      const hasText = typeof answer.text === 'string' && answer.text.trim().length > 0;
+      const hasOptions = Array.isArray(answer.selectedOptionIds) && answer.selectedOptionIds.length > 0;
+      if (!hasText && !hasOptions) return `Question ${question.id} is required.`;
+    }
+    return null;
+  }
+
+  private replayedUserQuestionToolResultInput(
+    session: AgentSessionState,
+    pending: AgentPendingUserQuestion,
+    result: AskUserQuestionResult,
+  ): AgentEventInput {
+    const parentMessage = getAgentEventActivePath(session.eventState)
+      .find((message) => message.role === 'assistant'
+        && message.content.some((part) => part.type === 'toolCall' && part.id === pending.toolCallId));
+    if (!parentMessage) {
+      throw new Error(`Cannot resume replayed user question without parent tool call: ${pending.toolCallId}`);
+    }
+    const messageId = `tool-result-${pending.toolCallId}-${randomUUID()}`;
+    return {
+      type: 'tool_result.created',
+      actor: toolActor('ask_user_question', pending.toolCallId),
+      runId: pending.runId,
+      messageId,
+      parentMessageId: parentMessage.id,
+      toolCallId: pending.toolCallId,
+      toolName: 'ask_user_question',
+      content: [{ type: 'text', text: JSON.stringify({ ok: true, data: result }) }],
+      isError: false,
+      outputSummary: 'Answered user question.',
+    };
   }
 
   private async cancelUserQuestion(requestId: string, reason: string) {
@@ -2333,7 +2393,7 @@ export class AgentRuntime {
 
   private memoryOriginWorkspaceFilter(session: AgentSessionState | null): string | undefined {
     if (!session || this.memoryIsolation(session) !== 'isolated') return undefined;
-    return this.memoryOriginWorkspace() ?? '__no_workspace__';
+    return this.memoryOriginWorkspaceForSession(session);
   }
 
   private memorySources(sessionId: string, session: AgentSessionState): AgentMemorySource[] {
@@ -2344,6 +2404,25 @@ export class AgentRuntime {
     if (runId) source.runId = runId;
     if (session.eventState.latestEventId) source.eventId = session.eventState.latestEventId;
     return [source];
+  }
+
+  private memoryOriginWorkspaceForSession(session: AgentSessionState): string | undefined {
+    if (this.memoryIsolation(session) === 'global') return this.memoryOriginWorkspace() ?? undefined;
+    return this.memoryOriginWorkspace() ?? '__no_workspace__';
+  }
+
+  private async assertMemoryMutationAllowed(session: AgentSessionState, memoryId: string) {
+    const isolation = this.memoryIsolation(session);
+    if (isolation === 'read-only-global') {
+      throw new Error('Memory writes are disabled while agent.runtime.memoryIsolation is read-only-global.');
+    }
+    if (isolation !== 'isolated') return;
+    const entry = await this.getEventStore().getMemoryEntry(this.agentIdentity.agentId, memoryId);
+    if (!entry) throw new Error(`Unknown memory entry: ${memoryId}`);
+    const workspace = this.memoryOriginWorkspaceForSession(session);
+    if (entry.originWorkspace !== workspace) {
+      throw new Error('Cannot mutate memory outside the current isolated workspace.');
+    }
   }
 
   private memoryOriginWorkspace(): string | undefined {

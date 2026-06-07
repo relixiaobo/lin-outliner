@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { parse as parseYaml } from 'yaml';
 import type { AgentSourceKind } from '../core/agentEventLog';
+import { parseSkillMarkdown, parseToolListFromFrontmatter } from './agentSkills';
 
 export interface AgentSkillContentTarget {
   skillName: string;
@@ -41,7 +41,7 @@ const SKILL_FILE_NAME = 'SKILL.md';
 const MAX_SKILL_MARKDOWN_BYTES = 256 * 1024;
 const MAX_SUPPORT_FILE_BYTES = 256 * 1024;
 const SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 const EXECUTABLE_SUPPORT_EXTENSIONS = new Set([
   '.bat',
   '.cmd',
@@ -188,7 +188,14 @@ function validateSkillMarkdown(content: string, previousContent: string | null):
     );
   }
   rejectSecretLookingContent(content);
-  const parsed = parseFrontmatter(content);
+  if (!FRONTMATTER_PATTERN.test(content.replace(/^\uFEFF/, ''))) {
+    throw new AgentSkillAuthoringError(
+      'missing_skill_frontmatter',
+      'SKILL.md must start with YAML frontmatter.',
+      'Use the stable SKILL.md shape: frontmatter, a closing marker, then Markdown instructions.',
+    );
+  }
+  const parsed = parseSkillMarkdown(content);
   const description = typeof parsed.frontmatter.description === 'string'
     ? parsed.frontmatter.description.trim()
     : '';
@@ -200,18 +207,18 @@ function validateSkillMarkdown(content: string, previousContent: string | null):
     );
   }
 
-  if (previousContent === null && parsed.frontmatter['disable-model-invocation'] !== true) {
+  if (parsed.frontmatter['disable-model-invocation'] !== true) {
     throw new AgentSkillAuthoringError(
       'model_invocation_requires_promotion',
-      'New agent-authored skills must set disable-model-invocation: true.',
-      'Create the skill as user-invocable first. Promote model invocation only through an explicit later review.',
+      'Agent-authored skills must set disable-model-invocation: true.',
+      'Keep the skill user-invocable. Promote model invocation only through an explicit later review.',
     );
   }
 
   const previousTools = previousContent === null
     ? new Set<string>()
-    : new Set(parseAllowedTools(parseFrontmatter(previousContent).frontmatter['allowed-tools']).map(normalizeRule));
-  const addedRisky = parseAllowedTools(parsed.frontmatter['allowed-tools'])
+    : new Set(parseToolListFromFrontmatter(parseSkillMarkdown(previousContent).frontmatter['allowed-tools']).map(normalizeRule));
+  const addedRisky = parseToolListFromFrontmatter(parsed.frontmatter['allowed-tools'])
     .map(normalizeRule)
     .filter((rule) => !previousTools.has(rule))
     .filter(isRiskyAllowedToolRule);
@@ -249,50 +256,6 @@ function validateSupportFile(target: AgentSkillContentTarget, content: string): 
     );
   }
   rejectSecretLookingContent(content);
-}
-
-function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
-  const match = FRONTMATTER_PATTERN.exec(content.replace(/^\uFEFF/, ''));
-  if (!match) {
-    throw new AgentSkillAuthoringError(
-      'missing_skill_frontmatter',
-      'SKILL.md must start with YAML frontmatter.',
-      'Use the stable SKILL.md shape: frontmatter, a closing marker, then Markdown instructions.',
-    );
-  }
-  let frontmatter: unknown;
-  try {
-    frontmatter = parseYaml(match[1] ?? '');
-  } catch (error) {
-    throw new AgentSkillAuthoringError(
-      'invalid_skill_frontmatter',
-      `SKILL.md frontmatter is invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
-      'Fix the YAML frontmatter and retry.',
-    );
-  }
-  if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) {
-    throw new AgentSkillAuthoringError(
-      'invalid_skill_frontmatter',
-      'SKILL.md frontmatter must be a YAML object.',
-      'Use key/value frontmatter fields such as description and disable-model-invocation.',
-    );
-  }
-  return {
-    frontmatter: frontmatter as Record<string, unknown>,
-    body: content.slice(match[0].length),
-  };
-}
-
-function parseAllowedTools(value: unknown): string[] {
-  if (typeof value === 'string') {
-    return value.split(',').map((item) => item.trim()).filter(Boolean);
-  }
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === 'string')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  return [];
 }
 
 function isRiskyAllowedToolRule(rule: string): boolean {
