@@ -165,13 +165,14 @@ interface PR (see its bullet below).
   (`/dream` bypasses → consolidate-only if nothing new). **Redirects #159's per-turn
   trigger** (reuses its worker/isolation/provenance internals). **Build order
   (plan §Execution order):** ① the shared per-agent **`date` scheduler primitive**
-  (does not exist yet — shared with `agent-scheduled-routines`, foundation-first
-  A7) → ② **`RunMeta` agent-level anchor generalization** (protocol surface A4 —
-  **interface-only PR, PM-ratified first**) → ③ Dream thin assembly (reuses #159's
-  worker). ① and ② parallelize; ③ depends on both. **First move: draft the ②
-  interface one-pager for PM ratification, start ① in parallel.** Detailed design
-  for conversation-model's `Offline consolidation` item; another dev agent to build.
-  See `docs/plans/agent-dream-memory.md`.
+  (**core kernel landed in PR #161** — `src/core/dateSchedule.ts`; generic
+  date-field/UI/command-node wiring still in `agent-scheduled-routines`) → ②
+  **`RunMeta` agent-level anchor generalization** (protocol surface A4 —
+  interface-only PR; **shape PM-ratified 2026-06-07 = the `AgentRunAnchor`
+  discriminated union, not optional `conversationId`**, so the interface PR can
+  proceed) → ③ Dream thin assembly (reuses #159's worker). ① and ② parallelize;
+  ③ depends on both. Detailed design for conversation-model's `Offline
+  consolidation` item; codex building. See `docs/plans/agent-dream-memory.md`.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
