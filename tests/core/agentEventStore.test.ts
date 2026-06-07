@@ -601,7 +601,7 @@ describe('agent event store', () => {
 
       const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
         agentId: string;
-        conversationId: string;
+        anchor: { type: string; agentId: string; conversationId?: string };
         trigger: { type: string; messageId?: string };
         fingerprint: { appVersion: string };
         status: string;
@@ -609,7 +609,7 @@ describe('agent event store', () => {
       };
       expect(runMeta).toMatchObject({
         agentId: 'built-in:tenon:assistant',
-        conversationId: sessionId,
+        anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: sessionId },
         trigger: { type: 'message', messageId: 'message-1' },
         fingerprint: { appVersion: 'test' },
         status: 'completed',
@@ -653,6 +653,130 @@ describe('agent event store', () => {
         runIds: string[];
       };
       expect(rebuilt.runIds).toEqual([runId]);
+    });
+  });
+
+  test('rebuilds the run index from legacy flat conversation run metadata', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-legacy-run-meta';
+      const runId = 'run-legacy-meta';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Legacy run meta' },
+        { ...base(sessionId, 2, 'run.started'), runId },
+        {
+          ...base(sessionId, 3, 'assistant_message.started'),
+          runId,
+          messageId: 'assistant-1',
+          parentMessageId: null,
+          providerId: 'test',
+          modelId: 'test',
+        },
+      ]);
+      await writeFile(store.runPaths(runId).runMetaPath, `${JSON.stringify({
+        v: 1,
+        id: runId,
+        agentId: 'built-in:tenon:assistant',
+        conversationId: sessionId,
+        kind: 'turn',
+        status: 'running',
+        trigger: { type: 'manual' },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+        createdAt: 1_700_000_000_002,
+        updatedAt: 1_700_000_000_003,
+        latestSeq: 3,
+      })}\n`);
+      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+
+      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3]);
+      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+        runIds: string[];
+      };
+      expect(rebuilt.runIds).toEqual([runId]);
+    });
+  });
+
+  test('leaves agent-anchored runs out of a conversation run index rebuild', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-agent-anchor';
+      const runId = 'run-agent-anchor';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Agent anchor filter' },
+      ]);
+      const runPaths = store.runPaths(runId);
+      await mkdir(runPaths.runDir, { recursive: true });
+      await writeFile(runPaths.runMetaPath, `${JSON.stringify({
+        v: 1,
+        id: runId,
+        agentId: 'built-in:tenon:assistant',
+        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        kind: 'scheduled',
+        status: 'completed',
+        trigger: { type: 'system' },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+        createdAt: 1_700_000_000_002,
+        updatedAt: 1_700_000_000_003,
+        latestSeq: 3,
+      })}\n`);
+      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+
+      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1]);
+      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+        runIds: string[];
+      };
+      expect(rebuilt.runIds).toEqual([]);
+    });
+  });
+
+  test('leaves live-appended agent-anchored runs out of the conversation run index', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-live-agent-anchor';
+      const runId = 'run-live-agent-anchor';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Live agent anchor filter' },
+        {
+          ...base(sessionId, 2, 'run.started'),
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          kind: 'scheduled',
+          trigger: { type: 'system' },
+          fingerprint: {
+            appVersion: 'test',
+            promptHash: 'prompt',
+            toolSchemaHash: 'tools',
+            skillBindings: [],
+            modelConfig: 'model',
+          },
+          retention: 'hot',
+        },
+      ]);
+
+      const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
+      expect(runRaw).toContain('run.started');
+      const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
+        anchor: { type: string; agentId: string };
+      };
+      expect(runMeta.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
+
+      const index = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+        runIds: string[];
+      };
+      expect(index.runIds).toEqual([]);
+      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1]);
     });
   });
 

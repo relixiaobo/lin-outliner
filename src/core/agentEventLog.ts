@@ -188,10 +188,14 @@ export interface AgentRunFingerprint {
   modelConfig: string;
 }
 
+export type AgentRunAnchor =
+  | { type: 'conversation'; agentId: AgentId; conversationId: string }
+  | { type: 'agent'; agentId: AgentId };
+
 export interface AgentRunMeta {
   id: string;
-  agentId: string;
-  conversationId: string;
+  agentId: AgentId;
+  anchor: AgentRunAnchor;
   parentRunId?: string;
   kind: AgentRunKind;
   status: AgentRunStatus;
@@ -200,6 +204,10 @@ export interface AgentRunMeta {
   fingerprint: AgentRunFingerprint;
   retention: AgentRunRetention;
   createdAt: number;
+}
+
+export function conversationIdOfRun(run: Pick<AgentRunMeta, 'anchor'>): string | null {
+  return run.anchor.type === 'conversation' ? run.anchor.conversationId : null;
 }
 
 export type AgentRunLogEventType =
@@ -777,7 +785,8 @@ export interface SkillAuditEvent extends AgentEventBase {
 export interface RunStartedEvent extends AgentEventBase {
   type: 'run.started';
   runId: string;
-  agentId?: string;
+  agentId?: AgentId;
+  anchor?: AgentRunAnchor;
   kind?: AgentRunKind;
   trigger?: AgentRunTrigger;
   fingerprint?: AgentRunFingerprint;
@@ -1325,7 +1334,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'run.started':
       state.runs[event.runId] = {
         id: event.runId,
-        agentId: event.agentId,
+        agentId: event.agentId ?? event.anchor?.agentId,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,

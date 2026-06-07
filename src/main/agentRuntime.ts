@@ -3005,6 +3005,7 @@ export class AgentRuntime {
       actor: systemActor(),
       runId,
       agentId: this.agentIdentity.agentId,
+      anchor: { type: 'conversation', agentId: this.agentIdentity.agentId, conversationId: sessionId },
       kind: 'turn',
       trigger: this.runTrigger(session),
       fingerprint: this.runFingerprint(session),

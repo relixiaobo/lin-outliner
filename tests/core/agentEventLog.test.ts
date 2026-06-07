@@ -7,9 +7,11 @@ import {
   getAgentEventMessageBranches,
   getAgentEventRuntimeTranscriptPath,
   getAgentEventVisibleTranscript,
+  conversationIdOfRun,
   replayAgentEvents,
   type AgentActor,
   type AgentEvent,
+  type AgentRunMeta,
   type AgentPayloadRef,
 } from '../../src/core/agentEventLog';
 
@@ -37,6 +39,28 @@ function textOf(message: ReturnType<typeof deriveAgentPiMessages>[number]) {
 }
 
 describe('agent event log', () => {
+  test('represents agent-anchored run meta without a conversation target', () => {
+    const meta = {
+      id: 'run-dream',
+      agentId: 'built-in:tenon:assistant',
+      anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+      kind: 'scheduled',
+      status: 'running',
+      trigger: { type: 'system' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'prompt',
+        toolSchemaHash: 'tools',
+        skillBindings: [],
+        modelConfig: 'model',
+      },
+      retention: 'hot',
+      createdAt: 1,
+    } satisfies AgentRunMeta;
+
+    expect(conversationIdOfRun(meta)).toBeNull();
+  });
+
   test('replays a linear conversation and derives pi messages from deltas', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'session.created'), title: 'Untitled' },
