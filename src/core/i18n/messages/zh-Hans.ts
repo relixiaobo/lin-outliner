@@ -859,6 +859,7 @@ commandPalette: {
       heading: '任务',
       panelAriaLabel: '智能体任务',
       openPanel: '打开任务面板',
+      openPanelActive: ({ count }) => `打开任务面板（${count} 个运行中）`,
       closePanel: '关闭任务面板',
       close: '关闭',
       idleSummary: '没有正在运行的任务',

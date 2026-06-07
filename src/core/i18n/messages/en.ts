@@ -943,6 +943,8 @@ commandPalette: {
       heading: 'Tasks',
       panelAriaLabel: 'Agent tasks',
       openPanel: 'Open task panel',
+      openPanelActive: ({ count }: { count: number }) =>
+        count === 1 ? 'Open task panel (1 running)' : `Open task panel (${count} running)`,
       closePanel: 'Close task panel',
       close: 'Close',
       idleSummary: 'No running tasks',

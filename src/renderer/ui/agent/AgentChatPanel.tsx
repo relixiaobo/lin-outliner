@@ -925,7 +925,9 @@ export function AgentChatPanel({
           />
           <ButtonControl
             aria-expanded={taskPanelOpen && !selectedSubagent}
-            aria-label={t.agent.task.openPanel}
+            aria-label={runningTaskCount > 0
+              ? t.agent.task.openPanelActive({ count: runningTaskCount })
+              : t.agent.task.openPanel}
             className="agent-task-panel-button"
             onClick={() => {
               setSelectedSubagentId(null);

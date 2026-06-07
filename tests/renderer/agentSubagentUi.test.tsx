@@ -198,6 +198,7 @@ describe('agent subagent UI', () => {
 
     expect(rendered.container.textContent).toContain('Tasks');
     expect(rendered.container.textContent).toContain('1 task running');
+    expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 task running');
     expect(rendered.container.textContent).toContain('Inspect subagent UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
 

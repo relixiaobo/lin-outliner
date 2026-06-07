@@ -62,7 +62,7 @@ export function AgentTaskPanel({
             <UsedToolsIcon size={ICON_SIZE.menu} />
             <span>{t.agent.task.heading}</span>
           </div>
-          <p>{runningCount > 0 ? t.agent.task.runningSummary({ count: runningCount }) : t.agent.task.idleSummary}</p>
+          <p aria-live="polite">{runningCount > 0 ? t.agent.task.runningSummary({ count: runningCount }) : t.agent.task.idleSummary}</p>
         </div>
         <IconButton
           className="agent-task-close"
