@@ -34,6 +34,19 @@ async function nodesWithText(page: Parameters<typeof trailingEditor>[0], text: s
   return projection.nodes.filter((node) => node.content.text === text);
 }
 
+async function trailingTextOrCommittedParentId(
+  page: Parameters<typeof trailingEditor>[0],
+  parentId: string,
+  text: string,
+) {
+  const editor = trailingEditor(page, parentId);
+  if (await editor.count()) {
+    const editorText = await editor.textContent();
+    if (editorText === text) return parentId;
+  }
+  return (await nodeByText(page, text))?.parentId ?? null;
+}
+
 async function dispatchCompositionEvent(
   locator: ReturnType<typeof trailingEditor>,
   type: 'compositionstart' | 'compositionend',
@@ -368,11 +381,11 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     await trailingEditor(page).click();
     await page.keyboard.type(firstText, { delay: 0 });
-    await expect(trailingEditor(page)).toHaveText(firstText);
+    await expect.poll(() => trailingTextOrCommittedParentId(page, ids.today, firstText)).toBe(ids.today);
 
     await trailingEditor(page, ids.gamma).click();
     await page.keyboard.type(secondText, { delay: 0 });
-    await expect(trailingEditor(page, ids.gamma)).toHaveText(secondText);
+    await expect.poll(() => trailingTextOrCommittedParentId(page, ids.gamma, secondText)).toBe(ids.gamma);
 
     await page.keyboard.press('Enter');
 

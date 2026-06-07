@@ -129,6 +129,8 @@ export interface AgentMemoryEntryPatch {
 export interface AgentConversationIndexEntry {
   id: string;
   title: string | null;
+  members: AgentPrincipal[];
+  goal?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -544,6 +546,12 @@ export class AgentEventStore {
     });
   }
 
+  async getMemoryEntry(agentId: string, entryId: string): Promise<AgentMemoryEntry | null> {
+    await this.ensureStorageLayout();
+    const projection = await this.getMemoryProjection(agentId);
+    return projection.entries.get(entryId) ?? null;
+  }
+
   async listMemoryEntries(
     agentId: string,
     options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
@@ -951,6 +959,7 @@ export class AgentEventStore {
       v: 1,
       id: sessionId,
       members,
+      goal: renamed?.goal ?? created?.goal ?? existing?.goal,
       createdAt: existing?.createdAt ?? created?.createdAt ?? latest!.createdAt,
       title: renamed?.title ?? created?.title ?? existing?.title ?? null,
       name: renamed?.title ?? created?.title ?? existing?.name,
@@ -987,6 +996,8 @@ export class AgentEventStore {
           entry = {
             id: sessionId,
             title: event.title,
+            members: event.members?.slice() ?? [],
+            goal: event.goal,
             createdAt: event.createdAt,
             updatedAt: event.createdAt,
             messageCount: entry?.messageCount ?? 0,
@@ -1212,6 +1223,7 @@ function updateConversationIndexEntry(
   };
   if (event.type === 'session.renamed') {
     next.title = event.title;
+    next.goal = event.goal ?? next.goal;
   }
   if (
     event.type === 'user_message.created'
@@ -1231,6 +1243,8 @@ function conversationIndexEntryFromReplayState(
   return {
     id: sessionId,
     title: state.session.title,
+    members: state.session.members.slice(),
+    goal: state.session.goal,
     createdAt: state.session.createdAt,
     updatedAt: state.session.updatedAt,
     messageCount: Object.keys(state.messages).length,
@@ -1664,6 +1678,7 @@ function agentIdFromEvents(events: readonly AgentEvent[]): string | null {
 }
 
 function principalsFromEvent(event: AgentEvent): AgentPrincipal[] {
+  if (event.type === 'session.created') return event.members?.slice() ?? [];
   if (event.actor.type === 'user') return [{ type: 'user', userId: event.actor.userId }];
   if (event.actor.type === 'agent') return [{ type: 'agent', agentId: event.actor.agentId }];
   return [];

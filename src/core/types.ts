@@ -1,4 +1,6 @@
 import type { AgentRenderProjection } from './agentRenderProjection';
+import type { AgentUserQuestionPendingView } from './agentTypes';
+import type { AgentPrincipal } from './agentEventLog';
 import type { CaptureNodeMetadata } from './launcher/sources';
 
 export type NodeId = string;
@@ -664,11 +666,14 @@ export interface SearchHit {
 export interface AgentConversation {
   conversationId: string;
   renderProjection: AgentRenderProjection;
+  pendingUserQuestion?: AgentUserQuestionPendingView | null;
 }
 
 export interface AgentConversationListMeta {
   id: string;
   title: string | null;
+  members: AgentPrincipal[];
+  goal?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -695,12 +700,14 @@ export interface AgentMemoryEntryView {
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';
+export type AgentMemoryIsolation = 'global' | 'isolated' | 'read-only-global';
 
 export interface AgentRuntimeSettings {
   permissionMode: AgentPermissionMode;
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
+  memoryIsolation: AgentMemoryIsolation;
   additionalSkillDirectories: string[];
   additionalAgentDirectories: string[];
   providerTimeoutMs: number | null;
@@ -716,6 +723,7 @@ export interface AgentRuntimeSettingsInput {
   automaticSkillsEnabled?: boolean;
   slashSkillsEnabled?: boolean;
   compactEnabled?: boolean;
+  memoryIsolation?: AgentMemoryIsolation;
   additionalSkillDirectories?: string[];
   additionalAgentDirectories?: string[];
   providerTimeoutMs?: number | null;

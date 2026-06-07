@@ -59,10 +59,11 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
 - **Compaction** — manual / automatic / reactive + tool-output slimming + recent-file
   restore; `compaction.completed` already records a summary over a **retained**
   range (the distillation backbone).
-- **Skills** — discovery + invocation from `user` / `project` / additional / `dynamic`
-  sources; path-conditional; embedded shell; `allowed-tools` run-scoped preapproval;
-  `model`/`effort` override; `context: fork`. **Registry startup-cached; no `built-in`;
-  no authoring** (`docs/spec/agent-skills.md`).
+- **Skills** — discovery + invocation from `built-in` / `user` / `project` /
+  additional / `dynamic` sources; path-conditional; embedded shell; `allowed-tools`
+  run-scoped preapproval; `model`/`effort` override; `context: fork`; slash-only
+  built-in `/skillify`; governed file-tool self-authoring with hot-reload and
+  `skill.*` audit events (`docs/spec/agent-skills.md`).
 - **Permissions** — `allow | ask | deny` + platform hard blocks + bash classifier +
   ask resolver + approval UI + permission events (#60,
   `docs/spec/agent-tool-permissions.md`). Session-scoped allow rules remain
@@ -71,10 +72,10 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
   (`docs/spec/agent-subagent-runtime-plan.md`).
 
-**Not shipped (the build surface):** memory emission/retrieval; DM/Channel UX and
-routing; hook policy/execution; the config tool / runtime_status / doctor; skill
-authoring; `ask_user_question`; durable multi-agent registry/coordinator; a unified
-visible task panel.
+**Not shipped (the remaining build surface):** prompt-only hook policy/execution;
+config recovery/rollback; background task panel + notifications + needs-input;
+memory v2 extraction/consolidation; skill curation; durable multi-agent
+registry/coordinator; a unified visible task panel.
 
 ## Execution policy — pre-release clean cut
 
@@ -155,9 +156,9 @@ list — `src/core/types.ts`, `commands.ts`, `agentEventLog.ts`):
   **no stored `kind`** (F2).
 - `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources` down-pointer (incl. `runId`/`eventId` for invalidation; [[agent-data-model]]).
 - `MessageEvent.role` narrowed to `user | assistant`; `tool_result` events move to the run-log vocabulary; `MessageEvent.forwarded` provenance (`actor` stays native speaker) ([[agent-data-model]]).
-- `MemoryEntry` schema reserved (`memory.entry_added/...`) + `originWorkspace` +
-  isolation tier + `status: active|invalidated`; the runtime memory-append API is
-  still M1 implementation work ([[agent-data-model]]).
+- `MemoryEntry` schema (`memory.entry_added/...`) + `originWorkspace` +
+  isolation tier + `status: active|invalidated`; M1 implements the runtime-owned
+  memory append/retrieval surface, while extraction/consolidation stays M2+.
 - Canonical `tool.permission.*` names + request-id join (reconcile the `checked/resolved` + `approval.*` dual-track; [[agent-tool-permissions-hardening]]).
 - `'built-in'` on `SkillDefinition.source` ([[agent-skills-authoring]]).
 - Pending-interaction types for `user_question.*` ([[agent-ask-user-question-tool]]).

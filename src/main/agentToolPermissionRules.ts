@@ -26,7 +26,13 @@ export type AgentToolActionKind =
   | 'external.message.send'
   | 'task.stop'
   | 'agent.memory.manage'
+  | 'agent.user_question.ask'
+  | 'agent.runtime.status'
+  | 'agent.config.read'
+  | 'agent.config.write'
+  | 'agent.doctor.run'
   | 'agent.skill.invoke'
+  | 'agent.skill.write'
   | 'agent.subagent.spawn'
   | 'agent.subagent.status'
   | 'agent.subagent.send'
@@ -147,7 +153,13 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'external.message.send',
   'task.stop',
   'agent.memory.manage',
+  'agent.user_question.ask',
+  'agent.runtime.status',
+  'agent.config.read',
+  'agent.config.write',
+  'agent.doctor.run',
   'agent.skill.invoke',
+  'agent.skill.write',
   'agent.subagent.spawn',
   'agent.subagent.status',
   'agent.subagent.send',
@@ -243,10 +255,14 @@ const KNOWN_TOOL_NAMES = new Set<string>([
   'agent_send',
   'agent_status',
   'agent_stop',
+  'ask_user_question',
   'bash',
+  'config',
+  'doctor',
   'file_edit',
   'file_write',
   'memory',
+  'runtime_status',
   'node_create',
   'node_delete',
   'node_edit',
@@ -261,6 +277,8 @@ const PLATFORM_HARD_BLOCK_ACTIONS = new Set<AgentToolActionKind>([
 
 const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
   ...PLATFORM_HARD_BLOCK_ACTIONS,
+  'agent.config.write',
+  'agent.skill.write',
   'agent.subagent.spawn',
   'shell.unknown',
 ]);
@@ -268,7 +286,7 @@ const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
 const BEHAVIOR_ORDER: readonly GlobalToolPermissionDecision[] = ['deny', 'ask', 'allow'];
 
 export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPermissionConfig {
-  if (isGlobalToolPermissionConfig(input)) return input;
+  if (isGlobalToolPermissionConfig(input)) return parsePrevalidatedGlobalToolPermissionConfig(input);
   const settings = isRecord(input) ? input as GlobalToolPermissionSettings : {};
   const permissions = isRecord(settings.permissions) ? settings.permissions : {};
   const rules: ParsedGlobalToolPermissionRule[] = [];
@@ -292,6 +310,34 @@ export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPer
     }
   }
 
+  return { rules, diagnostics };
+}
+
+function parsePrevalidatedGlobalToolPermissionConfig(input: GlobalToolPermissionConfig): GlobalToolPermissionConfig {
+  const rules: ParsedGlobalToolPermissionRule[] = [];
+  const diagnostics: GlobalToolPermissionRuleDiagnostic[] = [];
+  for (const candidate of input.rules) {
+    if (!isRecord(candidate) || typeof candidate.ruleValue !== 'string' || !isGlobalToolPermissionDecision(candidate.decision)) {
+      diagnostics.push({
+        ruleValue: isRecord(candidate) && 'ruleValue' in candidate ? String(candidate.ruleValue) : String(candidate),
+        decision: isRecord(candidate) && 'decision' in candidate && isGlobalToolPermissionDecision(candidate.decision)
+          ? candidate.decision
+          : 'ask',
+        code: 'invalid_rule',
+        message: 'Permission rule entries must be parsed from a valid rule string.',
+      });
+      continue;
+    }
+    const parsed = parseGlobalToolPermissionRule(candidate.ruleValue, candidate.decision);
+    if ('diagnostic' in parsed) {
+      diagnostics.push(parsed.diagnostic);
+    } else {
+      rules.push({
+        ...parsed.rule,
+        updatedAt: typeof candidate.updatedAt === 'number' ? candidate.updatedAt : undefined,
+      });
+    }
+  }
   return { rules, diagnostics };
 }
 
@@ -473,6 +519,10 @@ function sourceRank(source: GlobalToolPermissionResolution['source']): number {
 
 function isGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {
   return isRecord(value) && Array.isArray(value.rules) && Array.isArray(value.diagnostics);
+}
+
+function isGlobalToolPermissionDecision(value: unknown): value is GlobalToolPermissionDecision {
+  return value === 'allow' || value === 'ask' || value === 'deny';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

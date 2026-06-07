@@ -2098,6 +2098,17 @@ to the current projection; compaction preserves visible entry ids, facts,
 sources, status, and `createdAt`, but drops superseded intermediate mutation
 events.
 
+Each entry records `originWorkspace` when a local file root is available and
+keeps `sources` down-pointers to the conversation/run/message/event that created
+it. Runtime setting `agent.runtime.memoryIsolation` controls retrieval and
+write behavior:
+
+- `global` (default): read and write the agent's full memory pool.
+- `isolated`: read only entries whose `originWorkspace` matches the current
+  workspace and write new entries with that origin.
+- `read-only-global`: read the global pool but reject `remember` writes, so the
+  current workspace cannot add durable facts to the shared pool.
+
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
 the active projection. Reminder retrieval ranks by memory-specific relevance
 (phrase/term overlap) and backfills with latest active facts so stale ids remain
@@ -2122,28 +2133,31 @@ projection:
 
 ## Self-Maintenance Controls
 
-Canonical contracts for `runtime_status`, the cc-2.1-style `config` tool,
-doctor workflow, and controlled skill-maintenance workflows live in
-[`../plans/agent-self-modification.md`](../plans/agent-self-modification.md).
-
 Runtime control tools are not file tools:
 
 - `runtime_status` and doctor diagnostics are read-only and must redact secrets.
 - `config` reads when `value` is omitted and writes when `value` is present,
   matching cc-2.1's small `ConfigTool` shape.
-- `config` writes are ask-gated, whitelisted, versioned changes through
-  runtime-owned write paths. Review/approval cards are UI around the permission
-  request, not a separate model-facing tool.
+- `config` writes are ask-gated, whitelisted, audited changes through
+  runtime-owned write paths. The current write whitelist is:
+  `agent.runtime.compactEnabled`, `agent.runtime.memoryIsolation`,
+  `agent.runtime.automaticSkillsEnabled`, `agent.runtime.slashSkillsEnabled`,
+  `agent.runtime.disabledSkills`, `agent.runtime.disabledAgents`,
+  provider retry/timeout/cache settings. Review/approval cards are UI around the
+  permission request, not a separate model-facing tool.
 - The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
   settings, permission config, hook config, skill registry metadata, or
   last-known-good recovery state.
-- Skill maintenance should not add a separate model-facing CRUD tool family in
-  v1. It should follow cc-2.1's approach: `/skillify` or natural-language skill
-  edit workflows produce/review content, then use existing `file_write` or
-  `file_edit`.
+- Skill maintenance does not add a separate model-facing CRUD tool family in
+  v1. It follows cc-2.1's smaller surface: `/skillify` produces/reviews content,
+  then uses existing `file_write` or `file_edit`.
 - The file-tool gateway must classify writes under `.agents/skills/**` as
-  skill-content writes instead of generic document edits, attaching permission,
-  validation, provenance, snapshot, rollback, and event-log behavior.
+  skill-content writes instead of generic document edits. These writes use
+  permission action `agent.skill.write`, cannot be globally always-allowed,
+  validate frontmatter/support files, reject risky `allowed-tools` escalation,
+  carry rollback metadata in tool details, emit `skill.created` /
+  `skill.patched` / `skill.replaced` audit events on success, and hot-reload the
+  skill registry.
 
 ## Mapping to Current Lin Commands
 

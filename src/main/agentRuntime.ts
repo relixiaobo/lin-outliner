@@ -32,6 +32,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
+  type AgentUserQuestionPendingView,
   LIN_AGENT_EVENT_CHANNEL,
   type AgentImageAttachmentInput,
   type AgentMessageAttachmentInput,
@@ -42,6 +43,7 @@ import {
   type AgentApprovalRequestView,
   type AgentApprovalResolutionScope,
   type AgentUserViewContext,
+  type AskUserQuestionResult,
   type ImageContent,
   type TextContent,
   type Usage,
@@ -54,6 +56,7 @@ import {
   getAgentEventActivePath,
   getAgentEventRuntimeTranscriptPath,
   type AgentActor,
+  type AgentCompactionSourceRange,
   type AgentCompactionTrigger,
   type AgentEvent,
   type AgentEventMessageRecord,
@@ -63,8 +66,11 @@ import {
   type AgentMemorySource,
   type AgentPayloadRef,
   type AgentPersistedContent,
+  type AgentPrincipal,
   type AgentRunFingerprint,
   type AgentRunTrigger,
+  type AgentUserQuestionAnswer,
+  type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
 import {
   nodeReferenceMarkersToText,
@@ -74,7 +80,7 @@ import {
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
-import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
 import {
@@ -96,6 +102,7 @@ import { AgentPastChatsService } from './agentPastChats';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
+  updateAgentRuntimeSettings,
   getProviderApiKey,
   providerStreamOptionsFromRuntimeSettings,
   type AgentProviderRuntimeConfig,
@@ -116,6 +123,7 @@ import {
   type AgentSubagentRestoredRun,
   type AgentSubagentRunSnapshot,
 } from './agentSubagents';
+import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import {
   evaluateAgentToolPermission,
@@ -173,6 +181,13 @@ import type {
   AgentSlashCommandView,
 } from '../core/types';
 import type { AgentMemoryToolRuntime } from './agentMemoryTool';
+import type { AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
+import {
+  normalizeRuntimeSettingPatch,
+  readRuntimeSetting,
+  type AgentSelfMaintenanceRuntime,
+  type DoctorDiagnostic,
+} from './agentSelfMaintenanceTools';
 import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
@@ -215,6 +230,7 @@ const MAX_ATTACHMENT_NAME_LENGTH = 180;
 const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
 const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
+const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
@@ -254,6 +270,16 @@ interface AgentToolApprovalResolution {
   alwaysAllowRule?: string;
 }
 
+interface AgentPendingUserQuestion {
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  requestId: string;
+  request: AgentUserQuestionRequestView;
+  resolve?: (result: AskUserQuestionResult) => void;
+  reject?: (error: unknown) => void;
+}
+
 interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   assistantMessageId: string | null;
   assistantText: string;
@@ -264,6 +290,8 @@ type RendererProjectionDomainEvent = Extract<AgentDomainEvent, { lane: 'renderer
 type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'approval_request' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'approval_resolved' }>, 'conversationId' | 'timestamp'>
+  | Omit<Extract<AgentRuntimeEvent, { type: 'user_question_request' }>, 'conversationId' | 'timestamp'>
+  | Omit<Extract<AgentRuntimeEvent, { type: 'user_question_resolved' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'closed' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'error' }>, 'conversationId' | 'timestamp'>;
 
@@ -316,6 +344,7 @@ export class AgentRuntime {
     alwaysAllowRule?: string;
     resolve: (resolution: AgentToolApprovalResolution) => void;
   }>();
+  private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextSessionId = 1;
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
@@ -343,7 +372,7 @@ export class AgentRuntime {
         session,
         prompt,
         summary,
-        compactedThroughMessageId,
+        source,
         trigger,
         preservedMessages,
       ) => (
@@ -352,7 +381,7 @@ export class AgentRuntime {
           session,
           prompt,
           summary,
-          compactedThroughMessageId,
+          source,
           trigger,
           preservedMessages,
         )
@@ -383,18 +412,7 @@ export class AgentRuntime {
   }
 
   async restoreLatestConversation() {
-    for (const conversation of await this.listConversations()) {
-      try {
-        return await this.restoreConversation(conversation.id);
-      } catch (error) {
-        console.warn(
-          `Skipping unrestorable agent conversation ${conversation.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-    return this.createConversation();
+    return this.restoreOrCreateDefaultDm();
   }
 
   async restoreConversation(conversationId: string) {
@@ -405,13 +423,35 @@ export class AgentRuntime {
     return this.conversationResponse(sessionId, session);
   }
 
+  private async restoreOrCreateDefaultDm() {
+    const sessionId = this.defaultDmConversationId();
+    let eventState = await this.loadEventState(sessionId);
+    if (!eventState.session) {
+      eventState = createEmptyAgentEventReplayState();
+      const events = this.buildEvents(eventState, sessionId, [{
+        type: 'session.created',
+        actor: systemActor(),
+        title: this.agentIdentity.displayName,
+        members: this.defaultConversationMembers(),
+      }]);
+      await this.getEventStore().appendEvents(sessionId, events);
+      for (const event of events) appendAgentEventToReplayState(eventState, event);
+      this.publishPersistedEvents(sessionId, events);
+    }
+    const session = await this.createSessionWithEventState(eventState);
+    return this.conversationResponse(sessionId, session);
+  }
+
   async createConversation() {
-    const sessionId = this.createSessionId();
+    const sessionId = this.createChannelId();
     const eventState = createEmptyAgentEventReplayState();
+    const title = normalizeSessionTitle('');
     const created = this.buildEvents(eventState, sessionId, [{
       type: 'session.created',
       actor: systemActor(),
-      title: 'Untitled',
+      title,
+      members: this.defaultConversationMembers(),
+      goal: title,
     }]);
     await this.getEventStore().appendEvents(sessionId, created);
     for (const event of created) appendAgentEventToReplayState(eventState, event);
@@ -641,6 +681,9 @@ export class AgentRuntime {
 
   async renameConversation(conversationId: string, title: string) {
     const sessionId = sessionIdFromConversationId(conversationId);
+    if (this.isDefaultDmSessionId(sessionId)) {
+      throw new Error('The canonical agent DM cannot be renamed.');
+    }
     const normalized = normalizeSessionTitle(title);
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -648,6 +691,7 @@ export class AgentRuntime {
         type: 'session.renamed',
         actor: systemActor(),
         title: normalized,
+        goal: normalized,
       }]);
       this.emitProjection(sessionId, 'session_renamed');
       return eventStateToMeta(session.eventState);
@@ -658,6 +702,7 @@ export class AgentRuntime {
       type: 'session.renamed',
       actor: systemActor(),
       title: normalized,
+      goal: normalized,
     }]);
     await this.getEventStore().appendEvents(sessionId, events);
     for (const event of events) appendAgentEventToReplayState(eventState, event);
@@ -667,8 +712,12 @@ export class AgentRuntime {
 
   async deleteConversation(conversationId: string) {
     const sessionId = sessionIdFromConversationId(conversationId);
+    if (this.isDefaultDmSessionId(sessionId)) {
+      throw new Error('The canonical agent DM cannot be deleted.');
+    }
     const session = this.sessions.get(sessionId);
     if (session) {
+      await this.clearPendingUserQuestionsForSession(sessionId, 'conversation_deleted');
       session.agent.abort();
       session.unsubscribe?.();
       clearPendingProjection(session);
@@ -719,7 +768,7 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      const memoryReminder = await this.buildMemoryReminder(messageText);
+      const memoryReminder = await this.buildMemoryReminder(messageText, session);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
         memoryReminder,
@@ -873,7 +922,7 @@ export class AgentRuntime {
     session.queuedFollowUpSkillListingReservation = skillListingReservation;
     const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
     session.agent.followUp(buildUserPromptMessage(text, [], {
-      memoryReminder: await this.buildMemoryReminder(text),
+      memoryReminder: await this.buildMemoryReminder(text, session),
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder,
       skillListingReminder: skillListingReservation?.text ?? null,
@@ -924,6 +973,8 @@ export class AgentRuntime {
     const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    void this.clearPendingUserQuestionsForSession(sessionId, 'conversation_stopped')
+      .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
     session.agent.abort();
     session.skillRuntime.resetRunPermissionRules();
     this.emitProjection(sessionId, 'stop_requested');
@@ -938,13 +989,17 @@ export class AgentRuntime {
     this.userViewContextReminderTracker.reset(sessionId);
     void (async () => {
       await this.clearPendingApprovalsForSession(sessionId, session);
+      await this.clearPendingUserQuestionsForSession(sessionId, 'conversation_reset');
+      const previousSession = session.eventState.session;
       await this.getEventStore().deleteConversation(sessionId);
       this.debugProjectionCache.delete(sessionId);
       const eventState = createEmptyAgentEventReplayState();
       const events = this.buildEvents(eventState, sessionId, [{
         type: 'session.created',
         actor: systemActor(),
-        title: 'Untitled',
+        title: previousSession?.title ?? (this.isDefaultDmSessionId(sessionId) ? this.agentIdentity.displayName : 'Untitled'),
+        members: previousSession?.members.slice() ?? this.defaultConversationMembers(),
+        goal: previousSession?.goal,
       }]);
       await this.getEventStore().appendEvents(sessionId, events);
       for (const event of events) appendAgentEventToReplayState(eventState, event);
@@ -970,6 +1025,8 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     void this.clearPendingApprovalsForSession(sessionId, session)
+      .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
+    void this.clearPendingUserQuestionsForSession(sessionId, 'conversation_closed')
       .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
     session.agent.abort();
     session.unsubscribe?.();
@@ -1002,6 +1059,12 @@ export class AgentRuntime {
     if (resolvedEvents.length > 0) {
       await this.appendSessionEvents(sessionId, session, resolvedEvents);
       this.emitProjection(sessionId, 'approval.resolved');
+    }
+  }
+
+  private async clearPendingUserQuestionsForSession(sessionId: string, reason: string) {
+    for (const pending of [...this.pendingUserQuestions.values()]) {
+      if (pending.sessionId === sessionId) await this.cancelUserQuestion(pending.requestId, reason);
     }
   }
 
@@ -1115,6 +1178,8 @@ export class AgentRuntime {
             service: this.getPastChatsService(),
             currentConversationId: () => sessionId,
           },
+          askUserQuestion: this.createAskUserQuestionRuntime(() => sessionId, () => sessionRef.current),
+          selfMaintenance: this.createSelfMaintenanceRuntime(() => sessionId, () => sessionRef.current),
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -1202,13 +1267,18 @@ export class AgentRuntime {
     let eventState = await this.loadEventState(sessionId);
     if (!eventState.session) {
       eventState = createEmptyAgentEventReplayState();
+      const isDefaultDm = this.isDefaultDmSessionId(sessionId);
+      const title = isDefaultDm ? this.agentIdentity.displayName : 'Untitled';
       const events = this.buildEvents(eventState, sessionId, [{
         type: 'session.created',
         actor: systemActor(),
-        title: 'Untitled',
+        title,
+        members: this.defaultConversationMembers(),
+        goal: isDefaultDm ? undefined : title,
       }]);
       await this.getEventStore().appendEvents(sessionId, events);
       for (const event of events) appendAgentEventToReplayState(eventState, event);
+      this.publishPersistedEvents(sessionId, events);
     }
     await this.createSessionWithEventState(eventState);
     return this.sessions.get(sessionId)!;
@@ -1266,6 +1336,8 @@ export class AgentRuntime {
         service: this.getPastChatsService(),
         currentConversationId: () => session.eventState.session?.id ?? null,
       },
+      askUserQuestion: this.createAskUserQuestionRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
+      selfMaintenance: this.createSelfMaintenanceRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
     });
   }
 
@@ -1697,6 +1769,33 @@ export class AgentRuntime {
     return `lin-agent-${randomUUID()}`;
   }
 
+  private defaultDmConversationId() {
+    return `lin-agent-dm-${hashJson({
+      userId: LOCAL_USER_ID,
+      agentId: this.agentIdentity.agentId,
+    }).slice(0, 16)}`;
+  }
+
+  private createChannelId() {
+    return `lin-agent-channel-${randomUUID()}`;
+  }
+
+  private isDefaultDmSessionId(sessionId: string) {
+    return sessionId === this.defaultDmConversationId();
+  }
+
+  private userPrincipal(): AgentPrincipal {
+    return { type: 'user', userId: LOCAL_USER_ID };
+  }
+
+  private agentPrincipal(): AgentPrincipal {
+    return { type: 'agent', agentId: this.agentIdentity.agentId };
+  }
+
+  private defaultConversationMembers(): AgentPrincipal[] {
+    return [this.userPrincipal(), this.agentPrincipal()];
+  }
+
   private createMessageId(prefix: string) {
     return `${prefix}-${randomUUID()}`;
   }
@@ -1747,6 +1846,7 @@ export class AgentRuntime {
     return {
       conversationId: conversationIdFromSessionId(sessionId),
       renderProjection: this.renderProjection(session),
+      pendingUserQuestion: this.pendingUserQuestionView(sessionId, session),
     };
   }
 
@@ -1877,6 +1977,26 @@ export class AgentRuntime {
       });
       return;
     }
+    if (input.type === 'user_question_request') {
+      this.emit({
+        type: 'user_question_request',
+        conversationId,
+        requestId: input.requestId,
+        question: input.question,
+        timestamp,
+      });
+      return;
+    }
+    if (input.type === 'user_question_resolved') {
+      this.emit({
+        type: 'user_question_resolved',
+        conversationId,
+        requestId: input.requestId,
+        result: input.result,
+        timestamp,
+      });
+      return;
+    }
     this.emit({
       type: 'approval_resolved',
       conversationId,
@@ -1906,38 +2026,374 @@ export class AgentRuntime {
     getSession: () => AgentSessionState | null,
   ): AgentMemoryToolRuntime {
     return {
-      list: (options) => this.getEventStore().queryMemoryEntries(this.agentIdentity.agentId, {
-        query: options.query,
-        includeInvalidated: options.includeInvalidated,
-        limit: options.limit,
-      }),
+      list: async (options) => {
+        const session = getSession();
+        const result = await this.getEventStore().queryMemoryEntries(this.agentIdentity.agentId, {
+          query: options.query,
+          includeInvalidated: options.includeInvalidated,
+          limit: options.limit,
+          originWorkspace: this.memoryOriginWorkspaceFilter(session),
+        });
+        return {
+          entries: result.entries,
+          totalEntries: result.totalEntries,
+        };
+      },
       remember: (fact) => {
         const session = getSession();
         if (!session) throw new Error('Agent session is not ready.');
+        if (this.memoryIsolation(session) === 'read-only-global') {
+          throw new Error('Memory writes are disabled while agent.runtime.memoryIsolation is read-only-global.');
+        }
         return this.getEventStore().addMemoryEntry(this.agentIdentity.agentId, {
           fact,
-          originWorkspace: this.memoryOriginWorkspace(),
+          originWorkspace: this.memoryOriginWorkspaceForSession(session),
           sources: this.memorySources(getSessionId(), session),
         });
       },
-      update: (memoryId, fact) => this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact }),
-      forget: (memoryId) => this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'agent'),
+      update: async (memoryId, fact) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        await this.assertMemoryMutationAllowed(session, memoryId);
+        return this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact });
+      },
+      forget: async (memoryId) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        await this.assertMemoryMutationAllowed(session, memoryId);
+        return this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'agent');
+      },
     };
   }
 
-  private async buildMemoryReminder(query: string): Promise<string | null> {
+  private createAskUserQuestionRuntime(
+    getSessionId: () => string,
+    getSession: () => AgentSessionState | null,
+  ): AgentAskUserQuestionRuntime {
+    return {
+      ask: (toolCallId, request, signal) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        return this.askUserQuestion(getSessionId(), session, toolCallId, request, signal);
+      },
+    };
+  }
+
+  private createSelfMaintenanceRuntime(
+    getSessionId: () => string,
+    getSession: () => AgentSessionState | null,
+  ): AgentSelfMaintenanceRuntime {
+    return {
+      runtimeStatus: async () => {
+        const providerConfig = await this.getActiveProviderConfig();
+        return {
+          agentId: this.agentIdentity.agentId,
+          conversationId: conversationIdFromSessionId(getSessionId()),
+          provider: providerConfig
+            ? {
+                configured: true,
+                providerId: providerConfig.providerId,
+                modelId: providerConfig.modelId,
+                reasoningLevel: providerConfig.reasoningLevel,
+              }
+            : { configured: false },
+          runtime: await this.getRuntimeSettings(),
+        };
+      },
+      readConfig: async (setting) => ({
+        operation: 'read',
+        setting,
+        value: readRuntimeSetting(await this.getRuntimeSettings(), setting),
+      }),
+      writeConfig: async (setting, value) => {
+        const session = getSession();
+        if (!session) throw new Error('Agent session is not ready.');
+        const before = readRuntimeSetting(await this.getRuntimeSettings(), setting);
+        const patch = normalizeRuntimeSettingPatch(setting, value);
+        await updateAgentRuntimeSettings(patch);
+        const runtimeSettings = await this.refreshRuntimeSettings(session);
+        const after = readRuntimeSetting(runtimeSettings, setting);
+        await this.appendSessionEvents(getSessionId(), session, [{
+          type: 'config.change',
+          actor: this.agentActor(),
+          runId: this.activeRunId(session) ?? undefined,
+          changeId: `config-change-${randomUUID()}`,
+          status: 'applied',
+          change: {
+            target: 'runtime',
+            key: setting,
+            before,
+            after,
+            reason: 'config tool',
+          },
+        }]);
+        return { operation: 'write', setting, value: after };
+      },
+      doctor: async () => {
+        const diagnostics: DoctorDiagnostic[] = [];
+        const providerConfig = await this.getActiveProviderConfig();
+        const runtimeSettings = await this.getRuntimeSettings();
+        if (!providerConfig) {
+          diagnostics.push({
+            id: 'provider.not_configured',
+            severity: 'error',
+            message: 'No usable provider is configured.',
+            recommendation: 'Configure a provider and credential in Settings before starting agent runs.',
+          });
+        }
+        if (runtimeSettings.additionalSkillDirectories.length > 0) {
+          diagnostics.push({
+            id: 'skills.additional_directories',
+            severity: 'info',
+            message: `${runtimeSettings.additionalSkillDirectories.length} additional skill directories are configured.`,
+          });
+        }
+        if (runtimeSettings.disabledSkills?.length) {
+          diagnostics.push({
+            id: 'skills.disabled',
+            severity: 'warning',
+            message: `${runtimeSettings.disabledSkills.length} skills are disabled.`,
+            recommendation: 'Use config reads to inspect disabled skill names before relying on skills.',
+          });
+        }
+        if (runtimeSettings.disabledAgents?.length) {
+          diagnostics.push({
+            id: 'agents.disabled',
+            severity: 'warning',
+            message: `${runtimeSettings.disabledAgents.length} subagents are disabled.`,
+          });
+        }
+        return {
+          ok: diagnostics.every((diagnostic) => diagnostic.severity !== 'error'),
+          diagnostics,
+        };
+      },
+    };
+  }
+
+  private async askUserQuestion(
+    sessionId: string,
+    session: AgentSessionState,
+    toolCallId: string,
+    request: AgentUserQuestionRequestView,
+    signal?: AbortSignal,
+  ): Promise<AskUserQuestionResult> {
+    const runId = this.activeRunId(session);
+    if (!runId) throw new Error('Cannot ask the user a question outside an active run.');
+    if ([...this.pendingUserQuestions.values()].some((pending) => pending.sessionId === sessionId && pending.runId === runId)) {
+      throw new Error('A user question is already pending for this run.');
+    }
+
+    const requestId = `question-${randomUUID()}`;
+    await this.appendSessionEvents(sessionId, session, [{
+      type: 'user_question.requested',
+      actor: this.agentActor(),
+      runId,
+      requestId,
+      toolCallId,
+      request,
+    }]);
+
+    return new Promise<AskUserQuestionResult>((resolve, reject) => {
+      const pending: AgentPendingUserQuestion = {
+        sessionId,
+        runId,
+        toolCallId,
+        requestId,
+        request,
+        resolve,
+        reject,
+      };
+      this.pendingUserQuestions.set(requestId, pending);
+      this.emitConversationRuntimeEvent(sessionId, {
+        type: 'user_question_request',
+        requestId,
+        question: this.userQuestionView(sessionId, pending),
+      });
+      this.emitProjection(sessionId, 'user_question.requested');
+      const abort = () => {
+        void this.cancelUserQuestion(requestId, 'aborted')
+          .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
+      };
+      if (signal?.aborted) {
+        abort();
+      } else {
+        signal?.addEventListener('abort', abort, { once: true });
+      }
+    });
+  }
+
+  async resolveUserQuestion(
+    conversationId: string,
+    requestId: string,
+    resultInput: unknown,
+  ) {
+    const sessionId = sessionIdFromConversationId(conversationId);
+    const session = await this.ensureSessionWithId(sessionId);
+    const pending = this.pendingUserQuestions.get(requestId) ?? this.pendingUserQuestionFromReplay(sessionId, session, requestId);
+    if (!pending || pending.sessionId !== sessionId) return { resolved: false };
+    const result = normalizeAskUserQuestionResult(requestId, pending.request, resultInput);
+    const validationError = this.validateUserQuestionResult(pending.request, result);
+    if (validationError) throw new Error(validationError);
+    const events: AgentEventInput[] = [{
+      type: 'user_question.answered',
+      actor: userActor(),
+      runId: pending.runId,
+      requestId,
+      result,
+    }];
+    if (!pending.resolve) events.push(this.replayedUserQuestionToolResultInput(session, pending, result));
+    await this.appendSessionEvents(sessionId, session, events);
+    this.pendingUserQuestions.delete(requestId);
+    this.emitConversationRuntimeEvent(sessionId, {
+      type: 'user_question_resolved',
+      requestId,
+      result,
+    });
+    this.emitProjection(sessionId, 'user_question.answered');
+    if (pending.resolve) {
+      pending.resolve(result);
+    }
+    return { resolved: true };
+  }
+
+  private validateUserQuestionResult(
+    request: AgentUserQuestionRequestView,
+    result: AskUserQuestionResult,
+  ): string | null {
+    const answers = new Map(result.answers.map((answer) => [answer.questionId, answer]));
+    for (const question of request.questions) {
+      if (question.required === false) continue;
+      const answer = answers.get(question.id);
+      if (!answer) return `Question ${question.id} is required.`;
+      const hasText = typeof answer.text === 'string' && answer.text.trim().length > 0;
+      const hasOptions = Array.isArray(answer.selectedOptionIds) && answer.selectedOptionIds.length > 0;
+      if (!hasText && !hasOptions) return `Question ${question.id} is required.`;
+    }
+    return null;
+  }
+
+  private replayedUserQuestionToolResultInput(
+    session: AgentSessionState,
+    pending: AgentPendingUserQuestion,
+    result: AskUserQuestionResult,
+  ): AgentEventInput {
+    const parentMessage = getAgentEventActivePath(session.eventState)
+      .find((message) => message.role === 'assistant'
+        && message.content.some((part) => part.type === 'toolCall' && part.id === pending.toolCallId));
+    if (!parentMessage) {
+      throw new Error(`Cannot resume replayed user question without parent tool call: ${pending.toolCallId}`);
+    }
+    const messageId = `tool-result-${pending.toolCallId}-${randomUUID()}`;
+    return {
+      type: 'tool_result.created',
+      actor: toolActor('ask_user_question', pending.toolCallId),
+      runId: pending.runId,
+      messageId,
+      parentMessageId: parentMessage.id,
+      toolCallId: pending.toolCallId,
+      toolName: 'ask_user_question',
+      content: [{ type: 'text', text: JSON.stringify({ ok: true, data: result }) }],
+      isError: false,
+      outputSummary: 'Answered user question.',
+    };
+  }
+
+  private async cancelUserQuestion(requestId: string, reason: string) {
+    const pending = this.pendingUserQuestions.get(requestId);
+    if (!pending) return;
+    this.pendingUserQuestions.delete(requestId);
+    const session = this.sessions.get(pending.sessionId);
+    if (session) {
+      await this.appendSessionEvents(pending.sessionId, session, [{
+        type: 'user_question.cancelled',
+        actor: systemActor(),
+        runId: pending.runId,
+        requestId,
+        reason,
+      }]);
+      this.emitProjection(pending.sessionId, 'user_question.cancelled');
+    }
+    this.emitConversationRuntimeEvent(pending.sessionId, {
+      type: 'user_question_resolved',
+      requestId,
+    });
+    pending.reject?.(new Error(`User question cancelled: ${reason}`));
+  }
+
+  private pendingUserQuestionView(
+    sessionId: string,
+    session: AgentSessionState,
+  ): AgentUserQuestionPendingView | null {
+    const live = [...this.pendingUserQuestions.values()].find((pending) => pending.sessionId === sessionId);
+    if (live) return this.userQuestionView(sessionId, live);
+    const replayed = Object.values(session.eventState.userQuestions)
+      .filter((question) => question.status === 'pending')
+      .sort((left, right) => left.createdAt - right.createdAt)[0];
+    return replayed ? this.userQuestionView(sessionId, {
+      sessionId,
+      runId: replayed.runId,
+      toolCallId: replayed.toolCallId,
+      requestId: replayed.requestId,
+      request: replayed.request,
+    }) : null;
+  }
+
+  private pendingUserQuestionFromReplay(
+    sessionId: string,
+    session: AgentSessionState,
+    requestId: string,
+  ): AgentPendingUserQuestion | null {
+    const record = session.eventState.userQuestions[requestId];
+    if (!record || record.status !== 'pending') return null;
+    return {
+      sessionId,
+      runId: record.runId,
+      toolCallId: record.toolCallId,
+      requestId,
+      request: record.request,
+    };
+  }
+
+  private userQuestionView(
+    sessionId: string,
+    pending: AgentPendingUserQuestion,
+  ): AgentUserQuestionPendingView {
+    return {
+      requestId: pending.requestId,
+      conversationId: conversationIdFromSessionId(sessionId),
+      runId: pending.runId,
+      toolCallId: pending.toolCallId,
+      request: pending.request,
+    };
+  }
+
+  private async buildMemoryReminder(query: string, session: AgentSessionState): Promise<string | null> {
     try {
       const relevant = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
         query,
         limit: 8,
+        originWorkspace: this.memoryOriginWorkspaceFilter(session),
       });
-      const latest = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, { limit: 8 });
+      const latest = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+        limit: 8,
+        originWorkspace: this.memoryOriginWorkspaceFilter(session),
+      });
       const entries = uniqueMemoryEntries([...relevant, ...latest]).slice(0, 8);
       return formatMemoryReminder(entries);
     } catch (error) {
       console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
+  }
+
+  private memoryIsolation(session: AgentSessionState): AgentRuntimeSettings['memoryIsolation'] {
+    return session.runtimeSettings.memoryIsolation ?? 'global';
+  }
+
+  private memoryOriginWorkspaceFilter(session: AgentSessionState | null): string | undefined {
+    if (!session || this.memoryIsolation(session) !== 'isolated') return undefined;
+    return this.memoryOriginWorkspaceForSession(session);
   }
 
   private memorySources(sessionId: string, session: AgentSessionState): AgentMemorySource[] {
@@ -1948,6 +2404,25 @@ export class AgentRuntime {
     if (runId) source.runId = runId;
     if (session.eventState.latestEventId) source.eventId = session.eventState.latestEventId;
     return [source];
+  }
+
+  private memoryOriginWorkspaceForSession(session: AgentSessionState): string | undefined {
+    if (this.memoryIsolation(session) === 'global') return this.memoryOriginWorkspace() ?? undefined;
+    return this.memoryOriginWorkspace() ?? '__no_workspace__';
+  }
+
+  private async assertMemoryMutationAllowed(session: AgentSessionState, memoryId: string) {
+    const isolation = this.memoryIsolation(session);
+    if (isolation === 'read-only-global') {
+      throw new Error('Memory writes are disabled while agent.runtime.memoryIsolation is read-only-global.');
+    }
+    if (isolation !== 'isolated') return;
+    const entry = await this.getEventStore().getMemoryEntry(this.agentIdentity.agentId, memoryId);
+    if (!entry) throw new Error(`Unknown memory entry: ${memoryId}`);
+    const workspace = this.memoryOriginWorkspaceForSession(session);
+    if (entry.originWorkspace !== workspace) {
+      throw new Error('Cannot mutate memory outside the current isolated workspace.');
+    }
   }
 
   private memoryOriginWorkspace(): string | undefined {
@@ -1981,13 +2456,17 @@ export class AgentRuntime {
   }
 
   private async listEventConversations(): Promise<AgentConversationListMeta[]> {
-    return (await this.getEventStore().listConversationIndexEntries()).map((entry) => ({
-      id: entry.id,
-      title: sanitizeSessionTitle(entry.title),
-      createdAt: entry.createdAt,
-      updatedAt: entry.updatedAt,
-      messageCount: entry.messageCount,
-    }));
+    return (await this.getEventStore().listConversationIndexEntries())
+      .filter((entry) => !!entry.goal)
+      .map((entry) => ({
+        id: entry.id,
+        title: sanitizeSessionTitle(entry.title),
+        members: entry.members.slice(),
+        goal: entry.goal,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        messageCount: entry.messageCount,
+      }));
   }
 
   private async loadEventState(sessionId: string): Promise<AgentEventReplayState> {
@@ -2235,7 +2714,7 @@ export class AgentRuntime {
     session: AgentSessionState,
     prompt: UserMessage,
     summary: string,
-    compactedThroughMessageId: string,
+    source: AgentCompactionSourceRange,
     trigger: 'manual' | 'auto' | 'reactive',
     preservedMessages: readonly AgentMessage[] = [],
   ) {
@@ -2255,7 +2734,7 @@ export class AgentRuntime {
         actor: systemActor(),
         messageId,
         summary,
-        compactedThroughMessageId,
+        source,
         trigger,
       },
       {
@@ -2658,14 +3137,17 @@ export class AgentRuntime {
     const activeRun = session.activeRun;
     const messageId = activeRun?.toolCallMessageIds.get(toolCallId) ?? findLatestAssistantMessageId(session.eventState);
     if (!messageId) return;
-    await this.appendSessionEvents(sessionId, session, [{
+    const events: AgentEventInput[] = [{
       type: isError ? 'tool_call.failed' : 'tool_call.completed',
       actor: toolActor(toolName, toolCallId),
       runId: this.activeRunId(session) ?? undefined,
       messageId,
       toolCallId,
       errorMessage: isError ? summarizeJson(result) : undefined,
-    }]);
+    }];
+    const skillAuditEvent = isError ? null : skillAuditEventFromToolResult(toolName, toolCallId, result);
+    if (skillAuditEvent) events.push(skillAuditEvent);
+    await this.appendSessionEvents(sessionId, session, events);
   }
 
   private async deriveRuntimePiMessages(
@@ -3368,6 +3850,8 @@ function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationL
   return {
     id: eventState.session.id,
     title: sanitizeSessionTitle(eventState.session.title),
+    members: eventState.session.members.slice(),
+    goal: eventState.session.goal,
     createdAt: eventState.session.createdAt,
     updatedAt: eventState.session.updatedAt,
     messageCount: Object.keys(eventState.messages).length,
@@ -3491,6 +3975,110 @@ function summarizeJson(value: unknown): string {
   }
 }
 
+function skillAuditEventFromToolResult(
+  toolName: string,
+  toolCallId: string,
+  result: unknown,
+): AgentEventInput | null {
+  if (toolName !== 'file_write' && toolName !== 'file_edit') return null;
+  const details = isRecord(result) && Object.hasOwn(result, 'details') ? result.details : result;
+  if (!isToolEnvelope(details) || !details.ok || details.tool !== toolName || !isRecord(details.data)) return null;
+  const skillWrite = parseAgentSkillWriteAudit(details.data.skillWrite);
+  if (!skillWrite) return null;
+  return {
+    type: skillAuditEventType(skillWrite.changeType),
+    actor: toolActor(toolName, toolCallId),
+    skillId: skillWrite.skillName,
+    source: skillWrite.source,
+    summary: `${skillWrite.changeType} ${skillWrite.relativePath} (${skillWrite.previousHash ?? 'new'} -> ${skillWrite.nextHash})`,
+  };
+}
+
+function skillAuditEventType(
+  changeType: AgentSkillWriteAudit['changeType'],
+): 'skill.created' | 'skill.patched' | 'skill.replaced' {
+  switch (changeType) {
+    case 'create':
+      return 'skill.created';
+    case 'replace':
+      return 'skill.replaced';
+    case 'patch':
+    case 'support-file-write':
+      return 'skill.patched';
+    default: {
+      const _exhaustive: never = changeType;
+      return _exhaustive;
+    }
+  }
+}
+
+function parseAgentSkillWriteAudit(value: unknown): AgentSkillWriteAudit | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.skillName !== 'string') return null;
+  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in' && value.source !== 'dynamic') return null;
+  if (typeof value.skillRoot !== 'string') return null;
+  if (typeof value.relativePath !== 'string') return null;
+  if (
+    value.changeType !== 'create'
+    && value.changeType !== 'patch'
+    && value.changeType !== 'replace'
+    && value.changeType !== 'support-file-write'
+  ) {
+    return null;
+  }
+  if (value.previousHash !== undefined && typeof value.previousHash !== 'string') return null;
+  if (typeof value.nextHash !== 'string') return null;
+  if (typeof value.previousBytes !== 'number' || typeof value.nextBytes !== 'number') return null;
+  return {
+    skillName: value.skillName,
+    source: value.source,
+    skillRoot: value.skillRoot,
+    relativePath: value.relativePath,
+    changeType: value.changeType,
+    previousHash: value.previousHash,
+    nextHash: value.nextHash,
+    previousBytes: value.previousBytes,
+    nextBytes: value.nextBytes,
+    warnings: Array.isArray(value.warnings)
+      ? value.warnings.filter((warning): warning is string => typeof warning === 'string')
+      : [],
+  };
+}
+
+function normalizeAskUserQuestionResult(
+  requestId: string,
+  request: AgentUserQuestionRequestView,
+  input: unknown,
+): AskUserQuestionResult {
+  const inputAnswers = isRecord(input) && Array.isArray(input.answers) ? input.answers : [];
+  const answersByQuestionId = new Map<string, unknown>();
+  for (const answer of inputAnswers) {
+    if (!isRecord(answer) || typeof answer.questionId !== 'string') continue;
+    answersByQuestionId.set(answer.questionId, answer);
+  }
+
+  const answers: AgentUserQuestionAnswer[] = [];
+  for (const question of request.questions) {
+    const raw = answersByQuestionId.get(question.id);
+    if (!isRecord(raw)) continue;
+    const answer: AgentUserQuestionAnswer = { questionId: question.id };
+    if (question.type === 'single_choice' || question.type === 'multi_choice') {
+      const allowed = new Set((question.options ?? []).map((option) => option.id));
+      const selected = Array.isArray(raw.selectedOptionIds)
+        ? raw.selectedOptionIds.filter((id): id is string => typeof id === 'string' && allowed.has(id))
+        : [];
+      answer.selectedOptionIds = question.type === 'single_choice' ? selected.slice(0, 1) : selected;
+    }
+    const text = typeof raw.text === 'string' ? raw.text.trim().slice(0, 4000) : '';
+    const notes = typeof raw.notes === 'string' ? raw.notes.trim().slice(0, 4000) : '';
+    if (text) answer.text = text;
+    if (notes) answer.notes = notes;
+    answers.push(answer);
+  }
+
+  return { requestId, answers };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -3553,7 +4141,7 @@ function systemActor(): AgentActor {
 }
 
 function userActor(): AgentActor {
-  return { type: 'user', userId: 'local-user' };
+  return { type: 'user', userId: LOCAL_USER_ID };
 }
 
 function toolActor(toolName: string, toolCallId: string): AgentActor {
@@ -3635,6 +4223,8 @@ function createConfiguredAgent(
     subagentRuntime?: AgentSubagentRuntime;
     memory?: AgentToolsOptions['memory'];
     pastChats?: AgentToolsOptions['pastChats'];
+    askUserQuestion?: AgentToolsOptions['askUserQuestion'];
+    selfMaintenance?: AgentToolsOptions['selfMaintenance'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: string[];
     disallowedTools?: string[];
@@ -3682,6 +4272,8 @@ function createConfiguredAgent(
         subagentRuntime: options.subagentRuntime,
         memory: options.memory,
         pastChats: options.pastChats,
+        askUserQuestion: options.askUserQuestion,
+        selfMaintenance: options.selfMaintenance,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,
       }),

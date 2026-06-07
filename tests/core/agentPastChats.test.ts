@@ -202,7 +202,7 @@ describe('agent past chats', () => {
           ...base(sessionId, 5, 'compaction.completed'),
           messageId: 'compact-root',
           summary: 'Focus ring choice was preserved.',
-          compactedThroughMessageId: 'assistant-before-compact',
+          source: { fromMessageId: 'user-before-compact', throughMessageId: 'assistant-before-compact' },
           trigger: 'manual',
         },
         {

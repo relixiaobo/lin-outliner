@@ -101,8 +101,11 @@ truth.
   - large-session regression coverage for checkpoint replay, indexes, render
     projection, and payload-bounded JSONL
 - [x] Agent skills, compaction, and subagents:
+  - immutable code-registered built-in skills, including slash-only `/skillify`
   - automatic and slash skill loading from `.agents/skills`
   - path-conditional and dynamically discovered skills with gitignore guards
+  - governed `.agents/skills/**` writes through normal file tools with
+    `agent.skill.write` permission, validation, rollback metadata, and hot reload
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
@@ -118,9 +121,17 @@ truth.
   - `memory` tool with list/remember/update/forget actions
   - bounded `<agent-memory>` turn reminder injection with relevance ranking and
     latest-entry backfill
+  - runtime `memoryIsolation` modes: global, isolated, and read-only-global
   - Settings Memory pane for list/edit/forget
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as `agent.memory.manage`
+- [x] Agent M1 self-maintenance and structured input:
+  - canonical DM restore plus user-created single-agent Channels
+  - `ask_user_question` tool with pending question persistence and renderer
+    resolution
+  - `runtime_status`, `config`, and `doctor` tools with permission-gated config
+    writes
+  - mixed-resolution compaction source ranges for replay/render/runtime context
 
 ## Next Milestone
 

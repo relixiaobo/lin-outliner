@@ -188,6 +188,26 @@ describe('agent skills', () => {
     expect(reminderText).toContain('<turn-context>visible node</turn-context>');
   });
 
+  test('ships skillify as a built-in slash-only authoring workflow', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-skillify-'));
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+
+    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
+    const skill = await runtime.getSkill('skillify');
+    const prompt = await createSlashSkillPrompt(runtime, '/skillify turn this workflow into a reusable skill', null);
+
+    expect(automaticListing).toBeNull();
+    expect(skill).toMatchObject({
+      name: 'skillify',
+      source: 'built-in',
+      modelInvocable: false,
+      userInvocable: true,
+    });
+    const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
+    expect(text).toContain('Skill authoring workflow');
+    expect(text).toContain('disable-model-invocation: true');
+  });
+
   test('records model and effort effects for slash and agent-invoked skills', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
@@ -365,6 +385,34 @@ describe('agent skills', () => {
 
     const listing = await runtime.buildSkillListingReminderText(200_000);
     expect(listing).toContain('external-demo');
+  });
+
+  test('loads code-registered built-in skills before mutable local skills', async () => {
+    const root = await createSkillFixture('floor-skill', {
+      frontmatter: ['description: Mutable shadow skill'],
+      body: 'Use mutable instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      builtInSkills: [{
+        name: 'floor-skill',
+        description: 'Built-in floor skill',
+        body: 'Use built-in instructions.',
+      }],
+    });
+
+    const skill = await runtime.getSkill('floor-skill');
+    const listing = await runtime.buildSkillListingReminderText(200_000);
+
+    expect(skill).toMatchObject({
+      name: 'floor-skill',
+      source: 'built-in',
+      skillFile: 'built-in/floor-skill/SKILL.md',
+    });
+    expect(skill?.body).toBe('Use built-in instructions.');
+    expect(listing).toContain('Built-in floor skill');
+    expect(listing).not.toContain('Mutable shadow skill');
   });
 
   test('re-lists a same-name skill when its resolved file identity changes', async () => {

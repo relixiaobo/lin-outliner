@@ -1318,6 +1318,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
 
     win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent, emitOAuthEvent, resolveOAuthLogin };
+    (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
     win.lin = {
       // The per-provider config opens as its own native window in the app; in tests
       // it is reached by navigating to ?surface=provider-config directly, so this
@@ -2410,10 +2411,10 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
         branches: null,
       };
       compactions[compaction.id] = {
-        compactedThroughMessageId: compaction.compactedThroughMessageId ?? messageId,
         createdAt: compaction.createdAt,
         id: compaction.id,
         messageId,
+        source: compaction.source ?? { fromMessageId: messageId, throughMessageId: messageId },
         summary: compaction.summary,
         trigger: compaction.trigger ?? 'manual',
       };

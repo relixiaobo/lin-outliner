@@ -16,6 +16,7 @@ import {
   type FileGrepData,
   type TaskStopData,
 } from '../../src/main/agentLocalTools';
+import { AgentSkillRuntime } from '../../src/main/agentSkills';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
@@ -483,6 +484,195 @@ describe('agent local tools', () => {
       });
       expect(updated.ok).toBe(true);
       expect(updated.data!.type).toBe('update');
+    });
+  });
+
+  test('file_write validates agent-authored skills and hot-reloads the registry', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const tools = createLocalTools({ workspace });
+      const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'draft-skill', 'SKILL.md');
+
+      const result = await (fileWrite.execute as any)('write-skill', {
+        file_path: skillFile,
+        content: [
+          '---',
+          'description: Draft skill for local authoring',
+          'disable-model-invocation: true',
+          'allowed-tools: Bash(git status:*), file_read',
+          '---',
+          'Use the draft workflow.',
+          '',
+        ].join('\n'),
+      });
+      const details = result.details as ToolEnvelope<{ skillWrite?: { changeType: string; skillName: string } }>;
+      const skill = await skillRuntime.getSkill('draft-skill');
+
+      expect(details.ok).toBe(true);
+      expect(details.data?.skillWrite).toMatchObject({
+        changeType: 'create',
+        skillName: 'draft-skill',
+      });
+      expect(details.instructions).toContain('registry has been reloaded');
+      expect(skill).toMatchObject({
+        name: 'draft-skill',
+        source: 'project',
+        modelInvocable: false,
+        userInvocable: true,
+      });
+      expect(skill?.body).toContain('Use the draft workflow.');
+    });
+  });
+
+  test('file_edit hot-reloads existing user-only skill content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'existing-skill', 'SKILL.md');
+      await mkdir(path.dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, [
+        '---',
+        'description: Existing local skill',
+        'disable-model-invocation: true',
+        '---',
+        'Use old instructions.',
+        '',
+      ].join('\n'), 'utf8');
+
+      expect((await skillRuntime.getSkill('existing-skill'))?.body).toContain('old instructions');
+      await (fileRead.execute as any)('read-skill', { file_path: skillFile });
+      const result = await (fileEdit.execute as any)('edit-skill', {
+        file_path: skillFile,
+        old_string: 'Use old instructions.',
+        new_string: 'Use new instructions.',
+      });
+      const details = result.details as ToolEnvelope<{ skillWrite?: { changeType: string } }>;
+      const skill = await skillRuntime.getSkill('existing-skill');
+
+      expect(details.ok).toBe(true);
+      expect(details.data?.skillWrite).toMatchObject({ changeType: 'patch' });
+      expect(skill?.body).toContain('Use new instructions.');
+    });
+  });
+
+  test('skill edits and replacements cannot promote model invocation', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+      const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'guarded-skill', 'SKILL.md');
+      const initialContent = [
+        '---',
+        'description: Guarded skill for local authoring',
+        'disable-model-invocation: true',
+        '---',
+        'Use guarded instructions.',
+        '',
+      ].join('\n');
+      await mkdir(path.dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, initialContent, 'utf8');
+
+      await (fileRead.execute as any)('read-guarded-skill', { file_path: skillFile });
+      const editResult = await (fileEdit.execute as any)('edit-promote-skill', {
+        file_path: skillFile,
+        old_string: 'disable-model-invocation: true\n',
+        new_string: '',
+      });
+      const editDetails = editResult.details as ToolEnvelope<unknown>;
+
+      const writeResult = await (fileWrite.execute as any)('write-promote-skill', {
+        file_path: skillFile,
+        content: [
+          '---',
+          'description: Guarded skill for local authoring',
+          '---',
+          'Use replacement instructions.',
+          '',
+        ].join('\n'),
+      });
+      const writeDetails = writeResult.details as ToolEnvelope<unknown>;
+
+      expect(editDetails.ok).toBe(false);
+      expect(editDetails.error?.code).toBe('model_invocation_requires_promotion');
+      expect(writeDetails.ok).toBe(false);
+      expect(writeDetails.error?.code).toBe('model_invocation_requires_promotion');
+      expect(await readFile(skillFile, 'utf8')).toBe(initialContent);
+      expect((await skillRuntime.getSkill('guarded-skill'))?.modelInvocable).toBe(false);
+    });
+  });
+
+  test('skill validation lets agents repair broken previous frontmatter', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'repair-skill', 'SKILL.md');
+      const brokenContent = [
+        '---',
+        'description: [broken',
+        '---',
+        'Use broken instructions.',
+        '',
+      ].join('\n');
+      await mkdir(path.dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, brokenContent, 'utf8');
+
+      await (fileRead.execute as any)('read-repair-skill', { file_path: skillFile });
+      const result = await (fileEdit.execute as any)('repair-skill', {
+        file_path: skillFile,
+        old_string: brokenContent,
+        new_string: [
+          '---',
+          'description: Repaired skill for local authoring',
+          'disable-model-invocation: true',
+          '---',
+          'Use repaired instructions.',
+          '',
+        ].join('\n'),
+      });
+      const details = result.details as ToolEnvelope<{ skillWrite?: { changeType: string } }>;
+
+      expect(details.ok).toBe(true);
+      expect(details.data?.skillWrite).toMatchObject({ changeType: 'patch' });
+      expect((await skillRuntime.getSkill('repair-skill'))?.body).toContain('repaired instructions');
+      expect((await skillRuntime.getSkill('repair-skill'))?.modelInvocable).toBe(false);
+    });
+  });
+
+  test('file_write rejects risky skill allowed-tools escalation', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'risky-skill', 'SKILL.md');
+
+      const result = await (fileWrite.execute as any)('write-risky-skill', {
+        file_path: skillFile,
+        content: [
+          '---',
+          'description: Risky skill for local authoring',
+          'disable-model-invocation: true',
+          'allowed-tools: file_write',
+          '---',
+          'Use risky instructions.',
+          '',
+        ].join('\n'),
+      });
+      const details = result.details as ToolEnvelope<unknown>;
+
+      expect(details.ok).toBe(false);
+      expect(details.error?.code).toBe('skill_allowed_tools_escalation');
+      expect(await skillRuntime.getSkill('risky-skill')).toBeNull();
     });
   });
 

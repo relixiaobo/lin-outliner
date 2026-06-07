@@ -12,6 +12,7 @@ import type { AgentMessage, UserMessage } from '../core/agentTypes';
 import {
   getAgentEventActivePath,
   type AgentActor,
+  type AgentCompactionSourceRange,
   type AgentCompactionTrigger,
   type AgentEventReplayState,
   type AgentEventType,
@@ -106,7 +107,7 @@ export interface AgentRuntimeContextHost<TSession extends AgentRuntimeContextSes
     session: TSession,
     prompt: UserMessage,
     summary: string,
-    compactedThroughMessageId: string,
+    source: AgentCompactionSourceRange,
     trigger: AgentCompactionTrigger,
     preservedMessages: readonly AgentMessage[],
   ): Promise<void>;
@@ -229,10 +230,10 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       ) {
         compactPlan.messagesToKeep.push((session.activeRun?.lastSubmittedUserPrompt ?? session.lastRun?.lastSubmittedUserPrompt)!);
       }
-      const compactedThroughMessageId = compactedThroughMessageIdForPlan(
+      const source = compactionSourceForPlan(
         getAgentEventActivePath(session.eventState),
         compactPlan.messagesToSummarize.length,
-      ) ?? selectedLeafMessageId;
+      ) ?? { fromMessageId: selectedLeafMessageId, throughMessageId: selectedLeafMessageId };
 
       activeCompactionId = this.host.beginCompaction(sessionId, session, options.trigger);
       const response = await this.completeCompactSummaryWithRetries(sessionId, model, apiKey, {
@@ -266,7 +267,7 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
         session,
         compactMessage,
         summary,
-        compactedThroughMessageId,
+        source,
         options.trigger,
         compactPlan.messagesToKeep,
       );
@@ -483,13 +484,15 @@ export function autoCompactThreshold(model: Model<Api>): number {
   return effectiveWindow - AUTO_COMPACT_BUFFER_TOKENS;
 }
 
-function compactedThroughMessageIdForPlan(
+function compactionSourceForPlan(
   activePath: readonly { id: string }[],
   summarizedMessageCount: number,
-): string | null {
+): AgentCompactionSourceRange | null {
   if (activePath.length === 0 || summarizedMessageCount <= 0) return null;
-  const index = Math.min(activePath.length, summarizedMessageCount) - 1;
-  return activePath[index]?.id ?? null;
+  const throughIndex = Math.min(activePath.length, summarizedMessageCount) - 1;
+  const fromMessageId = activePath[0]?.id;
+  const throughMessageId = activePath[throughIndex]?.id;
+  return fromMessageId && throughMessageId ? { fromMessageId, throughMessageId } : null;
 }
 
 async function continueFromActivePath(agent: AgentRuntimeContextSession['agent']) {

@@ -334,9 +334,9 @@ raw messages (conversation log, leaves)
 
 - **One operation ("summarize a span") reused at three scopes**, each rung feeding the
   next. Today's `compaction.completed` already carries the backbone —
-  `compactedThroughMessageId` over a **retained** range (`agentEventLog.ts:372-378,937-952`),
-  non-destructive; the change is to recognize it as a *multi-consumer* node and make the
-  down-pointer explicit (`source`).
+  a `source` down-pointer range (`fromMessageId` → `throughMessageId`) over a
+  **retained** raw span (`agentEventLog.ts:822-826,968-978`), non-destructive; the
+  change is to recognize it as a *multi-consumer* node.
 - **The top rung crosses ownership.** Segment/conversation summaries are the
   *conversation's* objective compression; the agent then distills **its own**
   `MemoryEntry` from them. Conversations/channels hold no memory; a "channel summary" is

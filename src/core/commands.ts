@@ -115,6 +115,7 @@ export const AGENT_COMMANDS = [
   'agent_steer_conversation',
   'agent_clear_steer',
   'agent_resolve_approval',
+  'agent_resolve_user_question',
   'agent_stop_conversation',
   'agent_reset_conversation',
   'agent_close_conversation',

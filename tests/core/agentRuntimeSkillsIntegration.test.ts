@@ -430,6 +430,89 @@ describe('agent runtime skill integration', () => {
     expect(compactRootText).toContain('- auto-skill');
   });
 
+  test('records skill audit events for successful agent-authored skill writes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-authoring-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-authoring-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const skillContent = [
+      '---',
+      'description: Use when testing agent-authored skill audit events.',
+      'disable-model-invocation: true',
+      '---',
+      'AUDITED_SKILL_BODY.',
+    ].join('\n');
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('file_write', {
+            file_path: '.agents/skills/audited-skill/SKILL.md',
+            content: skillContent,
+          }, { id: 'tool-skill-write-audit' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Skill authored.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Create the audited skill.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected skill write approval request.');
+    expect(approvalEvent.request.toolName).toBe('file_write');
+    expect(approvalEvent.request.title).toBe('Approve skill content write?');
+
+    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
+    await sendPromise;
+
+    expect(script.pendingCount()).toBe(0);
+    expect(await readFile(path.join(localRoot, '.agents', 'skills', 'audited-skill', 'SKILL.md'), 'utf8'))
+      .toBe(skillContent);
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    const toolCompleted = events.find((event) => (
+      event.type === 'tool_call.completed'
+      && event.toolCallId === 'tool-skill-write-audit'
+    ));
+    const skillCreated = events.find((event) => event.type === 'skill.created');
+    expect(skillCreated).toMatchObject({
+      actor: { type: 'tool', toolName: 'file_write', toolCallId: 'tool-skill-write-audit' },
+      skillId: 'audited-skill',
+      source: 'project',
+    });
+    expect(skillCreated?.summary).toContain('create SKILL.md');
+    expect(skillCreated?.seq).toBe((toolCompleted?.seq ?? 0) + 1);
+  });
+
   test('projects manual compact as active while the summary request is running', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-active-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-active-data-'));

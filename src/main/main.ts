@@ -1836,6 +1836,12 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         args.approved === true,
         args.scope === 'always' ? 'always' : args.scope === 'conversation' ? 'conversation' : 'once',
       );
+    case 'agent_resolve_user_question':
+      return agentRuntime.resolveUserQuestion(
+        conversationId(),
+        String(args.requestId),
+        args.result,
+      );
     case 'agent_stop_conversation':
       return agentRuntime.stopConversation(conversationId());
     case 'agent_reset_conversation':

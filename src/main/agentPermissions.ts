@@ -13,6 +13,7 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
+import { detectAgentSkillContentTarget } from './agentSkillAuthoring';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
@@ -125,6 +126,10 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'web_fetch',
   'past_chats',
   'memory',
+  'ask_user_question',
+  'runtime_status',
+  'config',
+  'doctor',
   'skill',
   'task_stop',
   'node_read',
@@ -152,6 +157,12 @@ const TOOL_ALIASES = new Map<string, string>([
   ['pastchats', 'past_chats'],
   ['past_chats', 'past_chats'],
   ['memory', 'memory'],
+  ['ask_user_question', 'ask_user_question'],
+  ['askuserquestion', 'ask_user_question'],
+  ['runtime_status', 'runtime_status'],
+  ['runtimestatus', 'runtime_status'],
+  ['config', 'config'],
+  ['doctor', 'doctor'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
   ['agent', 'agent'],
@@ -446,6 +457,70 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
+  if (toolName === 'ask_user_question') {
+    return [descriptor(toolName, 'agent.user_question.ask', {
+      accessScope: 'none',
+      title: 'ask user question',
+      summary: 'Pause the run to ask the user for structured input.',
+      consequence: 'This waits for explicit user input and does not read or mutate local or external data.',
+      defaultDecision: 'allow',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+    })];
+  }
+
+  if (toolName === 'runtime_status') {
+    return [descriptor(toolName, 'agent.runtime.status', {
+      accessScope: 'none',
+      title: 'runtime status',
+      summary: 'Read redacted local agent runtime status.',
+      consequence: 'This reads local runtime settings and provider status without secrets.',
+      defaultDecision: 'allow',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+    })];
+  }
+
+  if (toolName === 'doctor') {
+    return [descriptor(toolName, 'agent.doctor.run', {
+      accessScope: 'none',
+      title: 'runtime doctor',
+      summary: 'Run read-only local agent diagnostics.',
+      consequence: 'This reads local diagnostic state without secrets or mutation.',
+      defaultDecision: 'allow',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+    })];
+  }
+
+  if (toolName === 'config') {
+    const argsRecord = input.args && typeof input.args === 'object' && !Array.isArray(input.args)
+      ? input.args as Record<string, unknown>
+      : null;
+    const writes = !!argsRecord && Object.hasOwn(argsRecord, 'value');
+    return [descriptor(toolName, writes ? 'agent.config.write' : 'agent.config.read', {
+      accessScope: 'none',
+      title: writes ? 'agent config write' : 'agent config read',
+      summary: writes ? 'Update a whitelisted local agent runtime setting.' : 'Read a whitelisted local agent runtime setting.',
+      consequence: writes
+        ? 'This changes local agent runtime behavior through a whitelisted settings API.'
+        : 'This reads local agent runtime configuration without secrets.',
+      defaultDecision: writes ? 'ask' : 'allow',
+      reversible: writes,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+      requestTitle: writes ? 'Approve agent config change?' : undefined,
+      requestTarget: getStringArg(argsRecord, 'setting') ?? 'agent runtime setting',
+    })];
+  }
+
   if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history' || toolName === 'past_chats') {
     return [descriptor(toolName, 'outline.read', {
       accessScope: 'allowed_file_area',
@@ -675,6 +750,30 @@ function derivePathToolActionDescriptor(
       code: `outside_workspace_${isWrite ? 'write' : 'read'}`,
       requestTitle: `Approve outside file ${isWrite ? 'write' : 'read'}?`,
       requestTarget: resolved,
+    });
+  }
+
+  const skillTarget = isWrite ? detectAgentSkillContentTarget(resolved, policy.workspaceRoot) : null;
+  if (skillTarget) {
+    return descriptor(toolName, 'agent.skill.write', {
+      accessScope: 'allowed_file_area',
+      title: 'skill content write',
+      summary: `Write ${skillTarget.relativePath} for skill ${skillTarget.skillName}.`,
+      consequence: 'This changes local agent skill instructions and can affect future agent behavior.',
+      defaultDecision: 'ask',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+      code: 'agent.skill.write',
+      requestTitle: 'Approve skill content write?',
+      requestTarget: `${skillTarget.skillName}/${skillTarget.relativePath}`,
+      requestDetails: [
+        { label: 'Tool', value: toolName },
+        { label: 'Skill', value: skillTarget.skillName },
+        { label: 'Path', value: resolved },
+        { label: 'Source', value: skillTarget.source },
+      ],
     });
   }
 
@@ -1143,6 +1242,10 @@ export function toPermissionClassifierInput(toolNameInput: string, args: unknown
     case 'operation_history':
     case 'past_chats':
     case 'memory':
+    case 'ask_user_question':
+    case 'runtime_status':
+    case 'config':
+    case 'doctor':
     case 'task_stop':
     case 'agent_status':
     case 'agent_send':
@@ -1518,7 +1621,7 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'memory') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'memory' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') return 'read';
   return 'unknown';

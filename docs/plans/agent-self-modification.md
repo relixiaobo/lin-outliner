@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-06
 ---
 
 # Agent Self-Modification
@@ -76,17 +76,17 @@ Lin already has several foundations:
 - Internal hook-like extension points: `transformContext`, `beforeToolCall`, and
   `afterToolCall`.
 
-Lin does not yet have:
+After the M1 implementation in this branch, Lin has `runtime_status`, read/write
+`config` for a whitelisted runtime-settings surface, and a read-only `doctor`
+tool. Remaining gaps:
 
-- Agent-facing config/status tooling such as a cc-2.1-style `config` tool,
-  `runtime_status`, or a doctor workflow.
 - First-class lifecycle hooks such as `SessionStart`, `UserPromptSubmit`,
   `PreToolUse`, `PostToolUse`, `PreCompact`, or `PostCompact`.
-- Controlled skill creation and editing from successful sessions.
+- Review-card UI and last-known-good recovery for config mutations.
+- Config base-version/hash checks and an explicit write queue.
 - Skill-declared hook registration.
 - Background skill curation.
 - Background skill improvement or silent skill rewriting.
-- Last-known-good runtime config snapshots.
 - A self-maintenance audit surface distinct from ordinary chat messages.
 
 ## Reference Review
@@ -633,14 +633,17 @@ Stage 3's permission/audit machinery.
 
 ## Implementation Checklist
 
-- [ ] Define protocol types for self-maintenance tools and review/approval cards.
-- [ ] Add `runtime_status`.
-- [ ] Add read-only `config` reads.
-- [ ] Add read-only doctor workflow.
-- [ ] Add review/approval event types.
+- [x] Define protocol types for self-maintenance tools.
+- [ ] Define review/approval card payloads beyond permission prompts.
+- [x] Add `runtime_status`.
+- [x] Add read-only `config` reads.
+- [x] Add read-only doctor workflow.
+- [x] Add accepted config write adapter for whitelisted settings.
+- [x] Persist applied config changes as `config.change` events.
+- [x] Route config writes through the permission layer.
+- [ ] Add dedicated review/approval event types beyond permission prompts.
 - [ ] Add review/approval card UI.
 - [ ] Add config base version/hash checks and write queue.
-- [ ] Add accepted config write adapter for whitelisted settings.
 - [ ] Add prompt-only hook registry (on the program F4 event bus — [[agent-program]]).
 - [ ] Add last-known-good config snapshots.
 - [ ] Add rollback events and UI.

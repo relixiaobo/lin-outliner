@@ -81,11 +81,13 @@ const MODEL_ID_REPLACEMENTS: Record<string, Record<string, string>> = {
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const AGENT_PERMISSION_MODES = ['trusted', 'restricted'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+const AGENT_MEMORY_ISOLATIONS = ['global', 'isolated', 'read-only-global'] as const;
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   permissionMode: 'trusted',
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
+  memoryIsolation: 'global',
   additionalSkillDirectories: [],
   additionalAgentDirectories: [],
   providerTimeoutMs: null,
@@ -360,6 +362,9 @@ function normalizeAgentRuntimeSettings(input?: Partial<AgentRuntimeSettings> | n
     automaticSkillsEnabled: booleanOrDefault(input?.automaticSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.automaticSkillsEnabled),
     slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
     compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
+    memoryIsolation: isAgentMemoryIsolation(input?.memoryIsolation)
+      ? input.memoryIsolation
+      : DEFAULT_AGENT_RUNTIME_SETTINGS.memoryIsolation,
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
     additionalAgentDirectories: normalizeStringList(input?.additionalAgentDirectories),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
@@ -564,6 +569,10 @@ function isAgentPermissionMode(value: unknown): value is AgentRuntimeSettings['p
 
 function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['providerCacheRetention'] {
   return typeof value === 'string' && (AGENT_CACHE_RETENTIONS as readonly string[]).includes(value);
+}
+
+function isAgentMemoryIsolation(value: unknown): value is AgentRuntimeSettings['memoryIsolation'] {
+  return typeof value === 'string' && (AGENT_MEMORY_ISOLATIONS as readonly string[]).includes(value);
 }
 
 async function readProviderFile(): Promise<ProviderConfigFile> {

@@ -121,7 +121,7 @@ describe('agent render projection', () => {
         ...base(5, 'compaction.completed'),
         messageId: 'compact-root',
         summary: 'Kept the important implementation details.',
-        compactedThroughMessageId: 'assistant-before-compact',
+        source: { fromMessageId: 'user-before-compact', throughMessageId: 'assistant-before-compact' },
         trigger: 'manual',
       },
       {
@@ -182,7 +182,7 @@ describe('agent render projection', () => {
         ...base(5, 'compaction.completed'),
         messageId: 'compact-1',
         summary: 'First compact summary.',
-        compactedThroughMessageId: 'a1',
+        source: { fromMessageId: 'u1', throughMessageId: 'a1' },
         trigger: 'manual',
       },
       {
@@ -218,7 +218,7 @@ describe('agent render projection', () => {
         ...base(10, 'compaction.completed'),
         messageId: 'compact-2',
         summary: 'Second compact summary.',
-        compactedThroughMessageId: 'a2',
+        source: { fromMessageId: 'compact-1', throughMessageId: 'a2' },
         trigger: 'manual',
       },
       {

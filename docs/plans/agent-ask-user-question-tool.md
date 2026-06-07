@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-06
 ---
 
 # Agent Ask User Question Tool
@@ -459,17 +459,18 @@ reference model first, then build the user-question UI on top of it.
 
 ## Checklist
 
-- [ ] Finalize the protocol shape and update core types.
-- [ ] Add the `ask_user_question` tool definition and validation.
-- [ ] Add runtime request, answer, cancel, and optional feedback handling.
-- [ ] Add event-log support and restart semantics.
-- [ ] Add renderer pending-interaction state.
-- [ ] Add the user-question UI surface.
-- [ ] Reuse composer editor primitives for answer fields.
+- [x] Finalize the protocol shape and update core types.
+- [x] Add the `ask_user_question` tool definition and validation.
+- [x] Add runtime request, answer, and cancel handling.
+- [x] Add event-log support and restart replay of pending questions.
+- [x] Add renderer pending-interaction state.
+- [x] Add the user-question UI surface.
+- [x] Reuse composer editor styling and interaction primitives for answer fields.
+- [ ] Add a dedicated clarify/discuss action that keeps the question open.
 - [ ] Wire `@` references and attachment button into answer inputs.
 - [ ] Align or explicitly defer user-message edit composer consistency.
-- [ ] Update `docs/spec/` with the shipped behavior.
-- [ ] Run `bun run typecheck` and relevant renderer/runtime tests.
+- [x] Update `docs/spec/` with the shipped behavior.
+- [x] Run `bun run typecheck` and relevant renderer/runtime tests.
 - [ ] Run light/dark visual verification for the pending-question UI.
 
 ## Integration notes (added at the merge gate, 2026-06-03)

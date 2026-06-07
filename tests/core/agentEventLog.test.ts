@@ -167,6 +167,14 @@ describe('agent event log', () => {
 
     expect(state.latestSeq).toBe(5);
     expect(state.runs['run-1']?.status).toBe('running');
+    expect(state.userQuestions['question-1']).toMatchObject({
+      requestId: 'question-1',
+      status: 'answered',
+      result: {
+        requestId: 'question-1',
+        answers: [{ questionId: 'choice', selectedOptionIds: ['a'] }],
+      },
+    });
     expect(getAgentEventActivePath(state)).toEqual([]);
     expect(getAgentEventConversation(state)).toEqual([]);
   });
@@ -280,7 +288,7 @@ describe('agent event log', () => {
         ...base(7, 'compaction.completed'),
         messageId: 'compact-root',
         summary: 'Summary',
-        compactedThroughMessageId: 'assistant-before-compact',
+        source: { fromMessageId: 'user-before-compact', throughMessageId: 'assistant-before-compact' },
         trigger: 'manual',
       },
       {
@@ -301,6 +309,14 @@ describe('agent event log', () => {
       'compact-root',
       'user-after-compact',
     ]);
+    expect(state.compactionsByMessageId['compact-root']?.source).toEqual({
+      fromMessageId: 'user-before-compact',
+      throughMessageId: 'assistant-before-compact',
+    });
+    expect(getAgentEventRuntimeTranscriptPath(state).map((message) => message.id)).toEqual([
+      'compact-root',
+      'user-after-compact',
+    ]);
     expect(getAgentEventVisibleTranscript(state).map((entry) => ({
       id: entry.message.id,
       archived: entry.archived,
@@ -310,6 +326,91 @@ describe('agent event log', () => {
       { id: 'compact-root', archived: false },
       { id: 'user-after-compact', archived: false },
     ]);
+  });
+
+  test('uses mixed-resolution runtime history after compaction', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Compaction with tools' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'u1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Read the file' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'a1',
+        parentMessageId: 'u1',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        runId: 'run-1',
+        messageId: 'a1',
+        stopReason: 'toolUse',
+        content: [{ type: 'toolCall', id: 'tool-1', name: 'file_read', arguments: { file_path: 'secret.txt' } }],
+      },
+      {
+        ...base(5, 'tool_result.created', { type: 'tool', toolName: 'file_read', toolCallId: 'tool-1' }),
+        runId: 'run-1',
+        messageId: 'tool-result-1',
+        parentMessageId: 'a1',
+        toolCallId: 'tool-1',
+        toolName: 'file_read',
+        content: [{ type: 'text', text: 'verbatim old tool output' }],
+      },
+      {
+        ...base(6, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'a2',
+        parentMessageId: 'tool-result-1',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(7, 'assistant_message.completed', agentActor),
+        runId: 'run-1',
+        messageId: 'a2',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'I read the file.' }],
+      },
+      {
+        ...base(8, 'compaction.completed'),
+        messageId: 'compact-root',
+        summary: 'The file was read and its exact output is summarized.',
+        source: { fromMessageId: 'u1', throughMessageId: 'a2' },
+        trigger: 'manual',
+      },
+      {
+        ...base(9, 'user_message.created', systemActor),
+        messageId: 'compact-root',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Conversation compacted. Summary: The file was read.' }],
+      },
+      {
+        ...base(10, 'user_message.created', userActor),
+        messageId: 'u2',
+        parentMessageId: 'compact-root',
+        content: [{ type: 'text', text: 'Continue from there' }],
+      },
+    ]);
+
+    expect(getAgentEventVisibleTranscript(state).map((entry) => ({
+      id: entry.message.id,
+      archived: entry.archived,
+    }))).toEqual([
+      { id: 'u1', archived: true },
+      { id: 'a1', archived: true },
+      { id: 'tool-result-1', archived: true },
+      { id: 'a2', archived: true },
+      { id: 'compact-root', archived: false },
+      { id: 'u2', archived: false },
+    ]);
+    expect(getAgentEventRuntimeTranscriptPath(state).map((message) => message.id)).toEqual(['compact-root', 'u2']);
+    expect(JSON.stringify(deriveAgentPiMessages(state))).not.toContain('verbatim old tool output');
+    expect(JSON.stringify(deriveAgentPiMessages(state))).toContain('Conversation compacted');
   });
 
   test('keeps multimedia as payload refs with derived previews', () => {
