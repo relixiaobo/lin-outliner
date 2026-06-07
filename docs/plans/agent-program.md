@@ -32,7 +32,7 @@ mostly the *same* set of seams every agent plan was independently planning to cu
 | [[agent-import-skill]] | Data import from other products (consumer of skills + ask_user_question) | M1–M2 |
 | [[agent-scheduled-routines]] | `command` NodeType + anacron scheduler + triggered runs | M2 |
 | [[agent-generative-ui]] | Inline HTML/SVG widgets in chat | M1–M2 (P3 priority) |
-| [[agent-tool-permissions-hardening]] | Post-#60 permission correctness/hardening | any (independent) |
+| `docs/plans/archive/agent-tool-permissions-hardening.md` | Post-#60 permission correctness/hardening | done (#154) |
 | `agent-tool-result-trim` | Model-visible tool-result trimming | shipping (#128) |
 
 ## Shipped foundation (build on this — A8)
@@ -66,8 +66,8 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   `skill.*` audit events (`docs/spec/agent-skills.md`).
 - **Permissions** — `allow | ask | deny` + platform hard blocks + bash classifier +
   ask resolver + approval UI + permission events (#60,
-  `docs/spec/agent-tool-permissions.md`). Session-scoped allow rules remain
-  pre-M0 permission debt and are removed by [[agent-tool-permissions-hardening]].
+  `docs/spec/agent-tool-permissions.md`). Conversation-scoped allow rules were
+  removed by the archived hardening pass.
 - **Subagents** — fresh / fork / background runs + sidechain transcripts + background
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
   (`docs/spec/agent-subagent-runtime-plan.md`).
@@ -159,7 +159,8 @@ list — `src/core/types.ts`, `commands.ts`, `agentEventLog.ts`):
 - `MemoryEntry` schema (`memory.entry_added/...`) + `originWorkspace` +
   isolation tier + `status: active|invalidated`; M1 implements the runtime-owned
   memory append/retrieval surface, while extraction/consolidation stays M2+.
-- Canonical `tool.permission.*` names + request-id join (reconcile the `checked/resolved` + `approval.*` dual-track; [[agent-tool-permissions-hardening]]).
+- Canonical `tool.permission.*` names + request-id join (the archived hardening
+  pass reconciled the `checked/resolved` + `approval.*` dual-track).
 - `'built-in'` on `SkillDefinition.source` ([[agent-skills-authoring]]).
 - Pending-interaction types for `user_question.*` ([[agent-ask-user-question-tool]]).
 - `widget_state.updated` event ([[agent-generative-ui]]).

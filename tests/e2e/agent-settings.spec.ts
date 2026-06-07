@@ -144,6 +144,43 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
   });
 
+  test('lets users view, edit, and forget agent memory entries', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: /^Memory/ }).click();
+
+    await expect(settings.getByRole('list', { name: 'Remembered facts' })).toBeVisible();
+    await expect(settings.getByText('Prefer concise, direct implementation notes')).toBeVisible();
+    await expect(settings.getByText('Use the old session vocabulary')).toBeVisible();
+    await expect(settings.getByText('Active')).toBeVisible();
+    await expect(settings.getByText('Forgotten')).toBeVisible();
+
+    await settings.getByRole('button', { name: 'Edit memory' }).click();
+    const editor = settings.getByLabel('Memory fact');
+    await expect(editor).toBeVisible();
+    await editor.fill('Prefer concise, direct implementation notes with explicit verification.');
+    await settings.getByRole('button', { name: 'Save memory' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_update_memory')?.args;
+    }).toMatchObject({
+      memoryId: 'memory-active',
+      fact: 'Prefer concise, direct implementation notes with explicit verification.',
+    });
+    await expect(settings.getByText('Memory updated')).toBeVisible();
+    await expect(settings.getByText('Prefer concise, direct implementation notes with explicit verification.')).toBeVisible();
+
+    await settings.getByRole('button', { name: 'Forget memory' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_forget_memory')?.args;
+    }).toMatchObject({ memoryId: 'memory-active' });
+    await expect(settings.getByText('Memory forgotten')).toBeVisible();
+    await expect(settings.locator('.settings-chip', { hasText: 'Forgotten' })).toHaveCount(2);
+    await expect(settings.getByRole('button', { name: 'Edit memory' })).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: 'Forget memory' })).toHaveCount(0);
+  });
+
   test('groups providers by credential and reads status on each row', async ({ page }) => {
     const settings = await openSettings(page);
     await expect(settings.getByRole('list', { name: 'Connected providers' })).toBeVisible();

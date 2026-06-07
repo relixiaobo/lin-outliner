@@ -8,9 +8,10 @@ defines the skill-level inputs (permission modes, pre-approved tools) that feed
 in here.
 
 Original design + rationale: `docs/plans/archive/agent-tool-permissions.md`
-(shipped in #60). Non-blocking follow-ups not yet implemented are tracked in
-`docs/plans/agent-tool-permissions-hardening.md`; the **Known divergences**
-section at the end records where current behavior differs from that end-state.
+(shipped in #60). The non-blocking hardening follow-ups shipped in M1 and are
+archived in `docs/plans/archive/agent-tool-permissions-hardening.md`; the
+**Known divergences** section at the end records remaining intentional gaps from
+the original broad plan.
 
 ## Decision model
 
@@ -182,8 +183,7 @@ fallback/interaction outcomes.
 
 ## Known divergences from the plan (shipped-state honesty)
 
-Current behavior differs from the original plan / hardening end-state in these
-ways (tracked in `agent-tool-permissions-hardening.md`):
+Current behavior differs from the original broad plan in these ways:
 
 1. **Classifier auto-allow is effectively dead in production.** Every shipped
    descriptor sets `classifierAutoAllowEligible: false`, so the LLM classifier is

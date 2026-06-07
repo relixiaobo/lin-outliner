@@ -1,9 +1,9 @@
 ---
-status: draft
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-07
 ---
 
 # Agent Tool Permissions — Hardening Follow-ups
@@ -17,6 +17,10 @@ This plan tracks the **non-blocking** medium/low items surfaced by the deep
 review that were deliberately deferred out of the fix commit. None is a live
 fail-open today; each is correctness-of-contract, defense-in-depth, or
 observability.
+
+Done: the M1 permission-hardening pass shipped the resolved items and archived
+this follow-up plan. Current behavior lives in
+`docs/spec/agent-tool-permissions.md`.
 
 The contract from `agent-tool-permissions.md` still governs. Where this plan
 and that plan disagree, the parent plan wins. Every change must preserve the

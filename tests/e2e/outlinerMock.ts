@@ -528,6 +528,34 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         messageCount: 1,
       },
     ];
+    const agentMemoryEntries = [
+      {
+        id: 'memory-active',
+        agentId: 'built-in:tenon:assistant',
+        fact: 'Prefer concise, direct implementation notes in agent review work.',
+        originWorkspace: '/mock/local-root',
+        sources: [{
+          conversationId: 'mock-agent-session',
+          runId: 'run-memory-e2e',
+          eventId: 'event-memory-e2e',
+        }],
+        status: 'active',
+        createdAt: now - 4_000,
+      },
+      {
+        id: 'memory-forgotten',
+        agentId: 'built-in:tenon:assistant',
+        fact: 'Use the old session vocabulary in public UI.',
+        originWorkspace: '/mock/local-root',
+        sources: [{
+          conversationId: 'mock-agent-session',
+          runId: 'run-memory-old',
+          eventId: 'event-memory-old',
+        }],
+        status: 'invalidated',
+        createdAt: now - 8_000,
+      },
+    ];
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
@@ -1471,6 +1499,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_list_all_definitions') {
           return clone(agentDefinitions) as T;
+        }
+        if (cmd === 'agent_list_memory') {
+          const includeInvalidated = args.includeInvalidated === true;
+          const limit = typeof args.limit === 'number' ? args.limit : agentMemoryEntries.length;
+          return clone(agentMemoryEntries
+            .filter((entry) => includeInvalidated || entry.status === 'active')
+            .slice(0, limit)) as T;
+        }
+        if (cmd === 'agent_update_memory') {
+          const memoryId = String(args.memoryId ?? '');
+          const fact = String(args.fact ?? '').trim();
+          const entry = agentMemoryEntries.find((item) => item.id === memoryId && item.status === 'active');
+          if (!entry) return clone(null) as T;
+          entry.fact = fact;
+          return clone(entry) as T;
+        }
+        if (cmd === 'agent_forget_memory') {
+          const memoryId = String(args.memoryId ?? '');
+          const entry = agentMemoryEntries.find((item) => item.id === memoryId);
+          if (!entry) return clone(null) as T;
+          entry.status = 'invalidated';
+          return clone(entry) as T;
         }
         if (cmd === 'agent_update_tool_permission_settings') {
           const next = args.settings as { permissions?: { allow?: string[]; ask?: string[]; deny?: string[] } };
