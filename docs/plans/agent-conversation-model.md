@@ -997,7 +997,7 @@ P1 — conversations + memory v1
 - [x] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
 - [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, prompt-free — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
-- [ ] Inline memory write instructions in the agent prompt.
+- [x] Inline memory write instructions in the agent prompt.
 - [x] Memory recall added to the per-turn reminder stack (`agentRuntime.ts:640`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
 - [ ] Profile UI: view / edit / forget memory.
 - [x] M0.5 clean cut: rename/remove remaining agent `session*` protocol/index/API

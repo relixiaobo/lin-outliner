@@ -125,6 +125,7 @@ truth.
   - Settings Memory pane for list/edit/forget
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as `agent.memory.manage`
+  - stable prompt guidance for when to remember, update, or forget durable facts
 - [x] Agent M1 self-maintenance and structured input:
   - canonical DM restore plus user-created single-agent Channels
   - `ask_user_question` tool with pending question persistence and renderer
