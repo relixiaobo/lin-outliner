@@ -36,6 +36,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent memory recall clean cut: one read-only `recall` tool (PR #158)** — implements the #157 M2 decision.
+  Removed the two model-visible memory tools from the foreground agent pool — the `memory` CRUD tool
+  (`agentMemoryTool.ts`, deleted) and the `past_chats` tool (`agentPastChatsTool.ts`, deleted) — and replaced
+  them with a single read-only `recall` tool (`agentRecallTool.ts`) over active durable memory entries.
+  `recall` reads only `status:'active'` entries, enforces the agent's `memoryIsolation` tier (`isolated`
+  retrieves only entries whose `originWorkspace` matches the session — unscoped and other-workspace entries
+  are excluded), bounds results by `limit` (default 8 / max 20), and optionally expands raw evidence only
+  when `include_evidence:true` — nested under the matching entry and resolved solely from that entry's
+  recorded `MemoryEntry.sources`, never via a free-text transcript search, within a shared `max_chars` budget
+  (default 4000 / max 12000). The internal `agentPastChats` evidence search is retained as `recall`'s
+  backing service (no longer model-visible); Settings/Profile list/edit/forget remain the human write path.
+  Permission surface is a net reduction: the writable `agent.memory.manage` (auto-allowed) is replaced by
+  read-only `agent.memory.recall` (`accessScope:'none'`, no external effect), and `memory` is dropped from the
+  control/auto-allow mutation sets — A3 intact. Prompt guidance, tool-call UI label/icon (`recall` →
+  `BrainIcon`), i18n (en + zh-Hans), and the active specs (`agent-tool-design.md`, `agent-progress.md`, et al.)
+  were updated in the same change (A6). Gate: typecheck + `test:core` 655/0 (incl. a new runtime isolation
+  regression test asserting `isolated` recall excludes other-workspace/unscoped/invalidated entries) +
+  `test:renderer` 354/0; two high-effort finder passes (removal-completeness + recall correctness/security)
+  returned no findings. ([#158](https://github.com/relixiaobo/lin-outliner/pull/158))
+
 - **Guide agent memory use in the system prompt (PR #155)** — added a stable `Memory` section to the Tenon
   agent system prompt: use the `memory` tool for concise durable facts / stable preferences / corrections
   that should carry forward; treat `<agent-memory>` as background context (not user-authored instructions);

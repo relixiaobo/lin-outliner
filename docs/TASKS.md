@@ -325,6 +325,18 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-recall-clean-cut** (codex, PR #158) — implements the #157 M2 read/write surface decision. Removes the
+  model-visible `memory` CRUD tool and `past_chats` tool from the foreground agent pool and replaces them with
+  a single read-only `recall` tool over active durable memory: `status:'active'`-only, `memoryIsolation`-tier
+  enforced (`isolated` excludes other-workspace/unscoped entries), `limit` ≤20, optional `include_evidence`
+  expansion nested under the entry and resolved only from `MemoryEntry.sources` within a shared `max_chars`
+  budget. Internal `agentPastChats` evidence search retained as recall's backing; Settings/Profile remain the
+  human write path; permission surface is a net reduction (read-only `agent.memory.recall` replaces writable
+  auto-allowed `agent.memory.manage`, A3 intact). Specs updated in-change (A6). Gate: typecheck + `test:core`
+  655/0 (incl. new runtime isolation regression test) + `test:renderer` 354/0; two high-effort finder passes
+  (removal-completeness + recall correctness/security) returned no findings; two non-blocking observations
+  (dead i18n keys, isolation regression test) were fixed by codex before merge.
+
 - **agent-memory-plan-adjustments** (codex, PR #157) — docs-only plan revision (PM-ratified 2026-06-07) across
   four `docs/plans/*.md`, no production or spec change. Pins two M2 decisions: **write authority** = exactly
   two runtime-owned writers (Settings/Profile UI + Dream/extraction), no model-visible write tool and no
