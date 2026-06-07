@@ -184,6 +184,11 @@ const api = {
   // the stored mode so the settings control can reflect the current pick.
   getTheme: () => ipcRenderer.invoke('lin:get-theme') as Promise<ThemeMode>,
   setTheme: (mode: ThemeMode) => ipcRenderer.invoke('lin:set-theme', mode) as Promise<void>,
+  // Opt-in OS-notification preference for off-floor task delivery (default off).
+  getNotificationPrefs: () =>
+    ipcRenderer.invoke('lin:get-notification-prefs') as Promise<{ osNotificationsEnabled: boolean }>,
+  setNotificationPrefs: (prefs: { osNotificationsEnabled: boolean }) =>
+    ipcRenderer.invoke('lin:set-notification-prefs', prefs) as Promise<{ osNotificationsEnabled: boolean }>,
   // Language preference. initialLanguage is the synchronously-resolved effective
   // locale for first paint; setLanguage applies immediately across all windows (the
   // main process broadcasts it + rebuilds the native menu) and persists;

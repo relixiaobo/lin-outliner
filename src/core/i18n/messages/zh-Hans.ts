@@ -255,6 +255,9 @@ export const zhHans: PartialMessages = {
       themeDark: '深色',
       languageLabel: '语言',
       languageSublabel: '选择菜单和界面的显示语言。',
+      notificationsGroup: '通知',
+      osNotificationsLabel: '系统通知',
+      osNotificationsSublabel: '当后台任务完成或需要输入、且应用处于后台时，显示系统通知。默认关闭。',
     },
   },
   common: {

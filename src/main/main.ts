@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -32,6 +32,11 @@ import {
   upsertProviderConfig,
   testProviderConnection,
 } from './agentSettings';
+import {
+  getCachedNotificationPrefs,
+  getNotificationPrefs,
+  setNotificationPrefs,
+} from './agentNotificationPrefs';
 import {
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
@@ -148,6 +153,24 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
 
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
+});
+
+// Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
+// in-app delivery is unaffected. Suppressed while the app is focused (the user is
+// already looking) and gated on the persisted user preference read at call time.
+void getNotificationPrefs();
+agentRuntime.setOsNotifier(({ title, body }) => {
+  if (!getCachedNotificationPrefs().osNotificationsEnabled) return;
+  if (!Notification.isSupported()) return;
+  if (mainWindow?.isFocused()) return;
+  const notification = new Notification({ title, body: body ?? '' });
+  notification.on('click', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  notification.show();
 });
 
 // ─── Security shell (the native host owns navigation + capabilities) ───
@@ -1031,6 +1054,17 @@ function registerIpc() {
     nativeTheme.themeSource = mode;
     saveThemePreference(mode);
   });
+  // Opt-in OS-notification preference. Self-contained dedicated channels (not the
+  // agent-command union) so the off-floor task plane owns its own preference
+  // without touching the shared command/type surface.
+  ipcMain.handle('lin:get-notification-prefs', () => getNotificationPrefs());
+  ipcMain.handle('lin:set-notification-prefs', (_event, input: unknown) =>
+    setNotificationPrefs(
+      input && typeof input === 'object' && 'osNotificationsEnabled' in input
+        ? { osNotificationsEnabled: (input as { osNotificationsEnabled?: unknown }).osNotificationsEnabled === true }
+        : {},
+    ),
+  );
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open
   // windows re-render via I18nProvider without a reload), and rebuilds the native
