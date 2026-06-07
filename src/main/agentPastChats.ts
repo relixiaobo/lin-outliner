@@ -3,7 +3,9 @@ import {
   type AgentEventMessageRecord,
   type AgentMemorySource,
   type AgentPersistedContent,
+  type AgentPayloadRef,
 } from '../core/agentEventLog';
+import type { AgentMessage } from '../core/agentTypes';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -341,6 +343,9 @@ export class AgentPastChatsService {
 
   async readMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
     const source = params.source;
+    if (source.kind === 'agent_run') {
+      return this.readAgentRunMemorySourceEvidence(params);
+    }
     if (!source.messageRange) {
       return pastChatsError('SOURCE_NOT_FOUND', 'Memory source does not include an addressable message range.');
     }
@@ -380,6 +385,69 @@ export class AgentPastChatsService {
       totalChars: assembled.totalChars,
       outputTruncated: assembled.outputTruncated,
     };
+  }
+
+  private async readAgentRunMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
+    const source = params.source;
+    const runId = source.subagentRunId ?? source.runId;
+    if (!runId || !source.messageRange) {
+      return pastChatsError('SOURCE_NOT_FOUND', 'Agent-run memory source does not include an addressable run message range.');
+    }
+
+    const conversations = await this.conversationMetaById();
+    const conversation = conversations.get(source.conversationId);
+    if (!conversation) {
+      return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
+    }
+
+    const state = await this.eventStore.replay(source.conversationId);
+    const run = state.subagents[runId];
+    if (!run?.transcriptPayloadId) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
+    }
+    const payload = state.payloads[run.transcriptPayloadId];
+    if (!payload) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
+    }
+
+    const messages = await this.readSubagentTranscriptPayload(source.conversationId, payload);
+    const [fromMessageId, throughMessageId] = source.messageRange;
+    const startIndex = agentRunMessageIndex(runId, fromMessageId);
+    if (startIndex < 0 || startIndex >= messages.length) {
+      return pastChatsError('SOURCE_NOT_FOUND', `The source message ${fromMessageId} was not found in agent run ${runId}.`);
+    }
+    const throughIndex = agentRunMessageIndex(runId, throughMessageId);
+    const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
+    const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
+    const assembled = clampRuntimeReadMessages(runId, messages.slice(startIndex, endIndex + 1), maxChars, startIndex);
+
+    return {
+      mode: 'evidence',
+      source: { ...source },
+      conversation: {
+        id: conversation.id,
+        title: conversation.title,
+        createdAt: isoTime(conversation.createdAt),
+        updatedAt: isoTime(conversation.updatedAt),
+      },
+      messages: assembled.messages,
+      totalChars: assembled.totalChars,
+      outputTruncated: assembled.outputTruncated,
+    };
+  }
+
+  private async readSubagentTranscriptPayload(
+    sessionId: string,
+    payload: AgentPayloadRef,
+  ): Promise<AgentMessage[]> {
+    try {
+      const raw = await this.eventStore.readPayload(sessionId, payload);
+      const parsed = JSON.parse(raw.toString('utf8')) as unknown;
+      if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.messages)) return [];
+      return parsed.messages.filter(isRecordableRuntimeMessage).map((message) => JSON.parse(JSON.stringify(message)) as AgentMessage);
+    } catch {
+      return [];
+    }
   }
 
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
@@ -473,6 +541,49 @@ function clampReadMessages(messages: readonly AgentEventMessageRecord[], maxChar
   return { messages: out, totalChars, outputTruncated };
 }
 
+function clampRuntimeReadMessages(
+  runId: string,
+  messages: readonly AgentMessage[],
+  maxChars: number,
+  startIndex = 0,
+): {
+  messages: PastChatsReadMessage[];
+  totalChars: number;
+  outputTruncated: boolean;
+} {
+  const full = messages.map((message, index) => ({
+    message,
+    messageId: agentRunMessageId(runId, startIndex + index),
+    text: runtimeMessageText(message),
+  }));
+  const totalChars = full.reduce((sum, item) => sum + item.text.length, 0);
+  let remaining = maxChars;
+  let outputTruncated = totalChars > maxChars;
+  const out: PastChatsReadMessage[] = [];
+
+  for (const item of full) {
+    if (remaining <= 0) {
+      outputTruncated = true;
+      break;
+    }
+    const truncated = item.text.length > remaining;
+    const text = truncated ? item.text.slice(0, remaining).trimEnd() : item.text;
+    remaining -= text.length;
+    out.push({
+      messageId: item.messageId,
+      role: runtimeMessageRole(item.message),
+      createdAt: isoTime(runtimeMessageTimestamp(item.message)),
+      text,
+      toolName: item.message.role === 'toolResult' ? item.message.toolName : undefined,
+      isError: item.message.role === 'toolResult' ? item.message.isError : undefined,
+      messageTruncated: truncated || undefined,
+    });
+    if (truncated) break;
+  }
+
+  return { messages: out, totalChars, outputTruncated };
+}
+
 function messageText(message: AgentEventMessageRecord): string {
   if (message.role === 'toolResult' && message.outputSummary?.trim()) {
     return message.outputSummary.trim();
@@ -502,6 +613,53 @@ function contentText(content: readonly AgentPersistedContent[]): string {
     .filter(Boolean)
     .join('\n')
     .trim();
+}
+
+function runtimeMessageText(message: AgentMessage): string {
+  if (message.role === 'toolResult') return runtimeContentText(message.content);
+  return runtimeContentText(message.content);
+}
+
+function runtimeContentText(content: AgentMessage['content']): string {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (!isRecord(part)) return '';
+      if (part.type === 'text' && typeof part.text === 'string') return part.text;
+      if (part.type === 'thinking') return '[thinking]';
+      if (part.type === 'toolCall') return `[tool:${String(part.name ?? 'unknown')} ${summarizeJson(part.arguments)}]`;
+      if (part.type === 'image') return '[image]';
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function runtimeMessageRole(message: AgentMessage): PastChatsRole {
+  return message.role === 'assistant' || message.role === 'toolResult' ? message.role : 'user';
+}
+
+function runtimeMessageTimestamp(message: AgentMessage): number {
+  return typeof message.timestamp === 'number' ? message.timestamp : Date.now();
+}
+
+function agentRunMessageId(runId: string, index: number): string {
+  return `${runId}:message:${index + 1}`;
+}
+
+function agentRunMessageIndex(runId: string, messageId: string): number {
+  const prefix = `${runId}:message:`;
+  if (!messageId.startsWith(prefix)) return -1;
+  const numeric = Number(messageId.slice(prefix.length));
+  if (!Number.isInteger(numeric) || numeric <= 0) return -1;
+  return numeric - 1;
+}
+
+function isRecordableRuntimeMessage(message: unknown): message is AgentMessage {
+  return isRecord(message)
+    && (message.role === 'user' || message.role === 'assistant' || message.role === 'toolResult');
 }
 
 function cleanUserMessageText(text: string): string {
@@ -640,6 +798,10 @@ function summarizeJson(value: unknown): string {
   const text = JSON.stringify(value);
   if (!text) return '';
   return text.length > 180 ? `${text.slice(0, 180).trimEnd()}...` : text;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function escapeRegExp(value: string): string {

@@ -371,9 +371,13 @@ export interface AgentIdentityRecord {
 
 export interface AgentMemorySource {
   conversationId: string;
+  kind?: 'conversation' | 'agent_run';
   summaryId?: string;
   messageRange?: [string, string];
   runId?: string;
+  subagentRunId?: string;
+  agentId?: string;
+  parentToolCallId?: string;
   eventId?: string;
 }
 
@@ -394,14 +398,30 @@ export interface AgentDreamWatermarkCursor {
   eventId: string | null;
 }
 
+export interface AgentDreamAgentRunWatermarkCursor {
+  messageCount: number;
+  payloadId: string | null;
+}
+
 export interface AgentDreamWatermark {
   conversations: Record<string, AgentDreamWatermarkCursor>;
+  agentRuns?: Record<string, AgentDreamAgentRunWatermarkCursor>;
 }
 
 export interface AgentDreamProcessedConversation {
   fromSeqExclusive: number;
   throughSeq: number;
   throughEventId: string | null;
+  messageCount: number;
+  charCount: number;
+}
+
+export interface AgentDreamProcessedAgentRun {
+  parentConversationId: string;
+  parentToolCallId?: string;
+  fromMessageCountExclusive: number;
+  throughMessageCount: number;
+  transcriptPayloadId: string | null;
   messageCount: number;
   charCount: number;
 }
@@ -446,6 +466,7 @@ export type AgentMemoryEvent =
       watermark: AgentDreamWatermark;
       processed: {
         conversations: Record<string, AgentDreamProcessedConversation>;
+        agentRuns?: Record<string, AgentDreamProcessedAgentRun>;
         totalMessageCount: number;
         totalCharCount: number;
         consolidateOnly: boolean;
@@ -851,6 +872,9 @@ export interface SubagentRunStartedEvent extends AgentEventBase {
   type: 'subagent_run.started';
   subagentRunId: string;
   parentToolCallId?: string;
+  executingAgentId?: AgentId | string;
+  parentAgentId?: AgentId | string;
+  memoryOwnerAgentId?: AgentId | string;
   name?: string;
   description: string;
   prompt: string;
@@ -1003,6 +1027,9 @@ export interface AgentSubagentRunRecord {
   prompt: string;
   subagentType: string;
   contextMode: 'fresh' | 'fork';
+  executingAgentId?: string;
+  parentAgentId?: string;
+  memoryOwnerAgentId?: string;
   status: AgentSubagentRunStatus;
   startedAt: number;
   updatedAt: number;
@@ -1416,6 +1443,9 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         prompt: event.prompt,
         subagentType: event.subagentType,
         contextMode: event.contextMode,
+        executingAgentId: event.executingAgentId,
+        parentAgentId: event.parentAgentId,
+        memoryOwnerAgentId: event.memoryOwnerAgentId,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,

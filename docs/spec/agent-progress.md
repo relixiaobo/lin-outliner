@@ -133,6 +133,9 @@ truth.
     Dream watermark, `dream.completed` records the processed range, and run meta
     is agent-anchored instead of conversation-anchored; Dream run meta is indexed
     per agent and projected into the task panel
+  - fresh typed subagents use their own agent identity for `<agent-memory>`,
+    `recall`, and sidechain-transcript Dream evidence; fork subagents inherit the
+    parent agent's memory owner
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as read-only `agent.memory.recall`
   - prompt guidance that foreground memory writes are handled by Settings/Profile

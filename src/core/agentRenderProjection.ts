@@ -67,6 +67,9 @@ export interface AgentRenderSubagentEntity {
   prompt: string;
   subagentType: string;
   contextMode: AgentSubagentRunRecord['contextMode'];
+  executingAgentId?: string;
+  parentAgentId?: string;
+  memoryOwnerAgentId?: string;
   status: AgentSubagentRunRecord['status'];
   startedAt: number;
   updatedAt: number;

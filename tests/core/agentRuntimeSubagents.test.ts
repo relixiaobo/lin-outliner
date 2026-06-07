@@ -13,12 +13,14 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
+import { AgentPastChatsService } from '../../src/main/agentPastChats';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -79,6 +81,11 @@ async function createAgent(root: string, name: string, body: string) {
   await mkdir(agentDir, { recursive: true });
   await writeFile(path.join(agentDir, 'AGENT.md'), body);
   return agentDir;
+}
+
+function projectAgentId(agentDir: string, name: string): string {
+  const agentFile = path.join(agentDir, 'AGENT.md');
+  return `project:${createHash('sha256').update(path.resolve(agentFile)).digest('hex').slice(0, 16)}:${name}`;
 }
 
 function createWindowSink() {
@@ -214,13 +221,24 @@ describe('agent runtime subagents', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-data-'));
     roots.push(localRoot, dataRoot);
 
-    await createAgent(localRoot, 'researcher', [
+    const researcherDir = await createAgent(localRoot, 'researcher', [
       '---',
       'description: Researches focused questions in isolation.',
       'tools: [file_read, web_search]',
       '---',
       'RESEARCHER_AGENT_BODY: always include this marker in the system prompt.',
     ].join('\n'));
+    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
+    await new AgentEventStore(dataRoot).addMemoryEntry(researcherAgentId, {
+      id: 'memory-researcher-own',
+      fact: 'Researcher agent prefers teal source notes.',
+      sources: [{ conversationId: 'seed-researcher' }],
+    });
+    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-parent-only',
+      fact: 'Parent agent prefers amber planning notes.',
+      sources: [{ conversationId: 'seed-parent' }],
+    });
 
     const contexts: string[] = [];
     const script = scriptedStream(
@@ -272,6 +290,121 @@ describe('agent runtime subagents', () => {
     expect(contexts.some((text) => text.includes('RESEARCHER_AGENT_BODY'))).toBe(true);
     expect(contexts.some((text) => text.includes('Research result from child.'))).toBe(true);
     expect(contexts.some((text) => text.includes('"toolName":"Agent"'))).toBe(true);
+    const childContext = contexts.find((text) => text.includes('RESEARCHER_AGENT_BODY')) ?? '';
+    expect(childContext).toContain('memory-researcher-own');
+    expect(childContext).toContain('Researcher agent prefers teal source notes.');
+    expect(childContext).toContain('"recall"');
+    expect(childContext).not.toContain('memory-parent-only');
+    expect(childContext).not.toContain('Parent agent prefers amber planning notes.');
+  });
+
+  test('scheduled Dream writes fresh subagent transcript memory to the called agent owner', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const researcherDir = await createAgent(localRoot, 'researcher', [
+      '---',
+      'description: Researches focused questions in isolation.',
+      '---',
+      'Researcher agent body.',
+    ].join('\n'));
+    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
+    const childEvidence = `Researcher durable note: use teal source notes for synthesis. ${'agent-owned evidence '.repeat(90)}`;
+    const dreamRequests: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'research memory',
+            prompt: 'Record whether the researcher should use teal source notes.',
+            subagent_type: 'researcher',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText(childEvidence)),
+        fauxAssistantMessage(fauxText('Parent received the researcher result.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model, context) => {
+          const request = textFromContext(context);
+          dreamRequests.push(request);
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: request.includes('## Agent Run')
+                ? [{ type: 'add', fact: 'Researcher agent uses teal source notes for synthesis.' }]
+                : [],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use the researcher agent.', sink);
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+
+    const store = new AgentEventStore(dataRoot);
+    const researcherEntries = await store.listMemoryEntries(researcherAgentId);
+    const parentEntries = await store.listMemoryEntries('built-in:tenon:assistant');
+    const source = researcherEntries[0]?.sources[0];
+    const dreamState = await store.readDreamState(researcherAgentId);
+    const runId = source?.subagentRunId ?? source?.runId;
+    const evidence = source
+      ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
+      : null;
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(researcherEntries.map((entry) => entry.fact)).toEqual([
+      'Researcher agent uses teal source notes for synthesis.',
+    ]);
+    expect(parentEntries).toEqual([]);
+    expect(source).toMatchObject({
+      kind: 'agent_run',
+      conversationId: session.conversationId,
+      agentId: researcherAgentId,
+    });
+    expect(runId).toMatch(/^subagent-/);
+    expect(source?.messageRange?.[0]).toContain(`${runId}:message:`);
+    expect(dreamState.watermark.agentRuns?.[runId!]?.messageCount).toBeGreaterThan(0);
+    expect(evidence?.mode).toBe('evidence');
+    expect(evidence?.mode === 'evidence' ? evidence.messages.some((message) => (
+      message.messageId.startsWith(`${runId}:message:`)
+      && message.text.includes('Researcher durable note: use teal source notes')
+    )) : false).toBe(true);
+    expect(dreamRequests.some((request) => (
+      request.includes('## Agent Run')
+      && request.includes('Researcher durable note: use teal source notes')
+    ))).toBe(true);
   });
 
   test('omitting subagent_type creates a fork with parent context and placeholder tool results', async () => {

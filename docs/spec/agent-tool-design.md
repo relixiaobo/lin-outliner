@@ -2071,8 +2071,13 @@ projection; compaction preserves visible entry ids, facts, sources, status,
 mutation events.
 
 Each entry records `originWorkspace` when a local file root is available and
-keeps `sources` down-pointers to the conversation/run/message/event that created
-it. Runtime setting `agent.runtime.memoryIsolation` controls recall visibility:
+keeps `sources` down-pointers to the conversation or agent-run evidence that
+created it. Conversation sources carry `conversationId` plus optional
+`runId`/`messageRange`/`eventId`. Agent-run sources carry
+`kind: "agent_run"`, the parent `conversationId`, `agentId`,
+`subagentRunId`/`runId`, synthetic transcript `messageRange`, optional
+`parentToolCallId`, and the transcript payload id as `eventId`. Runtime setting
+`agent.runtime.memoryIsolation` controls recall visibility:
 
 - `global` (default): recall can read the agent's full active memory pool.
 - `isolated`: recall reads only entries whose `originWorkspace` matches the
@@ -2088,14 +2093,25 @@ runtime-owned Dream path can write memory after it verifies raw conversation/run
 evidence. Dream is not fired after every foreground turn. Automatic Dream uses a
 per-agent `date` schedule and skips thin evidence below its minimum-volume gate;
 manual `/dream` bypasses that heuristic and runs a consolidate-only pass when
-there is no new raw evidence. The no-tools model call receives raw evidence
-since the last Dream watermark plus the currently visible memory entries. It
-returns structured add/update/forget proposals only; the runtime performs
-dedupe/scope checks, appends `memory.entry_*` events with
-`conversationId`/`runId`/`messageRange`/`eventId` provenance, records
-`dream.completed`, advances the per-conversation watermark, and projects the
-agent-anchored Dream run as a read-only task-panel row. The foreground model must
-not claim it saved, updated, or forgot durable memory through a tool call.
+there is no new raw evidence for the current foreground agent. The no-tools
+model call receives raw evidence since the last Dream watermark plus the
+currently visible memory entries. It returns structured add/update/forget
+proposals only; the runtime performs dedupe/scope checks, appends
+`memory.entry_*` events with source provenance, records `dream.completed`,
+advances per-conversation watermarks and per-agent-run transcript watermarks, and
+projects the foreground agent's Dream run as a read-only task-panel row. The
+foreground model must not claim it saved, updated, or forgot durable memory
+through a tool call.
+
+Subagent memory ownership is explicit. A fresh typed subagent runs as the called
+agent definition: its `<agent-memory>` reminder and `recall` tool read that
+agent's memory, and its sidechain transcript is Dream evidence for that same
+agent. The parent agent's Dream sees only the parent conversation surface, such
+as the `Agent` tool call and compact result projection, not the full fresh
+subagent transcript. A fork subagent keeps the parent agent as both execution
+identity and memory owner; its sidechain transcript can become Dream evidence for
+the parent, but Dream skips the copied parent-context prefix and starts at the
+fork directive.
 
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
 the active projection. Reminder retrieval ranks by memory-specific relevance
@@ -2105,12 +2121,14 @@ the foreground model can call `recall` when the reminder or current context is
 insufficient.
 
 Evidence expansion is always nested under a returned memory entry. The runtime
-expands only that entry's `MemoryEntry.sources` through the internal conversation
-evidence service, verifies the retained active branch, and clamps output by
-`max_chars`. Older conversations that have not been distilled into active memory
-entries are intentionally not foreground-recallable. Internal summary search and
-raw conversation/run reads remain available to runtime-owned Dream/extraction
-and diagnostics, not as public model tools.
+expands only that entry's `MemoryEntry.sources` through the internal evidence
+service. Conversation sources verify the retained active branch. Agent-run
+sources read the referenced subagent transcript payload and expand only the
+synthetic transcript message range. Both paths clamp output by `max_chars`. Older
+conversations that have not been distilled into active memory entries are
+intentionally not foreground-recallable. Internal summary search and raw
+conversation/run reads remain available to runtime-owned Dream/extraction and
+diagnostics, not as public model tools.
 
 Tool results use the shared envelope and expose only the slim model-visible
 projection:

@@ -357,6 +357,9 @@ type AgentSubagentRun = {
   prompt: string;
   status: 'running' | 'completed' | 'failed' | 'stopped';
   contextMode: 'fresh' | 'fork';
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
   transcriptPayloadId?: string;
   model?: string;
   effort?: string;
@@ -374,6 +377,8 @@ type AgentSubagentRun = {
 
 A fresh subagent starts from its own agent definition and prompt. It does not
 inherit the parent transcript. The parent must brief it with complete context.
+Its execution identity and memory owner are the called agent definition, not the
+parent agent that invoked `Agent`.
 
 Selection:
 
@@ -387,6 +392,7 @@ Selection:
 A fork subagent inherits the current prepared parent context as a cache-stable
 snapshot. It is used when the main agent needs isolated exploration or execution
 without pulling intermediate tool output into the parent context.
+Its execution identity and memory owner remain the parent agent's identity.
 
 Selection:
 
@@ -419,6 +425,12 @@ Every subagent writes a separate transcript. The parent session stores only:
 
 This is required so subagents reduce parent-context pressure rather than moving
 tool noise into the main conversation.
+
+The sidechain transcript is still durable evidence. Fresh subagent transcripts
+are Dream evidence for the called agent's `memoryOwnerAgentId`; fork transcripts
+are Dream evidence for the parent agent. Dream skips the copied parent-context
+prefix of a fork transcript and starts from the fork directive plus child-side
+messages, so parent history is not reprocessed as new fork evidence.
 
 ## Model-Facing Tools
 
@@ -664,8 +676,9 @@ Implemented payload role:
 - `subagent_transcript`
 
 `subagent_run.started` records stable run metadata: id, optional same-session
-name, description, prompt, subagent type, fresh/fork context mode, parent tool
-call id, transcript payload ref, and transcript message count.
+name, description, prompt, subagent type, fresh/fork context mode, execution
+identity, parent agent identity, memory owner identity, parent tool call id,
+transcript payload ref, and transcript message count.
 
 `subagent_run.updated` records status transitions and transcript movement:
 `running`, `completed`, `failed`, or `stopped`, plus final result/error and the
@@ -696,6 +709,10 @@ user-visible conversation state. The sidechain transcript is stored as immutable
 JSON payload snapshots and referenced by the subagent run record. This keeps the
 parent model context clean while still allowing status, restore, debug, and
 continuation.
+
+Transcript payloads include the same execution and memory owner ids as the run
+record. They can be read by runtime-owned Dream and by bounded memory evidence
+expansion, but the parent model only receives the `Agent` tool result projection.
 
 ## Compaction And Resume
 
@@ -832,6 +849,9 @@ Implemented.
 
 - `Agent` with `subagent_type` creates a fresh sidechain pi-mono `Agent`.
 - The child receives its agent definition system prompt plus the supplied task.
+- The child derives `executingAgentId` and `memoryOwnerAgentId` from the called
+  agent definition. Its `<agent-memory>` reminder and `recall` tool read that
+  owner id, not the parent agent id.
 - The parent receives only the final result or error.
 - Sidechain transcript snapshots are persisted as `subagent_transcript`
   payloads.
@@ -843,6 +863,9 @@ Implemented.
 - `Agent` without `subagent_type` forks from the current parent context.
 - The fork uses the parent system prompt, parent messages, a fork directive, and
   placeholder results for unresolved tool calls.
+- Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`, and
+  Dream treats only the fork directive plus child-side transcript as new
+  agent-run evidence.
 - Recursive fork attempts are rejected.
 - Child tool output stays in the sidechain transcript and does not pollute the
   parent context.
