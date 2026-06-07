@@ -325,6 +325,17 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-memory-plan-adjustments** (codex, PR #157) — docs-only plan revision (PM-ratified 2026-06-07) across
+  four `docs/plans/*.md`, no production or spec change. Pins two M2 decisions: **write authority** = exactly
+  two runtime-owned writers (Settings/Profile UI + Dream/extraction), no model-visible write tool and no
+  foreground "remember this" path; **read surface** = a single read-only `recall` tool over durable memory (no
+  model-visible `past_chats` / second chat-search tool) whose raw evidence is a nested `evidence[]` child of
+  the matching `MemoryEntry` behind a default-off `include_evidence` flag, with `invalidated` filtering,
+  isolation-tier enforcement, and `max_chars`. Records the accepted no-backfill consequence (un-distilled old
+  conversations are not foreground-recallable by design). Spec untouched on purpose (A6 — reconcile in the M2
+  implementation PR). Gate: docs-only, internal-consistency + wikilink check across all four plans, no spec/
+  production touched.
+
 - **agent-m1-tail-cleanup** (codex, PR #156) — M1 tail verification + plan/spec hygiene (no production code):
   e2e coverage for the pending `ask_user_question` card under light/dark `prefers-color-scheme` (real
   `user_question_request` event path + `agent_resolve_user_question` submit) and for the Settings Memory

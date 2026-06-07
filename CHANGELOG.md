@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Revise agent memory planning toward the target write/read surface (PR #157)** — docs-only plan
+  adjustment (PM-ratified 2026-06-07) across four `docs/plans/*.md`, no production or spec change. Pins two
+  decisions for the M2 build. **Write authority — DECIDED:** the durable memory line is written by exactly
+  two runtime-owned writers (Settings/Profile UI for explicit edits, Dream/extraction for automatic
+  consolidation); there is no model-visible memory write tool and no synchronous foreground "remember this"
+  path. **Read surface — DECIDED:** a single model-visible read-only `recall` tool over durable memory (no
+  model-visible `past_chats` and no second chat-search tool); `include_evidence` defaults to false and, when
+  true, returns raw conversation/run excerpts only as an `evidence[]` field nested under the matching
+  `MemoryEntry` (never a sibling in the ranked list, expandable only through the entry's provenance), with
+  `status:'invalidated'` filtering, isolation-tier enforcement, and a `max_chars` cap. States the accepted
+  consequence explicitly: old conversations Dream never distilled into a `MemoryEntry` are not
+  foreground-recallable by design. Spec left untouched on purpose (A6 — current code still ships the inline
+  memory tool / `past_chats`; reconcile in the M2 implementation PR).
+  ([#157](https://github.com/relixiaobo/lin-outliner/pull/157))
+
 - **Close agent M1 tail verification + plan hygiene (PR #156)** — no production code: added e2e coverage for
   the pending `ask_user_question` card (light/dark `prefers-color-scheme`, real `user_question_request` event
   path + `agent_resolve_user_question` submit) and for the Settings Memory view/edit/forget pane
