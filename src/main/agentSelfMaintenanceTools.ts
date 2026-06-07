@@ -1,4 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentDreamCompletedChanges } from '../core/agentEventLog';
 import type { AgentRuntimeSettings, AgentRuntimeSettingsInput } from '../core/types';
 import {
   agentToolResult,
@@ -37,11 +38,24 @@ export interface DoctorData {
   diagnostics: DoctorDiagnostic[];
 }
 
+export interface DreamToolData {
+  status: 'completed' | 'failed' | 'skipped';
+  runId?: string;
+  processed?: {
+    totalMessageCount: number;
+    totalCharCount: number;
+    consolidateOnly: boolean;
+  };
+  changes?: AgentDreamCompletedChanges;
+  errorMessage?: string;
+}
+
 export interface AgentSelfMaintenanceRuntime {
   runtimeStatus(): Promise<RuntimeStatusData>;
   readConfig(setting: string): Promise<ConfigToolData>;
   writeConfig(setting: string, value: unknown): Promise<ConfigToolData>;
   doctor(): Promise<DoctorData>;
+  dream(reason?: string): Promise<DreamToolData>;
 }
 
 const RUNTIME_STATUS_PARAMETERS = {
@@ -64,6 +78,14 @@ const DOCTOR_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {},
+} as const;
+
+const DREAM_PARAMETERS = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    reason: { type: 'string', minLength: 1, maxLength: 240 },
+  },
 } as const;
 
 export function createSelfMaintenanceTools(runtime: AgentSelfMaintenanceRuntime): AgentTool<any>[] {
@@ -101,6 +123,26 @@ export function createSelfMaintenanceTools(runtime: AgentSelfMaintenanceRuntime)
       parameters: DOCTOR_PARAMETERS,
       executionMode: 'parallel',
       execute: async () => selfMaintenanceResult('doctor', await runtime.doctor()),
+    },
+    {
+      name: 'dream',
+      label: 'Dream',
+      description: 'Request a runtime-owned Memory Dream for the current Tenon agent. This trigger cannot specify memory facts; the background extractor decides changes from recorded evidence.',
+      parameters: DREAM_PARAMETERS,
+      executionMode: 'sequential',
+      execute: async (_toolCallId, rawParams: unknown) => {
+        const started = Date.now();
+        const params = isRecord(rawParams) ? rawParams : {};
+        try {
+          const data = await runtime.dream(typeof params.reason === 'string' ? params.reason.trim() : undefined);
+          if (data.status === 'failed') {
+            return selfMaintenanceError<DreamToolData>('dream', 'DREAM_FAILED', data.errorMessage ?? 'Dream failed.', started, data);
+          }
+          return selfMaintenanceResult('dream', data, started, dreamInstructions(data));
+        } catch (error) {
+          return selfMaintenanceError<DreamToolData>('dream', 'DREAM_FAILED', errorMessage(error), started);
+        }
+      },
     },
   ];
 }
@@ -161,14 +203,59 @@ export function readRuntimeSetting(settings: AgentRuntimeSettings, setting: stri
   }
 }
 
-function selfMaintenanceResult<TData>(tool: string, data: TData) {
-  return agentToolResult(successEnvelope(tool, data), data);
+function selfMaintenanceResult<TData>(
+  tool: string,
+  data: TData,
+  started?: number,
+  instructions?: string,
+) {
+  return agentToolResult(successEnvelope(tool, data, {
+    ...(started !== undefined ? { metrics: { durationMs: Date.now() - started } } : {}),
+    ...(instructions ? { instructions } : {}),
+    ...(isDreamSkippedData(data) ? { status: 'unchanged' } : {}),
+  }), visibleSelfMaintenanceData(tool, data));
 }
 
-function selfMaintenanceError<TData>(tool: string, code: string, message: string) {
+function selfMaintenanceError<TData>(
+  tool: string,
+  code: string,
+  message: string,
+  started?: number,
+  data?: TData,
+) {
   return agentToolResult(errorEnvelope<TData>(tool, code, message, {
-    instructions: 'Inspect the error and retry only with a supported setting or diagnostic request.',
-  }));
+    ...(data !== undefined ? { data } : {}),
+    ...(started !== undefined ? { metrics: { durationMs: Date.now() - started } } : {}),
+    instructions: 'Inspect the error and retry only if the requested runtime maintenance action is still relevant.',
+  }), data === undefined ? undefined : visibleSelfMaintenanceData(tool, data));
+}
+
+function dreamInstructions(data: DreamToolData): string {
+  if (data.status === 'skipped') {
+    return 'No Memory Dream ran. Explain the unavailable condition briefly if it matters to the user.';
+  }
+  return 'Memory Dream finished. Do not claim specific remembered facts unless recall returns them.';
+}
+
+function visibleSelfMaintenanceData(tool: string, data: unknown): unknown {
+  if (tool !== 'dream' || !isRecord(data)) return data;
+  return {
+    status: data.status,
+    ...(typeof data.runId === 'string' ? { run_id: data.runId } : {}),
+    ...(isRecord(data.processed) ? {
+      processed: {
+        total_messages: data.processed.totalMessageCount,
+        total_chars: data.processed.totalCharCount,
+        consolidate_only: data.processed.consolidateOnly,
+      },
+    } : {}),
+    ...(isRecord(data.changes) ? { changes: data.changes } : {}),
+    ...(typeof data.errorMessage === 'string' ? { error_message: data.errorMessage } : {}),
+  };
+}
+
+function isDreamSkippedData(data: unknown): boolean {
+  return isRecord(data) && data.status === 'skipped';
 }
 
 function requireBoolean(setting: string, value: unknown): boolean {

@@ -60,6 +60,7 @@ surface.
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
 | `recall` | agent | No | No | Read active durable memory entries, with optional nested source evidence. |
+| `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream for the current agent; cannot specify facts to save. |
 
 ### Deferred Tools
 
@@ -77,6 +78,8 @@ permission behavior harder to reason about.
 - Use `web_*` for network read tools.
 - Use `recall` for durable agent memory. Raw conversation search is internal to
   runtime-owned evidence expansion and Dream/extraction, not a model-visible tool.
+- Use `dream` only as a trigger-only request for runtime-owned Dream extraction.
+  It is not a foreground fact write/update/forget API.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -2089,24 +2092,31 @@ setting `agent.runtime.memoryIsolation` controls recall visibility:
   skips writes in this mode, so facts learned in the workspace do not enter the
   global memory pool.
 
-Explicit memory management is not a foreground model tool. The Settings/Profile
-UI can list, edit, and forget memory through IPC-backed runtime methods, and the
+Explicit fact management is not a foreground model tool. The Settings/Profile UI
+can list, edit, and forget memory through IPC-backed runtime methods, and the
 runtime-owned Dream path can write memory after it verifies raw conversation/run
 evidence. Dream is not fired after every foreground turn. Automatic Dream uses a
 per-agent `date` schedule and skips thin evidence below its minimum-volume gate;
 manual `/dream` bypasses that heuristic and runs a consolidate-only pass when
-there is no new raw evidence for the current foreground agent. The no-tools
-model call receives raw evidence since the last Dream watermark plus the
-currently visible memory entries. It returns structured add/update/forget
-proposals only; the runtime performs dedupe/scope checks, appends
-`memory.entry_*` events with source provenance, records `dream.completed`,
-advances per-conversation watermarks and per-agent-run transcript watermarks, and
-projects foreground and owner-anchored Dream runs as read-only task-panel rows.
+there is no new raw evidence for the current foreground agent. The foreground
+`dream` tool is permission-gated and trigger-only: the model can ask the runtime
+to run Dream for the current agent, but it cannot provide facts, select another
+agent, or bypass scope checks. `agent.memory.dream` cannot be globally allowed;
+each model-triggered Dream request needs explicit approval. The no-tools model
+call receives raw evidence since the last Dream watermark plus the currently
+visible memory entries. It returns structured add/update/forget proposals only;
+the runtime performs dedupe/scope checks, appends `memory.entry_*` events with
+source provenance, records `dream.completed`, advances per-conversation
+watermarks and per-agent-run transcript watermarks, and projects foreground and
+owner-anchored Dream runs as read-only task-panel rows. Manual `/dream` also
+writes a conversation-side `dream.finished` marker so the chat stream shows
+running/completed feedback.
 Per-agent-run watermarks bind `messageCount` to a transcript `payloadId`; if the
 payload id changes after compaction or a new transcript snapshot, Dream treats
 the new payload as a new address space and does not skip it merely because an old
-message count is larger. The foreground model must not claim it saved, updated,
-or forgot durable memory through a tool call.
+message count is larger. The foreground model must not claim specific saved,
+updated, or forgotten durable facts through a tool call unless `recall` returns
+those facts after Dream completes.
 
 Subagent memory ownership is explicit. A fresh typed subagent runs as the called
 agent definition: its `<agent-memory>` reminder and `recall` tool read that

@@ -124,6 +124,7 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'runtime_status',
   'config',
   'doctor',
+  'dream',
   'skill',
   'task_stop',
   'node_read',
@@ -155,6 +156,7 @@ const TOOL_ALIASES = new Map<string, string>([
   ['runtimestatus', 'runtime_status'],
   ['config', 'config'],
   ['doctor', 'doctor'],
+  ['dream', 'dream'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
   ['agent', 'agent'],
@@ -430,6 +432,22 @@ export function deriveAgentToolActionDescriptors(input: {
       externalEffect: false,
       highConsequence: false,
       classifierAutoAllowEligible: false,
+    })];
+  }
+
+  if (toolName === 'dream') {
+    return [descriptor(toolName, 'agent.memory.dream', {
+      accessScope: 'none',
+      title: 'agent memory dream',
+      summary: 'Request runtime-owned durable memory extraction for the current agent.',
+      consequence: 'This may update local durable agent memory from recorded conversation evidence; the model cannot provide memory facts directly.',
+      defaultDecision: 'ask',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+      requestTitle: 'Approve Memory Dream?',
+      requestTarget: 'current agent memory',
     })];
   }
 
@@ -1219,6 +1237,7 @@ export function toPermissionClassifierInput(toolNameInput: string, args: unknown
     case 'runtime_status':
     case 'config':
     case 'doctor':
+    case 'dream':
     case 'task_stop':
     case 'agent_status':
     case 'agent_send':
@@ -1594,7 +1613,7 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor' || toolName === 'dream') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') return 'read';
   return 'unknown';

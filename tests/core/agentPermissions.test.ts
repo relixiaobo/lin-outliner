@@ -238,6 +238,11 @@ describe('agent permissions', () => {
       args: { setting: 'agent.runtime.compactEnabled', value: false },
       policy: { workspaceRoot },
     });
+    const dream = evaluateAgentToolPermission({
+      toolName: 'dream',
+      args: { reason: 'test memory extraction' },
+      policy: { workspaceRoot },
+    });
     const configWriteWithGlobalAllow = evaluateAgentToolPermission({
       toolName: 'config',
       args: { setting: 'agent.runtime.compactEnabled', value: false },
@@ -265,8 +270,20 @@ describe('agent permissions', () => {
         },
       },
     });
+    const dreamWithGlobalAllow = evaluateAgentToolPermission({
+      toolName: 'dream',
+      args: {},
+      policy: {
+        workspaceRoot,
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(agent.memory.dream)'],
+          },
+        },
+      },
+    });
     const configGlobalAllow = parseGlobalToolPermissionSettings({
-      permissions: { allow: ['Action(agent.config.write)'] },
+      permissions: { allow: ['Action(agent.config.write)', 'Action(agent.memory.dream)'] },
     });
 
     expect(runtimeStatus).toMatchObject({
@@ -292,6 +309,14 @@ describe('agent permissions', () => {
     });
     expect(configWrite.behavior === 'ask' ? configWrite.request.title : undefined)
       .toBe('Approve agent config change?');
+    expect(dream).toMatchObject({
+      behavior: 'ask',
+      access: 'control',
+      code: 'agent.memory.dream',
+      descriptor: { actionKind: 'agent.memory.dream' },
+    });
+    expect(dream.behavior === 'ask' ? dream.request.title : undefined)
+      .toBe('Approve Memory Dream?');
     expect(configWriteWithGlobalAllow).toMatchObject({
       behavior: 'ask',
       descriptor: { actionKind: 'agent.config.write' },
@@ -300,13 +325,25 @@ describe('agent permissions', () => {
       behavior: 'ask',
       descriptor: { actionKind: 'agent.config.write' },
     });
+    expect(dreamWithGlobalAllow).toMatchObject({
+      behavior: 'ask',
+      descriptor: { actionKind: 'agent.memory.dream' },
+    });
     expect(configGlobalAllow.rules).toEqual([]);
-    expect(configGlobalAllow.diagnostics).toEqual([{
-      ruleValue: 'Action(agent.config.write)',
-      decision: 'allow',
-      code: 'forbidden_allow_rule',
-      message: 'Action agent.config.write cannot be globally allowed.',
-    }]);
+    expect(configGlobalAllow.diagnostics).toEqual([
+      {
+        ruleValue: 'Action(agent.config.write)',
+        decision: 'allow',
+        code: 'forbidden_allow_rule',
+        message: 'Action agent.config.write cannot be globally allowed.',
+      },
+      {
+        ruleValue: 'Action(agent.memory.dream)',
+        decision: 'allow',
+        code: 'forbidden_allow_rule',
+        message: 'Action agent.memory.dream cannot be globally allowed.',
+      },
+    ]);
   });
 
   test('skill content file writes use the skill-write permission action', () => {

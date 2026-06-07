@@ -105,6 +105,15 @@ async function flushProjectionCoalescing() {
   await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
+async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 1000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for condition');
+}
+
 function scriptedStream(
   responses: Array<AssistantMessage | ((context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage)>,
   onCall: (model: Model<Api>, context: Context) => void,
@@ -268,7 +277,94 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).toContain('"config"');
     expect(contextText).toContain('"doctor"');
     expect(contextText).toContain('"recall"');
+    expect(contextText).toContain('"dream"');
     expect(contextText).not.toContain('"past_chats"');
+  });
+
+  test('agent can request Dream through the foreground tool surface', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-tool-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-tool-data-'));
+    roots.push(localRoot, dataRoot);
+    const dreamRequests: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('dream', { reason: 'test Dream memory' }, { id: 'tool-dream-test' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Dream test completed.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model, context) => {
+          dreamRequests.push(textFromContext(context));
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [{ type: 'add', fact: 'User is testing the Dream memory feature.' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'I want to test the Dream feature.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected Dream approval request.');
+    expect(approvalEvent.request.toolName).toBe('dream');
+    expect(approvalEvent.request.title).toBe('Approve Memory Dream?');
+    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
+    await sendPromise;
+
+    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
+    const activePath = getAgentEventActivePath(replay);
+    const toolCalls = activePath.flatMap((message) => (
+      message.content
+        .filter((part): part is Extract<AgentPersistedContent, { type: 'toolCall' }> => part.type === 'toolCall')
+        .map((part) => ({ name: part.name, arguments: part.arguments }))
+    ));
+    const toolResults = activePath.filter((message) => message.role === 'toolResult');
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(toolCalls).toEqual([{ name: 'dream', arguments: { reason: 'test Dream memory' } }]);
+    expect(toolResults.map((message) => message.toolName)).toEqual(['dream']);
+    expect(persistedText(toolResults[0]?.content ?? [])).toContain('"status": "completed"');
+    expect(persistedText(toolResults[0]?.content ?? [])).toContain('"run_id": "dream-run-');
+    expect(entries.map((entry) => entry.fact)).toEqual(['User is testing the Dream memory feature.']);
+    expect(dreamRequests.join('\n')).toContain('I want to test the Dream feature.');
+    expect(dreamRequests.join('\n')).toContain('"tools":[]');
   });
 
   test('recalls durable memory with nested source evidence', async () => {
@@ -679,6 +775,17 @@ describe('agent runtime past chats integration', () => {
     expect(dreamRequests.join('\n')).toContain('I will keep future engineering answers concise.');
     expect(dreamRequests.join('\n')).toContain('"tools":[]');
     expect((await new AgentEventStore(dataRoot).readDreamState('built-in:tenon:assistant')).watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
+    const projection = latestProjectionEvent(sink.events)?.renderProjection;
+    const dreamRow = projection?.transcriptRows.find((row) => row.kind === 'dream');
+    expect(dreamRow?.kind).toBe('dream');
+    if (dreamRow?.kind === 'dream') {
+      expect(typeof projection?.entities.dreams[dreamRow.dreamId]?.runId).toBe('string');
+      expect(projection?.entities.dreams[dreamRow.dreamId]).toMatchObject({
+        status: 'completed',
+        processed: { totalMessageCount: 2 },
+        changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+      });
+    }
   });
 
   test('scheduled dream skips thin evidence while manual /dream forces it', async () => {

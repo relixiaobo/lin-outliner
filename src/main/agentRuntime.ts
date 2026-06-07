@@ -59,6 +59,7 @@ import {
   type AgentCompactionSourceRange,
   type AgentCompactionTrigger,
   type AgentDreamCompletedChanges,
+  type AgentDreamMarkerStatus,
   type AgentDreamTrigger,
   type AgentDreamWatermark,
   type AgentEvent,
@@ -222,6 +223,7 @@ import {
 import {
   buildAgentRenderProjection,
   type AgentRenderActiveCompaction,
+  type AgentRenderActiveDream,
   type AgentRenderDreamTaskEntity,
   type AgentRenderTaskEntity,
   type AgentRenderTaskStatus,
@@ -345,6 +347,7 @@ interface AgentSessionState {
   autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
   activeCompaction: AgentRenderActiveCompaction | null;
+  activeDream: AgentRenderActiveDream | null;
   currentDebugQueryIndex: number;
   nextDebugQueryIndex: number;
   nextDebugTurnIndex: number;
@@ -374,6 +377,18 @@ interface AgentDreamMemoryExtractionTask {
   originWorkspace?: string;
   originWorkspaceFilter?: string;
   watermark: AgentDreamWatermark;
+}
+
+interface AgentDreamRunResult {
+  agentId: string;
+  runId?: string;
+  trigger: AgentDreamTrigger;
+  status: AgentDreamMarkerStatus;
+  startedAt: number;
+  completedAt: number;
+  processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
+  changes?: AgentDreamCompletedChanges;
+  errorMessage?: string;
 }
 
 type AgentEventInput = AgentRuntimeContextEventInput;
@@ -1309,6 +1324,7 @@ export class AgentRuntime {
       autoCompactInProgress: false,
       eventState,
       activeCompaction: null,
+      activeDream: null,
       currentDebugQueryIndex: 0,
       nextDebugQueryIndex: debugCounters.nextQueryIndex,
       nextDebugTurnIndex: debugCounters.nextTurnIndex,
@@ -1870,8 +1886,34 @@ export class AgentRuntime {
 
   private async runManualDreamFromConversation(sessionId: string) {
     if (!this.dreamMemoryExtractionEnabled()) return;
-    await this.fireDreamForAgent(this.agentIdentity.agentId, 'manual', new Date());
-    this.emitProjection(sessionId, 'dream.completed');
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const activeDreamId = this.beginDream(sessionId, session);
+    let result: AgentDreamRunResult;
+    try {
+      result = await this.fireDreamForAgent(this.agentIdentity.agentId, 'manual', new Date()) ?? {
+        agentId: this.agentIdentity.agentId,
+        trigger: 'manual',
+        status: 'skipped',
+        startedAt: session.activeDream?.startedAt ?? Date.now(),
+        completedAt: Date.now(),
+        errorMessage: 'Dream is unavailable for the current memory/provider configuration.',
+      };
+    } catch (error) {
+      result = {
+        agentId: this.agentIdentity.agentId,
+        trigger: 'manual',
+        status: 'failed',
+        startedAt: session.activeDream?.startedAt ?? Date.now(),
+        completedAt: Date.now(),
+        errorMessage: error instanceof Error ? error.message : String(error),
+      };
+    }
+    try {
+      await this.appendDreamFinishedEvent(sessionId, session, result);
+    } finally {
+      this.finishDream(sessionId, session, activeDreamId, 'dream.finished');
+    }
   }
 
   private async fireDream(trigger: AgentDreamTrigger, now: Date): Promise<void> {
@@ -1883,16 +1925,16 @@ export class AgentRuntime {
     }
   }
 
-  private async fireDreamForAgent(agentId: string, trigger: AgentDreamTrigger, now: Date): Promise<void> {
+  private async fireDreamForAgent(agentId: string, trigger: AgentDreamTrigger, now: Date): Promise<AgentDreamRunResult | null> {
     if (this.dreamingAgentIds.has(agentId)) {
       if (trigger === 'manual') throw new Error('Dream is already running for this agent.');
-      return;
+      return null;
     }
     this.dreamingAgentIds.add(agentId);
     try {
       const task = await this.createDreamMemoryExtractionTask(agentId, trigger, now);
-      if (!task) return;
-      await this.runDreamMemoryExtractionTask(task);
+      if (!task) return null;
+      return await this.runDreamMemoryExtractionTask(task);
     } finally {
       this.dreamingAgentIds.delete(agentId);
     }
@@ -2013,11 +2055,21 @@ export class AgentRuntime {
     return resolveSubagentMemoryOwner(run, this.agentIdentity.agentId);
   }
 
-  private async runDreamMemoryExtractionTask(task: AgentDreamMemoryExtractionTask) {
+  private async runDreamMemoryExtractionTask(task: AgentDreamMemoryExtractionTask): Promise<AgentDreamRunResult> {
     let modelForRunMeta: Model<Api> | null = null;
     try {
       const providerConfig = await this.getActiveProviderConfig();
-      if (!providerConfig) return;
+      if (!providerConfig) {
+        return {
+          agentId: task.agentId,
+          runId: task.runId,
+          trigger: task.trigger,
+          status: 'skipped',
+          startedAt: task.startedAt,
+          completedAt: Date.now(),
+          errorMessage: 'No enabled agent provider is configured.',
+        };
+      }
       const model = this.resolveProviderModel(providerConfig);
       modelForRunMeta = model;
       await this.writeDreamRunMeta(task, 'running', model);
@@ -2052,7 +2104,7 @@ export class AgentRuntime {
       const changes = actions.length > 0
         ? await this.applyDreamMemoryActions(task, actions, currentMemories)
         : emptyDreamChanges();
-      await this.getEventStore().appendDreamCompleted(task.agentId, {
+      const completed = await this.getEventStore().appendDreamCompleted(task.agentId, {
         runId: task.runId,
         trigger: task.trigger,
         startedAt: task.startedAt,
@@ -2067,11 +2119,31 @@ export class AgentRuntime {
         changes,
       });
       await this.writeDreamRunMeta(task, 'completed', model);
+      return {
+        agentId: task.agentId,
+        runId: task.runId,
+        trigger: task.trigger,
+        status: 'completed',
+        startedAt: task.startedAt,
+        completedAt: completed.completedAt,
+        processed: completed.processed,
+        changes: completed.changes,
+      };
     } catch (error) {
       if (modelForRunMeta) {
         await this.writeDreamRunMeta(task, 'failed', modelForRunMeta).catch(() => undefined);
       }
-      console.warn(`Dream memory extraction skipped: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Dream memory extraction skipped: ${message}`);
+      return {
+        agentId: task.agentId,
+        runId: task.runId,
+        trigger: task.trigger,
+        status: 'failed',
+        startedAt: task.startedAt,
+        completedAt: Date.now(),
+        errorMessage: message,
+      };
     }
   }
 
@@ -2310,6 +2382,7 @@ export class AgentRuntime {
       revision: session.revision,
       activeRunId: this.activeRunId(session),
       activeCompaction: session.activeCompaction,
+      activeDream: session.activeDream,
       isStreaming: session.agent.state.isStreaming,
       model: clone(session.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: session.agent.state.thinkingLevel,
@@ -2349,6 +2422,29 @@ export class AgentRuntime {
   ) {
     if (session.activeCompaction?.id === compactionId) {
       session.activeCompaction = null;
+    }
+    this.emitProjection(sessionId, lastEventType);
+  }
+
+  private beginDream(sessionId: string, session: AgentSessionState): string {
+    const activeDream = {
+      id: randomUUID(),
+      trigger: 'manual' as const,
+      startedAt: Date.now(),
+    };
+    session.activeDream = activeDream;
+    this.emitProjection(sessionId, 'dream.started');
+    return activeDream.id;
+  }
+
+  private finishDream(
+    sessionId: string,
+    session: AgentSessionState,
+    dreamId: string,
+    lastEventType: string,
+  ) {
+    if (session.activeDream?.id === dreamId) {
+      session.activeDream = null;
     }
     this.emitProjection(sessionId, lastEventType);
   }
@@ -2649,6 +2745,30 @@ export class AgentRuntime {
         return {
           ok: diagnostics.every((diagnostic) => diagnostic.severity !== 'error'),
           diagnostics,
+        };
+      },
+      dream: async () => {
+        const result = await this.fireDreamForAgent(this.agentIdentity.agentId, 'manual', new Date());
+        if (!result) {
+          return {
+            status: 'skipped',
+            processed: undefined,
+            changes: undefined,
+            errorMessage: 'Dream is unavailable for the current memory/provider configuration.',
+          };
+        }
+        return {
+          status: result.status,
+          runId: result.runId,
+          processed: result.processed
+            ? {
+                totalMessageCount: result.processed.totalMessageCount,
+                totalCharCount: result.processed.totalCharCount,
+                consolidateOnly: result.processed.consolidateOnly,
+              }
+            : undefined,
+          changes: result.changes,
+          errorMessage: result.errorMessage,
         };
       },
     };
@@ -3249,6 +3369,51 @@ export class AgentRuntime {
     );
 
     await this.appendSessionEvents(sessionId, session, inputs);
+  }
+
+  private async appendDreamFinishedEvent(
+    sessionId: string,
+    session: AgentSessionState,
+    result: AgentDreamRunResult,
+  ) {
+    const messageId = this.createMessageId('user');
+    const timestamp = result.completedAt;
+    const reminder = systemReminder([
+      `Memory Dream ${result.status}.`,
+      result.runId ? `Run id: ${result.runId}.` : null,
+      result.errorMessage ? `Error: ${result.errorMessage}` : null,
+    ].filter(Boolean).join('\n'));
+    await this.appendSessionEvents(sessionId, session, [
+      {
+        type: 'dream.finished',
+        actor: systemActor(),
+        createdAt: timestamp,
+        messageId,
+        agentId: result.agentId,
+        runId: result.runId,
+        trigger: result.trigger,
+        status: result.status,
+        startedAt: result.startedAt,
+        completedAt: result.completedAt,
+        processed: result.processed,
+        changes: result.changes,
+        errorMessage: result.errorMessage,
+      },
+      {
+        type: 'user_message.created',
+        actor: systemActor(),
+        createdAt: timestamp,
+        messageId,
+        parentMessageId: session.eventState.selectedLeafMessageId,
+        content: [{ type: 'text', text: reminder }],
+      },
+      {
+        type: 'branch.selected',
+        actor: systemActor(),
+        createdAt: timestamp,
+        leafMessageId: messageId,
+      },
+    ]);
   }
 
   private async buildPreservedMessageEvents(

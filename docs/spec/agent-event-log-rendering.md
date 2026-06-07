@@ -381,6 +381,7 @@ type AgentEventType =
   | 'subagent_run.started'
   | 'subagent_run.updated'
   | 'compaction.completed'
+  | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
   | 'checkpoint.created'
@@ -394,11 +395,14 @@ schema-reserved so these features can land without changing the event-store
 model. Events that are emitted today still go through the same append-only
 rules.
 
-Agent-owned memory events live in the separate per-agent memory log, not the
-conversation render projection. `memory.entry_*` events project to editable
-durable memory entries; `dream.completed` projects the latest Dream watermark
-and audit summary. Agent-anchored Dream run meta is indexed per agent and added
-to the render task projection as a read-only Dream task.
+Agent-owned memory events live in the separate per-agent memory log.
+`memory.entry_*` events project to editable durable memory entries;
+`dream.completed` projects the latest Dream watermark and audit summary.
+Agent-anchored Dream run meta is indexed per agent and added to the render task
+projection as a read-only Dream task. A manual conversation-triggered Dream also
+writes a conversation-side `dream.finished` marker keyed to a hidden user-message
+anchor. That marker is for chat-stream placement only; the memory audit remains
+in the per-agent memory log.
 
 ## Message Model
 
@@ -726,6 +730,10 @@ Rules:
   `entities.compactions`.
 - The compact root user message remains available for pi-mono projection but is
   not rendered as a normal user bubble.
+- `dream.finished` events become dedicated Dream boundary rows keyed by their
+  hidden anchor message, with status, processed counts, and memory-change counts
+  in `entities.dreams`. Active manual `/dream` runs append a transient
+  `activeDream` row until the marker is written.
 - Long output rows are collapsed by default.
 - The thinking/tool **process block is collapsed by default** in every steady
   state. While its turn is live, the collapsed header acts as a status line: it

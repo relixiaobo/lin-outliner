@@ -534,6 +534,7 @@ export type AgentEventType =
   | 'subagent_run.started'
   | 'subagent_run.updated'
   | 'compaction.completed'
+  | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
   | 'checkpoint.created'
@@ -906,6 +907,22 @@ export interface CompactionCompletedEvent extends AgentEventBase {
   trigger: AgentCompactionTrigger;
 }
 
+export type AgentDreamMarkerStatus = 'completed' | 'failed' | 'skipped';
+
+export interface DreamFinishedEvent extends AgentEventBase {
+  type: 'dream.finished';
+  messageId: string;
+  agentId: string;
+  runId?: string;
+  trigger: AgentDreamTrigger;
+  status: AgentDreamMarkerStatus;
+  startedAt: number;
+  completedAt: number;
+  processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
+  changes?: AgentDreamCompletedChanges;
+  errorMessage?: string;
+}
+
 export interface PayloadCreatedEvent extends AgentEventBase {
   type: 'payload.created';
   payload: AgentPayloadRef;
@@ -972,6 +989,7 @@ export type AgentEvent =
   | SubagentRunStartedEvent
   | SubagentRunUpdatedEvent
   | CompactionCompletedEvent
+  | DreamFinishedEvent
   | PayloadCreatedEvent
   | PayloadDerivedEvent
   | CheckpointCreatedEvent
@@ -1055,6 +1073,21 @@ export interface AgentCompactionRecord {
   createdAt: number;
 }
 
+export interface AgentDreamRecord {
+  id: string;
+  messageId: string;
+  agentId: string;
+  runId?: string;
+  trigger: AgentDreamTrigger;
+  status: AgentDreamMarkerStatus;
+  startedAt: number;
+  completedAt: number;
+  processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
+  changes?: AgentDreamCompletedChanges;
+  errorMessage?: string;
+  createdAt: number;
+}
+
 export interface AgentCompactionSourceRange {
   fromMessageId: string;
   throughMessageId: string;
@@ -1086,6 +1119,7 @@ export interface AgentEventReplayState {
   runs: Record<string, AgentRunRecord>;
   subagents: Record<string, AgentSubagentRunRecord>;
   compactionsByMessageId: Record<string, AgentCompactionRecord>;
+  dreamsByMessageId: Record<string, AgentDreamRecord>;
   userQuestions: Record<string, AgentUserQuestionRecord>;
 }
 
@@ -1120,6 +1154,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     runs: {},
     subagents: {},
     compactionsByMessageId: {},
+    dreamsByMessageId: {},
     userQuestions: {},
   };
 }
@@ -1500,6 +1535,22 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         summary: event.summary,
         source: event.source,
         trigger: event.trigger,
+        createdAt: event.createdAt,
+      };
+      return;
+    case 'dream.finished':
+      state.dreamsByMessageId[event.messageId] = {
+        id: event.eventId,
+        messageId: event.messageId,
+        agentId: event.agentId,
+        runId: event.runId,
+        trigger: event.trigger,
+        status: event.status,
+        startedAt: event.startedAt,
+        completedAt: event.completedAt,
+        processed: event.processed,
+        changes: event.changes,
+        errorMessage: event.errorMessage,
         createdAt: event.createdAt,
       };
       return;

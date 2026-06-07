@@ -132,22 +132,25 @@ truth.
     gate, `/dream` forces the same no-tools path, raw evidence is read since the
     Dream watermark, `dream.completed` records the processed range, and run meta
     is agent-anchored instead of conversation-anchored; Dream run meta is indexed
-    per agent and projected into the task panel
+    per agent and projected into the task panel; manual `/dream` projects a
+    chat-stream Dream boundary, and the foreground `dream` tool can request the
+    same runtime-owned path without supplying memory facts
   - fresh typed subagents use their own agent identity for `<agent-memory>`,
     `recall`, and sidechain-transcript Dream evidence; fork subagents inherit the
     parent agent's memory owner and use a persisted Dream evidence boundary;
     agent-run memory sources bind evidence to the recorded transcript payload id,
     and owner-anchored Dream tasks appear in the shared task projection
   - projected-state cache, idempotent forget, and high-churn log compaction
-  - permission classification as read-only `agent.memory.recall`
+  - permission classification for read-only `agent.memory.recall` and
+    trigger-only `agent.memory.dream`
   - prompt guidance that foreground memory writes are handled by Settings/Profile
     UI and runtime-owned extraction, not by a model-visible CRUD tool
 - [x] Agent M1 self-maintenance and structured input:
   - canonical DM restore plus user-created single-agent Channels
   - `ask_user_question` tool with pending question persistence and renderer
     resolution
-  - `runtime_status`, `config`, and `doctor` tools with permission-gated config
-    writes
+  - `runtime_status`, `config`, `doctor`, and `dream` tools with
+    permission-gated config/Dream writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
 
 ## Next Milestone

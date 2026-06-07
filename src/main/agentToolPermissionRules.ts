@@ -26,6 +26,7 @@ export type AgentToolActionKind =
   | 'external.message.send'
   | 'task.stop'
   | 'agent.memory.recall'
+  | 'agent.memory.dream'
   | 'agent.user_question.ask'
   | 'agent.runtime.status'
   | 'agent.config.read'
@@ -153,6 +154,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'external.message.send',
   'task.stop',
   'agent.memory.recall',
+  'agent.memory.dream',
   'agent.user_question.ask',
   'agent.runtime.status',
   'agent.config.read',
@@ -258,6 +260,7 @@ const KNOWN_TOOL_NAMES = new Set<string>([
   'bash',
   'config',
   'doctor',
+  'dream',
   'file_edit',
   'file_write',
   'recall',
@@ -277,6 +280,7 @@ const PLATFORM_HARD_BLOCK_ACTIONS = new Set<AgentToolActionKind>([
 const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
   ...PLATFORM_HARD_BLOCK_ACTIONS,
   'agent.config.write',
+  'agent.memory.dream',
   'agent.skill.write',
   'agent.subagent.spawn',
   'shell.unknown',
