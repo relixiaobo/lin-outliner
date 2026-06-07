@@ -1,21 +1,229 @@
-.agent-subagent-running-button {
+.agent-task-panel-button {
+  position: relative;
   display: inline-flex;
-  height: 28px;
-  min-width: 34px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
   border-radius: var(--radius-sm);
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-  padding: 0 var(--space-3);
+  color: var(--text-secondary);
+  transition: color var(--motion-fast);
 }
 
-.agent-subagent-running-button:hover,
-.agent-subagent-running-button:focus-visible {
-  background: var(--control-hover);
+.agent-task-panel-button:hover:not(:disabled),
+.agent-task-panel-button:focus-visible:not(:disabled),
+.agent-task-panel-button[aria-expanded="true"] {
   color: var(--text-strong);
+}
+
+.agent-task-panel-badge {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  display: inline-flex;
+  min-width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--text-strong);
+  color: var(--surface);
+  font-size: var(--font-ui-xs);
+  line-height: 1;
+  padding: 0 var(--space-1);
+}
+
+.agent-task-panel {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: min(380px, 100%);
+  min-width: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface) 96%, white);
+  box-shadow: var(--agent-side-panel-shadow);
+}
+
+.agent-task-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  /* Side panels reach the top edge, but their controls must sit below the window
+     chrome drag zone; otherwise the corner agent toggle intercepts pointer clicks. */
+  padding: var(--chrome-height) var(--space-6) var(--space-6);
+}
+
+.agent-task-title-block {
+  min-width: 0;
+}
+
+.agent-task-title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.agent-task-title-block p {
+  margin: var(--space-2) 0 0;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-task-close {
+  flex: 0 0 auto;
+}
+
+.agent-task-action-error {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--danger);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: var(--space-4) var(--space-6);
+}
+
+.agent-task-empty {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: var(--space-6);
+}
+
+.agent-task-list {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.agent-task-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.agent-task-row:hover {
+  background: var(--fill-1);
+}
+
+.agent-task-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  color: inherit;
+  padding: var(--space-4);
+  text-align: left;
+}
+
+.agent-task-main:hover,
+.agent-task-main:focus-visible {
+  background: var(--control-hover);
+}
+
+.agent-task-kind,
+.agent-task-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-task-kind {
+  color: var(--text-soft);
+}
+
+.agent-task-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  white-space: normal;
+}
+
+.agent-task-meta {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.agent-task-status {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--text-soft);
+  padding: 0 var(--space-2);
+}
+
+.agent-task-status.is-running {
+  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
+  color: var(--agent-accent);
+}
+
+.agent-task-status.is-completed {
+  background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
+  color: var(--semantic-success-strong);
+}
+
+.agent-task-status.is-failed,
+.agent-task-status.is-stopped {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.agent-task-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-2);
+}
+
+.agent-task-icon-button {
+  color: var(--text-faint);
+}
+
+.agent-task-icon-button:hover:not(:disabled),
+.agent-task-icon-button:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.agent-task-icon-button.is-danger:hover:not(:disabled),
+.agent-task-icon-button.is-danger:focus-visible:not(:disabled) {
+  color: var(--danger);
 }
 
 .agent-subagent-inline {
@@ -108,7 +316,8 @@
   justify-content: space-between;
   gap: var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-6) var(--space-6) var(--space-6);
+  /* Matches .agent-task-header: controls clear the top window chrome drag zone. */
+  padding: var(--chrome-height) var(--space-6) var(--space-6);
 }
 
 .agent-subagent-title-block {
@@ -536,4 +745,3 @@
   line-height: var(--line-meta);
   padding: var(--space-1) 0;
 }
-

@@ -856,7 +856,8 @@ Implemented for same-session background runs.
 - `AgentStop` aborts a live child agent and persists stopped state.
 - Completion, failure, and stopped states are returned to the parent model
   through hidden subagent notifications.
-- The projection UI updates from persisted `subagent_run` events.
+- The renderer derives current-conversation task entries from persisted
+  `subagent_run` projection state; this is a UI view, not a separate task store.
 
 ### Resume
 
@@ -887,14 +888,23 @@ Implemented.
 Implemented for the current first-class surfaces.
 
 - `Agent` tool blocks show subagent metadata and transcript access.
+- The agent header exposes a Tasks button. It opens a current-conversation task
+  panel derived from `subagent_run` projection data, ordered with running work
+  first, and shows status, type/mode, message count, and latest update time.
+- Task rows can open the existing subagent details panel; running task rows can
+  stop the subagent through `AgentStop`.
 - The subagent details panel loads sidechain transcripts lazily from payload
   refs.
 - Nested child tool calls inside transcripts remain expandable.
 - Running background subagents can be messaged or stopped from the details
   panel.
+- Task and subagent side-panel controls clear the top window chrome drag zone so
+  close/open actions remain pointer-clickable in the agent rail.
 
 Deferred UI polish:
 
+- cross-conversation per-agent aggregation and non-subagent task adapters
+  (Dream, scheduled routines, background shell tasks);
 - richer progress summaries for long background runs;
 - metrics and diagnostics beyond sidechain transcript replay.
 

@@ -1818,11 +1818,18 @@ test.describe('agent composer controls', () => {
     });
 
     await expect(page.getByText('Subagent · Inspect subagent UI')).toBeVisible();
-    await page.getByText('Subagent · Inspect subagent UI').click();
+    await page.getByRole('button', { name: 'Open task panel' }).click();
+    const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
+    await expect(tasks).toBeVisible();
+    await expect(tasks.getByText('1 task running')).toBeVisible();
+    await expect(tasks.getByText('Inspect subagent UI')).toBeVisible();
+    await tasks.getByRole('button', { name: 'Open task' }).click();
+
+    const details = page.getByRole('complementary', { name: 'Subagent details' });
+    await expect(details).toBeVisible();
+    await expect(details.getByText('Inspect subagent UI')).toBeVisible();
     await expect(page.getByText('fork · explorer')).toBeVisible();
 
-    await page.getByRole('button', { name: 'View transcript' }).click();
-    const details = page.getByRole('complementary', { name: 'Subagent details' });
     await expect(details).toBeVisible();
     await expect(details.getByText('Timeline (4)')).toBeVisible();
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
@@ -1856,5 +1863,10 @@ test.describe('agent composer controls', () => {
         },
       },
     ]);
+
+    await details.getByRole('button', { name: 'Close subagent details' }).click();
+    await expect(details).toHaveCount(0);
+    await tasks.getByRole('button', { name: 'Close task panel' }).click();
+    await expect(tasks).toHaveCount(0);
   });
 });

@@ -608,6 +608,10 @@ background-shell `BackgroundTask` registry with `running/completed/failed/stoppe
 - A **unified, user-visible per-agent task panel** ("what is @assistant working
   on") aggregating runs across conversations, each tagged with its conversation;
   cancelable. (Today the registries are internal and split.)
+  - Current first slice shipped: the renderer exposes a current-conversation task
+    panel for `subagent_run` projection records, with open-details and stop
+    actions. Cross-conversation per-agent aggregation and non-subagent task
+    adapters remain M2 work.
 - A **`needs-input`** state: a task that needs a decision pauses, posts the question
   into its conversation, and resumes on your reply (addressable via `AgentSend`).
   cc-2.1's `asyncRewake` (exit-code-2 wakes the model) is the proven shape.
@@ -1059,7 +1063,12 @@ P2 — memory v2 + background-task surfacing
   (conversation/message range/run/event/workspace). Throttling is currently the
   per-turn completion gate plus a serial runtime queue; time/activity/lock gates
   remain for offline consolidation.
-- [ ] Visible per-agent task panel (runs aggregated across conversations, cancelable).
+- [x] First visible task-panel slice: current-conversation `subagent_run`
+  projection records, open-details action, and stop action for running subagent
+  tasks.
+- [ ] Extend the task panel to per-agent cross-conversation aggregation and
+  non-subagent task adapters (Dream/offline consolidation, scheduled routines,
+  background shell tasks).
 - [ ] Generalize `pendingSubagentNotifications` → conversation-scoped delivery (reusing the P1 `actor` field) + first-class task-update messages + rate-limiting/folding. (DM delivery; Channel/coordinator delivery is P3.)
 
 P3 — sequential rooms + consolidation + registry

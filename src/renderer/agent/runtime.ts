@@ -60,6 +60,21 @@ export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
+export type AgentTaskKind = 'subagent';
+
+export interface AgentTaskEntry {
+  id: string;
+  kind: AgentTaskKind;
+  status: AgentRenderSubagentEntity['status'];
+  title: string;
+  subtitle: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  subagentId: string;
+  subagent: AgentRenderSubagentEntity;
+}
+
 const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationId: '',
   revision: 0,
@@ -199,6 +214,38 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   return { entries, turnPhase };
+}
+
+const TASK_STATUS_RANK: Record<AgentTaskEntry['status'], number> = {
+  running: 0,
+  failed: 1,
+  stopped: 2,
+  completed: 3,
+};
+
+export function buildAgentTaskEntries(projection: AgentRenderProjection): AgentTaskEntry[] {
+  const tasks = projection.subagentRunIds.flatMap((id): AgentTaskEntry[] => {
+    const subagent = projection.entities.subagents[id];
+    if (!subagent) return [];
+    return [{
+      id: `subagent:${subagent.id}`,
+      kind: 'subagent',
+      status: subagent.status,
+      title: subagent.description.trim() || subagent.name?.trim() || subagent.id,
+      subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
+      startedAt: subagent.startedAt,
+      updatedAt: subagent.updatedAt,
+      completedAt: subagent.completedAt,
+      subagentId: subagent.id,
+      subagent,
+    }];
+  });
+
+  return tasks.sort((left, right) => (
+    TASK_STATUS_RANK[left.status] - TASK_STATUS_RANK[right.status]
+    || right.updatedAt - left.updatedAt
+    || left.id.localeCompare(right.id)
+  ));
 }
 
 function isHiddenOnlySystemReminder(entity: AgentRenderMessageEntity): boolean {
@@ -402,6 +449,7 @@ export interface LinAgentRuntimeView {
   conversationId: string | null;
   conversationTitle: string | null;
   conversationCost: number;
+  tasks: AgentTaskEntry[];
   subagentRunIds: string[];
   subagents: Record<string, AgentRenderSubagentEntity>;
   subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity>;
@@ -888,6 +936,7 @@ export class AgentRuntimeStore {
       conversationId: this.conversationId,
       conversationTitle: this.projection.conversationTitle,
       conversationCost: conversationCost(this.projection),
+      tasks: buildAgentTaskEntries(this.projection),
       subagentRunIds: this.projection.subagentRunIds,
       subagents,
       subagentsByParentToolCallId,
