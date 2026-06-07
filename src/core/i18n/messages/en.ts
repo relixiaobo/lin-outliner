@@ -883,6 +883,7 @@ commandPalette: {
           done: 'Listed recent past chat messages',
         },
         listMemory: { base: 'list memory', pending: 'Listing memory', done: 'Listed memory' },
+        recallMemory: { base: 'recall memory', pending: 'Recalling memory', done: 'Recalled memory' },
         rememberMemory: { base: 'remember fact', pending: 'Remembering fact', done: 'Remembered fact' },
         updateMemory: { base: 'update memory', pending: 'Updating memory', done: 'Updated memory' },
         forgetMemory: { base: 'forget memory', pending: 'Forgetting memory', done: 'Forgot memory' },

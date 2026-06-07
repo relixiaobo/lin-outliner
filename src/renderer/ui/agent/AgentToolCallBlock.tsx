@@ -13,7 +13,6 @@ import {
   LoaderIcon,
   NodeCreateToolIcon,
   NodeEditToolIcon,
-  RecentsIcon,
   RestoreIcon,
   SearchIcon,
   TerminalIcon,
@@ -78,13 +77,7 @@ export function getToolIcon(toolCall: ToolCall) {
   if (toolCall.name === 'node_create') return NodeCreateToolIcon;
   if (toolCall.name === 'node_read') return FileTextIcon;
   if (toolCall.name === 'node_edit') return NodeEditToolIcon;
-  if (toolCall.name === 'past_chats') {
-    const mode = pastChatsMode(toolCall.arguments);
-    if (mode === 'read') return FileTextIcon;
-    if (mode === 'search') return SearchIcon;
-    return RecentsIcon;
-  }
-  if (toolCall.name === 'memory') return BrainIcon;
+  if (toolCall.name === 'recall') return BrainIcon;
   if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
   if (toolCall.name === 'node_delete') {
     return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
@@ -103,21 +96,6 @@ function pickSubject(args: Record<string, unknown>, ...keys: string[]): string |
     }
   }
   return null;
-}
-
-type PastChatsMode = 'recent' | 'search' | 'read';
-type MemoryMode = 'list' | 'remember' | 'update' | 'forget';
-
-function pastChatsMode(args: Record<string, unknown>): PastChatsMode {
-  if (pickSubject(args, 'message_id')) return 'read';
-  if (pickSubject(args, 'query')) return 'search';
-  return 'recent';
-}
-
-function memoryMode(args: Record<string, unknown>): MemoryMode {
-  const action = typeof args.action === 'string' ? args.action : '';
-  if (action === 'remember' || action === 'update' || action === 'forget') return action;
-  return 'list';
 }
 
 type ToolCallLabels = Messages['agent']['toolCall'];
@@ -150,30 +128,8 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   if (toolCall.name === 'AgentSend') return verbByStatus(verbs.messageSubagent, status, labels);
   if (toolCall.name === 'AgentStop') return verbByStatus(verbs.stopSubagent, status, labels);
   const args = toolCall.arguments;
-  if (toolCall.name === 'past_chats') {
-    const mode = pastChatsMode(args);
-    if (mode === 'read') {
-      const subject = pickSubject(args, 'message_id');
-      return withSubject(verbByStatus(verbs.readPastChat, status, labels), subject, labels);
-    }
-    if (mode === 'search') {
-      const subject = pickSubject(args, 'query');
-      return withSubject(verbByStatus(verbs.searchPastChats, status, labels), subject, labels);
-    }
-    return verbByStatus(verbs.listRecentPastChats, status, labels);
-  }
-  if (toolCall.name === 'memory') {
-    const mode = memoryMode(args);
-    if (mode === 'remember') {
-      return withSubject(verbByStatus(verbs.rememberMemory, status, labels), pickSubject(args, 'fact'), labels);
-    }
-    if (mode === 'update') {
-      return withSubject(verbByStatus(verbs.updateMemory, status, labels), pickSubject(args, 'memory_id', 'fact'), labels);
-    }
-    if (mode === 'forget') {
-      return withSubject(verbByStatus(verbs.forgetMemory, status, labels), pickSubject(args, 'memory_id'), labels);
-    }
-    return withSubject(verbByStatus(verbs.listMemory, status, labels), pickSubject(args, 'query'), labels);
+  if (toolCall.name === 'recall') {
+    return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
   }
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');

@@ -68,7 +68,6 @@ const RISKY_ALLOWED_TOOL_NAMES = new Set([
   'doctor',
   'file_edit',
   'file_write',
-  'memory',
   'node_create',
   'node_delete',
   'node_edit',

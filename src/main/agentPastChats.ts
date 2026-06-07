@@ -1,6 +1,7 @@
 import {
   getAgentEventVisibleTranscript,
   type AgentEventMessageRecord,
+  type AgentMemorySource,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
 import {
@@ -28,6 +29,7 @@ const DEFAULT_AFTER_CONTEXT = 4;
 const MAX_AFTER_CONTEXT = 20;
 const DEFAULT_READ_CHARS = 2_000;
 const MAX_READ_CHARS = 8_000;
+const DEFAULT_EVIDENCE_CHARS = 1_600;
 const MAX_QUERY_TERMS = 12;
 
 export type PastChatsRole = 'user' | 'assistant' | 'toolResult';
@@ -49,6 +51,11 @@ export interface PastChatsReadParams {
   includeCurrentConversation?: boolean;
 }
 
+export interface PastChatsEvidenceParams {
+  source: AgentMemorySource;
+  maxChars?: number;
+}
+
 export interface PastChatsRecentParams {
   after?: string;
   before?: string;
@@ -66,6 +73,10 @@ export type PastChatsResult =
   | PastChatsRecentResult
   | PastChatsSearchResult
   | PastChatsReadResult
+  | PastChatsErrorResult;
+
+export type PastChatsEvidenceResult =
+  | PastChatsEvidenceReadResult
   | PastChatsErrorResult;
 
 export interface PastChatsRecentResult {
@@ -111,6 +122,15 @@ export interface PastChatsReadResult {
   outputTruncated: boolean;
 }
 
+export interface PastChatsEvidenceReadResult {
+  mode: 'evidence';
+  source: AgentMemorySource;
+  conversation: { id: string; title: string | null; createdAt: string; updatedAt: string };
+  messages: PastChatsReadMessage[];
+  totalChars: number;
+  outputTruncated: boolean;
+}
+
 export interface PastChatsReadMessage {
   messageId: string;
   role: PastChatsRole;
@@ -126,7 +146,8 @@ export type PastChatsErrorCode =
   | 'MISSING_QUERY_OR_MESSAGE_ID'
   | 'CONVERSATION_NOT_FOUND'
   | 'NOT_ON_ACTIVE_BRANCH'
-  | 'CONVERSATION_IS_CURRENT';
+  | 'CONVERSATION_IS_CURRENT'
+  | 'SOURCE_NOT_FOUND';
 
 export interface PastChatsErrorResult {
   mode: 'error';
@@ -318,6 +339,49 @@ export class AgentPastChatsService {
     };
   }
 
+  async readMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
+    const source = params.source;
+    if (!source.messageRange) {
+      return pastChatsError('SOURCE_NOT_FOUND', 'Memory source does not include an addressable message range.');
+    }
+
+    const conversations = await this.conversationMetaById();
+    const conversation = conversations.get(source.conversationId);
+    if (!conversation) {
+      return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
+    }
+
+    const visible = await this.visibleSessionMessages(source.conversationId);
+    const [fromMessageId, throughMessageId] = source.messageRange;
+    const startIndex = visible.messages.findIndex((message) => message.id === fromMessageId);
+    if (startIndex < 0) {
+      return pastChatsError(
+        'NOT_ON_ACTIVE_BRANCH',
+        `The source message ${fromMessageId} was edited away or is on a non-active branch.`,
+        { nearbyMessageIds: nearbyMessageIds(visible.messages, { messageId: fromMessageId }) },
+      );
+    }
+
+    const throughIndex = visible.messages.findIndex((message) => message.id === throughMessageId);
+    const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
+    const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
+    const assembled = clampReadMessages(visible.messages.slice(startIndex, endIndex + 1), maxChars);
+
+    return {
+      mode: 'evidence',
+      source: { ...source },
+      conversation: {
+        id: conversation.id,
+        title: conversation.title,
+        createdAt: isoTime(conversation.createdAt),
+        updatedAt: isoTime(conversation.updatedAt),
+      },
+      messages: assembled.messages,
+      totalChars: assembled.totalChars,
+      outputTruncated: assembled.outputTruncated,
+    };
+  }
+
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
     return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
   }
@@ -455,10 +519,14 @@ function truncateForDisplay(text: string, maxChars: number): string {
 
 function nearbyMessageIds(
   visibleMessages: readonly AgentEventMessageRecord[],
-  indexEntry: AgentEventSearchIndexEntry,
+  indexEntry: Pick<AgentEventSearchIndexEntry, 'messageId'> & Partial<Pick<AgentEventSearchIndexEntry, 'createdAt'>>,
 ): string[] {
-  const byTime = visibleMessages.findIndex((message) => message.createdAt >= indexEntry.createdAt);
-  const center = byTime >= 0 ? byTime : visibleMessages.length;
+  const createdAt = indexEntry.createdAt;
+  const byTime = typeof createdAt === 'number'
+    ? visibleMessages.findIndex((message) => message.createdAt >= createdAt)
+    : -1;
+  const byId = visibleMessages.findIndex((message) => message.id === indexEntry.messageId);
+  const center = byTime >= 0 ? byTime : byId >= 0 ? byId : visibleMessages.length;
   return visibleMessages
     .slice(Math.max(0, center - 5), Math.min(visibleMessages.length, center + 5))
     .map((message) => message.id);

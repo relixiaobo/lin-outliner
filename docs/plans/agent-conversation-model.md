@@ -1035,12 +1035,12 @@ P1 — conversations + memory foundation
   bridge debt, then wipe dev userData (format change, no migration).
 
 P2 — memory v2 + background-task surfacing
-- [ ] Remove the main agent's model-visible inline `memory` tool and prompt guidance; keep Settings/Profile UI and `<agent-memory>` consumption.
-- [ ] Remove the model-visible `past_chats` tool; replace it with the single
+- [x] Remove the main agent's model-visible inline `memory` tool and prompt guidance; keep Settings/Profile UI and `<agent-memory>` consumption.
+- [x] Remove the model-visible `past_chats` tool; replace it with the single
   read-only `recall` tool over durable memory. `include_evidence` defaults to
   false; when true, evidence is nested under each returned memory entry, respects
   `max_chars`, and expands raw logs only through `MemoryEntry.sources`.
-- [ ] Make the no-backfill consequence explicit in implementation notes and UI
+- [x] Make the no-backfill consequence explicit in implementation notes and UI
   copy where relevant: old conversations without a `MemoryEntry` are not
   foreground-recallable by design.
 - [ ] Runtime-owned Dream/extraction worker with a restricted model surface and host callback.

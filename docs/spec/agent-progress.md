@@ -118,14 +118,16 @@ truth.
 - [x] Agent memory foundation:
   - per-agent `agents/<agentId>/memory/events.jsonl` event log using the shared
     append-only seq-log primitive with conversation/run logs
-  - `memory` tool with list/remember/update/forget actions
+  - single model-visible `recall` tool over active durable memory entries, with
+    optional nested evidence expansion through `MemoryEntry.sources`
   - bounded `<agent-memory>` turn reminder injection with relevance ranking and
     latest-entry backfill
   - runtime `memoryIsolation` modes: global, isolated, and read-only-global
   - Settings Memory pane for list/edit/forget
   - projected-state cache, idempotent forget, and high-churn log compaction
-  - permission classification as `agent.memory.manage`
-  - stable prompt guidance for when to remember, update, or forget durable facts
+  - permission classification as read-only `agent.memory.recall`
+  - prompt guidance that foreground memory writes are handled by Settings/Profile
+    UI and runtime-owned extraction, not by a model-visible CRUD tool
 - [x] Agent M1 self-maintenance and structured input:
   - canonical DM restore plus user-created single-agent Channels
   - `ask_user_question` tool with pending question persistence and renderer

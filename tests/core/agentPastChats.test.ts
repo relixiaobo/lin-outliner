@@ -2,11 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent, AgentMemorySource } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentPastChatsService } from '../../src/main/agentPastChats';
-import { createPastChatsTool } from '../../src/main/agentPastChatsTool';
-import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
@@ -268,6 +266,50 @@ describe('agent past chats', () => {
     });
   });
 
+  test('reads bounded evidence from memory source ranges', async () => {
+    await withStore(async (store, service) => {
+      const sessionId = 'session-memory-evidence';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Memory evidence' },
+        {
+          ...base(sessionId, 2, 'user_message.created', userActor),
+          messageId: 'user-evidence',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'The durable preference is terse direct answers.' }],
+        },
+        {
+          ...base(sessionId, 3, 'assistant_message.started', agentActor),
+          runId: 'run-evidence',
+          messageId: 'assistant-evidence',
+          parentMessageId: 'user-evidence',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(sessionId, 4, 'assistant_message.completed', agentActor),
+          messageId: 'assistant-evidence',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'I will keep answers terse and direct.' }],
+        },
+      ]);
+
+      const source: AgentMemorySource = {
+        conversationId: sessionId,
+        messageRange: ['user-evidence', 'assistant-evidence'],
+        runId: 'run-evidence',
+        eventId: `${sessionId}-event-4`,
+      };
+      const evidence = await service.readMemorySourceEvidence({ source, maxChars: 120 });
+
+      expect(evidence.mode).toBe('evidence');
+      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
+      expect(evidence.conversation).toMatchObject({ id: sessionId, title: 'Memory evidence' });
+      expect(evidence.source).toEqual(source);
+      expect(evidence.messages.map((message) => message.messageId)).toEqual(['user-evidence', 'assistant-evidence']);
+      expect(evidence.messages.map((message) => message.text).join('\n')).toContain('terse direct answers');
+    });
+  });
+
   test('recent returns visible user message anchors with system reminders stripped', async () => {
     await withStore(async (store, service) => {
       const sessionId = 'session-recent';
@@ -342,163 +384,4 @@ describe('agent past chats', () => {
     });
   });
 
-  test('tool wrapper returns structured mode errors without data when no recovery anchors', async () => {
-    await withStore(async (_store, service) => {
-      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
-      const result = await (tool.execute as any)('tool-call-1', { query: 'x', message_id: 'm_x' });
-      const details = result.details as ToolEnvelope;
-
-      expect(details.ok).toBe(false);
-      expect(details.data).toMatchObject({ mode: 'error', code: 'AMBIGUOUS_MODE' });
-      const first = result.content[0];
-      if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
-      const visible = JSON.parse(first.text);
-
-      // AMBIGUOUS_MODE has no nearby ids, so the visible envelope carries no `data` —
-      // the failure is fully described by `error.{code,message}`.
-      expect(visible).toMatchObject({
-        ok: false,
-        error: { code: 'AMBIGUOUS_MODE' },
-      });
-      expect(typeof visible.error.message).toBe('string');
-      expect(visible).not.toHaveProperty('data');
-      // `tool` and `status` are dropped from the visible envelope; success/error
-      // status restates `ok`, so it is omitted. `recoverable` is gone from `error`.
-      expect(visible).not.toHaveProperty('tool');
-      expect(visible).not.toHaveProperty('status');
-      expect(visible.error).not.toHaveProperty('recoverable');
-      // Single self-contained block: no parallel markdown rendering.
-      expect(result.content).toHaveLength(1);
-    });
-  });
-
-  test('tool wrapper returns snake_case model-visible summaries', async () => {
-    await withStore(async (store, service) => {
-      const sessionId = 'session-api';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'API shape' },
-        {
-          ...base(sessionId, 2, 'user_message.created', userActor),
-          messageId: 'user-api',
-          parentMessageId: null,
-          content: [{ type: 'text', text: 'We chose SQLite Checkpoints for past chats' }],
-        },
-      ]);
-
-      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
-      const result = await (tool.execute as any)('tool-call-1', { query: 'sqlite checkpoints' });
-      const first = result.content[0];
-      if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
-      const visible = JSON.parse(first.text);
-
-      expect(visible.data).toMatchObject({
-        total_hits: 1,
-        truncated: false,
-        hits: [{ message_id: 'user-api' }],
-      });
-      expect(visible.data.hits[0].snippet).toContain('<mark>SQLite</mark> <mark>Checkpoints</mark>');
-      expect(visible.data).not.toHaveProperty('mode');
-      expect(visible.data).not.toHaveProperty('returned_hits');
-      expect(visible.data.totalHits).toBeUndefined();
-      expect(visible.data.messageIds).toBeUndefined();
-      expect(visible.instructions).toContain('message_id');
-      expect(visible.instructions).not.toContain('messageId');
-    });
-  });
-
-  test('tool wrapper returns recent user messages as navigation items', async () => {
-    await withStore(async (store, service) => {
-      const sessionId = 'session-recent-wrapper';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Recent wrapper' },
-        {
-          ...base(sessionId, 2, 'user_message.created', userActor),
-          messageId: 'user-wrapper',
-          parentMessageId: null,
-          content: [{ type: 'text', text: 'Review the unified past_chats API style' }],
-        },
-      ]);
-
-      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
-      const result = await (tool.execute as any)('tool-call-1', { recent: true, max_message_chars: 20 });
-      const first = result.content[0];
-      if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
-      const visible = JSON.parse(first.text);
-
-      expect(visible.data).toMatchObject({
-        total_items: 1,
-        truncated: false,
-        items: [{
-          message_id: 'user-wrapper',
-          conversation_id: sessionId,
-          text_truncated: true,
-        }],
-      });
-      expect(visible.data.items[0].text).toContain('Review the');
-      expect(visible.data).not.toHaveProperty('mode');
-      expect(visible.data).not.toHaveProperty('returned_items');
-      expect(visible.instructions).toContain('message_id');
-      expect(result.content).toHaveLength(1);
-    });
-  });
-
-  test('tool wrapper read mode drops the echoed anchor id and derivable count', async () => {
-    await withStore(async (store, service) => {
-      const sessionId = 'session-read-wrapper';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Read wrapper' },
-        {
-          ...base(sessionId, 2, 'user_message.created', userActor),
-          messageId: 'user-read',
-          parentMessageId: null,
-          content: [{ type: 'text', text: 'What did we decide about checkpoints?' }],
-        },
-      ]);
-
-      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
-      const result = await (tool.execute as any)('tool-call-1', { message_id: 'user-read' });
-      const first = result.content[0];
-      if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
-      const visible = JSON.parse(first.text);
-
-      expect(visible.ok).toBe(true);
-      expect(visible.data).toMatchObject({ conversation: { id: sessionId, title: 'Read wrapper' } });
-      expect(visible.data.messages.some((message: { message_id: string }) => message.message_id === 'user-read')).toBe(true);
-      expect(visible.data).toHaveProperty('total_chars');
-      expect(visible.data).toHaveProperty('output_truncated');
-      // Dropped: the `mode` arg echo, the `anchor_message_id` echo of the input,
-      // and `message_count` (== messages.length).
-      expect(visible.data).not.toHaveProperty('mode');
-      expect(visible.data).not.toHaveProperty('anchor_message_id');
-      expect(visible.data).not.toHaveProperty('message_count');
-    });
-  });
-
-  test('tool wrapper guides empty search without claiming missing history', async () => {
-    await withStore(async (_store, service) => {
-      const tool = createPastChatsTool({ service, currentConversationId: () => 'session-current' });
-      const result = await (tool.execute as any)('tool-call-1', {
-        query: 'conversation history topics discussed',
-      });
-      const first = result.content[0];
-      if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
-      const visible = JSON.parse(first.text);
-
-      expect(visible).toMatchObject({
-        ok: true,
-        data: {
-          total_hits: 0,
-          truncated: false,
-          hits: [],
-        },
-      });
-      // Success status restates `ok:true`; `tool` is dropped from the visible envelope.
-      expect(visible).not.toHaveProperty('tool');
-      expect(visible).not.toHaveProperty('status');
-      expect(visible.data).not.toHaveProperty('mode');
-      expect(visible.data).not.toHaveProperty('returned_hits');
-      expect(visible.instructions).toContain('Do not claim this is the first conversation');
-      expect(result.content).toHaveLength(1);
-    });
-  });
 });

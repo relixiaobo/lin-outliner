@@ -170,7 +170,7 @@ async function seedPastSession(dataRoot: string): Promise<void> {
       ...base(sessionId, 2, 'user_message.created', userActor),
       messageId: 'past-user-focus',
       parentMessageId: null,
-      content: [{ type: 'text', text: 'We chose cobalt blue for focus rings in the past chats tool UI.' }],
+      content: [{ type: 'text', text: 'We chose cobalt blue for focus rings in the agent UI.' }],
     },
     {
       ...base(sessionId, 3, 'assistant_message.started', agentActor),
@@ -257,30 +257,36 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).toContain('"runtime_status"');
     expect(contextText).toContain('"config"');
     expect(contextText).toContain('"doctor"');
+    expect(contextText).toContain('"recall"');
+    expect(contextText).not.toContain('"past_chats"');
   });
 
-  test('recalls a prior session through search then read tool calls', async () => {
+  test('recalls durable memory with nested source evidence', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-past-chats-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-past-chats-data-'));
     roots.push(localRoot, dataRoot);
     await seedPastSession(dataRoot);
+    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-focus-ring',
+      fact: 'Cobalt blue was chosen for focus rings.',
+      sources: [{
+        conversationId: 'past-session-focus',
+        messageRange: ['past-user-focus', 'past-assistant-focus'],
+        runId: 'past-run-focus',
+        eventId: 'past-session-focus-event-4',
+      }],
+      createdAt: 30,
+    });
 
     const contexts: string[] = [];
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('past_chats', { query: 'cobalt focus rings' }, { id: 'tool-past-search' }),
+          fauxToolCall('recall', {
+            query: 'cobalt focus rings',
+            include_evidence: true,
+          }, { id: 'tool-recall-search' }),
         ], { stopReason: 'toolUse' }),
-        (context) => {
-          contexts.push(textFromContext(context));
-          return fauxAssistantMessage([
-            fauxToolCall('past_chats', {
-              message_id: 'past-user-focus',
-              before_context: 0,
-              after_context: 1,
-            }, { id: 'tool-past-read' }),
-          ], { stopReason: 'toolUse' });
-        },
         (context) => {
           contexts.push(textFromContext(context));
           return fauxAssistantMessage(fauxText('We chose cobalt blue for focus rings.'));
@@ -335,22 +341,20 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(toolCalls).toEqual([
-      { name: 'past_chats', arguments: { query: 'cobalt focus rings' } },
       {
-        name: 'past_chats',
+        name: 'recall',
         arguments: {
-          message_id: 'past-user-focus',
-          before_context: 0,
-          after_context: 1,
+          query: 'cobalt focus rings',
+          include_evidence: true,
         },
       },
     ]);
-    expect(toolResults.map((message) => message.toolName)).toEqual(['past_chats', 'past_chats']);
-    expect(contextText).toContain('"past_chats"');
-    // Self-contained search result reaches the model with snippets...
-    expect(contextText).toContain('snippet');
-    expect(contextText).toContain('"past-user-focus"');
-    // ...and the read result carries the full message text inline (no markdown block).
+    expect(toolResults.map((message) => message.toolName)).toEqual(['recall']);
+    expect(contextText).toContain('"recall"');
+    expect(contextText).toContain('memory-focus-ring');
+    expect(contextText).toContain('evidence');
+    expect(contextText).toContain('past-user-focus');
+    expect(contextText).toContain('We chose cobalt blue for focus rings in the agent UI.');
     expect(contextText).toContain('Cobalt blue is the recorded focus-ring choice.');
     expect(finalAssistantText).toBe('We chose cobalt blue for focus rings.');
   });
@@ -407,7 +411,7 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(contextText).toContain('"memory"');
+    expect(contextText).toContain('"recall"');
     expect(contextText).toContain('<agent-memory>');
     expect(contextText).toContain('memory-direct-style');
     expect(contextText).toContain('User prefers direct, concise engineering answers.');
@@ -481,290 +485,4 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).not.toContain('Other workspace uses amber focus rings.');
   });
 
-  test('read-only global memory mode blocks new memory writes', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-readonly-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-readonly-data-'));
-    roots.push(localRoot, dataRoot);
-    const contexts: string[] = [];
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('memory', {
-            action: 'remember',
-            fact: 'This workspace should not be persisted.',
-          }, { id: 'tool-memory-remember' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Noted.')),
-      ],
-      (_model, context) => {
-        contexts.push(textFromContext(context));
-      },
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
-          automaticSkillsEnabled: false,
-          slashSkillsEnabled: false,
-          compactEnabled: true,
-          memoryIsolation: 'read-only-global',
-          additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.createConversation();
-    await runtime.sendMessage(created.conversationId, 'Remember this for later.');
-    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
-    const activePath = getAgentEventActivePath(replay);
-    const toolResultText = activePath
-      .filter((message) => message.role === 'toolResult')
-      .map((message) => persistedText(message.content))
-      .join('\n');
-    const memories = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
-      includeInvalidated: true,
-    });
-
-    expect(script.pendingCount()).toBe(0);
-    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(toolResultText).toContain('read-only-global');
-    expect(memories).toEqual([]);
-    expect(contexts.join('\n')).toContain('"memory"');
-  });
-
-  test('read-only global memory mode blocks memory update and forget', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-readonly-update-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-readonly-update-data-'));
-    roots.push(localRoot, dataRoot);
-    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
-      id: 'memory-readonly-existing',
-      fact: 'Original fact must stay.',
-      sources: [{ conversationId: 'past-conversation' }],
-      createdAt: 30,
-    });
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('memory', {
-            action: 'update',
-            memory_id: 'memory-readonly-existing',
-            fact: 'Updated fact should not persist.',
-          }, { id: 'tool-memory-update' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage([
-          fauxToolCall('memory', {
-            action: 'forget',
-            memory_id: 'memory-readonly-existing',
-          }, { id: 'tool-memory-forget' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Done.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
-          automaticSkillsEnabled: false,
-          slashSkillsEnabled: false,
-          compactEnabled: true,
-          memoryIsolation: 'read-only-global',
-          additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.createConversation();
-    await runtime.sendMessage(created.conversationId, 'Try to mutate readonly memory.');
-    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
-    const toolResultText = getAgentEventActivePath(replay)
-      .filter((message) => message.role === 'toolResult')
-      .map((message) => persistedText(message.content))
-      .join('\n');
-    const memories = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
-      includeInvalidated: true,
-    });
-
-    expect(script.pendingCount()).toBe(0);
-    expect(toolResultText).toContain('read-only-global');
-    expect(memories).toMatchObject([{
-      id: 'memory-readonly-existing',
-      fact: 'Original fact must stay.',
-      status: 'active',
-    }]);
-  });
-
-  test('isolated memory mode blocks mutation of another workspace entry', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-update-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-update-data-'));
-    roots.push(localRoot, dataRoot);
-    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
-      id: 'memory-other-workspace-update',
-      fact: 'Other workspace fact must stay.',
-      originWorkspace: 'workspace:other',
-      sources: [{ conversationId: 'past-conversation' }],
-      createdAt: 30,
-    });
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('memory', {
-            action: 'update',
-            memory_id: 'memory-other-workspace-update',
-            fact: 'Cross workspace mutation should not persist.',
-          }, { id: 'tool-memory-update-other' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Done.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
-          automaticSkillsEnabled: false,
-          slashSkillsEnabled: false,
-          compactEnabled: true,
-          memoryIsolation: 'isolated',
-          additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.createConversation();
-    await runtime.sendMessage(created.conversationId, 'Try to mutate another workspace memory.');
-    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
-    const toolResultText = getAgentEventActivePath(replay)
-      .filter((message) => message.role === 'toolResult')
-      .map((message) => persistedText(message.content))
-      .join('\n');
-    const memories = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
-      includeInvalidated: true,
-    });
-
-    expect(script.pendingCount()).toBe(0);
-    expect(toolResultText).toContain('outside the current isolated workspace');
-    expect(memories).toMatchObject([{
-      id: 'memory-other-workspace-update',
-      fact: 'Other workspace fact must stay.',
-      status: 'active',
-    }]);
-  });
-
-  test('isolated memory mode without a workspace can recall its own writes', async () => {
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-no-workspace-data-'));
-    roots.push(dataRoot);
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('memory', {
-            action: 'remember',
-            fact: 'No-workspace isolated memory should be recallable.',
-          }, { id: 'tool-memory-remember-no-workspace' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage([
-          fauxToolCall('memory', {
-            action: 'list',
-            query: 'No-workspace isolated',
-          }, { id: 'tool-memory-list-no-workspace' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Done.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
-          automaticSkillsEnabled: false,
-          slashSkillsEnabled: false,
-          compactEnabled: true,
-          memoryIsolation: 'isolated',
-          additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.createConversation();
-    await runtime.sendMessage(created.conversationId, 'Remember and recall without a workspace.');
-    const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
-    const toolResultText = getAgentEventActivePath(replay)
-      .filter((message) => message.role === 'toolResult')
-      .map((message) => persistedText(message.content))
-      .join('\n');
-    const memories = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
-      includeInvalidated: true,
-    });
-
-    expect(script.pendingCount()).toBe(0);
-    expect(toolResultText).toContain('No-workspace isolated memory should be recallable.');
-    expect(memories).toMatchObject([{
-      fact: 'No-workspace isolated memory should be recallable.',
-      originWorkspace: '__no_workspace__',
-      status: 'active',
-    }]);
-  });
 });

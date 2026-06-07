@@ -25,7 +25,7 @@ export type AgentToolActionKind =
   | 'deploy.publish_remote'
   | 'external.message.send'
   | 'task.stop'
-  | 'agent.memory.manage'
+  | 'agent.memory.recall'
   | 'agent.user_question.ask'
   | 'agent.runtime.status'
   | 'agent.config.read'
@@ -152,7 +152,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'deploy.publish_remote',
   'external.message.send',
   'task.stop',
-  'agent.memory.manage',
+  'agent.memory.recall',
   'agent.user_question.ask',
   'agent.runtime.status',
   'agent.config.read',
@@ -229,8 +229,7 @@ export const SAFE_AUTO_ALLOW_TOOL_NAMES: readonly string[] = [
   'node_read',
   'node_search',
   'operation_history',
-  'past_chats',
-  'memory',
+  'recall',
   'task_stop',
   'web_search',
 ];
@@ -261,7 +260,7 @@ const KNOWN_TOOL_NAMES = new Set<string>([
   'doctor',
   'file_edit',
   'file_write',
-  'memory',
+  'recall',
   'runtime_status',
   'node_create',
   'node_delete',

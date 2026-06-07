@@ -502,7 +502,7 @@ nodex tools:
 - `node_search`
 - `undo`
 - `browser`
-- `past_chats`
+- conversation-history recall
 
 nodex is the closest outliner reference. Its important lesson is that document
 tools should be domain-specific, not generic file operations. The agent edits
@@ -596,8 +596,7 @@ These agent-level tools are active on top of the P0 local/document surface.
 
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
-| `past_chats` | nodex `past_chats` | Yes | No | Search and read older Tenon agent conversations. |
-| `memory` | Tenon agent memory store | Yes | No | List, remember, update, or forget durable facts for the local agent. |
+| `recall` | Tenon agent memory store | Yes | No | Read active durable memory entries, with optional nested source evidence. |
 | `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, or free-text user input. |
 | `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
@@ -632,8 +631,8 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `file_*` for filesystem operations.
 - `bash` for shell execution.
 - `task_stop` for stopping background commands created by `bash`.
-- `past_chats` for conversation history.
-- `memory` for explicit durable agent facts.
+- `recall` for durable agent memory. Raw conversation-history lookup is internal
+  to runtime-owned evidence expansion, Dream/extraction, and diagnostics.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

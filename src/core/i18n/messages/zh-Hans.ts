@@ -801,6 +801,7 @@ commandPalette: {
           done: '已列出最近的历史对话消息',
         },
         listMemory: { base: '列出记忆', pending: '正在列出记忆', done: '已列出记忆' },
+        recallMemory: { base: '召回记忆', pending: '正在召回记忆', done: '已召回记忆' },
         rememberMemory: { base: '记住事实', pending: '正在记住事实', done: '已记住事实' },
         updateMemory: { base: '更新记忆', pending: '正在更新记忆', done: '已更新记忆' },
         forgetMemory: { base: '忘记记忆', pending: '正在忘记记忆', done: '已忘记记忆' },

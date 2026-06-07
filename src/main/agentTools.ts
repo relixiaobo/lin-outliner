@@ -14,8 +14,7 @@ import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentSubagentTools, normalizeAgentToolNames, type AgentSubagentRuntime } from './agentSubagents';
-import { createMemoryTool, type AgentMemoryToolRuntime } from './agentMemoryTool';
-import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
+import { createRecallTool, type AgentRecallToolRuntime } from './agentRecallTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import { createSelfMaintenanceTools, type AgentSelfMaintenanceRuntime } from './agentSelfMaintenanceTools';
 import {
@@ -183,8 +182,7 @@ export interface AgentToolsOptions {
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
   subagentRuntime?: AgentSubagentRuntime;
-  memory?: AgentMemoryToolRuntime;
-  pastChats?: PastChatsToolRuntime;
+  recall?: AgentRecallToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   selfMaintenance?: AgentSelfMaintenanceRuntime;
   allowedTools?: string[];
@@ -197,8 +195,7 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
     createWebSearchTool(),
     createWebFetchTool(options.localFileRoot),
-    ...(options.memory ? [createMemoryTool(options.memory)] : []),
-    ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
+    ...(options.recall ? [createRecallTool(options.recall)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
     ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
