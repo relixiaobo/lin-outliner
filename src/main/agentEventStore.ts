@@ -14,8 +14,11 @@ import type {
   AgentPayloadDisplayMetadata,
   AgentPayloadRef,
   AgentPayloadRole,
+  AgentId,
+  AgentRunAnchor,
   AgentRunFingerprint,
   AgentRunKind,
+  AgentRunMeta,
   AgentRunRetention,
   AgentRunStatus,
   AgentIdentityRecord,
@@ -24,7 +27,7 @@ import type {
   AgentMemorySource,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { appendAgentEventToReplayState, replayAgentEvents } from '../core/agentEventLog';
+import { appendAgentEventToReplayState, conversationIdOfRun, replayAgentEvents } from '../core/agentEventLog';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -87,19 +90,8 @@ export interface AgentRunEventStorePaths {
   payloadsDir: string;
 }
 
-export interface AgentRunMetaProjection {
+export interface AgentRunMetaProjection extends AgentRunMeta {
   v: 1;
-  id: string;
-  agentId: string;
-  conversationId: string;
-  parentRunId?: string;
-  kind: AgentRunKind;
-  status: AgentRunStatus;
-  trigger: AgentRunTrigger;
-  usage?: Usage;
-  fingerprint: AgentRunFingerprint;
-  retention: AgentRunRetention;
-  createdAt: number;
   updatedAt: number;
   latestSeq: number;
 }
@@ -803,7 +795,7 @@ export class AgentEventStore {
         const runDir = path.join(paths.runsDir, entry.name);
         try {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
-          if (!meta || meta.conversationId !== sessionId) continue;
+          if (!meta || conversationIdOfRun(meta) !== sessionId) continue;
           latestSeqByRunId[meta.id] = Math.max(latestSeqByRunId[meta.id] ?? 0, meta.latestSeq);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
@@ -926,11 +918,13 @@ export class AgentEventStore {
     if (!latest) return;
     const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
+    const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? started.anchor?.agentId : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
+    const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, sessionId);
     const meta: AgentRunMetaProjection = {
       v: 1,
       id: runId,
-      agentId: existing?.agentId ?? (started?.type === 'run.started' ? started.agentId : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant',
-      conversationId: sessionId,
+      agentId,
+      anchor,
       parentRunId: existing?.parentRunId,
       kind: existing?.kind ?? (started?.type === 'run.started' ? started.kind : undefined) ?? 'turn',
       status: terminal ? runStatusFromTerminalEvent(terminal) : existing?.status ?? 'running',
@@ -1720,8 +1714,14 @@ function normalizeConversationRunIndex(value: unknown): AgentConversationRunInde
 
 function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
   if (!isRecord(value) || value.v !== 1) return null;
-  if (typeof value.id !== 'string' || typeof value.conversationId !== 'string') return null;
   if (typeof value.agentId !== 'string') return null;
+  if (typeof value.id !== 'string') return null;
+  const anchor = normalizeRunAnchor(value.anchor, value.agentId) ?? (
+    typeof value.conversationId === 'string'
+      ? conversationRunAnchor(value.agentId, value.conversationId)
+      : null
+  );
+  if (!anchor) return null;
   if (!isAgentRunStatus(value.status) || !isAgentRunRetention(value.retention)) return null;
   if (!isRecord(value.trigger) || typeof value.trigger.type !== 'string') return null;
   if (!isRecord(value.fingerprint)) return null;
@@ -1732,8 +1732,8 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
   return {
     v: 1,
     id: value.id,
-    agentId: value.agentId,
-    conversationId: value.conversationId,
+    agentId: asAgentId(value.agentId)!,
+    anchor,
     parentRunId: typeof value.parentRunId === 'string' ? value.parentRunId : undefined,
     kind: isAgentRunKind(value.kind) ? value.kind : 'turn',
     status: value.status,
@@ -1745,6 +1745,26 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
     updatedAt,
     latestSeq,
   };
+}
+
+function normalizeRunAnchor(value: unknown, fallbackAgentId?: string): AgentRunAnchor | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.agentId === 'string' && fallbackAgentId && value.agentId !== fallbackAgentId) return null;
+  const agentId = asAgentId(typeof value.agentId === 'string' ? value.agentId : fallbackAgentId);
+  if (!agentId) return null;
+  if (value.type === 'agent') return { type: 'agent', agentId };
+  if (value.type === 'conversation' && typeof value.conversationId === 'string') {
+    return conversationRunAnchor(agentId, value.conversationId);
+  }
+  return null;
+}
+
+function conversationRunAnchor(agentId: string, conversationId: string): AgentRunAnchor {
+  return { type: 'conversation', agentId: asAgentId(agentId)!, conversationId };
+}
+
+function asAgentId(value: string | undefined): AgentId | null {
+  return value ? value as AgentId : null;
 }
 
 function normalizeConversationMeta(value: unknown): AgentConversationMetaProjection | null {
