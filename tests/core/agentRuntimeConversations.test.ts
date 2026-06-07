@@ -304,15 +304,16 @@ describe('agent runtime conversations', () => {
       toolName: 'ask_user_question',
       isError: false,
     });
-    expect(toolResult?.content).toEqual([{
-      type: 'text',
-      text: JSON.stringify({
-        ok: true,
-        data: {
-          requestId: 'question-1',
-          answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
-        },
-      }),
-    }]);
+    // Replayed answers render through the shared tool-result envelope, identical to
+    // the live ask_user_question result the model sees (format-agnostic structure check).
+    expect(toolResult?.content).toHaveLength(1);
+    expect(toolResult?.content[0]).toMatchObject({ type: 'text' });
+    expect(JSON.parse((toolResult?.content[0] as { text: string }).text)).toEqual({
+      ok: true,
+      data: {
+        requestId: 'question-1',
+        answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+      },
+    });
   });
 });

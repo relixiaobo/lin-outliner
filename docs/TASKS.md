@@ -334,6 +334,16 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-m1-complete** (codex, PR #153) — clean-cut agent M1: canonical single-agent DM + Channels vocabulary
+  (list/rename/delete operate on Channels; default-channel delete falls back to the DM), mixed-resolution
+  compaction (source-ranged events + bounded mixed history), `ask_user_question` v1 (main-agent-only,
+  persisted requested/answered/cancelled, pause/resume, restart-safe replay that re-appends the tool result),
+  self-maintenance v1 (`runtime_status`/`config`/`doctor` with scoped permission defaults + audited
+  `config.change`), skills self-authoring v1 (`/skillify`, governed `.agents/skills` writes, risky-escalation
+  validation, hot reload, `skill.*` audit events), and memory isolation modes (global/isolated/read-only-global).
+  Gate: high-effort 7-angle review → 10 findings, all fixed by codex (758c61d) with regression tests + a `main`
+  follow-up reusing the shared tool-result envelope on replay; typecheck + `test:core` 661/0.
+
 - **used-tools-icon** (main, PR #139) — swapped the "Used N tools" process-summary glyph from `ListChecks`
   to lucide `ChartNoAxesGantt` (staggered bars) via a new `UsedToolsIcon` alias used only there;
   `OptionsIcon` stays `ListChecks` for field-type "options" usages. Gate: typecheck + `test:renderer` 354/0

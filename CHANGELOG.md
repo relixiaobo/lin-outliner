@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent M1: canonical DM + Channels, ask_user_question, self-maintenance, skills self-authoring (PR #153)** —
+  a clean-cut M1 build across the agent stack: a canonical single-agent DM plus a Channels vocabulary
+  (restore finds/creates the built-in assistant DM; public list/rename/delete operate on Channels; default
+  channel deletion falls back to the DM); a mixed-resolution compaction backbone (compaction events carry
+  explicit source ranges; bounded mixed-resolution model context); `ask_user_question` v1 (main-agent-only
+  structured-question tool with persisted requested/answered/cancelled events, runtime pause/resume, a
+  renderer pending-question card, and restart-safe replay that now re-appends the tool result so the blocked
+  call resumes); self-maintenance v1 (`runtime_status` / `config` / `doctor` tools with scoped permission
+  defaults and audited `config.change` events); skills self-authoring v1 (built-in `/skillify`, governed
+  `.agents/skills` writes through `file_write`/`file_edit`, validation against risky escalation, hot registry
+  reload, and `skill.created/patched/replaced` audit events); and memory isolation modes (global / isolated /
+  read-only-global) wired through runtime config and the memory recall/write/update/forget paths. Gate:
+  typecheck + `test:core` 661/0 + `test:renderer` 356/0 + `test:e2e` 288/0 + 7-angle high-effort review.
+  The review surfaced 10 findings — all fixed before merge (758c61d) with regression tests, the load-bearing
+  one being that a runtime-settings refresh dropped the four M1 tools from the live tool set after the first
+  turn; a follow-up on `main` routes the restart-replay tool result through the shared `agentToolResult`
+  envelope so it renders identically to the live result the model sees.
+  ([#153](https://github.com/relixiaobo/lin-outliner/pull/153))
+
 - **Inline local-file references: hover preview + click-to-open (PR #132)** — agent chat messages can
   now carry `[[file:name^/abs/path]]` references that render as an inline chip (file icon + name); hovering
   shows a preview popover (native icon / image thumbnail, type, size, path, modified date) and clicking

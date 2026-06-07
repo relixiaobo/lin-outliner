@@ -80,7 +80,7 @@ import {
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
-import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { agentToolResult, isToolEnvelope, successEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
 import {
@@ -181,7 +181,7 @@ import type {
   AgentSlashCommandView,
 } from '../core/types';
 import type { AgentMemoryToolRuntime } from './agentMemoryTool';
-import type { AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
+import { ASK_USER_QUESTION_TOOL_NAME, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import {
   normalizeRuntimeSettingPatch,
   readRuntimeSetting,
@@ -2285,15 +2285,18 @@ export class AgentRuntime {
       throw new Error(`Cannot resume replayed user question without parent tool call: ${pending.toolCallId}`);
     }
     const messageId = `tool-result-${pending.toolCallId}-${randomUUID()}`;
+    // Reuse the shared envelope helper so a replayed answer renders identically to
+    // the live ask_user_question tool result the model otherwise sees.
+    const toolResult = agentToolResult(successEnvelope(ASK_USER_QUESTION_TOOL_NAME, result), result);
     return {
       type: 'tool_result.created',
-      actor: toolActor('ask_user_question', pending.toolCallId),
+      actor: toolActor(ASK_USER_QUESTION_TOOL_NAME, pending.toolCallId),
       runId: pending.runId,
       messageId,
       parentMessageId: parentMessage.id,
       toolCallId: pending.toolCallId,
-      toolName: 'ask_user_question',
-      content: [{ type: 'text', text: JSON.stringify({ ok: true, data: result }) }],
+      toolName: ASK_USER_QUESTION_TOOL_NAME,
+      content: toolResult.content,
       isError: false,
       outputSummary: 'Answered user question.',
     };
