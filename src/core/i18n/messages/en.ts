@@ -719,6 +719,8 @@ commandPalette: {
       openDebug: 'Open agent debug',
       conversations: 'Channels',
       noConversations: 'No channels',
+      unreadTasks: ({ count }: { count: number }) =>
+        count === 1 ? '1 unread task update' : `${count} unread task updates`,
       conversationTitle: 'Channel name',
       cancelRename: 'Cancel rename',
       saveRename: 'Save rename',

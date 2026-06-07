@@ -461,6 +461,34 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('threads cross-conversation unread attention and clears it on zero', async () => {
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    // Attention for a conversation other than the active one still updates (badges
+    // are cross-conversation, unlike projection/approval events).
+    fake.emit({
+      type: 'conversation_attention',
+      conversationId: 'other',
+      unreadCount: 3,
+      lastNotification: { notificationId: 'n-1', kind: 'task_completed', title: 'Task done' },
+      timestamp: 10,
+    });
+    expect(store.getSnapshot().unreadByConversationId.get('other')).toBe(3);
+
+    fake.emit({
+      type: 'conversation_attention',
+      conversationId: 'other',
+      unreadCount: 0,
+      timestamp: 11,
+    });
+    expect(store.getSnapshot().unreadByConversationId.has('other')).toBe(false);
+    unsubscribe();
+  });
+
   test('queues multiple pending approval requests and shows the next one after resolution', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
     const store = createAgentRuntimeStore(fake.client);

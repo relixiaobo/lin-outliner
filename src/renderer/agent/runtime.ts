@@ -476,6 +476,8 @@ export interface LinAgentRuntimeView {
   conversationId: string | null;
   conversationTitle: string | null;
   conversationCost: number;
+  /** Folded per-conversation unread count for the off-floor task plane (badge source). */
+  unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
   subagentRunIds: string[];
   subagents: Record<string, AgentRenderSubagentEntity>;
@@ -545,6 +547,7 @@ export class AgentRuntimeStore {
   private pendingApprovalOrder: string[] = [];
   private readonly pendingUserQuestions = new Map<string, AgentUserQuestionPendingView>();
   private pendingUserQuestionOrder: string[] = [];
+  private readonly unreadByConversationId = new Map<string, number>();
   private restorePromise: Promise<string> | null = null;
   private requestVersion = 0;
   private started = false;
@@ -905,6 +908,18 @@ export class AgentRuntimeStore {
       return;
     }
 
+    if (payload.type === 'conversation_attention') {
+      // Cross-conversation: badges track every conversation, not just the active one.
+      const previous = this.unreadByConversationId.get(payload.conversationId) ?? 0;
+      if (payload.unreadCount > 0) {
+        this.unreadByConversationId.set(payload.conversationId, payload.unreadCount);
+      } else {
+        this.unreadByConversationId.delete(payload.conversationId);
+      }
+      if (previous !== payload.unreadCount) this.publish();
+      return;
+    }
+
     if (payload.type === 'projection') {
       if (!this.conversationId) {
         this.conversationId = payload.conversationId;
@@ -963,6 +978,7 @@ export class AgentRuntimeStore {
       conversationId: this.conversationId,
       conversationTitle: this.projection.conversationTitle,
       conversationCost: conversationCost(this.projection),
+      unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
       subagentRunIds: this.projection.subagentRunIds,
       subagents,

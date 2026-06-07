@@ -513,6 +513,7 @@ export function AgentChatPanel({
     tasks,
     toolResults,
     turnPhase,
+    unreadByConversationId,
   } = useLinAgentRuntime();
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -1026,6 +1027,19 @@ export function AgentChatPanel({
                         {formatConversationTime(conversation.updatedAt, locale)}
                         {conversation.messageCount > 0 ? ` · ${conversation.messageCount}` : ''}
                       </span>
+                      {(() => {
+                        const unread = isCurrent ? 0 : unreadByConversationId.get(conversation.id) ?? 0;
+                        if (unread <= 0) return null;
+                        return (
+                          <span
+                            className="agent-conversation-unread"
+                            aria-label={t.agent.chat.unreadTasks({ count: unread })}
+                            title={t.agent.chat.unreadTasks({ count: unread })}
+                          >
+                            {unread > 99 ? '99+' : unread}
+                          </span>
+                        );
+                      })()}
                     </ButtonControl>
                     <div className="agent-conversation-row-actions">
                       <IconButton
