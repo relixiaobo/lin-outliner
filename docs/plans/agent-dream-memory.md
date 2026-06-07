@@ -73,8 +73,10 @@ interim shape (A7). Build in this order:
    part — mostly wiring the two prerequisites together.
 
 Steps 1 and 2 are independent (parallelizable on separate branches); step 3
-depends on both. Only (2) needs ratification before code. **First actionable move:
-draft the (2) interface one-pager for PM ratification and start (1) in parallel.**
+depends on both. **Status: (1)'s core kernel landed (PR #161, `src/core/dateSchedule.ts`)
+and (2)'s interface shape is PM-ratified (the `AgentRunAnchor` discriminated union,
+see below) — so the (2) interface-only PR can proceed, and step 3 unblocks once it
+lands.**
 
 ## Design
 
@@ -182,7 +184,11 @@ conversation (foreground/routine = conversation-targeted; Dream = agent-only).
 This touches `src/core/types.ts` (protocol surface) → **interface-first + PM
 ratification** (A4/A7). It pays off beyond Dream (clarifies subagent/routine runs).
 
-### Run anchor interface proposal for ratification
+### Run anchor interface — PM-ratified (2026-06-07)
+
+**Ratified shape** (PM, during PR #161 review): the discriminated union below —
+the rejected `conversationId?: string` alternative was explicitly declined. The
+prerequisite-② interface-only PR can proceed with this shape.
 
 The clean shape is to separate **who owns the run** from **where the run is
 visible**:

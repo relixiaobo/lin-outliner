@@ -100,6 +100,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Shared `date` schedule primitive (PR #161)** — `src/core/dateSchedule.ts`, the pure decision kernel
+  for scheduled agent work (Dream prerequisite ①, shared with `agent-scheduled-routines`). Parses a
+  canonical `<endpoint> RRULE:...` schedule over a bounded RRULE subset (`FREQ` daily/weekly/monthly/yearly,
+  `INTERVAL`, weekly `BYDAY`, inclusive `UNTIL`); exposes parse/format, `mostRecentDateScheduleDue` (the most
+  recent occurrence ≤ now, for anacron-style catch-up/coalescing) and `shouldFireDateSchedule` (fire-once
+  decision against a `lastSuccessAt` watermark). DST-safe (occurrences reconstruct local wall-clock; invalid
+  calendar days like the 31st / Feb 29 are skipped per RFC 5545). No runtime/heartbeat wiring, no generic
+  date-field `RRULE` support, no `RunMeta` change yet — those stay in `agent-scheduled-routines` / later Dream
+  steps. Gate: typecheck + `test:core` 672/0 (incl. a `TZ=America/New_York` DST spring-forward regression and
+  strict-`INTERVAL` rejection tests); two review findings (a monthly/yearly DST-gap drop, lax `INTERVAL`
+  parsing) fixed before merge. The plan also records the **PM-ratified `AgentRunAnchor` discriminated union**
+  for the upcoming prerequisite-② (`RunMeta` anchor) interface PR. ([#161](https://github.com/relixiaobo/lin-outliner/pull/161))
+
 - **Agent task panel for subagent runs (PR #160)** — a dedicated side panel listing the conversation's
   subagent runs, opened from a Tasks toggle in the agent composer chrome (mutually exclusive with the
   subagent-details pane). `buildAgentTaskEntries` derives the list from the projection

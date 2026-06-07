@@ -360,6 +360,15 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-dream-date-scheduler** (codex, PR #161) — Dream prerequisite ① core kernel: a shared pure
+  `src/core/dateSchedule.ts` (parse/format a canonical `<endpoint> RRULE:...` over a bounded subset — `FREQ`,
+  `INTERVAL`, weekly `BYDAY`, inclusive `UNTIL`; `mostRecentDateScheduleDue` for anacron catch-up +
+  `shouldFireDateSchedule` watermark fire-once). DST-safe, skips invalid calendar days. No runtime/field/UI
+  wiring yet (stays in `agent-scheduled-routines`). Gate: typecheck + `test:core` 672/0; two review findings
+  (monthly/yearly DST-gap drop; lax `INTERVAL` parsing) fixed with `TZ`-pinned + strict-parse regression
+  tests before merge. Prerequisite ②'s `AgentRunAnchor` discriminated-union shape was **PM-ratified** in the
+  same review, so the ② interface-only PR can now proceed.
+
 - **agent-task-panel** (codex, PR #160) — a side panel listing a conversation's subagent runs, opened from a
   Tasks toggle in the agent composer (mutually exclusive with the subagent-details pane). `buildAgentTaskEntries`
   derives the list from the projection, totally/stably ordered by status rank → `updatedAt` desc → id; each row
