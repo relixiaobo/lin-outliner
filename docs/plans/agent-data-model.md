@@ -357,12 +357,13 @@ raw messages (conversation log, leaves)
   drilled back to ground truth — the contamination guard the LoCoMo ceiling demands.
 
 Consumers **beyond context injection**: navigation (summary spine = thread
-table-of-contents); **hierarchical recall** — `recall.overview(query)` → matching
-summaries *with addresses*, then `recall.expand(summaryId)` → the raw span; the
+table-of-contents); **single-tool recall** — model-visible `recall(query,
+include_evidence?, max_chars?)` returns active `MemoryEntry` results and may
+nest raw excerpts under each entry only by expanding that entry's `sources`; the
 raw/fine layer is an internal conversation/run evidence search service, not a
-model-visible `past_chats` tool; **Dream candidate location** (summaries/search
-identify spans to inspect, raw messages/run events supply the evidence); titling;
-re-entry briefs.
+model-visible `past_chats` tool or second recall tool; **Dream candidate
+location** (summaries/search identify spans to inspect, raw messages/run events
+supply the evidence); titling; re-entry briefs.
 
 ### 5. On-disk layout (target)
 
@@ -646,9 +647,13 @@ agent.skills[]          ──▶ skills/ file tree
 - **PM-ratified (2026-06-07):** because Lin has not shipped, use a clean cut:
   remove the foreground model-visible memory write tool and the model-visible
   `past_chats` tool rather than preserving compatibility aliases. The target
-  model-facing retrieval surface is read-only recall/evidence; Dream/extraction
-  must use summaries/search only as locators and must read raw conversation/run
-  records before writing long-term memory.
+  model-facing retrieval surface is the single read-only `recall` tool.
+  `include_evidence` defaults to false; evidence is nested under memory entries,
+  never returned as sibling ranked items; raw logs expand only through
+  `MemoryEntry.sources`; retrieval excludes `status:'invalidated'`, enforces the
+  agent's isolation tier, and respects `max_chars`. Dream/extraction must use
+  summaries/search only as locators and must read raw conversation/run records
+  before writing long-term memory.
 
 ## Protocol-surface coordination (A4 / A7)
 
@@ -694,5 +699,6 @@ These are data-model-local; the experience/sequencing OQs live in
   append primitive stays; the foreground model-callable memory write tool is not
   the target writer, and `past_chats` is not a target model-visible tool.
   Settings/Profile UI and Dream/extraction callbacks drive writes; foreground
-  model access is read-only recall/evidence. Open detail: exact Dream
+  model access is the single read-only `recall` tool over active memory entries,
+  with optional nested evidence expansion. Open detail: exact Dream
   scheduling/throttle policy and review surface.

@@ -47,9 +47,9 @@ permission plan; it builds on it.
   also governs the **memory line** — written via a runtime-owned append surface, not
   `file_write`; the conversation-model memory-write decision was reversed to honor exactly
   this principle. The 2026-06-07 memory decision further narrows the target writer:
-  the foreground main agent should consume memory but not own a general-purpose
-  model-visible memory write tool; Settings/Profile UI and Dream/extraction callbacks
-  drive durable memory writes. See [[agent-conversation-model]] §Memory model.)
+  there is no model-visible memory write tool; only Settings/Profile UI and
+  Dream/extraction drive durable memory writes. See [[agent-conversation-model]]
+  §Memory model.)
 - Do not make self-modification a synonym for unrestricted autonomy.
 - Do not add autonomous command hooks before read-only and prompt-only hooks are
   implemented and observable.
