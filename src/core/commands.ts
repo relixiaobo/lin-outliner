@@ -16,6 +16,8 @@ export const DOCUMENT_COMMANDS = [
   'set_node_checkbox_visible',
   'set_code_block',
   'set_code_language',
+  'set_command_node',
+  'set_command_schedule',
   'create_image_node',
   'set_node_image',
   'set_view_toolbar_visible',

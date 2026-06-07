@@ -17,6 +17,7 @@ import {
 } from './operationJournal';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
+import { formatDateSchedule, parseDateSchedule } from './dateSchedule';
 import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
@@ -70,6 +71,9 @@ import {
   type IconKind,
   type Node,
   type CodeBlockNode,
+  type CommandNode,
+  COMMAND_SCHEDULE_FIELD,
+  isProtectedField,
   type DefConfigNode,
   type DisplayFieldNode,
   type EmbedNode,
@@ -735,6 +739,41 @@ export class Core {
         throw CoreError.invalidOperation('node is not a code block');
       }
       setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
+    });
+  }
+
+  // Convert a plain content row into a command node (its text content stays the
+  // brief). Idempotent; seeds the user-only `commandSchedule` protected field so
+  // the bright line holds the moment the node becomes a command. Drafting a
+  // command (including this conversion) is allowed from any origin — only
+  // *arming* the schedule is user-only (see `setCommandSchedule`).
+  setCommandNode(nodeId: string): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== undefined && node.type !== 'command') {
+        throw CoreError.invalidOperation('only plain content nodes can become command nodes');
+      }
+      const protectedFields = node.protectedFields?.includes(COMMAND_SCHEDULE_FIELD)
+        ? node.protectedFields
+        : [...(node.protectedFields ?? []), COMMAND_SCHEDULE_FIELD];
+      return { ...node, type: 'command', protectedFields } as CommandNode;
+    });
+  }
+
+  // Arm / change / clear a command node's schedule. The bright line: a write to
+  // the protected `commandSchedule` field is rejected unless it originates from
+  // the user. A non-empty value re-arms (`sysLastRunAt = now`) so an occurrence
+  // that already passed today does not retroactively fire; clearing it leaves
+  // the watermark untouched (the node simply becomes manual-only).
+  setCommandSchedule(nodeId: string, schedule: string | undefined, origin: CommitOrigin): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
+      if (isProtectedField(node, COMMAND_SCHEDULE_FIELD) && origin !== 'user') {
+        throw CoreError.invalidOperation('only the user can arm a command node schedule');
+      }
+      const normalized = normalizeCommandSchedule(schedule);
+      const command = node as CommandNode;
+      setOptional(command, 'commandSchedule', normalized);
+      if (normalized) command.sysLastRunAt = nowMs();
     });
   }
 
@@ -3339,6 +3378,19 @@ function requiredNode(state: DocumentState, nodeId: string): Node {
 function setOptional<T extends object, K extends keyof T>(object: T, key: K, value: T[K] | undefined) {
   if (value === undefined || value === null || value === '') delete object[key];
   else object[key] = value;
+}
+
+// Validate and canonicalize a command schedule string. Empty → undefined
+// (manual-only). A non-empty value must parse as a `<endpoint> RRULE:...`
+// schedule (src/core/dateSchedule.ts); we store the canonical re-serialization
+// so the offline scheduler always reads a normalized form.
+function normalizeCommandSchedule(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const parsed = parseDateSchedule(trimmed);
+  if (!parsed) throw CoreError.invalidOperation('invalid command schedule');
+  return formatDateSchedule(parsed);
 }
 
 function ensureParentMutable(state: DocumentState, parentId: string) {

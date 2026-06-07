@@ -395,6 +395,14 @@ export class DocumentService {
         return this.core.setCodeBlock(String(args.nodeId), nullableString(args.codeLanguage) ?? undefined);
       case 'set_code_language':
         return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
+      case 'set_command_node':
+        return this.core.setCommandNode(String(args.nodeId));
+      case 'set_command_schedule':
+        return this.core.setCommandSchedule(
+          String(args.nodeId),
+          nullableString(args.schedule) ?? undefined,
+          meta.origin ?? 'user',
+        );
       case 'create_image_node':
         return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
           assetId: nullableString(args.assetId) ?? undefined,

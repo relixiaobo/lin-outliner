@@ -369,6 +369,13 @@ export interface NodeBase {
   templateId?: NodeId;
   autoCollected: boolean;
   aiSummary?: string;
+  /**
+   * Field keys on this node that only the user may write (the mutation gateway
+   * rejects `agent`/`system`-origin writes to them). The enforcement primitive
+   * behind the command-node bright line — a `command` node carries
+   * `[COMMAND_SCHEDULE_FIELD]` so the agent can never arm an unattended run.
+   * See `isProtectedField` and `docs/plans/agent-scheduled-routines.md`.
+   */
   protectedFields?: string[];
   /**
    * Typed launcher-capture sidecar: provenance metadata only (what the node is
@@ -466,11 +473,44 @@ export interface QueryParams {
 }
 export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
 export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }
+/**
+ * A `command` node's text content (`NodeBase.content`) is a natural-language
+ * brief the agent executes end-to-end — the prose is the program, so there is no
+ * separate brief property. Setting `commandSchedule` (user-only — see the bright
+ * line below) arms it to run on a schedule. See
+ * `docs/plans/agent-scheduled-routines.md`.
+ */
 export interface CommandNode extends NodeBase {
   type: 'command';
-  command?: string;
+  /**
+   * Canonical schedule string — a date endpoint with an optional recurrence
+   * rule, `"<endpoint> RRULE:..."`, parsed by `src/core/dateSchedule.ts`. One
+   * field carries both *when to start* (the endpoint) and *how to repeat* (the
+   * rule). **User-only-writable** (listed in `protectedFields`): the agent may
+   * draft the brief and propose a schedule as text, but only the user can arm an
+   * unattended run. Empty/absent = manual-only (Run now still works).
+   */
   commandSchedule?: string;
+  /**
+   * System-managed fire watermark (ms epoch). Advanced by the harness after a
+   * successful run and reset to "now" when the user re-arms the schedule; the
+   * anacron scheduler fires when `now >= mostRecentDue && sysLastRunAt < dueAt`.
+   * Never written by the agent.
+   */
   sysLastRunAt?: number;
+}
+
+/** The single user-only-writable field key on a `command` node (the bright line). */
+export const COMMAND_SCHEDULE_FIELD = 'commandSchedule';
+
+/**
+ * Whether `field` is declared user-only-writable on `node` (see
+ * `NodeBase.protectedFields`). The mutation gateway rejects non-`user`-origin
+ * writes to a protected field; this is the enforcement primitive behind the
+ * command-node bright line and is reusable for any future protected field.
+ */
+export function isProtectedField(node: Pick<NodeBase, 'protectedFields'>, field: string): boolean {
+  return node.protectedFields?.includes(field) ?? false;
 }
 
 export type Node =
