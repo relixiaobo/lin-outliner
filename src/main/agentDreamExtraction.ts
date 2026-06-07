@@ -1,11 +1,13 @@
 import { isHiddenAgentContextBlock } from '../core/agentAttachments';
 import {
+  type AgentEvent,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentMemoryEntry,
   type AgentMemorySource,
   type AgentPersistedContent,
   getAgentEventRuntimeTranscriptPath,
+  replayAgentEvents,
 } from '../core/agentEventLog';
 import type { UserMessage } from '../core/agentTypes';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
@@ -17,11 +19,24 @@ const DREAM_MAX_ACTIONS = 5;
 
 type DreamMemoryActionType = 'add' | 'update' | 'forget';
 
-export interface DreamMemoryExtractionSpan {
-  conversationId: string;
-  runId: string;
+export interface DreamMemoryExtractionSourceRange {
   source: AgentMemorySource;
+  fromSeqExclusive: number;
+  throughSeq: number;
+  throughEventId: string | null;
+  messageCount: number;
+  charCount: number;
+}
+
+export interface DreamMemoryExtractionSpan {
+  id: string;
+  runId: string;
+  sources: AgentMemorySource[];
+  sourceRanges: DreamMemoryExtractionSourceRange[];
   transcript: string;
+  totalMessageCount: number;
+  totalCharCount: number;
+  consolidateOnly: boolean;
 }
 
 export type DreamMemoryAction =
@@ -33,6 +48,12 @@ export interface DreamMemoryExtractionRequestInput {
   span: DreamMemoryExtractionSpan;
   existingMemories: readonly AgentMemoryEntry[];
   originWorkspace?: string;
+}
+
+export interface DreamMemoryExtractionConversationInput {
+  conversationId: string;
+  events: readonly AgentEvent[];
+  fromSeqExclusive: number;
 }
 
 export function buildDreamMemoryExtractionSpan(
@@ -60,10 +81,91 @@ export function buildDreamMemoryExtractionSpan(
   };
   if (state.latestEventId) source.eventId = state.latestEventId;
   return {
-    conversationId,
+    id: `run:${runId}`,
     runId,
-    source,
+    sources: [source],
+    sourceRanges: [{
+      source,
+      fromSeqExclusive: 0,
+      throughSeq: state.latestSeq,
+      throughEventId: state.latestEventId,
+      messageCount: slice.length,
+      charCount: transcript.length,
+    }],
     transcript,
+    totalMessageCount: slice.length,
+    totalCharCount: transcript.length,
+    consolidateOnly: false,
+  };
+}
+
+export function buildDreamMemoryExtractionSpanFromEvents(
+  runId: string,
+  inputs: readonly DreamMemoryExtractionConversationInput[],
+): DreamMemoryExtractionSpan | null {
+  const ranges: DreamMemoryExtractionSourceRange[] = [];
+  const renderedConversations: string[] = [];
+
+  for (const input of inputs) {
+    const sortedEvents = [...input.events].sort((left, right) => left.seq - right.seq);
+    const evidenceEvents = sortedEvents.filter((event) => event.seq > input.fromSeqExclusive && isDreamEvidenceEvent(event));
+    if (evidenceEvents.length === 0) continue;
+
+    const state = replayAgentEvents(sortedEvents);
+    const activePath = getAgentEventRuntimeTranscriptPath(state);
+    const evidenceMessageIds = new Set(evidenceEvents.flatMap(messageIdsFromEvidenceEvent));
+    const messages = activePath.filter((message) => evidenceMessageIds.has(message.id));
+    if (messages.length === 0) continue;
+
+    const transcript = renderDreamTranscript(messages);
+    if (!transcript.trim()) continue;
+
+    const throughEvent = evidenceEvents.at(-1)!;
+    const from = messages[0]!;
+    const through = messages.at(-1)!;
+    const source: AgentMemorySource = {
+      conversationId: input.conversationId,
+      messageRange: [from.id, through.id],
+      eventId: throughEvent.eventId,
+    };
+    const runIds = uniqueStrings(messages.map((message) => message.runId).filter((value): value is string => !!value));
+    if (runIds.length === 1) source.runId = runIds[0];
+
+    ranges.push({
+      source,
+      fromSeqExclusive: input.fromSeqExclusive,
+      throughSeq: throughEvent.seq,
+      throughEventId: throughEvent.eventId,
+      messageCount: messages.length,
+      charCount: transcript.length,
+    });
+    renderedConversations.push(`## Conversation ${input.conversationId}\n${transcript}`);
+  }
+
+  if (ranges.length === 0) return null;
+  const transcript = truncateDreamTranscript(renderedConversations.join('\n\n'));
+  return {
+    id: `dream:${runId}`,
+    runId,
+    sources: ranges.map((range) => range.source),
+    sourceRanges: ranges,
+    transcript,
+    totalMessageCount: ranges.reduce((sum, range) => sum + range.messageCount, 0),
+    totalCharCount: ranges.reduce((sum, range) => sum + range.charCount, 0),
+    consolidateOnly: false,
+  };
+}
+
+export function buildConsolidateOnlyDreamMemoryExtractionSpan(runId: string): DreamMemoryExtractionSpan {
+  return {
+    id: `dream:${runId}:consolidate`,
+    runId,
+    sources: [],
+    sourceRanges: [],
+    transcript: '(no new raw evidence)',
+    totalMessageCount: 0,
+    totalCharCount: 0,
+    consolidateOnly: true,
   };
 }
 
@@ -72,17 +174,23 @@ export function buildDreamMemoryExtractionRequest(input: DreamMemoryExtractionRe
     .map((entry) => `- ${entry.id}: ${entry.fact}`)
     .join('\n') || '(none)';
   const workspace = input.originWorkspace ?? '(none)';
+  const evidenceMode = input.span.consolidateOnly
+    ? 'There is no new raw evidence. Consolidate existing memory only: update or forget stale/duplicate/conflicting entries, but do not add new memories.'
+    : 'Analyze the raw evidence since the last Dream and propose durable memory changes.';
   const prompt = `You are Tenon's private Dream memory extractor.
 
 You do not have tools. You cannot write files. Return JSON only.
 
-Analyze the raw evidence from the most recent completed foreground run and propose at most ${DREAM_MAX_ACTIONS} durable memory changes.
+${evidenceMode}
+
+Propose at most ${DREAM_MAX_ACTIONS} durable memory changes.
 
 Rules:
 - Save only stable facts, user preferences, durable decisions, project conventions, or relationship context that should help future turns.
 - Do not save transient task steps, temporary status, command output, secrets, credentials, raw logs, or facts already represented as durable outline content.
 - Do not infer beyond the raw evidence. If the evidence is ambiguous, emit no action.
 - Prefer updating or forgetting an existing memory when the new evidence corrects or supersedes it.
+- If there is no new raw evidence, do not add new memory entries.
 - Never mention that memory was saved. The foreground assistant did not call a memory write tool.
 - Ground every action in the raw evidence below, not in summaries.
 
@@ -126,11 +234,12 @@ export function parseDreamMemoryActions(responseText: string): DreamMemoryAction
 
 export function mergeMemorySources(
   existing: readonly AgentMemorySource[],
-  next: AgentMemorySource,
+  next: AgentMemorySource | readonly AgentMemorySource[],
 ): AgentMemorySource[] {
   const merged: AgentMemorySource[] = [];
   const seen = new Set<string>();
-  for (const source of [...existing, next]) {
+  const nextSources = Array.isArray(next) ? next : [next];
+  for (const source of [...existing, ...nextSources]) {
     const key = JSON.stringify(source);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -148,8 +257,7 @@ function renderDreamTranscript(messages: readonly AgentEventMessageRecord[]): st
     .map((message, index) => renderDreamMessage(message, index + 1))
     .filter(Boolean)
     .join('\n\n');
-  if (rendered.length <= DREAM_TRANSCRIPT_CHAR_BUDGET) return rendered;
-  return `[older raw evidence truncated]\n${rendered.slice(rendered.length - DREAM_TRANSCRIPT_CHAR_BUDGET)}`;
+  return truncateDreamTranscript(rendered);
 }
 
 function renderDreamMessage(message: AgentEventMessageRecord, index: number): string {
@@ -195,6 +303,28 @@ function findCurrentTurnStartIndex(messages: readonly AgentEventMessageRecord[],
   const previous = messages[firstRunMessageIndex - 1];
   if (previous?.role === 'user') return firstRunMessageIndex - 1;
   return firstRunMessageIndex;
+}
+
+function truncateDreamTranscript(rendered: string): string {
+  if (rendered.length <= DREAM_TRANSCRIPT_CHAR_BUDGET) return rendered;
+  return `[older raw evidence truncated]\n${rendered.slice(rendered.length - DREAM_TRANSCRIPT_CHAR_BUDGET)}`;
+}
+
+function isDreamEvidenceEvent(event: AgentEvent): boolean {
+  return event.type === 'user_message.created'
+    || event.type === 'user_message.edited'
+    || event.type === 'assistant_message.completed'
+    || event.type === 'assistant_message.failed'
+    || event.type === 'tool_result.created'
+    || event.type === 'tool_result.replaced';
+}
+
+function messageIdsFromEvidenceEvent(event: AgentEvent): string[] {
+  return typeof event.messageId === 'string' ? [event.messageId] : [];
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function normalizeDreamMemoryAction(value: unknown): DreamMemoryAction | null {

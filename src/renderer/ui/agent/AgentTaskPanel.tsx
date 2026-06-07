@@ -5,6 +5,7 @@ import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import {
   AgentIcon,
+  BrainIcon,
   CloseIcon,
   ICON_SIZE,
   OpenIcon,
@@ -28,6 +29,32 @@ function formatTaskTime(timestamp: number, locale: string): string {
 
 function taskStatusLabel(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
   return labels.status[task.status];
+}
+
+function taskKindLabel(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
+  if (task.kind === 'dream') return labels.kindDream;
+  return labels.kindSubagent;
+}
+
+function taskTitle(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
+  if (task.kind === 'dream') return labels.dreamTitle;
+  return task.title;
+}
+
+function taskMetaParts(task: AgentTaskEntry, labels: Messages['agent']['task'], locale: string): string[] {
+  if (task.kind === 'dream') {
+    return [
+      task.trigger === 'schedule' ? labels.triggerSchedule : labels.triggerManual,
+      task.processed ? labels.messages({ count: task.processed.totalMessageCount }) : null,
+      task.changes ? labels.memoryChanges({ count: task.changes.added + task.changes.updated + task.changes.forgotten }) : null,
+      formatTaskTime(task.updatedAt, locale),
+    ].filter((part): part is string => Boolean(part));
+  }
+  return [
+    task.subtitle,
+    labels.messages({ count: task.subagent.transcriptMessageCount }),
+    formatTaskTime(task.updatedAt, locale),
+  ];
 }
 
 export function AgentTaskPanel({
@@ -86,35 +113,45 @@ export function AgentTaskPanel({
           {tasks.map((task) => {
             const canStop = task.kind === 'subagent' && task.status === 'running';
             const stopping = stoppingTaskId === task.id;
+            const kindIcon = task.kind === 'dream' ? BrainIcon : AgentIcon;
+            const KindIcon = kindIcon;
+            const meta = taskMetaParts(task, t.agent.task, locale).join(' · ');
+            const mainContent = (
+              <>
+                <span className="agent-task-kind">
+                  <KindIcon size={ICON_SIZE.menu} />
+                  <span>{taskKindLabel(task, t.agent.task)}</span>
+                  <span className={`agent-task-status is-${task.status}`}>{taskStatusLabel(task, t.agent.task)}</span>
+                </span>
+                <span className="agent-task-title">{taskTitle(task, t.agent.task)}</span>
+                <span className="agent-task-meta">{meta}</span>
+              </>
+            );
             return (
-              <article className={`agent-task-row is-${task.status}`} key={task.id}>
-                <ButtonControl
-                  className="agent-task-main"
-                  onClick={() => onOpenSubagent(task.subagentId)}
-                >
-                  <span className="agent-task-kind">
-                    <AgentIcon size={ICON_SIZE.menu} />
-                    <span>{t.agent.task.kindSubagent}</span>
-                    <span className={`agent-task-status is-${task.status}`}>{taskStatusLabel(task, t.agent.task)}</span>
-                  </span>
-                  <span className="agent-task-title">{task.title}</span>
-                  <span className="agent-task-meta">
-                    {task.subtitle}
-                    {' · '}
-                    {t.agent.task.messages({ count: task.subagent.transcriptMessageCount })}
-                    {' · '}
-                    {formatTaskTime(task.updatedAt, locale)}
-                  </span>
-                </ButtonControl>
-                <div className="agent-task-row-actions">
-                  <IconButton
-                    className="agent-task-icon-button"
-                    icon={OpenIcon}
-                    label={t.agent.task.openTask}
+              <article className={`agent-task-row is-${task.status}${task.kind === 'dream' ? ' is-readonly' : ''}`} key={task.id}>
+                {task.kind === 'subagent' ? (
+                  <ButtonControl
+                    className="agent-task-main"
                     onClick={() => onOpenSubagent(task.subagentId)}
-                    title={t.agent.task.openTask}
-                    variant="message"
-                  />
+                  >
+                    {mainContent}
+                  </ButtonControl>
+                ) : (
+                  <div className="agent-task-main">
+                    {mainContent}
+                  </div>
+                )}
+                <div className="agent-task-row-actions">
+                  {task.kind === 'subagent' ? (
+                    <IconButton
+                      className="agent-task-icon-button"
+                      icon={OpenIcon}
+                      label={t.agent.task.openTask}
+                      onClick={() => onOpenSubagent(task.subagentId)}
+                      title={t.agent.task.openTask}
+                      variant="message"
+                    />
+                  ) : null}
                   {canStop ? (
                     <IconButton
                       className="agent-task-icon-button is-danger"

@@ -7,6 +7,7 @@ import {
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentPersistedContent,
+  type AgentDreamCompletedChanges,
   type AgentSubagentRunRecord,
 } from './agentEventLog';
 
@@ -92,10 +93,44 @@ export interface AgentRenderActiveCompaction {
   startedAt: number;
 }
 
+export type AgentRenderTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+export interface AgentRenderSubagentTaskEntity {
+  id: string;
+  kind: 'subagent';
+  status: AgentRenderTaskStatus;
+  title: string;
+  subtitle: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  subagentId: string;
+}
+
+export interface AgentRenderDreamTaskEntity {
+  id: string;
+  kind: 'dream';
+  status: AgentRenderTaskStatus;
+  trigger: 'manual' | 'schedule';
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  runId: string;
+  processed?: {
+    totalMessageCount: number;
+    totalCharCount: number;
+    consolidateOnly: boolean;
+  };
+  changes?: AgentDreamCompletedChanges;
+}
+
+export type AgentRenderTaskEntity = AgentRenderSubagentTaskEntity | AgentRenderDreamTaskEntity;
+
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   subagents: Record<string, AgentRenderSubagentEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
+  tasks: Record<string, AgentRenderTaskEntity>;
 }
 
 export interface AgentRenderProjection {
@@ -111,6 +146,7 @@ export interface AgentRenderProjection {
   errorMessage: string | null;
   rows: AgentRenderRow[];
   transcriptRows: AgentRenderRow[];
+  taskIds: string[];
   subagentRunIds: string[];
   entities: AgentRenderEntities;
   streaming: AgentStreamingRenderState | null;
@@ -125,6 +161,7 @@ export interface BuildAgentRenderProjectionOptions {
   thinkingLevel?: string;
   pendingToolCallIds?: string[];
   errorMessage?: string | null;
+  agentTasks?: readonly AgentRenderTaskEntity[];
 }
 
 export function buildAgentRenderProjection(
@@ -136,7 +173,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {} };
+  const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {}, tasks: {} };
   const rows = buildActiveRows(state, activePath, entities);
   const transcriptRows = buildTranscriptRows(state, entities);
   let streaming: AgentStreamingRenderState | null = null;
@@ -153,12 +190,20 @@ export function buildAgentRenderProjection(
     }
   }
 
+  const taskIds: string[] = [];
   const subagentRunIds = Object.values(state.subagents ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id))
     .map((run) => {
       entities.subagents[run.id] = toRenderSubagentEntity(run);
+      const task = toRenderSubagentTaskEntity(run);
+      entities.tasks[task.id] = task;
+      taskIds.push(task.id);
       return run.id;
     });
+  for (const task of options.agentTasks ?? []) {
+    entities.tasks[task.id] = task;
+    if (!taskIds.includes(task.id)) taskIds.push(task.id);
+  }
 
   return {
     conversationId: state.session.id,
@@ -173,6 +218,7 @@ export function buildAgentRenderProjection(
     errorMessage: options.errorMessage ?? null,
     rows,
     transcriptRows,
+    taskIds,
     subagentRunIds,
     entities,
     streaming,
@@ -285,6 +331,20 @@ function toRenderMessageEntity(
 
 function toRenderSubagentEntity(run: AgentSubagentRunRecord): AgentRenderSubagentEntity {
   return { ...run };
+}
+
+function toRenderSubagentTaskEntity(run: AgentSubagentRunRecord): AgentRenderSubagentTaskEntity {
+  return {
+    id: `subagent:${run.id}`,
+    kind: 'subagent',
+    status: run.status,
+    title: run.description.trim() || run.name?.trim() || run.id,
+    subtitle: `${run.contextMode} · ${run.subagentType}`,
+    startedAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    completedAt: run.completedAt,
+    subagentId: run.id,
+  };
 }
 
 function toRenderCompactionEntity(record: AgentCompactionRecord): AgentRenderCompactionEntity {

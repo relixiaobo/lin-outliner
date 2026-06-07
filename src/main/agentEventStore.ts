@@ -22,6 +22,10 @@ import type {
   AgentRunRetention,
   AgentRunStatus,
   AgentIdentityRecord,
+  AgentDreamCompletedChanges,
+  AgentDreamProcessedConversation,
+  AgentDreamTrigger,
+  AgentDreamWatermark,
   AgentMemoryEntry,
   AgentMemoryEvent,
   AgentMemorySource,
@@ -36,6 +40,7 @@ import {
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
+const AGENT_RUN_INDEX_FILE = 'runs.json';
 const LEGACY_SESSIONS_DIR = 'sessions';
 const RUN_EVENT_LOG_FILE = 'events.jsonl';
 const RUN_META_FILE = 'meta.json';
@@ -118,6 +123,28 @@ export interface AgentMemoryEntryPatch {
   status?: AgentMemoryEntry['status'];
 }
 
+export interface AgentDreamCompletedInput {
+  dreamId?: string;
+  runId: string;
+  trigger: AgentDreamTrigger;
+  startedAt: number;
+  completedAt?: number;
+  watermark: AgentDreamWatermark;
+  processed: {
+    conversations: Record<string, AgentDreamProcessedConversation>;
+    totalMessageCount: number;
+    totalCharCount: number;
+    consolidateOnly: boolean;
+  };
+  changes: AgentDreamCompletedChanges;
+}
+
+export interface AgentDreamState {
+  lastCompleted: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null;
+  watermark: AgentDreamWatermark;
+  lastSuccessAt: number | null;
+}
+
 export interface AgentConversationIndexEntry {
   id: string;
   title: string | null;
@@ -155,10 +182,18 @@ interface AgentConversationRunIndex {
   latestSeqByRunId: Record<string, number>;
 }
 
+interface AgentRunIndex {
+  v: 1;
+  agentId: string;
+  runIds: string[];
+  updatedAtByRunId: Record<string, number>;
+}
+
 interface AgentMemoryProjectionCache {
   latestSeq: number;
   eventCount: number;
   entries: Map<string, AgentMemoryEntry>;
+  dream: AgentDreamState;
 }
 
 export interface AgentEventSearchIndexEntry {
@@ -231,12 +266,13 @@ export class AgentEventStore {
     };
   }
 
-  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string } {
+  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string; runIndexPath: string } {
     const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
     return {
       agentDir,
       identityPath: path.join(agentDir, AGENT_IDENTITY_FILE),
       memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
+      runIndexPath: path.join(agentDir, AGENT_RUN_INDEX_FILE),
     };
   }
 
@@ -443,6 +479,39 @@ export class AgentEventStore {
     await atomicWriteFile(paths.identityPath, `${JSON.stringify({ v: 1, ...identity })}\n`);
   }
 
+  async writeRunMeta(meta: AgentRunMetaProjection): Promise<void> {
+    await this.ensureStorageLayout();
+    const normalized = normalizeRunMeta(meta);
+    if (!normalized) throw new Error('Invalid agent run meta.');
+    const runPaths = this.runPaths(normalized.id);
+    await mkdir(runPaths.runDir, { recursive: true });
+    await atomicWriteFile(runPaths.runMetaPath, `${JSON.stringify(normalized)}\n`);
+    await this.updateRunIndexes(normalized);
+  }
+
+  async readRunMetaProjection(runId: string): Promise<AgentRunMetaProjection | null> {
+    await this.ensureStorageLayout();
+    return this.readRunMeta(runId);
+  }
+
+  async listAgentRunMetaProjections(
+    agentId: string,
+    options: { limit?: number } = {},
+  ): Promise<AgentRunMetaProjection[]> {
+    await this.ensureStorageLayout();
+    const index = await this.ensureAgentRunIndex(agentId);
+    const limit = Math.max(0, Math.min(100, Math.trunc(options.limit ?? 50)));
+    const metas: AgentRunMetaProjection[] = [];
+    for (const runId of index.runIds) {
+      const meta = await this.readRunMeta(runId);
+      if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+      metas.push(meta);
+    }
+    return metas
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+      .slice(0, limit);
+  }
+
   async readAgentIdentity(agentId: string): Promise<AgentIdentityRecord | null> {
     await this.ensureStorageLayout();
     const paths = this.agentPaths(agentId);
@@ -536,6 +605,42 @@ export class AgentEventStore {
       await this.maybeCompactMemoryLog(agentId, projection);
       return next;
     });
+  }
+
+  async appendDreamCompleted(agentId: string, input: AgentDreamCompletedInput): Promise<Extract<AgentMemoryEvent, { type: 'dream.completed' }>> {
+    await this.ensureStorageLayout();
+    return this.memoryEventLog.enqueue(agentId, async () => {
+      const completedAt = input.completedAt ?? Date.now();
+      const event = await this.nextMemoryEvent(agentId, {
+        type: 'dream.completed',
+        createdAt: completedAt,
+        dreamId: input.dreamId ?? `dream-${randomUUID()}`,
+        runId: input.runId,
+        trigger: input.trigger,
+        startedAt: input.startedAt,
+        completedAt,
+        watermark: normalizeDreamWatermark(input.watermark),
+        processed: {
+          conversations: normalizeDreamProcessedConversations(input.processed.conversations),
+          totalMessageCount: Math.max(0, Math.trunc(input.processed.totalMessageCount)),
+          totalCharCount: Math.max(0, Math.trunc(input.processed.totalCharCount)),
+          consolidateOnly: input.processed.consolidateOnly,
+        },
+        changes: normalizeDreamChanges(input.changes),
+      }) as Extract<AgentMemoryEvent, { type: 'dream.completed' }>;
+      const projection = await this.getMemoryProjection(agentId);
+      await this.appendMemoryEvents(agentId, [event]);
+      projection.dream = dreamStateFromCompleted(event);
+      projection.latestSeq = event.seq;
+      projection.eventCount += 1;
+      await this.maybeCompactMemoryLog(agentId, projection);
+      return event;
+    });
+  }
+
+  async readDreamState(agentId: string): Promise<AgentDreamState> {
+    await this.ensureStorageLayout();
+    return cloneDreamState((await this.getMemoryProjection(agentId)).dream);
   }
 
   async getMemoryEntry(agentId: string, entryId: string): Promise<AgentMemoryEntry | null> {
@@ -658,7 +763,8 @@ export class AgentEventStore {
     agentId: string,
     input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
       | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>,
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>,
   ): Promise<AgentMemoryEvent> {
     const seq = await this.memoryEventLog.latestSeq(agentId, () => [this.agentPaths(agentId).memoryEventsPath]) + 1;
     return {
@@ -681,10 +787,12 @@ export class AgentEventStore {
     if (cached && cached.latestSeq === latestSeq) return cached;
 
     const events = await this.readMemoryEvents(agentId);
+    const projected = projectMemoryEvents(events);
     const projection: AgentMemoryProjectionCache = {
       latestSeq,
       eventCount: events.length,
-      entries: projectMemoryEntries(events),
+      entries: projected.entries,
+      dream: projected.dream,
     };
     this.memoryProjectionByAgentId.set(agentId, projection);
     return projection;
@@ -695,7 +803,7 @@ export class AgentEventStore {
     const projectedEntryCount = Math.max(1, projection.entries.size);
     if (projection.eventCount < projectedEntryCount * MEMORY_COMPACTION_CHURN_FACTOR) return;
 
-    const events = compactMemoryProjection(agentId, projection.entries);
+    const events = compactMemoryProjection(agentId, projection.entries, projection.dream.lastCompleted);
     const filePath = this.agentPaths(agentId).memoryEventsPath;
     await mkdir(path.dirname(filePath), { recursive: true });
     await atomicWriteFile(filePath, serializeJsonl(events));
@@ -745,9 +853,7 @@ export class AgentEventStore {
       await this.agentEventLog.append(runPaths.runEventsPath, group);
       if (metaEvents.length > 0) {
         const meta = await this.updateRunMeta(sessionId, runId, metaEvents);
-        if (meta && conversationIdOfRun(meta) === sessionId) {
-          await this.updateConversationRunIndex(sessionId, runId, meta.latestSeq);
-        }
+        if (meta) await this.updateRunIndexes(meta);
       }
     }
 
@@ -774,6 +880,12 @@ export class AgentEventStore {
       return { v: 1, runIds: [], latestSeqByRunId: {} };
     }
     return this.rebuildConversationRunIndex(sessionId);
+  }
+
+  private async ensureAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
+    const index = await this.readAgentRunIndex(agentId);
+    if (index) return index;
+    return this.rebuildAgentRunIndex(agentId);
   }
 
   private async conversationDirExists(sessionId: string): Promise<boolean> {
@@ -813,6 +925,37 @@ export class AgentEventStore {
     const index: AgentConversationRunIndex = { v: 1, runIds, latestSeqByRunId };
     await mkdir(paths.conversationDir, { recursive: true });
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+    return index;
+  }
+
+  private async rebuildAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
+    const updatedAtByRunId: Record<string, number> = {};
+    const paths = this.paths('__placeholder__');
+    try {
+      const entries = await readdir(paths.runsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const runDir = path.join(paths.runsDir, entry.name);
+        try {
+          const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
+          if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+          updatedAtByRunId[meta.id] = Math.max(updatedAtByRunId[meta.id] ?? 0, meta.updatedAt);
+        } catch (error) {
+          if (isNotFoundError(error) || error instanceof SyntaxError) continue;
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    const runIds = Object.keys(updatedAtByRunId).sort((left, right) => (
+      updatedAtByRunId[right]! - updatedAtByRunId[left]! || left.localeCompare(right)
+    ));
+    const index: AgentRunIndex = { v: 1, agentId, runIds, updatedAtByRunId };
+    const agentPaths = this.agentPaths(agentId);
+    await mkdir(agentPaths.agentDir, { recursive: true });
+    await atomicWriteFile(agentPaths.runIndexPath, `${JSON.stringify(index)}\n`);
     return index;
   }
 
@@ -884,6 +1027,27 @@ export class AgentEventStore {
     }
   }
 
+  private async readAgentRunIndex(agentId: string): Promise<AgentRunIndex | null> {
+    try {
+      const raw = await readFile(this.agentPaths(agentId).runIndexPath, 'utf8');
+      return normalizeAgentRunIndex(JSON.parse(raw), agentId);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  }
+
+  private async updateRunIndexes(meta: AgentRunMetaProjection) {
+    const conversationId = conversationIdOfRun(meta);
+    if (conversationId) {
+      await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq);
+    }
+    if (meta.anchor.type === 'agent') {
+      await this.updateAgentRunIndex(meta.anchor.agentId, meta.id, meta.updatedAt);
+    }
+  }
+
   private async updateConversationRunIndex(sessionId: string, runId: string, latestSeq: number) {
     const paths = this.paths(sessionId);
     const existing = await this.ensureConversationRunIndex(sessionId);
@@ -898,6 +1062,26 @@ export class AgentEventStore {
     };
     await mkdir(paths.conversationDir, { recursive: true });
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+  }
+
+  private async updateAgentRunIndex(agentId: string, runId: string, updatedAt: number) {
+    const paths = this.agentPaths(agentId);
+    const existing = await this.ensureAgentRunIndex(agentId);
+    const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
+    const index: AgentRunIndex = {
+      v: 1,
+      agentId,
+      runIds,
+      updatedAtByRunId: {
+        ...existing.updatedAtByRunId,
+        [runId]: Math.max(existing.updatedAtByRunId[runId] ?? 0, updatedAt),
+      },
+    };
+    index.runIds.sort((left, right) => (
+      index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
+    ));
+    await mkdir(paths.agentDir, { recursive: true });
+    await atomicWriteFile(paths.runIndexPath, `${JSON.stringify(index)}\n`);
   }
 
   private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
@@ -1701,6 +1885,25 @@ function normalizeConversationRunIndex(value: unknown): AgentConversationRunInde
   };
 }
 
+function normalizeAgentRunIndex(value: unknown, agentId: string): AgentRunIndex | null {
+  if (!isRecord(value) || value.v !== 1 || value.agentId !== agentId || !Array.isArray(value.runIds)) return null;
+  const updatedAtByRunId = isRecord(value.updatedAtByRunId)
+    ? Object.fromEntries(Object.entries(value.updatedAtByRunId).filter((entry): entry is [string, number] => (
+        typeof entry[1] === 'number' && Number.isFinite(entry[1])
+      )))
+    : {};
+  const runIds = uniqueStrings(value.runIds.filter((runId): runId is string => typeof runId === 'string'))
+    .sort((left, right) => (
+      (updatedAtByRunId[right] ?? 0) - (updatedAtByRunId[left] ?? 0) || left.localeCompare(right)
+    ));
+  return {
+    v: 1,
+    agentId,
+    runIds,
+    updatedAtByRunId,
+  };
+}
+
 function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
   if (!isRecord(value) || value.v !== 1) return null;
   if (typeof value.agentId !== 'string') return null;
@@ -1797,7 +2000,11 @@ function isAgentPrincipal(value: unknown): value is AgentPrincipal {
 }
 
 function isAgentRunKind(value: unknown): value is AgentRunKind {
-  return value === 'turn' || value === 'background' || value === 'subagent' || value === 'scheduled';
+  return value === 'turn'
+    || value === 'background'
+    || value === 'subagent'
+    || value === 'scheduled'
+    || value === 'reflective';
 }
 
 function isAgentRunStatus(value: unknown): value is AgentRunStatus {
@@ -1810,6 +2017,10 @@ function isAgentRunRetention(value: unknown): value is AgentRunRetention {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
 export function agentConversationDirName(sessionId: string): string {
@@ -1915,12 +2126,21 @@ function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[]
   return events;
 }
 
-function projectMemoryEntries(events: readonly AgentMemoryEvent[]): Map<string, AgentMemoryEntry> {
+function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
+  entries: Map<string, AgentMemoryEntry>;
+  dream: AgentDreamState;
+} {
   const entries = new Map<string, AgentMemoryEntry>();
+  let lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null = null;
   for (const event of [...events].sort(compareMemoryEventsForReplay)) {
     if (event.type === 'memory.entry_added') {
       const entry = normalizeMemoryEntry(event.entry);
       if (entry) entries.set(entry.id, entry);
+      continue;
+    }
+
+    if (event.type === 'dream.completed') {
+      lastCompletedDream = event;
       continue;
     }
 
@@ -1934,12 +2154,19 @@ function projectMemoryEntries(events: readonly AgentMemoryEvent[]): Map<string, 
 
     entries.set(current.id, { ...current, status: 'invalidated' });
   }
-  return entries;
+  return {
+    entries,
+    dream: lastCompletedDream ? dreamStateFromCompleted(lastCompletedDream) : emptyDreamState(),
+  };
 }
 
-function compactMemoryProjection(agentId: string, entries: ReadonlyMap<string, AgentMemoryEntry>): AgentMemoryEvent[] {
+function compactMemoryProjection(
+  agentId: string,
+  entries: ReadonlyMap<string, AgentMemoryEntry>,
+  lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
+): AgentMemoryEvent[] {
   const createdAt = Date.now();
-  return [...entries.values()]
+  const events = [...entries.values()]
     .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
     .map((entry, index): AgentMemoryEvent => ({
       v: 1,
@@ -1950,6 +2177,15 @@ function compactMemoryProjection(agentId: string, entries: ReadonlyMap<string, A
       createdAt,
       entry,
     }));
+  if (lastCompletedDream) {
+    events.push({
+      ...lastCompletedDream,
+      eventId: `dream-compact-${randomUUID()}`,
+      seq: events.length + 1,
+      createdAt,
+    });
+  }
+  return events;
 }
 
 function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
@@ -2001,6 +2237,33 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
     };
   }
 
+  if (value.type === 'dream.completed') {
+    if (typeof value.dreamId !== 'string' || typeof value.runId !== 'string') return null;
+    const trigger = value.trigger === 'manual' || value.trigger === 'schedule' ? value.trigger : null;
+    const startedAt = numberOrNull(value.startedAt);
+    const completedAt = numberOrNull(value.completedAt);
+    const watermark = normalizeDreamWatermark(value.watermark);
+    const processed = normalizeDreamProcessed(value.processed);
+    const changes = normalizeDreamChanges(isRecord(value.changes) ? value.changes : {});
+    if (!trigger || startedAt === null || completedAt === null || !processed) return null;
+    return {
+      v: 1,
+      type: 'dream.completed',
+      eventId: value.eventId,
+      seq,
+      agentId: value.agentId,
+      createdAt,
+      dreamId: value.dreamId,
+      runId: value.runId,
+      trigger,
+      startedAt,
+      completedAt,
+      watermark,
+      processed,
+      changes,
+    };
+  }
+
   return null;
 }
 
@@ -2018,6 +2281,87 @@ function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
     sources: Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [],
     status: value.status === 'invalidated' ? 'invalidated' : 'active',
     createdAt,
+  };
+}
+
+function emptyDreamState(): AgentDreamState {
+  return {
+    lastCompleted: null,
+    watermark: { conversations: {} },
+    lastSuccessAt: null,
+  };
+}
+
+function dreamStateFromCompleted(event: Extract<AgentMemoryEvent, { type: 'dream.completed' }>): AgentDreamState {
+  return {
+    lastCompleted: event,
+    watermark: normalizeDreamWatermark(event.watermark),
+    lastSuccessAt: event.completedAt,
+  };
+}
+
+function cloneDreamState(state: AgentDreamState): AgentDreamState {
+  return {
+    lastCompleted: state.lastCompleted ? JSON.parse(JSON.stringify(state.lastCompleted)) as AgentDreamState['lastCompleted'] : null,
+    watermark: normalizeDreamWatermark(state.watermark),
+    lastSuccessAt: state.lastSuccessAt,
+  };
+}
+
+function normalizeDreamWatermark(value: unknown): AgentDreamWatermark {
+  if (!isRecord(value) || !isRecord(value.conversations)) return { conversations: {} };
+  const conversations: AgentDreamWatermark['conversations'] = {};
+  for (const [conversationId, rawCursor] of Object.entries(value.conversations)) {
+    const cursor = normalizeDreamWatermarkCursor(rawCursor);
+    if (cursor) conversations[conversationId] = cursor;
+  }
+  return { conversations };
+}
+
+function normalizeDreamWatermarkCursor(value: unknown): AgentDreamWatermark['conversations'][string] | null {
+  if (!isRecord(value)) return null;
+  const seq = numberOrNull(value.seq);
+  if (seq === null || seq < 0) return null;
+  const eventId = typeof value.eventId === 'string' || value.eventId === null ? value.eventId : null;
+  return { seq: Math.trunc(seq), eventId };
+}
+
+function normalizeDreamProcessed(value: unknown): Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'] | null {
+  if (!isRecord(value) || !isRecord(value.conversations)) return null;
+  return {
+    conversations: normalizeDreamProcessedConversations(value.conversations),
+    totalMessageCount: nonNegativeInteger(value.totalMessageCount),
+    totalCharCount: nonNegativeInteger(value.totalCharCount),
+    consolidateOnly: value.consolidateOnly === true,
+  };
+}
+
+function normalizeDreamProcessedConversations(value: unknown): Record<string, AgentDreamProcessedConversation> {
+  if (!isRecord(value)) return {};
+  const conversations: Record<string, AgentDreamProcessedConversation> = {};
+  for (const [conversationId, raw] of Object.entries(value)) {
+    if (!isRecord(raw)) continue;
+    const fromSeqExclusive = numberOrNull(raw.fromSeqExclusive);
+    const throughSeq = numberOrNull(raw.throughSeq);
+    if (fromSeqExclusive === null || throughSeq === null || fromSeqExclusive < 0 || throughSeq < fromSeqExclusive) continue;
+    conversations[conversationId] = {
+      fromSeqExclusive: Math.trunc(fromSeqExclusive),
+      throughSeq: Math.trunc(throughSeq),
+      throughEventId: typeof raw.throughEventId === 'string' || raw.throughEventId === null ? raw.throughEventId : null,
+      messageCount: nonNegativeInteger(raw.messageCount),
+      charCount: nonNegativeInteger(raw.charCount),
+    };
+  }
+  return conversations;
+}
+
+function normalizeDreamChanges(value: unknown): AgentDreamCompletedChanges {
+  const record = isRecord(value) ? value : {};
+  return {
+    added: nonNegativeInteger(record.added),
+    updated: nonNegativeInteger(record.updated),
+    forgotten: nonNegativeInteger(record.forgotten),
+    skipped: nonNegativeInteger(record.skipped),
   };
 }
 

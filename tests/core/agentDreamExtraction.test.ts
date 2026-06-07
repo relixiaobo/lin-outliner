@@ -97,7 +97,7 @@ describe('agent dream extraction', () => {
 
     const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
 
-    expect(span?.source.messageRange).toEqual(['assistant-new', 'assistant-new']);
+    expect(span?.sources[0]?.messageRange).toEqual(['assistant-new', 'assistant-new']);
     expect(span?.transcript).toContain('New run response without a fresh user prompt.');
     expect(span?.transcript).not.toContain('Previous turn instruction');
     expect(span?.transcript).not.toContain('Previous run tool result.');
@@ -138,7 +138,7 @@ describe('agent dream extraction', () => {
 
     const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
 
-    expect(span?.source.messageRange).toEqual(['user-new', 'assistant-new']);
+    expect(span?.sources[0]?.messageRange).toEqual(['user-new', 'assistant-new']);
     expect(span?.transcript).toContain('Remember that concise answers are preferred.');
     expect(span?.transcript).toContain('I will answer concisely.');
   });

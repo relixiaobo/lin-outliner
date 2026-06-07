@@ -468,16 +468,19 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   reads bounded raw conversation/run spans, proposes add/update/forget memory
   events, dedupes/conflict-checks against the current memory line, and appends
   through the same runtime memory API with provenance.
-- **Implemented first slice:** per-turn Dream extraction follows cc-2.1's
-  `extractMemories` stop-hook shape: it runs after a completed foreground turn,
-  uses a no-tools model call over the raw current turn plus visible memory, and
-  lets the runtime append memory events. It intentionally does not use cc-2.1's
+- **Implemented Dream thin assembly:** Dream write-back is a scheduled/manual
+  reflective run, not a per-turn stop hook. The automatic path uses the shared
+  `date` schedule primitive plus a minimum-evidence gate; `/dream` forces the
+  same no-tools path and consolidates existing memory when there is no new raw
+  evidence. Dream reads raw conversation/run events since its watermark, appends
+  memory events through the runtime store, records `dream.completed`, and writes
+  agent-anchored reflective run meta. It intentionally does not use cc-2.1's
   file-writing extraction agent because Tenon's clean write boundary is the
   event-sourced memory store.
-- **Offline consolidation ("reflect").** Gated merge/dedupe/prune/
-  contradiction-resolve. Gate = time + activity + lock (cheapest first), the
-  `autoDream` shape (`cc-2.1 .../autoDream.ts`), but grounded in Lin's raw
-  conversation/run logs rather than summary-only evidence.
+- **Offline consolidation follow-ups.** The first Dream pass already supports
+  merge/dedupe/prune/contradiction proposals over visible memory. Deeper task
+  panel observability, backlog chunking, and future summary/search locator
+  optimizations remain follow-up work.
 - **Provenance tags:** `conversationId` / `runId` / `eventId` / `originWorkspace` —
   recorded for the addressable `sources` down-pointer, the visible-memory guard, and
   invalidation.
@@ -1053,16 +1056,17 @@ P2 — memory v2 + background-task surfacing
 - [x] Make the no-backfill consequence explicit in implementation notes and UI
   copy where relevant: old conversations without a `MemoryEntry` are not
   foreground-recallable by design.
-- [x] Runtime-owned per-turn Dream extraction worker with a restricted no-tools
-  model surface and runtime host callback.
-- [x] Read raw current-turn conversation messages and relevant run evidence
-  before writing memory. Distillation summary/search remains a future locator
-  for offline consolidation only.
+- [x] Runtime-owned Dream reflective run with a restricted no-tools model
+  surface and runtime host callback; scheduled `date` trigger plus manual
+  `/dream`, no per-turn write-back.
+- [x] Read raw conversation/run evidence since the Dream watermark before
+  writing memory. Distillation summary/search remains a future locator
+  optimization only.
 - [x] Dedupe/conflict-check against existing visible memory; append
   add/update/forget events with raw provenance tags
-  (conversation/message range/run/event/workspace). Throttling is currently the
-  per-turn completion gate plus a serial runtime queue; time/activity/lock gates
-  remain for offline consolidation.
+  (conversation/message range/run/event/workspace). The automatic path is gated
+  by a per-agent lock, provider availability, date due-ness, and minimum evidence
+  volume; `/dream` bypasses only the volume heuristic.
 - [x] First visible task-panel slice: current-conversation `subagent_run`
   projection records, open-details action, and stop action for running subagent
   tasks.

@@ -73,7 +73,7 @@ When the model calls the `skill` tool for a `context: fork` skill:
 6. The parent receives only the final subagent result or error as the `skill` tool result.
 7. The rendered skill body is not injected into the parent context and is not recorded as an invoked parent skill for compact restore.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` is a built-in runtime command and is handled before slash skill resolution. `/skillify` is a built-in slash-only skill; it is user-invocable but not model-invocable, so it does not appear in the automatic model skill listing.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in slash-only skill; it is user-invocable but not model-invocable, so it does not appear in the automatic model skill listing.
 
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
 

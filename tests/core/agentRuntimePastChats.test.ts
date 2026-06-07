@@ -95,6 +95,16 @@ function createWindowSink() {
   };
 }
 
+function latestProjectionEvent(events: readonly AgentRuntimeEvent[]) {
+  return [...events].reverse().find((event): event is Extract<AgentRuntimeEvent, { type: 'projection' }> => (
+    event.type === 'projection'
+  )) ?? null;
+}
+
+async function flushProjectionCoalescing() {
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
 function scriptedStream(
   responses: Array<AssistantMessage | ((context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage)>,
   onCall: (model: Model<Api>, context: Context) => void,
@@ -601,7 +611,7 @@ describe('agent runtime past chats integration', () => {
     expect(postRecallContext).not.toContain('Invalidated recall fact mentions orange focus rings.');
   });
 
-  test('dream extraction saves durable memory from raw completed turn evidence', async () => {
+  test('manual /dream saves durable memory from raw evidence since the watermark', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-data-'));
     roots.push(localRoot, dataRoot);
@@ -651,6 +661,8 @@ describe('agent runtime past chats integration', () => {
 
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, 'Please keep engineering answers concise from now on.');
+    expect(await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant')).toEqual([]);
+    await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
     const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
@@ -661,15 +673,241 @@ describe('agent runtime past chats integration', () => {
     expect(entries.map((entry) => entry.fact)).toEqual(['User prefers concise engineering answers.']);
     expect(entries[0]?.originWorkspace).toBe(memoryOriginWorkspace(localRoot));
     expect(source?.conversationId).toBe(created.conversationId);
-    expect(typeof source?.runId).toBe('string');
     expect(typeof source?.eventId).toBe('string');
     expect(source?.messageRange?.length).toBe(2);
     expect(dreamRequests.join('\n')).toContain('Please keep engineering answers concise from now on.');
     expect(dreamRequests.join('\n')).toContain('I will keep future engineering answers concise.');
     expect(dreamRequests.join('\n')).toContain('"tools":[]');
+    expect((await new AgentEventStore(dataRoot).readDreamState('built-in:tenon:assistant')).watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
   });
 
-  test('dream extraction only updates memory visible to the current isolation tier', async () => {
+  test('scheduled dream skips thin evidence while manual /dream forces it', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-schedule-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-schedule-data-'));
+    roots.push(localRoot, dataRoot);
+    let dreamCalls = 0;
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Noted.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => {
+          dreamCalls += 1;
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [{ type: 'add', fact: 'User prefers compact acknowledgements.' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Prefer compact acknowledgements.');
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    expect(dreamCalls).toBe(0);
+    expect(await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant')).toEqual([]);
+
+    await runtime.sendMessage(created.conversationId, '/dream');
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+    const dreamState = await new AgentEventStore(dataRoot).readDreamState('built-in:tenon:assistant');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(dreamCalls).toBe(1);
+    expect(entries.map((entry) => entry.fact)).toEqual(['User prefers compact acknowledgements.']);
+    expect(dreamState.lastCompleted?.trigger).toBe('manual');
+  });
+
+  test('scheduled dream fires for enough new evidence and records an agent-anchored run', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-auto-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-auto-data-'));
+    roots.push(localRoot, dataRoot);
+    let dreamCalls = 0;
+    const longPreference = `Please remember this durable collaboration preference: ${'concise evidence '.repeat(90)}`;
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText(`I will remember the collaboration preference. ${'grounded reply '.repeat(90)}`))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => {
+          dreamCalls += 1;
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [{ type: 'add', fact: 'User has a durable collaboration preference for concise evidence.' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, longPreference);
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    await flushProjectionCoalescing();
+
+    const store = new AgentEventStore(dataRoot);
+    const entries = await store.listMemoryEntries('built-in:tenon:assistant');
+    const dreamState = await store.readDreamState('built-in:tenon:assistant');
+    const runId = dreamState.lastCompleted?.runId;
+    const runMeta = runId ? await store.readRunMetaProjection(runId) : null;
+    const projection = latestProjectionEvent(sink.events)?.renderProjection;
+    const dreamTaskId = projection?.taskIds.find((taskId) => projection.entities.tasks[taskId]?.kind === 'dream');
+    const dreamTask = dreamTaskId ? projection?.entities.tasks[dreamTaskId] : null;
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(dreamCalls).toBe(1);
+    expect(entries.map((entry) => entry.fact)).toEqual(['User has a durable collaboration preference for concise evidence.']);
+    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
+    expect(runMeta?.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
+    expect(runMeta?.kind).toBe('reflective');
+    expect(dreamTask).toMatchObject({
+      id: `dream:${runId}`,
+      kind: 'dream',
+      status: 'completed',
+      trigger: 'schedule',
+      runId,
+      processed: {
+        totalMessageCount: 2,
+        consolidateOnly: false,
+      },
+      changes: { added: 1 },
+    });
+  });
+
+  test('manual /dream with no new evidence consolidates memory without replaying old raw evidence', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-data-'));
+    roots.push(localRoot, dataRoot);
+    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+      id: 'memory-stable',
+      fact: 'User prefers stable concise memory.',
+      originWorkspace: memoryOriginWorkspace(localRoot),
+      sources: [{ conversationId: 'old-conversation' }],
+      createdAt: 30,
+    });
+    const dreamRequests: string[] = [];
+    let dreamCall = 0;
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('I will remember the stable preference.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model, context) => {
+          dreamRequests.push(textFromContext(context));
+          dreamCall += 1;
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: dreamCall === 1
+                ? []
+                : [{ type: 'update', memory_id: 'memory-stable', fact: 'User prefers stable, concise memory.' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Stable concise memory is preferred.');
+    await runtime.sendMessage(created.conversationId, '/dream');
+    await runtime.sendMessage(created.conversationId, '/dream');
+
+    const updated = await new AgentEventStore(dataRoot).getMemoryEntry('built-in:tenon:assistant', 'memory-stable');
+    const secondRequest = dreamRequests[1] ?? '';
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(dreamRequests).toHaveLength(2);
+    expect(updated?.fact).toBe('User prefers stable, concise memory.');
+    expect(secondRequest).toContain('(no new raw evidence)');
+    expect(secondRequest).not.toContain('Stable concise memory is preferred.');
+  });
+
+  test('manual /dream only updates memory visible to the current isolation tier', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-data-'));
     roots.push(localRoot, dataRoot);
@@ -741,6 +979,7 @@ describe('agent runtime past chats integration', () => {
 
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, 'For this workspace, prefer short answers.');
+    await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
     const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
@@ -758,7 +997,7 @@ describe('agent runtime past chats integration', () => {
     expect(other?.fact).toBe('Other workspace prefers terse answers.');
   });
 
-  test('dream extraction treats same-key updates as no-ops', async () => {
+  test('manual /dream treats same-key updates as no-ops but records completion', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-noop-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-noop-data-'));
     roots.push(localRoot, dataRoot);
@@ -816,6 +1055,7 @@ describe('agent runtime past chats integration', () => {
 
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, 'Keep answers concise.');
+    await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
     const events = await new AgentEventStore(dataRoot).readMemoryEvents('built-in:tenon:assistant');
@@ -823,11 +1063,11 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(['memory.entry_added']);
+    expect(events.map((event) => event.type)).toEqual(['memory.entry_added', 'dream.completed']);
     expect(entry?.sources).toEqual([{ conversationId: 'old-conversation' }]);
   });
 
-  test('dream extraction is disabled for read-only-global memory isolation', async () => {
+  test('manual /dream is disabled for read-only-global memory isolation', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-data-'));
     roots.push(localRoot, dataRoot);
@@ -877,6 +1117,7 @@ describe('agent runtime past chats integration', () => {
 
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, 'Do not write memories in this workspace.');
+    await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
     const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');

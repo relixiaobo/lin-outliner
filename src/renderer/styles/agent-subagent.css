@@ -149,6 +149,10 @@
   background: var(--control-hover);
 }
 
+.agent-task-row.is-readonly .agent-task-main:hover {
+  background: transparent;
+}
+
 .agent-task-kind,
 .agent-task-meta {
   display: flex;
@@ -174,8 +178,10 @@
 }
 
 .agent-task-meta {
-  overflow-wrap: anywhere;
-  white-space: normal;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-task-status {

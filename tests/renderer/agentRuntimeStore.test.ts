@@ -16,6 +16,7 @@ import type {
   AgentRenderActiveCompaction,
   AgentRenderProjection,
   AgentRenderSubagentEntity,
+  AgentRenderTaskEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
 import { systemReminder } from '../../src/core/agentAttachments';
@@ -71,6 +72,8 @@ function projection(
     activeCompaction?: AgentRenderActiveCompaction | null;
     subagents?: Record<string, AgentRenderSubagentEntity>;
     subagentRunIds?: string[];
+    tasks?: Record<string, AgentRenderTaskEntity>;
+    taskIds?: string[];
   } = {},
 ): AgentRenderProjection {
   const rows = entries.map((entry) => ({
@@ -78,6 +81,21 @@ function projection(
     kind: 'message' as const,
     messageId: entry.nodeId,
   }));
+  const subagentTasks = Object.values(options.subagents ?? {}).map((subagent) => ({
+    id: `subagent:${subagent.id}`,
+    kind: 'subagent' as const,
+    status: subagent.status,
+    title: subagent.description.trim() || subagent.name?.trim() || subagent.id,
+    subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
+    startedAt: subagent.startedAt,
+    updatedAt: subagent.updatedAt,
+    completedAt: subagent.completedAt,
+    subagentId: subagent.id,
+  }));
+  const tasks = {
+    ...Object.fromEntries(subagentTasks.map((task) => [task.id, task])),
+    ...(options.tasks ?? {}),
+  };
   return {
     conversationId: 'saved',
     revision: options.revision ?? 1,
@@ -91,6 +109,7 @@ function projection(
     errorMessage: null,
     rows,
     transcriptRows: rows,
+    taskIds: options.taskIds ?? Object.keys(tasks),
     subagentRunIds: options.subagentRunIds ?? Object.keys(options.subagents ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
@@ -110,6 +129,7 @@ function projection(
       }])),
       subagents: options.subagents ?? {},
       compactions: {},
+      tasks,
     },
     streaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
@@ -367,6 +387,33 @@ describe('agent runtime store', () => {
         subagentId: 'subagent-completed',
       },
     ]);
+    unsubscribe();
+  });
+
+  test('derives Dream task entries from agent-level task projection', async () => {
+    const dreamTask: AgentRenderTaskEntity = {
+      id: 'dream:dream-run-1',
+      kind: 'dream',
+      status: 'completed',
+      trigger: 'schedule',
+      startedAt: 100,
+      updatedAt: 150,
+      completedAt: 150,
+      runId: 'dream-run-1',
+      processed: { totalMessageCount: 4, totalCharCount: 1200, consolidateOnly: false },
+      changes: { added: 1, updated: 1, forgotten: 0, skipped: 0 },
+    };
+    const restored = conversation('saved', projection([], {
+      taskIds: [dreamTask.id],
+      tasks: { [dreamTask.id]: dreamTask },
+    }));
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().tasks).toEqual([dreamTask]);
     unsubscribe();
   });
 
