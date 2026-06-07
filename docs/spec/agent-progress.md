@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-06-06
+Last updated: 2026-06-07
 
 ## Current Direction
 
@@ -112,6 +112,8 @@ truth.
   - same-session `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
   - fresh and fork subagents with sidechain transcripts and background
     notifications
+  - current-conversation task panel derived from `subagent_run` render
+    projection state, with open-details and stop actions for subagent tasks
   - skill `context: fork` routed through the subagent runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai

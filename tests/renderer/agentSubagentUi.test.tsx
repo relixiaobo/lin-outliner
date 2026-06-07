@@ -5,8 +5,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { ToolCall, Usage } from '../../src/core/agentTypes';
 import type { AgentRenderSubagentEntity } from '../../src/core/agentRenderProjection';
+import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentSubagentDetailsPanel } from '../../src/renderer/ui/agent/AgentSubagentDetailsPanel';
+import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
 
 interface RenderedComponent {
   cleanup: () => void;
@@ -169,6 +171,50 @@ describe('agent subagent UI', () => {
       },
     ]);
   });
+
+  test('lists subagent tasks and stops a running task', async () => {
+    let openedSubagentId: string | null = null;
+    const running = subagentEntity();
+    running.status = 'running';
+    running.completedAt = undefined;
+    const completed = {
+      ...subagentEntity(),
+      id: 'subagent-2',
+      description: 'Summarize notes',
+      status: 'completed' as const,
+      updatedAt: 320,
+      completedAt: 320,
+    };
+    const rendered = renderComponent(
+      <AgentTaskPanel
+        conversationId="session-1"
+        onClose={() => undefined}
+        onOpenSubagent={(subagentId) => {
+          openedSubagentId = subagentId;
+        }}
+        tasks={[taskEntry(running), taskEntry(completed)]}
+      />,
+    );
+
+    expect(rendered.container.textContent).toContain('Tasks');
+    expect(rendered.container.textContent).toContain('1 task running');
+    expect(rendered.container.textContent).toContain('Inspect subagent UI');
+    expect(rendered.container.textContent).toContain('Summarize notes');
+
+    await click(rendered, textButton(rendered, 'Inspect subagent UI'));
+    expect(openedSubagentId).toBe('subagent-1');
+
+    await click(rendered, ariaButton(rendered, 'Stop task'));
+    await waitForCommand(rendered, 'agent_subagent_stop');
+
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_subagent_stop')).toEqual([{
+      cmd: 'agent_subagent_stop',
+      args: {
+        agentId: 'subagent-1',
+        conversationId: 'session-1',
+      },
+    }]);
+  });
 });
 
 function renderComponent(
@@ -306,6 +352,22 @@ function textButton(rendered: RenderedComponent, text: string): HTMLButtonElemen
   return found;
 }
 
+function ariaButton(rendered: RenderedComponent, label: string): HTMLButtonElement {
+  const found = rendered.document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!found) throw new Error(`Missing aria button: ${label}`);
+  return found;
+}
+
+async function waitForCommand(rendered: RenderedComponent, cmd: string) {
+  for (let index = 0; index < 20; index += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+    if (rendered.commands.some((call) => call.cmd === cmd)) return;
+  }
+  throw new Error(`Missing command: ${cmd}`);
+}
+
 function agentToolCall(): ToolCall {
   return {
     type: 'toolCall',
@@ -333,6 +395,21 @@ function subagentEntity(): AgentRenderSubagentEntity {
     transcriptPayloadId: 'subagent-transcript-1',
     transcriptMessageCount: 4,
     parentToolCallId: 'tool-agent-1',
+  };
+}
+
+function taskEntry(subagent: AgentRenderSubagentEntity): AgentTaskEntry {
+  return {
+    id: `subagent:${subagent.id}`,
+    kind: 'subagent',
+    status: subagent.status,
+    title: subagent.description,
+    subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
+    startedAt: subagent.startedAt,
+    updatedAt: subagent.updatedAt,
+    completedAt: subagent.completedAt,
+    subagentId: subagent.id,
+    subagent,
   };
 }
 

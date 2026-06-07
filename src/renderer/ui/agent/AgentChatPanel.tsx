@@ -32,7 +32,6 @@ import type {
   AgentTurnPhase,
 } from '../../agent/runtime';
 import {
-  AgentIcon,
   CheckIcon,
   ChevronDownIcon,
   CloseIcon,
@@ -41,6 +40,7 @@ import {
   NewConversationIcon,
   PencilIcon,
   TrashIcon,
+  UsedToolsIcon,
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
@@ -49,6 +49,7 @@ import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
+import { AgentTaskPanel } from './AgentTaskPanel';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
@@ -503,11 +504,11 @@ export function AgentChatPanel({
     conversationId,
     conversationTitle,
     steer: steerRuntime,
-    subagentRunIds,
     subagents,
     subagentsByParentToolCallId,
     switchBranch,
     stop,
+    tasks,
     toolResults,
     turnPhase,
   } = useLinAgentRuntime();
@@ -521,6 +522,7 @@ export function AgentChatPanel({
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<{ id: string; title: string | null } | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -540,10 +542,7 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
   );
-  const runningSubagentIds = useMemo(
-    () => subagentRunIds.filter((id) => subagents[id]?.status === 'running'),
-    [subagentRunIds, subagents],
-  );
+  const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
   const selectedSubagent = selectedSubagentId ? subagents[selectedSubagentId] ?? null : null;
   const virtualLayout = useMemo(
     () => buildVirtualTranscriptLayout(conversationRows, rowHeightsRef.current),
@@ -924,16 +923,19 @@ export function AgentChatPanel({
             title={t.agent.chat.newConversation}
             variant="composerTool"
           />
-          {runningSubagentIds.length > 0 ? (
-            <ButtonControl
-              className="agent-subagent-running-button"
-              onClick={() => setSelectedSubagentId(runningSubagentIds[0] ?? null)}
-              title={t.agent.chat.showRunningSubagents}
-            >
-              <AgentIcon size={ICON_SIZE.menu} />
-              <span>{runningSubagentIds.length}</span>
-            </ButtonControl>
-          ) : null}
+          <ButtonControl
+            aria-expanded={taskPanelOpen && !selectedSubagent}
+            aria-label={t.agent.task.openPanel}
+            className="agent-task-panel-button"
+            onClick={() => {
+              setSelectedSubagentId(null);
+              setTaskPanelOpen((open) => !open);
+            }}
+            title={t.agent.task.openPanel}
+          >
+            <UsedToolsIcon size={ICON_SIZE.toolbar} />
+            {runningTaskCount > 0 ? <span className="agent-task-panel-badge">{runningTaskCount}</span> : null}
+          </ButtonControl>
           <IconButton
             className="agent-menu-button"
             icon={DebugIcon}
@@ -1132,6 +1134,16 @@ export function AgentChatPanel({
         subagent={selectedSubagent}
         subagentsByParentToolCallId={subagentsByParentToolCallId}
       />
+      {taskPanelOpen && !selectedSubagent ? (
+        <AgentTaskPanel
+          conversationId={conversationId}
+          onClose={() => setTaskPanelOpen(false)}
+          onOpenSubagent={(subagentId) => {
+            setSelectedSubagentId(subagentId);
+          }}
+          tasks={tasks}
+        />
+      ) : null}
       {pendingDeleteConversation ? (
         <ConfirmDialog
           title={t.agent.chat.deleteConfirmTitle}

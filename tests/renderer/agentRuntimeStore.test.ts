@@ -150,6 +150,26 @@ function persistedContent(message: UserMessage | AssistantMessage): AgentPersist
   return content;
 }
 
+function subagentEntity(
+  patch: Partial<AgentRenderSubagentEntity> & Pick<AgentRenderSubagentEntity, 'id'>,
+): AgentRenderSubagentEntity {
+  return {
+    description: 'Inspect subagent UI',
+    prompt: 'Inspect the current UI.',
+    subagentType: 'explorer',
+    contextMode: 'fork',
+    status: 'completed',
+    startedAt: 100,
+    updatedAt: 260,
+    completedAt: 260,
+    result: 'Found the relevant UI path.',
+    transcriptPayloadId: 'subagent-transcript-1',
+    transcriptMessageCount: 4,
+    parentToolCallId: 'tool-agent-1',
+    ...patch,
+  };
+}
+
 function conversation(conversationId: string, renderProjection: AgentRenderProjection): AgentConversation {
   return {
     conversationId,
@@ -293,6 +313,59 @@ describe('agent runtime store', () => {
     expect(entry?.message.role).toBe('user');
     expect(entry?.message.content).toEqual([
       { type: 'text', text: 'Review [[file:shot.png^%2Ftmp%2Fshot.png]].' },
+    ]);
+    unsubscribe();
+  });
+
+  test('derives task entries from subagent runs with running work first', async () => {
+    const completed = subagentEntity({
+      id: 'subagent-completed',
+      description: 'Finished audit',
+      status: 'completed',
+      updatedAt: 300,
+      completedAt: 300,
+    });
+    const running = subagentEntity({
+      id: 'subagent-running',
+      description: 'Long research',
+      status: 'running',
+      updatedAt: 200,
+      completedAt: undefined,
+    });
+    const restored = conversation('saved', projection([], {
+      subagentRunIds: [completed.id, running.id],
+      subagents: {
+        [completed.id]: completed,
+        [running.id]: running,
+      },
+    }));
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().tasks.map((task) => ({
+      id: task.id,
+      status: task.status,
+      title: task.title,
+      subtitle: task.subtitle,
+      subagentId: task.subagentId,
+    }))).toEqual([
+      {
+        id: 'subagent:subagent-running',
+        status: 'running',
+        title: 'Long research',
+        subtitle: 'fork · explorer',
+        subagentId: 'subagent-running',
+      },
+      {
+        id: 'subagent:subagent-completed',
+        status: 'completed',
+        title: 'Finished audit',
+        subtitle: 'fork · explorer',
+        subagentId: 'subagent-completed',
+      },
     ]);
     unsubscribe();
   });
