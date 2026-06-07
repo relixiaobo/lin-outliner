@@ -125,7 +125,7 @@ naming; align lifecycle points to it rather than inventing variants.
 | **Lifecycle** (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PostCompact`, `Stop`) | runtime | hooks (self-mod), notifications | cc-2.1 names; the hook event surface |
 | **Run / execution** (`run.started/completed/failed`, `*_message.delta`, `thinking.delta`, `tool_call.*`, `tool_result.created`) | the run loop | run log, debug panel | live in the **run log** (F2), not the conversation log — keeps `tool_call ↔ tool_result` pairs off the shared channel stream |
 | **Permission** (`tool.permission.checked` → `tool.permission.resolved`, keyed by request id) | permission engine | approval UI, hooks, run log, `needs-input` | **M0 pins ONE canonical vocabulary + the request-id join** — reconciles today's `tool.permission.checked/resolved` + `approval.*` dual-track, which the spec admits can't join (`docs/spec/agent-tool-permissions.md:144,189`) |
-| **Distillation** (`compaction.completed`, generalized) | compaction / consolidation | context assembly, navigation, recall, memory feedstock | a recorded summary over a **retained** range; carries the addressable `source` down-pointer ([[agent-data-model]]) |
+| **Distillation** (`compaction.completed`, generalized) | compaction / consolidation | context assembly, navigation, recall, Dream span location | a recorded summary over a **retained** range; carries the addressable `source` down-pointer; Dream uses summaries as locators, then reads raw conversation/run evidence before writing memory ([[agent-data-model]]) |
 | **Task** (`TaskCreated`, `TaskCompleted`, `needs-input`) | task plane (conv-model) | task panel, notifications, hooks | self-mod's `TaskCreated/Completed` hooks **depend on conv-model building this** |
 | **Notification / attention** | task plane, runs | origin conversation (in-stream + unread/OS) | trusted internal observer; reuses **F3 `actor`** |
 | **`user_question.*`** (requested / answered / cancelled) | ask_user_question | ask-question UI, `needs-input` tasks | [[agent-ask-user-question-tool]] |
@@ -189,7 +189,8 @@ L1 SINGLE-AGENT CAPABILITY (M1)
         │
 L2 OFF-FLOOR + EXTENSION (M2)
    background task panel + notifications + needs-input (conv-model)
-   · prompt-only hooks (self-mod) · memory v2 extraction · config recovery + curation
+   · prompt-only hooks (self-mod) · memory v2 Dream extraction (raw-record evidence,
+     no foreground inline memory tool) · config recovery + curation
         │
 L3 MULTI-AGENT (M3)
    sequential Channels + coordinator (conv-model) · per-agent POV derivation
@@ -207,8 +208,8 @@ mostly independent).
 |---|---|---|
 | **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
 | **M0.5 — Clean cut** | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
-| **M1 — Single-agent "self"** | memory v1 (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent **remembers**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
-| **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · memory v2 extraction · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic**, runtime self-heals |
+| **M1 — Single-agent "self"** | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection; the shipped inline tool is a bootstrap, not the target writer) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
+| **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators, and removal of the foreground inline memory tool · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals |
 | **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
 
 ## How this reorg changes the member plans

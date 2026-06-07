@@ -46,7 +46,10 @@ permission plan; it builds on it.
   skill registries, app config, or runtime metadata as ordinary file writes. (This now
   also governs the **memory line** — written via a runtime-owned append surface, not
   `file_write`; the conversation-model memory-write decision was reversed to honor exactly
-  this principle. See [[agent-conversation-model]] §Memory model.)
+  this principle. The 2026-06-07 memory decision further narrows the target writer:
+  the foreground main agent should consume memory but not own a general-purpose
+  model-visible memory write tool; Settings/Profile UI and Dream/extraction callbacks
+  drive durable memory writes. See [[agent-conversation-model]] §Memory model.)
 - Do not make self-modification a synonym for unrestricted autonomy.
 - Do not add autonomous command hooks before read-only and prompt-only hooks are
   implemented and observable.
@@ -123,7 +126,7 @@ Lin decisions:
 - Keep the stable local `SKILL.md` path already documented in
   `docs/spec/agent-skills.md`.
 - Do not copy legacy command directories, remote skill search, MCP/plugin skill
-  lifecycle, memory, or background automatic skill rewriting.
+  lifecycle, foreground memory authoring, or background automatic skill rewriting.
 - Start with read-only observation before enabling mutating config writes.
 - Include controlled user-directed skill creation and editing in the first
   self-modification release, but follow cc-2.1's smaller tool surface: use
