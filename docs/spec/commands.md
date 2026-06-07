@@ -80,6 +80,30 @@ toggles the owner node's done state.
 `create_search_node`, `set_search_node`, `set_search_query_outline`,
 `refresh_search_node_results`.
 
+### Document — command nodes (scheduled routines)
+`set_command_node`, `set_command_schedule`, `mark_command_fired`.
+
+A `command` node's text content is a natural-language brief the agent runs
+end-to-end; arming its schedule makes it run unattended on a timer. See
+`docs/plans/agent-scheduled-routines.md`.
+
+- `set_command_node(nodeId)` converts a plain content row into a `command` node
+  (brief stays in the node's content) and seeds the user-only `commandSchedule`
+  protected field. Drafting a command is allowed from any origin.
+- `set_command_schedule(nodeId, schedule?)` arms / changes / clears the schedule
+  — a canonical `<endpoint> RRULE:...` string parsed by `dateSchedule.ts`. **The
+  bright line: rejected unless `origin === 'user'`** (the agent can draft a brief
+  and propose a schedule as text, but only the user can arm an unattended run). A
+  non-empty value re-arms the watermark (`sysLastRunAt = now`); clearing it makes
+  the node manual-only and leaves the watermark untouched.
+- `mark_command_fired(nodeId, firedAt)` advances the system fire watermark after
+  a successful run (system-managed, never agent-written).
+
+The anacron scheduler (main process) sweeps command nodes on a 60s tick, on app
+launch, and on `powerMonitor.resume`, firing each due node once (catch-up
+coalesces a multi-day gap). A fire is a no-human-turn agent run anchored to the
+command's own delivery conversation with a `{type:'schedule'}` trigger.
+
 ### Document — history
 `undo`, `redo`.
 

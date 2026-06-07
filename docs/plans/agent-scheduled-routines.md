@@ -1,12 +1,38 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-05-26
-updated: 2026-05-30
+updated: 2026-06-08
 ---
 
 # Proactive Agent — Command Nodes
+
+## Build status (2026-06-08, PR #165, cc-2)
+
+PM-ratified directional calls (2026-06-07):
+
+1. **Schedule storage = command-scoped, thin-B1.** The canonical
+   `<endpoint> RRULE:...` lives on the command node (`commandSchedule`), parsed by
+   the shipped `dateSchedule.ts`. The broader decision **B1** (recurrence on the
+   *generic* `date` FieldType, with a date-picker Repeat section + `DATE_OVERLAPS`/
+   `OVERDUE` RRULE tolerance) is **deferred to a follow-up** — out of scope here.
+2. **Safety = interactive trust inheritance.** Bright line via the node-tool
+   gateway + `protectedFields` + `origin`; Run-now is attended, no extra fence.
+3. **v1 includes the full builder UI** (command builder panel + smart-convert).
+
+Shipped on the branch:
+
+- **Kernel (done, tested).** `command` NodeType shape reconciled (brief = node
+  content; `commandSchedule` + system `sysLastRunAt`); `protectedFields`
+  enforcement primitive; `set_command_node` / `set_command_schedule` /
+  `mark_command_fired`; Loro persistence of the new fields; the anacron scheduler
+  (`commandScheduler.ts` + a 60s tick alongside Dream + launch + `powerMonitor.resume`
+  catch-up); `startTriggeredRun` (no-human-turn, conversation-anchored,
+  `{type:'schedule'}` trigger). typecheck + `test:core` + `test:renderer` green.
+
+Remaining (PR3): the builder-panel UI + smart-convert + the Run-now action and
+result routing to Today — UI-gated work that needs light+dark visual verification.
 
 ## Essence
 
