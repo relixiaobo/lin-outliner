@@ -165,14 +165,14 @@ interface PR (see its bullet below).
   (`/dream` bypasses → consolidate-only if nothing new). **Redirects #159's per-turn
   trigger** (reuses its worker/isolation/provenance internals). **Build order
   (plan §Execution order):** ① the shared per-agent **`date` scheduler primitive**
-  (**core kernel landed in PR #161** — `src/core/dateSchedule.ts`; generic
+  (**core kernel landed, PR #161** — `src/core/dateSchedule.ts`; generic
   date-field/UI/command-node wiring still in `agent-scheduled-routines`) → ②
-  **`RunMeta` agent-level anchor generalization** (protocol surface A4 —
-  interface-only PR; **shape PM-ratified 2026-06-07 = the `AgentRunAnchor`
-  discriminated union, not optional `conversationId`**, so the interface PR can
-  proceed) → ③ Dream thin assembly (reuses #159's worker). ① and ② parallelize;
-  ③ depends on both. Detailed design for conversation-model's `Offline
-  consolidation` item; codex building. See `docs/plans/agent-dream-memory.md`.
+  **`RunMeta` agent-level anchor generalization** (**landed, PR #162** — the
+  `AgentRunAnchor` discriminated union, interface-first, behavior-neutral) → ③
+  **Dream thin assembly** (reuses #159's worker) — **both prerequisites are in;
+  ③ is now unblocked and is the next build.** Detailed design for conversation-
+  model's `Offline consolidation` item; codex building. See
+  `docs/plans/agent-dream-memory.md`.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -360,6 +360,13 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-run-anchor** (codex, PR #162) — Dream prerequisite ②, interface-first: `AgentRunMeta` replaces flat
+  `conversationId` with the PM-ratified `anchor: AgentRunAnchor` discriminated union (`conversation` | `agent`)
+  + a `conversationIdOfRun` accessor; `RunStartedEvent.anchor` added. Behavior-neutral (all current runs
+  conversation-anchored); legacy-read shim in `normalizeRunMeta`; both live-append and rebuild conversation-
+  index paths filter agent-anchored runs. No agent-anchored producer yet (that's ③). Gate: typecheck +
+  `test:core` 676/0; one review finding (live-append missed the rebuild path's agent-anchored filter) fixed
+  before merge. **Unblocks ③ Dream thin assembly.**
 - **agent-dream-date-scheduler** (codex, PR #161) — Dream prerequisite ① core kernel: a shared pure
   `src/core/dateSchedule.ts` (parse/format a canonical `<endpoint> RRULE:...` over a bounded subset — `FREQ`,
   `INTERVAL`, weekly `BYDAY`, inclusive `UNTIL`; `mostRecentDateScheduleDue` for anacron catch-up +

@@ -100,6 +100,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Generalize the agent run anchor (PR #162)** — Dream prerequisite ②, an interface-first protocol change
+  on the agent run-meta surface. `AgentRunMeta` replaces its flat mandatory `conversationId` with the
+  PM-ratified `anchor: AgentRunAnchor` discriminated union (`{ type: 'conversation'; agentId; conversationId }`
+  | `{ type: 'agent'; agentId }`), plus a `conversationIdOfRun(meta)` accessor; `RunStartedEvent` gains an
+  optional `anchor`. This lets a future agent-level Dream run exist without a fake `conversationId`. Behavior
+  is fully neutral for every current run (all conversation-anchored): the store projection extends the core
+  type, `normalizeRunMeta` keeps a legacy-read shim (old flat `conversationId` reads as a conversation
+  anchor), and BOTH the live-append and rebuild conversation-index paths filter agent-anchored runs via
+  `conversationIdOfRun` (so an agent-anchored run never leaks into a conversation's index, replay, or
+  `deleteConversation` cascade). No agent-anchored producer ships yet (that is Dream prerequisite ③). Gate:
+  typecheck + `test:core` 676/0 (incl. agent-anchored representability + legacy-rebuild + live-append and
+  rebuild exclusion tests); one review finding (the live-append path missed the agent-anchored filter the
+  rebuild path had) fixed before merge. ([#162](https://github.com/relixiaobo/lin-outliner/pull/162))
+
 - **Shared `date` schedule primitive (PR #161)** — `src/core/dateSchedule.ts`, the pure decision kernel
   for scheduled agent work (Dream prerequisite ①, shared with `agent-scheduled-routines`). Parses a
   canonical `<endpoint> RRULE:...` schedule over a bounded RRULE subset (`FREQ` daily/weekly/monthly/yearly,

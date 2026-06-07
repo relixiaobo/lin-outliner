@@ -74,9 +74,9 @@ interim shape (A7). Build in this order:
 
 Steps 1 and 2 are independent (parallelizable on separate branches); step 3
 depends on both. **Status: (1)'s core kernel landed (PR #161, `src/core/dateSchedule.ts`)
-and (2)'s interface shape is PM-ratified (the `AgentRunAnchor` discriminated union,
-see below) — so the (2) interface-only PR can proceed, and step 3 unblocks once it
-lands.**
+and (2)'s `AgentRunAnchor` anchor generalization landed (PR #162, interface-first,
+behavior-neutral). Both prerequisites are in — step 3 (Dream thin assembly) is now
+unblocked and is the next build.**
 
 ## Design
 
@@ -267,8 +267,9 @@ What changes: the **trigger** (per-turn → `schedule(date)` + `/dream`), the
 - [x] Land the shared core `date` schedule primitive once: canonical `RRULE`
   subset parsing/formatting, most-recent-due computation, and anacron fire
   decision. Not yet wired into date fields, command nodes, or Dream.
-- [ ] Decide the `RunMeta` anchor generalization (agent-level run); land it
-  interface-first (protocol surface, PM ratify).
+- [x] Decide the `RunMeta` anchor generalization (agent-level run); land it
+  interface-first (protocol surface, PM ratify). **Landed PR #162** — `AgentRunMeta.anchor:
+  AgentRunAnchor` (`conversation` | `agent`) + `conversationIdOfRun`, behavior-neutral.
 - [ ] Add per-agent Dream state: `dreamSchedule` (`date`), `dreamWatermark`,
   `dreaming` lock; reuse `agent-scheduled-routines` `date` machinery for the
   scheduler.
