@@ -2093,9 +2093,9 @@ since the last Dream watermark plus the currently visible memory entries. It
 returns structured add/update/forget proposals only; the runtime performs
 dedupe/scope checks, appends `memory.entry_*` events with
 `conversationId`/`runId`/`messageRange`/`eventId` provenance, records
-`dream.completed`, and advances the per-conversation watermark. The foreground
-model must not claim it saved, updated, or forgot durable memory through a tool
-call.
+`dream.completed`, advances the per-conversation watermark, and projects the
+agent-anchored Dream run as a read-only task-panel row. The foreground model must
+not claim it saved, updated, or forgot durable memory through a tool call.
 
 Each normal user turn receives a bounded `<agent-memory>` reminder built from
 the active projection. Reminder retrieval ranks by memory-specific relevance

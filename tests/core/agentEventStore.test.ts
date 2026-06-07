@@ -1124,6 +1124,11 @@ describe('agent event store', () => {
         kind: 'reflective',
         trigger: { type: 'schedule' },
       });
+      await expect(store.listAgentRunMetaProjections('built-in:tenon:assistant')).resolves.toMatchObject([{
+        id: 'dream-run-1',
+        kind: 'reflective',
+        status: 'completed',
+      }]);
     });
   });
 });

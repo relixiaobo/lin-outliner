@@ -1400,8 +1400,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               errorMessage: null,
               rows: [],
               transcriptRows: [],
+              taskIds: [],
               subagentRunIds: [],
-              entities: { messages: {}, subagents: {}, compactions: {} },
+              entities: { messages: {}, subagents: {}, compactions: {}, tasks: {} },
               streaming: null,
             },
           }) as T;
@@ -2444,6 +2445,22 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     : rawSubagents;
   const subagentRunIds = state.subagentRunIds
     ?? (Array.isArray(rawSubagents) ? rawSubagents.map((subagent: any) => subagent.id) : Object.keys(subagents));
+  const subagentTasks = Object.values(subagents).map((subagent: any) => ({
+    id: `subagent:${subagent.id}`,
+    kind: 'subagent',
+    status: subagent.status,
+    title: (subagent.description ?? '').trim() || (subagent.name ?? '').trim() || subagent.id,
+    subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
+    startedAt: subagent.startedAt,
+    updatedAt: subagent.updatedAt,
+    completedAt: subagent.completedAt,
+    subagentId: subagent.id,
+  }));
+  const tasks = {
+    ...Object.fromEntries(subagentTasks.map((task: any) => [task.id, task])),
+    ...(state.tasks ?? {}),
+  };
+  const taskIds = state.taskIds ?? Object.keys(tasks);
 
   for (const entry of state.conversation ?? []) {
     if (entry.kind === 'compaction') {
@@ -2560,8 +2577,9 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       errorMessage: state.errorMessage ?? null,
       rows,
       transcriptRows: state.transcriptRows ?? rows,
+      taskIds,
       subagentRunIds,
-      entities: { messages: entities, subagents, compactions },
+      entities: { messages: entities, subagents, compactions, tasks },
       streaming,
     },
     timestamp: Date.now(),

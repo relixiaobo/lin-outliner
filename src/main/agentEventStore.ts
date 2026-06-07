@@ -40,6 +40,7 @@ import {
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
+const AGENT_RUN_INDEX_FILE = 'runs.json';
 const LEGACY_SESSIONS_DIR = 'sessions';
 const RUN_EVENT_LOG_FILE = 'events.jsonl';
 const RUN_META_FILE = 'meta.json';
@@ -181,6 +182,13 @@ interface AgentConversationRunIndex {
   latestSeqByRunId: Record<string, number>;
 }
 
+interface AgentRunIndex {
+  v: 1;
+  agentId: string;
+  runIds: string[];
+  updatedAtByRunId: Record<string, number>;
+}
+
 interface AgentMemoryProjectionCache {
   latestSeq: number;
   eventCount: number;
@@ -258,12 +266,13 @@ export class AgentEventStore {
     };
   }
 
-  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string } {
+  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string; runIndexPath: string } {
     const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
     return {
       agentDir,
       identityPath: path.join(agentDir, AGENT_IDENTITY_FILE),
       memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
+      runIndexPath: path.join(agentDir, AGENT_RUN_INDEX_FILE),
     };
   }
 
@@ -477,11 +486,30 @@ export class AgentEventStore {
     const runPaths = this.runPaths(normalized.id);
     await mkdir(runPaths.runDir, { recursive: true });
     await atomicWriteFile(runPaths.runMetaPath, `${JSON.stringify(normalized)}\n`);
+    await this.updateRunIndexes(normalized);
   }
 
   async readRunMetaProjection(runId: string): Promise<AgentRunMetaProjection | null> {
     await this.ensureStorageLayout();
     return this.readRunMeta(runId);
+  }
+
+  async listAgentRunMetaProjections(
+    agentId: string,
+    options: { limit?: number } = {},
+  ): Promise<AgentRunMetaProjection[]> {
+    await this.ensureStorageLayout();
+    const index = await this.ensureAgentRunIndex(agentId);
+    const limit = Math.max(0, Math.min(100, Math.trunc(options.limit ?? 50)));
+    const metas: AgentRunMetaProjection[] = [];
+    for (const runId of index.runIds) {
+      const meta = await this.readRunMeta(runId);
+      if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+      metas.push(meta);
+    }
+    return metas
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+      .slice(0, limit);
   }
 
   async readAgentIdentity(agentId: string): Promise<AgentIdentityRecord | null> {
@@ -825,9 +853,7 @@ export class AgentEventStore {
       await this.agentEventLog.append(runPaths.runEventsPath, group);
       if (metaEvents.length > 0) {
         const meta = await this.updateRunMeta(sessionId, runId, metaEvents);
-        if (meta && conversationIdOfRun(meta) === sessionId) {
-          await this.updateConversationRunIndex(sessionId, runId, meta.latestSeq);
-        }
+        if (meta) await this.updateRunIndexes(meta);
       }
     }
 
@@ -854,6 +880,12 @@ export class AgentEventStore {
       return { v: 1, runIds: [], latestSeqByRunId: {} };
     }
     return this.rebuildConversationRunIndex(sessionId);
+  }
+
+  private async ensureAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
+    const index = await this.readAgentRunIndex(agentId);
+    if (index) return index;
+    return this.rebuildAgentRunIndex(agentId);
   }
 
   private async conversationDirExists(sessionId: string): Promise<boolean> {
@@ -893,6 +925,37 @@ export class AgentEventStore {
     const index: AgentConversationRunIndex = { v: 1, runIds, latestSeqByRunId };
     await mkdir(paths.conversationDir, { recursive: true });
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+    return index;
+  }
+
+  private async rebuildAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
+    const updatedAtByRunId: Record<string, number> = {};
+    const paths = this.paths('__placeholder__');
+    try {
+      const entries = await readdir(paths.runsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const runDir = path.join(paths.runsDir, entry.name);
+        try {
+          const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
+          if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+          updatedAtByRunId[meta.id] = Math.max(updatedAtByRunId[meta.id] ?? 0, meta.updatedAt);
+        } catch (error) {
+          if (isNotFoundError(error) || error instanceof SyntaxError) continue;
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    const runIds = Object.keys(updatedAtByRunId).sort((left, right) => (
+      updatedAtByRunId[right]! - updatedAtByRunId[left]! || left.localeCompare(right)
+    ));
+    const index: AgentRunIndex = { v: 1, agentId, runIds, updatedAtByRunId };
+    const agentPaths = this.agentPaths(agentId);
+    await mkdir(agentPaths.agentDir, { recursive: true });
+    await atomicWriteFile(agentPaths.runIndexPath, `${JSON.stringify(index)}\n`);
     return index;
   }
 
@@ -964,6 +1027,27 @@ export class AgentEventStore {
     }
   }
 
+  private async readAgentRunIndex(agentId: string): Promise<AgentRunIndex | null> {
+    try {
+      const raw = await readFile(this.agentPaths(agentId).runIndexPath, 'utf8');
+      return normalizeAgentRunIndex(JSON.parse(raw), agentId);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  }
+
+  private async updateRunIndexes(meta: AgentRunMetaProjection) {
+    const conversationId = conversationIdOfRun(meta);
+    if (conversationId) {
+      await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq);
+    }
+    if (meta.anchor.type === 'agent') {
+      await this.updateAgentRunIndex(meta.anchor.agentId, meta.id, meta.updatedAt);
+    }
+  }
+
   private async updateConversationRunIndex(sessionId: string, runId: string, latestSeq: number) {
     const paths = this.paths(sessionId);
     const existing = await this.ensureConversationRunIndex(sessionId);
@@ -978,6 +1062,26 @@ export class AgentEventStore {
     };
     await mkdir(paths.conversationDir, { recursive: true });
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+  }
+
+  private async updateAgentRunIndex(agentId: string, runId: string, updatedAt: number) {
+    const paths = this.agentPaths(agentId);
+    const existing = await this.ensureAgentRunIndex(agentId);
+    const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
+    const index: AgentRunIndex = {
+      v: 1,
+      agentId,
+      runIds,
+      updatedAtByRunId: {
+        ...existing.updatedAtByRunId,
+        [runId]: Math.max(existing.updatedAtByRunId[runId] ?? 0, updatedAt),
+      },
+    };
+    index.runIds.sort((left, right) => (
+      index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
+    ));
+    await mkdir(paths.agentDir, { recursive: true });
+    await atomicWriteFile(paths.runIndexPath, `${JSON.stringify(index)}\n`);
   }
 
   private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
@@ -1778,6 +1882,25 @@ function normalizeConversationRunIndex(value: unknown): AgentConversationRunInde
     v: 1,
     runIds: uniqueStrings(value.runIds.filter((runId): runId is string => typeof runId === 'string')),
     latestSeqByRunId,
+  };
+}
+
+function normalizeAgentRunIndex(value: unknown, agentId: string): AgentRunIndex | null {
+  if (!isRecord(value) || value.v !== 1 || value.agentId !== agentId || !Array.isArray(value.runIds)) return null;
+  const updatedAtByRunId = isRecord(value.updatedAtByRunId)
+    ? Object.fromEntries(Object.entries(value.updatedAtByRunId).filter((entry): entry is [string, number] => (
+        typeof entry[1] === 'number' && Number.isFinite(entry[1])
+      )))
+    : {};
+  const runIds = uniqueStrings(value.runIds.filter((runId): runId is string => typeof runId === 'string'))
+    .sort((left, right) => (
+      (updatedAtByRunId[right] ?? 0) - (updatedAtByRunId[left] ?? 0) || left.localeCompare(right)
+    ));
+  return {
+    v: 1,
+    agentId,
+    runIds,
+    updatedAtByRunId,
   };
 }
 

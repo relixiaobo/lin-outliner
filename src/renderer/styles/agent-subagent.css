@@ -149,6 +149,10 @@
   background: var(--control-hover);
 }
 
+.agent-task-row.is-readonly .agent-task-main:hover {
+  background: transparent;
+}
+
 .agent-task-kind,
 .agent-task-meta {
   display: flex;

@@ -95,6 +95,16 @@ function createWindowSink() {
   };
 }
 
+function latestProjectionEvent(events: readonly AgentRuntimeEvent[]) {
+  return [...events].reverse().find((event): event is Extract<AgentRuntimeEvent, { type: 'projection' }> => (
+    event.type === 'projection'
+  )) ?? null;
+}
+
+async function flushProjectionCoalescing() {
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
 function scriptedStream(
   responses: Array<AssistantMessage | ((context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage)>,
   onCall: (model: Model<Api>, context: Context) => void,
@@ -790,12 +800,16 @@ describe('agent runtime past chats integration', () => {
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, longPreference);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    await flushProjectionCoalescing();
 
     const store = new AgentEventStore(dataRoot);
     const entries = await store.listMemoryEntries('built-in:tenon:assistant');
     const dreamState = await store.readDreamState('built-in:tenon:assistant');
     const runId = dreamState.lastCompleted?.runId;
     const runMeta = runId ? await store.readRunMetaProjection(runId) : null;
+    const projection = latestProjectionEvent(sink.events)?.renderProjection;
+    const dreamTaskId = projection?.taskIds.find((taskId) => projection.entities.tasks[taskId]?.kind === 'dream');
+    const dreamTask = dreamTaskId ? projection?.entities.tasks[dreamTaskId] : null;
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -804,6 +818,18 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.lastCompleted?.trigger).toBe('schedule');
     expect(runMeta?.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
     expect(runMeta?.kind).toBe('reflective');
+    expect(dreamTask).toMatchObject({
+      id: `dream:${runId}`,
+      kind: 'dream',
+      status: 'completed',
+      trigger: 'schedule',
+      runId,
+      processed: {
+        totalMessageCount: 2,
+        consolidateOnly: false,
+      },
+      changes: { added: 1 },
+    });
   });
 
   test('manual /dream with no new evidence consolidates memory without replaying old raw evidence', async () => {

@@ -28,6 +28,8 @@ import type {
   AgentRenderMessageEntity,
   AgentRenderProjection,
   AgentRenderSubagentEntity,
+  AgentRenderTaskEntity,
+  AgentRenderTaskStatus,
 } from '../../core/agentRenderProjection';
 import type { AgentPersistedContent } from '../../core/agentEventLog';
 
@@ -60,20 +62,9 @@ export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
-export type AgentTaskKind = 'subagent';
-
-export interface AgentTaskEntry {
-  id: string;
-  kind: AgentTaskKind;
-  status: AgentRenderSubagentEntity['status'];
-  title: string;
-  subtitle: string;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  subagentId: string;
-  subagent: AgentRenderSubagentEntity;
-}
+export type AgentTaskEntry =
+  | (Extract<AgentRenderTaskEntity, { kind: 'subagent' }> & { subagent: AgentRenderSubagentEntity })
+  | Extract<AgentRenderTaskEntity, { kind: 'dream' }>;
 
 const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationId: '',
@@ -88,8 +79,9 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   errorMessage: null,
   rows: [],
   transcriptRows: [],
+  taskIds: [],
   subagentRunIds: [],
-  entities: { messages: {}, subagents: {}, compactions: {} },
+  entities: { messages: {}, subagents: {}, compactions: {}, tasks: {} },
   streaming: null,
 };
 
@@ -216,7 +208,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   return { entries, turnPhase };
 }
 
-const TASK_STATUS_RANK: Record<AgentTaskEntry['status'], number> = {
+const TASK_STATUS_RANK: Record<AgentRenderTaskStatus, number> = {
   running: 0,
   failed: 1,
   stopped: 2,
@@ -224,21 +216,15 @@ const TASK_STATUS_RANK: Record<AgentTaskEntry['status'], number> = {
 };
 
 export function buildAgentTaskEntries(projection: AgentRenderProjection): AgentTaskEntry[] {
-  const tasks = projection.subagentRunIds.flatMap((id): AgentTaskEntry[] => {
-    const subagent = projection.entities.subagents[id];
-    if (!subagent) return [];
-    return [{
-      id: `subagent:${subagent.id}`,
-      kind: 'subagent',
-      status: subagent.status,
-      title: subagent.description.trim() || subagent.name?.trim() || subagent.id,
-      subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
-      startedAt: subagent.startedAt,
-      updatedAt: subagent.updatedAt,
-      completedAt: subagent.completedAt,
-      subagentId: subagent.id,
-      subagent,
-    }];
+  const tasks = projection.taskIds.flatMap((id): AgentTaskEntry[] => {
+    const task = projection.entities.tasks[id];
+    if (!task) return [];
+    if (task.kind === 'subagent') {
+      const subagent = projection.entities.subagents[task.subagentId];
+      if (!subagent) return [];
+      return [{ ...task, subagent }];
+    }
+    return [{ ...task }];
   });
 
   return tasks.sort((left, right) => (

@@ -66,11 +66,13 @@ import {
   type AgentEventReplayState,
   type AgentIdentityRecord,
   type AgentMemoryEntry,
+  type AgentMemoryEvent,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentRunFingerprint,
   type AgentRunTrigger,
+  type AgentRunMeta,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
@@ -98,6 +100,7 @@ import {
 import {
   AgentEventStore,
   MAX_AGENT_MEMORY_FACT_CHARS,
+  type AgentRunMetaProjection,
 } from './agentEventStore';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
@@ -204,7 +207,13 @@ import {
   type AgentSelfMaintenanceRuntime,
   type DoctorDiagnostic,
 } from './agentSelfMaintenanceTools';
-import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
+import {
+  buildAgentRenderProjection,
+  type AgentRenderActiveCompaction,
+  type AgentRenderDreamTaskEntity,
+  type AgentRenderTaskEntity,
+  type AgentRenderTaskStatus,
+} from '../core/agentRenderProjection';
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
 import { shouldFireDateSchedule } from '../core/dateSchedule';
@@ -379,6 +388,7 @@ export class AgentRuntime {
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
   private readonly dreamingAgentIds = new Set<string>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private agentTaskCache: AgentRenderTaskEntity[] = [];
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
   private readonly agentIdentity: AgentIdentityRecord;
@@ -464,6 +474,7 @@ export class AgentRuntime {
     const eventState = await this.loadEventState(sessionId);
     if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
+    await this.refreshAgentTaskCache();
     return this.conversationResponse(sessionId, session);
   }
 
@@ -483,6 +494,7 @@ export class AgentRuntime {
       this.publishPersistedEvents(sessionId, events);
     }
     const session = await this.createSessionWithEventState(eventState);
+    await this.refreshAgentTaskCache();
     return this.conversationResponse(sessionId, session);
   }
 
@@ -501,6 +513,7 @@ export class AgentRuntime {
     for (const event of created) appendAgentEventToReplayState(eventState, event);
     this.publishPersistedEvents(sessionId, created);
     const session = await this.createSessionWithEventState(eventState);
+    await this.refreshAgentTaskCache();
     return this.conversationResponse(sessionId, session);
   }
 
@@ -1975,6 +1988,29 @@ export class AgentRuntime {
       updatedAt: timestamp,
       latestSeq: 0,
     });
+    await this.refreshAgentTaskCache();
+    this.emitAgentTaskProjection(`dream.${status}`);
+  }
+
+  private async refreshAgentTaskCache(): Promise<void> {
+    const store = this.getEventStore();
+    const [runs, dreamState] = await Promise.all([
+      store.listAgentRunMetaProjections(this.agentIdentity.agentId, { limit: 50 }),
+      store.readDreamState(this.agentIdentity.agentId),
+    ]);
+    const lastCompleted = dreamState.lastCompleted;
+    this.agentTaskCache = runs
+      .flatMap((run): AgentRenderTaskEntity[] => {
+        const task = dreamTaskFromRunMeta(run, lastCompleted?.runId === run.id ? lastCompleted : null);
+        return task ? [task] : [];
+      })
+      .sort(compareRenderTasks);
+  }
+
+  private emitAgentTaskProjection(lastEventType: string) {
+    for (const sessionId of this.sessions.keys()) {
+      this.emitProjection(sessionId, lastEventType, 'coalesce');
+    }
   }
 
   private async applyDreamMemoryActions(
@@ -2154,6 +2190,7 @@ export class AgentRuntime {
       // appendAssistantCompleted). The top-level banner is reserved for transient
       // operational errors delivered via the `error` event.
       errorMessage: null,
+      agentTasks: this.agentTaskCache,
     });
     return {
       ...projection,
@@ -4981,6 +5018,51 @@ function createConfigurationErrorStreamFn(messageText: string): StreamFn {
 
 function parseDreamSlashCommand(message: string): boolean {
   return /^\/dream\s*$/i.test(message.trim());
+}
+
+function dreamTaskFromRunMeta(
+  run: AgentRunMetaProjection,
+  completed: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
+): AgentRenderDreamTaskEntity | null {
+  if (run.anchor.type !== 'agent' || run.kind !== 'reflective') return null;
+  const trigger = dreamTaskTrigger(run);
+  if (!trigger) return null;
+  const status = renderTaskStatusFromRunStatus(run.status);
+  return {
+    id: `dream:${run.id}`,
+    kind: 'dream',
+    status,
+    trigger,
+    startedAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    completedAt: status === 'running' ? undefined : run.updatedAt,
+    runId: run.id,
+    processed: completed?.processed,
+    changes: completed?.changes,
+  };
+}
+
+function dreamTaskTrigger(run: Pick<AgentRunMeta, 'trigger'>): AgentRenderDreamTaskEntity['trigger'] | null {
+  if (run.trigger.type === 'schedule') return 'schedule';
+  if (run.trigger.type === 'manual') return 'manual';
+  return null;
+}
+
+function renderTaskStatusFromRunStatus(status: AgentRunMeta['status']): AgentRenderTaskStatus {
+  return status === 'cancelled' ? 'stopped' : status;
+}
+
+function compareRenderTasks(left: AgentRenderTaskEntity, right: AgentRenderTaskEntity): number {
+  return taskStatusRank(left.status) - taskStatusRank(right.status)
+    || right.updatedAt - left.updatedAt
+    || left.id.localeCompare(right.id);
+}
+
+function taskStatusRank(status: AgentRenderTaskStatus): number {
+  if (status === 'running') return 0;
+  if (status === 'failed') return 1;
+  if (status === 'stopped') return 2;
+  return 3;
 }
 
 function dreamWatermarkFromSpan(

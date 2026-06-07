@@ -112,8 +112,9 @@ truth.
   - same-session `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
   - fresh and fork subagents with sidechain transcripts and background
     notifications
-  - current-conversation task panel derived from `subagent_run` render
-    projection state, with open-details and stop actions for subagent tasks
+  - task panel derived from the shared render task projection: subagent tasks keep
+    open-details/stop actions, and agent-level Dream runs show as read-only
+    reflective tasks with trigger, processed count, and memory-change count
   - skill `context: fork` routed through the subagent runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
@@ -130,7 +131,8 @@ truth.
     automatic path uses the shared `date` schedule primitive plus a minimum-volume
     gate, `/dream` forces the same no-tools path, raw evidence is read since the
     Dream watermark, `dream.completed` records the processed range, and run meta
-    is agent-anchored instead of conversation-anchored
+    is agent-anchored instead of conversation-anchored; Dream run meta is indexed
+    per agent and projected into the task panel
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification as read-only `agent.memory.recall`
   - prompt guidance that foreground memory writes are handled by Settings/Profile

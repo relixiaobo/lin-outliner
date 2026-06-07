@@ -214,7 +214,41 @@ describe('agent subagent UI', () => {
         agentId: 'subagent-1',
         conversationId: 'session-1',
       },
-    }]);
+      }]);
+  });
+
+  test('lists Dream tasks as read-only agent tasks', async () => {
+    let openedSubagentId: string | null = null;
+    const dreamTask: AgentTaskEntry = {
+      id: 'dream:dream-run-1',
+      kind: 'dream',
+      status: 'completed',
+      trigger: 'manual',
+      startedAt: 100,
+      updatedAt: 150,
+      completedAt: 150,
+      runId: 'dream-run-1',
+      processed: { totalMessageCount: 3, totalCharCount: 900, consolidateOnly: false },
+      changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+    };
+    const rendered = renderComponent(
+      <AgentTaskPanel
+        conversationId="session-1"
+        onClose={() => undefined}
+        onOpenSubagent={(subagentId) => {
+          openedSubagentId = subagentId;
+        }}
+        tasks={[dreamTask]}
+      />,
+    );
+
+    expect(rendered.container.textContent).toContain('Dream');
+    expect(rendered.container.textContent).toContain('Memory Dream');
+    expect(rendered.container.textContent).toContain('Manual');
+    expect(rendered.container.textContent).toContain('3 messages');
+    expect(rendered.container.textContent).toContain('1 memory change');
+    expect(rendered.container.querySelector('[aria-label="Open task"]')).toBeNull();
+    expect(openedSubagentId).toBeNull();
   });
 });
 

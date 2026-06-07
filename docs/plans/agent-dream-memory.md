@@ -171,9 +171,10 @@ minimum; `/dream` bypasses that heuristic.
 ### Output / observability
 
 A Dream run emits the usual `memory.entry_*` events **plus a `dream.completed`
-event** (watermark range processed + change counts) for audit and the future
-per-agent task panel. `dream.completed` is a **new taxonomy event** — coordinate
-per A4/A7 (additive).
+event** (watermark range processed + change counts) for audit. Its agent-anchored
+run meta is indexed per agent and projected as a read-only Dream task in the task
+panel; `dream.completed` supplies the processed-count and change-count summary.
+`dream.completed` is a **new taxonomy event** — coordinate per A4/A7 (additive).
 
 ### Protocol cost — `RunMeta` anchor generalization (the one real change)
 
@@ -231,10 +232,9 @@ the **consolidation** half to the prompt + action schema.
   backlog in multiple passes.
 - **`consolidateOnly` cadence** — also run a periodic full-set re-consolidation
   independent of new evidence (vs. only via `/dream`)?
-- **Manual Dream reporting** — `/dream` is the first command surface. It
-  currently has no transcript output of its own; the task panel can surface
-  `dream.completed` later.
-- **Dream visibility** — surface `dream.completed` in the M2 per-agent task panel?
+- **Manual Dream reporting depth** — `/dream` is the first command surface and
+  the task panel now shows the Dream task summary. A richer detail panel or
+  transcript-style audit remains follow-up.
 
 ## Rejected alternatives (path not taken — kept for the record)
 
@@ -290,6 +290,8 @@ the **consolidation** half to the prompt + action schema.
   pass = extract + consolidate; keep `applyDreamMemoryActions` invariants.
 - [x] `/dream` command surface.
 - [x] Emit `dream.completed` (taxonomy add; coordinate A4/A7).
+- [x] Project Dream as an agent-level task: per-agent run index, render task
+  entity, and read-only task-panel row.
 - [x] Tests: schedule fires a Dream (not per turn); `DREAM_MIN_VOLUME` skips a
   thin auto run; `/dream` forces; `/dream` with no new evidence consolidates;
   watermark advances and isn't reprocessed; isolation/`read-only-global`/no-op

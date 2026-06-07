@@ -397,7 +397,8 @@ rules.
 Agent-owned memory events live in the separate per-agent memory log, not the
 conversation render projection. `memory.entry_*` events project to editable
 durable memory entries; `dream.completed` projects the latest Dream watermark
-and audit summary for future task-panel observability.
+and audit summary. Agent-anchored Dream run meta is indexed per agent and added
+to the render task projection as a read-only Dream task.
 
 ## Message Model
 
