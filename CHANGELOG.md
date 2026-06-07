@@ -100,6 +100,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent-owned subagent memory + `dream` trigger tool (PR #164)** — extends the Dream milestone to
+  subagents. Run records, task projections, tool results, and persisted transcript envelopes now carry an
+  explicit **execution + memory-owner identity**: a fresh typed subagent routes its `<agent-memory>` reminder,
+  `recall`, and scheduled Dream through the **called agent** owner (its own durable memory line); a fork keeps
+  the **parent** owner and Dream skips the copied parent-context prefix via a persisted boundary index (not a
+  content scan). Two new shared modules — `agentSubagentIdentity.ts` (single owner-resolution seam) and
+  `agentSubagentTranscript.ts` (transcript decode + `${runId}:message:N` addressing) — single-source the logic
+  across reminders, recall, and Dream; Dream watermarks and recall evidence key on the content-addressed
+  `payloadId` and the Dream-pinned `source.eventId`. Adds a model-visible **`dream` tool** — a *trigger-only*
+  request for a runtime-owned Memory Dream (the model cannot specify facts; `reason` is not accepted; gated
+  `agent.memory.dream`, in `ALLOW_FORBIDDEN_ACTIONS`, always asks) — and a **Dream chat-feedback** boundary
+  (`AgentDreamBoundary`) emitted by both `/dream` and the tool path. The memory-write surface stays closed
+  (no model-written facts). Also invalidates shape-stale agent checkpoints to prevent a `dream.finished`
+  tail-replay crash. Gate (two high-effort review rounds): all prior findings + three confirmed
+  isolation/UX findings fixed (fresh-subagent workspace scope, multi-workspace Dream partition, benign
+  concurrent-Dream skip, zh-Hans 886/886, `dream` boundary symmetry, dead `reason` removed) + a latent
+  stale-checkpoint crash; typecheck + `test:core` 686/0 + `test:renderer` 361/0. Residual low items tracked in
+  `agent-dream-followups` (f)/(g). ([#164](https://github.com/relixiaobo/lin-outliner/pull/164))
+
 - **Agent Dream — scheduled reflective memory consolidation (PR #163)** — Dream prerequisite ③, the thin
   assembly that makes Dream a real, visible capability. Memory write-back now happens in an agent-level
   **reflective run** triggered by a built-in **daily schedule** or a manual **`/dream`** (replacing #159's

@@ -141,10 +141,12 @@ foundation (**M0**, interface-first), the cross-plan **event taxonomy**, the con
 protocol-surface change list, the dependency graph, and the milestones **M0 foundation →
 M1 single-agent self → M2 off-floor+extension → M3 multi-agent**. Members below reference
 it; standalone agent items (not in the program) follow at the end. **The program is
-PM-ratified; M0 + M0.5 landed (#150/#151) and M1 started (memory v1, #152).** **Next
-agent build (PM-directed 2026-06-07): `agent-dream-memory`, pulled ahead of the rest
-of M1** — start with its shared `date` scheduler primitive + the `RunMeta` agent-anchor
-interface PR (see its bullet below).
+PM-ratified; M0 + M0.5 landed (#150/#151), M1 landed its core (memory v1 #152, plus
+#153/#155/#156), and M2 is underway** — recall clean-cut (#158), Dream extraction (#159 →
+reflective Dream #161/#162/#163), task panel (#160), and **agent-owned subagent memory +
+the `dream` trigger tool + Dream chat feedback (#164)**. **Next M2 direction is open (PM to
+pick): notifications + needs-input · `agent-scheduled-routines` wiring · prompt-only hooks —
+see the M2 milestone row in `agent-program.md`.**
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
@@ -159,7 +161,10 @@ interface PR (see its bullet below).
   durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
   daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
   `docs/spec/` (agent-tool-design / conversation-model offline-consolidation); plan archived at
-  `docs/plans/archive/agent-dream-memory.md`. Polish tracked in `agent-dream-followups` (P3) below.
+  `docs/plans/archive/agent-dream-memory.md`. **Extended in #164** to **agent-owned subagent
+  memory** (each fresh typed subagent owns its called-agent memory line; forks share the parent's),
+  a model-visible **`dream` trigger tool** (trigger-only, no model-written facts), and a **Dream
+  chat-feedback** boundary. Polish tracked in `agent-dream-followups` (P3) below.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -229,6 +234,14 @@ Standalone agent items (not part of the program):
   (d) **running-Dream read-only test** — the read-only guard is covered for a completed Dream row only;
   add a running-Dream case. (e) **un-transacted `dream.completed`/run-meta status** — a failed second
   write leaves the task row labeled `failed` though memory + watermark committed (cosmetic).
+  (f) **reminder-cache non-Dream invalidation** (from #164 review) — `run.memoryReminderCache` is cleared
+  on Dream completion but NOT on an out-of-band Settings memory edit during a still-active subagent run, so
+  that run can serve a stale `<agent-memory>` reminder until it ends (bounded by run lifetime); key the cache
+  on a memory seq/version. (g) **checkpoint shape-version hygiene** (from #164 `b3deae02` review) — bump
+  `CHECKPOINT_VERSION` on every replay-state shape change instead of relying on per-field structural guards
+  in `normalizeCheckpoint`, and extend `agentEventStore.test.ts` to replay a `dream.finished` tail over a
+  shape-stale checkpoint (the current +30 test only exercises the full-fallback path, not the incremental
+  tail-application path).
 - **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
   agent projection so the agent can read/insert them.
 - **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
@@ -356,6 +369,20 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-owned-subagent-memory** (codex, PR #164) — extends the Dream milestone to subagents (M2, plan-less).
+  Adds explicit execution + **memory-owner identity** to run records / task projections / tool results /
+  persisted transcript envelopes: a fresh typed subagent routes its `<agent-memory>` reminder, `recall`, and
+  scheduled Dream through the **called agent** owner; a fork keeps the **parent** owner and Dream skips the
+  copied parent-context prefix (now a persisted boundary index, not a content scan). New shared modules
+  `agentSubagentIdentity.ts` + `agentSubagentTranscript.ts` single-source owner resolution and transcript
+  id-addressing; Dream watermarks/recall evidence key on the content-addressed `payloadId` and the Dream-pinned
+  `source.eventId`. Adds a model-visible **`dream` trigger tool** (trigger-only — the runtime extractor decides
+  changes; `reason` not accepted; gated `agent.memory.dream`, in `ALLOW_FORBIDDEN_ACTIONS`, always asks) and a
+  **Dream chat-feedback** boundary (`AgentDreamBoundary`) emitted by both `/dream` and the tool path. Gate:
+  two high-effort review rounds → all 10 prior findings + 3 confirmed new isolation/UX findings fixed (fresh
+  workspace scope, multi-workspace partition, benign concurrent-Dream skip, zh-Hans 886/886, `dream` boundary
+  symmetry, dead `reason` removed), plus a latent stale-checkpoint crash fixed (`b3deae02`); typecheck +
+  `test:core` 686/0 + `test:renderer` 361/0. Residual low items → `agent-dream-followups` (f)/(g).
 - **agent-dream-memory** (codex, PR #163) — Dream prerequisite ③ thin assembly; **closes the Dream milestone**
   (① #161 + ② #162 + ③ #163). Memory write-back is now an agent-level reflective run on a built-in daily
   schedule or manual `/dream`, replacing #159's per-turn extraction; `fire(agent, source)` gates (lock /

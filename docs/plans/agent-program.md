@@ -213,6 +213,18 @@ mostly independent).
 | **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · single read-only `recall` tool over active memory entries with optional nested evidence expansion · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals; old conversations not distilled into memory are intentionally not foreground-recallable |
 | **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
 
+**Cross-milestone note — per-agent identity started early (2026-06-07, #164).** Agent-owned
+subagent memory (an M2 slice on top of the Dream milestone) gives every fresh typed subagent its
+own `memoryOwnerAgentId` (the called agent definition), its own durable memory line, owner-scoped
+`recall` / `<agent-memory>`, and a per-owner scheduled Dream; forks inherit the parent owner. This
+is the first **per-agent identity for a non-foreground agent** — groundwork the map had placed in
+**M3** (per-agent POV · registry unification). M3 therefore *unifies* an already-real multi-owner
+memory model rather than introducing it: the registry/POV work builds on `agentSubagentIdentity.ts`
+(the single owner-resolution seam) + `agentSubagentTranscript.ts` (id-addressing), and must not
+redesign them. Open consequence for M3: a built-in subagent owner id is workspace-independent, so its
+memory line spans workspaces — `isolated`-tier scoping for such shared owners is settled for the
+single-host case (#164) but is a known design surface when multi-host/registry lands.
+
 ## How this reorg changes the member plans
 
 - **[[agent-conversation-model]]** — slimmed: its §Skills moves to

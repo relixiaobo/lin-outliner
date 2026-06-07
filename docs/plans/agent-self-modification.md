@@ -81,8 +81,13 @@ Lin already has several foundations:
 
 M1 shipped state (2026-06-07): Lin has `runtime_status`, read/write `config` for
 a whitelisted runtime-settings surface, read-only `doctor`, audited
-`config.change` events, and permission-gated config writes. Remaining gaps are
-M2+:
+`config.change` events, and permission-gated config writes. **M2 added a fourth
+self-maintenance tool — `dream` (#164)** — a trigger-only request for a
+runtime-owned Memory Dream (the model cannot specify facts; the extractor decides
+from recorded evidence). It lives alongside the others in
+`agentSelfMaintenanceTools.ts`, is gated `agent.memory.dream` (in
+`ALLOW_FORBIDDEN_ACTIONS`, always asks), and its design is owned by the Dream /
+memory subsystem, not this plan. Remaining gaps are M2+:
 
 - First-class lifecycle hooks such as `SessionStart`, `UserPromptSubmit`,
   `PreToolUse`, `PostToolUse`, `PreCompact`, or `PostCompact`.
