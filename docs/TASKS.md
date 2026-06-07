@@ -198,6 +198,17 @@ Standalone agent items (not part of the program):
   Windows currently falls back to the user-profile ACL with no extra restriction.
   Add Windows ACL hardening if/when Windows becomes a supported target. See
   `[[agent-secrets-plaintext-decision]]` rationale.
+- **agent-dream-secret-redaction** (P3, *no plan file*) — follow-up from #159
+  (runtime Dream extraction): the runtime-owned Dream worker sends raw completed-turn
+  evidence (including tool-call arguments and tool results) to a no-tools model and
+  can persist proposed facts into the durable, plaintext-`0600` memory event store;
+  the only guard against capturing a secret/credential is the extractor prompt ("Do
+  not save secrets/credentials..."). **PM decision (2026-06-07): accept prompt-level
+  for now** — it matches the ratified write design (memory writes are runtime-owned,
+  what-not-to-save is model-guided). Add a defense-in-depth code-level guard later
+  (e.g. skip/redact obvious secret patterns / high-entropy strings before
+  add/update), accepting it is heuristic and imperfect. Memory store is plaintext at
+  rest like the secrets store — see `[[agent-secrets-plaintext-decision]]`.
 - **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
   agent projection so the agent can read/insert them.
 - **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
