@@ -191,15 +191,6 @@ member reorg is drafted; pending PM ratification before M0 starts.**
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-tool-permissions-hardening** (P2, independent) — non-blocking follow-ups after the
-  #60 permission implementation: move the `sessionApproved` short-circuit below
-  configured-ask (don't silently relax a configured `ask`); re-validate
-  pre-shaped configs in `parseGlobalToolPermissionSettings`; extend the exfil
-  redline to interpreter/ssh sinks + bare `id_ecdsa`/`id_dsa`; collapse the dual
-  `approval.*`/`tool.permission.*` event vocabulary; align denied-reason literals
-  with the plan contract (`platform_hard_block`/`user_denied`, `recoverable`
-  set). None is a live fail-open. Self-contained spec in
-  `docs/plans/agent-tool-permissions-hardening.md`.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
@@ -333,6 +324,14 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   rebuild; several unlocked by the stable-identity foundation P1 PR-A laid).
 
 ## Recently completed
+
+- **agent-m1-tail-cleanup** (codex, PR #156) — M1 tail verification + plan/spec hygiene (no production code):
+  e2e coverage for the pending `ask_user_question` card under light/dark `prefers-color-scheme` (real
+  `user_question_request` event path + `agent_resolve_user_question` submit) and for the Settings Memory
+  view/edit/forget pane (`agent_list/update/forget_memory` IPC, with mock support); flips the conversation-model
+  "Profile UI" and ask-user-question "visual verification" checklist items to done; archives the completed
+  tool-permissions hardening plan (`status: done`) and repoints its references. Gate: typecheck + the 2 new
+  e2e tests pass in isolation (`2 passed`); changes are additive-only so no existing-test regression risk.
 
 - **agent-memory-prompt-guidance** (codex, PR #155) — added a stable `Memory` section to the agent system
   prompt (when to remember/update/forget durable facts; `<agent-memory>` is background context; route raw

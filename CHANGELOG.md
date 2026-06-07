@@ -10,6 +10,15 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Internal
+
+- **Close agent M1 tail verification + plan hygiene (PR #156)** — no production code: added e2e coverage for
+  the pending `ask_user_question` card (light/dark `prefers-color-scheme`, real `user_question_request` event
+  path + `agent_resolve_user_question` submit) and for the Settings Memory view/edit/forget pane
+  (`agent_list/update/forget_memory` IPC + renderer-mock support); marked the M1 "Profile UI" and
+  "visual verification" checklist items done; archived the completed `agent-tool-permissions-hardening` plan
+  (`status: done`) and repointed its references. ([#156](https://github.com/relixiaobo/lin-outliner/pull/156))
+
 ### Changed
 
 - **Guide agent memory use in the system prompt (PR #155)** — added a stable `Memory` section to the Tenon
