@@ -115,7 +115,7 @@ export function AgentTaskPanel({
             const stopping = stoppingTaskId === task.id;
             const kindIcon = task.kind === 'dream' ? BrainIcon : AgentIcon;
             const KindIcon = kindIcon;
-            const meta = taskMetaParts(task, t.agent.task, locale);
+            const meta = taskMetaParts(task, t.agent.task, locale).join(' · ');
             const mainContent = (
               <>
                 <span className="agent-task-kind">
@@ -124,14 +124,7 @@ export function AgentTaskPanel({
                   <span className={`agent-task-status is-${task.status}`}>{taskStatusLabel(task, t.agent.task)}</span>
                 </span>
                 <span className="agent-task-title">{taskTitle(task, t.agent.task)}</span>
-                <span className="agent-task-meta">
-                  {meta.map((part, index) => (
-                    <span key={`${task.id}:meta:${index}`}>
-                      {index > 0 ? ' · ' : null}
-                      {part}
-                    </span>
-                  ))}
-                </span>
+                <span className="agent-task-meta">{meta}</span>
               </>
             );
             return (

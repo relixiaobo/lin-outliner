@@ -247,6 +247,9 @@ describe('agent subagent UI', () => {
     expect(rendered.container.textContent).toContain('Manual');
     expect(rendered.container.textContent).toContain('3 messages');
     expect(rendered.container.textContent).toContain('1 memory change');
+    const meta = rendered.container.querySelector('.agent-task-meta');
+    expect(meta?.textContent).toContain('Manual · 3 messages · 1 memory change');
+    expect(meta?.childElementCount).toBe(0);
     expect(rendered.container.querySelector('[aria-label="Open task"]')).toBeNull();
     expect(openedSubagentId).toBeNull();
   });

@@ -178,8 +178,10 @@
 }
 
 .agent-task-meta {
-  overflow-wrap: anywhere;
-  white-space: normal;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-task-status {
