@@ -657,6 +657,32 @@ conversation-scoped** (reusing the **P1 `actor`** attribution), and add
 (completion can flood — hermes uses watch-strike + a global circuit breaker; cc-2.1
 folds / invalidates notifications; we only batch today).
 
+**Shipped (M2 delivery slice).** A detached subagent terminal now emits a durable
+`notification.created` anchored to its origin conversation (`kind` =
+`task_completed|failed|stopped`, `source = {subagent}`), idempotent and
+restart-safe (`docs/spec/agent-event-log-rendering.md` §Notification + attention
+projection). Attention folds per conversation into `attentionByConversationId`
+unread counts, pushed to the renderer over a `conversation_attention` runtime event
+(in `agentTypes.ts`, **not** `core/types.ts` — stays off the sibling scheduled-
+routines lane's protocol surface) and rendered as a neutral unread badge on the
+conversation list; opening a conversation durably clears it via a `notification.read`
+cursor (no new IPC command). The optional OS notification is wired through an
+injectable `OsNotifier` (`agentRuntime.setOsNotifier`) to a native Electron
+`Notification`, gated on a self-contained opt-in preference (default OFF,
+focus-suppressed). The existing idle-gated `pendingSubagentNotifications`
+model-injection stays as the live-session composed-turn layer.
+
+**Remaining.** (1) `needs-input` **trigger**: route a background run's
+`ask_user_question` to its origin conversation (wire `askUserQuestion` bound to the
+parent session into `createSubagentAgent`, emit `kind: 'needs_input'`), then
+re-spawn the paused run from its run log + inject the answer on restart — the
+protocol (`needs_input` kind) + delivery + attention are already in place; the
+trigger is a subsystem with a **directional product implication** (subagent-
+initiated user interruptions) to confirm with the PM. (2) The **cheap status-post**
+row (no-LLM in-stream task-update message) and cross-conversation panel
+aggregation. (3) Rate-limit / fold **thresholds** beyond the current per-
+conversation fold.
+
 **Cross-validated.** cc-2.1 and hermes independently converge on this shape:
 queue + idle-drain + inject-into-origin-conversation (cc-2.1 `asyncRewake` /
 async-hook attachments; hermes `completion_queue` drained after a turn and routed by
