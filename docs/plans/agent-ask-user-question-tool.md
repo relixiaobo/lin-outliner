@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-06
+updated: 2026-06-07
 ---
 
 # Agent Ask User Question Tool
@@ -471,7 +471,12 @@ reference model first, then build the user-question UI on top of it.
 - [ ] Align or explicitly defer user-message edit composer consistency.
 - [x] Update `docs/spec/` with the shipped behavior.
 - [x] Run `bun run typecheck` and relevant renderer/runtime tests.
-- [ ] Run light/dark visual verification for the pending-question UI.
+- [x] Run light/dark visual verification for the pending-question UI.
+
+Verification note (2026-06-07): `tests/e2e/agent-composer.spec.ts` injects the
+real `user_question_request` event path, verifies the pending-question card under
+light and dark `prefers-color-scheme`, and checks submit wiring through
+`agent_resolve_user_question`.
 
 ## Integration notes (added at the merge gate, 2026-06-03)
 

@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-02
-updated: 2026-06-06
+updated: 2026-06-07
 ---
 
 # Agent Self-Modification
@@ -76,9 +76,10 @@ Lin already has several foundations:
 - Internal hook-like extension points: `transformContext`, `beforeToolCall`, and
   `afterToolCall`.
 
-After the M1 implementation in this branch, Lin has `runtime_status`, read/write
-`config` for a whitelisted runtime-settings surface, and a read-only `doctor`
-tool. Remaining gaps:
+M1 shipped state (2026-06-07): Lin has `runtime_status`, read/write `config` for
+a whitelisted runtime-settings surface, read-only `doctor`, audited
+`config.change` events, and permission-gated config writes. Remaining gaps are
+M2+:
 
 - First-class lifecycle hooks such as `SessionStart`, `UserPromptSubmit`,
   `PreToolUse`, `PostToolUse`, `PreCompact`, or `PostCompact`.

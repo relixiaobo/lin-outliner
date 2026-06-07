@@ -3,6 +3,7 @@ import {
   commandCalls,
   e2eProjection,
   emitAgentProjection,
+  emitAgentEvent,
   emitDocumentEvent,
   openMockedApp,
 } from './outlinerMock';
@@ -26,6 +27,51 @@ async function invokeDocumentCommand(page: Page, cmd: string, args: Record<strin
     origin: 'test',
     projection: await e2eProjection(page),
     timestamp: Date.now(),
+  });
+}
+
+async function pendingQuestionMetrics(page: Page) {
+  return page.locator('.agent-question-card').evaluate((card) => {
+    const surface = card.closest('.agent-composer-surface');
+    const option = card.querySelector('.agent-question-option');
+    const textarea = card.querySelector('.agent-question-text');
+    const button = card.querySelector('.agent-approval-button.is-primary');
+    if (
+      !(card instanceof HTMLElement)
+      || !(surface instanceof HTMLElement)
+      || !(option instanceof HTMLElement)
+      || !(textarea instanceof HTMLElement)
+      || !(button instanceof HTMLElement)
+    ) {
+      return null;
+    }
+
+    const cardBox = card.getBoundingClientRect();
+    const surfaceBox = surface.getBoundingClientRect();
+    const cardStyle = getComputedStyle(card);
+    const optionStyle = getComputedStyle(option);
+    const textareaStyle = getComputedStyle(textarea);
+    const buttonStyle = getComputedStyle(button);
+    const title = card.querySelector('.agent-question-title');
+    const titleStyle = title instanceof HTMLElement ? getComputedStyle(title) : null;
+
+    return {
+      cardOverflow: card.scrollWidth > card.clientWidth + 1,
+      optionOverflow: option.scrollWidth > option.clientWidth + 1,
+      textareaOverflow: textarea.scrollWidth > textarea.clientWidth + 1,
+      insideSurface:
+        cardBox.left >= surfaceBox.left - 1
+        && cardBox.right <= surfaceBox.right + 1
+        && cardBox.top >= surfaceBox.top - 1
+        && cardBox.bottom <= surfaceBox.bottom + 1,
+      titleColor: titleStyle?.color ?? '',
+      cardColor: cardStyle.color,
+      optionBackground: optionStyle.backgroundColor,
+      textareaBackground: textareaStyle.backgroundColor,
+      buttonBackground: buttonStyle.backgroundColor,
+      buttonColor: buttonStyle.color,
+      buttonHeight: Math.round(button.getBoundingClientRect().height),
+    };
   });
 }
 
@@ -71,6 +117,94 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_send_message')?.args.message;
     }).toBe('first line\nsecond line\nthird line');
+  });
+
+  test('keeps pending user questions visually stable in light and dark themes', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await emitAgentEvent(page, {
+      type: 'user_question_request',
+      conversationId: 'mock-agent-session',
+      requestId: 'question-e2e',
+      question: {
+        requestId: 'question-e2e',
+        conversationId: 'mock-agent-session',
+        runId: 'run-question-e2e',
+        toolCallId: 'tool-question-e2e',
+        request: {
+          submitLabel: 'Use this path',
+          questions: [{
+            id: 'path',
+            type: 'single_choice',
+            header: 'Implementation path',
+            question: 'Which implementation path should the agent use for the memory profile surface?',
+            required: true,
+            allowOther: true,
+            options: [{
+              id: 'verify-existing',
+              label: 'Verify existing UI',
+              description: 'Use the shipped Settings Memory pane and add focused verification.',
+            }, {
+              id: 'rebuild',
+              label: 'Rebuild the pane',
+              description: 'Replace the current pane with a new profile-specific surface.',
+            }],
+          }, {
+            id: 'notes',
+            type: 'free_text',
+            header: 'Extra context',
+            question: 'Anything else the implementation should preserve?',
+            required: false,
+          }],
+        },
+      },
+      timestamp: 1_800_000_001_000,
+    });
+
+    const card = page.locator('.agent-question-card');
+    await expect(card).toBeVisible();
+    await expect(card.getByText('Input needed')).toBeVisible();
+    await expect(card.getByText('Which implementation path should the agent use')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Use this path' })).toBeDisabled();
+
+    const light = await pendingQuestionMetrics(page);
+    expect(light).not.toBeNull();
+    expect(light!.insideSurface).toBe(true);
+    expect(light!.cardOverflow).toBe(false);
+    expect(light!.optionOverflow).toBe(false);
+    expect(light!.textareaOverflow).toBe(false);
+    expect(light!.buttonBackground).not.toContain('244, 63, 94');
+    expect(light!.buttonHeight).toBeGreaterThanOrEqual(28);
+
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect.poll(async () => (await pendingQuestionMetrics(page))?.optionBackground)
+      .not.toBe(light!.optionBackground);
+    const dark = await pendingQuestionMetrics(page);
+    expect(dark).not.toBeNull();
+    expect(dark!.insideSurface).toBe(true);
+    expect(dark!.cardOverflow).toBe(false);
+    expect(dark!.optionOverflow).toBe(false);
+    expect(dark!.textareaOverflow).toBe(false);
+    expect(dark!.titleColor).not.toBe(light!.titleColor);
+    expect(dark!.buttonBackground).not.toContain('255, 93, 118');
+    expect(dark!.buttonHeight).toBe(light!.buttonHeight);
+
+    await card.getByLabel('Verify existing UI').check();
+    await expect(page.getByRole('button', { name: 'Use this path' })).toBeEnabled();
+    await page.getByRole('button', { name: 'Use this path' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-session',
+      requestId: 'question-e2e',
+      result: {
+        requestId: 'question-e2e',
+        answers: [
+          { questionId: 'path', selectedOptionIds: ['verify-existing'] },
+          { questionId: 'notes' },
+        ],
+      },
+    });
   });
 
   test('inserts attachments inline and sends them as context', async ({ page }) => {

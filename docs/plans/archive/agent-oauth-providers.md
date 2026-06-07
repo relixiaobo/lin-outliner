@@ -236,7 +236,8 @@ base URL per account).
 ### 6. Agent self-configuration boundary
 
 One invariant, cross-referenced with (not duplicated by)
-[[agent-self-modification]] and `agent-tool-permissions-hardening`:
+[[agent-self-modification]] and the archived agent-tool-permissions hardening
+plan:
 
 > **The agent observes; the runtime acts.** Agent tools receive a
 > secret-stripped read-only view (`authKind`, `connected`, `credentialed`,

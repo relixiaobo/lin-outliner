@@ -1,9 +1,9 @@
 ---
-status: draft
+status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-06
-updated: 2026-06-06
+updated: 2026-06-07
 ---
 
 # Agent Data Model — Persistence & Context Contract
@@ -27,6 +27,10 @@ load-bearing claim below was stress-tested against the real runtime (see the
 post-stress-test version. **Pre-release clean cut:** change the format, wipe
 `~/.lin-outliner-*` dev userData, and delete old readers/aliases instead of
 shipping migrations or compatibility branches.
+
+M0/M1 status: this file is now a standing data-model contract, not an unstarted
+implementation plan. Shipped behavior must also be folded into `docs/spec/` in
+the same change, per AGENTS.md A6.
 
 ## Goal
 
