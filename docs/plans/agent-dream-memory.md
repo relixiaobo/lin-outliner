@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 priority: P2
-owner: unassigned
+owner: codex
 created: 2026-06-07
 updated: 2026-06-07
 ---
@@ -59,6 +59,10 @@ interim shape (A7). Build in this order:
    [[agent-scheduled-routines]] (also draft). Land it **once**, as the common
    trigger machinery both consume — Dream is its first consumer. *Foundation
    before consumers (A7); coordinate so routines and Dream don't fork it.*
+   **Status:** core `dateSchedule` parsing, formatting, most-recent-due, and
+   fire-decision primitives landed as a pure module; generic date-field UI/parser
+   integration, heartbeat wiring, and command-node scheduling still remain in
+   [[agent-scheduled-routines]].
 2. **`RunMeta` anchor generalization (interface-first, PM ratify).** Make a run
    anchor to an **agent** and *optionally* target a conversation (§Protocol cost —
    touches `src/core/types.ts` / `agentEventLog.ts`, the protocol surface, A4).
@@ -178,6 +182,28 @@ conversation (foreground/routine = conversation-targeted; Dream = agent-only).
 This touches `src/core/types.ts` (protocol surface) → **interface-first + PM
 ratification** (A4/A7). It pays off beyond Dream (clarifies subagent/routine runs).
 
+### Run anchor interface proposal for ratification
+
+The clean shape is to separate **who owns the run** from **where the run is
+visible**:
+
+```ts
+type AgentRunAnchor =
+  | { type: 'conversation'; agentId: AgentId; conversationId: string }
+  | { type: 'agent'; agentId: AgentId };
+```
+
+`AgentRunMeta.agentId` remains required. `conversationId` becomes present only
+for conversation-targeted runs, derived from `anchor.type === 'conversation'`.
+Dream uses `{ type: 'agent', agentId }`; foreground turns, subagents, and future
+scheduled routines use `{ type: 'conversation', agentId, conversationId }`.
+
+Rejected interface shape: `conversationId?: string` alone. It is mechanically
+smaller, but it makes `undefined` carry product meaning and leaves call sites
+guessing whether a run is agent-level or an accidentally missing conversation
+target. The explicit discriminant is slightly more verbose and much safer at the
+protocol boundary.
+
 ### Reuse from #159 (redirect, not rewrite)
 
 #159's `agentDreamExtraction` worker — span builder, extraction prompt, action
@@ -232,6 +258,9 @@ What changes: the **trigger** (per-turn → `schedule(date)` + `/dream`), the
 
 ## Checklist
 
+- [x] Land the shared core `date` schedule primitive once: canonical `RRULE`
+  subset parsing/formatting, most-recent-due computation, and anacron fire
+  decision. Not yet wired into date fields, command nodes, or Dream.
 - [ ] Decide the `RunMeta` anchor generalization (agent-level run); land it
   interface-first (protocol surface, PM ratify).
 - [ ] Add per-agent Dream state: `dreamSchedule` (`date`), `dreamWatermark`,

@@ -77,6 +77,12 @@ Not canonical:
 ## Implementation
 
 - Core parser and formatter: `src/core/dateFieldValue.ts`
+- Shared schedule recurrence primitive: `src/core/dateSchedule.ts`. It parses a
+  canonical `<endpoint> RRULE:...` schedule, computes the most recent due
+  occurrence, and returns an anacron-style fire decision for agent scheduling
+  work. Generic date fields do not yet accept `RRULE`; the user-facing grammar
+  above remains the current date field contract until the scheduled-routines
+  plan wires recurrence into field editing, search, and rendering.
 - Search date matching: `src/core/searchEngine.ts`
 - Date field UI: `src/renderer/ui/outliner/DateValuePicker.tsx` — a date value is a
   plain editable row whose picker is summoned additively (Space on an empty draft,
