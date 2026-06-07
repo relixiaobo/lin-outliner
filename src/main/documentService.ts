@@ -403,6 +403,8 @@ export class DocumentService {
           nullableString(args.schedule) ?? undefined,
           meta.origin ?? 'user',
         );
+      case 'mark_command_fired':
+        return this.core.markCommandFired(String(args.nodeId), nullableNumber(args.firedAt) ?? Date.now());
       case 'create_image_node':
         return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
           assetId: nullableString(args.assetId) ?? undefined,

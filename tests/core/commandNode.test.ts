@@ -110,3 +110,23 @@ describe('Core.setCommandSchedule (the bright line)', () => {
     expect(() => core.setCommandSchedule(id, '2026-06-09T09:00', 'user')).toThrow();
   });
 });
+
+describe('Core.markCommandFired', () => {
+  test('advances the system fire watermark (the system-managed write path)', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
+    core.setCommandNode(id);
+
+    core.markCommandFired(id, 1_750_000_000_000);
+
+    expect(commandNode(core, id).sysLastRunAt).toBe(1_750_000_000_000);
+  });
+
+  test('refuses to mark a node that is not a command node', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'plain'));
+    expect(() => core.markCommandFired(id, 1_750_000_000_000)).toThrow();
+  });
+});

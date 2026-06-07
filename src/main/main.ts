@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -1971,6 +1971,9 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
+    // Anacron catch-up on system wake: a command whose occurrence elapsed while
+    // the device slept fires once on resume (coalesced via the watermark).
+    powerMonitor.on('resume', () => agentRuntime.runCommandCatchUp());
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),

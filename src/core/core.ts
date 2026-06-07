@@ -777,6 +777,16 @@ export class Core {
     });
   }
 
+  // Advance a command node's system fire watermark after a successful run. Not
+  // user-facing and not protected (system-managed, never agent-written): the
+  // anacron scheduler calls this via a `system`-origin command.
+  markCommandFired(nodeId: string, firedAt: number): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
+      (node as CommandNode).sysLastRunAt = firedAt;
+    });
+  }
+
   setViewToolbarVisible(nodeId: string, visible: boolean): CommandOutcome {
     return this.mutate(() => {
       this.patchViewDefDirect(nodeId, (viewDef) => {

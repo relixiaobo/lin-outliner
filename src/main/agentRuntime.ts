@@ -118,6 +118,7 @@ import {
 } from './agentDreamExtraction';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
+import { selectDueCommands, type DueCommand } from './commandScheduler';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
@@ -276,6 +277,10 @@ const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
+const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
+// In-memory per-command failure backoff (openclaw-style); process-level, never
+// persisted. A failed fire does not advance the watermark, so it stays due.
+const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -429,6 +434,11 @@ export class AgentRuntime {
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
   private readonly dreamingAgentIds = new Set<string>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private commandSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private commandSweepTail: Promise<void> = Promise.resolve();
+  private readonly firingCommandNodeIds = new Set<string>();
+  private readonly commandFailureCounts = new Map<string, number>();
+  private readonly commandBackoffUntil = new Map<string, number>();
   private agentTaskCache: AgentRenderTaskEntity[] = [];
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
@@ -490,11 +500,15 @@ export class AgentRuntime {
       completeSimpleFn: this.options.completeSimpleFn,
     });
     this.startDreamScheduler();
+    this.startCommandScheduler();
   }
 
   ready() {
     this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
     this.queueScheduledDream(new Date());
+    // Anacron catch-up on launch: fire any command whose occurrence elapsed
+    // while the app was closed (coalesced to one fire per command).
+    this.queueCommandSweep(new Date());
   }
 
   async drainDreamMemoryExtractionForTest(): Promise<void> {
@@ -1898,6 +1912,110 @@ export class AgentRuntime {
       this.queueScheduledDream(new Date());
     }, DREAM_SCHEDULER_INTERVAL_MS);
     (this.dreamSchedulerTimer as { unref?: () => void }).unref?.();
+  }
+
+  private startCommandScheduler() {
+    if (this.commandSchedulerTimer) return;
+    this.commandSchedulerTimer = setInterval(() => {
+      this.queueCommandSweep(new Date());
+    }, COMMAND_SCHEDULER_INTERVAL_MS);
+    (this.commandSchedulerTimer as { unref?: () => void }).unref?.();
+  }
+
+  // Catch-up hook for app launch (see ready()) and `powerMonitor.resume` (wired
+  // in main.ts). Idle-safe: queued behind any in-flight sweep.
+  runCommandCatchUp() {
+    this.queueCommandSweep(new Date());
+  }
+
+  private queueCommandSweep(now: Date) {
+    this.commandSweepTail = this.commandSweepTail
+      .catch(() => undefined)
+      .then(() => this.sweepCommandSchedules(now));
+  }
+
+  private async sweepCommandSchedules(now: Date) {
+    let due: DueCommand[];
+    try {
+      due = selectDueCommands(this.outlinerToolHost.getProjection(), now);
+    } catch {
+      return;
+    }
+    for (const command of due) {
+      if (this.firingCommandNodeIds.has(command.nodeId)) continue;
+      const backoffUntil = this.commandBackoffUntil.get(command.nodeId);
+      if (backoffUntil !== undefined && backoffUntil > now.getTime()) continue;
+      await this.fireCommand(command, now);
+    }
+  }
+
+  private async fireCommand(command: DueCommand, now: Date) {
+    this.firingCommandNodeIds.add(command.nodeId);
+    try {
+      await this.startTriggeredRun(command);
+      // Success: advance the watermark (system origin — never agent-written) so
+      // the occurrence is not re-fired, and clear any failure backoff.
+      await this.outlinerToolHost.handle(
+        'mark_command_fired',
+        { nodeId: command.nodeId, firedAt: now.getTime() },
+        { origin: 'system', summary: 'Command schedule fired.' },
+      );
+      this.commandFailureCounts.delete(command.nodeId);
+      this.commandBackoffUntil.delete(command.nodeId);
+    } catch (error) {
+      // Failure does NOT advance the watermark — the occurrence stays due.
+      // Apply an in-memory backoff so a persistently failing command (e.g. no
+      // provider configured) does not tight-loop.
+      const attempt = this.commandFailureCounts.get(command.nodeId) ?? 0;
+      this.commandFailureCounts.set(command.nodeId, attempt + 1);
+      const delay = COMMAND_FAILURE_BACKOFF_MS[Math.min(attempt, COMMAND_FAILURE_BACKOFF_MS.length - 1)];
+      this.commandBackoffUntil.set(command.nodeId, now.getTime() + delay);
+      this.emitError(
+        this.commandConversationSessionId(command.nodeId),
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      this.firingCommandNodeIds.delete(command.nodeId);
+    }
+  }
+
+  // One delivery conversation per command node — a stable id derived from the
+  // node id so every fire posts into a single thread (find-or-created on each
+  // fire; tolerant of the conversation being deleted).
+  private commandConversationSessionId(nodeId: string): string {
+    return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
+  }
+
+  // A scheduled fire: no human turn. The brief is the command node's content;
+  // the agent gets bounded context (brief + when it last ran) and runs under the
+  // same interactive capabilities, anchored to the delivery conversation with a
+  // `schedule` trigger.
+  private async startTriggeredRun(command: DueCommand): Promise<void> {
+    const brief = command.brief.trim();
+    if (!brief) return; // an empty command has nothing to run
+    const sessionId = this.commandConversationSessionId(command.nodeId);
+    const session = await this.ensureSessionWithId(sessionId);
+    if (session.agent.state.isStreaming) throw new Error('A run for this command is already in progress.');
+    await this.refreshRuntimeSettings(session);
+    session.skillRuntime.resetRunPermissionRules();
+    this.beginDebugQuery(session);
+    const now = new Date();
+    const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, brief, session);
+    const prompt = buildUserPromptMessage(
+      buildTriggeredCommandPrompt(brief, command.lastSuccessAt),
+      [],
+      { memoryReminder, outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost) },
+      now,
+    );
+    await this.appendUserPromptEvent(sessionId, session, prompt);
+    await this.startRun(sessionId, session, prompt, {
+      type: 'schedule',
+      schedule: command.schedule,
+      dueAt: command.dueAt,
+    });
+    await session.agent.prompt(prompt);
+    await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
+    await this.persistAndEmitIdle(sessionId, session);
   }
 
   private queueScheduledDream(now: Date) {
@@ -3577,7 +3695,12 @@ export class AgentRuntime {
     };
   }
 
-  private async startRun(sessionId: string, session: AgentSessionState, prompt: UserMessage | null = null) {
+  private async startRun(
+    sessionId: string,
+    session: AgentSessionState,
+    prompt: UserMessage | null = null,
+    triggerOverride: AgentRunTrigger | null = null,
+  ) {
     const runId = randomUUID();
     const runState: AgentActiveRunState = {
       id: runId,
@@ -3596,7 +3719,7 @@ export class AgentRuntime {
       agentId: this.agentIdentity.agentId,
       anchor: { type: 'conversation', agentId: this.agentIdentity.agentId, conversationId: sessionId },
       kind: 'turn',
-      trigger: this.runTrigger(session),
+      trigger: triggerOverride ?? this.runTrigger(session),
       fingerprint: this.runFingerprint(session),
       retention: 'hot',
     }]);
@@ -4119,6 +4242,16 @@ export class AgentRuntime {
 
 function isDirectoryAttachment(attachment: AgentPathBackedAttachment): boolean {
   return attachment.kind === 'file' && attachment.mimeType === 'inode/directory';
+}
+
+// The instruction text for a scheduled command fire: the brief, plus a bounded
+// note of when it last ran so the agent covers only what is new (catch-up
+// digests "the last few days" rather than replaying full history).
+function buildTriggeredCommandPrompt(brief: string, lastSuccessAt: number | null): string {
+  const since = lastSuccessAt
+    ? `This is a scheduled run. The previous successful run was ${new Date(lastSuccessAt).toISOString()} — cover what is new since then.`
+    : 'This is the first scheduled run of this command.';
+  return `${brief}\n\n(${since})`;
 }
 
 function buildUserPromptMessage(
