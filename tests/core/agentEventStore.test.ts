@@ -741,6 +741,45 @@ describe('agent event store', () => {
     });
   });
 
+  test('leaves live-appended agent-anchored runs out of the conversation run index', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-live-agent-anchor';
+      const runId = 'run-live-agent-anchor';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Live agent anchor filter' },
+        {
+          ...base(sessionId, 2, 'run.started'),
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          kind: 'scheduled',
+          trigger: { type: 'system' },
+          fingerprint: {
+            appVersion: 'test',
+            promptHash: 'prompt',
+            toolSchemaHash: 'tools',
+            skillBindings: [],
+            modelConfig: 'model',
+          },
+          retention: 'hot',
+        },
+      ]);
+
+      const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
+      expect(runRaw).toContain('run.started');
+      const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
+        anchor: { type: string; agentId: string };
+      };
+      expect(runMeta.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
+
+      const index = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+        runIds: string[];
+      };
+      expect(index.runIds).toEqual([]);
+      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1]);
+    });
+  });
+
   test('preserves existing runs when appending after the derived run index is missing', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';

@@ -742,11 +742,12 @@ export class AgentEventStore {
     for (const [runId, group] of runEvents) {
       const runPaths = this.runPaths(runId);
       const metaEvents = group.filter((event) => !isStreamingDeltaEvent(event));
-      if (metaEvents.length > 0) await this.registerConversationRun(sessionId, runId);
       await this.agentEventLog.append(runPaths.runEventsPath, group);
       if (metaEvents.length > 0) {
-        await this.updateRunMeta(sessionId, runId, metaEvents);
-        await this.updateConversationRunIndex(sessionId, runId, metaEvents.at(-1)!.seq);
+        const meta = await this.updateRunMeta(sessionId, runId, metaEvents);
+        if (meta && conversationIdOfRun(meta) === sessionId) {
+          await this.updateConversationRunIndex(sessionId, runId, meta.latestSeq);
+        }
       }
     }
 
@@ -899,23 +900,10 @@ export class AgentEventStore {
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
   }
 
-  private async registerConversationRun(sessionId: string, runId: string) {
-    const existing = await this.ensureConversationRunIndex(sessionId);
-    if (existing.runIds.includes(runId)) return;
-    const paths = this.paths(sessionId);
-    const index: AgentConversationRunIndex = {
-      v: 1,
-      runIds: [...existing.runIds, runId],
-      latestSeqByRunId: existing.latestSeqByRunId,
-    };
-    await mkdir(paths.conversationDir, { recursive: true });
-    await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
-  }
-
-  private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]) {
+  private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
     const existing = await this.readRunMeta(runId);
     const latest = events.at(-1);
-    if (!latest) return;
+    if (!latest) return null;
     const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
     const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? started.anchor?.agentId : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
@@ -939,6 +927,7 @@ export class AgentEventStore {
     const runPaths = this.runPaths(runId);
     await mkdir(runPaths.runDir, { recursive: true });
     await atomicWriteFile(runPaths.runMetaPath, `${JSON.stringify(meta)}\n`);
+    return meta;
   }
 
   private async updateConversationMeta(sessionId: string, events: readonly AgentEvent[]) {
