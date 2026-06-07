@@ -175,9 +175,13 @@ function visibleRecallToolData(data: AgentRecallToolData): unknown {
 function visibleSource(source: AgentMemorySource): unknown {
   return {
     conversation_id: source.conversationId,
+    ...(source.kind ? { kind: source.kind } : {}),
     ...(source.summaryId ? { summary_id: source.summaryId } : {}),
     ...(source.messageRange ? { message_range: source.messageRange } : {}),
     ...(source.runId ? { run_id: source.runId } : {}),
+    ...(source.subagentRunId ? { subagent_run_id: source.subagentRunId } : {}),
+    ...(source.agentId ? { agent_id: source.agentId } : {}),
+    ...(source.parentToolCallId ? { parent_tool_call_id: source.parentToolCallId } : {}),
     ...(source.eventId ? { event_id: source.eventId } : {}),
   };
 }

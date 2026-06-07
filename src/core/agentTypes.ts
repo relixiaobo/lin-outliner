@@ -121,6 +121,9 @@ export interface AgentSubagentActionResult {
   prompt: string;
   subagent_type: string;
   context_mode: 'fresh' | 'fork';
+  executing_agent_id?: string;
+  parent_agent_id?: string;
+  memory_owner_agent_id?: string;
   result?: string;
   error?: string;
   started_at: number;

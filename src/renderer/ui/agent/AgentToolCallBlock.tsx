@@ -78,6 +78,7 @@ export function getToolIcon(toolCall: ToolCall) {
   if (toolCall.name === 'node_read') return FileTextIcon;
   if (toolCall.name === 'node_edit') return NodeEditToolIcon;
   if (toolCall.name === 'recall') return BrainIcon;
+  if (toolCall.name === 'dream') return BrainIcon;
   if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
   if (toolCall.name === 'node_delete') {
     return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
@@ -130,6 +131,9 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   const args = toolCall.arguments;
   if (toolCall.name === 'recall') {
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
+  }
+  if (toolCall.name === 'dream') {
+    return verbByStatus(verbs.dreamMemory, status, labels);
   }
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');

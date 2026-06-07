@@ -44,6 +44,7 @@ import {
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
+import { AgentDreamBoundary } from './AgentDreamBoundary';
 import { AgentComposer } from './AgentComposer';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -165,10 +166,11 @@ interface VirtualTranscriptLayout {
 }
 
 function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
-  return entry.kind === 'compaction' ? 'system' : entry.message.role;
+  return entry.kind === 'compaction' || entry.kind === 'dream' ? 'system' : entry.message.role;
 }
 
 function getEntryTimestamp(entry: AgentConversationEntry): number {
+  if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
   if (entry.kind !== 'compaction') return entry.message.timestamp;
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
@@ -178,7 +180,7 @@ function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntr
 }
 
 function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return entry.kind === 'compaction' || entry.message.role === 'user';
+  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.message.role === 'user';
 }
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
@@ -239,7 +241,7 @@ function buildConversationRenderRows(
     rows.push(buildConversationRenderRow({
       entry,
       endIndex: index,
-      key: entry.kind === 'compaction'
+      key: entry.kind === 'compaction' || entry.kind === 'dream'
         ? entry.id
         : entry.nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
       turnEnded: turnEndedByEndIndex.get(index) ?? true,
@@ -286,7 +288,7 @@ function buildConversationRenderRow({
 }
 
 function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
-  if (row.entry.kind === 'compaction') return 72;
+  if (row.entry.kind === 'compaction' || row.entry.kind === 'dream') return 72;
   const content = row.entry.message.content;
   if (typeof content === 'string') {
     return Math.max(72, Math.ceil(content.length / 72) * 24 + 32);
@@ -838,6 +840,9 @@ export function AgentChatPanel({
   function renderConversationRow(row: AgentConversationRenderRow): ReactNode {
     if (row.entry.kind === 'compaction') {
       return <AgentCompactionBoundary entry={row.entry} />;
+    }
+    if (row.entry.kind === 'dream') {
+      return <AgentDreamBoundary entry={row.entry} />;
     }
 
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'

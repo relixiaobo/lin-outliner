@@ -601,6 +601,7 @@ These agent-level tools are active on top of the P0 local/document surface.
 | `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
 | `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
+| `dream` | Tenon agent memory Dream | Yes | Yes | Request runtime-owned memory extraction for the current agent; cannot specify facts to save. |
 | `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is a built-in slash-only workflow. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
@@ -633,14 +634,18 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `task_stop` for stopping background commands created by `bash`.
 - `recall` for durable agent memory. Raw conversation-history lookup is internal
   to runtime-owned evidence expansion, Dream/extraction, and diagnostics.
-- Runtime-owned Dream runs are scheduled/manual reflective runs, not foreground
-  tools. The automatic path uses the shared `date` schedule primitive plus a
-  minimum-evidence gate; `/dream` forces the same no-tools path and consolidates
-  existing memory when there is no new evidence. Dream reads raw conversation/run
-  events since its per-conversation watermark, appends scoped `memory.entry_*`
-  events with provenance, records `dream.completed` in the agent memory log, and
-  writes an agent-anchored reflective run meta entry. It is not a model-visible
-  write tool.
+- Runtime-owned Dream runs are scheduled/manual reflective runs. The automatic
+  path uses the shared `date` schedule primitive plus a minimum-evidence gate;
+  `/dream` forces the same no-tools path and consolidates existing memory when
+  there is no new evidence. The foreground `dream` tool is trigger-only: it lets
+  the model request the same runtime-owned path for the current agent, but it
+  cannot pass facts to save, choose a different agent, or write memory directly.
+  Dream reads raw conversation/run events since its per-conversation watermark,
+  appends scoped `memory.entry_*` events with provenance, records
+  `dream.completed` in the agent memory log, and writes an agent-anchored
+  reflective run meta entry. Manual `/dream` and foreground `dream` tool
+  triggers also write a conversation-side `dream.finished` marker so the chat
+  stream shows running/completed feedback.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

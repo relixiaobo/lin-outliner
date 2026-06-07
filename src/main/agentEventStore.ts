@@ -23,6 +23,7 @@ import type {
   AgentRunStatus,
   AgentIdentityRecord,
   AgentDreamCompletedChanges,
+  AgentDreamProcessedAgentRun,
   AgentDreamProcessedConversation,
   AgentDreamTrigger,
   AgentDreamWatermark,
@@ -132,6 +133,7 @@ export interface AgentDreamCompletedInput {
   watermark: AgentDreamWatermark;
   processed: {
     conversations: Record<string, AgentDreamProcessedConversation>;
+    agentRuns?: Record<string, AgentDreamProcessedAgentRun>;
     totalMessageCount: number;
     totalCharCount: number;
     consolidateOnly: boolean;
@@ -622,6 +624,7 @@ export class AgentEventStore {
         watermark: normalizeDreamWatermark(input.watermark),
         processed: {
           conversations: normalizeDreamProcessedConversations(input.processed.conversations),
+          agentRuns: normalizeDreamProcessedAgentRuns(input.processed.agentRuns),
           totalMessageCount: Math.max(0, Math.trunc(input.processed.totalMessageCount)),
           totalCharCount: Math.max(0, Math.trunc(input.processed.totalCharCount)),
           consolidateOnly: input.processed.consolidateOnly,
@@ -1814,6 +1817,7 @@ function isRunLogEvent(event: AgentEvent): boolean {
     case 'follow_up.queued':
     case 'follow_up.applied':
     case 'compaction.completed':
+    case 'dream.finished':
     case 'checkpoint.created':
       return false;
     default:
@@ -2287,7 +2291,7 @@ function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
 function emptyDreamState(): AgentDreamState {
   return {
     lastCompleted: null,
-    watermark: { conversations: {} },
+    watermark: { conversations: {}, agentRuns: {} },
     lastSuccessAt: null,
   };
 }
@@ -2309,13 +2313,20 @@ function cloneDreamState(state: AgentDreamState): AgentDreamState {
 }
 
 function normalizeDreamWatermark(value: unknown): AgentDreamWatermark {
-  if (!isRecord(value) || !isRecord(value.conversations)) return { conversations: {} };
+  if (!isRecord(value) || !isRecord(value.conversations)) return { conversations: {}, agentRuns: {} };
   const conversations: AgentDreamWatermark['conversations'] = {};
   for (const [conversationId, rawCursor] of Object.entries(value.conversations)) {
     const cursor = normalizeDreamWatermarkCursor(rawCursor);
     if (cursor) conversations[conversationId] = cursor;
   }
-  return { conversations };
+  const agentRuns: NonNullable<AgentDreamWatermark['agentRuns']> = {};
+  if (isRecord(value.agentRuns)) {
+    for (const [runId, rawCursor] of Object.entries(value.agentRuns)) {
+      const cursor = normalizeDreamAgentRunWatermarkCursor(rawCursor);
+      if (cursor) agentRuns[runId] = cursor;
+    }
+  }
+  return { conversations, agentRuns };
 }
 
 function normalizeDreamWatermarkCursor(value: unknown): AgentDreamWatermark['conversations'][string] | null {
@@ -2326,10 +2337,19 @@ function normalizeDreamWatermarkCursor(value: unknown): AgentDreamWatermark['con
   return { seq: Math.trunc(seq), eventId };
 }
 
+function normalizeDreamAgentRunWatermarkCursor(value: unknown): NonNullable<AgentDreamWatermark['agentRuns']>[string] | null {
+  if (!isRecord(value)) return null;
+  const messageCount = numberOrNull(value.messageCount);
+  if (messageCount === null || messageCount < 0) return null;
+  const payloadId = typeof value.payloadId === 'string' || value.payloadId === null ? value.payloadId : null;
+  return { messageCount: Math.trunc(messageCount), payloadId };
+}
+
 function normalizeDreamProcessed(value: unknown): Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'] | null {
   if (!isRecord(value) || !isRecord(value.conversations)) return null;
   return {
     conversations: normalizeDreamProcessedConversations(value.conversations),
+    agentRuns: normalizeDreamProcessedAgentRuns(value.agentRuns),
     totalMessageCount: nonNegativeInteger(value.totalMessageCount),
     totalCharCount: nonNegativeInteger(value.totalCharCount),
     consolidateOnly: value.consolidateOnly === true,
@@ -2353,6 +2373,32 @@ function normalizeDreamProcessedConversations(value: unknown): Record<string, Ag
     };
   }
   return conversations;
+}
+
+function normalizeDreamProcessedAgentRuns(value: unknown): Record<string, AgentDreamProcessedAgentRun> {
+  if (!isRecord(value)) return {};
+  const runs: Record<string, AgentDreamProcessedAgentRun> = {};
+  for (const [runId, raw] of Object.entries(value)) {
+    if (!isRecord(raw) || typeof raw.parentConversationId !== 'string' || raw.parentConversationId.length === 0) continue;
+    const fromMessageCountExclusive = numberOrNull(raw.fromMessageCountExclusive);
+    const throughMessageCount = numberOrNull(raw.throughMessageCount);
+    if (
+      fromMessageCountExclusive === null
+      || throughMessageCount === null
+      || fromMessageCountExclusive < 0
+      || throughMessageCount < fromMessageCountExclusive
+    ) continue;
+    runs[runId] = {
+      parentConversationId: raw.parentConversationId,
+      parentToolCallId: normalizeOptionalString(raw.parentToolCallId),
+      fromMessageCountExclusive: Math.trunc(fromMessageCountExclusive),
+      throughMessageCount: Math.trunc(throughMessageCount),
+      transcriptPayloadId: typeof raw.transcriptPayloadId === 'string' || raw.transcriptPayloadId === null ? raw.transcriptPayloadId : null,
+      messageCount: nonNegativeInteger(raw.messageCount),
+      charCount: nonNegativeInteger(raw.charCount),
+    };
+  }
+  return runs;
 }
 
 function normalizeDreamChanges(value: unknown): AgentDreamCompletedChanges {
@@ -2387,12 +2433,16 @@ function normalizeMemoryEntryPatch(value: unknown): AgentMemoryEntryPatch {
 function normalizeMemorySource(value: unknown): AgentMemorySource | null {
   if (!isRecord(value) || typeof value.conversationId !== 'string' || value.conversationId.length === 0) return null;
   const source: AgentMemorySource = { conversationId: value.conversationId };
+  if (value.kind === 'conversation' || value.kind === 'agent_run') source.kind = value.kind;
   if (typeof value.summaryId === 'string' && value.summaryId.length > 0) source.summaryId = value.summaryId;
   if (Array.isArray(value.messageRange) && value.messageRange.length === 2) {
     const [from, to] = value.messageRange;
     if (typeof from === 'string' && typeof to === 'string') source.messageRange = [from, to];
   }
   if (typeof value.runId === 'string' && value.runId.length > 0) source.runId = value.runId;
+  if (typeof value.subagentRunId === 'string' && value.subagentRunId.length > 0) source.subagentRunId = value.subagentRunId;
+  if (typeof value.agentId === 'string' && value.agentId.length > 0) source.agentId = value.agentId;
+  if (typeof value.parentToolCallId === 'string' && value.parentToolCallId.length > 0) source.parentToolCallId = value.parentToolCallId;
   if (typeof value.eventId === 'string' && value.eventId.length > 0) source.eventId = value.eventId;
   return source;
 }
@@ -2489,6 +2539,7 @@ function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheck
   if (!isRecord(state.session) || state.session.id !== sessionId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
   if (!isRecord(state.subagents) || !isRecord(state.compactionsByMessageId)) return null;
+  if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
   if (!Array.isArray(state.rootMessageIds)) return null;
   if (!isRecord(state.childrenByParentId) || !isRecord(state.derivedPayloadsBySourceId)) return null;
   const targets = normalizeCheckpointTargets(value.targets);

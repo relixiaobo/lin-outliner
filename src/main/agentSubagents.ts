@@ -34,6 +34,11 @@ import {
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
+import {
+  agentDefinitionAgentId,
+  memoryWorkspaceIdForRoot,
+  resolveSubagentMemoryOwner,
+} from './agentSubagentIdentity';
 
 export const AGENT_SUBAGENT_TOOL_NAME = 'Agent';
 export const AGENT_STATUS_TOOL_NAME = 'AgentStatus';
@@ -135,6 +140,10 @@ export interface AgentSubagentCreateInput {
   sessionId: string;
   messages: AgentMessage[];
   systemPrompt: string;
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
+  memoryOriginWorkspace?: string;
   model?: string;
   effort?: string;
   permissionMode?: AgentPermissionMode;
@@ -158,6 +167,7 @@ export interface AgentSubagentRuntimeHost {
   getParentMessages(): AgentMessage[];
   getParentSystemPrompt(): string;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
+  buildMemoryReminder(agentId: string, query: string, originWorkspace?: string): Promise<string | null>;
   persistSubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
   notifySubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
   persistToolOutputPayload(
@@ -176,6 +186,8 @@ export interface AgentSubagentRuntimeHost {
 
 export interface AgentSubagentRuntimeOptions {
   sessionId: string;
+  executingAgentId: string;
+  memoryOwnerAgentId?: string;
   localRoot?: string;
   additionalAgentDirectories?: string[];
   includeUserAgents?: boolean;
@@ -193,6 +205,11 @@ interface AgentRunRecord {
   subagentType: string;
   contextMode: 'fresh' | 'fork';
   definition: AgentDefinition | null;
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
+  memoryOriginWorkspace?: string;
+  dreamEvidenceStartMessageIndex: number;
   status: 'running' | 'completed' | 'failed' | 'stopped';
   startedAt: number;
   updatedAt: number;
@@ -214,6 +231,7 @@ interface AgentRunRecord {
   pendingPersist?: Promise<void>;
   skillRuntime?: AgentSkillRuntime;
   localWorkspace?: AgentLocalWorkspaceContext;
+  memoryReminderCache?: { key: string; text: string | null };
 }
 
 type RunningSlotReservation = () => void;
@@ -225,6 +243,11 @@ export interface AgentSubagentRunSnapshot {
   prompt: string;
   subagentType: string;
   contextMode: 'fresh' | 'fork';
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
+  memoryOriginWorkspace?: string;
+  dreamEvidenceStartMessageIndex: number;
   status: 'running' | 'completed' | 'failed' | 'stopped';
   startedAt: number;
   updatedAt: number;
@@ -269,6 +292,8 @@ export class AgentSubagentRuntime {
   private readonly depth: number;
   private readonly maxDepth: number;
   private readonly ancestry: string[];
+  private readonly executingAgentId: string;
+  private readonly memoryOwnerAgentId: string;
   private readonly host: AgentSubagentRuntimeHost;
   private readonly runs = new Map<string, AgentRunRecord>();
   private readonly names = new Map<string, string>();
@@ -283,6 +308,8 @@ export class AgentSubagentRuntime {
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_SUBAGENT_DEPTH;
     this.ancestry = options.ancestry ?? [];
+    this.executingAgentId = options.executingAgentId;
+    this.memoryOwnerAgentId = options.memoryOwnerAgentId ?? options.executingAgentId;
     this.host = options.host;
     this.registry = new AgentDefinitionRegistry({
       localRoot: this.localRoot,
@@ -300,6 +327,12 @@ export class AgentSubagentRuntime {
 
   updateDisabledAgents(disabledAgents: string[]): void {
     this.disabledAgents = disabledAgents;
+  }
+
+  clearMemoryReminderCache(): void {
+    for (const run of this.runs.values()) {
+      run.memoryReminderCache = undefined;
+    }
   }
 
   async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
@@ -356,6 +389,14 @@ export class AgentSubagentRuntime {
   restorePersistedRuns(restoredRuns: readonly AgentSubagentRestoredRun[]): void {
     for (const { record, transcriptMessages } of restoredRuns) {
       if (this.runs.has(record.id)) continue;
+      const executingAgentId = record.executingAgentId ?? this.executingAgentId;
+      const parentAgentId = record.parentAgentId ?? this.executingAgentId;
+      const memoryOwnerAgentId = resolveSubagentMemoryOwner({
+        ...record,
+        executingAgentId,
+        parentAgentId,
+      }, this.memoryOwnerAgentId);
+      const memoryOriginWorkspace = record.memoryOriginWorkspace ?? memoryWorkspaceIdForRoot(this.localRoot);
       const run: AgentRunRecord = {
         id: record.id,
         name: record.name,
@@ -364,6 +405,10 @@ export class AgentSubagentRuntime {
         subagentType: record.subagentType,
         contextMode: record.contextMode,
         definition: null,
+        executingAgentId,
+        parentAgentId,
+        memoryOwnerAgentId,
+        memoryOriginWorkspace,
         status: record.status,
         startedAt: record.startedAt,
         updatedAt: record.updatedAt,
@@ -379,6 +424,9 @@ export class AgentSubagentRuntime {
         toolResultBudgetState: restoreToolResultBudgetStateFromAgentMessages(transcriptMessages),
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
+        dreamEvidenceStartMessageIndex: record.dreamEvidenceStartMessageIndex ?? (
+          record.contextMode === 'fork' ? transcriptMessages.length : 0
+        ),
       };
       this.runs.set(run.id, run);
       if (run.name) this.names.set(run.name, run.id);
@@ -497,6 +545,14 @@ export class AgentSubagentRuntime {
 
     const runId = `subagent-${randomUUID()}`;
     const subagentSessionId = `${this.hostSessionPrefix()}-${runId}`;
+    const parentAgentId = this.executingAgentId;
+    const executingAgentId = contextMode === 'fork'
+      ? this.executingAgentId
+      : agentDefinitionAgentId(definition);
+    const memoryOwnerAgentId = contextMode === 'fork'
+      ? this.memoryOwnerAgentId
+      : executingAgentId;
+    const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
     let childRuntime: AgentSubagentRuntime;
     const runtimeSettings = await this.host.getRuntimeSettings();
     const skillRuntime = new AgentSkillRuntime({
@@ -529,6 +585,8 @@ export class AgentSubagentRuntime {
     let run: AgentRunRecord | null = null;
     childRuntime = new AgentSubagentRuntime({
       sessionId: subagentSessionId,
+      executingAgentId,
+      memoryOwnerAgentId,
       localRoot: this.localRoot,
       additionalAgentDirectories: this.additionalAgentDirectories,
       depth: this.depth + 1,
@@ -539,6 +597,7 @@ export class AgentSubagentRuntime {
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
+        buildMemoryReminder: (agentId, query, originWorkspace) => this.host.buildMemoryReminder(agentId, query, originWorkspace),
         persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
         notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -554,6 +613,9 @@ export class AgentSubagentRuntime {
     const promptMessages = contextMode === 'fork'
       ? buildForkSubagentMessages(this.host.getParentMessages(), params.prompt)
       : [...preloadMessages, createUserMessage(params.prompt)];
+    const dreamEvidenceStartMessageIndex = contextMode === 'fork'
+      ? Math.max(0, promptMessages.length - 1)
+      : 0;
     const systemPrompt = contextMode === 'fork'
       ? this.host.getParentSystemPrompt()
       : buildFreshAgentSystemPrompt(definition);
@@ -561,6 +623,10 @@ export class AgentSubagentRuntime {
       sessionId: subagentSessionId,
       messages: [],
       systemPrompt,
+      executingAgentId,
+      parentAgentId,
+      memoryOwnerAgentId,
+      memoryOriginWorkspace,
       model: params.model ?? definition.model,
       effort: params.effort ?? definition.effort,
       permissionMode: definition.permissionMode,
@@ -586,6 +652,11 @@ export class AgentSubagentRuntime {
       subagentType: definition.name,
       contextMode,
       definition,
+      executingAgentId,
+      parentAgentId,
+      memoryOwnerAgentId,
+      memoryOriginWorkspace,
+      dreamEvidenceStartMessageIndex,
       status: 'running',
       startedAt: now,
       updatedAt: now,
@@ -761,13 +832,14 @@ export class AgentSubagentRuntime {
     const source = ((run.agent?.state.messages as unknown[]) ?? run.messages)
       .filter(isRecordableAgentMessage)
       .map(cloneAgentMessage);
+    const memoryReminder = await this.runMemoryReminder(run, latestUserQuery(source) ?? run.prompt);
     throwIfAborted(signal);
     const selection = collectAgentMessageToolResultBudgetSelections(source, run.toolResultBudgetState, {
       limit: MAX_TOOL_RESULTS_PER_BATCH_CHARS,
       skipToolNames: SUBAGENT_TOOL_RESULT_BUDGET_SKIP_TOOLS,
     });
     if (selection.toPersist.length === 0 && selection.alreadyReplaced.length === 0) {
-      return await this.autoCompactRunIfNeeded(run, source, signal) ?? source;
+      return withMemoryReminder(await this.autoCompactRunIfNeeded(run, source, signal) ?? source, memoryReminder);
     }
 
     const nextMessages = source.map(cloneAgentMessage);
@@ -801,12 +873,20 @@ export class AgentSubagentRuntime {
     }
 
     throwIfAborted(signal);
-    if (!changed) return await this.autoCompactRunIfNeeded(run, source, signal) ?? source;
+    if (!changed) return withMemoryReminder(await this.autoCompactRunIfNeeded(run, source, signal) ?? source, memoryReminder);
     run.messages = nextMessages.map(cloneAgentMessage);
     if (run.agent) run.agent.state.messages = nextMessages as never;
     run.updatedAt = Date.now();
     await this.queuePersistRunUpdate(run).catch(() => undefined);
-    return await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages;
+    return withMemoryReminder(await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages, memoryReminder);
+  }
+
+  private async runMemoryReminder(run: AgentRunRecord, query: string): Promise<string | null> {
+    const key = JSON.stringify([run.memoryOwnerAgentId, run.memoryOriginWorkspace ?? null, query]);
+    if (run.memoryReminderCache?.key === key) return run.memoryReminderCache.text;
+    const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId, query, run.memoryOriginWorkspace);
+    run.memoryReminderCache = { key, text };
+    return text;
   }
 
   private async autoCompactRunIfNeeded(run: AgentRunRecord, messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[] | null> {
@@ -848,7 +928,9 @@ export class AgentSubagentRuntime {
         `${this.sessionId}-${run.id}-${trigger}-compact`,
         messages,
         model,
-        undefined,
+        run.contextMode === 'fork'
+          ? 'This is a fork subagent transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, subagent actions, user follow-ups, and final result.'
+          : undefined,
         signal,
       );
       throwIfAborted(signal);
@@ -870,6 +952,7 @@ export class AgentSubagentRuntime {
         ),
       ];
       run.messages = compactedMessages.map(cloneAgentMessage);
+      run.dreamEvidenceStartMessageIndex = 0;
       if (run.agent) run.agent.state.messages = compactedMessages as never;
       run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(compactedMessages);
       run.autoCompactConsecutiveFailures = 0;
@@ -916,6 +999,8 @@ export class AgentSubagentRuntime {
     let childAgent: Agent | null = null;
     childRuntime = new AgentSubagentRuntime({
       sessionId: `${this.hostSessionPrefix()}-${run.id}`,
+      executingAgentId: run.executingAgentId,
+      memoryOwnerAgentId: run.memoryOwnerAgentId,
       localRoot: this.localRoot,
       additionalAgentDirectories: this.additionalAgentDirectories,
       depth: this.depth + 1,
@@ -926,6 +1011,7 @@ export class AgentSubagentRuntime {
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
+        buildMemoryReminder: (agentId, query, originWorkspace) => this.host.buildMemoryReminder(agentId, query, originWorkspace),
         persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
         notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -943,6 +1029,10 @@ export class AgentSubagentRuntime {
       sessionId: `${this.hostSessionPrefix()}-${run.id}`,
       messages: run.messages.map(cloneAgentMessage),
       systemPrompt,
+      executingAgentId: run.executingAgentId,
+      parentAgentId: run.parentAgentId,
+      memoryOwnerAgentId: run.memoryOwnerAgentId,
+      memoryOriginWorkspace: run.memoryOriginWorkspace,
       model: definition.model,
       effort: definition.effort,
       permissionMode: definition.permissionMode,
@@ -1441,6 +1531,9 @@ function runToToolData(run: AgentRunRecord): AgentSubagentToolData {
     prompt: run.prompt,
     subagent_type: run.subagentType,
     context_mode: run.contextMode,
+    executing_agent_id: run.executingAgentId,
+    parent_agent_id: run.parentAgentId,
+    memory_owner_agent_id: run.memoryOwnerAgentId,
     result: run.result,
     error: run.error,
     started_at: run.startedAt,
@@ -1458,6 +1551,11 @@ function snapshotRun(run: AgentRunRecord): AgentSubagentRunSnapshot {
     prompt: run.prompt,
     subagentType: run.subagentType,
     contextMode: run.contextMode,
+    executingAgentId: run.executingAgentId,
+    parentAgentId: run.parentAgentId,
+    memoryOwnerAgentId: run.memoryOwnerAgentId,
+    memoryOriginWorkspace: run.memoryOriginWorkspace,
+    dreamEvidenceStartMessageIndex: run.dreamEvidenceStartMessageIndex,
     status: run.status,
     startedAt: run.startedAt,
     updatedAt: run.updatedAt,
@@ -1487,6 +1585,21 @@ function createHiddenUserMessage(text: string): UserMessage {
     timestamp: Date.now(),
     content: [{ type: 'text', text: systemReminder(text) }],
   };
+}
+
+function withMemoryReminder(messages: AgentMessage[], memoryReminder: string | null): AgentMessage[] {
+  if (!memoryReminder) return messages;
+  return [createHiddenUserMessage(memoryReminder), ...messages.map(cloneAgentMessage)];
+}
+
+function latestUserQuery(messages: readonly AgentMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    const text = messageTextParts(message).join('\n').trim();
+    if (text) return text;
+  }
+  return null;
 }
 
 function extractFinalAssistantText(messages: readonly AgentMessage[]): string {

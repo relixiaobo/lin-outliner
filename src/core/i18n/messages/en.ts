@@ -846,6 +846,22 @@ commandPalette: {
         auto: 'Auto',
         retry: 'Retry',
       },
+      dreamingMemory: 'Dreaming memory',
+      memoryDreamed: 'Memory Dream',
+      dreaming: 'Dreaming',
+      dreamed: 'Dreamed',
+      dreamFailed: 'Dream failed',
+      dreamSkipped: 'Dream skipped',
+      dreamTrigger: {
+        manual: 'Manual',
+        schedule: 'Scheduled',
+      },
+      dreamProcessedMessages: ({ count }: { count: number }) => `${count} ${count === 1 ? 'message' : 'messages'}`,
+      dreamMemoryChanges: ({ count }: { count: number }) => `${count} memory ${count === 1 ? 'change' : 'changes'}`,
+      dreamProcessedDetail: ({ messages, chars }: { messages: number; chars: number }) =>
+        `Processed ${messages} ${messages === 1 ? 'message' : 'messages'} (${chars.toLocaleString()} chars).`,
+      dreamChangesDetail: ({ added, updated, forgotten, skipped }: { added: number; updated: number; forgotten: number; skipped: number }) =>
+        `Memory changes: ${added} added, ${updated} updated, ${forgotten} forgotten, ${skipped} skipped.`,
     },
     // Tool-call disclosure: summaries (verb forms), section headers, persisted output.
     toolCall: {
@@ -875,6 +891,7 @@ commandPalette: {
         messageSubagent: { base: 'message subagent', pending: 'Messaging subagent', done: 'Messaged subagent' },
         stopSubagent: { base: 'stop subagent', pending: 'Stopping subagent', done: 'Stopped subagent' },
         recallMemory: { base: 'recall memory', pending: 'Recalling memory', done: 'Recalled memory' },
+        dreamMemory: { base: 'dream memory', pending: 'Dreaming memory', done: 'Dreamed memory' },
         createNode: { base: 'create node', pending: 'Creating node', done: 'Created node' },
         readNode: { base: 'read node', pending: 'Reading node', done: 'Read node' },
         editNode: { base: 'edit node', pending: 'Editing node', done: 'Edited node' },

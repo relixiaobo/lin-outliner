@@ -14,6 +14,8 @@ import type {
 import type { AgentConversation } from '../../src/core/types';
 import type {
   AgentRenderActiveCompaction,
+  AgentRenderActiveDream,
+  AgentRenderDreamEntity,
   AgentRenderProjection,
   AgentRenderSubagentEntity,
   AgentRenderTaskEntity,
@@ -70,6 +72,8 @@ function projection(
     revision?: number;
     streamingMessageId?: string;
     activeCompaction?: AgentRenderActiveCompaction | null;
+    activeDream?: AgentRenderActiveDream | null;
+    dreams?: Record<string, AgentRenderDreamEntity>;
     subagents?: Record<string, AgentRenderSubagentEntity>;
     subagentRunIds?: string[];
     tasks?: Record<string, AgentRenderTaskEntity>;
@@ -102,6 +106,7 @@ function projection(
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
     activeCompaction: options.activeCompaction ?? null,
+    activeDream: options.activeDream ?? null,
     isStreaming: !!options.isStreaming,
     model: { id: 'test-model', provider: 'test' },
     thinkingLevel: 'off',
@@ -129,6 +134,7 @@ function projection(
       }])),
       subagents: options.subagents ?? {},
       compactions: {},
+      dreams: options.dreams ?? {},
       tasks,
     },
     streaming: options.streamingMessageId ? {
@@ -632,6 +638,78 @@ describe('agent runtime store', () => {
       kind: 'compaction',
       status: 'active',
       compaction: restoredProjection.activeCompaction,
+    });
+    unsubscribe();
+  });
+
+  test('keeps Dream rows as visible boundary entries', async () => {
+    const restoredProjection = projection([]);
+    restoredProjection.rows = [{
+      id: 'dream:dream-anchor',
+      kind: 'dream',
+      messageId: 'dream-anchor',
+      dreamId: 'dream-1',
+    }];
+    restoredProjection.transcriptRows = restoredProjection.rows;
+    restoredProjection.entities.messages['dream-anchor'] = {
+      id: 'dream-anchor',
+      role: 'user',
+      status: 'completed',
+      parentMessageId: null,
+      content: [{ type: 'text', text: systemReminder('Memory Dream completed.') }],
+      createdAt: 20,
+      updatedAt: 20,
+      branches: null,
+    };
+    restoredProjection.entities.dreams['dream-1'] = {
+      id: 'dream-1',
+      messageId: 'dream-anchor',
+      agentId: 'built-in:tenon:assistant',
+      runId: 'dream-run-1',
+      trigger: 'manual',
+      status: 'completed',
+      startedAt: 10,
+      completedAt: 20,
+      createdAt: 20,
+      processed: { totalMessageCount: 2, totalCharCount: 240, consolidateOnly: false, conversations: {} },
+      changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+    };
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries).toEqual([{
+      id: 'dream:dream-anchor',
+      kind: 'dream',
+      status: 'completed',
+      dream: restoredProjection.entities.dreams['dream-1'],
+    }]);
+    unsubscribe();
+  });
+
+  test('keeps active Dream as a visible boundary entry', async () => {
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: userMessage('dream this'), branches: null },
+    ], {
+      activeDream: {
+        id: 'active-dream-1',
+        trigger: 'manual',
+        startedAt: 30,
+      },
+    });
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries.at(-1)).toEqual({
+      id: 'active-dream:active-dream-1',
+      kind: 'dream',
+      status: 'active',
+      dream: restoredProjection.activeDream,
     });
     unsubscribe();
   });

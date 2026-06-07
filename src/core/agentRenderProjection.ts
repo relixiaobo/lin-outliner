@@ -4,6 +4,7 @@ import {
   getAgentEventVisibleTranscript,
   type AgentCompactionRecord,
   type AgentCompactionTrigger,
+  type AgentDreamRecord,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentPersistedContent,
@@ -11,7 +12,7 @@ import {
   type AgentSubagentRunRecord,
 } from './agentEventLog';
 
-export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction';
+export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream';
 
 export type AgentRenderRow =
   | {
@@ -25,6 +26,13 @@ export type AgentRenderRow =
       kind: 'compaction';
       messageId: string;
       compactionId: string;
+      archived?: boolean;
+    }
+  | {
+      id: string;
+      kind: 'dream';
+      messageId: string;
+      dreamId: string;
       archived?: boolean;
     };
 
@@ -67,6 +75,9 @@ export interface AgentRenderSubagentEntity {
   prompt: string;
   subagentType: string;
   contextMode: AgentSubagentRunRecord['contextMode'];
+  executingAgentId?: string;
+  parentAgentId?: string;
+  memoryOwnerAgentId?: string;
   status: AgentSubagentRunRecord['status'];
   startedAt: number;
   updatedAt: number;
@@ -90,6 +101,27 @@ export interface AgentRenderCompactionEntity {
 export interface AgentRenderActiveCompaction {
   id: string;
   trigger: AgentCompactionTrigger;
+  startedAt: number;
+}
+
+export interface AgentRenderDreamEntity {
+  id: string;
+  messageId: string;
+  agentId: string;
+  runId?: string;
+  trigger: AgentDreamRecord['trigger'];
+  status: AgentDreamRecord['status'];
+  startedAt: number;
+  completedAt: number;
+  processed?: AgentDreamRecord['processed'];
+  changes?: AgentDreamCompletedChanges;
+  errorMessage?: string;
+  createdAt: number;
+}
+
+export interface AgentRenderActiveDream {
+  id: string;
+  trigger: 'manual';
   startedAt: number;
 }
 
@@ -130,6 +162,7 @@ export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   subagents: Record<string, AgentRenderSubagentEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
+  dreams: Record<string, AgentRenderDreamEntity>;
   tasks: Record<string, AgentRenderTaskEntity>;
 }
 
@@ -139,6 +172,7 @@ export interface AgentRenderProjection {
   conversationTitle: string | null;
   activeRunId: string | null;
   activeCompaction: AgentRenderActiveCompaction | null;
+  activeDream: AgentRenderActiveDream | null;
   isStreaming: boolean;
   model: Record<string, unknown>;
   thinkingLevel: string;
@@ -156,6 +190,7 @@ export interface BuildAgentRenderProjectionOptions {
   revision: number;
   activeRunId?: string | null;
   activeCompaction?: AgentRenderActiveCompaction | null;
+  activeDream?: AgentRenderActiveDream | null;
   isStreaming?: boolean;
   model?: Record<string, unknown>;
   thinkingLevel?: string;
@@ -173,7 +208,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {}, tasks: {} };
+  const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {}, dreams: {}, tasks: {} };
   const rows = buildActiveRows(state, activePath, entities);
   const transcriptRows = buildTranscriptRows(state, entities);
   let streaming: AgentStreamingRenderState | null = null;
@@ -211,6 +246,7 @@ export function buildAgentRenderProjection(
     conversationTitle: state.session.title,
     activeRunId: options.activeRunId ?? null,
     activeCompaction: options.activeCompaction ?? null,
+    activeDream: options.activeDream ?? null,
     isStreaming: options.isStreaming ?? !!streaming,
     model: options.model ?? {},
     thinkingLevel: options.thinkingLevel ?? 'off',
@@ -248,6 +284,11 @@ function buildTranscriptRows(
       appendCompactionRow(rows, entities, state, entry.message, compaction, entry.archived);
       continue;
     }
+    const dream = dreamForMessage(state, entry.message);
+    if (dream) {
+      appendDreamRow(rows, entities, state, entry.message, dream, entry.archived);
+      continue;
+    }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
   return rows;
@@ -262,6 +303,11 @@ function appendActiveRow(
   const compaction = compactionForMessage(state, message);
   if (compaction) {
     appendCompactionRow(rows, entities, state, message, compaction, false);
+    return;
+  }
+  const dream = dreamForMessage(state, message);
+  if (dream) {
+    appendDreamRow(rows, entities, state, message, dream, false);
     return;
   }
   appendMessageRow(rows, entities, state, message, false);
@@ -302,6 +348,26 @@ function appendCompactionRow(
   });
   entities.messages[message.id] = toRenderMessageEntity(state, message);
   entities.compactions[compaction.id] = toRenderCompactionEntity(compaction);
+}
+
+function appendDreamRow(
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+  dream: AgentDreamRecord,
+  archived: boolean,
+) {
+  const prefix = archived ? 'archived:' : '';
+  rows.push({
+    id: `${prefix}dream:${message.id}`,
+    kind: 'dream',
+    messageId: message.id,
+    dreamId: dream.id,
+    archived: archived || undefined,
+  });
+  entities.messages[message.id] = toRenderMessageEntity(state, message);
+  entities.dreams[dream.id] = toRenderDreamEntity(dream);
 }
 
 function toRenderMessageEntity(
@@ -358,12 +424,37 @@ function toRenderCompactionEntity(record: AgentCompactionRecord): AgentRenderCom
   };
 }
 
+function toRenderDreamEntity(record: AgentDreamRecord): AgentRenderDreamEntity {
+  return {
+    id: record.id,
+    messageId: record.messageId,
+    agentId: record.agentId,
+    runId: record.runId,
+    trigger: record.trigger,
+    status: record.status,
+    startedAt: record.startedAt,
+    completedAt: record.completedAt,
+    processed: record.processed,
+    changes: record.changes,
+    errorMessage: record.errorMessage,
+    createdAt: record.createdAt,
+  };
+}
+
 function compactionForMessage(
   state: AgentEventReplayState,
   message: AgentEventMessageRecord,
 ): AgentCompactionRecord | null {
   if (message.role !== 'user') return null;
   return state.compactionsByMessageId[message.id] ?? null;
+}
+
+function dreamForMessage(
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+): AgentDreamRecord | null {
+  if (message.role !== 'user') return null;
+  return state.dreamsByMessageId[message.id] ?? null;
 }
 
 function textFromContent(content: AgentPersistedContent[]): string {

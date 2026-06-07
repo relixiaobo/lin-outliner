@@ -9,8 +9,12 @@ import {
   getAgentEventRuntimeTranscriptPath,
   replayAgentEvents,
 } from '../core/agentEventLog';
-import type { UserMessage } from '../core/agentTypes';
+import type { AgentMessage, UserMessage } from '../core/agentTypes';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
+import {
+  agentRunMessageId,
+  isRecordableRuntimeMessage,
+} from './agentSubagentTranscript';
 
 const DREAM_TRANSCRIPT_CHAR_BUDGET = 60_000;
 const DREAM_MESSAGE_CONTENT_CHAR_BUDGET = 12_000;
@@ -54,6 +58,17 @@ export interface DreamMemoryExtractionConversationInput {
   conversationId: string;
   events: readonly AgentEvent[];
   fromSeqExclusive: number;
+}
+
+export interface DreamMemoryExtractionAgentRunInput {
+  conversationId: string;
+  agentId: string;
+  subagentRunId: string;
+  parentToolCallId?: string;
+  transcriptPayloadId?: string | null;
+  originWorkspace?: string;
+  transcriptMessages: readonly AgentMessage[];
+  fromMessageCountExclusive: number;
 }
 
 export function buildDreamMemoryExtractionSpan(
@@ -103,10 +118,23 @@ export function buildDreamMemoryExtractionSpanFromEvents(
   runId: string,
   inputs: readonly DreamMemoryExtractionConversationInput[],
 ): DreamMemoryExtractionSpan | null {
-  const ranges: DreamMemoryExtractionSourceRange[] = [];
-  const renderedConversations: string[] = [];
+  return buildDreamMemoryExtractionSpanFromEvidence(runId, {
+    conversations: inputs,
+    agentRuns: [],
+  });
+}
 
-  for (const input of inputs) {
+export function buildDreamMemoryExtractionSpanFromEvidence(
+  runId: string,
+  inputs: {
+    conversations: readonly DreamMemoryExtractionConversationInput[];
+    agentRuns: readonly DreamMemoryExtractionAgentRunInput[];
+  },
+): DreamMemoryExtractionSpan | null {
+  const ranges: DreamMemoryExtractionSourceRange[] = [];
+  const renderedSections: string[] = [];
+
+  for (const input of inputs.conversations) {
     const sortedEvents = [...input.events].sort((left, right) => left.seq - right.seq);
     const evidenceEvents = sortedEvents.filter((event) => event.seq > input.fromSeqExclusive && isDreamEvidenceEvent(event));
     if (evidenceEvents.length === 0) continue;
@@ -139,11 +167,46 @@ export function buildDreamMemoryExtractionSpanFromEvents(
       messageCount: messages.length,
       charCount: transcript.length,
     });
-    renderedConversations.push(`## Conversation ${input.conversationId}\n${transcript}`);
+    renderedSections.push(`## Conversation ${input.conversationId}\n${transcript}`);
+  }
+
+  for (const input of inputs.agentRuns) {
+    const messages = input.transcriptMessages
+      .filter(isRecordableRuntimeMessage)
+      .slice(input.fromMessageCountExclusive);
+    if (messages.length === 0) continue;
+
+    const transcript = renderDreamRuntimeTranscript(input.subagentRunId, messages, input.fromMessageCountExclusive);
+    if (!transcript.trim()) continue;
+
+    const throughMessageCount = input.fromMessageCountExclusive + messages.length;
+    const source: AgentMemorySource = {
+      kind: 'agent_run',
+      conversationId: input.conversationId,
+      runId: input.subagentRunId,
+      subagentRunId: input.subagentRunId,
+      agentId: input.agentId,
+      messageRange: [
+        agentRunMessageId(input.subagentRunId, input.fromMessageCountExclusive),
+        agentRunMessageId(input.subagentRunId, throughMessageCount - 1),
+      ],
+      eventId: input.transcriptPayloadId ?? undefined,
+      parentToolCallId: input.parentToolCallId,
+    };
+
+    ranges.push({
+      source,
+      fromSeqExclusive: input.fromMessageCountExclusive,
+      throughSeq: throughMessageCount,
+      throughEventId: input.transcriptPayloadId ?? null,
+      messageCount: messages.length,
+      charCount: transcript.length,
+    });
+    renderedSections.push(`## Agent Run ${input.subagentRunId} (${input.agentId}) in Conversation ${input.conversationId}\n${transcript}`);
   }
 
   if (ranges.length === 0) return null;
-  const transcript = truncateDreamTranscript(renderedConversations.join('\n\n'));
+  const transcript = truncateDreamTranscript(renderedSections.join('\n\n'));
   return {
     id: `dream:${runId}`,
     runId,
@@ -260,6 +323,14 @@ function renderDreamTranscript(messages: readonly AgentEventMessageRecord[]): st
   return truncateDreamTranscript(rendered);
 }
 
+function renderDreamRuntimeTranscript(runId: string, messages: readonly AgentMessage[], startIndex: number): string {
+  const rendered = messages
+    .map((message, index) => renderDreamRuntimeMessage(runId, message, startIndex + index))
+    .filter(Boolean)
+    .join('\n\n');
+  return truncateDreamTranscript(rendered);
+}
+
 function renderDreamMessage(message: AgentEventMessageRecord, index: number): string {
   const header = `### ${index}. ${message.role} message ${message.id}${message.runId ? ` (run ${message.runId})` : ''}`;
   const content = renderPersistedContent(message.content);
@@ -267,6 +338,16 @@ function renderDreamMessage(message: AgentEventMessageRecord, index: number): st
   if (message.role === 'toolResult' && message.toolName) details.push(`tool: ${message.toolName}`);
   if (message.outputSummary) details.push(`summary: ${message.outputSummary}`);
   if (message.errorMessage) details.push(`error: ${message.errorMessage}`);
+  const body = [...details, content].filter(Boolean).join('\n');
+  return body ? `${header}\n${body}` : '';
+}
+
+function renderDreamRuntimeMessage(runId: string, message: AgentMessage, index: number): string {
+  const header = `### ${index + 1}. ${message.role} message ${agentRunMessageId(runId, index)} (agent run ${runId})`;
+  const details: string[] = [];
+  if (message.role === 'toolResult' && message.toolName) details.push(`tool: ${message.toolName}`);
+  if (message.role === 'toolResult' && message.isError) details.push('error: true');
+  const content = renderRuntimeContent(message.content);
   const body = [...details, content].filter(Boolean).join('\n');
   return body ? `${header}\n${body}` : '';
 }
@@ -282,6 +363,26 @@ function renderPersistedContent(content: readonly AgentPersistedContent[]): stri
       if (part.type === 'toolCall') return [`tool call: ${part.name} ${JSON.stringify(part.arguments)}`];
       if (part.type === 'image') return [part.alt || part.imageRef.summary || `[image:${part.imageRef.id}]`];
       return [part.label || part.payload.summary || `[payload:${part.payload.id}]`];
+    })
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, DREAM_MESSAGE_CONTENT_CHAR_BUDGET);
+}
+
+function renderRuntimeContent(content: AgentMessage['content']): string {
+  if (typeof content === 'string') return content.trim().slice(0, DREAM_MESSAGE_CONTENT_CHAR_BUDGET);
+  if (!Array.isArray(content)) return '';
+  return content
+    .flatMap((part) => {
+      if (!isRecord(part)) return [];
+      if (part.type === 'text' && typeof part.text === 'string') {
+        if (isHiddenAgentContextBlock(part.text)) return [];
+        return [part.text.trim()];
+      }
+      if (part.type === 'thinking') return ['[thinking omitted]'];
+      if (part.type === 'toolCall') return [`tool call: ${String(part.name ?? 'unknown')} ${JSON.stringify(part.arguments ?? {})}`];
+      if (part.type === 'image') return ['[image]'];
+      return [];
     })
     .filter(Boolean)
     .join('\n\n')

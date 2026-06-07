@@ -189,6 +189,36 @@ describe('agent event store', () => {
     });
   });
 
+  test('falls back to log replay when a checkpoint has a stale replay-state shape', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+        {
+          ...base(sessionId, 2, 'user_message.created', userActor),
+          messageId: 'message-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+      ]);
+      const checkpoint = await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      expect(checkpoint?.seq).toBe(2);
+
+      const checkpointPath = store.checkpointPath(sessionId, 2);
+      const raw = JSON.parse(await readFile(checkpointPath, 'utf8')) as {
+        state: Record<string, unknown>;
+      };
+      delete raw.state.dreamsByMessageId;
+      await writeFile(checkpointPath, `${JSON.stringify(raw)}\n`, 'utf8');
+
+      const replayed = await store.replay(sessionId);
+
+      expect(replayed.latestSeq).toBe(2);
+      expect(replayed.messages['message-1']?.content).toEqual([{ type: 'text', text: 'Hello' }]);
+      expect(replayed.dreamsByMessageId).toEqual({});
+    });
+  });
+
   test('does not write a checkpoint for stale replay state', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';

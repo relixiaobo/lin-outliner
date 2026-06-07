@@ -681,9 +681,13 @@ export interface AgentConversationListMeta {
 
 export interface AgentMemorySourceView {
   conversationId: string;
+  kind?: 'conversation' | 'agent_run';
   summaryId?: string;
   messageRange?: [string, string];
   runId?: string;
+  subagentRunId?: string;
+  agentId?: string;
+  parentToolCallId?: string;
   eventId?: string;
 }
 

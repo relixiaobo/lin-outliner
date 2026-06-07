@@ -155,6 +155,59 @@ describe('agent render projection', () => {
     });
   });
 
+  test('projects Dream markers as boundary rows instead of user bubbles', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Dream' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-before-dream',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Remember concise answers.' }],
+      },
+      {
+        ...base(3, 'dream.finished'),
+        messageId: 'dream-anchor',
+        agentId: 'built-in:tenon:assistant',
+        runId: 'dream-run-1',
+        trigger: 'manual',
+        status: 'completed',
+        startedAt: 1_700_000_000_010,
+        completedAt: 1_700_000_000_020,
+        processed: {
+          conversations: {},
+          totalMessageCount: 1,
+          totalCharCount: 120,
+          consolidateOnly: false,
+        },
+        changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+      },
+      {
+        ...base(4, 'user_message.created', systemActor),
+        messageId: 'dream-anchor',
+        parentMessageId: 'user-before-dream',
+        content: [{ type: 'text', text: systemReminder('Memory Dream completed.') }],
+      },
+      {
+        ...base(5, 'branch.selected'),
+        leafMessageId: 'dream-anchor',
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.rows).toEqual([
+      { id: 'user:user-before-dream', kind: 'message', messageId: 'user-before-dream' },
+      { id: 'dream:dream-anchor', kind: 'dream', messageId: 'dream-anchor', dreamId: 'event-3' },
+    ]);
+    expect(projection.transcriptRows).toEqual(projection.rows);
+    expect(projection.entities.dreams['event-3']).toMatchObject({
+      messageId: 'dream-anchor',
+      runId: 'dream-run-1',
+      status: 'completed',
+      changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+    });
+  });
+
   test('reconstructs consecutive compact boundaries as one transcript timeline', () => {
     const state = replayAgentEvents([
       { ...base(1, 'session.created'), title: 'Nested compaction' },

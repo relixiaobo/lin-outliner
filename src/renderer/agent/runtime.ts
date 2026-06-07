@@ -24,7 +24,9 @@ import type {
 import type { AgentConversation } from '../../core/types';
 import type {
   AgentRenderActiveCompaction,
+  AgentRenderActiveDream,
   AgentRenderCompactionEntity,
+  AgentRenderDreamEntity,
   AgentRenderMessageEntity,
   AgentRenderProjection,
   AgentRenderSubagentEntity,
@@ -58,7 +60,23 @@ export interface AgentActiveCompactionEntry {
 
 export type AgentCompactionEntry = AgentCompletedCompactionEntry | AgentActiveCompactionEntry;
 
-export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry;
+export interface AgentCompletedDreamEntry {
+  id: string;
+  kind: 'dream';
+  status: 'completed';
+  dream: AgentRenderDreamEntity;
+}
+
+export interface AgentActiveDreamEntry {
+  id: string;
+  kind: 'dream';
+  status: 'active';
+  dream: AgentRenderActiveDream;
+}
+
+export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
+
+export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry | AgentDreamEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
@@ -72,6 +90,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationTitle: null,
   activeRunId: null,
   activeCompaction: null,
+  activeDream: null,
   isStreaming: false,
   model: {},
   thinkingLevel: 'off',
@@ -81,7 +100,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   transcriptRows: [],
   taskIds: [],
   subagentRunIds: [],
-  entities: { messages: {}, subagents: {}, compactions: {}, tasks: {} },
+  entities: { messages: {}, subagents: {}, compactions: {}, dreams: {}, tasks: {} },
   streaming: null,
 };
 
@@ -142,6 +161,18 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       }
       continue;
     }
+    if (row.kind === 'dream') {
+      const dream = projection.entities.dreams[row.dreamId];
+      if (dream) {
+        entries.push({
+          id: row.id,
+          kind: 'dream',
+          status: 'completed',
+          dream,
+        });
+      }
+      continue;
+    }
 
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
@@ -167,6 +198,15 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     });
   }
 
+  if (projection.activeDream) {
+    entries.push({
+      id: `active-dream:${projection.activeDream.id}`,
+      kind: 'dream',
+      status: 'active',
+      dream: projection.activeDream,
+    });
+  }
+
   let turnPhase: AgentTurnPhase = 'idle';
   const streamingEntry = entries.find((entry): entry is AgentMessageEntry => (
     entry.kind === 'message' && entry.streaming && entry.message.role === 'assistant'
@@ -187,6 +227,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
 
   const lastEntry = entries[entries.length - 1];
   const shouldAppendAssistantPlaceholder = !projection.activeCompaction
+    && !projection.activeDream
     && projection.isStreaming
     && (
       !lastEntry
