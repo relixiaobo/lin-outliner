@@ -10,6 +10,22 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Changed
+
+- **Harden agent permission approval semantics (PR #154)** — removed conversation-scoped approval from the
+  permission model: approval scopes are now only `once` / `always`, and stale conversation-shaped rule
+  fixtures can no longer relax a configured/default `ask`. `approval.*` UI events and `tool.permission.*`
+  policy events now share one `permission-<uuid>` request id so a single decision is joinable across both
+  families — including the skill-shell path, which now emits the full `tool.permission.checked/resolved`
+  pair (previously it surfaced only the UI half). Denied-reason strings are canonicalized to one contract
+  (`configured_deny`, `policy_denied`, `classifier_blocked`, `classifier_unavailable`, `platform_hard_block`,
+  `run_aborted`, `runtime`, `user_denied`) backed by a single `PERMISSION_DENIED_CONTRACT` table that drives
+  `recoverable` / `resolvedBy` / `source` / `status` for every reason — so durable policy blocks
+  (`tool_denied` / `tool_not_preapproved` → new `policy_denied`) are correctly non-recoverable, and the
+  audit record can no longer contradict itself (e.g. a runtime denial is no longer logged as `user_once`).
+  Gate: typecheck + `test:core` 662/0 + `test:renderer` 356/0 + 7-angle high-effort review → 7 findings, all
+  fixed before merge (29dd688) with regression tests. ([#154](https://github.com/relixiaobo/lin-outliner/pull/154))
+
 ### Added
 
 - **Agent M1: canonical DM + Channels, ask_user_question, self-maintenance, skills self-authoring (PR #153)** —

@@ -334,6 +334,14 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-tool-permissions-hardening** (codex, PR #154) — hardened agent permission approval: removed
+  conversation-scoped approval (scopes now `once`/`always` only), unified `approval.*` + `tool.permission.*`
+  onto one `permission-<uuid>` join id (skill-shell now emits the full checked/resolved pair), and
+  canonicalized denied reasons into a single `PERMISSION_DENIED_CONTRACT` table driving
+  recoverable/resolvedBy/source/status (new `policy_denied` for durable `tool_denied`/`tool_not_preapproved`).
+  Closes hardening-plan items #1/#4/#5. Gate: high-effort 7-angle review → 7 findings, all fixed by codex
+  (29dd688) with regression tests; typecheck + `test:core` 662/0 + `test:renderer` 356/0.
+
 - **agent-m1-complete** (codex, PR #153) — clean-cut agent M1: canonical single-agent DM + Channels vocabulary
   (list/rename/delete operate on Channels; default-channel delete falls back to the DM), mixed-resolution
   compaction (source-ranged events + bounded mixed history), `ask_user_question` v1 (main-agent-only,
