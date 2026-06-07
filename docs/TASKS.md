@@ -155,24 +155,11 @@ interface PR (see its bullet below).
   runtime). Owns the detailed design of the M0 seams it analyzed (identity, `actor`,
   session→conversation, `AgentSessionState` split). See
   `docs/plans/agent-conversation-model.md`.
-- **agent-dream-memory** (P2, M2, plan drafted — **NEXT agent build, PM-directed
-  2026-06-07, pulled ahead of the rest of M1**) — durable memory write-back modeled
-  as the agent's **reflective `run`** (no-tools, agent-level anchor, writes memory),
-  triggered by a **`date` schedule** (reusing scheduled-routines' machinery) plus a
-  manual **`/dream`**; not per-turn, no idle detection. Awake = read-only
-  `<agent-memory>`/`recall`; sleep = one pass that extracts + consolidates. Gates:
-  hard `lock`/`canRun`, plus a `DREAM_MIN_VOLUME` heuristic on the auto path
-  (`/dream` bypasses → consolidate-only if nothing new). **Redirects #159's per-turn
-  trigger** (reuses its worker/isolation/provenance internals). **Build order
-  (plan §Execution order):** ① the shared per-agent **`date` scheduler primitive**
-  (**core kernel landed, PR #161** — `src/core/dateSchedule.ts`; generic
-  date-field/UI/command-node wiring still in `agent-scheduled-routines`) → ②
-  **`RunMeta` agent-level anchor generalization** (**landed, PR #162** — the
-  `AgentRunAnchor` discriminated union, interface-first, behavior-neutral) → ③
-  **Dream thin assembly** (reuses #159's worker) — **both prerequisites are in;
-  ③ is now unblocked and is the next build.** Detailed design for conversation-
-  model's `Offline consolidation` item; codex building. See
-  `docs/plans/agent-dream-memory.md`.
+- **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
+  durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
+  daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
+  `docs/spec/` (agent-tool-design / conversation-model offline-consolidation); plan archived at
+  `docs/plans/archive/agent-dream-memory.md`. Polish tracked in `agent-dream-followups` (P3) below.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -233,6 +220,15 @@ Standalone agent items (not part of the program):
   (e.g. skip/redact obvious secret patterns / high-entropy strings before
   add/update), accepting it is heuristic and imperfect. Memory store is plaintext at
   rest like the secrets store — see `[[agent-secrets-plaintext-decision]]`.
+- **agent-dream-followups** (P3, *no plan file*) — polish deferred from #163 (Dream thin assembly,
+  now landed): (a) **per-agent schedule UI** — Dream uses a built-in daily cadence; expose a Settings
+  field / the shared `date` routine surface. (b) **large-backlog chunking** — a single Dream pass is
+  bounded by the ~60k-char transcript budget; iterate a big historical backlog across multiple passes.
+  (c) **precise cross-conversation provenance** — an `add` currently tags a new fact with *all* processed
+  conversations' sources (the model doesn't say which one a fact came from); attribute per-conversation.
+  (d) **running-Dream read-only test** — the read-only guard is covered for a completed Dream row only;
+  add a running-Dream case. (e) **un-transacted `dream.completed`/run-meta status** — a failed second
+  write leaves the task row labeled `failed` though memory + watermark committed (cosmetic).
 - **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
   agent projection so the agent can read/insert them.
 - **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
@@ -360,6 +356,15 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-dream-memory** (codex, PR #163) — Dream prerequisite ③ thin assembly; **closes the Dream milestone**
+  (① #161 + ② #162 + ③ #163). Memory write-back is now an agent-level reflective run on a built-in daily
+  schedule or manual `/dream`, replacing #159's per-turn extraction; `fire(agent, source)` gates (lock /
+  provider / 1000-char MIN_VOLUME / consolidate-only); per-conversation watermark cursor in a new
+  `dream.completed` event; reuses #159's no-tools worker + `applyDreamMemoryActions` (isolation/provenance
+  intact); agent-anchored runs kept out of conversation indexes (#162 invariant); task panel gains a shared
+  task projection + read-only Dream rows. Gate: typecheck + `test:core` 680/0 + `test:renderer` 358/0; four
+  finder passes clean; light/dark visual verification; one visual finding (meta truncation) fixed before
+  merge. Plan flipped `done` → `docs/plans/archive/`. Follow-ups → `agent-dream-followups` (P3).
 - **agent-run-anchor** (codex, PR #162) — Dream prerequisite ②, interface-first: `AgentRunMeta` replaces flat
   `conversationId` with the PM-ratified `anchor: AgentRunAnchor` discriminated union (`conversation` | `agent`)
   + a `conversationIdOfRun` accessor; `RunStartedEvent.anchor` added. Behavior-neutral (all current runs

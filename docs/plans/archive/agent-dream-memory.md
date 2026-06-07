@@ -1,10 +1,15 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: codex
 created: 2026-06-07
 updated: 2026-06-07
 ---
+
+> **Done — landed across PR #161 (① date scheduler primitive), #162 (② run-anchor
+> generalization), #163 (③ thin assembly).** Design folded into `docs/spec/`
+> (agent-tool-design / conversation-model offline consolidation). Remaining polish
+> is tracked as `agent-dream-followups` (P3) in `docs/TASKS.md`. Kept as history.
 
 # Agent Dream — Scheduled Reflective Memory Run
 

@@ -100,6 +100,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Dream — scheduled reflective memory consolidation (PR #163)** — Dream prerequisite ③, the thin
+  assembly that makes Dream a real, visible capability. Memory write-back now happens in an agent-level
+  **reflective run** triggered by a built-in **daily schedule** or a manual **`/dream`** (replacing #159's
+  per-turn inline extraction); during waking hours the agent still only reads durable memory. `fire(agent,
+  source)` gates the run: a per-agent in-flight **lock**, **provider/online** check, a **1,000-rendered-char**
+  new-evidence minimum on the auto path (`/dream` bypasses → consolidate-only when nothing is new). Evidence
+  is raw conversation events since a **per-conversation watermark cursor** (persisted in a new `dream.completed`
+  memory event with processed ranges + change counts); `memory.*`/`dream.*` are excluded so a Dream's own
+  writes never re-trigger it. The run reuses #159's no-tools `completeSimple` + `applyDreamMemoryActions`
+  (isolation/provenance/dedup intact: `read-only-global` writes nothing, `isolated` stays scoped). Dream runs
+  are agent-anchored (`{ type: 'agent' }`, PR #162) and indexed in a per-agent run index, kept out of every
+  conversation index/replay/delete cascade. The task panel gains a shared render task projection (`taskIds` +
+  `entities.tasks`) and renders Dream as a **read-only** row (trigger · processed count · memory-change count
+  · time); subagent open/stop stays subagent-only. Protocol additions are additive (`reflective` run kind,
+  `schedule` trigger, `dream.completed`). Gate: typecheck + `test:core` 680/0 + `test:renderer` 358/0; four
+  finder passes (gating/watermark, agent-anchored persistence, task projection, security/isolation) clean;
+  light/dark visual verification; one visual finding (Dream meta row truncation) fixed before merge.
+  Follow-ups tracked: Settings schedule UI, large-backlog chunking, precise cross-conversation provenance.
+  ([#163](https://github.com/relixiaobo/lin-outliner/pull/163))
+
 - **Generalize the agent run anchor (PR #162)** — Dream prerequisite ②, an interface-first protocol change
   on the agent run-meta surface. `AgentRunMeta` replaces its flat mandatory `conversationId` with the
   PM-ratified `anchor: AgentRunAnchor` discriminated union (`{ type: 'conversation'; agentId; conversationId }`
