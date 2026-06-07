@@ -140,8 +140,11 @@ loose set of plans. **`agent-program`** (`meta`) is the umbrella: it owns the L0
 foundation (**M0**, interface-first), the cross-plan **event taxonomy**, the consolidated
 protocol-surface change list, the dependency graph, and the milestones **M0 foundation →
 M1 single-agent self → M2 off-floor+extension → M3 multi-agent**. Members below reference
-it; standalone agent items (not in the program) follow at the end. **The program +
-member reorg is drafted; pending PM ratification before M0 starts.**
+it; standalone agent items (not in the program) follow at the end. **The program is
+PM-ratified; M0 + M0.5 landed (#150/#151) and M1 started (memory v1, #152).** **Next
+agent build (PM-directed 2026-06-07): `agent-dream-memory`, pulled ahead of the rest
+of M1** — start with its shared `date` scheduler primitive + the `RunMeta` agent-anchor
+interface PR (see its bullet below).
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
@@ -152,18 +155,23 @@ member reorg is drafted; pending PM ratification before M0 starts.**
   runtime). Owns the detailed design of the M0 seams it analyzed (identity, `actor`,
   session→conversation, `AgentSessionState` split). See
   `docs/plans/agent-conversation-model.md`.
-- **agent-dream-memory** (P2, M2, plan drafted) — durable memory write-back modeled
+- **agent-dream-memory** (P2, M2, plan drafted — **NEXT agent build, PM-directed
+  2026-06-07, pulled ahead of the rest of M1**) — durable memory write-back modeled
   as the agent's **reflective `run`** (no-tools, agent-level anchor, writes memory),
   triggered by a **`date` schedule** (reusing scheduled-routines' machinery) plus a
   manual **`/dream`**; not per-turn, no idle detection. Awake = read-only
   `<agent-memory>`/`recall`; sleep = one pass that extracts + consolidates. Gates:
   hard `lock`/`canRun`, plus a `DREAM_MIN_VOLUME` heuristic on the auto path
   (`/dream` bypasses → consolidate-only if nothing new). **Redirects #159's per-turn
-  trigger** (reuses its worker/isolation/provenance internals). Headline protocol
-  decision: generalize `RunMeta`'s conversation anchor to an agent-level run
-  (interface-first). Detailed design for conversation-model's `Offline consolidation`
-  item. PM-directed (2026-06-07); another dev agent to build. See
-  `docs/plans/agent-dream-memory.md`.
+  trigger** (reuses its worker/isolation/provenance internals). **Build order
+  (plan §Execution order):** ① the shared per-agent **`date` scheduler primitive**
+  (does not exist yet — shared with `agent-scheduled-routines`, foundation-first
+  A7) → ② **`RunMeta` agent-level anchor generalization** (protocol surface A4 —
+  **interface-only PR, PM-ratified first**) → ③ Dream thin assembly (reuses #159's
+  worker). ① and ② parallelize; ③ depends on both. **First move: draft the ②
+  interface one-pager for PM ratification, start ① in parallel.** Detailed design
+  for conversation-model's `Offline consolidation` item; another dev agent to build.
+  See `docs/plans/agent-dream-memory.md`.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -198,7 +206,10 @@ member reorg is drafted; pending PM ratification before M0 starts.**
 - **agent-scheduled-routines** (P2, M2) — a "command node" whose content is a
   natural-language brief to the agent; setting its `date` field (one field
   carrying both *when to start* and *how to repeat*) makes it run on a schedule.
-  Needs the `AgentSessionState` split (M0). See `docs/plans/agent-scheduled-routines.md`.
+  Needs the `AgentSessionState` split (M0). **Its per-agent `date` scheduler
+  primitive is now on `agent-dream-memory`'s critical path (Dream is its first
+  consumer) — build the primitive once, shared, so the two don't fork it.** See
+  `docs/plans/agent-scheduled-routines.md`.
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
@@ -348,6 +359,16 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-task-panel** (codex, PR #160) — a side panel listing a conversation's subagent runs, opened from a
+  Tasks toggle in the agent composer (mutually exclusive with the subagent-details pane). `buildAgentTaskEntries`
+  derives the list from the projection, totally/stably ordered by status rank → `updatedAt` desc → id; each row
+  opens the transcript or stops a running subagent (`agent_subagent_stop`, guarded, errors as `role="alert"`).
+  New `agent.task.*` i18n (en + zh-Hans). Gate: typecheck + `test:core` 661/0 + `test:renderer` 356/0 +
+  light/dark visual verification; medium review (no protocol/security surface) — no correctness bugs, the two
+  design-token notes were pre-existing clones. **Follow-up a11y polish landed on `main` after merge:** Tasks
+  toggle `aria-label` now carries the running count (`agent.task.openPanelActive`), and the running/idle summary
+  is an `aria-live="polite"` region (the React-19 unmount-setState finding was a non-issue; `aria-expanded` left
+  as-is — it correctly tracks visibility).
 - **agent-dream-extraction** (codex, PR #159) — the automatic write half of the #157 M2 write authority:
   runtime-owned per-turn Dream extraction. After each completed foreground run, a fire-and-forget worker sends
   the raw turn evidence + visible memory through a bounded no-tools model call and applies add/update/forget to

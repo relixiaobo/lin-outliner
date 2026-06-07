@@ -47,6 +47,31 @@ Durable memory is (re)written only by the Dream run.
 - **Storage format, isolation tiers, `originWorkspace`, provenance, undo
   invalidation** — all from #157/#158/#159 stand unchanged.
 
+## Execution order (pulled forward — the next agent build)
+
+**PM-directed 2026-06-07: Dream is the next agent capability to build**, ahead of
+the rest of M1. It is not yet `in-progress` — it has two prerequisites that gate
+the thin Dream assembly, and the first behavior must not be written against an
+interim shape (A7). Build in this order:
+
+1. **`date` scheduler primitive (shared infra).** A per-agent `date`-driven
+   scheduler (one field = when + repeat) does **not exist yet**; it is shared with
+   [[agent-scheduled-routines]] (also draft). Land it **once**, as the common
+   trigger machinery both consume — Dream is its first consumer. *Foundation
+   before consumers (A7); coordinate so routines and Dream don't fork it.*
+2. **`RunMeta` anchor generalization (interface-first, PM ratify).** Make a run
+   anchor to an **agent** and *optionally* target a conversation (§Protocol cost —
+   touches `src/core/types.ts` / `agentEventLog.ts`, the protocol surface, A4).
+   Land as an **interface-only PR first, PM-ratified**, before any Dream behavior
+   builds on it.
+3. **Dream thin assembly.** Per-agent state + `fire(agent, source)` gates + the
+   reflective run, reusing #159's worker/apply path verbatim (§Reuse). The small
+   part — mostly wiring the two prerequisites together.
+
+Steps 1 and 2 are independent (parallelizable on separate branches); step 3
+depends on both. Only (2) needs ratification before code. **First actionable move:
+draft the (2) interface one-pager for PM ratification and start (1) in parallel.**
+
 ## Design
 
 ### Dream is a run; **trigger and run-type are orthogonal axes**

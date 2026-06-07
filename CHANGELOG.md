@@ -100,6 +100,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent task panel for subagent runs (PR #160)** — a dedicated side panel listing the conversation's
+  subagent runs, opened from a Tasks toggle in the agent composer chrome (mutually exclusive with the
+  subagent-details pane). `buildAgentTaskEntries` derives the list from the projection
+  (`subagentRunIds` + `entities.subagents`), titled by description→name→id, subtitled
+  `contextMode · subagentType · N messages · time`, and totally/stably ordered by status rank
+  (running→failed→stopped→completed) then `updatedAt` desc then id. Each row opens the subagent transcript
+  or, for a running subagent, stops it through `agent_subagent_stop` (guarded; errors surface as a
+  `role="alert"`). New `agent.task.*` i18n keys (en + zh-Hans). Gate: typecheck + `test:core` 661/0 +
+  `test:renderer` 356/0 (incl. new `agentRuntimeStore`/`agentSubagentUi` coverage) + light/dark visual
+  verification. Follow-up a11y polish landed on `main` after merge: the Tasks toggle's `aria-label` now
+  carries the running count (the badge was visual-only) via a new `agent.task.openPanelActive` key, and the
+  running/idle summary is an `aria-live="polite"` region so screen readers hear count changes.
+  ([#160](https://github.com/relixiaobo/lin-outliner/pull/160))
+
 - **Agent M1: canonical DM + Channels, ask_user_question, self-maintenance, skills self-authoring (PR #153)** —
   a clean-cut M1 build across the agent stack: a canonical single-agent DM plus a Channels vocabulary
   (restore finds/creates the built-in assistant DM; public list/rename/delete operate on Channels; default
