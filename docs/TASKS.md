@@ -208,14 +208,15 @@ terminal result, not a mid-run ask) — see the M2 milestone row in `agent-progr
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-authoring** (P2, M2, *draft — for a dev to pick up*) — the user-facing path
-  to **create / edit / duplicate / manage agent definitions** (`AGENT.md` persona files),
-  the agent-side analogue of `agent-skills-authoring`. Today authoring is filesystem-only
-  + restart-required and settings is read-only; this adds a registry write + hot-reload
-  (main), a create/edit UI (settings), and a directories-UI + disable-by-identity cleanup.
-  **Scoped to run in parallel with `agent-scheduled-routines`**: reuses the existing
-  `AgentDefinition` shape and deliberately does **not** touch `src/core/types.ts`. Model-
-  driven authoring is a non-goal (write surface stays user-driven). See
+- **agent-authoring** (P2, M2, **in-progress — core shipped in #167**) — the user-facing
+  create / edit / duplicate / manage path for agent definitions (`AGENT.md`) landed (Form⇄Raw
+  editor, hot-reload, disable-by-identity, + subagent system-prompt unification). **Remaining
+  follow-ups** (from the #167 review gate): (a) **consolidate the two AGENT.md parsers** —
+  `core/agentMarkdown.ts` vs the registry loader's own copy in `agentSubagents.ts` (byte-equal
+  today, drift risk); (b) agents from `additionalAgentDirectories` show Save/Delete but every
+  write rejects on containment → render them **read-only** like built-ins; (c) an `effort` value
+  outside the 6 catalog options renders as `off` in the form `<select>`; (d) `TOOL_CATALOG` has
+  no compile-time link to the real tool registry → guard-test against `filterAgentTools`. See
   `docs/plans/agent-authoring.md`.
 Standalone agent items (not part of the program):
 
@@ -379,6 +380,20 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-authoring** (cc, PR #167) — user-facing **create / edit / duplicate / manage agent definitions**
+  (`AGENT.md` persona files), the agent-side analogue of skills authoring (M2). One **Form ⇄ Raw editor**
+  for every agent (built-ins read-only with "Duplicate to my agents"), global-vs-workspace storage choice,
+  and **hot-reload** into the subagent picker + settings list with no restart; new `AGENT.md` format module
+  (`src/core/agentMarkdown.ts`); `disabledAgents` re-keyed on `agentId` (same-named agents from different
+  sources disable independently). Also folds in **subagent system-prompt unification** — a fresh subagent
+  reuses the shared core of the main prompt + a headless directive (built-in `general` collapses to a
+  zero-persona default). Non-goal held: the **model** never reaches the write surface (user-driven only);
+  no `AgentDefinition`/`types.ts` change (clean-parallel with `agent-scheduled-routines`). Gate: max-effort
+  `/code-review` (5 finder angles + security + sweep) → a **confirmed symlink containment escape** (lexical
+  path check let a hostile-workspace `.agents/agents` symlink redirect a write outside the agents root) was
+  fixed at the gate with realpath resolution + regression test, plus a disabled-row dead-end and a
+  missing settings-changed broadcast; typecheck + `test:core` 720/0 + `test:renderer` 369/0. Residual
+  low items → `agent-authoring` follow-ups (a)–(d) in Backlog.
 - **agent-notifications** (cc, PR #166) — off-floor **notifications + attention delivery** so long-running
   background tasks/subagents don't go silent (M2, plan-less; needs-input deferred — subagents surface a
   clarification via their **terminal result**, not a mid-run ask). Per-conversation unread is event-sourced

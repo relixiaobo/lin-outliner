@@ -100,6 +100,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent authoring & management (PR #167)** — create, edit, duplicate, enable/disable, and locate your
+  own **agent definitions** (`AGENT.md` persona files) from Settings → Agents, without hand-editing files
+  or restarting. One **Form ⇄ Raw editor** serves every agent (built-ins are read-only with "Duplicate to
+  my agents"); you choose global (`~/.agents/agents`) vs workspace (`<project>/.agents/agents`) storage, and
+  changes **hot-reload** into the subagent picker and list. A new `AGENT.md` format module
+  (`src/core/agentMarkdown.ts`) round-trips the serialize/parse pair, and `disabledAgents` is now keyed on
+  the full agent identity so same-named agents from different sources disable independently. The **model
+  never reaches the write surface** — authoring is user-driven only (mirrors the closed memory-write
+  surface). Also unifies the **subagent system prompt**: a fresh subagent now reuses the shared core of the
+  main system prompt (capabilities / tool conventions / safety) plus a headless directive, and built-in
+  `general` collapses to a zero-persona default. *Note:* re-keying `disabledAgents` from name to identity is
+  a stored-settings change with no migration — a pre-existing disabled agent re-enables once (wipe dev
+  `userData`), per the pre-release no-back-compat policy.
 - **Agent notifications + off-floor attention delivery (PR #166)** — long-running background tasks and
   subagents no longer go silent. Per-conversation unread is event-sourced (`notification.created` /
   `notification.read`) and folded incrementally onto the persisted conversation index, so a badge is **seeded
