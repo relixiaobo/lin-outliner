@@ -81,6 +81,7 @@ import {
 import {
   nodeReferenceMarkersToText,
   rewriteFileReferenceMarkerPaths,
+  richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
 } from '../core/referenceMarkup';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
@@ -118,7 +119,7 @@ import {
 } from './agentDreamExtraction';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
-import { selectDueCommands, type DueCommand } from './commandScheduler';
+import { liveCommandNodeIds, selectDueCommands, type DueCommand } from './commandScheduler';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
@@ -213,6 +214,7 @@ import type {
   AgentConversationListMeta,
   AgentMemoryEntryView,
   AgentSlashCommandView,
+  DocumentProjection,
 } from '../core/types';
 import { ASK_USER_QUESTION_TOOL_NAME, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import {
@@ -439,6 +441,9 @@ export class AgentRuntime {
   private readonly firingCommandNodeIds = new Set<string>();
   private readonly commandFailureCounts = new Map<string, number>();
   private readonly commandBackoffUntil = new Map<string, number>();
+  // Command nodes that have a delivery conversation this session, so the sweep
+  // can delete the conversation when the node is permanently removed.
+  private readonly knownCommandConversationNodeIds = new Set<string>();
   private agentTaskCache: AgentRenderTaskEntity[] = [];
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
@@ -1922,6 +1927,15 @@ export class AgentRuntime {
     (this.commandSchedulerTimer as { unref?: () => void }).unref?.();
   }
 
+  // Teardown for the recurring scheduler timer (called on dispose / before-quit).
+  // `.unref()` already keeps it from blocking exit; this stops it cleanly so a
+  // disposed runtime (e.g. a test instance) leaves no live interval behind.
+  stopCommandScheduler() {
+    if (!this.commandSchedulerTimer) return;
+    clearInterval(this.commandSchedulerTimer);
+    this.commandSchedulerTimer = null;
+  }
+
   // Catch-up hook for app launch (see ready()) and `powerMonitor.resume` (wired
   // in main.ts). Idle-safe: queued behind any in-flight sweep.
   runCommandCatchUp() {
@@ -1935,29 +1949,65 @@ export class AgentRuntime {
   }
 
   private async sweepCommandSchedules(now: Date) {
-    let due: DueCommand[];
+    let projection;
     try {
-      due = selectDueCommands(this.outlinerToolHost.getProjection(), now);
+      projection = this.outlinerToolHost.getProjection();
     } catch {
       return;
     }
+    this.pruneCommandRuntimeState(projection);
+    const due = selectDueCommands(projection, now);
     for (const command of due) {
       if (this.firingCommandNodeIds.has(command.nodeId)) continue;
       const backoffUntil = this.commandBackoffUntil.get(command.nodeId);
       if (backoffUntil !== undefined && backoffUntil > now.getTime()) continue;
-      await this.fireCommand(command, now);
+      // Fire concurrently — do NOT await here. `fireCommand` self-guards via
+      // `firingCommandNodeIds` and never rejects, so one slow/hung command can't
+      // block the others (or, via the sweep tail, every subsequent sweep).
+      void this.fireCommand(command, now);
+    }
+  }
+
+  // Reconcile in-memory command state against the live document: prune backoff
+  // entries for nodes that no longer exist, and delete the delivery conversation
+  // of a command node that was permanently removed (trashed nodes are still
+  // present, so their conversation is preserved for restore).
+  private pruneCommandRuntimeState(projection: DocumentProjection) {
+    if (
+      this.commandFailureCounts.size === 0
+      && this.commandBackoffUntil.size === 0
+      && this.knownCommandConversationNodeIds.size === 0
+    ) return;
+    const live = liveCommandNodeIds(projection);
+    for (const nodeId of [...this.commandFailureCounts.keys()]) {
+      if (!live.has(nodeId)) this.commandFailureCounts.delete(nodeId);
+    }
+    for (const nodeId of [...this.commandBackoffUntil.keys()]) {
+      if (!live.has(nodeId)) this.commandBackoffUntil.delete(nodeId);
+    }
+    for (const nodeId of [...this.knownCommandConversationNodeIds]) {
+      if (live.has(nodeId)) continue;
+      this.knownCommandConversationNodeIds.delete(nodeId);
+      void this.deleteConversation(
+        conversationIdFromSessionId(this.commandConversationSessionId(nodeId)),
+      ).catch(() => undefined);
     }
   }
 
   private async fireCommand(command: DueCommand, now: Date) {
     this.firingCommandNodeIds.add(command.nodeId);
+    this.knownCommandConversationNodeIds.add(command.nodeId);
     try {
       await this.startTriggeredRun(command);
       // Success: advance the watermark (system origin — never agent-written) so
-      // the occurrence is not re-fired, and clear any failure backoff.
+      // the occurrence is not re-fired, and clear any failure backoff. Use the
+      // COMPLETION time, not the sweep-start `now`: a run that straddled the next
+      // occurrence boundary would otherwise leave a watermark before it and
+      // double-fire. `markCommandFired` is forward-only, so this never regresses
+      // a fresher user re-arm.
       await this.outlinerToolHost.handle(
         'mark_command_fired',
-        { nodeId: command.nodeId, firedAt: now.getTime() },
+        { nodeId: command.nodeId, firedAt: Date.now() },
         { origin: 'system', summary: 'Command schedule fired.' },
       );
       this.commandFailureCounts.delete(command.nodeId);
@@ -1989,7 +2039,10 @@ export class AgentRuntime {
   // A scheduled fire: no human turn, `schedule` trigger.
   private async startTriggeredRun(command: DueCommand): Promise<void> {
     const brief = command.brief.trim();
-    if (!brief) return; // an empty command has nothing to run
+    // Defensive: `selectDueCommands` already drops empty-brief commands, so this
+    // throw is unreachable in normal operation — but it guarantees an empty
+    // command can never reach the watermark advance in `fireCommand`.
+    if (!brief) throw new Error('This command has no brief to run.');
     await this.runCommandTurn(this.commandConversationSessionId(command.nodeId), brief, command.lastSuccessAt, {
       type: 'schedule',
       schedule: command.schedule,
@@ -2003,11 +2056,27 @@ export class AgentRuntime {
   async runCommandNow(nodeId: string): Promise<{ conversationId: string }> {
     const node = this.outlinerToolHost.getProjection().nodes.find((entry) => entry.id === nodeId);
     if (!node || node.type !== 'command') throw new Error('Not a command node.');
-    const brief = node.content.text.trim();
-    if (!brief) throw new Error('This command has no brief to run.');
     const sessionId = this.commandConversationSessionId(nodeId);
-    await this.runCommandTurn(sessionId, brief, node.sysLastRunAt ?? null, { type: 'node', nodeId });
-    return { conversationId: conversationIdFromSessionId(sessionId) };
+    // Coordinate with the scheduled sweep via the same guard set. If a fire (or
+    // another Run-now) for this node is already in flight, surface the existing
+    // delivery conversation instead of starting a colliding second run — and the
+    // sweep, which skips nodes in this set, won't treat the attended run as a
+    // schedule failure.
+    if (this.firingCommandNodeIds.has(nodeId)) {
+      return { conversationId: conversationIdFromSessionId(sessionId) };
+    }
+    // Reconstruct inline references so an attended run sees the same brief a
+    // scheduled fire does (see `selectDueCommands`).
+    const brief = richTextToReferenceMarkup(node.content).trim();
+    if (!brief) throw new Error('This command has no brief to run.');
+    this.firingCommandNodeIds.add(nodeId);
+    this.knownCommandConversationNodeIds.add(nodeId);
+    try {
+      await this.runCommandTurn(sessionId, brief, node.sysLastRunAt ?? null, { type: 'node', nodeId });
+      return { conversationId: conversationIdFromSessionId(sessionId) };
+    } finally {
+      this.firingCommandNodeIds.delete(nodeId);
+    }
   }
 
   // Shared no-human-turn execution for command runs (scheduled + Run-now). The
@@ -2027,10 +2096,20 @@ export class AgentRuntime {
     this.beginDebugQuery(session);
     const now = new Date();
     const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, brief, session);
+    // Like an interactive turn (sendMessage), the model needs the skill/subagent
+    // listings to discover and use them — a brief that says "use the /weather
+    // skill" or "delegate to the research subagent" is otherwise blind to them.
+    const skillListingReminder = await this.buildSkillListingReminder(session);
+    const agentListingReminder = await this.buildAgentListingReminder(session);
     const prompt = buildUserPromptMessage(
       buildTriggeredCommandPrompt(brief, lastSuccessAt),
       [],
-      { memoryReminder, outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost) },
+      {
+        memoryReminder,
+        outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
+        skillListingReminder,
+        agentListingReminder,
+      },
       now,
     );
     await this.appendUserPromptEvent(sessionId, session, prompt);
@@ -2038,6 +2117,13 @@ export class AgentRuntime {
     await session.agent.prompt(prompt);
     await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
     await this.persistAndEmitIdle(sessionId, session);
+    // A failed run resolves `prompt()` normally (the executor error is captured
+    // as state, not thrown), so detect it here and propagate — otherwise a
+    // scheduled fire that errored (no provider, bad key, rate limit) would be
+    // treated as success and advance the watermark, defeating the failure
+    // backoff. `errorMessage` is cleared at the start of every run.
+    const runError = session.agent.state.errorMessage;
+    if (runError) throw new Error(runError);
   }
 
   private queueScheduledDream(now: Date) {

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import {
-  describeDateSchedule,
   formatDateSchedule,
+  isWeekdayPreset,
   parseDateSchedule,
+  WEEKDAY_PRESET,
   type DateRecurrenceRule,
   type DateSchedule,
 } from '../../../core/dateSchedule';
@@ -13,10 +14,12 @@ import {
 } from '../../../core/dateFieldValue';
 
 // Recurrence presets exposed in the editor (a Todoist-style "Repeat" set). The
-// custom `INTERVAL` / multi-day `BYDAY` rules the schedule string can express are
-// reachable by editing the agent-proposed value; the preset list keeps manual
-// authoring simple.
-export type CommandRecurrencePreset = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly';
+// canonical schedule string can express richer rules (custom `INTERVAL`, a
+// multi-day `BYDAY`) — typically proposed by the agent as text — which don't map
+// to a simple preset. Those are preserved verbatim under the `custom` option so
+// opening the editor to tweak the time never silently downgrades the rule.
+export type CommandRecurrencePreset =
+  | 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
 export interface CommandNodeControlsLabels {
   enableSchedule: string;
@@ -28,7 +31,6 @@ export interface CommandNodeControlsLabels {
   time: string;
   repeat: string;
   ends: string;
-  manualOnly: string;
   recurrence: Record<CommandRecurrencePreset, string>;
 }
 
@@ -44,13 +46,18 @@ export interface CommandNodeControlsProps {
   busy?: boolean;
 }
 
-const PRESETS: readonly CommandRecurrencePreset[] = ['none', 'daily', 'weekdays', 'weekly', 'monthly', 'yearly'];
+// The presets a user can pick from the dropdown. `custom` is never freely
+// selectable — it only appears (pre-selected) when the armed schedule already
+// carries a rule no preset represents, so the user can keep it as-is.
+const SELECTABLE_PRESETS: readonly CommandRecurrencePreset[] = [
+  'none', 'daily', 'weekdays', 'weekly', 'monthly', 'yearly',
+];
 
 export function CommandNodeControls(props: CommandNodeControlsProps) {
   const { schedule, labels, onSetSchedule, onRunNow, readOnly, busy } = props;
   const [editing, setEditing] = useState(false);
 
-  const summary = useMemo(() => (schedule ? describeDateSchedule(schedule) : ''), [schedule]);
+  const summary = useMemo(() => (schedule ? scheduleChipSummary(schedule, labels) : ''), [schedule, labels]);
 
   return (
     <div className="command-node-controls" data-testid="command-node-controls">
@@ -109,7 +116,14 @@ function CommandScheduleEditor({ schedule, labels, onCancel, onClear, onSave }: 
   const [preset, setPreset] = useState<CommandRecurrencePreset>(initial.preset);
   const [until, setUntil] = useState(initial.until);
 
-  const next = date ? buildScheduleString({ date, time, preset, until }) : null;
+  // An "Ends" date before the start would arm a schedule that can never fire;
+  // block Save (and constrain the picker) rather than store a silently-dead rule.
+  const untilBeforeStart = until !== '' && date !== '' && until < date;
+  const next = !date || untilBeforeStart
+    ? null
+    : buildScheduleString({ date, time, preset, until, rule: initial.rule });
+
+  const presetOptions = preset === 'custom' ? (['custom', ...SELECTABLE_PRESETS] as const) : SELECTABLE_PRESETS;
 
   return (
     <div className="command-schedule-editor">
@@ -124,7 +138,7 @@ function CommandScheduleEditor({ schedule, labels, onCancel, onClear, onSave }: 
       <label className="command-schedule-field">
         <span>{labels.repeat}</span>
         <select value={preset} onChange={(event) => setPreset(event.target.value as CommandRecurrencePreset)}>
-          {PRESETS.map((option) => (
+          {presetOptions.map((option) => (
             <option key={option} value={option}>{labels.recurrence[option]}</option>
           ))}
         </select>
@@ -132,7 +146,12 @@ function CommandScheduleEditor({ schedule, labels, onCancel, onClear, onSave }: 
       {preset !== 'none' && (
         <label className="command-schedule-field">
           <span>{labels.ends}</span>
-          <input type="date" value={until} onChange={(event) => setUntil(event.target.value)} />
+          <input
+            type="date"
+            value={until}
+            min={date || undefined}
+            onChange={(event) => setUntil(event.target.value)}
+          />
         </label>
       )}
       <div className="command-schedule-editor__actions">
@@ -157,32 +176,51 @@ interface FormState {
   time: string;
   preset: CommandRecurrencePreset;
   until: string;
+  /** The originally-parsed recurrence, preserved for the `custom` preset. */
+  rule: DateRecurrenceRule | null;
 }
 
 function formStateFromSchedule(schedule: string | null): FormState {
   const parsed = schedule ? parseDateSchedule(schedule) : null;
-  if (!parsed) return { date: '', time: '', preset: 'none', until: '' };
+  if (!parsed) return { date: '', time: '', preset: 'none', until: '', rule: null };
   return {
     date: dateFieldEndpointDate(parsed.anchor),
     time: dateFieldEndpointTime(parsed.anchor),
     preset: presetFromRule(parsed.recurrence),
     until: parsed.recurrence?.until ? dateFieldEndpointDate(parsed.recurrence.until) : '',
+    rule: parsed.recurrence ?? null,
   };
 }
 
 function presetFromRule(rule: DateSchedule['recurrence']): CommandRecurrencePreset {
   if (!rule) return 'none';
-  if (rule.frequency === 'weekly') {
-    const isWeekdays = rule.byDay?.length === 5
-      && ['MO', 'TU', 'WE', 'TH', 'FR'].every((day) => rule.byDay?.includes(day as never));
-    return isWeekdays ? 'weekdays' : 'weekly';
+  if (rule.interval > 1) return 'custom'; // every-N-units has no plain preset
+  switch (rule.frequency) {
+    case 'daily':
+      return 'daily';
+    case 'weekly':
+      if (!rule.byDay || rule.byDay.length === 0) return 'weekly';
+      return isWeekdayPreset(rule.byDay) ? 'weekdays' : 'custom';
+    case 'monthly':
+      return 'monthly';
+    case 'yearly':
+      return 'yearly';
   }
-  return rule.frequency;
+}
+
+interface ScheduleForm {
+  date: string;
+  time: string;
+  preset: CommandRecurrencePreset;
+  until: string;
+  rule?: DateRecurrenceRule | null;
 }
 
 // Build the canonical `<endpoint> RRULE:...` string from the editor form, reusing
-// the core codec so the stored value is always normalized.
-export function buildScheduleString(form: FormState): string | null {
+// the core codec so the stored value is always normalized. `custom` re-emits the
+// preserved rule (interval/byDay intact) with only the anchor/until refreshed
+// from the form.
+export function buildScheduleString(form: ScheduleForm): string | null {
   if (!form.date) return null;
   const anchor = formatDateFieldEndpoint(form.date, form.time);
   let recurrence: DateRecurrenceRule | undefined;
@@ -191,7 +229,7 @@ export function buildScheduleString(form: FormState): string | null {
       recurrence = { frequency: 'daily', interval: 1 };
       break;
     case 'weekdays':
-      recurrence = { frequency: 'weekly', interval: 1, byDay: ['MO', 'TU', 'WE', 'TH', 'FR'] };
+      recurrence = { frequency: 'weekly', interval: 1, byDay: [...WEEKDAY_PRESET] };
       break;
     case 'weekly':
       recurrence = { frequency: 'weekly', interval: 1 };
@@ -202,9 +240,49 @@ export function buildScheduleString(form: FormState): string | null {
     case 'yearly':
       recurrence = { frequency: 'yearly', interval: 1 };
       break;
+    case 'custom':
+      recurrence = form.rule
+        ? { ...form.rule, byDay: form.rule.byDay ? [...form.rule.byDay] : undefined }
+        : undefined;
+      break;
     default:
       recurrence = undefined;
   }
-  if (recurrence && form.until) recurrence.until = form.until;
+  if (recurrence) {
+    if (form.until) recurrence.until = form.until;
+    else delete recurrence.until;
+  }
   return formatDateSchedule({ anchor, recurrence });
+}
+
+// A short, localized label for the schedule chip, built from the editor's own
+// recurrence labels so it never disagrees with the dropdown (and is never
+// hardcoded English). A custom interval reads as "×N"; a non-weekday BYDAY set
+// is summarized as its base frequency (the editor holds the full detail).
+export function scheduleChipSummary(schedule: string, labels: CommandNodeControlsLabels): string {
+  const parsed = parseDateSchedule(schedule);
+  if (!parsed) return '';
+  const time = dateFieldEndpointTime(parsed.anchor);
+  const date = dateFieldEndpointDate(parsed.anchor);
+  const rule = parsed.recurrence;
+  if (!rule) return time ? `${date} ${time}` : date;
+  let base = labels.recurrence[summaryPresetKey(rule)];
+  if (rule.interval > 1) base += ` ×${rule.interval}`;
+  const parts = [base];
+  if (time) parts.push(time);
+  if (rule.until) parts.push(`${labels.ends} ${dateFieldEndpointDate(rule.until)}`);
+  return parts.join(' · ');
+}
+
+function summaryPresetKey(rule: DateRecurrenceRule): CommandRecurrencePreset {
+  switch (rule.frequency) {
+    case 'daily':
+      return 'daily';
+    case 'weekly':
+      return rule.byDay && isWeekdayPreset(rule.byDay) ? 'weekdays' : 'weekly';
+    case 'monthly':
+      return 'monthly';
+    case 'yearly':
+      return 'yearly';
+  }
 }

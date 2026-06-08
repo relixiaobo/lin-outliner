@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import { buildScheduleString, CommandNodeControls } from '../../src/renderer/ui/outliner/CommandNodeControls';
+import {
+  buildScheduleString,
+  CommandNodeControls,
+  scheduleChipSummary,
+} from '../../src/renderer/ui/outliner/CommandNodeControls';
 import { getMessages } from '../../src/core/i18n';
 
 const labels = getMessages('en').outliner.field.command;
@@ -31,6 +35,33 @@ describe('buildScheduleString', () => {
   test('returns null without a date', () => {
     expect(buildScheduleString({ date: '', time: '09:00', preset: 'daily', until: '' })).toBeNull();
   });
+
+  test('the custom preset preserves the original interval/byDay (no silent downgrade)', () => {
+    // Opening the editor on an agent-proposed "every two weeks on Mon+Wed" and
+    // saving (e.g. after tweaking the time) must keep the custom rule intact.
+    const rule = { frequency: 'weekly' as const, interval: 2, byDay: ['MO' as const, 'WE' as const] };
+    expect(buildScheduleString({ date: '2026-06-09', time: '09:00', preset: 'custom', until: '', rule }))
+      .toBe('2026-06-09T09:00 RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE');
+  });
+});
+
+describe('scheduleChipSummary', () => {
+  test('localizes the chip from the recurrence labels (never hardcoded English)', () => {
+    expect(scheduleChipSummary('2026-06-09T09:00 RRULE:FREQ=DAILY', labels)).toBe('Daily · 09:00');
+    expect(scheduleChipSummary('2026-06-09T09:00 RRULE:FREQ=MONTHLY;UNTIL=2026-12-31', labels))
+      .toBe('Monthly · 09:00 · Ends 2026-12-31');
+    expect(scheduleChipSummary('2026-06-09T09:00', labels)).toBe('2026-06-09 09:00');
+  });
+
+  test('an interval reads as ×N — no "Every 2 weekday" grammar bug', () => {
+    expect(scheduleChipSummary('2026-06-09T09:00 RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR', labels))
+      .toBe('Every weekday ×2 · 09:00');
+  });
+
+  test('localizes under zh-Hans (chip matches the dropdown locale)', () => {
+    const zh = getMessages('zh-Hans').outliner.field.command;
+    expect(scheduleChipSummary('2026-06-09T09:00 RRULE:FREQ=DAILY', zh)).toBe('每天 · 09:00');
+  });
 });
 
 interface Rendered {
@@ -52,7 +83,7 @@ describe('CommandNodeControls', () => {
     expect(textButton(manual, labels.enableSchedule)).toBeTruthy();
 
     const armed = render('2026-06-09T09:00 RRULE:FREQ=DAILY');
-    expect(textButton(armed, 'Every day at 09:00')).toBeTruthy();
+    expect(textButton(armed, 'Daily · 09:00')).toBeTruthy();
   });
 
   test('opening the editor reveals the schedule form', async () => {
@@ -65,7 +96,7 @@ describe('CommandNodeControls', () => {
 
   test('clearing an armed schedule writes null (manual-only)', async () => {
     const rendered = render('2026-06-09T09:00 RRULE:FREQ=DAILY');
-    await click(rendered, textButton(rendered, 'Every day at 09:00'));
+    await click(rendered, textButton(rendered, 'Daily · 09:00'));
     await click(rendered, textButton(rendered, labels.clear));
     expect(rendered.scheduleWrites.at(-1)).toBeNull();
   });

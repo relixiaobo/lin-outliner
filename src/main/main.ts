@@ -2017,6 +2017,7 @@ if (!app.requestSingleInstanceLock()) {
     if (quitAfterFlush) return;
     event.preventDefault();
     quitAfterFlush = true;
+    agentRuntime.stopCommandScheduler();
     void documentService.flushPendingChanges()
       .catch((error) => console.error(error))
       .finally(() => app.quit());

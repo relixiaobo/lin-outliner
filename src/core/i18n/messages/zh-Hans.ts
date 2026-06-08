@@ -575,7 +575,6 @@ commandPalette: {
         time: '时间',
         repeat: '重复',
         ends: '结束',
-        manualOnly: '仅手动',
         recurrence: {
           none: '不重复',
           daily: '每天',
@@ -583,6 +582,7 @@ commandPalette: {
           weekly: '每周',
           monthly: '每月',
           yearly: '每年',
+          custom: '自定义',
         },
       },
     },

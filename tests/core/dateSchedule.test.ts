@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
-  describeDateSchedule,
   formatDateRecurrenceRule,
   formatDateSchedule,
+  isWeekdayPreset,
   mostRecentDateScheduleDue,
   parseDateRecurrenceRule,
   parseDateSchedule,
@@ -124,28 +124,16 @@ function localDate(year: number, month: number, day: number, hour = 0, minute = 
   return new Date(year, month - 1, day, hour, minute);
 }
 
-describe('describeDateSchedule', () => {
-  test('one-off shows the date (and time when present)', () => {
-    expect(describeDateSchedule('2026-06-09T09:00')).toBe('2026-06-09 09:00');
-    expect(describeDateSchedule('2026-06-09')).toBe('2026-06-09');
+describe('isWeekdayPreset', () => {
+  test('matches exactly Mon–Fri, order-independent', () => {
+    expect(isWeekdayPreset(['MO', 'TU', 'WE', 'TH', 'FR'])).toBe(true);
+    expect(isWeekdayPreset(['FR', 'TH', 'WE', 'TU', 'MO'])).toBe(true);
   });
 
-  test('recurrence presets read in human terms', () => {
-    expect(describeDateSchedule('2026-06-09T09:00 RRULE:FREQ=DAILY')).toBe('Every day at 09:00');
-    expect(describeDateSchedule('2026-06-09T09:00 RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'))
-      .toBe('Every weekday at 09:00');
-    expect(describeDateSchedule('2026-06-09T09:00 RRULE:FREQ=WEEKLY;BYDAY=MO,WE'))
-      .toBe('Every week on Mon, Wed at 09:00');
-    expect(describeDateSchedule('2026-06-09T09:00 RRULE:FREQ=WEEKLY;INTERVAL=2'))
-      .toBe('Every 2 weeks at 09:00');
-  });
-
-  test('monthly with an end date', () => {
-    expect(describeDateSchedule('2026-06-09T09:00 RRULE:FREQ=MONTHLY;UNTIL=2026-12-31'))
-      .toBe('Every month at 09:00 · until 2026-12-31');
-  });
-
-  test('returns empty string for an unparseable schedule', () => {
-    expect(describeDateSchedule('not-a-date')).toBe('');
+  test('rejects partial, extended, or empty sets', () => {
+    expect(isWeekdayPreset(['MO', 'WE'])).toBe(false);
+    expect(isWeekdayPreset(['MO', 'TU', 'WE', 'TH', 'FR', 'SA'])).toBe(false);
+    expect(isWeekdayPreset([])).toBe(false);
+    expect(isWeekdayPreset(undefined)).toBe(false);
   });
 });

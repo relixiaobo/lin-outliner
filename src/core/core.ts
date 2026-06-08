@@ -73,7 +73,6 @@ import {
   type CodeBlockNode,
   type CommandNode,
   COMMAND_SCHEDULE_FIELD,
-  isProtectedField,
   type DefConfigNode,
   type DisplayFieldNode,
   type EmbedNode,
@@ -767,7 +766,12 @@ export class Core {
   setCommandSchedule(nodeId: string, schedule: string | undefined, origin: CommitOrigin): CommandOutcome {
     return this.patchNode(nodeId, (node) => {
       if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
-      if (isProtectedField(node, COMMAND_SCHEDULE_FIELD) && origin !== 'user') {
+      // The bright line, keyed to the node-type invariant (not the mutable
+      // `protectedFields` array, which could drift and fail open): arming /
+      // changing / clearing a command node's schedule is user-only. The agent
+      // can draft the brief and propose a schedule as text, but only the user
+      // can arm an unattended run.
+      if (origin !== 'user') {
         throw CoreError.invalidOperation('only the user can arm a command node schedule');
       }
       const normalized = normalizeCommandSchedule(schedule);
@@ -779,11 +783,15 @@ export class Core {
 
   // Advance a command node's system fire watermark after a successful run. Not
   // user-facing and not protected (system-managed, never agent-written): the
-  // anacron scheduler calls this via a `system`-origin command.
+  // anacron scheduler calls this via a `system`-origin command. Forward-only —
+  // a fire whose captured timestamp is older than the current watermark (a long
+  // run that straddled a user re-arm) must never move it backward and re-expose
+  // a covered occurrence.
   markCommandFired(nodeId: string, firedAt: number): CommandOutcome {
     return this.patchNode(nodeId, (node) => {
       if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
-      (node as CommandNode).sysLastRunAt = firedAt;
+      const command = node as CommandNode;
+      command.sysLastRunAt = Math.max(command.sysLastRunAt ?? 0, firedAt);
     });
   }
 

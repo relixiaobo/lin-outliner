@@ -4,9 +4,7 @@ import {
   dateFromIsoLocalDateTime,
 } from './localDate';
 import {
-  dateFieldEndpointDate,
   dateFieldEndpointHasTime,
-  dateFieldEndpointTime,
   normalizedDateFieldEndpoint,
 } from './dateFieldValue';
 
@@ -114,53 +112,16 @@ export function formatDateRecurrenceRule(rule: DateRecurrenceRule): string {
   return parts.join(';');
 }
 
-const WEEKDAY_LABELS: Record<DateScheduleWeekday, string> = {
-  MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun',
-};
-const WEEKDAY_PRESET: readonly DateScheduleWeekday[] = ['MO', 'TU', 'WE', 'TH', 'FR'];
+// Mon–Fri, the canonical "weekday" recurrence set. Exported as the single
+// source of truth so the command-schedule editor (detect + emit) and the chip
+// summary all agree — no hand-duplicated day arrays that can drift.
+export const WEEKDAY_PRESET: readonly DateScheduleWeekday[] = ['MO', 'TU', 'WE', 'TH', 'FR'];
 
-// A short human label for a schedule — shared vocabulary for the command-node
-// chip, read-only renders, and agent-facing text. English + locale-independent
-// (like a date rendered via Intl); the canonical RRULE string stays the source
-// of truth (see `formatDateSchedule`). Returns '' for an unparseable input.
-export function describeDateSchedule(input: DateSchedule | string): string {
-  const schedule = typeof input === 'string' ? parseDateSchedule(input) : input;
-  if (!schedule) return '';
-  const time = dateFieldEndpointTime(schedule.anchor);
-  const at = time ? ` at ${time}` : '';
-  const rule = schedule.recurrence;
-  if (!rule) {
-    const date = dateFieldEndpointDate(schedule.anchor);
-    return time ? `${date} ${time}` : date;
-  }
-  const every = rule.interval > 1 ? `${rule.interval} ` : '';
-  let base: string;
-  switch (rule.frequency) {
-    case 'daily':
-      base = `Every ${every}${rule.interval > 1 ? 'days' : 'day'}`;
-      break;
-    case 'weekly': {
-      const days = rule.byDay?.length ? rule.byDay : null;
-      if (days && sameWeekdaySet(days, WEEKDAY_PRESET)) base = `Every ${every}weekday`;
-      else if (days) base = `Every ${every}${rule.interval > 1 ? 'weeks' : 'week'} on ${days.map((d) => WEEKDAY_LABELS[d]).join(', ')}`;
-      else base = `Every ${every}${rule.interval > 1 ? 'weeks' : 'week'}`;
-      break;
-    }
-    case 'monthly':
-      base = `Every ${every}${rule.interval > 1 ? 'months' : 'month'}`;
-      break;
-    case 'yearly':
-      base = `Every ${every}${rule.interval > 1 ? 'years' : 'year'}`;
-      break;
-  }
-  const until = rule.until ? ` · until ${dateFieldEndpointDate(rule.until)}` : '';
-  return `${base}${at}${until}`;
-}
-
-function sameWeekdaySet(a: readonly DateScheduleWeekday[], b: readonly DateScheduleWeekday[]): boolean {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((day) => set.has(day));
+// Whether a BYDAY set is exactly Mon–Fri (order-independent).
+export function isWeekdayPreset(byDay: readonly DateScheduleWeekday[] | undefined): boolean {
+  if (!byDay || byDay.length !== WEEKDAY_PRESET.length) return false;
+  const set = new Set(byDay);
+  return WEEKDAY_PRESET.every((day) => set.has(day));
 }
 
 export function mostRecentDateScheduleDue(input: DateSchedule | string, now = new Date()): Date | null {

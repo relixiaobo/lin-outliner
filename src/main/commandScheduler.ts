@@ -1,5 +1,7 @@
 import { shouldFireDateSchedule } from '../core/dateSchedule';
-import type { DocumentProjection } from '../core/types';
+import { richTextToReferenceMarkup } from '../core/referenceMarkup';
+import { collectDescendantIds } from '../core/treeUtils';
+import type { DocumentProjection, NodeProjection } from '../core/types';
 
 // One command node that is due to fire on this tick. Pure data derived from the
 // projection + `now`; the runtime turns each into a triggered agent run.
@@ -20,20 +22,35 @@ export interface DueCommand {
 // `shouldFireDateSchedule` says an occurrence at/before `now` has not yet been
 // covered by `sysLastRunAt`. Catch-up coalesces by construction: a three-day
 // gap yields one due occurrence (today's), not three.
+type CommandNodeProjection = Extract<NodeProjection, { type: 'command' }>;
+
+function isScheduledCommand(node: NodeProjection): node is CommandNodeProjection {
+  return node.type === 'command' && !!node.commandSchedule;
+}
+
 export function selectDueCommands(projection: DocumentProjection, now: Date): DueCommand[] {
+  // Early-out before any O(N) trash walk: the common document has zero command
+  // nodes, so don't build the trashed set (or a node Map) until we know at least
+  // one command node exists.
+  const commandNodes = projection.nodes.filter(isScheduledCommand);
+  if (commandNodes.length === 0) return [];
+
   const trashed = trashedNodeIds(projection);
   const due: DueCommand[] = [];
-  for (const node of projection.nodes) {
-    if (node.type !== 'command') continue;
+  for (const node of commandNodes) {
     if (trashed.has(node.id)) continue; // trashed command nodes are paused
-    const schedule = node.commandSchedule;
-    if (!schedule) continue; // empty schedule = manual-only (Run now still works)
+    // Reconstruct inline references (`[[label||id]]` / file markers) the same
+    // way every other agent-facing node text does — `content.text` alone drops
+    // them (they live by offset in `content.inlineRefs`).
+    const brief = richTextToReferenceMarkup(node.content);
+    if (!brief.trim()) continue; // empty brief = nothing to run; never fire / advance the watermark
+    const schedule = node.commandSchedule!;
     const lastSuccessAt = node.sysLastRunAt ?? null;
     const decision = shouldFireDateSchedule(schedule, now, lastSuccessAt);
     if (!decision.shouldFire || !decision.dueAt) continue;
     due.push({
       nodeId: node.id,
-      brief: node.content.text,
+      brief,
       schedule,
       dueAt: decision.dueAt.getTime(),
       lastSuccessAt,
@@ -42,18 +59,21 @@ export function selectDueCommands(projection: DocumentProjection, now: Date): Du
   return due;
 }
 
-// Ids of every node under the Trash subtree (so a trashed command pauses without
-// scanning content). Walks `children` from the projection's trash root.
-function trashedNodeIds(projection: DocumentProjection): Set<string> {
-  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
-  const trashed = new Set<string>();
-  const stack = [...(byId.get(projection.trashId)?.children ?? [])];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    if (trashed.has(id)) continue;
-    trashed.add(id);
-    const node = byId.get(id);
-    if (node) stack.push(...node.children);
+// Ids of every command node currently present in the document (scheduled or
+// not), so the runtime can prune in-memory backoff state for nodes that were
+// deleted, trashed, or had their schedule cleared.
+export function liveCommandNodeIds(projection: DocumentProjection): Set<string> {
+  const ids = new Set<string>();
+  for (const node of projection.nodes) {
+    if (node.type === 'command') ids.add(node.id);
   }
-  return trashed;
+  return ids;
+}
+
+// Ids of every node under the Trash subtree (so a trashed command pauses without
+// scanning content). Reuses the canonical subtree walk so it can never diverge
+// from the rest of the tree tooling.
+function trashedNodeIds(projection: DocumentProjection): Set<string> {
+  const byId = new Map<string, NodeProjection>(projection.nodes.map((node) => [node.id, node]));
+  return new Set(collectDescendantIds(byId, projection.trashId));
 }

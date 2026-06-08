@@ -123,6 +123,20 @@ describe('Core.markCommandFired', () => {
     expect(commandNode(core, id).sysLastRunAt).toBe(1_750_000_000_000);
   });
 
+  test('is forward-only — an older fire timestamp never regresses the watermark', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
+    core.setCommandNode(id);
+
+    core.markCommandFired(id, 1_750_000_000_000);
+    // A long run that captured an older sweep-start time must not move it back
+    // (which would re-expose a covered occurrence / clobber a user re-arm).
+    core.markCommandFired(id, 1_740_000_000_000);
+
+    expect(commandNode(core, id).sysLastRunAt).toBe(1_750_000_000_000);
+  });
+
   test('refuses to mark a node that is not a command node', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;

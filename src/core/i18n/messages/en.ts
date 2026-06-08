@@ -633,7 +633,6 @@ commandPalette: {
         time: 'Time',
         repeat: 'Repeat',
         ends: 'Ends',
-        manualOnly: 'Manual only',
         recurrence: {
           none: 'Does not repeat',
           daily: 'Daily',
@@ -641,6 +640,7 @@ commandPalette: {
           weekly: 'Weekly',
           monthly: 'Monthly',
           yearly: 'Yearly',
+          custom: 'Custom',
         },
       },
     },

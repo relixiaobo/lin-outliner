@@ -92,29 +92,47 @@ end-to-end; arming its schedule makes it run unattended on a timer. See
   protected field. Drafting a command is allowed from any origin.
 - `set_command_schedule(nodeId, schedule?)` arms / changes / clears the schedule
   — a canonical `<endpoint> RRULE:...` string parsed by `dateSchedule.ts`. **The
-  bright line: rejected unless `origin === 'user'`** (the agent can draft a brief
-  and propose a schedule as text, but only the user can arm an unattended run). A
-  non-empty value re-arms the watermark (`sysLastRunAt = now`); clearing it makes
-  the node manual-only and leaves the watermark untouched.
+  bright line: a command node's schedule is rejected unless `origin === 'user'`**
+  (gated on the `command` node-type invariant, not the mutable `protectedFields`
+  array, so it can never fail open). The agent can draft a brief and propose a
+  schedule as text, but only the user can arm an unattended run. A non-empty
+  value re-arms the watermark (`sysLastRunAt = now`); clearing it makes the node
+  manual-only and leaves the watermark untouched.
 - `mark_command_fired(nodeId, firedAt)` advances the system fire watermark after
-  a successful run (system-managed, never agent-written).
+  a successful run (system-managed, never agent-written). **Forward-only** — a
+  fire that captured an older sweep-start time never moves the watermark backward
+  (so a long run that straddled a user re-arm can't re-expose a covered
+  occurrence).
 
 The anacron scheduler (main process) sweeps command nodes on a 60s tick, on app
 launch, and on `powerMonitor.resume`, firing each due node once (catch-up
-coalesces a multi-day gap). A fire is a no-human-turn agent run anchored to the
-command's own delivery conversation with a `{type:'schedule'}` trigger.
+coalesces a multi-day gap). Due nodes fire **concurrently** — one slow/hung run
+never blocks the others or subsequent sweeps. A fire is a no-human-turn agent run
+anchored to the command's own delivery conversation with a `{type:'schedule'}`
+trigger; the brief is reconstructed via reference markup (so inline references
+survive) and an empty brief is skipped (never fires, never advances the
+watermark). The run sees the same skill / subagent listings an interactive turn
+does. **Only a run that actually completes advances the watermark** — a failed
+run (no provider, bad key, rate limit) leaves the occurrence due and arms an
+in-memory backoff ladder. The sweep also prunes backoff state and deletes the
+delivery conversation of a command node that was permanently removed.
 
 `agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
 now: the same no-human-turn execution with a `{type:'node'}` trigger and **no
-watermark advance**, so testing a command never disturbs its schedule. Returns
-the delivery `conversationId`.
+watermark advance**, so testing a command never disturbs its schedule. It
+coordinates with the scheduled sweep through a shared in-flight guard — if a fire
+for the same node is already running it returns the existing conversation rather
+than colliding. Returns the delivery `conversationId`.
 
 Entry points (renderer): the `/command` slash command converts the current row
 into a command node; the controls under a command node's brief expose a neutral
 schedule chip (opens an inline date/time/repeat/ends editor that writes the
 canonical schedule string via the user-only gateway) and a **Run now** button
-(`agent_run_command_now`). The chip's human-readable label comes from
-`describeDateSchedule`.
+(`agent_run_command_now`). The editor preserves a custom recurrence
+(`INTERVAL`/`BYDAY`) under a `custom` preset rather than downgrading it, and
+blocks an end-before-start range. The chip's localized summary is built from the
+recurrence labels (`scheduleChipSummary`). The controls honor the row's edit
+lock (`displayed.locked`).
 
 ### Document — history
 `undo`, `redo`.

@@ -54,7 +54,11 @@ describe('selectDueCommands', () => {
   });
 
   test('does not fire before the anchor', () => {
-    const cmd = node({ id: 'cmd', type: 'command', commandSchedule: '2026-06-09T09:00' });
+    const cmd = node({
+      id: 'cmd', type: 'command',
+      content: { text: 'Daily digest', marks: [], inlineRefs: [] },
+      commandSchedule: '2026-06-09T09:00',
+    });
     const now = new Date(2026, 5, 9, 8, 0);
     expect(selectDueCommands(projection([cmd]), now)).toHaveLength(0);
   });
@@ -62,6 +66,7 @@ describe('selectDueCommands', () => {
   test('does not re-fire an occurrence already covered by the watermark', () => {
     const cmd = node({
       id: 'cmd', type: 'command',
+      content: { text: 'Daily digest', marks: [], inlineRefs: [] },
       commandSchedule: '2026-06-09T09:00',
       sysLastRunAt: new Date(2026, 5, 9, 9, 30).getTime(), // fired after the 09:00 due time
     });
@@ -72,6 +77,7 @@ describe('selectDueCommands', () => {
   test('coalesces a multi-day gap into a single daily fire', () => {
     const cmd = node({
       id: 'cmd', type: 'command',
+      content: { text: 'Daily digest', marks: [], inlineRefs: [] },
       commandSchedule: '2026-06-01T09:00 RRULE:FREQ=DAILY',
       sysLastRunAt: new Date(2026, 5, 6, 9, 0).getTime(), // last fired 06 Jun
     });
@@ -79,6 +85,30 @@ describe('selectDueCommands', () => {
     const due = selectDueCommands(projection([cmd]), now);
     expect(due).toHaveLength(1);
     expect(due[0].dueAt).toBe(new Date(2026, 5, 9, 9, 0).getTime());
+  });
+
+  test('skips an armed command whose brief is empty (never advances its watermark)', () => {
+    const cmd = node({
+      id: 'cmd', type: 'command',
+      content: { text: '   ', marks: [], inlineRefs: [] }, // whitespace-only = nothing to run
+      commandSchedule: '2026-06-09T09:00',
+    });
+    expect(selectDueCommands(projection([cmd]), new Date(2026, 5, 9, 10, 0))).toHaveLength(0);
+  });
+
+  test('reconstructs inline references in the brief (markup, not stripped text)', () => {
+    const cmd = node({
+      id: 'cmd', type: 'command',
+      content: {
+        text: 'Summarize ', // the reference text lives only in inlineRefs, by offset
+        marks: [],
+        inlineRefs: [{ offset: 10, target: { kind: 'node', nodeId: 'proj-x' }, displayName: 'ProjectX' }],
+      },
+      commandSchedule: '2026-06-09T09:00',
+    });
+    const due = selectDueCommands(projection([cmd]), new Date(2026, 5, 9, 10, 0));
+    expect(due).toHaveLength(1);
+    expect(due[0].brief).toContain('proj-x'); // markup carries the reference, not dropped
   });
 
   test('ignores command nodes with no schedule (manual-only)', () => {

@@ -35,9 +35,23 @@ Shipped on the branch:
   command node; `CommandNodeControls` renders a neutral schedule chip + inline
   date/time/repeat/ends editor (writes the canonical string through the user-only
   gateway) + a **Run now** button. `agent_run_command_now` runs the brief
-  attended (`{type:'node'}` trigger, no watermark advance). `describeDateSchedule`
-  gives the chip a human label. en + zh-Hans strings; token-only CSS (B3/B4
-  neutral state, guard-clean). typecheck + `test:core` + `test:renderer` green.
+  attended (`{type:'node'}` trigger, no watermark advance). en + zh-Hans strings;
+  token-only CSS (B3/B4 neutral state, guard-clean). typecheck + `test:core` +
+  `test:renderer` green.
+
+- **Self-review hardening (xhigh, done).** A 9-angle self-review surfaced real
+  defects, all fixed: a failed scheduled run no longer advances the watermark
+  (`runCommandTurn` detects the errored run; backoff now actually engages); the
+  watermark is written at completion time and is forward-only (no double-fire /
+  no clobber of a user re-arm); empty briefs and inline references are handled
+  (`richTextToReferenceMarkup`); command turns get the skill/subagent listings;
+  Run-now coordinates with the sweep (no collision / false backoff); the sweep
+  fires concurrently (no head-of-line blocking) and prunes backoff + delivery
+  conversations for removed nodes; the bright line is keyed to the node-type
+  invariant; the editor preserves custom recurrence + blocks end-before-start;
+  the chip summary is localized; controls honor `displayed.locked`; scheduler has
+  a teardown + zero-command early-out. See the corrected semantics in
+  `docs/spec/commands.md`.
 
 Deviations from the directional calls, for the gate:
 

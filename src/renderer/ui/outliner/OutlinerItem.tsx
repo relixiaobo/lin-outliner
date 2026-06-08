@@ -1752,6 +1752,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             <CommandNodeControls
               schedule={displayed.commandSchedule ?? null}
               labels={tf.command}
+              readOnly={displayed.locked}
               onSetSchedule={(schedule) => {
                 void props.run(() => api.setCommandSchedule(displayed.id, schedule));
               }}
