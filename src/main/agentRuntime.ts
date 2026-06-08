@@ -68,6 +68,8 @@ import {
   type AgentIdentityRecord,
   type AgentMemoryEntry,
   type AgentMemoryEvent,
+  type AgentNotificationKind,
+  type AgentTaskSource,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentPrincipal,
@@ -405,12 +407,21 @@ interface AgentDreamRunResult {
 }
 
 type AgentEventInput = AgentRuntimeContextEventInput;
+/** Opt-in OS-notification sink, wired by main.ts (owns the native Electron Notification). */
+export type OsNotifier = (input: { title: string; body?: string; conversationId: string }) => void;
 type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
 type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
 type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
 export class AgentRuntime {
   private sessions = new Map<string, AgentSessionState>();
+  private osNotifier?: OsNotifier;
+  // The conversation the user is actually VIEWING, reported by the renderer:
+  // the displayed conversation when the agent dock is open, else null (the dock
+  // collapses CSS-only while keeping the conversation loaded, so the runtime cannot
+  // infer this from restore alone). Used to suppress an OS banner for a task whose
+  // conversation the user is already looking at — see main.ts's notifier.
+  private viewedConversationId: string | null = null;
   private debugProjectionCache = new Map<string, {
     history: AgentDebugSnapshot[];
     latestSeq: number;
@@ -506,6 +517,23 @@ export class AgentRuntime {
     await this.dreamMemoryExtractionTail;
   }
 
+  /**
+   * Test-only: append a notification.created on a loaded conversation, so a test can
+   * deterministically interleave a delivery with markConversationRead and assert the
+   * index fold never drifts from replay. Returns the queued promise; do NOT await it
+   * before the racing call when reproducing the gap.
+   */
+  appendNotificationForTest(conversationId: string, notificationId: string): Promise<void> {
+    const sessionId = sessionIdFromConversationId(conversationId);
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Agent conversation not live: ${conversationId}`);
+    return this.emitTaskNotification(sessionId, session, {
+      notificationId,
+      kind: 'task_completed',
+      title: 'Test notification',
+    });
+  }
+
   async restoreLatestConversation() {
     return this.restoreOrCreateDefaultDm();
   }
@@ -516,7 +544,55 @@ export class AgentRuntime {
     if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
+    // Restoring loads a conversation's state; it does NOT mark it read, and it does
+    // NOT imply the user is viewing it (the dock may be collapsed). Marking read and
+    // the viewed-conversation signal are both driven explicitly by the renderer.
     return this.conversationResponse(sessionId, session);
+  }
+
+  /**
+   * Renderer-reported: the conversation the user can actually see (dock open), or
+   * null (dock collapsed). Window focus is not a dimension here — main.ts layers
+   * the focus check on top when deciding OS suppression.
+   */
+  setViewedConversation(conversationId: string | null): void {
+    this.viewedConversationId = conversationId;
+  }
+
+  getViewedConversation(): string | null {
+    return this.viewedConversationId;
+  }
+
+  /**
+   * Durably clear a conversation's unread attention — the user opened/read it.
+   * Driven explicitly by the renderer (genuine opens + the viewed conversation),
+   * NEVER by a config reload. A no-op when nothing is unread (so the log does not
+   * grow on every open) or the conversation is not live in this process (the
+   * renderer always restores before marking read).
+   *
+   * The read cursor's throughSeq is taken INSIDE the serial append, not from a
+   * pre-queue snapshot: seqs are assigned at write time, so a notification that
+   * completes in the gap would otherwise get a higher seq than a stale cursor and be
+   * dropped by replay while the index fold counted it read — a live-append/rebuild
+   * drift. Reading through the tail-at-write-time keeps "a read clears the whole
+   * conversation" true, which the O(1) index fold relies on.
+   */
+  async markConversationRead(conversationId: string): Promise<void> {
+    const sessionId = sessionIdFromConversationId(conversationId);
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    // Cheap pre-check to avoid scheduling an append when clearly nothing is unread;
+    // the authoritative decision is re-taken inside the serial block below.
+    const pending = session.eventState.attentionByConversationId[conversationId];
+    if (!pending || pending.unreadCount === 0) return;
+    await this.appendSessionEvents(sessionId, session, (state) => {
+      const attention = state.attentionByConversationId[conversationId];
+      if (!attention || attention.unreadCount === 0) return [];
+      const throughSeq = state.latestSeq;
+      if (throughSeq <= attention.lastReadThroughSeq) return [];
+      return [{ type: 'notification.read', actor: userActor(), conversationId, throughSeq }];
+    });
+    this.emitConversationAttention(sessionId, session);
   }
 
   private async restoreOrCreateDefaultDm() {
@@ -558,8 +634,35 @@ export class AgentRuntime {
     return this.conversationResponse(sessionId, session);
   }
 
-  listConversations() {
-    return this.listEventConversations();
+  async listConversations() {
+    const entries = await this.getEventStore().listConversationIndexEntries();
+    const listed = entries.filter((entry) => !!entry.goal);
+    // Seed cross-conversation unread badges on launch: the live conversation_attention
+    // event only fires for sessions touched this run, so a conversation that went
+    // unread before the app closed would show no badge until it is reopened. Re-emit
+    // the persisted unread — but only for conversations that have a list row to carry
+    // the badge (goal-less conversations like the default DM are masked when active
+    // and have nowhere to render an orphaned count).
+    for (const entry of listed) {
+      if ((entry.unreadCount ?? 0) > 0) {
+        this.emit({
+          type: 'conversation_attention',
+          conversationId: entry.id,
+          unreadCount: entry.unreadCount,
+          timestamp: Date.now(),
+        });
+      }
+    }
+    return listed
+      .map((entry) => ({
+        id: entry.id,
+        title: sanitizeSessionTitle(entry.title),
+        members: entry.members.slice(),
+        goal: entry.goal,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        messageCount: entry.messageCount,
+      }));
   }
 
   async listMemory(options: { includeInvalidated?: boolean; limit?: number } = {}): Promise<AgentMemoryEntryView[]> {
@@ -1537,15 +1640,34 @@ export class AgentRuntime {
       .filter((run) => run.status === 'running');
     if (runningRuns.length === 0) return;
 
+    const interruptedError = 'Subagent was interrupted before session restore.';
+    const completedAt = Date.now();
     await this.appendSessionEvents(sessionId, session, runningRuns.map((run): AgentEventInput => ({
       type: 'subagent_run.updated',
       actor: systemActor(),
       subagentRunId: run.id,
       status: 'failed',
-      completedAt: Date.now(),
-      error: 'Subagent was interrupted before session restore.',
+      completedAt,
+      error: interruptedError,
       transcriptMessageCount: run.transcriptMessageCount,
     })));
+
+    // "Don't go silent": a background subagent that died while the app was closed
+    // must still raise a durable badge (and OS banner) on restore — not vanish.
+    // Durable delivery only here (no live model-injection): the session is being
+    // restored, not running a turn, and recovery is re-spawn, not resume.
+    for (const run of runningRuns) {
+      await this.emitTaskNotification(sessionId, session, {
+        notificationId: `notification-${run.id}-${completedAt}`,
+        kind: 'task_failed',
+        title: `Subagent "${run.description}" was interrupted.`,
+        body: interruptedError,
+        source: { type: 'subagent', subagentRunId: run.id },
+        actor: run.parentToolCallId
+          ? toolActor(AGENT_SUBAGENT_TOOL_NAME, run.parentToolCallId)
+          : systemActor(),
+      });
+    }
   }
 
   private async readSubagentTranscriptPayload(
@@ -1646,10 +1768,69 @@ export class AgentRuntime {
     snapshot: AgentSubagentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
+    // A user-initiated stop is the user's own action — it raises no badge/OS
+    // banner (the durable notification below is for completion/failure only). The
+    // live model-injection still fires so a foreground agent learns its child stopped.
+    if (snapshot.status !== 'stopped') {
+      // Durable per-conversation delivery: emit the attention/OS signal as a
+      // notification.created event anchored to the origin conversation. This is the
+      // restart-safe record (the in-memory model-injection below is the live-session
+      // composed-turn layer; it is best-effort and not the durability guarantee).
+      // The id keys on the completion instant so a *resumed* detached run that
+      // finishes again gets a fresh notification (idempotent across replay, distinct
+      // across re-completions — see agentSubagents `send`).
+      await this.emitTaskNotification(sessionId, session, {
+        notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
+        kind: subagentNotificationKind(snapshot.status),
+        title: subagentNotificationTitle(snapshot),
+        body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
+        source: { type: 'subagent', subagentRunId: snapshot.id },
+        actor: snapshot.parentToolCallId
+          ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
+          : systemActor(),
+      });
+    }
     session.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
     void this.flushSubagentNotifications(sessionId, session).catch((error) => {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
     });
+  }
+
+  /**
+   * Append a durable notification.created event anchored to the session's origin
+   * conversation, then surface it (projection + opt-in OS notification). Idempotent
+   * on notificationId so a re-emitted terminal snapshot does not double-count.
+   */
+  private async emitTaskNotification(
+    sessionId: string,
+    session: AgentSessionState,
+    input: {
+      notificationId: string;
+      kind: AgentNotificationKind;
+      title: string;
+      body?: string;
+      source?: AgentTaskSource;
+      actor?: AgentActor;
+    },
+  ): Promise<void> {
+    if (session.eventState.notifications[input.notificationId]) return;
+    const conversationId = conversationIdFromSessionId(sessionId);
+    const body = input.body ? truncateNotificationBody(input.body) : undefined;
+    await this.appendSessionEvents(sessionId, session, [{
+      type: 'notification.created',
+      actor: input.actor ?? systemActor(),
+      notificationId: input.notificationId,
+      conversationId,
+      kind: input.kind,
+      title: input.title,
+      body,
+      source: input.source,
+    }]);
+    // No emitProjection here: the render projection never reads notifications or
+    // attention (the badge rides the dedicated conversation_attention event), so a
+    // rebuild would produce byte-identical content. Attention is the only signal.
+    this.emitConversationAttention(sessionId, session);
+    this.deliverOsNotification({ title: input.title, body, conversationId });
   }
 
   private async flushSubagentNotifications(sessionId: string, session: AgentSessionState): Promise<void> {
@@ -2581,6 +2762,40 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Push the conversation's folded unread count to the renderer's conversation
+   * list. Threaded independently of the active-conversation projection so badges
+   * on other conversations update too.
+   */
+  private emitConversationAttention(sessionId: string, session: AgentSessionState) {
+    const conversationId = conversationIdFromSessionId(sessionId);
+    const attention = session.eventState.attentionByConversationId[conversationId];
+    this.emit({
+      type: 'conversation_attention',
+      conversationId,
+      unreadCount: attention?.unreadCount ?? 0,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Set the opt-in OS-notification sink. main.ts owns the native Electron
+   * Notification (and window-focus suppression + the user opt-in gate); the
+   * runtime only forwards the signal. Left unset means OS notifications are off
+   * (the default) — the durable in-app delivery is unaffected.
+   */
+  setOsNotifier(notifier: OsNotifier | undefined): void {
+    this.osNotifier = notifier;
+  }
+
+  private deliverOsNotification(input: { title: string; body?: string; conversationId: string }): void {
+    try {
+      this.osNotifier?.(input);
+    } catch (error) {
+      this.emitError(input.conversationId, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private emitConversationRuntimeEvent(sessionId: string, input: PublicConversationRuntimeEventInput) {
     const conversationId = conversationIdFromSessionId(sessionId);
     const timestamp = Date.now();
@@ -3126,20 +3341,6 @@ export class AgentRuntime {
     return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
   }
 
-  private async listEventConversations(): Promise<AgentConversationListMeta[]> {
-    return (await this.getEventStore().listConversationIndexEntries())
-      .filter((entry) => !!entry.goal)
-      .map((entry) => ({
-        id: entry.id,
-        title: sanitizeSessionTitle(entry.title),
-        members: entry.members.slice(),
-        goal: entry.goal,
-        createdAt: entry.createdAt,
-        updatedAt: entry.updatedAt,
-        messageCount: entry.messageCount,
-      }));
-  }
-
   private async loadEventState(sessionId: string): Promise<AgentEventReplayState> {
     return this.getEventStore().replay(sessionId);
   }
@@ -3166,11 +3367,23 @@ export class AgentRuntime {
   private async appendSessionEvents(
     sessionId: string,
     session: AgentSessionState,
-    inputs: readonly AgentEventInput[],
+    // Either a fixed list, or a builder evaluated INSIDE the serial queue against the
+    // up-to-date eventState — required when an event field is derived from the log
+    // tail (e.g. a notification.read cursor), since seqs are assigned at write time
+    // and a concurrent append can land between a pre-queue snapshot and the write.
+    // Return [] to skip (the decision is then made authoritatively inside the queue).
+    inputs:
+      | readonly AgentEventInput[]
+      | ((state: AgentEventReplayState) => readonly AgentEventInput[]),
   ) {
     let events: AgentEvent[] = [];
     const writeEvents = async () => {
-      events = this.buildEvents(session.eventState, sessionId, inputs);
+      const resolved = typeof inputs === 'function' ? inputs(session.eventState) : inputs;
+      if (resolved.length === 0) {
+        events = [];
+        return;
+      }
+      events = this.buildEvents(session.eventState, sessionId, resolved);
       await this.getEventStore().appendEvents(sessionId, events);
       for (const event of events) appendAgentEventToReplayState(session.eventState, event);
       this.publishPersistedEvents(sessionId, events);
@@ -5290,12 +5503,30 @@ function resolveSkillEffortOverride(
   return supported[0] ?? currentThinkingLevel;
 }
 
+const NOTIFICATION_BODY_MAX_LENGTH = 280;
+
+function truncateNotificationBody(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length <= NOTIFICATION_BODY_MAX_LENGTH) return trimmed;
+  return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+function subagentNotificationKind(
+  // 'stopped' is gated out before this (a user-initiated stop raises no
+  // notification — see notifySubagentRun), so only failed/completed reach here.
+  status: 'failed' | 'completed',
+): AgentNotificationKind {
+  return status === 'failed' ? 'task_failed' : 'task_completed';
+}
+
+function subagentNotificationTitle(snapshot: AgentSubagentRunSnapshot): string {
+  if (snapshot.status === 'failed') return `Subagent "${snapshot.description}" failed.`;
+  if (snapshot.status === 'stopped') return `Subagent "${snapshot.description}" was stopped.`;
+  return `Subagent "${snapshot.description}" completed.`;
+}
+
 function formatSubagentNotification(snapshot: AgentSubagentRunSnapshot): string {
-  const summary = snapshot.status === 'completed'
-    ? `Subagent "${snapshot.description}" completed.`
-    : snapshot.status === 'failed'
-      ? `Subagent "${snapshot.description}" failed.`
-      : `Subagent "${snapshot.description}" was stopped.`;
+  const summary = subagentNotificationTitle(snapshot);
   return [
     '<subagent-notification>',
     `<agent_id>${escapeXml(snapshot.id)}</agent_id>`,

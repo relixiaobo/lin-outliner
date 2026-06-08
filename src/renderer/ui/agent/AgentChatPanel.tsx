@@ -25,7 +25,7 @@ import type {
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
-import { useLinAgentRuntime } from '../../agent/runtime';
+import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
@@ -66,6 +66,8 @@ const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 
 interface AgentChatPanelProps {
   index: DocumentIndex;
+  /** Whether the agent dock is open (not the CSS-collapsed seed). */
+  dockOpen: boolean;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel?: (conversationId: string | null) => void;
@@ -478,6 +480,7 @@ function AgentTranscriptRowShell({
 
 export function AgentChatPanel({
   index,
+  dockOpen,
   onOpenNodeReference,
   onOpenDebugPanel,
   userViewContext,
@@ -513,6 +516,7 @@ export function AgentChatPanel({
     tasks,
     toolResults,
     turnPhase,
+    unreadByConversationId,
   } = useLinAgentRuntime();
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -782,6 +786,36 @@ export function AgentChatPanel({
     () => window.lin?.onSettingsChanged?.(() => void refreshAfterSettingsChangeRef.current()),
     [],
   );
+  // Clicking an OS notification banner routes here — open the originating conversation.
+  const selectConversationRef = useRef(selectConversation);
+  selectConversationRef.current = selectConversation;
+  useEffect(
+    () => window.lin?.onNavigateToConversation?.((targetId) => {
+      // selectConversation rethrows on failure (e.g. the conversation was deleted);
+      // swallow so a stale banner click is not an unhandled rejection.
+      void selectConversationRef.current(targetId).catch(() => {});
+    }),
+    [],
+  );
+  // The dock collapses CSS-only while keeping this panel mounted, so report the
+  // real open state: gate durable mark-read (renderer) and OS-banner suppression
+  // (main) on whether the user can actually SEE the conversation, not just on it
+  // being loaded. Opening the dock reads the conversation it reveals (setDockVisible);
+  // collapsing reports null so a background completion still escalates.
+  useEffect(() => {
+    linAgentRuntimeStore.setDockVisible(dockOpen);
+    void window.lin?.agentSetViewedConversation?.(dockOpen ? conversationId : null);
+  }, [dockOpen, conversationId]);
+
+  // Unmount only (reload / window teardown): no panel is showing any conversation,
+  // so clear the viewed signal. Without this main keeps suppressing OS banners
+  // against the last-viewed conversation until the renderer re-mounts and re-reports.
+  // Kept separate from the push effect above so a conversation switch does not churn
+  // the signal false→null→back on every dependency change.
+  useEffect(() => () => {
+    linAgentRuntimeStore.setDockVisible(false);
+    void window.lin?.agentSetViewedConversation?.(null);
+  }, []);
 
   async function handleSteerMessage(message: string) {
     const trimmed = message.trim();
@@ -1026,6 +1060,22 @@ export function AgentChatPanel({
                         {formatConversationTime(conversation.updatedAt, locale)}
                         {conversation.messageCount > 0 ? ` · ${conversation.messageCount}` : ''}
                       </span>
+                      {(() => {
+                        const unread = isCurrent ? 0 : unreadByConversationId.get(conversation.id) ?? 0;
+                        if (unread <= 0) return null;
+                        return (
+                          <span
+                            className="agent-conversation-unread"
+                            // The visible glyph caps at "99+" for width; the accessible
+                            // name + tooltip carry the exact count (more useful to AT and
+                            // disambiguates "99+" on hover).
+                            aria-label={t.agent.chat.unreadTasks({ count: unread })}
+                            title={t.agent.chat.unreadTasks({ count: unread })}
+                          >
+                            {unread > 99 ? '99+' : unread}
+                          </span>
+                        );
+                      })()}
                     </ButtonControl>
                     <div className="agent-conversation-row-actions">
                       <IconButton

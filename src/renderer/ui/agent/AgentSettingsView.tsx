@@ -259,6 +259,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   // permission save flow: it applies immediately across all windows via the main
   // process (nativeTheme.themeSource) and persists, so there is no Save step.
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  // Opt-in OS-notification preference (General pane). Self-contained like the theme:
+  // applies immediately, persisted by main, no Save step. Default off.
+  const [osNotificationsEnabled, setOsNotificationsEnabled] = useState(false);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
@@ -296,6 +299,22 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   function changeTheme(mode: ThemeMode) {
     setThemeMode(mode);
     void window.lin?.setTheme?.(mode);
+  }
+
+  // Load the persisted OS-notification opt-in once. Best-effort like the theme load.
+  useEffect(() => {
+    let active = true;
+    void window.lin?.getNotificationPrefs?.()
+      .then((prefs) => {
+        if (active) setOsNotificationsEnabled(prefs.osNotificationsEnabled);
+      })
+      .catch(() => { /* keep the default (off) */ });
+    return () => { active = false; };
+  }, []);
+
+  function changeOsNotifications(enabled: boolean) {
+    setOsNotificationsEnabled(enabled);
+    void window.lin?.setNotificationPrefs?.({ osNotificationsEnabled: enabled });
   }
 
   function beginRequest() {
@@ -784,6 +803,25 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                           <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
                         ))}
                       </SelectControl>
+                    )}
+                    wrap
+                  />
+                </InsetGroup>
+                <InsetGroup
+                  ariaLabel={t.settings.general.notificationsGroup}
+                  label={t.settings.general.notificationsGroup}
+                >
+                  <InsetRow
+                    label={t.settings.general.osNotificationsLabel}
+                    sublabel={t.settings.general.osNotificationsSublabel}
+                    trailing={(
+                      <SwitchControl
+                        checked={osNotificationsEnabled}
+                        onCheckedChange={changeOsNotifications}
+                        label={t.settings.general.osNotificationsLabel}
+                      >
+                        <SwitchMark checked={osNotificationsEnabled} />
+                      </SwitchControl>
                     )}
                     wrap
                   />

@@ -242,6 +242,10 @@ export const api = {
   agentRestoreConversation: (conversationId: string) => (
     command<AgentConversation>('agent_restore_conversation', { conversationId })
   ),
+  // Dedicated channel (not the agent-command union): durably mark a conversation
+  // read when the user genuinely opens/views it. No-ops without the desktop bridge.
+  agentMarkConversationRead: (conversationId: string): Promise<void> =>
+    window.lin?.agentMarkConversationRead(conversationId) ?? Promise.resolve(),
   agentCreateConversation: () => command<AgentConversation>('agent_create_conversation'),
   agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
   agentRenameConversation: (conversationId: string, title: string) =>

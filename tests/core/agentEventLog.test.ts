@@ -806,3 +806,91 @@ describe('agent event log', () => {
     ])).toThrow(/increasing seq order/);
   });
 });
+
+describe('notification + attention projection', () => {
+  function notificationCreated(seq: number, conversationId: string, overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      ...base(seq, 'notification.created'),
+      notificationId: `notif-${seq}`,
+      conversationId,
+      kind: 'task_completed' as const,
+      title: `Task ${seq} done`,
+      ...overrides,
+    } as AgentEvent;
+  }
+
+  test('folds unread per conversation, anchored to the origin conversation', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      notificationCreated(2, 'conv-a', { source: { type: 'subagent', subagentRunId: 'subagent-x' } }),
+      notificationCreated(3, 'conv-a'),
+      notificationCreated(4, 'conv-b', { kind: 'needs_input', source: { type: 'run', runId: 'run-y' } }),
+    ]);
+
+    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(2);
+    expect(state.attentionByConversationId['conv-b']?.unreadCount).toBe(1);
+    expect(state.notifications['notif-2']?.source).toEqual({ type: 'subagent', subagentRunId: 'subagent-x' });
+    expect(state.notifications['notif-4']?.kind).toBe('needs_input');
+    expect(Object.values(state.notifications).every((record) => record.read === false)).toBe(true);
+  });
+
+  test('notification.read clears only its conversation through the given seq', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      notificationCreated(2, 'conv-a'),
+      notificationCreated(3, 'conv-a'),
+      notificationCreated(4, 'conv-b'),
+      { ...base(5, 'notification.read'), conversationId: 'conv-a', throughSeq: 3 },
+    ]);
+
+    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(0);
+    expect(state.attentionByConversationId['conv-a']?.lastReadThroughSeq).toBe(3);
+    expect(state.notifications['notif-2']?.read).toBe(true);
+    expect(state.notifications['notif-3']?.read).toBe(true);
+    // conv-b is untouched by conv-a's read cursor.
+    expect(state.attentionByConversationId['conv-b']?.unreadCount).toBe(1);
+    expect(state.notifications['notif-4']?.read).toBe(false);
+  });
+
+  test('a notification arriving after a read cursor counts as unread again (restart-safe replay)', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      notificationCreated(2, 'conv-a'),
+      { ...base(3, 'notification.read'), conversationId: 'conv-a', throughSeq: 2 },
+      notificationCreated(4, 'conv-a'),
+    ]);
+
+    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(1);
+    expect(state.notifications['notif-2']?.read).toBe(true);
+    expect(state.notifications['notif-4']?.read).toBe(false);
+  });
+
+  test('duplicate notification.created is idempotent', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      notificationCreated(2, 'conv-a'),
+      { ...notificationCreated(3, 'conv-a'), notificationId: 'notif-2' },
+    ]);
+
+    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(1);
+    expect(Object.keys(state.notifications)).toEqual(['notif-2']);
+  });
+
+  test('notification.created/read do not bump the conversation updatedAt (no list reorder)', () => {
+    // A background delivery and a read must not look like conversation activity:
+    // updatedAt stays pinned to the last real content event (the user message).
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      } as AgentEvent,
+      notificationCreated(5, 'conv-a'),
+      { ...base(6, 'notification.read'), conversationId: 'conv-a', throughSeq: 5 },
+    ]);
+
+    expect(state.session?.updatedAt).toBe(1_700_000_000_000 + 2);
+  });
+});

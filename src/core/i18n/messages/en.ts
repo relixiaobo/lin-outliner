@@ -289,6 +289,9 @@ export const en = {
       themeDark: 'Dark',
       languageLabel: 'Language',
       languageSublabel: 'Choose the display language for menus and the interface.',
+      notificationsGroup: 'Notifications',
+      osNotificationsLabel: 'System notifications',
+      osNotificationsSublabel: 'Show a system notification when a background task finishes or needs input while the app is in the background. Off by default.',
     },
   },
   // Cross-surface shared atoms — declared once so the same word has one key and one
@@ -719,6 +722,8 @@ commandPalette: {
       openDebug: 'Open agent debug',
       conversations: 'Channels',
       noConversations: 'No channels',
+      unreadTasks: ({ count }: { count: number }) =>
+        count === 1 ? '1 unread task update' : `${count} unread task updates`,
       conversationTitle: 'Channel name',
       cancelRename: 'Cancel rename',
       saveRename: 'Save rename',

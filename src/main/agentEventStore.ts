@@ -156,6 +156,12 @@ export interface AgentConversationIndexEntry {
   updatedAt: number;
   messageCount: number;
   latestSeq: number;
+  /**
+   * Folded off-floor unread count for this conversation, persisted so the badge
+   * survives restart (the live `conversation_attention` event only fires for
+   * sessions touched this run). Sourced from replay state, single source of truth.
+   */
+  unreadCount: number;
 }
 
 export interface AgentEventCheckpoint {
@@ -1172,6 +1178,7 @@ export class AgentEventStore {
             updatedAt: event.createdAt,
             messageCount: entry?.messageCount ?? 0,
             latestSeq: event.seq,
+            unreadCount: entry?.unreadCount ?? 0,
           };
         } else if (entry) {
           entry = updateConversationIndexEntry(entry, event);
@@ -1386,11 +1393,29 @@ function updateConversationIndexEntry(
   entry: AgentConversationIndexEntry,
   event: AgentEvent,
 ): AgentConversationIndexEntry {
+  // notification.created/read are off-floor attention bookkeeping, not activity:
+  // they must not bump updatedAt (which sorts + timestamps the list). Mirrors the
+  // replay reducer's touchSessionUpdatedAt skip.
+  const isAttentionEvent =
+    event.type === 'notification.created' || event.type === 'notification.read';
   const next: AgentConversationIndexEntry = {
     ...entry,
-    updatedAt: Math.max(entry.updatedAt, event.createdAt),
+    updatedAt: isAttentionEvent ? entry.updatedAt : Math.max(entry.updatedAt, event.createdAt),
     latestSeq: Math.max(entry.latestSeq, event.seq),
   };
+  // Fold unreadCount in O(1), not via a full replay. A created notification always
+  // carries the highest seq (so it is unread by construction → +1). The fold's
+  // `read → 0` relies on the invariant that the ONLY emitter of notification.read
+  // (markConversationRead) takes throughSeq INSIDE the serial append, i.e. reads
+  // through the tail-at-write-time, so a read genuinely clears the whole conversation
+  // — even if a notification completed in the gap. (A future partial-read emitter
+  // would have to recompute this fold or rebuild from replay.) The replay reducer
+  // remains the authority for the full-rebuild path, which this matches.
+  if (event.type === 'notification.created') {
+    next.unreadCount += 1;
+  } else if (event.type === 'notification.read') {
+    next.unreadCount = 0;
+  }
   if (event.type === 'session.renamed') {
     next.title = event.title;
     next.goal = event.goal ?? next.goal;
@@ -1419,6 +1444,7 @@ function conversationIndexEntryFromReplayState(
     updatedAt: state.session.updatedAt,
     messageCount: Object.keys(state.messages).length,
     latestSeq: state.latestSeq,
+    unreadCount: state.attentionByConversationId[sessionId]?.unreadCount ?? 0,
   };
 }
 

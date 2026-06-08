@@ -19,6 +19,13 @@ import type { NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
+/**
+ * Main → renderer one-shot: route the active agent panel to a conversation.
+ * Fired when the user clicks an OS notification banner for an off-floor task so
+ * the click lands on the originating conversation, not whatever was last active.
+ */
+export const LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL = 'lin:agent-navigate-conversation';
+
 export type {
   AssistantMessage,
   ImageContent,
@@ -339,6 +346,20 @@ export interface AgentUserQuestionResolvedEvent {
   timestamp: number;
 }
 
+/**
+ * Per-conversation unread/attention signal for the off-floor task plane. Emitted
+ * whenever a conversation's folded unread count changes (a task delivered a
+ * notification off-floor, or the user opened the conversation and cleared it).
+ * Threaded to the renderer's conversation list independently of the active-
+ * conversation projection, so badges update across all conversations.
+ */
+export interface AgentConversationAttentionEvent {
+  type: 'conversation_attention';
+  conversationId: string;
+  unreadCount: number;
+  timestamp: number;
+}
+
 export type AgentRuntimeEvent =
   | AgentProjectionEvent
   | AgentReadyEvent
@@ -349,6 +370,7 @@ export type AgentRuntimeEvent =
   | AgentApprovalRequestEvent
   | AgentApprovalResolvedEvent
   | AgentUserQuestionRequestEvent
-  | AgentUserQuestionResolvedEvent;
+  | AgentUserQuestionResolvedEvent
+  | AgentConversationAttentionEvent;
 
 export type { AskUserQuestionResult };

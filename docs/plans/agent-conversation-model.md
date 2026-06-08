@@ -618,6 +618,9 @@ background-shell `BackgroundTask` registry with `running/completed/failed/stoppe
 - A **`needs-input`** state: a task that needs a decision pauses, posts the question
   into its conversation, and resumes on your reply (addressable via `AgentSend`).
   cc-2.1's `asyncRewake` (exit-code-2 wakes the model) is the proven shape.
+  **Scoped by the 2026-06-08 decision below**: this is for a conversation's own
+  *foreground* agent, never a *subagent* — subagents run to completion and never
+  question the user mid-execution.
 - **First-class task-update messages** (provenance + a jump-to-artifact pointer),
   not a bare `systemReminder` blob.
 - **A task is a `Run` with its own durable execution log** (`RunMeta` + `runs/<id>/`,
@@ -656,6 +659,78 @@ conversation-scoped** (reusing the **P1 `actor`** attribution), and add
 **rate-limiting / folding**
 (completion can flood — hermes uses watch-strike + a global circuit breaker; cc-2.1
 folds / invalidates notifications; we only batch today).
+
+**Shipped (M2 delivery slice).** A detached subagent terminal now emits a durable
+`notification.created` anchored to its origin conversation (`kind` =
+`task_completed|failed`, `source = {subagent}`; a user-initiated **stop** raises no
+notification — it is the user's own action), idempotent and restart-safe
+(`docs/spec/agent-event-log-rendering.md` §Notification + attention projection). The
+notification id keys on the completion instant (`notification-<runId>-<completedAt>`)
+so a **resumed** detached run that finishes again is delivered, not dropped as a stale
+duplicate. A subagent left **running when the app dies** is marked failed AND raises
+its durable notification on the next restore (the "don't go silent" case). Attention
+folds per conversation into `attentionByConversationId` unread counts; notification
+events never bump the conversation's `updatedAt` (no list reorder / timestamp change).
+The count is pushed to the renderer over a `conversation_attention` runtime event (in
+`agentTypes.ts`, **not** `core/types.ts` — stays off the sibling scheduled-routines
+lane's protocol surface) and rendered as a neutral unread badge on the conversation
+list; the persisted unread is folded incrementally on the conversation index (no
+full replay per delivery) and **seeded on launch** for listed conversations so a
+badge survives restart before its conversation is reopened. Marking a conversation
+read is an **explicit "the user can see it" signal** (dedicated
+`lin:agent-mark-conversation-read` IPC + `markConversationRead`), driven by the
+renderer only when the **agent dock is actually open** (it collapses CSS-only while
+keeping the conversation loaded, so "loaded" ≠ "viewed") showing that conversation —
+**never** by a config reload (which also restores). The optional OS notification is
+wired through an injectable `OsNotifier` (`agentRuntime.setOsNotifier`) to a native
+Electron `Notification`, gated on a self-contained opt-in preference (default OFF,
+folded into the shared `appPreferences` store, read synchronously); it is suppressed
+only when the user is actually looking at that task's conversation (window focused
+**and** it is the renderer-reported *viewed conversation* — dock open showing it),
+truncates its body, and routes a banner click to the originating conversation. The
+existing idle-gated `pendingSubagentNotifications` model-injection stays as the
+live-session composed-turn layer.
+
+**DECIDED (PM, 2026-06-08): subagents never ask the user mid-execution.** A
+subagent is invoked *only* when its information and goal are clear enough to run to
+completion as a background task; it reports back on completion and never pauses to
+question the user. The user's interaction surface stays **one locus** (the
+foreground main agent / the current conversation) so attention is not scattered
+across many objects. Clarification happens **before** hand-off: the main agent uses
+`ask_user_question` with the user up front (foreground, shipped #153), and a
+subagent may ask its **main agent / channel** (agent↔agent) to clarify the task
+*before* formal execution — never agent↔user, never mid-execution. This is
+consistent with the restricted background-worker model (cc-2.1 Dream / hermes
+allow-listed memory+skill tools — no user-question tool on the background surface).
+Consequence: **do not** wire `ask_user_question` into `createSubagentAgent`, and do
+not build a subagent→user `needs_input` trigger. The `needs_input` notification
+`kind` stays reserved only for a conversation's **own foreground agent** awaiting a
+user decision while the user is in a different conversation (a minor cross-
+conversation attention case, not built yet). Agent↔agent task clarification and
+multi-agent routing are the **P3 coordinator / Channel** work, out of M2.
+
+**Companion (PM, 2026-06-08): clarity is the publishing agent's job; the terminal
+result is the clarification channel; recovery is re-spawn, not resume.** Task
+clarity is owned **up front by the agent that publishes the task** (it decomposes
+and, if needed, clarifies with the user in the foreground *before* spawning). A
+subagent's **terminal result is itself a clarification channel**: faced with an
+unclear task or a mid-run discovery that critical information is missing, it **may
+refuse or stop — surfacing as a failed/clarifying terminal run** rather than
+guessing. (Default behavior, though, is to **infer the most likely goal from
+context and proceed**; bailing is for genuine blockers, not mild ambiguity.) The
+failure/result is delivered back to the origin conversation by the shipped
+notification path (`kind: 'task_failed'`/`'task_completed'`, the clarifying reason
+in the body). **Recovery is to create a NEW, clearer task — not to resume the
+stopped one.** The main agent (or the user, having supplemented context in the
+DM/Channel) spawns a fresh, better-specified run. This deliberately **avoids
+mid-execution pause/resume entirely**, which sidesteps the hard restart-resume
+problem (the run log re-spawn + answer-injection that `needs-input` would have
+needed): there is nothing to resume — failed tasks just fail, and a clearer one
+replaces them.
+
+**Remaining.** (1) The **cheap status-post** row (no-LLM in-stream task-update
+message) and cross-conversation panel aggregation. (2) Rate-limit / fold
+**thresholds** beyond the current per-conversation fold.
 
 **Cross-validated.** cc-2.1 and hermes independently converge on this shape:
 queue + idle-drain + inject-into-origin-conversation (cc-2.1 `asyncRewake` /
