@@ -693,6 +693,25 @@ user decision while the user is in a different conversation (a minor cross-
 conversation attention case, not built yet). Agent↔agent task clarification and
 multi-agent routing are the **P3 coordinator / Channel** work, out of M2.
 
+**Companion (PM, 2026-06-08): clarity is the publishing agent's job; the terminal
+result is the clarification channel; recovery is re-spawn, not resume.** Task
+clarity is owned **up front by the agent that publishes the task** (it decomposes
+and, if needed, clarifies with the user in the foreground *before* spawning). A
+subagent's **terminal result is itself a clarification channel**: faced with an
+unclear task or a mid-run discovery that critical information is missing, it **may
+refuse or stop — surfacing as a failed/clarifying terminal run** rather than
+guessing. (Default behavior, though, is to **infer the most likely goal from
+context and proceed**; bailing is for genuine blockers, not mild ambiguity.) The
+failure/result is delivered back to the origin conversation by the shipped
+notification path (`kind: 'task_failed'`/`'task_completed'`, the clarifying reason
+in the body). **Recovery is to create a NEW, clearer task — not to resume the
+stopped one.** The main agent (or the user, having supplemented context in the
+DM/Channel) spawns a fresh, better-specified run. This deliberately **avoids
+mid-execution pause/resume entirely**, which sidesteps the hard restart-resume
+problem (the run log re-spawn + answer-injection that `needs-input` would have
+needed): there is nothing to resume — failed tasks just fail, and a clearer one
+replaces them.
+
 **Remaining.** (1) The **cheap status-post** row (no-LLM in-stream task-update
 message) and cross-conversation panel aggregation. (2) Rate-limit / fold
 **thresholds** beyond the current per-conversation fold.
