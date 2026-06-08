@@ -18,6 +18,7 @@ import {
   type ProviderConfigMode,
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
+import { LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
@@ -33,11 +34,6 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
-  getCachedNotificationPrefs,
-  getNotificationPrefs,
-  setNotificationPrefs,
-} from './agentNotificationPrefs';
-import {
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
@@ -46,7 +42,12 @@ import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
-import { loadAppPreferences, saveLanguagePreference, saveThemePreference } from './appPreferences';
+import {
+  loadAppPreferences,
+  saveLanguagePreference,
+  saveOsNotificationsPreference,
+  saveThemePreference,
+} from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
 import { getMessages } from '../core/i18n';
@@ -156,19 +157,25 @@ documentService.onProjectionChanged((event) => {
 });
 
 // Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
-// in-app delivery is unaffected. Suppressed while the app is focused (the user is
-// already looking) and gated on the persisted user preference read at call time.
-void getNotificationPrefs();
-agentRuntime.setOsNotifier(({ title, body }) => {
-  if (!getCachedNotificationPrefs().osNotificationsEnabled) return;
+// in-app delivery is unaffected. The preference is read synchronously at call time
+// (no async cache that could fail closed and stay OFF for the process). The banner
+// is suppressed only when the user is already looking at THIS task's conversation
+// (window focused AND it is the active conversation) — a completion in a background
+// channel still escalates while the window is foregrounded.
+agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
+  if (!loadAppPreferences().osNotificationsEnabled) return;
   if (!Notification.isSupported()) return;
-  if (mainWindow?.isFocused()) return;
+  const lookingAtThisConversation =
+    mainWindow?.isFocused() && agentRuntime.getActiveConversationId() === conversationId;
+  if (lookingAtThisConversation) return;
   const notification = new Notification({ title, body: body ?? '' });
   notification.on('click', () => {
-    if (!mainWindow) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+    // Route the click to the originating conversation, not whatever was last active.
+    mainWindow.webContents.send(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, conversationId);
   });
   notification.show();
 });
@@ -1054,17 +1061,27 @@ function registerIpc() {
     nativeTheme.themeSource = mode;
     saveThemePreference(mode);
   });
-  // Opt-in OS-notification preference. Self-contained dedicated channels (not the
-  // agent-command union) so the off-floor task plane owns its own preference
-  // without touching the shared command/type surface.
-  ipcMain.handle('lin:get-notification-prefs', () => getNotificationPrefs());
-  ipcMain.handle('lin:set-notification-prefs', (_event, input: unknown) =>
-    setNotificationPrefs(
-      input && typeof input === 'object' && 'osNotificationsEnabled' in input
-        ? { osNotificationsEnabled: (input as { osNotificationsEnabled?: unknown }).osNotificationsEnabled === true }
-        : {},
-    ),
-  );
+  // Opt-in OS-notification preference. Dedicated channels (not the agent-command
+  // union) so the off-floor task plane owns its preference without touching the
+  // shared command/type surface; backed by the shared synchronous app-preferences
+  // store (theme/language live there too).
+  ipcMain.handle('lin:get-notification-prefs', () => ({
+    osNotificationsEnabled: loadAppPreferences().osNotificationsEnabled,
+  }));
+  ipcMain.handle('lin:set-notification-prefs', (_event, input: unknown) => {
+    const enabled =
+      !!input && typeof input === 'object' && 'osNotificationsEnabled' in input
+        ? (input as { osNotificationsEnabled?: unknown }).osNotificationsEnabled === true
+        : false;
+    saveOsNotificationsPreference(enabled);
+    return { osNotificationsEnabled: enabled };
+  });
+  // Durable attention-clear: the user opened/viewed a conversation. Dedicated channel
+  // (off the command union) — see markConversationRead. A config reload never hits this.
+  ipcMain.handle('lin:agent-mark-conversation-read', (_event, conversationId: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId) return;
+    return agentRuntime.markConversationRead(conversationId);
+  });
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open
   // windows re-render via I18nProvider without a reload), and rebuilds the native

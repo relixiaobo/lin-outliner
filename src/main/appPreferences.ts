@@ -14,11 +14,16 @@ interface PersistedAppPreferences {
   // null = no explicit pick yet → the main process falls back to the OS locale
   // (resolveSystemLocale) on first run; a concrete value pins the language.
   language: Locale | null;
+  // Opt-in OS (Electron) notifications for off-floor task delivery. Default off —
+  // the durable in-app delivery is always on; the OS banner is the user-enabled
+  // escalation layer (A3-respecting).
+  osNotificationsEnabled: boolean;
 }
 
 const DEFAULTS: PersistedAppPreferences = {
   theme: 'system',
   language: null,
+  osNotificationsEnabled: false,
 };
 
 function preferencesFilePath(): string {
@@ -31,6 +36,7 @@ export function loadAppPreferences(): PersistedAppPreferences {
     return {
       theme: isThemeMode(parsed.theme) ? parsed.theme : DEFAULTS.theme,
       language: isLocale(parsed.language) ? parsed.language : DEFAULTS.language,
+      osNotificationsEnabled: parsed.osNotificationsEnabled === true,
     };
   } catch {
     // No prior preferences, or the file is unreadable/invalid — fall back to defaults.
@@ -44,6 +50,10 @@ export function saveThemePreference(theme: ThemeMode): void {
 
 export function saveLanguagePreference(language: Locale): void {
   savePreferences({ language });
+}
+
+export function saveOsNotificationsPreference(enabled: boolean): void {
+  savePreferences({ osNotificationsEnabled: enabled });
 }
 
 // Read-modify-write a subset of preferences, preserving the rest. Best effort —
