@@ -498,6 +498,15 @@ export interface CommandNode extends NodeBase {
    * Never written by the agent.
    */
   sysLastRunAt?: number;
+  /**
+   * Which agent definition runs this command. Matches an `AgentDefinition.name`
+   * from the subagent registry (see `listAllAgentDefinitions`); a fire spawns the
+   * brief as a subagent of this type so the run shows in the delivery
+   * conversation's task panel. Empty/absent = the main agent (a context fork from
+   * the otherwise-empty delivery conversation). Agent-editable; not part of the
+   * user-only bright line (only arming the *schedule* is user-gated).
+   */
+  commandAgent?: string;
 }
 
 /** The single user-only-writable field key on a `command` node (the bright line). */

@@ -184,6 +184,127 @@
   gap: var(--space-2);
 }
 
+/* Subagent run boundary — the inline record of a subagent run (mirrors the
+   compaction boundary: a centered control between two rules, expanding to the
+   final result). Neutral functional styling (B3/B4). */
+.agent-subagent-boundary {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-faint);
+}
+
+.agent-subagent-line {
+  min-width: 0;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.agent-subagent-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agent-subagent-toggle {
+  display: inline-flex;
+  max-width: 100%;
+  height: 28px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-3);
+}
+
+.agent-subagent-toggle:hover,
+.agent-subagent-toggle:focus-visible {
+  background: var(--control-hover);
+  color: var(--text-body);
+}
+
+.agent-subagent-toggle.is-active {
+  cursor: default;
+}
+
+.agent-subagent-toggle.is-active:hover,
+.agent-subagent-toggle.is-active:focus-visible {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.agent-subagent-chevron {
+  flex: 0 0 auto;
+  transition: transform var(--motion-fast);
+}
+
+.agent-subagent-chevron.is-expanded {
+  transform: rotate(180deg);
+}
+
+.agent-subagent-toggle .agent-subagent-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+}
+
+.agent-subagent-toggle small {
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+}
+
+.agent-subagent-toggle small.is-error {
+  color: var(--danger);
+}
+
+.agent-subagent-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  width: min(100%, 680px);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  justify-self: center;
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--border);
+  color: var(--text-soft);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  padding: var(--space-2) 0 var(--space-2) var(--space-5);
+}
+
+.agent-subagent-empty {
+  margin: 0;
+  color: var(--text-faint);
+}
+
+.agent-subagent-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.agent-subagent-open:hover,
+.agent-subagent-open:focus-visible {
+  background: var(--control-hover);
+  color: var(--text-body);
+}
+
+.agent-subagent-open svg {
+  flex: 0 0 auto;
+}
+
 .agent-dream-summary p {
   margin: 0;
 }

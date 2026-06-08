@@ -111,6 +111,34 @@ describe('selectDueCommands', () => {
     expect(due[0].brief).toContain('proj-x'); // markup carries the reference, not dropped
   });
 
+  test('the brief is the title plus the non-field child outline (field rows excluded)', () => {
+    const cmd = node({
+      id: 'cmd', type: 'command',
+      content: { text: 'Morning digest', marks: [], inlineRefs: [] },
+      commandSchedule: '2026-06-09T09:00',
+      children: ['agent-field', 'step-1', 'step-2'],
+    });
+    // A field-entry child (e.g. the Agent row) is config, not prompt — excluded.
+    const agentField = node({ id: 'agent-field', type: 'fieldEntry', parentId: 'cmd',
+      content: { text: 'Agent', marks: [], inlineRefs: [] } });
+    const step1 = node({ id: 'step-1', parentId: 'cmd', children: ['step-1a'],
+      content: { text: 'Collect unread feeds', marks: [], inlineRefs: [] } });
+    const step1a = node({ id: 'step-1a', parentId: 'step-1',
+      content: { text: 'group by source', marks: [], inlineRefs: [] } });
+    const step2 = node({ id: 'step-2', parentId: 'cmd',
+      content: { text: 'Post the highlights', marks: [], inlineRefs: [] } });
+
+    const due = selectDueCommands(
+      projection([cmd, agentField, step1, step1a, step2]),
+      new Date(2026, 5, 9, 10, 0),
+    );
+    expect(due).toHaveLength(1);
+    expect(due[0].brief).toBe(
+      'Morning digest\n- Collect unread feeds\n  - group by source\n- Post the highlights',
+    );
+    expect(due[0].brief).not.toContain('Agent');
+  });
+
   test('ignores command nodes with no schedule (manual-only)', () => {
     const cmd = node({ id: 'cmd', type: 'command' });
     expect(selectDueCommands(projection([cmd]), new Date(2026, 5, 9, 10, 0))).toHaveLength(0);

@@ -18,6 +18,7 @@ import {
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import { formatDateSchedule, parseDateSchedule } from './dateSchedule';
+import { COMMAND_AGENT_FIELD_ID, COMMAND_SCHEDULE_FIELD_ID } from './systemFields';
 import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
@@ -179,6 +180,13 @@ export class Core {
     changedNodeIds: [],
     requiresFullSearchRebuild: true,
   };
+  // True when construction seeded the system nodes or minted today's date node
+  // (i.e. the in-memory document now differs from what was loaded). The service
+  // layer persists once after load so these ids are durable — otherwise the
+  // lazily-created today node gets a fresh id on every launch and any renderer
+  // state holding the old id (panel root, persisted layout) dangles → a
+  // `parent not found` when the user adds the first row to today's note.
+  private initialPersistRequired = false;
 
   constructor(state?: CoreSerializedState) {
     this.loro = new LoroOutlinerDocument(state);
@@ -188,6 +196,7 @@ export class Core {
       this.ensureSystemNodesDirect();
       this.ensureCurrentTodayNodeDirect();
       this.loro.commit('__seed__');
+      this.initialPersistRequired = true;
     } else {
       const existing = this.loro.materializeState();
       this.ensureSystemNodesDirect();
@@ -195,11 +204,19 @@ export class Core {
       const normalized = this.loro.materializeState();
       if (!sameJson(existing, normalized)) {
         this.loro.commit(SYSTEM_COMMIT_ORIGIN);
+        this.initialPersistRequired = true;
       }
     }
 
     this.stateValue = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
+  }
+
+  /** Whether construction created/changed nodes that are not yet on disk (system
+   *  seeding or today's date node). The service persists once after load when set,
+   *  so the today node id stays stable across launches. */
+  requiresInitialPersist(): boolean {
+    return this.initialPersistRequired;
   }
 
   static new() {
@@ -743,19 +760,53 @@ export class Core {
 
   // Convert a plain content row into a command node (its text content stays the
   // brief). Idempotent; seeds the user-only `commandSchedule` protected field so
-  // the bright line holds the moment the node becomes a command. Drafting a
-  // command (including this conversion) is allowed from any origin — only
-  // *arming* the schedule is user-only (see `setCommandSchedule`).
+  // the bright line holds the moment the node becomes a command, and seeds the two
+  // config field rows (Schedule / Agent) so the command is fully node-native — the
+  // editors hang off real `fieldEntry` children, and the prompt is the remaining
+  // (non-field) child outline. Drafting a command (including this conversion) is
+  // allowed from any origin — only *arming* the schedule is user-only (see
+  // `setCommandSchedule`).
   setCommandNode(nodeId: string): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureNodeEditable(state, nodeId);
+      const node = clone(requiredNode(state, nodeId));
       if (node.type !== undefined && node.type !== 'command') {
         throw CoreError.invalidOperation('only plain content nodes can become command nodes');
       }
       const protectedFields = node.protectedFields?.includes(COMMAND_SCHEDULE_FIELD)
         ? node.protectedFields
         : [...(node.protectedFields ?? []), COMMAND_SCHEDULE_FIELD];
-      return { ...node, type: 'command', protectedFields } as CommandNode;
+      const command: CommandNode = { ...node, type: 'command', protectedFields } as CommandNode;
+      command.updatedAt = nowMs();
+      this.loro.writeNode(command);
+      this.ensureCommandFieldEntriesDirect(nodeId);
+      return focus(nodeId);
     });
+  }
+
+  // Seed the Schedule + Agent config rows for a command node as real `fieldEntry`
+  // children pointing at the built-in system fields (`sys:commandSchedule` /
+  // `sys:commandAgent`), whose value editors write the gated scalars. Find-or-create
+  // so a re-conversion never duplicates a row; the rows sit ahead of the prompt
+  // (the remaining non-field children), in Schedule-then-Agent order.
+  private ensureCommandFieldEntriesDirect(nodeId: string): void {
+    const hasEntry = (defId: string): boolean =>
+      (this.snapshot().nodes[nodeId]?.children ?? []).some((childId) => {
+        const child = this.snapshot().nodes[childId];
+        return child?.type === 'fieldEntry' && child.fieldDefId === defId;
+      });
+    if (!hasEntry(COMMAND_SCHEDULE_FIELD_ID)) {
+      this.insertFieldEntryNodeDirect(nodeId, 0, COMMAND_SCHEDULE_FIELD_ID);
+    }
+    if (!hasEntry(COMMAND_AGENT_FIELD_ID)) {
+      const children = this.snapshot().nodes[nodeId]?.children ?? [];
+      const scheduleIndex = children.findIndex((childId) => {
+        const child = this.snapshot().nodes[childId];
+        return child?.type === 'fieldEntry' && child.fieldDefId === COMMAND_SCHEDULE_FIELD_ID;
+      });
+      this.insertFieldEntryNodeDirect(nodeId, scheduleIndex >= 0 ? scheduleIndex + 1 : 0, COMMAND_AGENT_FIELD_ID);
+    }
   }
 
   // Arm / change / clear a command node's schedule. The bright line: a write to
@@ -792,6 +843,19 @@ export class Core {
       if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
       const command = node as CommandNode;
       command.sysLastRunAt = Math.max(command.sysLastRunAt ?? 0, firedAt);
+    });
+  }
+
+  // Choose which agent definition runs this command (matches an
+  // `AgentDefinition.name`; empty clears back to the main agent). Agent-editable
+  // — picking the executor is not part of the user-only bright line (only arming
+  // the *schedule* is user-gated, see `setCommandSchedule`).
+  setCommandAgent(nodeId: string, agent: string | undefined): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
+      const command = node as CommandNode;
+      const normalized = agent?.trim() ? agent.trim() : undefined;
+      setOptional(command, 'commandAgent', normalized);
     });
   }
 

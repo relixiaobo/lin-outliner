@@ -26,6 +26,7 @@ import type {
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { useLinAgentRuntime } from '../../agent/runtime';
+import { onAgentRevealRequest } from '../../agent/agentReveal';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
@@ -45,6 +46,7 @@ import {
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentDreamBoundary } from './AgentDreamBoundary';
+import { AgentSubagentBoundary } from './AgentSubagentBoundary';
 import { AgentComposer } from './AgentComposer';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -165,12 +167,17 @@ interface VirtualTranscriptLayout {
   totalHeight: number;
 }
 
+function isBoundaryEntry(entry: AgentConversationEntry): boolean {
+  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.kind === 'subagent';
+}
+
 function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
-  return entry.kind === 'compaction' || entry.kind === 'dream' ? 'system' : entry.message.role;
+  return isBoundaryEntry(entry) ? 'system' : (entry as AgentMessageEntry).message.role;
 }
 
 function getEntryTimestamp(entry: AgentConversationEntry): number {
   if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
+  if (entry.kind === 'subagent') return entry.subagent.startedAt;
   if (entry.kind !== 'compaction') return entry.message.timestamp;
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
@@ -180,7 +187,7 @@ function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntr
 }
 
 function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.message.role === 'user';
+  return isBoundaryEntry(entry) || (entry as AgentMessageEntry).message.role === 'user';
 }
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
@@ -241,9 +248,9 @@ function buildConversationRenderRows(
     rows.push(buildConversationRenderRow({
       entry,
       endIndex: index,
-      key: entry.kind === 'compaction' || entry.kind === 'dream'
+      key: isBoundaryEntry(entry)
         ? entry.id
-        : entry.nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
+        : (entry as AgentMessageEntry).nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
       turnEnded: turnEndedByEndIndex.get(index) ?? true,
       turnPhase,
       totalEntryCount: entries.length,
@@ -288,8 +295,9 @@ function buildConversationRenderRow({
 }
 
 function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
-  if (row.entry.kind === 'compaction' || row.entry.kind === 'dream') return 72;
-  const content = row.entry.message.content;
+  if (isBoundaryEntry(row.entry)) return 72;
+  const message = (row.entry as AgentMessageEntry).message;
+  const content = message.content;
   if (typeof content === 'string') {
     return Math.max(72, Math.ceil(content.length / 72) * 24 + 32);
   }
@@ -298,7 +306,7 @@ function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
     if (block.type === 'thinking') return total + block.thinking.length;
     return total + 48;
   }, 0);
-  const base = row.entry.message.role === 'user' ? 64 : TRANSCRIPT_ROW_ESTIMATE_PX;
+  const base = message.role === 'user' ? 64 : TRANSCRIPT_ROW_ESTIMATE_PX;
   return Math.max(base, Math.ceil(textLength / 84) * 24 + 44);
 }
 
@@ -705,6 +713,15 @@ export function AgentChatPanel({
     if (selectedSubagentId && !subagents[selectedSubagentId]) setSelectedSubagentId(null);
   }, [selectedSubagentId, subagents]);
 
+  // A command Run reveals its delivery conversation and asks for the task panel —
+  // the run is a parentless subagent, so it surfaces there (the open task panel
+  // persists across the conversation switch this same reveal triggers).
+  useEffect(() => onAgentRevealRequest((_conversationId, options) => {
+    if (!options.openTasks) return;
+    setSelectedSubagentId(null);
+    setTaskPanelOpen(true);
+  }), []);
+
   useEffect(() => {
     if (historyOpen) void loadConversations();
   }, [historyOpen, loadConversations]);
@@ -843,6 +860,9 @@ export function AgentChatPanel({
     }
     if (row.entry.kind === 'dream') {
       return <AgentDreamBoundary entry={row.entry} />;
+    }
+    if (row.entry.kind === 'subagent') {
+      return <AgentSubagentBoundary entry={row.entry} onOpenTranscript={setSelectedSubagentId} />;
     }
 
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'

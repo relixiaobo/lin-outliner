@@ -12,7 +12,7 @@ import {
   type AgentSubagentRunRecord,
 } from './agentEventLog';
 
-export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream';
+export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'subagent';
 
 export type AgentRenderRow =
   | {
@@ -33,6 +33,17 @@ export type AgentRenderRow =
       kind: 'dream';
       messageId: string;
       dreamId: string;
+      archived?: boolean;
+    }
+  | {
+      // A subagent run surfaced inline in the transcript as a boundary (its final
+      // result IS the conversation's record of the run). A main-agent-spawned run
+      // sits right after the assistant turn that launched it; a parentless run (a
+      // scheduled/Run-now command fire) is placed by start time.
+      id: string;
+      kind: 'subagent';
+      subagentId: string;
+      messageId?: string;
       archived?: boolean;
     };
 
@@ -291,7 +302,62 @@ function buildTranscriptRows(
     }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
-  return rows;
+  return insertSubagentRows(rows, entities, state);
+}
+
+function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCallId: string): boolean {
+  return entity?.content.some((block) => block.type === 'toolCall' && block.id === toolCallId) ?? false;
+}
+
+// Where a subagent boundary row belongs. A parented run anchors to the spawning
+// turn: right after the tool_result row for its call (once it completed) or, if
+// that hasn't arrived yet, right after the assistant message that issued the call.
+// A parentless run (a command fire) is ordered by start time among the messages.
+// `-1` means append at the end.
+function subagentInsertIndex(
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  run: AgentSubagentRunRecord,
+): number {
+  if (run.parentToolCallId) {
+    const resultIndex = rows.findIndex(
+      (row) => row.kind === 'tool_result'
+        && entities.messages[row.messageId]?.toolCallId === run.parentToolCallId,
+    );
+    if (resultIndex >= 0) return resultIndex + 1;
+    const callIndex = rows.findIndex(
+      (row) => row.kind === 'message'
+        && messageHasToolCall(entities.messages[row.messageId], run.parentToolCallId!),
+    );
+    return callIndex >= 0 ? callIndex + 1 : -1;
+  }
+  let index = -1;
+  for (let position = 0; position < rows.length; position += 1) {
+    const messageId = rows[position]!.messageId;
+    const message = messageId ? entities.messages[messageId] : undefined;
+    if (message && message.createdAt <= run.startedAt) index = position;
+  }
+  return index < 0 ? -1 : index + 1;
+}
+
+// Splice each subagent run into the transcript as a boundary row, earliest first
+// (the index is recomputed against the growing list each iteration).
+function insertSubagentRows(
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  state: AgentEventReplayState,
+): AgentRenderRow[] {
+  const runs = Object.values(state.subagents ?? {})
+    .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
+  if (runs.length === 0) return rows;
+  const result = [...rows];
+  for (const run of runs) {
+    const row: AgentRenderRow = { id: `subagent:${run.id}`, kind: 'subagent', subagentId: run.id };
+    const insertAt = subagentInsertIndex(result, entities, run);
+    if (insertAt < 0) result.push(row);
+    else result.splice(insertAt, 0, row);
+  }
+  return result;
 }
 
 function appendActiveRow(

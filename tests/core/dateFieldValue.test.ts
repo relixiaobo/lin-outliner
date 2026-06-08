@@ -35,6 +35,28 @@ describe('date field values', () => {
     expect(normalizeDateFieldValue('2026-05-20..2026-05-24')).toBe('');
   });
 
+  test('parses and formats recurring single dates; ranges never recur', () => {
+    expect(parseDateFieldValue('2026-05-20T09:30 RRULE:FREQ=DAILY')).toEqual({
+      kind: 'single',
+      date: '2026-05-20T09:30',
+      recurrence: { frequency: 'daily', interval: 1 },
+    });
+    expect(parseDateFieldValue(' 2026-05-20 rrule:freq=weekly;byday=we,mo;interval=2;until=2026-12-31 ')).toEqual({
+      kind: 'single',
+      date: '2026-05-20',
+      recurrence: { frequency: 'weekly', interval: 2, byDay: ['MO', 'WE'], until: '2026-12-31' },
+    });
+    // A plain single carries no `recurrence` key.
+    expect(parseDateFieldValue('2026-05-20')).not.toHaveProperty('recurrence');
+    // Round-trips through the canonical text form.
+    expect(normalizeDateFieldValue('2026-05-20 RRULE:FREQ=MONTHLY;INTERVAL=3')).toBe('2026-05-20 RRULE:FREQ=MONTHLY;INTERVAL=3');
+    // A recurring range is rejected (anchor part is not a bare endpoint).
+    expect(normalizeDateFieldValue('2026-05-20/2026-05-24 RRULE:FREQ=DAILY')).toBe('');
+    // A malformed rule rejects the whole value.
+    expect(normalizeDateFieldValue('2026-05-20 RRULE:FREQ=NOPE')).toBe('');
+    expect(normalizeDateFieldValue('2026-05-20 RRULE:')).toBe('');
+  });
+
   test('formats date input into canonical field values', () => {
     expect(formatDateFieldInput('', '')).toBe('');
     expect(formatDateFieldInput('2026-05-20', '')).toBe('2026-05-20');

@@ -36,17 +36,21 @@ import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
+import { AgentIcon, CalendarIcon } from '../icons';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldNameReusePopover } from './FieldNameReusePopover';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
 import { fieldChoiceLabel } from '../../state/outlinerRows';
 import {
+  COMMAND_AGENT_FIELD_ID,
+  COMMAND_SCHEDULE_FIELD_ID,
   isSystemFieldId,
   systemFieldDisplay,
   type SystemFieldDisplay,
 } from '../../../core/systemFields';
 import { SystemFieldValue } from './SystemFieldValue';
+import { CommandScheduleFieldValue, CommandAgentFieldValue } from './CommandFieldValue';
 import { SystemReferenceValues, isNodeReferenceSystemField } from './SystemReferenceValues';
 import { useFieldNameReuse } from './useFieldNameReuse';
 import { FieldValueOutliner } from './FieldValueOutliner';
@@ -132,8 +136,16 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const [nameDraft, setNameDraft] = useState(field?.content.text ?? '');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  // A command config field (Schedule / Agent) has a read-only name; its value cell
+  // is the interactive surface. Focus the value button (not the inert name input)
+  // when the row is navigated to, so Space summons the picker — matching the
+  // standard date field value's "navigate, Space, pick" flow.
+  const commandValueRef = useRef<HTMLButtonElement>(null);
+  const isCommandSystemField = entryFieldDefId === COMMAND_SCHEDULE_FIELD_ID
+    || entryFieldDefId === COMMAND_AGENT_FIELD_ID;
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const fieldNameFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-name');
+  const rowFocusTargetForEntry = rowFocusTarget(props.entryId, props.parentId, props.panelId);
   const descriptionFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'description');
 
   useEffect(() => {
@@ -141,6 +153,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   }, [field?.id, field?.content.text]);
 
   useEffect(() => {
+    if (isCommandSystemField) return;
     const request = props.ui.focusRequest;
     if (!request || !focusTargetMatches(request.target, fieldNameFocusTarget)) return;
     window.requestAnimationFrame(() => {
@@ -150,9 +163,27 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       setTextControlCursor(target, request.placement);
       props.setUi((prev) => clearFocusRequestState(prev, request));
     });
-  }, [fieldNameFocusTarget, props.setUi, props.ui.focusRequest]);
+  }, [isCommandSystemField, fieldNameFocusTarget, props.setUi, props.ui.focusRequest]);
+
+  // Command config fields: a focus request for this row (either the field-name
+  // surface or the generic row surface used by arrow navigation) lands on the value
+  // button so Space opens its picker.
+  useEffect(() => {
+    if (!isCommandSystemField) return;
+    const request = props.ui.focusRequest;
+    if (!request) return;
+    if (
+      !focusTargetMatches(request.target, fieldNameFocusTarget)
+      && !focusTargetMatches(request.target, rowFocusTargetForEntry)
+    ) return;
+    window.requestAnimationFrame(() => {
+      commandValueRef.current?.focus();
+      props.setUi((prev) => clearFocusRequestState(prev, request));
+    });
+  }, [isCommandSystemField, fieldNameFocusTarget, rowFocusTargetForEntry, props.setUi, props.ui.focusRequest]);
 
   useEffect(() => {
+    if (isCommandSystemField) return;
     const input = props.ui.pendingInputChar;
     if (!input || !focusTargetMatches(input.target, fieldNameFocusTarget)) return;
     window.requestAnimationFrame(() => {
@@ -173,7 +204,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       });
       props.setUi((prev) => clearPendingInputState(prev, input));
     });
-  }, [fieldNameFocusTarget, props.setUi, props.ui.pendingInputChar]);
+  }, [isCommandSystemField, fieldNameFocusTarget, props.setUi, props.ui.pendingInputChar]);
 
   // A built-in system field (`sys:*`) has no backing def node: its name is a fixed
   // label and its value is computed read-only from the owner (this entry's parent).
@@ -204,6 +235,14 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   const fieldConfig = field ? projectFieldConfig(props.index.byId, field) : undefined;
   const fieldType = fieldConfig?.fieldType ?? 'plain';
+  // System fields have no backing FieldDef, so the field-type glyph would default
+  // to plain text. Give the command config rows a meaningful marker icon instead:
+  // a calendar for the date-native Schedule, an agent glyph for the Agent picker.
+  const systemMarkerIcon = systemDisplay?.kind === 'commandSchedule'
+    ? CalendarIcon
+    : systemDisplay?.kind === 'commandAgent'
+      ? AgentIcon
+      : undefined;
   const drillDownId = field?.id ?? props.entryId;
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
@@ -456,7 +495,28 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   // daily-note date page) rejects `toggle_done` — render it read-only there.
   const ownerEditable = !(props.index.byId.get(props.parentId)?.locked ?? false);
   const valueControl = systemDisplay ? (
-    systemFieldId && isNodeReferenceSystemField(systemFieldId) ? (
+    // A command node's two config fields are node-native system fields whose value
+    // editors write the gated scalars (`commandSchedule` / `commandAgent`) — the
+    // Schedule chip + builder + Run, and the executing-agent picker.
+    systemDisplay.kind === 'commandSchedule' ? (
+      <CommandScheduleFieldValue
+        nodeId={props.parentId}
+        schedule={systemDisplay.schedule}
+        readOnly={!ownerEditable}
+        labels={tf.command}
+        run={props.run}
+        buttonRef={commandValueRef}
+      />
+    ) : systemDisplay.kind === 'commandAgent' ? (
+      <CommandAgentFieldValue
+        nodeId={props.parentId}
+        agent={systemDisplay.agent}
+        readOnly={!ownerEditable}
+        labels={tf.command}
+        run={props.run}
+        buttonRef={commandValueRef}
+      />
+    ) : systemFieldId && isNodeReferenceSystemField(systemFieldId) ? (
       // References / Owner / Day are read-only node references: render them as the
       // same reference rows used everywhere (double-click edits the target,
       // expandable), with the value set computed and immutable. See
@@ -561,6 +621,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           expanded={false}
           variant="field"
           fieldType={fieldType}
+          markerIcon={systemMarkerIcon}
           bulletColors={fieldOwnerColor ? [fieldOwnerColor] : undefined}
           onToggleExpand={row.toggleExpandOrSelect}
           onDrillDown={() => props.onRoot(drillDownId)}

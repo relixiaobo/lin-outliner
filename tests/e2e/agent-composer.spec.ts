@@ -1817,7 +1817,14 @@ test.describe('agent composer controls', () => {
       }],
     });
 
-    await expect(page.getByText('Subagent · Inspect subagent UI')).toBeVisible();
+    // A main-agent-spawned subagent renders as an inline boundary in the
+    // transcript (the conversation's permanent record of the run), not as a
+    // tool-call block inside the assistant bubble. The bubble is suppressed.
+    const boundary = page.getByRole('region', { name: 'Subagent · Inspect subagent UI' });
+    await expect(boundary).toBeVisible();
+    await expect(boundary.getByText('Running…')).toBeVisible();
+    await expect(page.getByText('Subagent · Inspect subagent UI', { exact: true })).toHaveCount(0);
+
     await page.getByRole('button', { name: 'Open task panel' }).click();
     const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
     await expect(tasks).toBeVisible();

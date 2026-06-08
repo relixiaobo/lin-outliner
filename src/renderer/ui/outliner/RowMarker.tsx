@@ -1,16 +1,24 @@
-import type { CSSProperties } from 'react';
+import type { ComponentType, CSSProperties } from 'react';
 import type { FieldType } from '../../api/types';
 import { conicColorStyle } from '../tags/tagColors';
+import { CommandIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { FieldTypeIcon } from './fieldTypePresentation';
 import { NodeBulletDot } from './NodeBulletDot';
 
-export type RowMarkerVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef';
+export type RowMarkerVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef' | 'command';
 
 interface RowMarkerProps {
   hasChildren: boolean;
   expanded: boolean;
   variant: RowMarkerVariant;
   fieldType?: FieldType;
+  // An explicit marker icon for a field-variant row, overriding the field-type
+  // glyph. System fields use it (e.g. the command Schedule / Agent rows) so they
+  // carry a meaningful icon instead of the default plain-text one.
+  icon?: ComponentType<{ size?: number }>;
+  // A command bullet shows a spinner instead of its glyph while the command's
+  // attended run is in flight (the title Run button has no persistent indicator).
+  processing?: boolean;
   bulletColors?: readonly string[];
   tagDefColor?: string;
   className?: string;
@@ -21,6 +29,8 @@ export function RowMarker({
   expanded,
   variant,
   fieldType,
+  icon: Icon,
+  processing = false,
   bulletColors = [],
   tagDefColor,
   className,
@@ -31,6 +41,7 @@ export function RowMarker({
     hasChildren ? 'has-children' : '',
     hasChildren && !expanded ? 'collapsed' : '',
     expanded ? 'expanded' : '',
+    variant === 'command' && processing ? 'is-processing' : '',
     className,
   ].filter(Boolean).join(' ');
 
@@ -45,7 +56,9 @@ export function RowMarker({
   return (
     <span className={bulletClass} style={bulletShapeStyle}>
       {variant === 'field' || variant === 'fieldDef' ? (
-        <FieldTypeIcon fieldType={fieldType} />
+        Icon ? <Icon size={ICON_SIZE.rowGlyph} /> : <FieldTypeIcon fieldType={fieldType} />
+      ) : variant === 'command' ? (
+        processing ? <LoaderIcon size={13} aria-hidden="true" /> : <CommandIcon size={13} aria-hidden="true" />
       ) : variant === 'tag' ? (
         <span aria-hidden="true" className="row-bullet-tag-glyph">#</span>
       ) : (

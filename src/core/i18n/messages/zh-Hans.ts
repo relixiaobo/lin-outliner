@@ -553,28 +553,10 @@ commandPalette: {
         endTime: '结束时间',
         endDateToggle: '结束日期',
         includeTimeToggle: '包含时间',
+        repeat: '重复',
+        ends: '结束于',
         today: '今天',
         clear: '清除',
-      },
-      // 通用节点值选择器（NodeValuePicker）的默认文案。
-      valuePicker: {
-        clearSelection: '清除选择',
-        noOptions: '没有选项',
-        create: ({ label }: { label: string }) => `创建“${label}”`,
-        optionsListLabel: ({ name }: { name: string }) => `${name}选项`,
-      },
-      // 命令节点（定时例程）控件：调度胶囊 + 编辑器 + 立即运行。
-      // 设定调度是「只有用户能做」的安全红线。
-      command: {
-        enableSchedule: '启用调度…',
-        runNow: '立即运行',
-        save: '保存',
-        cancel: '取消',
-        clear: '清除',
-        date: '开始日期',
-        time: '时间',
-        repeat: '重复',
-        ends: '结束',
         recurrence: {
           none: '不重复',
           daily: '每天',
@@ -584,6 +566,23 @@ commandPalette: {
           yearly: '每年',
           custom: '自定义',
         },
+      },
+      // 通用节点值选择器（NodeValuePicker）的默认文案。
+      valuePicker: {
+        clearSelection: '清除选择',
+        noOptions: '没有选项',
+        create: ({ label }: { label: string }) => `创建“${label}”`,
+        optionsListLabel: ({ name }: { name: string }) => `${name}选项`,
+      },
+      // 命令节点（定时例程）控件：Schedule 复用标准日期编辑器；Agent 是标准
+      // registry 选择器；Run 位于命令标题开头。设定调度是「只有用户能做」的安全红线。
+      command: {
+        enableSchedule: '启用调度…',
+        runNow: '运行',
+        edit: '编辑调度',
+        mainAgent: '主 agent',
+        selectAgent: '选择 agent',
+        agentPlaceholder: '按空格选择 agent…',
       },
     },
   },
@@ -845,6 +844,16 @@ commandPalette: {
     },
     subagent: {
       summary: ({ description }) => `子智能体 · ${description}`,
+      // 在对话流里记录一次子智能体运行的内联分割线。
+      boundary: {
+        label: '子智能体',
+        running: '运行中…',
+        ranAt: ({ time }) => `${time} 运行`,
+        failed: '失败',
+        stopped: '已停止',
+        viewFullRun: '查看完整运行',
+        noResult: '未记录结果。',
+      },
       heading: '子智能体',
       status: '状态',
       mode: '模式',

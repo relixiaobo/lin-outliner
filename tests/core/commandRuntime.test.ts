@@ -89,6 +89,61 @@ describe('command runtime — failed fires', () => {
     runtime.stopCommandScheduler();
   });
 
+  test('a fire that completes advances the watermark and clears backoff', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    const runtime = await createRuntime(dataRoot, Core.new(), calls);
+
+    const due = {
+      nodeId: 'cmd-ok',
+      brief: 'Summarize my unread feeds',
+      schedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
+      dueAt: new Date(2026, 5, 9, 9, 0).getTime(),
+      lastSuccessAt: null,
+      commandAgent: undefined,
+    };
+    // The provider-less env can't truly run a subagent, so stub the execution to a
+    // clean completion — this exercises fireCommand's SUCCESS branch (the run is
+    // covered end-to-end by the failed-fire test above).
+    (runtime as unknown as { runCommandSubagent: () => Promise<void> }).runCommandSubagent = async () => undefined;
+    const backoff = (runtime as unknown as { commandBackoffUntil: Map<string, number> }).commandBackoffUntil;
+    const failures = (runtime as unknown as { commandFailureCounts: Map<string, number> }).commandFailureCounts;
+    backoff.set('cmd-ok', Date.now() + 100_000);
+    failures.set('cmd-ok', 2);
+
+    await (runtime as unknown as { fireCommand: (d: typeof due, now: Date) => Promise<void> })
+      .fireCommand(due, new Date(2026, 5, 9, 10, 0));
+
+    // A completed run advances the watermark and clears any failure backoff.
+    expect(calls.some((call) => call.command === 'mark_command_fired')).toBe(true);
+    expect(backoff.has('cmd-ok')).toBe(false);
+    expect(failures.has('cmd-ok')).toBe(false);
+    runtime.stopCommandScheduler();
+  });
+
+  test('ensureCommandConversation persists the delivery conversation without materializing a session', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const created = core.createNode(libraryId, null, 'Summarize my unread feeds');
+    const nodeId = created.focus!.nodeId;
+    core.setCommandNode(nodeId);
+    const runtime = await createRuntime(dataRoot, core, calls);
+
+    const { conversationId } = await runtime.ensureCommandConversation(nodeId);
+    expect(conversationId).toBeTruthy();
+
+    // Persist-only: NO in-memory session yet. Restore creates the single session;
+    // creating one here too would `abort()` + recreate it mid-run and diverge the
+    // event seq ("seq N is not after existing M"). This guards that regression.
+    const sessions = (runtime as unknown as { sessions: Map<string, unknown> }).sessions;
+    expect(sessions.has(conversationId)).toBe(false);
+    runtime.stopCommandScheduler();
+  });
+
   test('Run now is a no-op when a fire for the same node is already in flight', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
     roots.push(dataRoot);

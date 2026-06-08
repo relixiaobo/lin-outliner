@@ -13,7 +13,7 @@ import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropBatchMove } from '../interactions/dragDrop';
-import { flattenVisibleRows } from '../../state/document';
+import { flattenVisibleRows, isRowExpanded } from '../../state/document';
 import { buildSelectableRows } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import {
@@ -90,7 +90,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   } = options;
   const byId = index.byId;
   const [dropPosition, setDropPosition] = useState<DropHoverPosition | null>(null);
-  const expanded = ui.expanded.has(rowId);
+  const expanded = isRowExpanded(rowId, byId, ui.expanded);
   const hasChildren = childIds.length > 0;
   const focused = ui.focusedId === rowId;
   const selected = !ui.focusedId && (

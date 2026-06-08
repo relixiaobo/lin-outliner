@@ -95,6 +95,11 @@ export class DocumentService {
 
   async initWorkspace(): Promise<ProjectionSnapshot> {
     this.core = await this.loadCore();
+    // The constructor lazily mints today's date node (and seeds system nodes) in
+    // memory; persist immediately so its id is durable across launches. Without
+    // this, a re-init mints a fresh today id while the renderer still holds the
+    // old one, producing `parent not found: date:…` on the first row of today.
+    if (this.core.requiresInitialPersist()) await this.saveCore();
     const projection = this.core.projection();
     this.rebuildTextSearchIndex(projection);
     return this.projectionSnapshot();
@@ -403,6 +408,8 @@ export class DocumentService {
           nullableString(args.schedule) ?? undefined,
           meta.origin ?? 'user',
         );
+      case 'set_command_agent':
+        return this.core.setCommandAgent(String(args.nodeId), nullableString(args.agent) ?? undefined);
       case 'mark_command_fired':
         return this.core.markCommandFired(String(args.nodeId), nullableNumber(args.firedAt) ?? Date.now());
       case 'create_image_node':

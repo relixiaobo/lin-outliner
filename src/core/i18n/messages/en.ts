@@ -611,28 +611,10 @@ commandPalette: {
         endTime: 'End time',
         endDateToggle: 'End date',
         includeTimeToggle: 'Include time',
-        today: 'Today',
-        clear: 'Clear',
-      },
-      // Generic node value picker (NodeValuePicker) defaults.
-      valuePicker: {
-        clearSelection: 'Clear selection',
-        noOptions: 'No options',
-        create: ({ label }: { label: string }) => `Create "${label}"`,
-        optionsListLabel: ({ name }: { name: string }) => `${name} options`,
-      },
-      // Command node (scheduled routine) controls: the schedule chip + editor +
-      // Run now. Arming the schedule is the user-only "bright line".
-      command: {
-        enableSchedule: 'Enable schedule…',
-        runNow: 'Run now',
-        save: 'Save',
-        cancel: 'Cancel',
-        clear: 'Clear',
-        date: 'Start date',
-        time: 'Time',
         repeat: 'Repeat',
         ends: 'Ends',
+        today: 'Today',
+        clear: 'Clear',
         recurrence: {
           none: 'Does not repeat',
           daily: 'Daily',
@@ -642,6 +624,25 @@ commandPalette: {
           yearly: 'Yearly',
           custom: 'Custom',
         },
+      },
+      // Generic node value picker (NodeValuePicker) defaults.
+      valuePicker: {
+        clearSelection: 'Clear selection',
+        noOptions: 'No options',
+        create: ({ label }: { label: string }) => `Create "${label}"`,
+        optionsListLabel: ({ name }: { name: string }) => `${name} options`,
+      },
+      // Command node (scheduled routine) controls: the Schedule value reuses the
+      // standard date editor; the Agent value is a standard registry picker; Run
+      // lives at the start of the command title. Arming the schedule is the
+      // user-only "bright line".
+      command: {
+        enableSchedule: 'Enable schedule…',
+        runNow: 'Run',
+        edit: 'Edit schedule',
+        mainAgent: 'Main agent',
+        selectAgent: 'Select agent',
+        agentPlaceholder: 'Press Space to pick an agent…',
       },
     },
   },
@@ -929,6 +930,16 @@ commandPalette: {
     // The subagent details panel + inline subagent details.
     subagent: {
       summary: ({ description }: { description: string }) => `Subagent · ${description}`,
+      // The inline transcript divider that records a subagent run in its conversation.
+      boundary: {
+        label: 'Subagent',
+        running: 'Running…',
+        ranAt: ({ time }: { time: string }) => `ran ${time}`,
+        failed: 'Failed',
+        stopped: 'Stopped',
+        viewFullRun: 'View full run',
+        noResult: 'No result recorded.',
+      },
       heading: 'Subagent',
       status: 'Status',
       mode: 'Mode',

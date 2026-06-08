@@ -15,8 +15,10 @@ PM-ratified directional calls (2026-06-07):
 1. **Schedule storage = command-scoped, thin-B1.** The canonical
    `<endpoint> RRULE:...` lives on the command node (`commandSchedule`), parsed by
    the shipped `dateSchedule.ts`. The broader decision **B1** (recurrence on the
-   *generic* `date` FieldType, with a date-picker Repeat section + `DATE_OVERLAPS`/
-   `OVERDUE` RRULE tolerance) is **deferred to a follow-up** — out of scope here.
+   *generic* `date` FieldType, with a date-picker Repeat section) was originally
+   deferred — **it has since landed in this PR** (see the field-unification
+   follow-up below); the `DATE_OVERLAPS`/`OVERDUE` RRULE search-tolerance part
+   remains deferred.
 2. **Safety = interactive trust inheritance.** Bright line via the node-tool
    gateway + `protectedFields` + `origin`; Run-now is attended, no extra fence.
 3. **v1 includes the full builder UI** (command builder panel + smart-convert).
@@ -53,6 +55,58 @@ Shipped on the branch:
   a teardown + zero-command early-out. See the corrected semantics in
   `docs/spec/commands.md`.
 
+Follow-up (PM-ratified 2026-06-08, same PR) — execution & card redesign:
+
+- **Runs are subagents, not main-conversation turns.** A fire (scheduled +
+  Run-now) now runs the brief as a **subagent** on the command's delivery
+  conversation (`runCommandSubagent` → `session.subagentRuntime.invokeAgent`,
+  awaited to completion; a background-flagged agent is polled via `status({wait})`),
+  so each run shows up as a task in that conversation's task panel. The watermark
+  still advances only on completion; failures arm the same backoff.
+- **Per-command agent.** New `commandAgent` (an `AgentDefinition.name`,
+  `set_command_agent`; empty = main agent via context fork). The picker is
+  populated by the existing `agent_list_all_definitions` IPC.
+- **Multi-line task details.** New `commandDetails` (`set_command_details`),
+  appended to the one-line brief at run time.
+- **Framed task card.** `CommandNodeControls` is now a bordered task card: Task
+  details textarea (commit-on-blur) → meta row (schedule chip/enable + Agent
+  picker) → Run + status, with the schedule builder expanding inline. Current
+  behavior documented in `docs/spec/commands.md`.
+
+Follow-up (PM-ratified 2026-06-08, same PR) — **field-native redesign** (supersedes
+the framed-card UI above; the execution layer + bright line are unchanged):
+
+The PM chose "全字段化": a command node should look like every other node — a
+command glyph instead of a bullet, its config as **inline field rows**, and its
+prompt as **ordinary child nodes**. Architecture (ratified):
+
+- **Storage stays the gated scalars.** `commandSchedule` / `commandAgent` remain
+  node scalars written through the user-only `set_command_schedule` /
+  `set_command_agent` gateways — the bright line keeps its node-type invariant and
+  cannot fail open. The scheduler keeps reading the scalars. No execution change.
+- **Surfaced as system fields backed by those scalars** (the `sys:done`-backed-by-
+  `completedAt` pattern): `sys:commandSchedule` + `sys:commandAgent` resolve their
+  value from the owner's scalar and render as field rows under the command node
+  (auto-seeded by `set_command_node`).
+- **Custom value editors, branched (not a general registry).** Shipped approach:
+  `OutlinerFieldRow` branches on `systemDisplay.kind` for the two command fields
+  and renders dedicated connected editors (`CommandScheduleFieldValue` +
+  `CommandAgentFieldValue` in `CommandFieldValue.tsx`). Schedule → the
+  date+recurrence builder (`CommandScheduleBuilderPanel`, now an inline popover)
+  routing to `set_command_schedule`, with the Run-now action co-located; Agent → a
+  registry picker routing to `set_command_agent`. A *general* per-field editor
+  registry was deemed unnecessary for two fields and deferred (deviation below).
+- **Prompt = the command node's non-field child nodes**, serialized to a nested
+  bullet outline at run time (`commandBriefText` + `serializeCommandBody`, inline
+  references reconstructed). `commandDetails` is removed (the prompt body is
+  ordinary outline content now).
+- **Command glyph**: a new `command` `RowMarker` variant; command nodes are always
+  shown expanded (`isRowExpanded`) so the config + steps stay visible.
+- Removes the `CommandNodeControls` card + `commandDetails` field/command/client.
+
+Status: **shipped** in this PR. The substance is folded into
+`docs/spec/commands.md`.
+
 Deviations from the directional calls, for the gate:
 
 - **Smart-convert deferred.** Call #3 listed "command builder panel + smart-
@@ -64,9 +118,117 @@ Deviations from the directional calls, for the gate:
 - **Result routing to Today** rides on the existing delivery-conversation
   surfacing (the run is anchored to the command's own conversation); no new
   "Today" routing was added in this PR.
+- **General per-field editor registry deferred.** The field-native plan proposed a
+  registry letting any field def declare a custom value editor. For exactly two
+  command fields that was over-built; the shipped code branches on the system-field
+  kind in `OutlinerFieldRow` instead. A general registry can be extracted later if
+  a third custom-edited field appears.
+- **Run-now placement.** With the card gone, Run lives inside the Schedule field
+  value (co-located with the schedule). A command node's config rows are always
+  visible because command nodes are force-expanded — preserving the old card's
+  always-on visibility rather than hiding config behind a collapse.
 - **Light+dark visual verification** is the main-agent gate (step 4). CSS is
   token-only and passes the static design-system guards by construction; the
   formal light/dark sign-off happens at the merge gate.
+
+Follow-up (PM-ratified 2026-06-08, same PR) — **subagent run boundary in the
+message stream**:
+
+The PM's complaint: a run opening the task list directly was abrupt ("现在直接
+打开 task list 有点突兀"), and a main-agent-spawned subagent read as a raw tool
+interaction. Ratified scope (AskUserQuestion): unify **both** kinds — a parentless
+command fire *and* a main-agent spawn — behind one inline boundary, with the
+main-agent case **suppressing its tool-call block**; click behavior is
+inline-expand of the result summary plus a "View full run" link. And: every
+subagent's final result must be recorded in its own DM/channel. Architecture
+(shipped):
+
+- **A new transcript row + entry kind `subagent`**, mirroring the
+  compaction/dream boundaries. `agentRenderProjection` inserts one boundary row
+  per run into `transcriptRows` (`insertSubagentRows` / `subagentInsertIndex`):
+  a parented run anchors after its tool-result row (else after the assistant
+  message that issued the call); a parentless run is ordered by start time. The
+  active `rows` path is untouched.
+- **`AgentSubagentBoundary`** (clone of `AgentCompactionBoundary`): a centered
+  control between two rules. Running → live status line (not yet expandable);
+  sealed → expands to the result/error (`AgentMarkdown`) with a "View full run"
+  link wired to `onOpenTranscript` → the subagent details panel.
+- **Tool-block suppression** for parented runs lives in one place —
+  `AgentMessageRow`'s `renderAssistantBlocks` filters out a tool call that a
+  subagent run claims (`subagentsByParentToolCallId`), and an assistant turn left
+  with no blocks is dropped — so the run reads as one boundary, not a tool call
+  plus an empty bubble.
+- **Run no longer auto-opens the task panel.** The Schedule field's Run action
+  reveals the agent conversation only; the run streams in as the inline boundary.
+
+Status: **shipped** in this PR. Folded into `docs/spec/agent-event-log-rendering.md`
+(render-projection rules) and `docs/spec/commands.md`.
+
+Follow-up (PM-ratified 2026-06-08, same PR) — **config fields use standard field
+editors (B1 + Agent select)**:
+
+The PM's question: the Schedule field should be "the standard `date` with repeat"
+and the Agent field "just an ordinary field" — both showed the plain-text (`T`)
+glyph and bespoke editors. Ratified scope: full unification in this PR, **storage
+unchanged** (Schedule stays the user-gated scalar; the bright line is untouched —
+only the editor/display are unified). Architecture (shipped):
+
+- **B1 — the generic `date` FieldType gained recurrence.** `DateFieldValue`'s
+  `single` variant carries an optional `recurrence` (a `range` never does),
+  encoded as the canonical `<endpoint> RRULE:...`. The recurrence-rule primitives
+  (`DateRecurrenceRule`, `parseDateRecurrenceRule`, `formatDateRecurrenceRule`,
+  `WEEKDAY_PRESET`, `isWeekdayPreset`) moved down into `dateFieldValue.ts` (the
+  value-model layer); `dateSchedule.ts` now builds its fire-evaluation on them and
+  re-exports them for back-compat (no import cycle). `DateValuePicker` gained a
+  **Repeat / Ends** section (single-only; hidden in range mode), so *every* date
+  field can now repeat. See `docs/spec/date-field-values.md`.
+- **Shared recurrence form helpers** (`src/renderer/ui/outliner/dateRecurrence.ts`):
+  `RecurrencePreset`, `SELECTABLE_PRESETS`, `presetFromRecurrence`,
+  `buildScheduleString`, `scheduleChipSummary` — consumed by both the date picker
+  and the command Schedule field. The recurrence i18n moved to the shared
+  `outliner.field.datePicker` namespace.
+- **Schedule field reuses `DateValuePicker`** (`allowRange={false}`) instead of the
+  bespoke builder panel (now deleted), committing live through the user-gated
+  `set_command_schedule`. It gets a **calendar** marker icon.
+- **Agent field** is a registry-sourced single-select with an **agent** marker
+  icon. Storage stays the (ungated) `commandAgent` scalar + system field — not
+  demoted to a field-value node, because agent definitions are a runtime registry,
+  not document nodes.
+- **Marker icon override.** System fields default to the plain-text glyph; a new
+  optional `markerIcon` on `RowLeading`/`RowMarker` lets the two command config
+  rows carry a meaningful icon.
+
+Second iteration (PM-ratified 2026-06-08, same PR) — **values use the standard
+outliner style; Run moves to the title.** The first cut still drew the two values
+as bespoke controls (a schedule chip + inline Run/status; a pill `<select>`). The
+PM asked for both to read like ordinary outliner values, and for Run to leave the
+date value entirely:
+
+- **Schedule value = standard date-value style.** Plain summary text + a muted
+  calendar glyph (no chip pill, no inline Run); clicking it opens the same
+  `DateValuePicker`, still via the gated `set_command_schedule`.
+- **Agent value = standard outliner listbox.** Plain agent text + a chevron,
+  opening a `PopoverListbox` (the same surface as the field-name / options
+  pickers) — replacing the native `<select>`. The chosen agent is marked
+  `aria-selected`.
+- **Run on the title, not the Schedule value.** A labelled **Run** button
+  (`CommandRunButton` — a text action button with a background, aligned with the
+  title like the inline Done checkbox) at the start of the command title;
+  `useCommandRun` holds the run state. While a run is in flight the **command
+  bullet glyph becomes a spinner** (`RowMarker` `processing` → `.is-processing`) —
+  the *only* running indicator; the button never shows running/failed (a
+  `runningRef` just guards a double-trigger). The ensure → reveal → run
+  orchestration is unchanged.
+
+Decide-and-note: the Agent field keeps its scalar storage (agent definitions are a
+runtime registry, the wrong fit for `options_from_supertag`) but now uses the
+shared outliner listbox surface instead of a native `<select>`, so it matches the
+rest of the outliner (the PM's "standard style" ask) — the earlier B10
+native-`<select>` call is superseded for this control.
+
+Status: **shipped** in this PR. Folded into `docs/spec/date-field-values.md`
+(recurrence grammar) and `docs/spec/commands.md` (the two config-field editors +
+the title Run / bullet spinner).
 
 ## Essence
 

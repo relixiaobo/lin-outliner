@@ -734,6 +734,19 @@ Rules:
   hidden anchor message, with status, processed counts, and memory-change counts
   in `entities.dreams`. Active manual `/dream` runs append a transient
   `activeDream` row until the marker is written.
+- `subagent_run.*` events become dedicated **subagent boundary rows** in
+  `transcriptRows` (kind `'subagent'`, keyed by run id, backed by
+  `entities.subagents`). They are the conversation's permanent record of a run —
+  every subagent's final result lands inline in its own DM/channel as an
+  expandable summary with a "View full run" link into the full transcript. A
+  parented run (a main-agent spawn, `parentToolCallId` set) anchors right after
+  its tool-result row, else after the assistant message that issued the call, and
+  **suppresses that tool-call block** so the run reads as one boundary, not a tool
+  interaction (an assistant turn left with no other blocks is dropped). A
+  parentless run (a scheduled command fire) is ordered by start time among the
+  messages. A running row shows a live status line and is not yet expandable; once
+  it seals it expands to the result (or error) and the full-run link. These rows
+  live only in `transcriptRows`, never in the active `rows` path.
 - Long output rows are collapsed by default.
 - The thinking/tool **process block is collapsed by default** in every steady
   state. While its turn is live, the collapsed header acts as a status line: it

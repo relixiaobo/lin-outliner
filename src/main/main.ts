@@ -1805,6 +1805,8 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       );
     case 'agent_run_command_now':
       return agentRuntime.runCommandNow(String(args.nodeId));
+    case 'agent_ensure_command_conversation':
+      return agentRuntime.ensureCommandConversation(String(args.nodeId));
     case 'agent_edit_message':
       return agentRuntime.editMessage(
         conversationId(),

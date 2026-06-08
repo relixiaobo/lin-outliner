@@ -1,4 +1,4 @@
-import type { DragEvent } from 'react';
+import type { ComponentType, DragEvent } from 'react';
 import type { FieldType } from '../../api/types';
 import {
   ChevronRightIcon,
@@ -15,7 +15,9 @@ interface RowLeadingProps {
   expanded: boolean;
   variant: RowLeadingVariant;
   fieldType?: FieldType;
+  markerIcon?: ComponentType<{ size?: number }>;
   markerClassName?: string;
+  processing?: boolean;
   bulletColors?: string[];
   tagDefColor?: string;
   onToggleExpand: () => void;
@@ -30,7 +32,9 @@ export function RowLeading({
   expanded,
   variant,
   fieldType,
+  markerIcon,
   markerClassName,
+  processing,
   bulletColors = [],
   tagDefColor,
   onToggleExpand,
@@ -78,6 +82,8 @@ export function RowLeading({
           expanded={expanded}
           variant={variant}
           fieldType={fieldType}
+          icon={markerIcon}
+          processing={processing}
           className={markerClassName}
           bulletColors={bulletColors}
           tagDefColor={tagDefColor}

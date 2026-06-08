@@ -15,6 +15,8 @@ export interface DueCommand {
   dueAt: number;
   /** The fire watermark before this fire (ms epoch), or null if never fired. */
   lastSuccessAt: number | null;
+  /** Which agent runs the brief (an `AgentDefinition.name`); empty = main agent. */
+  commandAgent: string | undefined;
 }
 
 // Anacron decision, as a pure function of the document + the clock. A command
@@ -23,6 +25,37 @@ export interface DueCommand {
 // covered by `sysLastRunAt`. Catch-up coalesces by construction: a three-day
 // gap yields one due occurrence (today's), not three.
 type CommandNodeProjection = Extract<NodeProjection, { type: 'command' }>;
+
+// The brief the agent runs: the command node's own text (the title) plus every
+// non-field descendant serialized as a nested bullet outline. Field-entry
+// children (the Agent / Schedule rows) are config, not prompt, so they're
+// skipped; inline references are preserved via reference markup. A command with
+// no body children reduces to just its title (backward compatible).
+export function commandBriefText(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): string {
+  const title = richTextToReferenceMarkup(node.content).trim();
+  const body = serializeCommandBody(node, byId, 0);
+  return body ? `${title}\n${body}`.trimEnd() : title;
+}
+
+function serializeCommandBody(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+  depth: number,
+): string {
+  const lines: string[] = [];
+  for (const childId of node.children) {
+    const child = byId.get(childId);
+    if (!child || child.type === 'fieldEntry') continue; // config row, not prompt
+    const text = richTextToReferenceMarkup(child.content).trim();
+    if (text) lines.push(`${'  '.repeat(depth)}- ${text}`);
+    const nested = serializeCommandBody(child, byId, depth + 1);
+    if (nested) lines.push(nested);
+  }
+  return lines.join('\n');
+}
 
 function isScheduledCommand(node: NodeProjection): node is CommandNodeProjection {
   return node.type === 'command' && !!node.commandSchedule;
@@ -35,14 +68,15 @@ export function selectDueCommands(projection: DocumentProjection, now: Date): Du
   const commandNodes = projection.nodes.filter(isScheduledCommand);
   if (commandNodes.length === 0) return [];
 
-  const trashed = trashedNodeIds(projection);
+  const byId = new Map<string, NodeProjection>(projection.nodes.map((node) => [node.id, node]));
+  const trashed = new Set(collectDescendantIds(byId, projection.trashId));
   const due: DueCommand[] = [];
   for (const node of commandNodes) {
     if (trashed.has(node.id)) continue; // trashed command nodes are paused
-    // Reconstruct inline references (`[[label||id]]` / file markers) the same
-    // way every other agent-facing node text does — `content.text` alone drops
-    // them (they live by offset in `content.inlineRefs`).
-    const brief = richTextToReferenceMarkup(node.content);
+    // The brief is the node's title + its non-field child outline, with inline
+    // references reconstructed (`[[label||id]]` / file markers) — `content.text`
+    // alone drops refs (they live by offset in `content.inlineRefs`).
+    const brief = commandBriefText(node, byId);
     if (!brief.trim()) continue; // empty brief = nothing to run; never fire / advance the watermark
     const schedule = node.commandSchedule!;
     const lastSuccessAt = node.sysLastRunAt ?? null;
@@ -54,6 +88,7 @@ export function selectDueCommands(projection: DocumentProjection, now: Date): Du
       schedule,
       dueAt: decision.dueAt.getTime(),
       lastSuccessAt,
+      commandAgent: node.commandAgent,
     });
   }
   return due;
@@ -68,12 +103,4 @@ export function liveCommandNodeIds(projection: DocumentProjection): Set<string> 
     if (node.type === 'command') ids.add(node.id);
   }
   return ids;
-}
-
-// Ids of every node under the Trash subtree (so a trashed command pauses without
-// scanning content). Reuses the canonical subtree walk so it can never diverge
-// from the rest of the tree tooling.
-function trashedNodeIds(projection: DocumentProjection): Set<string> {
-  const byId = new Map<string, NodeProjection>(projection.nodes.map((node) => [node.id, node]));
-  return new Set(collectDescendantIds(byId, projection.trashId));
 }

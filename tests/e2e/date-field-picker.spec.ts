@@ -44,6 +44,27 @@ test.describe('date field picker', () => {
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20T13:45/2026-05-24T13:45');
   });
 
+  test('arms a recurrence on a single date and hides repeat for ranges', async ({ page }) => {
+    const dueRow = row(page, ids.dueEntry);
+    await openEmptyDatePicker(page);
+    await page.getByRole('button', { name: 'Select 2026-05-20' }).click();
+    await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20');
+
+    // A generic date field now carries a "Repeat" control (B1). Arming a preset
+    // encodes the rule into the value string.
+    await ensurePickerOpen(page, dueRow);
+    await page.locator('.typed-field-date-recurrence-select').selectOption('daily');
+    await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20 RRULE:FREQ=DAILY');
+
+    // Switching to a range hides the repeat control (a range never recurs) and
+    // drops the rule from the committed value.
+    await ensurePickerOpen(page, dueRow);
+    await page.getByRole('switch', { name: 'End date' }).click();
+    await expect(page.locator('.typed-field-date-recurrence')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Select 2026-05-24' }).click();
+    await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20/2026-05-24');
+  });
+
   test('a malformed typed value flags an icon whose message is hover-only, never inline text', async ({ page }) => {
     const draft = trailingEditor(page, ids.dueEntry);
     await draft.click();

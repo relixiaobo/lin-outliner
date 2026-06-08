@@ -261,6 +261,18 @@ export function useUiState() {
   });
 }
 
+// Whether a row renders its children. A command node is always shown expanded —
+// its config (the Schedule / Agent field rows) and prompt steps are intrinsic to
+// what it is, so they stay visible the way the old controls card always did,
+// independent of the persisted `expanded` set.
+export function isRowExpanded(
+  nodeId: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+  expanded: Set<NodeId>,
+): boolean {
+  return expanded.has(nodeId) || byId.get(nodeId)?.type === 'command';
+}
+
 export function flattenVisibleRows(
   rootId: NodeId,
   byId: Map<NodeId, NodeProjection>,
@@ -275,7 +287,7 @@ export function flattenVisibleRows(
     for (const row of rows) {
       if (row.type !== 'field' && row.type !== 'content') continue;
       result.push(row.id);
-      if (!expanded.has(row.id)) continue;
+      if (!isRowExpanded(row.id, byId, expanded)) continue;
       const childParentId = outlinerChildParentId(row.id, byId);
       if (!childParentId || referencePath.includes(childParentId)) continue;
       visit(childParentId, [...referencePath, childParentId]);
