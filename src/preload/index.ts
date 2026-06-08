@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTypes';
+import {
+  LIN_AGENT_EVENT_CHANNEL,
+  LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL,
+  type AgentRuntimeEvent,
+} from '../core/agentTypes';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent, type OAuthLoginEventEnvelope } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
@@ -189,6 +193,19 @@ const api = {
     ipcRenderer.invoke('lin:get-notification-prefs') as Promise<{ osNotificationsEnabled: boolean }>,
   setNotificationPrefs: (prefs: { osNotificationsEnabled: boolean }) =>
     ipcRenderer.invoke('lin:set-notification-prefs', prefs) as Promise<{ osNotificationsEnabled: boolean }>,
+  // Durably mark a conversation read (the user opened/viewed it). Separate from
+  // restoreConversation so a config reload never clears unread.
+  agentMarkConversationRead: (conversationId: string) =>
+    ipcRenderer.invoke('lin:agent-mark-conversation-read', conversationId) as Promise<void>,
+  // The user clicked an OS notification banner — route the agent panel to the
+  // originating conversation.
+  onNavigateToConversation: (listener: (conversationId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, conversationId: string) => listener(conversationId);
+    ipcRenderer.on(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, handler);
+    };
+  },
   // Language preference. initialLanguage is the synchronously-resolved effective
   // locale for first paint; setLanguage applies immediately across all windows (the
   // main process broadcasts it + rebuilds the native menu) and persists;

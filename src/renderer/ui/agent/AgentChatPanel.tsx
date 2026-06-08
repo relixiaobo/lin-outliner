@@ -783,6 +783,15 @@ export function AgentChatPanel({
     () => window.lin?.onSettingsChanged?.(() => void refreshAfterSettingsChangeRef.current()),
     [],
   );
+  // Clicking an OS notification banner routes here — open the originating conversation.
+  const selectConversationRef = useRef(selectConversation);
+  selectConversationRef.current = selectConversation;
+  useEffect(
+    () => window.lin?.onNavigateToConversation?.((conversationId) => {
+      void selectConversationRef.current(conversationId);
+    }),
+    [],
+  );
 
   async function handleSteerMessage(message: string) {
     const trimmed = message.trim();
@@ -1033,6 +1042,9 @@ export function AgentChatPanel({
                         return (
                           <span
                             className="agent-conversation-unread"
+                            // The visible glyph caps at "99+" for width; the accessible
+                            // name + tooltip carry the exact count (more useful to AT and
+                            // disambiguates "99+" on hover).
                             aria-label={t.agent.chat.unreadTasks({ count: unread })}
                             title={t.agent.chat.unreadTasks({ count: unread })}
                           >

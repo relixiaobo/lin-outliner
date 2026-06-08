@@ -429,6 +429,8 @@ function normalizeStopReason(value: string | undefined): AssistantMessage['stopR
 export interface AgentRuntimeClient {
   restoreLatestConversation: () => Promise<AgentConversation>;
   restoreConversation: (conversationId: string) => Promise<AgentConversation>;
+  /** Durably mark a conversation read (genuine user open / active+focused view). */
+  markConversationRead: (conversationId: string) => Promise<void>;
   createConversation: () => Promise<AgentConversation>;
   closeConversation: (conversationId: string) => Promise<void>;
   sendMessage: (
@@ -517,6 +519,7 @@ export interface LinAgentRuntimeView {
 const defaultAgentRuntimeClient: AgentRuntimeClient = {
   restoreLatestConversation: () => api.agentRestoreLatestConversation(),
   restoreConversation: (conversationId) => api.agentRestoreConversation(conversationId),
+  markConversationRead: (conversationId) => api.agentMarkConversationRead(conversationId),
   createConversation: () => api.agentCreateConversation(),
   closeConversation: (conversationId) => api.agentCloseConversation(conversationId),
   sendMessage: (conversationId, message, attachments = [], userViewContext = null) =>
@@ -580,6 +583,8 @@ export class AgentRuntimeStore {
       const conversation = await this.client.restoreConversation(targetConversationId);
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
+      // Genuine user open → durably clear its off-floor unread (no-op if none).
+      void this.client.markConversationRead(conversation.conversationId);
       await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
@@ -619,6 +624,8 @@ export class AgentRuntimeStore {
       const conversation = await this.client.restoreLatestConversation();
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
+      // Opening the startup/default conversation reads it → clear its unread.
+      void this.client.markConversationRead(conversation.conversationId);
       await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
@@ -812,9 +819,22 @@ export class AgentRuntimeStore {
     if (this.started) return;
     this.started = true;
     this.client.onEvent(this.handleEvent);
+    // Returning focus to the window while viewing a conversation with pending unread
+    // (a task delivered while the app was backgrounded) reads it — clear it durably.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', () => this.markCurrentConversationReadIfFocused());
+    }
     void this.ensureConversation().catch((caught) => {
       this.reportError(caught);
     });
+  }
+
+  private markCurrentConversationReadIfFocused() {
+    const conversationId = this.conversationId;
+    if (!conversationId) return;
+    if (typeof document !== 'undefined' && !document.hasFocus()) return;
+    if ((this.unreadByConversationId.get(conversationId) ?? 0) === 0) return;
+    void this.client.markConversationRead(conversationId);
   }
 
   private ensureConversation() {
@@ -827,6 +847,8 @@ export class AgentRuntimeStore {
             return this.conversationId ?? conversation.conversationId;
           }
           this.hydrateConversation(conversation);
+          // Startup opens this conversation → clear its off-floor unread.
+          void this.client.markConversationRead(conversation.conversationId);
           return conversation.conversationId;
         })
         .catch((caught) => {
@@ -917,6 +939,13 @@ export class AgentRuntimeStore {
         this.unreadByConversationId.delete(payload.conversationId);
       }
       if (previous !== payload.unreadCount) this.publish();
+      // A task delivered into the conversation the user is actively viewing (window
+      // focused) is already seen — clear it durably so it does not resurface as a
+      // stale badge on the next restart. The UI masks the live badge for the current
+      // conversation; this keeps the persisted state in step.
+      if (payload.unreadCount > 0 && payload.conversationId === this.conversationId) {
+        this.markCurrentConversationReadIfFocused();
+      }
       return;
     }
 

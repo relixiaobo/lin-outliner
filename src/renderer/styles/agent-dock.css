@@ -370,11 +370,11 @@ button.panel-resize-handle {
   pointer-events: none;
 }
 
-.agent-conversation-row:hover .agent-conversation-unread,
-.agent-conversation-row:focus-within .agent-conversation-unread {
-  /* Yield the corner to the row actions on hover/focus. */
-  opacity: 0;
-}
+/*
+ * The row actions live in their own flex region to the right of the badge (they do
+ * not overlap it), so the badge stays visible on hover/focus — the unread count must
+ * remain readable exactly while the pointer is reaching for the row.
+ */
 
 .agent-conversation-row-actions {
   display: inline-flex;

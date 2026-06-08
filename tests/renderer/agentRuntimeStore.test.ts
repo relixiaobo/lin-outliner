@@ -228,6 +228,7 @@ function createFakeClient(options: {
     createConversation: 0,
     restoreLatestConversation: 0,
     restoreConversation: [] as string[],
+    markConversationRead: [] as string[],
     queueFollowUp: [] as Array<{ conversationId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
     resolveApproval: [] as Array<{ conversationId: string; requestId: string; approved: boolean; scope: AgentApprovalResolutionScope | undefined }>,
     resolveUserQuestion: [] as Array<{ conversationId: string; requestId: string; result: AskUserQuestionResult }>,
@@ -247,6 +248,9 @@ function createFakeClient(options: {
     restoreConversation: async (conversationId) => {
       calls.restoreConversation.push(conversationId);
       return conversation(conversationId, projection([]));
+    },
+    markConversationRead: async (conversationId) => {
+      calls.markConversationRead.push(conversationId);
     },
     createConversation: async () => {
       calls.createConversation += 1;
@@ -474,7 +478,6 @@ describe('agent runtime store', () => {
       type: 'conversation_attention',
       conversationId: 'other',
       unreadCount: 3,
-      lastNotification: { notificationId: 'n-1', kind: 'task_completed', title: 'Task done' },
       timestamp: 10,
     });
     expect(store.getSnapshot().unreadByConversationId.get('other')).toBe(3);
@@ -486,6 +489,29 @@ describe('agent runtime store', () => {
       timestamp: 11,
     });
     expect(store.getSnapshot().unreadByConversationId.has('other')).toBe(false);
+    unsubscribe();
+  });
+
+  test('marks a conversation read on genuine open but not on reload', async () => {
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+    // Opening the startup conversation reads it.
+    expect(fake.calls.markConversationRead).toEqual(['saved']);
+
+    // Switching to another conversation is a genuine user open → mark it read.
+    await store.getSnapshot().selectConversation('other');
+    await flushMicrotasks();
+    expect(fake.calls.markConversationRead).toEqual(['saved', 'other']);
+
+    // A config reload re-restores the same conversation but must NOT mark it read
+    // (that would clear unread on every model/settings toggle — review #6).
+    await store.getSnapshot().reloadConversation();
+    await flushMicrotasks();
+    expect(fake.calls.markConversationRead).toEqual(['saved', 'other']);
+    expect(fake.calls.restoreConversation).toContain('other');
     unsubscribe();
   });
 
