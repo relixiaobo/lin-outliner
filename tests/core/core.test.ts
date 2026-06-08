@@ -1019,6 +1019,33 @@ describe('Core', () => {
       .toThrow('auto-initialize');
   });
 
+  test('changing a field type prunes auto-init strategies the new type does not offer', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const entryId = mustFocus(core.createFieldDef(tagId, 'When', 'date'));
+    const fieldId = core.state().nodes[entryId].fieldDefId!;
+
+    // A date field offers three strategies; arm all three.
+    core.setFieldConfig(fieldId, {
+      fieldType: 'date',
+      autoInitialize: 'current_date,ancestor_day_node,ancestor_field_value',
+    });
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autoInitialize)
+      .toEqual(['current_date', 'ancestor_day_node', 'ancestor_field_value']);
+
+    // Switching to a plain field (which only offers ancestor_field_value) drops the
+    // date-only strategies but keeps the one still valid — no stale strategy lingers
+    // invisibly to be silently dropped on the next edit.
+    core.setFieldConfig(fieldId, { fieldType: 'plain' });
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autoInitialize)
+      .toEqual(['ancestor_field_value']);
+
+    // Switching to options-from-supertag (offers only ancestor_supertag_ref) drops
+    // the lingering ancestor_field_value entirely.
+    core.setFieldConfig(fieldId, { fieldType: 'options_from_supertag' });
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autoInitialize ?? []).toEqual([]);
+  });
+
   test('paste nodes is one undoable rich structural operation', () => {
     const core = Core.new();
     const today = core.projection().todayId;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AutoInitStrategy, FieldType, HideFieldMode, NodeId, NodeProjection } from '../../api/types';
 import { projectTagConfig } from '../../../core/configProjection';
+import { autoInitStrategiesForFieldType } from '../../../core/autoInit';
 import { resolveFieldOptions } from '../interactions/fieldOptions';
 import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
 import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeValuePicker';
@@ -22,15 +23,6 @@ interface ChoiceOption<T extends string> {
   marker?: NodeValuePickerMarker;
   value: T;
   label: string;
-}
-
-const AUTO_INIT_BY_FIELD_TYPE: Partial<Record<FieldType, AutoInitStrategy[]>> = {
-  date: ['current_date', 'ancestor_day_node', 'ancestor_field_value'],
-  options_from_supertag: ['ancestor_supertag_ref'],
-};
-
-function autoInitStrategiesForField(fieldType: FieldType | undefined): AutoInitStrategy[] {
-  return AUTO_INIT_BY_FIELD_TYPE[fieldType ?? 'plain'] ?? ['ancestor_field_value'];
 }
 
 function parseAutoInitStrategies(value: string | undefined): AutoInitStrategy[] {
@@ -227,7 +219,7 @@ export function DefinitionAutoInitializeControl(props: {
   };
   const enabled = parseAutoInitStrategies(props.value);
   const enabledSet = new Set(enabled);
-  const strategies = autoInitStrategiesForField(props.fieldType);
+  const strategies = autoInitStrategiesForFieldType(props.fieldType);
 
   // A field can carry several auto-init strategies at once (a date field offers
   // three), so this is one multi-select picker — not N indistinguishable toggles.

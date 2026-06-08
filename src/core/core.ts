@@ -1,3 +1,4 @@
+import { autoInitStrategiesForFieldType } from './autoInit';
 import { CoreError } from './errors';
 import { LoroOutlinerDocument, type SerializedLoroDocumentState } from './loroDocument';
 import { freshNodeId, isClientNodeId } from './nodeId';
@@ -1371,8 +1372,20 @@ export class Core {
       if ('hideField' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'hideField', value: normalizeOptionalText(patch.hideField) ?? null });
       }
+      // autoInitialize: explicit set, or pruned to the new type's valid strategies
+      // when the field type changes. Each strategy is type-specific, so a stored
+      // strategy that the new type does not offer would otherwise linger
+      // invisibly and be silently dropped on the next unrelated edit (the picker
+      // only ever serializes the offered set).
       if ('autoInitialize' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'enumList', configKey: 'autoInitialize', values: parseAutoInitStrategies(normalizeOptionalText(patch.autoInitialize)) });
+      } else if (patch.fieldType !== undefined) {
+        const currentAutoInit = fieldAutoInitOf(state, fieldId);
+        const valid = new Set(autoInitStrategiesForFieldType(patch.fieldType));
+        const pruned = currentAutoInit.filter((strategy) => valid.has(strategy));
+        if (pruned.length !== currentAutoInit.length) {
+          this.setConfigValueDirect(fieldId, { kind: 'enumList', configKey: 'autoInitialize', values: pruned });
+        }
       }
       // minValue/maxValue: explicit set, or cleared when the type is no longer numeric.
       const clearRange = patch.fieldType !== undefined && patch.fieldType !== 'number';
