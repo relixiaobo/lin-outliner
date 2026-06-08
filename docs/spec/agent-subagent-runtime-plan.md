@@ -389,6 +389,30 @@ Selection:
 - Callers should pass `subagent_type: "general"` when they want a fresh general
   agent.
 
+#### System prompt — one agent, headless mode (not a separate persona)
+
+A fresh subagent is the **same Tenon agent in headless mode**, not a stripped-down
+persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
+
+1. a **subagent identity + directive** ("You are a Tenon subagent… # Subagent
+   rules": complete only the task, run headless / never ask the user, keep tool
+   chatter out of the result, stay in scope, don't over-claim);
+2. the **shared core** of the main system prompt — `LIN_SUBAGENT_CORE_PROMPT`, the
+   `audience: 'shared'` sections of `LIN_AGENT_SYSTEM_PROMPT_SECTIONS`
+   (system-context, outliner, local-tools, web, communication-and-safety) — so a
+   subagent carries the SAME capabilities, tool conventions, and safety rules as
+   the main agent. The `audience: 'main'` sections (identity, memory) are the chat
+   agent's alone and are excluded;
+3. the definition's **persona body** as `# Agent instructions`, when non-empty.
+
+So the built-in **`general`** carries an **empty body** — it is just "the base
+agent, headless, zero persona" (the default fresh worker). A **user/project**
+definition specializes by adding a body; its body is purely additive on top of the
+shared base. This is the inverse of the earlier design where a fresh subagent got
+a bespoke minimal prompt that discarded the base. (Cost: a fresh subagent's system
+prompt grows from ~80 to ~1.2k tokens — normally provider-cached. Fork is
+unaffected; see below.)
+
 ### Fork Subagent
 
 A fork subagent inherits the current prepared parent context as a cache-stable

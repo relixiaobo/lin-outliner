@@ -45,8 +45,14 @@ restart:
   (`src/core/types.ts:741-757`) verbatim — it already carries every field the
   editor needs. This keeps the plan **out of `src/core/types.ts`** and therefore
   cleanly parallel with [[agent-scheduled-routines]] (see Collision self-check).
-- **No runtime/invocation/memory/isolation change.** Spawning, the
-  fresh-vs-fork seam, memory ownership, and isolation tiers are untouched.
+- ~~**No runtime/invocation/memory/isolation change.**~~ **Amended 2026-06-08
+  (PM-ratified):** folded in **subagent system-prompt unification** — a fresh
+  subagent now reuses the shared core of the main system prompt (capabilities /
+  tool conventions / safety) + a headless directive instead of a bespoke minimal
+  prompt, and built-in `general` collapses to a zero-persona default. This is the
+  ONLY invocation-semantics change; spawning routing, the fresh-vs-fork seam,
+  memory ownership, and isolation tiers remain untouched. Design folded into
+  `docs/spec/agent-subagent-runtime-plan.md` (Fresh Subagent → System prompt).
 - **No built-in mutation.** `general` and `fork` (`agentSubagents.ts:1293-1321`)
   stay immutable; editing one means duplicating to a user agent.
 - **Not multi-agent / channels.** Out of scope.
@@ -231,8 +237,15 @@ directories), mirroring how provider config and runtime settings already split.
   renderer tests (`tests/renderer/agentEditor.test.tsx`).
 - [x] **Slice 3** — `additionalAgentDirectories` settings UI; `disabledAgents`
   keyed on `agentId`; runtime check + UI updated.
+- [x] **Subagent prompt unification** (PM-ratified scope add) — tag
+  `LIN_AGENT_SYSTEM_PROMPT_SECTIONS` with an `audience` and export
+  `LIN_SUBAGENT_CORE_PROMPT` (the shared subset); `buildFreshAgentSystemPrompt`
+  = subagent identity + headless directive + shared core + persona body; empty
+  built-in `general`'s body. Tests: `tests/core/agentSystemPrompt.test.ts`
+  (audience split + core subset), `tests/core/agentSubagentPrompt.test.ts`
+  (composition). Token cost measured (~80 → ~1.2k per fresh subagent prompt).
 - [x] Spec: folded the authoring/management surface into
   `docs/spec/agent-subagent-runtime-plan.md` (registry → Authoring & hot-reload /
-  Disabling by identity) per A6.
+  Disabling by identity; Fresh Subagent → System prompt) per A6.
 - [ ] Gate (main agent): `/code-review`; add `/security-review` (renderer-driven
   file write); visual verification (light + dark) for the new settings editor.

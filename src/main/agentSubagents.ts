@@ -33,6 +33,7 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
+import { LIN_SUBAGENT_CORE_PROMPT } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
@@ -1306,18 +1307,17 @@ class AgentDefinitionRegistry {
 }
 
 function createGeneralAgentDefinition(): AgentDefinition {
+  // `general` is the zero-persona default: it adds no body of its own, so a fresh
+  // `general` run is simply the base Tenon agent in headless/subagent mode (the
+  // identity + directive + shared core that `buildFreshAgentSystemPrompt` supplies
+  // to every fresh subagent). A user agent specializes by adding a persona body.
   return {
     name: 'general',
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/general',
     description: 'General-purpose focused subagent for research, analysis, and execution.',
-    body: [
-      'You are a focused subagent running inside Lin.',
-      'Complete the assigned task independently and report only the result that matters to the parent agent.',
-      'Keep tool use and intermediate reasoning out of the final response unless the parent explicitly asked for it.',
-      'Stay inside the assigned scope. If you find adjacent work, mention it briefly instead of expanding the task.',
-    ].join('\n'),
+    body: '',
   };
 }
 
@@ -1447,21 +1447,32 @@ function parseFrontmatter(text: string): Record<string, unknown> {
   }
 }
 
-function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
-  return [
-    'You are a Tenon subagent.',
+// A fresh subagent is the SAME Tenon agent in headless mode, not a separate
+// dumbed-down persona: it reuses the shared-core system prompt (capabilities,
+// tool conventions, safety — `LIN_SUBAGENT_CORE_PROMPT`) and layers a subagent
+// identity + directive on top, then the definition's own persona body. `general`
+// carries an empty body, so it is just "the base agent, headless, zero persona";
+// a custom definition's body is the additive specialization. (Fork takes a
+// different path — it reuses the parent's full prompt + a fork directive.)
+export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
+  const header = [
+    'You are a Tenon subagent — a focused worker the main Tenon agent spawned to complete one task and report back.',
     '',
     `Agent type: ${definition.name}`,
     `Agent description: ${definition.description}`,
     '',
-    'Rules:',
-    '- Complete only the assigned task.',
-    '- Use tools directly when useful.',
-    '- Return a concise final result for the parent agent.',
+    '# Subagent rules',
+    '- Complete only the assigned task and return a concise final result to the parent agent.',
+    '- You run headless: never ask the user questions. If a required decision is missing, make a reasonable assumption and state it in your result.',
+    '- Use tools directly when useful. Keep intermediate reasoning and tool chatter out of the final result unless the parent asked for it.',
+    '- Stay inside the assigned scope; note adjacent work briefly instead of expanding into it.',
     '- Do not claim work that you did not do.',
-    '',
-    definition.body ? `Agent instructions:\n${definition.body}` : '',
-  ].filter(Boolean).join('\n');
+  ].join('\n');
+  return [
+    header,
+    LIN_SUBAGENT_CORE_PROMPT,
+    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
+  ].filter(Boolean).join('\n\n');
 }
 
 function buildForkDirective(directive: string): string {
