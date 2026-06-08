@@ -1043,11 +1043,17 @@ describe('agent runtime subagents', () => {
     const raised = attentionEvents[attentionEvents.length - 1]!;
     expect(raised.conversationId).toBe(session.conversationId);
     expect(raised.unreadCount).toBeGreaterThanOrEqual(1);
-    expect(raised.lastNotification?.kind).toBe('task_completed');
 
-    // Opening (restoring) the conversation reads it: attention clears to zero and
-    // survives a reload from the durable event log.
+    // Restoring (the config-reload path also restores) must NOT mark read: the
+    // durable unread is still present in the persisted log afterwards.
     await runtime.restoreConversation(session.conversationId);
+    const afterRestore = await new AgentEventStore(dataRoot).replay(session.conversationId);
+    expect(afterRestore.attentionByConversationId[session.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
+
+    // Marking the conversation read (the renderer's explicit user-open signal) is
+    // what clears attention to zero, and it survives because it is a durable
+    // notification.read cursor.
+    await runtime.markConversationRead(session.conversationId);
     const afterOpen = sink.events.filter(
       (event): event is Extract<AgentRuntimeEvent, { type: 'conversation_attention' }> =>
         event.type === 'conversation_attention',
@@ -1189,6 +1195,12 @@ describe('agent runtime subagents', () => {
     });
     await waitFor(() => script.pendingCount() === 2);
 
+    // A user-initiated stop is the user's own action — it raises NO durable
+    // notification/badge (the in-app model-injection still tells the parent).
+    const afterStop = await new AgentEventStore(dataRoot).replay(session.conversationId);
+    expect(afterStop.attentionByConversationId[session.conversationId]?.unreadCount ?? 0).toBe(0);
+    expect(Object.values(afterStop.notifications)).toHaveLength(0);
+
     const queued = await runtime.subagentSend(session.conversationId, subagentId, 'Resume after stop.');
     expect(queued).toMatchObject({
       agent_id: subagentId,
@@ -1203,6 +1215,20 @@ describe('agent runtime subagents', () => {
     });
     await waitFor(() => script.pendingCount() === 0);
     expect(resumedContexts.join('\n')).toContain('Resume after stop.');
+
+    // The resumed run completing again DOES notify (its notification id keys on the
+    // new completion instant, so the resume is not dropped as a stale duplicate).
+    // The terminal notification is appended fire-and-forget, so poll the durable log.
+    let resumeNotification: { kind: string } | undefined;
+    const deadline = Date.now() + 1000;
+    while (!resumeNotification && Date.now() < deadline) {
+      const replay = await new AgentEventStore(dataRoot).replay(session.conversationId);
+      resumeNotification = Object.values(replay.notifications).find(
+        (record) => record.source?.type === 'subagent' && record.source.subagentRunId === subagentId,
+      );
+      if (!resumeNotification) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(resumeNotification?.kind).toBe('task_completed');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
 
     releaseOriginalChild();
@@ -1313,5 +1339,186 @@ describe('agent runtime subagents', () => {
     expect(secondScript.pendingCount()).toBe(0);
     expect(restoredContexts.join('\n')).toContain('Restored background result.');
     expect(restoredContexts.join('\n')).toContain('\\"status\\": \\"completed\\"');
+  });
+
+  test('a background subagent interrupted by restart raises a durable failed notification', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-interrupt-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-interrupt-data-'));
+    roots.push(localRoot, dataRoot);
+
+    // The child blocks forever in the first runtime → the run is persisted as
+    // 'running' when the process "dies". Step order: parent launch (1), child (2,
+    // blocked), parent continuation (3).
+    let releaseChild!: () => void;
+    const childBlocked = new Promise<void>((resolve) => {
+      releaseChild = resolve;
+    });
+    const firstScript = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'interruptible background',
+            prompt: 'Run until the app dies.',
+            subagent_type: 'general',
+            run_in_background: true,
+            name: 'interrupted-bg',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' }),
+        async () => {
+          await childBlocked;
+          return fauxAssistantMessage(fauxText('Should never complete.'));
+        },
+        fauxAssistantMessage(fauxText('Parent after interruptible launch.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const firstSink = createWindowSink();
+    const firstRuntime = new AgentRuntime(
+      () => firstSink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: firstScript.streamFn,
+      },
+    );
+
+    const session = await firstRuntime.createConversation();
+    await sendMessageApprovingAgent(firstRuntime, session.conversationId, 'Start an interruptible background subagent.', firstSink);
+    const subagentId = latestProjection(firstSink.events)?.subagentRunIds[0]!;
+    expect(subagentId).toBeTruthy();
+    // The run is still alive (blocked) — persisted as running, no terminal yet.
+    const beforeRestart = await new AgentEventStore(dataRoot).replay(session.conversationId);
+    expect(beforeRestart.subagents[subagentId]?.status).toBe('running');
+    expect(beforeRestart.attentionByConversationId[session.conversationId]?.unreadCount ?? 0).toBe(0);
+
+    // Second runtime over the same data = a restart. Restoring marks the orphaned
+    // run failed AND raises the durable "don't go silent" notification + badge.
+    const secondScript = scriptedStream([], () => undefined);
+    const secondSink = createWindowSink();
+    const secondRuntime = new AgentRuntime(
+      () => secondSink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: secondScript.streamFn,
+      },
+    );
+
+    const restored = await secondRuntime.restoreConversation(session.conversationId);
+    const restoredSubagent = restored.renderProjection.entities.subagents[subagentId];
+    expect(restoredSubagent?.status).toBe('failed');
+
+    const afterRestart = await new AgentEventStore(dataRoot).replay(session.conversationId);
+    expect(afterRestart.attentionByConversationId[session.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
+    const interruptedNotification = Object.values(afterRestart.notifications).find(
+      (record) => record.source?.type === 'subagent' && record.source.subagentRunId === subagentId,
+    );
+    expect(interruptedNotification?.kind).toBe('task_failed');
+
+    const attentionRaised = secondSink.events.some(
+      (event) => event.type === 'conversation_attention'
+        && event.conversationId === session.conversationId
+        && event.unreadCount >= 1,
+    );
+    expect(attentionRaised).toBe(true);
+
+    releaseChild();
+  });
+
+  test('listConversations re-emits persisted unread on launch (cross-conversation seeding)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-seed-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-seed-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const firstScript = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'background seed',
+            prompt: 'Run in background.',
+            subagent_type: 'general',
+            run_in_background: true,
+            name: 'seed-bg',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Background seed result.')),
+        fauxAssistantMessage(fauxText('Parent after seed launch.')),
+        fauxAssistantMessage(fauxText('Parent consumed seed notification.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const firstSink = createWindowSink();
+    const firstRuntime = new AgentRuntime(
+      () => firstSink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: firstScript.streamFn,
+      },
+    );
+
+    const session = await firstRuntime.createConversation();
+    await sendMessageApprovingAgent(firstRuntime, session.conversationId, 'Start a background subagent that completes.', firstSink);
+    // The completed background subagent left durable unread (never opened/read).
+    const persisted = await new AgentEventStore(dataRoot).replay(session.conversationId);
+    expect(persisted.attentionByConversationId[session.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
+
+    // A fresh runtime (restart) never saw the live attention event. Listing the
+    // conversations must re-emit the persisted unread so the badge is not lost.
+    const secondScript = scriptedStream([], () => undefined);
+    const secondSink = createWindowSink();
+    const secondRuntime = new AgentRuntime(
+      () => secondSink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: secondScript.streamFn,
+      },
+    );
+
+    expect(secondSink.events.some((event) => event.type === 'conversation_attention')).toBe(false);
+    await secondRuntime.listConversations();
+    const seeded = secondSink.events.some(
+      (event) => event.type === 'conversation_attention'
+        && event.conversationId === session.conversationId
+        && event.unreadCount >= 1,
+    );
+    expect(seeded).toBe(true);
   });
 });

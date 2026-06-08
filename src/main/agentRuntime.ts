@@ -69,7 +69,7 @@ import {
   type AgentMemoryEntry,
   type AgentMemoryEvent,
   type AgentNotificationKind,
-  type AgentNotificationRecord,
+  type AgentTaskSource,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentPrincipal,
@@ -416,6 +416,10 @@ type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 export class AgentRuntime {
   private sessions = new Map<string, AgentSessionState>();
   private osNotifier?: OsNotifier;
+  // The conversation the renderer currently displays (last restored/created/opened).
+  // Used to suppress an OS banner for a task whose conversation the user is already
+  // looking at — see main.ts's notifier and getActiveConversationId().
+  private activeConversationId: string | null = null;
   private debugProjectionCache = new Map<string, {
     history: AgentDebugSnapshot[];
     latestSeq: number;
@@ -521,19 +525,31 @@ export class AgentRuntime {
     if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
-    // Opening a conversation reads it: durably clear its off-floor attention.
-    await this.clearConversationAttention(sessionId, session);
+    // Restoring loads a conversation's state; it does NOT mark it read. Marking read
+    // is a separate, explicit user-open signal (markConversationRead) so a config
+    // reload — which also restores — never clears unread. Track it as the active
+    // conversation for OS-notification suppression.
+    this.activeConversationId = conversationId;
     return this.conversationResponse(sessionId, session);
   }
 
+  /** The conversation the renderer is currently displaying, or null. */
+  getActiveConversationId(): string | null {
+    return this.activeConversationId;
+  }
+
   /**
-   * Durably clear a conversation's unread attention (the user opened/read it).
-   * Appends a notification.read cursor through the current tail and re-emits the
-   * folded count. A no-op when nothing is unread so the log does not grow on every
-   * open.
+   * Durably clear a conversation's unread attention — the user opened/read it.
+   * Driven explicitly by the renderer (genuine opens + the active+focused
+   * conversation), NEVER by a config reload. Appends a notification.read cursor
+   * through the current tail and re-emits the folded count. A no-op when nothing
+   * is unread (so the log does not grow on every open) or the conversation is not
+   * live in this process (the renderer always restores before marking read).
    */
-  private async clearConversationAttention(sessionId: string, session: AgentSessionState): Promise<void> {
-    const conversationId = conversationIdFromSessionId(sessionId);
+  async markConversationRead(conversationId: string): Promise<void> {
+    const sessionId = sessionIdFromConversationId(conversationId);
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
     const attention = session.eventState.attentionByConversationId[conversationId];
     if (!attention || attention.unreadCount === 0) return;
     const throughSeq = session.eventState.latestSeq;
@@ -564,6 +580,7 @@ export class AgentRuntime {
     }
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
+    this.activeConversationId = conversationIdFromSessionId(sessionId);
     return this.conversationResponse(sessionId, session);
   }
 
@@ -583,11 +600,37 @@ export class AgentRuntime {
     this.publishPersistedEvents(sessionId, created);
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
+    this.activeConversationId = conversationIdFromSessionId(sessionId);
     return this.conversationResponse(sessionId, session);
   }
 
-  listConversations() {
-    return this.listEventConversations();
+  async listConversations() {
+    const entries = await this.getEventStore().listConversationIndexEntries();
+    // Seed cross-conversation unread badges on launch: the live conversation_attention
+    // event only fires for sessions touched this run, so a conversation that went
+    // unread before the app closed would show no badge until it is reopened. Re-emit
+    // the persisted unread (sourced from replay state) for every still-unread one.
+    for (const entry of entries) {
+      if ((entry.unreadCount ?? 0) > 0) {
+        this.emit({
+          type: 'conversation_attention',
+          conversationId: entry.id,
+          unreadCount: entry.unreadCount,
+          timestamp: Date.now(),
+        });
+      }
+    }
+    return entries
+      .filter((entry) => !!entry.goal)
+      .map((entry) => ({
+        id: entry.id,
+        title: sanitizeSessionTitle(entry.title),
+        members: entry.members.slice(),
+        goal: entry.goal,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        messageCount: entry.messageCount,
+      }));
   }
 
   async listMemory(options: { includeInvalidated?: boolean; limit?: number } = {}): Promise<AgentMemoryEntryView[]> {
@@ -1565,15 +1608,34 @@ export class AgentRuntime {
       .filter((run) => run.status === 'running');
     if (runningRuns.length === 0) return;
 
+    const interruptedError = 'Subagent was interrupted before session restore.';
+    const completedAt = Date.now();
     await this.appendSessionEvents(sessionId, session, runningRuns.map((run): AgentEventInput => ({
       type: 'subagent_run.updated',
       actor: systemActor(),
       subagentRunId: run.id,
       status: 'failed',
-      completedAt: Date.now(),
-      error: 'Subagent was interrupted before session restore.',
+      completedAt,
+      error: interruptedError,
       transcriptMessageCount: run.transcriptMessageCount,
     })));
+
+    // "Don't go silent": a background subagent that died while the app was closed
+    // must still raise a durable badge (and OS banner) on restore — not vanish.
+    // Durable delivery only here (no live model-injection): the session is being
+    // restored, not running a turn, and recovery is re-spawn, not resume.
+    for (const run of runningRuns) {
+      await this.emitTaskNotification(sessionId, session, {
+        notificationId: `notification-${run.id}-${completedAt}`,
+        kind: 'task_failed',
+        title: `Subagent "${run.description}" was interrupted.`,
+        body: interruptedError,
+        source: { type: 'subagent', subagentRunId: run.id },
+        actor: run.parentToolCallId
+          ? toolActor(AGENT_SUBAGENT_TOOL_NAME, run.parentToolCallId)
+          : systemActor(),
+      });
+    }
   }
 
   private async readSubagentTranscriptPayload(
@@ -1674,20 +1736,28 @@ export class AgentRuntime {
     snapshot: AgentSubagentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
-    // Durable per-conversation delivery: emit the attention/OS signal as a
-    // notification.created event anchored to the origin conversation. This is the
-    // restart-safe record (the in-memory model-injection below is the live-session
-    // composed-turn layer; it is best-effort and not the durability guarantee).
-    await this.emitTaskNotification(sessionId, session, {
-      notificationId: `notification-${snapshot.id}`,
-      kind: subagentNotificationKind(snapshot.status),
-      title: subagentNotificationTitle(snapshot),
-      body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
-      source: { type: 'subagent', subagentRunId: snapshot.id },
-      actor: snapshot.parentToolCallId
-        ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
-        : systemActor(),
-    });
+    // A user-initiated stop is the user's own action — it raises no badge/OS
+    // banner (the durable notification below is for completion/failure only). The
+    // live model-injection still fires so a foreground agent learns its child stopped.
+    if (snapshot.status !== 'stopped') {
+      // Durable per-conversation delivery: emit the attention/OS signal as a
+      // notification.created event anchored to the origin conversation. This is the
+      // restart-safe record (the in-memory model-injection below is the live-session
+      // composed-turn layer; it is best-effort and not the durability guarantee).
+      // The id keys on the completion instant so a *resumed* detached run that
+      // finishes again gets a fresh notification (idempotent across replay, distinct
+      // across re-completions — see agentSubagents `send`).
+      await this.emitTaskNotification(sessionId, session, {
+        notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
+        kind: subagentNotificationKind(snapshot.status),
+        title: subagentNotificationTitle(snapshot),
+        body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
+        source: { type: 'subagent', subagentRunId: snapshot.id },
+        actor: snapshot.parentToolCallId
+          ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
+          : systemActor(),
+      });
+    }
     session.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
     void this.flushSubagentNotifications(sessionId, session).catch((error) => {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
@@ -1707,30 +1777,28 @@ export class AgentRuntime {
       kind: AgentNotificationKind;
       title: string;
       body?: string;
-      source?: { type: 'run'; runId: string } | { type: 'subagent'; subagentRunId: string };
+      source?: AgentTaskSource;
       actor?: AgentActor;
     },
   ): Promise<void> {
     if (session.eventState.notifications[input.notificationId]) return;
     const conversationId = conversationIdFromSessionId(sessionId);
+    const body = input.body ? truncateNotificationBody(input.body) : undefined;
     await this.appendSessionEvents(sessionId, session, [{
       type: 'notification.created',
       actor: input.actor ?? systemActor(),
       notificationId: input.notificationId,
       conversationId,
       kind: input.kind,
-      target: this.userPrincipal(),
       title: input.title,
-      body: input.body ? truncateNotificationBody(input.body) : undefined,
+      body,
       source: input.source,
     }]);
-    this.emitProjection(sessionId, 'notification.created', 'coalesce');
+    // No emitProjection here: the render projection never reads notifications or
+    // attention (the badge rides the dedicated conversation_attention event), so a
+    // rebuild would produce byte-identical content. Attention is the only signal.
     this.emitConversationAttention(sessionId, session);
-    this.deliverOsNotification(sessionId, session, input.notificationId, {
-      title: input.title,
-      body: input.body,
-      conversationId,
-    });
+    this.deliverOsNotification({ title: input.title, body, conversationId });
   }
 
   private async flushSubagentNotifications(sessionId: string, session: AgentSessionState): Promise<void> {
@@ -2670,28 +2738,12 @@ export class AgentRuntime {
   private emitConversationAttention(sessionId: string, session: AgentSessionState) {
     const conversationId = conversationIdFromSessionId(sessionId);
     const attention = session.eventState.attentionByConversationId[conversationId];
-    const latest = this.latestUnreadNotification(session, conversationId);
     this.emit({
       type: 'conversation_attention',
       conversationId,
       unreadCount: attention?.unreadCount ?? 0,
-      lastNotification: latest
-        ? { notificationId: latest.notificationId, kind: latest.kind, title: latest.title }
-        : undefined,
       timestamp: Date.now(),
     });
-  }
-
-  private latestUnreadNotification(
-    session: AgentSessionState,
-    conversationId: string,
-  ): AgentNotificationRecord | undefined {
-    let latest: AgentNotificationRecord | undefined;
-    for (const record of Object.values(session.eventState.notifications)) {
-      if (record.conversationId !== conversationId || record.read) continue;
-      if (!latest || record.seq > latest.seq) latest = record;
-    }
-    return latest;
   }
 
   /**
@@ -2704,15 +2756,7 @@ export class AgentRuntime {
     this.osNotifier = notifier;
   }
 
-  private deliverOsNotification(
-    sessionId: string,
-    session: AgentSessionState,
-    notificationId: string,
-    input: { title: string; body?: string; conversationId: string },
-  ): void {
-    void sessionId;
-    void session;
-    void notificationId;
+  private deliverOsNotification(input: { title: string; body?: string; conversationId: string }): void {
     try {
       this.osNotifier?.(input);
     } catch (error) {
@@ -3263,20 +3307,6 @@ export class AgentRuntime {
 
   private resolveProviderModel(providerConfig: AgentProviderRuntimeConfig) {
     return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
-  }
-
-  private async listEventConversations(): Promise<AgentConversationListMeta[]> {
-    return (await this.getEventStore().listConversationIndexEntries())
-      .filter((entry) => !!entry.goal)
-      .map((entry) => ({
-        id: entry.id,
-        title: sanitizeSessionTitle(entry.title),
-        members: entry.members.slice(),
-        goal: entry.goal,
-        createdAt: entry.createdAt,
-        updatedAt: entry.updatedAt,
-        messageCount: entry.messageCount,
-      }));
   }
 
   private async loadEventState(sessionId: string): Promise<AgentEventReplayState> {
@@ -5438,11 +5468,11 @@ function truncateNotificationBody(body: string): string {
 }
 
 function subagentNotificationKind(
-  status: AgentSubagentRunSnapshot['status'],
+  // 'stopped' is gated out before this (a user-initiated stop raises no
+  // notification — see notifySubagentRun), so only failed/completed reach here.
+  status: 'failed' | 'completed',
 ): AgentNotificationKind {
-  if (status === 'failed') return 'task_failed';
-  if (status === 'stopped') return 'task_stopped';
-  return 'task_completed';
+  return status === 'failed' ? 'task_failed' : 'task_completed';
 }
 
 function subagentNotificationTitle(snapshot: AgentSubagentRunSnapshot): string {
