@@ -389,6 +389,30 @@ Selection:
 - Callers should pass `subagent_type: "general"` when they want a fresh general
   agent.
 
+#### System prompt — one agent, headless mode (not a separate persona)
+
+A fresh subagent is the **same Tenon agent in headless mode**, not a stripped-down
+persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
+
+1. a **subagent identity + directive** ("You are a Tenon subagent… # Subagent
+   rules": complete only the task, run headless / never ask the user, keep tool
+   chatter out of the result, stay in scope, don't over-claim);
+2. the **shared core** of the main system prompt — `LIN_SUBAGENT_CORE_PROMPT`, the
+   `audience: 'shared'` sections of `LIN_AGENT_SYSTEM_PROMPT_SECTIONS`
+   (system-context, outliner, local-tools, web, communication-and-safety) — so a
+   subagent carries the SAME capabilities, tool conventions, and safety rules as
+   the main agent. The `audience: 'main'` sections (identity, memory) are the chat
+   agent's alone and are excluded;
+3. the definition's **persona body** as `# Agent instructions`, when non-empty.
+
+So the built-in **`general`** carries an **empty body** — it is just "the base
+agent, headless, zero persona" (the default fresh worker). A **user/project**
+definition specializes by adding a body; its body is purely additive on top of the
+shared base. This is the inverse of the earlier design where a fresh subagent got
+a bespoke minimal prompt that discarded the base. (Cost: a fresh subagent's system
+prompt grows from ~80 to ~1.2k tokens — normally provider-cached. Fork is
+unaffected; see below.)
+
 ### Fork Subagent
 
 A fork subagent inherits the current prepared parent context as a cache-stable
@@ -651,6 +675,68 @@ settings additional directories
 ```
 
 Later layers with the same `name` override earlier layers.
+
+#### Authoring & hot-reload
+
+Agent definitions are **user-authorable in-app** (the model never writes them —
+the write surface is user-driven only, mirroring the closed memory-write
+surface). The settings "Agent Profiles" pane exposes create / edit / duplicate /
+delete:
+
+- **Format layer** (`src/core/agentMarkdown.ts`, pure — `yaml` only, no fs):
+  `serializeAgentMarkdown(AgentAuthoringInput) → AGENT.md` text and its inverses
+  `parseAgentMarkdownDocument` / `parseAgentAuthoringInput`. Shared by **both**
+  main (the write surface below) and the renderer (the Form⇄Raw editor toggle), so
+  the AGENT.md format lives in exactly one place and the two sides cannot drift.
+- **Write surface** (`src/main/agentAuthoring.ts`, pure filesystem): serialize an
+  `AgentAuthoringInput` via `serializeAgentMarkdown` and atomic-write it under a
+  writable agents dir. The target is forced inside `~/.agents/agents/<slug>`
+  (`source: user`) or `<workspace>/.agents/agents/<slug>` (`source: project`); the
+  name is slugged to a filesystem-safe segment and path containment is asserted in
+  main, so a renderer-supplied name can never escape via traversal. Built-in
+  agents (`rootDir === 'built-in'`) are never a write target — editing one means
+  **duplicating** to a user copy.
+- **Editor UI** (`AgentEditor.tsx`): **one** editor abstraction for every agent —
+  built-in, user, or new — with two switchable modes behind a header
+  `SegmentedControl`. **Form** = structured controls (name / description / model /
+  effort / permission-mode / max-turns / background) plus on/off **toggle lists**
+  for tools and skills — all-on or all-off ⇒ the agent inherits every tool (the
+  `tools` field is omitted), a proper subset is stored, and any tool/skill outside
+  the curated catalog is preserved so Form editing never drops it. **Raw** = the
+  full `AGENT.md` text. The toggle converts losslessly through the format layer
+  (`serializeAgentMarkdown` Form→Raw, `parseAgentAuthoringInput` Raw→Form). A
+  **built-in** renders through this same editor but **read-only** (every control
+  disabled; the mode toggle stays live so Raw is viewable; the only action is
+  "Duplicate to my agents") — so opening `general` and opening a user agent look
+  identical, the difference is only editability. A **new** agent seeds a
+  **scaffold** (real defaults — `permission-mode: restricted`, `effort: medium`,
+  `max-turns: 20`, a starter persona — plus all tools on and model inherit), so
+  the Form starts populated and the Raw is a fill-in template rather than a bare
+  `name: ""`. Default mode is Form.
+- **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
+  (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
+  authoring write `AgentRuntime` reloads **every live session's** registry, so a
+  new/edited/deleted agent appears in the subagent picker and settings list
+  without an app restart. A run resolves its `AgentDefinition` at spawn, so reload
+  only affects future spawns — live runs are unaffected.
+- **IPC** (additive, `AGENT_COMMANDS`): `agent_create_agent_definition`,
+  `agent_update_agent_definition`, `agent_delete_agent_definition`,
+  `agent_duplicate_agent_definition`, `agent_reload_agent_definitions`. Each
+  returns the freshly reloaded `AgentDefinitionView[]` (an `AgentDefinition` plus
+  its `agentId`). `update`/`delete`/`duplicate` address an agent by `agentId`,
+  which main resolves to the definition (and rejects built-ins).
+- **`additionalAgentDirectories`** is editable from the same pane (comma-separated
+  paths), wired to `updateAdditionalAgentDirectories` (which also invalidates the
+  cache).
+
+#### Disabling by identity
+
+`disabledAgents` stores the full **`agentId`** (`${source}:${namespace}:${name}`,
+`agentSubagentIdentity.ts`), not the bare `name`, so disabling one source's agent
+no longer disables a same-named agent from another source. The spawn gate and the
+listing filter both check `agentDefinitionAgentId(definition)`. (Pre-release: the
+stored shape switched directly with no migration — see
+`storage-format-no-backcompat-prerelease`.)
 
 ### `AgentSkillRuntime`
 

@@ -42,6 +42,9 @@ import {
   type AgentRuntimeEvent,
   type AgentApprovalRequestView,
   type AgentApprovalResolutionScope,
+  type AgentAuthoringInput,
+  type AgentDefinitionView,
+  type AgentStorageLocation,
   type AgentUserViewContext,
   type AskUserQuestionResult,
   type ImageContent,
@@ -145,9 +148,16 @@ import {
   type AgentSubagentRunSnapshot,
 } from './agentSubagents';
 import {
+  agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
   resolveSubagentMemoryOwner,
 } from './agentSubagentIdentity';
+import {
+  createAgentDefinitionFile,
+  deleteAgentDefinitionFile,
+  duplicateAgentDefinitionFile,
+  updateAgentDefinitionFile,
+} from './agentAuthoring';
 import {
   createSubagentTranscriptEnvelope,
   parseSubagentTranscriptEnvelope,
@@ -208,6 +218,7 @@ import {
   type AgentRuntimeContextEventInput,
 } from './agentRuntimeContext';
 import type {
+  AgentDefinition,
   AgentPermissionMode,
   AgentReasoningLevel,
   AgentRuntimeSettings,
@@ -857,7 +868,15 @@ export class AgentRuntime {
     });
   }
 
-  async listAllAgentDefinitions(conversationId: string) {
+  async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
+    const definitions = await this.listRawAgentDefinitions(conversationId);
+    return definitions.map((definition) => ({ ...definition, agentId: agentDefinitionAgentId(definition) }));
+  }
+
+  // The raw (agentId-less) scan, shared by the settings list and the
+  // authoring resolve-by-id path. Reuses a live session's registry when one
+  // exists (so its cache invalidation is observed), else a throwaway runtime.
+  private async listRawAgentDefinitions(conversationId: string): Promise<AgentDefinition[]> {
     const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -871,6 +890,67 @@ export class AgentRuntime {
       host: {} as any,
     });
     return tempRuntime.listAllAgentDefinitions();
+  }
+
+  // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
+  // through main's containment-checked file surface, then every live session's
+  // registry cache is invalidated so the change is visible (subagent picker +
+  // settings list) without an app restart. The fresh view list is returned so
+  // the renderer can re-select by agentId.
+  async createAgentDefinition(
+    conversationId: string,
+    input: AgentAuthoringInput,
+    storage: AgentStorageLocation,
+  ): Promise<AgentDefinitionView[]> {
+    await createAgentDefinitionFile({ input, storage, localRoot: this.authoringLocalRoot() });
+    return this.reloadAgentDefinitions(conversationId);
+  }
+
+  async updateAgentDefinition(
+    conversationId: string,
+    agentId: string,
+    input: AgentAuthoringInput,
+  ): Promise<AgentDefinitionView[]> {
+    const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
+    await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
+    return this.reloadAgentDefinitions(conversationId);
+  }
+
+  async deleteAgentDefinition(conversationId: string, agentId: string): Promise<AgentDefinitionView[]> {
+    const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
+    await deleteAgentDefinitionFile({ existing, localRoot: this.authoringLocalRoot() });
+    return this.reloadAgentDefinitions(conversationId);
+  }
+
+  async duplicateAgentDefinition(
+    conversationId: string,
+    agentId: string,
+    newName: string,
+    storage: AgentStorageLocation,
+  ): Promise<AgentDefinitionView[]> {
+    const source = await this.resolveAgentDefinitionById(conversationId, agentId);
+    await duplicateAgentDefinitionFile({ source, newName, storage, localRoot: this.authoringLocalRoot() });
+    return this.reloadAgentDefinitions(conversationId);
+  }
+
+  // Invalidate every live session's registry cache, then return the fresh list.
+  // Also exposed as an explicit "reload agents" action.
+  async reloadAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
+    for (const session of this.sessions.values()) {
+      session.subagentRuntime.reloadAgentDefinitions();
+    }
+    return this.listAllAgentDefinitions(conversationId);
+  }
+
+  private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
+    const definitions = await this.listRawAgentDefinitions(conversationId);
+    const match = definitions.find((definition) => agentDefinitionAgentId(definition) === agentId);
+    if (!match) throw new Error('Agent definition not found.');
+    return match;
+  }
+
+  private authoringLocalRoot(): string {
+    return this.options.localFileRoot ?? process.cwd();
   }
 
   async listAllSkills(conversationId: string) {

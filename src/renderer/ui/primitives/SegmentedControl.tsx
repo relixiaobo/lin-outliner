@@ -12,6 +12,8 @@ interface SegmentedControlProps<T extends string> {
   /** Accessible name for the whole group (e.g. "Theme"). */
   label: string;
   className?: string;
+  /** Read-only display: segments render disabled and selection is a no-op. */
+  disabled?: boolean;
 }
 
 // A macOS-style segmented control: a horizontal row of mutually-exclusive
@@ -25,12 +27,14 @@ export function SegmentedControl<T extends string>({
   onChange,
   label,
   className,
+  disabled = false,
 }: SegmentedControlProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
   // Only notify on an actual change — re-selecting the active segment is a no-op,
   // matching the native radio convention (and avoiding a redundant persist).
   function select(next: T) {
+    if (disabled) return;
     if (next !== value) onChange(next);
   }
 
@@ -63,6 +67,7 @@ export function SegmentedControl<T extends string>({
           <button
             aria-checked={selected}
             className={`segmented-control-option${selected ? ' is-selected' : ''}`}
+            disabled={disabled}
             key={option.value}
             onClick={() => select(option.value)}
             onKeyDown={(event) => onKeyDown(event, index)}

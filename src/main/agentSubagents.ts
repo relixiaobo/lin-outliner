@@ -33,6 +33,7 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
+import { LIN_SUBAGENT_CORE_PROMPT } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
@@ -329,6 +330,11 @@ export class AgentSubagentRuntime {
     this.disabledAgents = disabledAgents;
   }
 
+  /** Invalidate this runtime's agent-definition cache (after an authoring write). */
+  reloadAgentDefinitions(): void {
+    this.registry.reload();
+  }
+
   clearMemoryReminderCache(): void {
     for (const run of this.runs.values()) {
       run.memoryReminderCache = undefined;
@@ -341,7 +347,7 @@ export class AgentSubagentRuntime {
 
   async reserveAgentListingReminderText(contextWindowTokens?: number | null): Promise<string | null> {
     const agents = await this.registry.listAgents();
-    const newAgents = agents.filter((agent) => !this.isAgentListed(agent) && !this.disabledAgents.includes(agent.name));
+    const newAgents = agents.filter((agent) => !this.isAgentListed(agent) && !this.disabledAgents.includes(agentDefinitionAgentId(agent)));
     if (newAgents.length === 0) return null;
     const listing = formatAgentListing(newAgents, contextWindowTokens ?? undefined);
     if (!listing) return null;
@@ -534,7 +540,7 @@ export class AgentSubagentRuntime {
       ? createForkAgentDefinition()
       : await this.resolveFreshAgent(params.subagent_type);
 
-    if (contextMode !== 'fork' && this.disabledAgents.includes(definition.name)) {
+    if (contextMode !== 'fork' && this.disabledAgents.includes(agentDefinitionAgentId(definition))) {
       throw new Error(`Agent '${definition.name}' is currently disabled in settings.`);
     }
 
@@ -1246,6 +1252,16 @@ class AgentDefinitionRegistry {
     const normalized = normalizeConfiguredDirectories(directories, this.localRoot);
     if (sameStringList(this.additionalAgentDirectories, normalized)) return;
     this.additionalAgentDirectories = normalized;
+    this.reload();
+  }
+
+  /**
+   * Drop the startup-cached scan so the next read re-scans the agents dirs. Used
+   * after an authoring write so a new/edited/deleted agent is live without an app
+   * restart. A run already resolved its definition at spawn, so live runs are
+   * unaffected — only future spawns see the change.
+   */
+  reload(): void {
     this.loaded = false;
     this.agents.clear();
     this.seenAgentFileIds.clear();
@@ -1291,18 +1307,17 @@ class AgentDefinitionRegistry {
 }
 
 function createGeneralAgentDefinition(): AgentDefinition {
+  // `general` is the zero-persona default: it adds no body of its own, so a fresh
+  // `general` run is simply the base Tenon agent in headless/subagent mode (the
+  // identity + directive + shared core that `buildFreshAgentSystemPrompt` supplies
+  // to every fresh subagent). A user agent specializes by adding a persona body.
   return {
     name: 'general',
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/general',
     description: 'General-purpose focused subagent for research, analysis, and execution.',
-    body: [
-      'You are a focused subagent running inside Lin.',
-      'Complete the assigned task independently and report only the result that matters to the parent agent.',
-      'Keep tool use and intermediate reasoning out of the final response unless the parent explicitly asked for it.',
-      'Stay inside the assigned scope. If you find adjacent work, mention it briefly instead of expanding the task.',
-    ].join('\n'),
+    body: '',
   };
 }
 
@@ -1374,7 +1389,7 @@ async function loadAgentsFromDir(agentsDir: string, source: AgentDefinition['sou
   return agents;
 }
 
-function createAgentDefinition(input: {
+export function createAgentDefinition(input: {
   name: string;
   rootDir: string;
   agentFile: string;
@@ -1406,7 +1421,7 @@ function createAgentDefinition(input: {
   };
 }
 
-function parseAgentMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+export function parseAgentMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
   const normalized = raw.replace(/^\uFEFF/, '');
   if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) {
     return { frontmatter: {}, body: normalized };
@@ -1432,21 +1447,32 @@ function parseFrontmatter(text: string): Record<string, unknown> {
   }
 }
 
-function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
-  return [
-    'You are a Tenon subagent.',
+// A fresh subagent is the SAME Tenon agent in headless mode, not a separate
+// dumbed-down persona: it reuses the shared-core system prompt (capabilities,
+// tool conventions, safety — `LIN_SUBAGENT_CORE_PROMPT`) and layers a subagent
+// identity + directive on top, then the definition's own persona body. `general`
+// carries an empty body, so it is just "the base agent, headless, zero persona";
+// a custom definition's body is the additive specialization. (Fork takes a
+// different path — it reuses the parent's full prompt + a fork directive.)
+export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
+  const header = [
+    'You are a Tenon subagent — a focused worker the main Tenon agent spawned to complete one task and report back.',
     '',
     `Agent type: ${definition.name}`,
     `Agent description: ${definition.description}`,
     '',
-    'Rules:',
-    '- Complete only the assigned task.',
-    '- Use tools directly when useful.',
-    '- Return a concise final result for the parent agent.',
+    '# Subagent rules',
+    '- Complete only the assigned task and return a concise final result to the parent agent.',
+    '- You run headless: never ask the user questions. If a required decision is missing, make a reasonable assumption and state it in your result.',
+    '- Use tools directly when useful. Keep intermediate reasoning and tool chatter out of the final result unless the parent asked for it.',
+    '- Stay inside the assigned scope; note adjacent work briefly instead of expanding into it.',
     '- Do not claim work that you did not do.',
-    '',
-    definition.body ? `Agent instructions:\n${definition.body}` : '',
-  ].filter(Boolean).join('\n');
+  ].join('\n');
+  return [
+    header,
+    LIN_SUBAGENT_CORE_PROMPT,
+    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
+  ].filter(Boolean).join('\n\n');
 }
 
 function buildForkDirective(directive: string): string {

@@ -64,6 +64,9 @@ export type {
 export type {
   AgentApprovalRequestView,
   AgentApprovalResolutionScope,
+  AgentAuthoringInput,
+  AgentDefinitionView,
+  AgentStorageLocation,
 } from '../../core/agentTypes';
 
 export interface AgentToolPermissionSettingsView {

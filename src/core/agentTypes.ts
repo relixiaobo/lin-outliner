@@ -15,7 +15,7 @@ import type {
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
-import type { NodeId, NodeType } from './types';
+import type { AgentDefinition, AgentPermissionMode, NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
@@ -36,6 +36,44 @@ export type {
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
+
+/**
+ * Where a user-authored agent definition lives. `user` → the cross-workspace
+ * `~/.agents/agents` dir; `project` → the git-trackable `<workspace>/.agents/agents`
+ * dir. Built-in agents are never a write target. See [[agent-authoring]].
+ */
+export type AgentStorageLocation = 'user' | 'project';
+
+/**
+ * The editable subset of an {@link AgentDefinition} that the settings authoring
+ * UI sends to main on create/update. Identity/location fields (`source`,
+ * `rootDir`, `agentFile`) are NOT here — main derives them from the storage
+ * location and name, so the renderer can never point a write outside the agents
+ * dirs.
+ */
+export interface AgentAuthoringInput {
+  name: string;
+  description: string;
+  body: string;
+  model?: string;
+  effort?: string;
+  permissionMode?: AgentPermissionMode;
+  maxTurns?: number;
+  tools?: string[];
+  disallowedTools?: string[];
+  skills?: string[];
+  background?: boolean;
+}
+
+/**
+ * An {@link AgentDefinition} plus its stable `agentId` — the addressing key the
+ * settings UI uses to update / delete / enable-disable a specific agent without
+ * colliding two same-named agents from different sources. Computed in main from
+ * `source`/`agentFile`/`name`; never persisted on disk.
+ */
+export interface AgentDefinitionView extends AgentDefinition {
+  agentId: string;
+}
 
 export interface AgentAttachmentInputBase {
   id: string;

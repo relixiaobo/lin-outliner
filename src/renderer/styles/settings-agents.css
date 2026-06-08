@@ -2,48 +2,12 @@
    detail is a drill-down route reached by clicking a row, so the top-level Settings
    pane stays scannable instead of flattening list + details into one surface. */
 
-/* The drill-down detail surface floats on the flat base like an inset card
-   (--bg-elevated, --radius-lg, hairline edge). */
-.agent-profile-detail-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
-  box-shadow: var(--inset-hairline);
-  height: auto;
-  max-height: none;
-  overflow: visible;
-}
-
-.agent-profile-detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border-subtle);
-  padding-bottom: var(--space-4);
-}
-
 .agent-profile-title {
   margin: 0;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   font-weight: 650;
   line-height: var(--line-ui-sm-tight);
-}
-
-.agent-profile-source-label {
-  color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-}
-
-.agent-profile-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 
 .agent-profile-field-label {
@@ -53,9 +17,108 @@
   line-height: var(--line-meta);
 }
 
-.agent-profile-prompt-preview {
+/* Authoring editor (create / edit a user agent). Reuses the inset-card +
+   settings-sheet-row field chrome shared with the provider sheet; the persona
+   body is a taller mono editor mirroring the read-only preview. */
+.agent-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.agent-editor-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.agent-editor-hint {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.agent-editor-field-hint {
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+/* The editor's field labels are longer than the provider sheet's (e.g. "Model
+   Override", "Permission Mode"), so widen the label column to keep them on one
+   line instead of the 92px provider default that wrapped. */
+.settings-agents-section .settings-sheet-row-label {
+  width: 132px;
+}
+
+/* A row whose trailing control is a segmented control (permission / storage):
+   label left, control right-aligned and intrinsically sized so it never
+   stretches edge-to-edge. */
+.settings-sheet-row-control {
+  justify-content: space-between;
+}
+
+.settings-sheet-row-control > :last-child {
+  flex: 0 0 auto;
+}
+
+/* The background-toggle row carries a description, so it stacks label + hint on
+   the lead and floats the switch to the trailing edge. */
+.settings-sheet-row-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.settings-sheet-row-switch .settings-sheet-row-label {
+  width: auto;
+}
+
+.settings-sheet-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* A field whose label is too long to share a line with its input (the agent
+   directories path box): stack label over a full-width input. */
+.settings-sheet-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.settings-sheet-row-stack .settings-sheet-row-label {
+  width: auto;
+}
+
+/* Mode toggle (Form / Raw) sits opposite the title; keep the title from being
+   pushed by a long edit-title. */
+.agent-editor-header .agent-profile-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-editor-raw {
+  height: 340px;
+  white-space: pre;
+}
+
+.agent-editor-persona {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.agent-profile-prompt-editor {
   width: 100%;
-  height: 120px;
+  height: 220px;
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -64,42 +127,19 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs-tight);
-  resize: none;
+  resize: vertical;
   outline: none;
 }
 
-.agent-profile-specs {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-4) 0;
+.agent-profile-prompt-editor:focus-visible {
+  box-shadow: var(--outline-focus);
 }
 
-.spec-item {
+.agent-editor-actions {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.spec-label {
-  color: var(--muted-2);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.spec-value {
-  color: var(--text-strong);
-  font-size: var(--font-meta);
-  font-weight: 600;
-  line-height: var(--line-meta);
-}
-
-.agent-profile-tags-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
 @media (max-width: 560px) {

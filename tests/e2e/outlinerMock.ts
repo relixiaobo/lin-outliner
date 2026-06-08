@@ -346,6 +346,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const agentDefinitions = [
       {
+        agentId: 'built-in:tenon:general',
         name: 'general',
         source: 'built-in',
         rootDir: 'built-in',

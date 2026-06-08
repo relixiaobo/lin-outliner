@@ -12,6 +12,9 @@ import type {
   AgentApprovalResolutionScope,
   AgentToolPermissionSettingsView,
   AgentDefinition,
+  AgentDefinitionView,
+  AgentAuthoringInput,
+  AgentStorageLocation,
   SkillDefinition,
   CommandResult,
   CreateNodeTree,
@@ -347,9 +350,24 @@ export const api = {
   agentOAuthCancel: (providerId: string) =>
     command<void>('agent_oauth_cancel', { providerId }),
   agentListAllDefinitions: (conversationId: string) =>
-    command<AgentDefinition[]>('agent_list_all_definitions', { conversationId }),
+    command<AgentDefinitionView[]>('agent_list_all_definitions', { conversationId }),
   agentTestProviderConnection: (options: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }) =>
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: (conversationId: string) =>
     command<SkillDefinition[]>('agent_list_all_skills', { conversationId }),
+  agentCreateAgentDefinition: (conversationId: string, input: AgentAuthoringInput, storage: AgentStorageLocation) =>
+    command<AgentDefinitionView[]>('agent_create_agent_definition', { conversationId, input, storage }),
+  agentUpdateAgentDefinition: (conversationId: string, agentId: string, input: AgentAuthoringInput) =>
+    command<AgentDefinitionView[]>('agent_update_agent_definition', { conversationId, agentId, input }),
+  agentDeleteAgentDefinition: (conversationId: string, agentId: string) =>
+    command<AgentDefinitionView[]>('agent_delete_agent_definition', { conversationId, agentId }),
+  agentDuplicateAgentDefinition: (
+    conversationId: string,
+    agentId: string,
+    newName: string,
+    storage: AgentStorageLocation,
+  ) =>
+    command<AgentDefinitionView[]>('agent_duplicate_agent_definition', { conversationId, agentId, newName, storage }),
+  agentReloadAgentDefinitions: (conversationId: string) =>
+    command<AgentDefinitionView[]>('agent_reload_agent_definitions', { conversationId }),
 };

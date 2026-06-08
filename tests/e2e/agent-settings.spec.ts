@@ -122,12 +122,12 @@ test.describe('agent settings window', () => {
     await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
-    await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
     await expect(settings.getByRole('switch', { name: 'Toggle general' })).toHaveCount(0);
 
     await settings.getByRole('button', { name: 'general', exact: true }).click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
-    await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
+    await expect(settings.locator('.agent-editor')).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
     await expect(settings.getByRole('switch', { name: 'Toggle general' })).toBeVisible();
     await expect(back).toBeEnabled();
@@ -136,12 +136,12 @@ test.describe('agent settings window', () => {
     await back.click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
-    await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
     await expect(forward).toBeEnabled();
 
     await forward.click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
-    await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
+    await expect(settings.locator('.agent-editor')).toBeVisible();
   });
 
   test('lets users view, edit, and forget agent memory entries', async ({ page }) => {

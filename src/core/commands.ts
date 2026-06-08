@@ -137,6 +137,11 @@ export const AGENT_COMMANDS = [
   'agent_list_all_definitions',
   'agent_test_provider_connection',
   'agent_list_all_skills',
+  'agent_create_agent_definition',
+  'agent_update_agent_definition',
+  'agent_delete_agent_definition',
+  'agent_duplicate_agent_definition',
+  'agent_reload_agent_definitions',
 ] as const;
 
 export const ASSET_COMMANDS = [

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-06-08
@@ -45,8 +45,14 @@ restart:
   (`src/core/types.ts:741-757`) verbatim — it already carries every field the
   editor needs. This keeps the plan **out of `src/core/types.ts`** and therefore
   cleanly parallel with [[agent-scheduled-routines]] (see Collision self-check).
-- **No runtime/invocation/memory/isolation change.** Spawning, the
-  fresh-vs-fork seam, memory ownership, and isolation tiers are untouched.
+- ~~**No runtime/invocation/memory/isolation change.**~~ **Amended 2026-06-08
+  (PM-ratified):** folded in **subagent system-prompt unification** — a fresh
+  subagent now reuses the shared core of the main system prompt (capabilities /
+  tool conventions / safety) + a headless directive instead of a bespoke minimal
+  prompt, and built-in `general` collapses to a zero-persona default. This is the
+  ONLY invocation-semantics change; spawning routing, the fresh-vs-fork seam,
+  memory ownership, and isolation tiers remain untouched. Design folded into
+  `docs/spec/agent-subagent-runtime-plan.md` (Fresh Subagent → System prompt).
 - **No built-in mutation.** `general` and `fork` (`agentSubagents.ts:1293-1321`)
   stay immutable; editing one means duplicating to a user agent.
 - **Not multi-agent / channels.** Out of scope.
@@ -169,36 +175,77 @@ See Open Questions for the form-vs-raw-`AGENT.md` decision.
 that ever changes, sequence shared-interface-first behind Lane B's types change.
 `main.ts` IPC is additive on both sides.
 
-## Open questions (for PM / drafting dev to resolve)
+## Open questions — resolved (PM-ratified 2026-06-08)
 
-1. **Edit affordance:** structured form (per-field) only, raw `AGENT.md` text
-   editor only, or both (form with a "raw" toggle)? *Lean: structured form for
-   the common fields + a raw body editor for the persona.*
-2. **Default storage location on create:** `~/.agents/agents` (global,
-   cross-workspace) vs `<workspace>/.agents/agents` (project, git-trackable)?
-   Offer a choice at create time, or pick a default? *Lean: offer a choice,
-   default to global user dir.*
-3. **Hot-reload mechanism:** registry invalidation on write + an explicit
-   "reload" action (deterministic) vs `fs.watch` on the agents dirs (automatic,
-   more edge cases)? *Lean: invalidation-on-write now; defer `fs.watch`.*
-4. **Built-in editing:** confirm duplicate-to-user (built-ins immutable) is the
-   intended UX (vs an override layer).
-5. **Priority / sequencing:** is this a third parallel lane now, or queued behind
-   Lane B? (Plan is written to run in parallel.)
-6. **Scope of Slice 3:** ship the disable-by-identity fix with this plan, or pull
-   it out as a standalone fast-track cleanup?
+1. **Edit affordance:** **a structured Form ⇄ a raw `AGENT.md` editor, switchable
+   modes** (redesigned 2026-06-08 from the original form-only lean, per PM
+   screenshots). `AgentEditor.tsx` carries a `SegmentedControl` Form/Raw toggle in
+   the header: **Form** shows structured controls (name / description / model /
+   effort / permission-mode / max-turns / background) plus **toggle lists** for
+   tools and skills (each catalog/installed item is a `SwitchControl` row — all-on
+   or all-off ⇒ unrestricted, a proper subset is stored); **Raw** is the full
+   `AGENT.md` text. Switching converts losslessly through the shared
+   `src/core/agentMarkdown.ts` (`serializeAgentMarkdown` on Form→Raw,
+   `parseAgentAuthoringInput` on Raw→Form) so the two views are always the same
+   data and the renderer never re-implements the format that main's loader reads.
+2. **Default storage location on create:** **offer a choice, default global**
+   (the lean). A `user` / `project` segmented control on the create form, seeded
+   to `user` (`~/.agents/agents`).
+3. **Hot-reload mechanism:** **invalidation-on-write** (the lean).
+   `AgentDefinitionRegistry.reload()` after every write across all live sessions;
+   `fs.watch` deferred.
+4. **Built-in editing:** **duplicate-to-user** confirmed. Built-ins render through
+   the **same** `AgentEditor` as a user agent, just **read-only** (every control
+   disabled; the Form/Raw toggle stays live so the AGENT.md is viewable; the only
+   action is "Duplicate to my agents") — so `general` and a user agent are one
+   abstraction, not two surfaces (redesign 2026-06-08: the earlier bespoke
+   read-only specs card was dropped). A **new** agent seeds a scaffold (real
+   defaults: `permission-mode: restricted`, `effort: medium`, `max-turns: 20`, a
+   starter persona; all tools on; model inherit) so neither Form nor Raw starts
+   blank.
+5. **Priority / sequencing:** ran as a **parallel lane** alongside Lane B; the
+   only shared file is `src/core/commands.ts` (additive — new command names
+   appended at the end, no overlap with Lane B's mid-list insertion).
+6. **Scope of Slice 3:** **bundled into this PR** (disable-by-identity +
+   directories UI), not split out.
+
+Reversible locals decided during build (recorded per AGENTS.md): tools/skills are
+**on/off toggle lists** — the tool list is a curated catalog of the common
+subagent tools (`TOOL_CATALOG` in `AgentEditor.tsx`; the internal outliner/node
+tools are omitted), and any tool/skill the file carries outside the catalog is
+preserved (`extraTools`/`extraSkills`) so editing in Form mode never silently
+drops it; `model` is a free-text override (placeholder `inherit`); the editor's
+Save/Delete/Duplicate commit to disk immediately and are a separate surface from
+the footer (which still owns the runtime-settings save: enable/disable +
+directories), mirroring how provider config and runtime settings already split.
 
 ## Subtasks
 
-- [ ] **Slice 1** — `AgentDefinitionRegistry` create/update/delete/duplicate +
-  reload; `AGENT.md` serializer (inverse of `parseAgentMarkdown`); IPC channels +
-  preload; path containment + name sanitization; unit tests (round-trip
-  serialize/parse, reload-makes-new-agent-visible, built-in not writable).
-- [ ] **Slice 2** — settings editor + "New agent" + duplicate-built-in; validation;
-  refresh on `lin:settings-changed`; renderer tests.
-- [ ] **Slice 3** — `additionalAgentDirectories` settings UI; `disabledAgents`
-  keyed on `agentId`; update runtime check + UI.
-- [ ] Spec: fold the authoring/management surface into `docs/spec/` (the
-  agent-subagent runtime / settings spec) per A6.
-- [ ] Gate: `/code-review`; add `/security-review` (renderer-driven file write);
-  visual verification (light + dark) for the new settings editor.
+- [x] **Slice 1** — authoring write surface (`src/main/agentAuthoring.ts`:
+  create/update/delete/duplicate) + the shared format layer
+  (`src/core/agentMarkdown.ts`: `serializeAgentMarkdown` /
+  `parseAgentAuthoringInput` / `parseAgentMarkdownDocument`, the inverse of the
+  registry's `parseAgentMarkdown`, pure — used by **both** main and the renderer
+  so the Form⇄Raw toggle can't drift); `AgentDefinitionRegistry.reload()` +
+  `AgentRuntime.reloadAgentDefinitions` (all live sessions); additive IPC; path
+  containment + slug sanitization; unit tests (`tests/core/agentAuthoring.test.ts`
+  — round-trip, duplicate-rejection, traversal guard, built-in-not-writable;
+  `tests/core/agentMarkdown.test.ts` — serialize⇄parse round-trip + tolerance).
+- [x] **Slice 2** — settings editor (`AgentEditor.tsx`) with the Form ⇄ Raw mode
+  toggle and tools/skills as on/off toggle lists + "New agent" +
+  duplicate-built-in; validation; list/picker refresh via the reloaded view list;
+  renderer tests (`tests/renderer/agentEditor.test.tsx`).
+- [x] **Slice 3** — `additionalAgentDirectories` settings UI; `disabledAgents`
+  keyed on `agentId`; runtime check + UI updated.
+- [x] **Subagent prompt unification** (PM-ratified scope add) — tag
+  `LIN_AGENT_SYSTEM_PROMPT_SECTIONS` with an `audience` and export
+  `LIN_SUBAGENT_CORE_PROMPT` (the shared subset); `buildFreshAgentSystemPrompt`
+  = subagent identity + headless directive + shared core + persona body; empty
+  built-in `general`'s body. Tests: `tests/core/agentSystemPrompt.test.ts`
+  (audience split + core subset), `tests/core/agentSubagentPrompt.test.ts`
+  (composition). Token cost measured (~80 → ~1.2k per fresh subagent prompt).
+- [x] Spec: folded the authoring/management surface into
+  `docs/spec/agent-subagent-runtime-plan.md` (registry → Authoring & hot-reload /
+  Disabling by identity; Fresh Subagent → System prompt) per A6.
+- [ ] Gate (main agent): `/code-review`; add `/security-review` (renderer-driven
+  file write); visual verification (light + dark) for the new settings editor.

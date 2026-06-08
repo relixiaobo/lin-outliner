@@ -48,6 +48,11 @@ interface InsetRowProps {
   wrap?: boolean;
   selected?: boolean;
   disabled?: boolean;
+  /** Visually de-emphasize the row (same `is-disabled` styling) while keeping it
+   *  interactive — for a navigable row whose target is "off" but must stay reachable
+   *  to turn it back on (e.g. a disabled agent, whose enable toggle lives in the
+   *  detail view it links to). Distinct from `disabled`, which blocks the click. */
+  dimmed?: boolean;
   /** When provided, the row's main area is a button; otherwise it is static
    *  (for rows whose only interactive control lives in `trailing`). */
   onSelect?: () => void;
@@ -64,6 +69,7 @@ export const InsetRow = memo(function InsetRow({
   wrap = false,
   selected = false,
   disabled = false,
+  dimmed = false,
   onSelect,
   ariaLabel,
 }: InsetRowProps) {
@@ -79,7 +85,7 @@ export const InsetRow = memo(function InsetRow({
 
   return (
     <div
-      className={['inset-row', selected ? 'is-selected' : '', disabled ? 'is-disabled' : '']
+      className={['inset-row', selected ? 'is-selected' : '', (disabled || dimmed) ? 'is-disabled' : '']
         .filter(Boolean)
         .join(' ')}
       role="listitem"
