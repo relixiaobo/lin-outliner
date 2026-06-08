@@ -662,18 +662,32 @@ folds / invalidates notifications; we only batch today).
 
 **Shipped (M2 delivery slice).** A detached subagent terminal now emits a durable
 `notification.created` anchored to its origin conversation (`kind` =
-`task_completed|failed|stopped`, `source = {subagent}`), idempotent and
-restart-safe (`docs/spec/agent-event-log-rendering.md` §Notification + attention
-projection). Attention folds per conversation into `attentionByConversationId`
-unread counts, pushed to the renderer over a `conversation_attention` runtime event
-(in `agentTypes.ts`, **not** `core/types.ts` — stays off the sibling scheduled-
-routines lane's protocol surface) and rendered as a neutral unread badge on the
-conversation list; opening a conversation durably clears it via a `notification.read`
-cursor (no new IPC command). The optional OS notification is wired through an
-injectable `OsNotifier` (`agentRuntime.setOsNotifier`) to a native Electron
-`Notification`, gated on a self-contained opt-in preference (default OFF,
-focus-suppressed). The existing idle-gated `pendingSubagentNotifications`
-model-injection stays as the live-session composed-turn layer.
+`task_completed|failed`, `source = {subagent}`; a user-initiated **stop** raises no
+notification — it is the user's own action), idempotent and restart-safe
+(`docs/spec/agent-event-log-rendering.md` §Notification + attention projection). The
+notification id keys on the completion instant (`notification-<runId>-<completedAt>`)
+so a **resumed** detached run that finishes again is delivered, not dropped as a stale
+duplicate. A subagent left **running when the app dies** is marked failed AND raises
+its durable notification on the next restore (the "don't go silent" case). Attention
+folds per conversation into `attentionByConversationId` unread counts; notification
+events never bump the conversation's `updatedAt` (no list reorder / timestamp change).
+The count is pushed to the renderer over a `conversation_attention` runtime event (in
+`agentTypes.ts`, **not** `core/types.ts` — stays off the sibling scheduled-routines
+lane's protocol surface) and rendered as a neutral unread badge on the conversation
+list; it is **seeded on launch** by re-emitting the persisted unread (carried on the
+conversation index) so a badge survives restart before its conversation is reopened.
+Marking a conversation read is an **explicit user-open signal** (dedicated
+`lin:agent-mark-conversation-read` IPC + `markConversationRead`), driven by the
+renderer on a genuine open / the active+focused conversation / regaining window
+focus — **never** by a config reload (which also restores). The optional OS
+notification is wired through an injectable `OsNotifier` (`agentRuntime.setOsNotifier`)
+to a native Electron `Notification`, gated on a self-contained opt-in preference
+(default OFF, folded into the shared `appPreferences` store, read synchronously);
+it is suppressed only when the user is already viewing that task's conversation
+(window focused **and** active conversation), truncates its body, and routes a
+banner click to the originating conversation. The existing idle-gated
+`pendingSubagentNotifications` model-injection stays as the live-session composed-turn
+layer.
 
 **DECIDED (PM, 2026-06-08): subagents never ask the user mid-execution.** A
 subagent is invoked *only* when its information and goal are clear enough to run to
