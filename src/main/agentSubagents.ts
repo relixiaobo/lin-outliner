@@ -329,6 +329,11 @@ export class AgentSubagentRuntime {
     this.disabledAgents = disabledAgents;
   }
 
+  /** Invalidate this runtime's agent-definition cache (after an authoring write). */
+  reloadAgentDefinitions(): void {
+    this.registry.reload();
+  }
+
   clearMemoryReminderCache(): void {
     for (const run of this.runs.values()) {
       run.memoryReminderCache = undefined;
@@ -341,7 +346,7 @@ export class AgentSubagentRuntime {
 
   async reserveAgentListingReminderText(contextWindowTokens?: number | null): Promise<string | null> {
     const agents = await this.registry.listAgents();
-    const newAgents = agents.filter((agent) => !this.isAgentListed(agent) && !this.disabledAgents.includes(agent.name));
+    const newAgents = agents.filter((agent) => !this.isAgentListed(agent) && !this.disabledAgents.includes(agentDefinitionAgentId(agent)));
     if (newAgents.length === 0) return null;
     const listing = formatAgentListing(newAgents, contextWindowTokens ?? undefined);
     if (!listing) return null;
@@ -534,7 +539,7 @@ export class AgentSubagentRuntime {
       ? createForkAgentDefinition()
       : await this.resolveFreshAgent(params.subagent_type);
 
-    if (contextMode !== 'fork' && this.disabledAgents.includes(definition.name)) {
+    if (contextMode !== 'fork' && this.disabledAgents.includes(agentDefinitionAgentId(definition))) {
       throw new Error(`Agent '${definition.name}' is currently disabled in settings.`);
     }
 
@@ -1246,6 +1251,16 @@ class AgentDefinitionRegistry {
     const normalized = normalizeConfiguredDirectories(directories, this.localRoot);
     if (sameStringList(this.additionalAgentDirectories, normalized)) return;
     this.additionalAgentDirectories = normalized;
+    this.reload();
+  }
+
+  /**
+   * Drop the startup-cached scan so the next read re-scans the agents dirs. Used
+   * after an authoring write so a new/edited/deleted agent is live without an app
+   * restart. A run already resolved its definition at spawn, so live runs are
+   * unaffected — only future spawns see the change.
+   */
+  reload(): void {
     this.loaded = false;
     this.agents.clear();
     this.seenAgentFileIds.clear();
@@ -1374,7 +1389,7 @@ async function loadAgentsFromDir(agentsDir: string, source: AgentDefinition['sou
   return agents;
 }
 
-function createAgentDefinition(input: {
+export function createAgentDefinition(input: {
   name: string;
   rootDir: string;
   agentFile: string;
@@ -1406,7 +1421,7 @@ function createAgentDefinition(input: {
   };
 }
 
-function parseAgentMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
+export function parseAgentMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
   const normalized = raw.replace(/^\uFEFF/, '');
   if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) {
     return { frontmatter: {}, body: normalized };

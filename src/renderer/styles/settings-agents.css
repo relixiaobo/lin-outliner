@@ -2,30 +2,6 @@
    detail is a drill-down route reached by clicking a row, so the top-level Settings
    pane stays scannable instead of flattening list + details into one surface. */
 
-/* The drill-down detail surface floats on the flat base like an inset card
-   (--bg-elevated, --radius-lg, hairline edge). */
-.agent-profile-detail-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
-  box-shadow: var(--inset-hairline);
-  height: auto;
-  max-height: none;
-  overflow: visible;
-}
-
-.agent-profile-detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border-subtle);
-  padding-bottom: var(--space-4);
-}
-
 .agent-profile-title {
   margin: 0;
   color: var(--text-strong);
@@ -100,6 +76,87 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+/* Authoring editor (create / edit a user agent). Reuses the inset-card +
+   settings-sheet-row field chrome shared with the provider sheet; the persona
+   body is a taller mono editor mirroring the read-only preview. */
+.agent-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.agent-editor-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.agent-editor-hint {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.agent-editor-field-hint {
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+/* The background-toggle row carries a description, so it stacks label + hint on
+   the lead and floats the switch to the trailing edge. */
+.settings-sheet-row-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.settings-sheet-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.agent-editor-persona {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.agent-profile-prompt-editor {
+  width: 100%;
+  height: 220px;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  color: var(--text-body);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs-tight);
+  resize: vertical;
+  outline: none;
+}
+
+.agent-profile-prompt-editor:focus-visible {
+  box-shadow: var(--outline-focus);
+}
+
+.agent-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.agent-editor-readonly {
+  gap: var(--space-4);
 }
 
 @media (max-width: 560px) {

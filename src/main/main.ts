@@ -19,6 +19,7 @@ import {
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL } from '../core/agentTypes';
+import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
@@ -1958,6 +1959,29 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       });
     case 'agent_list_all_skills':
       return agentRuntime.listAllSkills(conversationId());
+    case 'agent_create_agent_definition':
+      return agentRuntime.createAgentDefinition(
+        conversationId(),
+        args.input as AgentAuthoringInput,
+        args.storage as AgentStorageLocation,
+      );
+    case 'agent_update_agent_definition':
+      return agentRuntime.updateAgentDefinition(
+        conversationId(),
+        String(args.agentId),
+        args.input as AgentAuthoringInput,
+      );
+    case 'agent_delete_agent_definition':
+      return agentRuntime.deleteAgentDefinition(conversationId(), String(args.agentId));
+    case 'agent_duplicate_agent_definition':
+      return agentRuntime.duplicateAgentDefinition(
+        conversationId(),
+        String(args.agentId),
+        String(args.newName),
+        args.storage as AgentStorageLocation,
+      );
+    case 'agent_reload_agent_definitions':
+      return agentRuntime.reloadAgentDefinitions(conversationId());
     default:
       throw new Error(`Unknown agent command: ${command}`);
   }

@@ -652,6 +652,47 @@ settings additional directories
 
 Later layers with the same `name` override earlier layers.
 
+#### Authoring & hot-reload
+
+Agent definitions are **user-authorable in-app** (the model never writes them —
+the write surface is user-driven only, mirroring the closed memory-write
+surface). The settings "Agent Profiles" pane exposes create / edit / duplicate /
+delete:
+
+- **Write surface** (`src/main/agentAuthoring.ts`, pure filesystem): serialize an
+  `AgentAuthoringInput` to `AGENT.md` (`serializeAgentMarkdown`, the inverse of
+  `parseAgentMarkdown`) and atomic-write it under a writable agents dir. The
+  target is forced inside `~/.agents/agents/<slug>` (`source: user`) or
+  `<workspace>/.agents/agents/<slug>` (`source: project`); the name is slugged to
+  a filesystem-safe segment and path containment is asserted in main, so a
+  renderer-supplied name can never escape via traversal. Built-in agents
+  (`rootDir === 'built-in'`) are never a write target — editing one means
+  **duplicating** to a user copy.
+- **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
+  (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
+  authoring write `AgentRuntime` reloads **every live session's** registry, so a
+  new/edited/deleted agent appears in the subagent picker and settings list
+  without an app restart. A run resolves its `AgentDefinition` at spawn, so reload
+  only affects future spawns — live runs are unaffected.
+- **IPC** (additive, `AGENT_COMMANDS`): `agent_create_agent_definition`,
+  `agent_update_agent_definition`, `agent_delete_agent_definition`,
+  `agent_duplicate_agent_definition`, `agent_reload_agent_definitions`. Each
+  returns the freshly reloaded `AgentDefinitionView[]` (an `AgentDefinition` plus
+  its `agentId`). `update`/`delete`/`duplicate` address an agent by `agentId`,
+  which main resolves to the definition (and rejects built-ins).
+- **`additionalAgentDirectories`** is editable from the same pane (comma-separated
+  paths), wired to `updateAdditionalAgentDirectories` (which also invalidates the
+  cache).
+
+#### Disabling by identity
+
+`disabledAgents` stores the full **`agentId`** (`${source}:${namespace}:${name}`,
+`agentSubagentIdentity.ts`), not the bare `name`, so disabling one source's agent
+no longer disables a same-named agent from another source. The spawn gate and the
+listing filter both check `agentDefinitionAgentId(definition)`. (Pre-release: the
+stored shape switched directly with no migration — see
+`storage-format-no-backcompat-prerelease`.)
+
 ### `AgentSkillRuntime`
 
 Skill `context: fork` calls `SubagentRuntime` instead of creating pi-mono agents

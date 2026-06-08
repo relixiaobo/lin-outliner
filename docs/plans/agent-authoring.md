@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-06-08
@@ -169,36 +169,48 @@ See Open Questions for the form-vs-raw-`AGENT.md` decision.
 that ever changes, sequence shared-interface-first behind Lane B's types change.
 `main.ts` IPC is additive on both sides.
 
-## Open questions (for PM / drafting dev to resolve)
+## Open questions — resolved (PM-ratified 2026-06-08)
 
-1. **Edit affordance:** structured form (per-field) only, raw `AGENT.md` text
-   editor only, or both (form with a "raw" toggle)? *Lean: structured form for
-   the common fields + a raw body editor for the persona.*
-2. **Default storage location on create:** `~/.agents/agents` (global,
-   cross-workspace) vs `<workspace>/.agents/agents` (project, git-trackable)?
-   Offer a choice at create time, or pick a default? *Lean: offer a choice,
-   default to global user dir.*
-3. **Hot-reload mechanism:** registry invalidation on write + an explicit
-   "reload" action (deterministic) vs `fs.watch` on the agents dirs (automatic,
-   more edge cases)? *Lean: invalidation-on-write now; defer `fs.watch`.*
-4. **Built-in editing:** confirm duplicate-to-user (built-ins immutable) is the
-   intended UX (vs an override layer).
-5. **Priority / sequencing:** is this a third parallel lane now, or queued behind
-   Lane B? (Plan is written to run in parallel.)
-6. **Scope of Slice 3:** ship the disable-by-identity fix with this plan, or pull
-   it out as a standalone fast-track cleanup?
+1. **Edit affordance:** **structured form for the common fields + a raw body
+   editor for the persona** (the lean). `AgentEditor.tsx`: structured controls for
+   name / description / model / effort / permission-mode / max-turns + comma-list
+   text inputs for tools / skills; the persona body is a multiline mono editor.
+2. **Default storage location on create:** **offer a choice, default global**
+   (the lean). A `user` / `project` segmented control on the create form, seeded
+   to `user` (`~/.agents/agents`).
+3. **Hot-reload mechanism:** **invalidation-on-write** (the lean).
+   `AgentDefinitionRegistry.reload()` after every write across all live sessions;
+   `fs.watch` deferred.
+4. **Built-in editing:** **duplicate-to-user** confirmed. Built-ins render
+   read-only with a one-click "Duplicate to my agents".
+5. **Priority / sequencing:** ran as a **parallel lane** alongside Lane B; the
+   only shared file is `src/core/commands.ts` (additive — new command names
+   appended at the end, no overlap with Lane B's mid-list insertion).
+6. **Scope of Slice 3:** **bundled into this PR** (disable-by-identity +
+   directories UI), not split out.
+
+Reversible locals decided during build (recorded per AGENTS.md): tools/skills are
+comma-separated text inputs (a chip/multi-select picker is a future enhancement);
+`model` is a free-text override (placeholder `inherit`); the editor's
+Save/Delete/Duplicate commit to disk immediately and are a separate surface from
+the footer (which still owns the runtime-settings save: enable/disable +
+directories), mirroring how provider config and runtime settings already split.
 
 ## Subtasks
 
-- [ ] **Slice 1** — `AgentDefinitionRegistry` create/update/delete/duplicate +
-  reload; `AGENT.md` serializer (inverse of `parseAgentMarkdown`); IPC channels +
-  preload; path containment + name sanitization; unit tests (round-trip
-  serialize/parse, reload-makes-new-agent-visible, built-in not writable).
-- [ ] **Slice 2** — settings editor + "New agent" + duplicate-built-in; validation;
-  refresh on `lin:settings-changed`; renderer tests.
-- [ ] **Slice 3** — `additionalAgentDirectories` settings UI; `disabledAgents`
-  keyed on `agentId`; update runtime check + UI.
-- [ ] Spec: fold the authoring/management surface into `docs/spec/` (the
-  agent-subagent runtime / settings spec) per A6.
-- [ ] Gate: `/code-review`; add `/security-review` (renderer-driven file write);
-  visual verification (light + dark) for the new settings editor.
+- [x] **Slice 1** — authoring write surface (`src/main/agentAuthoring.ts`:
+  create/update/delete/duplicate + `serializeAgentMarkdown`, the inverse of
+  `parseAgentMarkdown`); `AgentDefinitionRegistry.reload()` +
+  `AgentRuntime.reloadAgentDefinitions` (all live sessions); additive IPC; path
+  containment + slug sanitization; unit tests (`tests/core/agentAuthoring.test.ts`
+  — round-trip, duplicate-rejection, traversal guard, built-in-not-writable).
+- [x] **Slice 2** — settings editor (`AgentEditor.tsx`) + "New agent" +
+  duplicate-built-in; validation; list/picker refresh via the reloaded view list;
+  renderer tests (`tests/renderer/agentEditor.test.tsx`).
+- [x] **Slice 3** — `additionalAgentDirectories` settings UI; `disabledAgents`
+  keyed on `agentId`; runtime check + UI updated.
+- [x] Spec: folded the authoring/management surface into
+  `docs/spec/agent-subagent-runtime-plan.md` (registry → Authoring & hot-reload /
+  Disabling by identity) per A6.
+- [ ] Gate (main agent): `/code-review`; add `/security-review` (renderer-driven
+  file write); visual verification (light + dark) for the new settings editor.
