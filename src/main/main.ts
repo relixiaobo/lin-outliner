@@ -159,14 +159,15 @@ documentService.onProjectionChanged((event) => {
 // Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
 // in-app delivery is unaffected. The preference is read synchronously at call time
 // (no async cache that could fail closed and stay OFF for the process). The banner
-// is suppressed only when the user is already looking at THIS task's conversation
-// (window focused AND it is the active conversation) — a completion in a background
-// channel still escalates while the window is foregrounded.
+// is suppressed only when the user is actually LOOKING at THIS task's conversation
+// (window focused AND the renderer reports it as the viewed conversation — i.e. the
+// dock is open showing it). A completion in a background channel, or while the dock
+// is collapsed, still escalates.
 agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
   if (!loadAppPreferences().osNotificationsEnabled) return;
   if (!Notification.isSupported()) return;
   const lookingAtThisConversation =
-    mainWindow?.isFocused() && agentRuntime.getActiveConversationId() === conversationId;
+    mainWindow?.isFocused() && agentRuntime.getViewedConversation() === conversationId;
   if (lookingAtThisConversation) return;
   const notification = new Notification({ title, body: body ?? '' });
   notification.on('click', () => {
@@ -1081,6 +1082,11 @@ function registerIpc() {
   ipcMain.handle('lin:agent-mark-conversation-read', (_event, conversationId: unknown) => {
     if (typeof conversationId !== 'string' || !conversationId) return;
     return agentRuntime.markConversationRead(conversationId);
+  });
+  // The renderer reports which conversation the user can actually see (dock open),
+  // or null (dock collapsed). Authoritative for OS-banner suppression.
+  ipcMain.handle('lin:agent-set-viewed-conversation', (_event, conversationId: unknown) => {
+    agentRuntime.setViewedConversation(typeof conversationId === 'string' && conversationId ? conversationId : null);
   });
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open

@@ -25,7 +25,7 @@ import type {
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
-import { useLinAgentRuntime } from '../../agent/runtime';
+import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
@@ -66,6 +66,8 @@ const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 
 interface AgentChatPanelProps {
   index: DocumentIndex;
+  /** Whether the agent dock is open (not the CSS-collapsed seed). */
+  dockOpen: boolean;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel?: (conversationId: string | null) => void;
@@ -478,6 +480,7 @@ function AgentTranscriptRowShell({
 
 export function AgentChatPanel({
   index,
+  dockOpen,
   onOpenNodeReference,
   onOpenDebugPanel,
   userViewContext,
@@ -787,11 +790,22 @@ export function AgentChatPanel({
   const selectConversationRef = useRef(selectConversation);
   selectConversationRef.current = selectConversation;
   useEffect(
-    () => window.lin?.onNavigateToConversation?.((conversationId) => {
-      void selectConversationRef.current(conversationId);
+    () => window.lin?.onNavigateToConversation?.((targetId) => {
+      // selectConversation rethrows on failure (e.g. the conversation was deleted);
+      // swallow so a stale banner click is not an unhandled rejection.
+      void selectConversationRef.current(targetId).catch(() => {});
     }),
     [],
   );
+  // The dock collapses CSS-only while keeping this panel mounted, so report the
+  // real open state: gate durable mark-read (renderer) and OS-banner suppression
+  // (main) on whether the user can actually SEE the conversation, not just on it
+  // being loaded. Opening the dock reads the conversation it reveals (setDockVisible);
+  // collapsing reports null so a background completion still escalates.
+  useEffect(() => {
+    linAgentRuntimeStore.setDockVisible(dockOpen);
+    void window.lin?.agentSetViewedConversation?.(dockOpen ? conversationId : null);
+  }, [dockOpen, conversationId]);
 
   async function handleSteerMessage(message: string) {
     const trimmed = message.trim();

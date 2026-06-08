@@ -197,6 +197,10 @@ const api = {
   // restoreConversation so a config reload never clears unread.
   agentMarkConversationRead: (conversationId: string) =>
     ipcRenderer.invoke('lin:agent-mark-conversation-read', conversationId) as Promise<void>,
+  // Report the conversation the user can actually see (dock open), or null when the
+  // dock is collapsed — used to suppress an OS banner only when truly looking at it.
+  agentSetViewedConversation: (conversationId: string | null) =>
+    ipcRenderer.invoke('lin:agent-set-viewed-conversation', conversationId) as Promise<void>,
   // The user clicked an OS notification banner — route the agent panel to the
   // originating conversation.
   onNavigateToConversation: (listener: (conversationId: string) => void) => {

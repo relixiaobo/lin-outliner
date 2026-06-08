@@ -38,6 +38,7 @@ export function AgentDock(props: AgentDockProps) {
     >
       <AgentChatPanel
         index={props.index}
+        dockOpen={open}
         userViewContext={props.userViewContext}
         onOpenNodeReference={props.onOpenNodeReference}
         onOpenDebugPanel={props.onOpenDebugPanel}

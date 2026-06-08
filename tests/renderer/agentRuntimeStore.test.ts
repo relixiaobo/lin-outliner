@@ -492,16 +492,21 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('marks a conversation read on genuine open but not on reload', async () => {
+  test('marks read only when the dock is open, on genuine open, never on reload', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
     await flushMicrotasks();
-    // Opening the startup conversation reads it.
+    // Dock collapsed (default): startup does NOT clear unread (the conversation is
+    // loaded but not visible — review N2).
+    expect(fake.calls.markConversationRead).toEqual([]);
+
+    // Opening the dock reads the conversation it reveals.
+    store.setDockVisible(true);
     expect(fake.calls.markConversationRead).toEqual(['saved']);
 
-    // Switching to another conversation is a genuine user open → mark it read.
+    // Switching to another conversation while the dock is open is a genuine open.
     await store.getSnapshot().selectConversation('other');
     await flushMicrotasks();
     expect(fake.calls.markConversationRead).toEqual(['saved', 'other']);
@@ -512,6 +517,12 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
     expect(fake.calls.markConversationRead).toEqual(['saved', 'other']);
     expect(fake.calls.restoreConversation).toContain('other');
+
+    // Collapsing the dock then a switch does NOT clear unread (review N2).
+    store.setDockVisible(false);
+    await store.getSnapshot().selectConversation('third');
+    await flushMicrotasks();
+    expect(fake.calls.markConversationRead).toEqual(['saved', 'other']);
     unsubscribe();
   });
 

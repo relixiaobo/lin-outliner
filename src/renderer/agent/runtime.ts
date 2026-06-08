@@ -551,6 +551,10 @@ export class AgentRuntimeStore {
   private readonly pendingUserQuestions = new Map<string, AgentUserQuestionPendingView>();
   private pendingUserQuestionOrder: string[] = [];
   private readonly unreadByConversationId = new Map<string, number>();
+  // Whether the agent dock is actually open (not the CSS-collapsed seed). The dock
+  // keeps the panel mounted + the conversation loaded when collapsed, so "a
+  // conversation is loaded" is NOT "the user is viewing it" — mark-read gates on this.
+  private dockVisible = false;
   private restorePromise: Promise<string> | null = null;
   private requestVersion = 0;
   private started = false;
@@ -583,8 +587,9 @@ export class AgentRuntimeStore {
       const conversation = await this.client.restoreConversation(targetConversationId);
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
-      // Genuine user open → durably clear its off-floor unread (no-op if none).
-      void this.client.markConversationRead(conversation.conversationId);
+      // Genuine open → clear its unread, but only if the dock is actually open (a
+      // banner click can route here while collapsed). No-op if nothing unread.
+      this.markCurrentConversationReadIfViewing();
       await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
@@ -624,8 +629,8 @@ export class AgentRuntimeStore {
       const conversation = await this.client.restoreLatestConversation();
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
-      // Opening the startup/default conversation reads it → clear its unread.
-      void this.client.markConversationRead(conversation.conversationId);
+      // Reveal the default/latest conversation → clear unread only if actually viewed.
+      this.markCurrentConversationReadIfViewing();
       await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
@@ -819,23 +824,37 @@ export class AgentRuntimeStore {
     if (this.started) return;
     this.started = true;
     this.client.onEvent(this.handleEvent);
-    // Returning focus to the window while viewing a conversation with pending unread
-    // (a task delivered while the app was backgrounded) reads it — clear it durably.
-    if (typeof window !== 'undefined') {
-      window.addEventListener('focus', () => this.markCurrentConversationReadIfFocused());
-    }
     void this.ensureConversation().catch((caught) => {
       this.reportError(caught);
     });
   }
 
-  private markCurrentConversationReadIfFocused() {
+  /**
+   * Report whether the agent dock is actually open. The dock keeps the panel mounted
+   * when collapsed, so this is the authority on "the user can see the conversation".
+   * Opening the dock reads the conversation it reveals.
+   */
+  setDockVisible = (visible: boolean) => {
+    if (this.dockVisible === visible) return;
+    this.dockVisible = visible;
+    if (visible) this.markCurrentConversationReadIfViewing();
+  };
+
+  /**
+   * Durably clear the displayed conversation's unread IFF the user can actually see
+   * it — i.e. the dock is open (not the CSS-collapsed seed). The window-focus
+   * dimension is owned by main's OS-banner suppression, not the durable read cursor:
+   * the badge for the current conversation is masked anyway, so clearing only governs
+   * whether it resurfaces on the next restart, and a conversation open in the dock has
+   * been seen. `markConversationRead` is a no-op in main when nothing is unread, so
+   * this is cheap to over-call and correct even for the (unlisted) default DM.
+   */
+  markCurrentConversationReadIfViewing = () => {
     const conversationId = this.conversationId;
     if (!conversationId) return;
-    if (typeof document !== 'undefined' && !document.hasFocus()) return;
-    if ((this.unreadByConversationId.get(conversationId) ?? 0) === 0) return;
+    if (!this.dockVisible) return;
     void this.client.markConversationRead(conversationId);
-  }
+  };
 
   private ensureConversation() {
     if (this.conversationId) return Promise.resolve(this.conversationId);
@@ -847,8 +866,10 @@ export class AgentRuntimeStore {
             return this.conversationId ?? conversation.conversationId;
           }
           this.hydrateConversation(conversation);
-          // Startup opens this conversation → clear its off-floor unread.
-          void this.client.markConversationRead(conversation.conversationId);
+          // Startup may reveal this conversation → clear its unread only if the dock
+          // is actually open + focused (setDockVisible re-checks once the App reports
+          // the rail state, covering the mount-order race).
+          this.markCurrentConversationReadIfViewing();
           return conversation.conversationId;
         })
         .catch((caught) => {
@@ -939,12 +960,12 @@ export class AgentRuntimeStore {
         this.unreadByConversationId.delete(payload.conversationId);
       }
       if (previous !== payload.unreadCount) this.publish();
-      // A task delivered into the conversation the user is actively viewing (window
-      // focused) is already seen — clear it durably so it does not resurface as a
-      // stale badge on the next restart. The UI masks the live badge for the current
-      // conversation; this keeps the persisted state in step.
+      // A task delivered into the conversation the user is actively viewing (dock
+      // open + window focused) is already seen — clear it durably so it does not
+      // resurface as a stale badge on the next restart. The UI masks the live badge
+      // for the current conversation; this keeps the persisted state in step.
       if (payload.unreadCount > 0 && payload.conversationId === this.conversationId) {
-        this.markCurrentConversationReadIfFocused();
+        this.markCurrentConversationReadIfViewing();
       }
       return;
     }
