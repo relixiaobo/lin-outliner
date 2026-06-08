@@ -618,6 +618,9 @@ background-shell `BackgroundTask` registry with `running/completed/failed/stoppe
 - A **`needs-input`** state: a task that needs a decision pauses, posts the question
   into its conversation, and resumes on your reply (addressable via `AgentSend`).
   cc-2.1's `asyncRewake` (exit-code-2 wakes the model) is the proven shape.
+  **Scoped by the 2026-06-08 decision below**: this is for a conversation's own
+  *foreground* agent, never a *subagent* — subagents run to completion and never
+  question the user mid-execution.
 - **First-class task-update messages** (provenance + a jump-to-artifact pointer),
   not a bare `systemReminder` blob.
 - **A task is a `Run` with its own durable execution log** (`RunMeta` + `runs/<id>/`,
@@ -672,16 +675,27 @@ injectable `OsNotifier` (`agentRuntime.setOsNotifier`) to a native Electron
 focus-suppressed). The existing idle-gated `pendingSubagentNotifications`
 model-injection stays as the live-session composed-turn layer.
 
-**Remaining.** (1) `needs-input` **trigger**: route a background run's
-`ask_user_question` to its origin conversation (wire `askUserQuestion` bound to the
-parent session into `createSubagentAgent`, emit `kind: 'needs_input'`), then
-re-spawn the paused run from its run log + inject the answer on restart — the
-protocol (`needs_input` kind) + delivery + attention are already in place; the
-trigger is a subsystem with a **directional product implication** (subagent-
-initiated user interruptions) to confirm with the PM. (2) The **cheap status-post**
-row (no-LLM in-stream task-update message) and cross-conversation panel
-aggregation. (3) Rate-limit / fold **thresholds** beyond the current per-
-conversation fold.
+**DECIDED (PM, 2026-06-08): subagents never ask the user mid-execution.** A
+subagent is invoked *only* when its information and goal are clear enough to run to
+completion as a background task; it reports back on completion and never pauses to
+question the user. The user's interaction surface stays **one locus** (the
+foreground main agent / the current conversation) so attention is not scattered
+across many objects. Clarification happens **before** hand-off: the main agent uses
+`ask_user_question` with the user up front (foreground, shipped #153), and a
+subagent may ask its **main agent / channel** (agent↔agent) to clarify the task
+*before* formal execution — never agent↔user, never mid-execution. This is
+consistent with the restricted background-worker model (cc-2.1 Dream / hermes
+allow-listed memory+skill tools — no user-question tool on the background surface).
+Consequence: **do not** wire `ask_user_question` into `createSubagentAgent`, and do
+not build a subagent→user `needs_input` trigger. The `needs_input` notification
+`kind` stays reserved only for a conversation's **own foreground agent** awaiting a
+user decision while the user is in a different conversation (a minor cross-
+conversation attention case, not built yet). Agent↔agent task clarification and
+multi-agent routing are the **P3 coordinator / Channel** work, out of M2.
+
+**Remaining.** (1) The **cheap status-post** row (no-LLM in-stream task-update
+message) and cross-conversation panel aggregation. (2) Rate-limit / fold
+**thresholds** beyond the current per-conversation fold.
 
 **Cross-validated.** cc-2.1 and hermes independently converge on this shape:
 queue + idle-drain + inject-into-origin-conversation (cc-2.1 `asyncRewake` /
