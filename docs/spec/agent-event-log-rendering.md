@@ -433,7 +433,14 @@ background delivery or a read never reorders or re-timestamps the conversation
 list). The folded `unreadCount` is also carried on the persisted conversation index
 (folded incrementally — `+1` per created, `0` per read-through-tail — matching the
 replay reducer, so no full replay per delivery) so a badge can be **seeded on
-launch** for listed conversations before they are reopened. Marking a conversation
+launch** for listed conversations before they are reopened. The incremental `read →
+0` step is only equal to the replay reducer because `markConversationRead` computes
+`throughSeq` **inside the serial append queue** (the tail at write time), so the read
+always covers every notification already in the log — including one that raced in
+just before it. Snapshotting `throughSeq` outside that queue would let a delivery slip
+a higher `seq` into the gap, leaving the replay reducer counting it unread while the
+incremental fold collapsed to `0`: a permanent drift, since the index only rebuilds
+on a missing entry. Marking a conversation
 read is an **explicit signal that the user can see it** (`markConversationRead` → a
 `notification.read` cursor): the renderer drives it only when the **agent dock is
 actually open** (it collapses CSS-only while keeping the conversation loaded, so

@@ -1521,4 +1521,52 @@ describe('agent runtime subagents', () => {
     );
     expect(seeded).toBe(true);
   });
+
+  test('a delivery racing mark-read keeps the index fold in step with replay', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-race-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-race-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: scriptedStream([], () => undefined).streamFn,
+      },
+    );
+
+    const session = await runtime.createConversation();
+    const conversationId = session.conversationId;
+
+    // First delivery → unread 1.
+    await runtime.appendNotificationForTest(conversationId, 'race-n-1');
+
+    // Interleave: queue a SECOND delivery, then mark-read in the SAME tick without
+    // awaiting the delivery. The second notification.created is written (higher seq)
+    // before the read's append runs; the read's throughSeq must be taken at that
+    // point (inside the serial queue), or the O(1) index fold (read → 0) would drift
+    // from the authoritative replay (which would still count race-n-2 unread).
+    const deliveryP = runtime.appendNotificationForTest(conversationId, 'race-n-2');
+    const readP = runtime.markConversationRead(conversationId);
+    await Promise.all([deliveryP, readP]);
+
+    const store = new AgentEventStore(dataRoot);
+    const replayUnread = (await store.replay(conversationId)).attentionByConversationId[conversationId]?.unreadCount ?? 0;
+    const indexEntry = (await store.listConversationIndexEntries()).find((entry) => entry.id === conversationId);
+    // The whole point: index fold and replay agree (no live-append/rebuild drift),
+    // and the read — taken through the tail-at-write-time — covers race-n-2.
+    expect(indexEntry?.unreadCount).toBe(replayUnread);
+    expect(replayUnread).toBe(0);
+  });
 });

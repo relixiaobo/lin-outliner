@@ -1404,11 +1404,13 @@ function updateConversationIndexEntry(
     latestSeq: Math.max(entry.latestSeq, event.seq),
   };
   // Fold unreadCount in O(1), not via a full replay. A created notification always
-  // carries the highest seq (so it is unread by construction → +1); the only emitter
-  // of notification.read (markConversationRead) always reads through the conversation
-  // tail, so a read clears the whole conversation (→ 0). The replay reducer remains
-  // the authority for the full-rebuild path (conversationIndexEntryFromReplayState),
-  // which this matches for those emitters.
+  // carries the highest seq (so it is unread by construction → +1). The fold's
+  // `read → 0` relies on the invariant that the ONLY emitter of notification.read
+  // (markConversationRead) takes throughSeq INSIDE the serial append, i.e. reads
+  // through the tail-at-write-time, so a read genuinely clears the whole conversation
+  // — even if a notification completed in the gap. (A future partial-read emitter
+  // would have to recompute this fold or rebuild from replay.) The replay reducer
+  // remains the authority for the full-rebuild path, which this matches.
   if (event.type === 'notification.created') {
     next.unreadCount += 1;
   } else if (event.type === 'notification.read') {

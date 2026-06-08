@@ -807,6 +807,16 @@ export function AgentChatPanel({
     void window.lin?.agentSetViewedConversation?.(dockOpen ? conversationId : null);
   }, [dockOpen, conversationId]);
 
+  // Unmount only (reload / window teardown): no panel is showing any conversation,
+  // so clear the viewed signal. Without this main keeps suppressing OS banners
+  // against the last-viewed conversation until the renderer re-mounts and re-reports.
+  // Kept separate from the push effect above so a conversation switch does not churn
+  // the signal false→null→back on every dependency change.
+  useEffect(() => () => {
+    linAgentRuntimeStore.setDockVisible(false);
+    void window.lin?.agentSetViewedConversation?.(null);
+  }, []);
+
   async function handleSteerMessage(message: string) {
     const trimmed = message.trim();
     if (!trimmed) return;

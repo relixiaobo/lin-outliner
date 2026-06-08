@@ -517,6 +517,23 @@ export class AgentRuntime {
     await this.dreamMemoryExtractionTail;
   }
 
+  /**
+   * Test-only: append a notification.created on a loaded conversation, so a test can
+   * deterministically interleave a delivery with markConversationRead and assert the
+   * index fold never drifts from replay. Returns the queued promise; do NOT await it
+   * before the racing call when reproducing the gap.
+   */
+  appendNotificationForTest(conversationId: string, notificationId: string): Promise<void> {
+    const sessionId = sessionIdFromConversationId(conversationId);
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Agent conversation not live: ${conversationId}`);
+    return this.emitTaskNotification(sessionId, session, {
+      notificationId,
+      kind: 'task_completed',
+      title: 'Test notification',
+    });
+  }
+
   async restoreLatestConversation() {
     return this.restoreOrCreateDefaultDm();
   }
@@ -535,7 +552,8 @@ export class AgentRuntime {
 
   /**
    * Renderer-reported: the conversation the user can actually see (dock open), or
-   * null (dock collapsed / agent not focused). Authoritative for OS suppression.
+   * null (dock collapsed). Window focus is not a dimension here — main.ts layers
+   * the focus check on top when deciding OS suppression.
    */
   setViewedConversation(conversationId: string | null): void {
     this.viewedConversationId = conversationId;
@@ -547,26 +565,33 @@ export class AgentRuntime {
 
   /**
    * Durably clear a conversation's unread attention — the user opened/read it.
-   * Driven explicitly by the renderer (genuine opens + the active+focused
-   * conversation), NEVER by a config reload. Appends a notification.read cursor
-   * through the current tail and re-emits the folded count. A no-op when nothing
-   * is unread (so the log does not grow on every open) or the conversation is not
-   * live in this process (the renderer always restores before marking read).
+   * Driven explicitly by the renderer (genuine opens + the viewed conversation),
+   * NEVER by a config reload. A no-op when nothing is unread (so the log does not
+   * grow on every open) or the conversation is not live in this process (the
+   * renderer always restores before marking read).
+   *
+   * The read cursor's throughSeq is taken INSIDE the serial append, not from a
+   * pre-queue snapshot: seqs are assigned at write time, so a notification that
+   * completes in the gap would otherwise get a higher seq than a stale cursor and be
+   * dropped by replay while the index fold counted it read — a live-append/rebuild
+   * drift. Reading through the tail-at-write-time keeps "a read clears the whole
+   * conversation" true, which the O(1) index fold relies on.
    */
   async markConversationRead(conversationId: string): Promise<void> {
     const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    const attention = session.eventState.attentionByConversationId[conversationId];
-    if (!attention || attention.unreadCount === 0) return;
-    const throughSeq = session.eventState.latestSeq;
-    if (throughSeq <= attention.lastReadThroughSeq) return;
-    await this.appendSessionEvents(sessionId, session, [{
-      type: 'notification.read',
-      actor: userActor(),
-      conversationId,
-      throughSeq,
-    }]);
+    // Cheap pre-check to avoid scheduling an append when clearly nothing is unread;
+    // the authoritative decision is re-taken inside the serial block below.
+    const pending = session.eventState.attentionByConversationId[conversationId];
+    if (!pending || pending.unreadCount === 0) return;
+    await this.appendSessionEvents(sessionId, session, (state) => {
+      const attention = state.attentionByConversationId[conversationId];
+      if (!attention || attention.unreadCount === 0) return [];
+      const throughSeq = state.latestSeq;
+      if (throughSeq <= attention.lastReadThroughSeq) return [];
+      return [{ type: 'notification.read', actor: userActor(), conversationId, throughSeq }];
+    });
     this.emitConversationAttention(sessionId, session);
   }
 
@@ -3342,11 +3367,23 @@ export class AgentRuntime {
   private async appendSessionEvents(
     sessionId: string,
     session: AgentSessionState,
-    inputs: readonly AgentEventInput[],
+    // Either a fixed list, or a builder evaluated INSIDE the serial queue against the
+    // up-to-date eventState — required when an event field is derived from the log
+    // tail (e.g. a notification.read cursor), since seqs are assigned at write time
+    // and a concurrent append can land between a pre-queue snapshot and the write.
+    // Return [] to skip (the decision is then made authoritatively inside the queue).
+    inputs:
+      | readonly AgentEventInput[]
+      | ((state: AgentEventReplayState) => readonly AgentEventInput[]),
   ) {
     let events: AgentEvent[] = [];
     const writeEvents = async () => {
-      events = this.buildEvents(session.eventState, sessionId, inputs);
+      const resolved = typeof inputs === 'function' ? inputs(session.eventState) : inputs;
+      if (resolved.length === 0) {
+        events = [];
+        return;
+      }
+      events = this.buildEvents(session.eventState, sessionId, resolved);
       await this.getEventStore().appendEvents(sessionId, events);
       for (const event of events) appendAgentEventToReplayState(session.eventState, event);
       this.publishPersistedEvents(sessionId, events);
