@@ -31,8 +31,28 @@ Shipped on the branch:
   catch-up); `startTriggeredRun` (no-human-turn, conversation-anchored,
   `{type:'schedule'}` trigger). typecheck + `test:core` + `test:renderer` green.
 
-Remaining (PR3): the builder-panel UI + smart-convert + the Run-now action and
-result routing to Today — UI-gated work that needs light+dark visual verification.
+- **UI (done, tested).** The `/command` slash command converts a row into a
+  command node; `CommandNodeControls` renders a neutral schedule chip + inline
+  date/time/repeat/ends editor (writes the canonical string through the user-only
+  gateway) + a **Run now** button. `agent_run_command_now` runs the brief
+  attended (`{type:'node'}` trigger, no watermark advance). `describeDateSchedule`
+  gives the chip a human label. en + zh-Hans strings; token-only CSS (B3/B4
+  neutral state, guard-clean). typecheck + `test:core` + `test:renderer` green.
+
+Deviations from the directional calls, for the gate:
+
+- **Smart-convert deferred.** Call #3 listed "command builder panel + smart-
+  convert"; the *conversion* path shipped is the explicit `/command` slash
+  command (deterministic, no model round-trip). LLM smart-convert (detect a
+  natural-language routine in a plain row and offer to convert) needs a live
+  provider + a UX affordance and is split to a follow-up — it does not gate the
+  bright line or the scheduler.
+- **Result routing to Today** rides on the existing delivery-conversation
+  surfacing (the run is anchored to the command's own conversation); no new
+  "Today" routing was added in this PR.
+- **Light+dark visual verification** is the main-agent gate (step 4). CSS is
+  token-only and passes the static design-system guards by construction; the
+  formal light/dark sign-off happens at the merge gate.
 
 ## Essence
 

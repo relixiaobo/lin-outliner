@@ -104,6 +104,18 @@ launch, and on `powerMonitor.resume`, firing each due node once (catch-up
 coalesces a multi-day gap). A fire is a no-human-turn agent run anchored to the
 command's own delivery conversation with a `{type:'schedule'}` trigger.
 
+`agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
+now: the same no-human-turn execution with a `{type:'node'}` trigger and **no
+watermark advance**, so testing a command never disturbs its schedule. Returns
+the delivery `conversationId`.
+
+Entry points (renderer): the `/command` slash command converts the current row
+into a command node; the controls under a command node's brief expose a neutral
+schedule chip (opens an inline date/time/repeat/ends editor that writes the
+canonical schedule string via the user-only gateway) and a **Run now** button
+(`agent_run_command_now`). The chip's human-readable label comes from
+`describeDateSchedule`.
+
 ### Document — history
 `undo`, `redo`.
 

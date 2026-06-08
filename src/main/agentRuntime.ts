@@ -1986,14 +1986,40 @@ export class AgentRuntime {
     return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
   }
 
-  // A scheduled fire: no human turn. The brief is the command node's content;
-  // the agent gets bounded context (brief + when it last ran) and runs under the
-  // same interactive capabilities, anchored to the delivery conversation with a
-  // `schedule` trigger.
+  // A scheduled fire: no human turn, `schedule` trigger.
   private async startTriggeredRun(command: DueCommand): Promise<void> {
     const brief = command.brief.trim();
     if (!brief) return; // an empty command has nothing to run
-    const sessionId = this.commandConversationSessionId(command.nodeId);
+    await this.runCommandTurn(this.commandConversationSessionId(command.nodeId), brief, command.lastSuccessAt, {
+      type: 'schedule',
+      schedule: command.schedule,
+      dueAt: command.dueAt,
+    });
+  }
+
+  // Run now (attended): the same execution path with a `node` trigger and NO
+  // watermark advance, so testing a command never disturbs its schedule.
+  // Returns the delivery conversation so the caller can surface it.
+  async runCommandNow(nodeId: string): Promise<{ conversationId: string }> {
+    const node = this.outlinerToolHost.getProjection().nodes.find((entry) => entry.id === nodeId);
+    if (!node || node.type !== 'command') throw new Error('Not a command node.');
+    const brief = node.content.text.trim();
+    if (!brief) throw new Error('This command has no brief to run.');
+    const sessionId = this.commandConversationSessionId(nodeId);
+    await this.runCommandTurn(sessionId, brief, node.sysLastRunAt ?? null, { type: 'node', nodeId });
+    return { conversationId: conversationIdFromSessionId(sessionId) };
+  }
+
+  // Shared no-human-turn execution for command runs (scheduled + Run-now). The
+  // brief is the command node's content; the agent gets bounded context (brief +
+  // when it last ran) and runs under inherited interactive capabilities,
+  // anchored to the command's own delivery conversation.
+  private async runCommandTurn(
+    sessionId: string,
+    brief: string,
+    lastSuccessAt: number | null,
+    trigger: AgentRunTrigger,
+  ): Promise<void> {
     const session = await this.ensureSessionWithId(sessionId);
     if (session.agent.state.isStreaming) throw new Error('A run for this command is already in progress.');
     await this.refreshRuntimeSettings(session);
@@ -2002,17 +2028,13 @@ export class AgentRuntime {
     const now = new Date();
     const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, brief, session);
     const prompt = buildUserPromptMessage(
-      buildTriggeredCommandPrompt(brief, command.lastSuccessAt),
+      buildTriggeredCommandPrompt(brief, lastSuccessAt),
       [],
       { memoryReminder, outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost) },
       now,
     );
     await this.appendUserPromptEvent(sessionId, session, prompt);
-    await this.startRun(sessionId, session, prompt, {
-      type: 'schedule',
-      schedule: command.schedule,
-      dueAt: command.dueAt,
-    });
+    await this.startRun(sessionId, session, prompt, trigger);
     await session.agent.prompt(prompt);
     await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
     await this.persistAndEmitIdle(sessionId, session);

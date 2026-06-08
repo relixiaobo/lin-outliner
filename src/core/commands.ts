@@ -109,6 +109,7 @@ export const AGENT_COMMANDS = [
   'agent_subagent_send',
   'agent_subagent_stop',
   'agent_send_message',
+  'agent_run_command_now',
   'agent_edit_message',
   'agent_regenerate_message',
   'agent_retry_message',

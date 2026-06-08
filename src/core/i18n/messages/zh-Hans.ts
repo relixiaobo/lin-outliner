@@ -525,6 +525,7 @@ commandPalette: {
         code: '代码块',
         image: '图片',
         command_palette: '命令面板',
+        command: '命令',
       },
       // 图片块工具栏 + 缺失状态。
       image: {
@@ -561,6 +562,28 @@ commandPalette: {
         noOptions: '没有选项',
         create: ({ label }: { label: string }) => `创建“${label}”`,
         optionsListLabel: ({ name }: { name: string }) => `${name}选项`,
+      },
+      // 命令节点（定时例程）控件：调度胶囊 + 编辑器 + 立即运行。
+      // 设定调度是「只有用户能做」的安全红线。
+      command: {
+        enableSchedule: '启用调度…',
+        runNow: '立即运行',
+        save: '保存',
+        cancel: '取消',
+        clear: '清除',
+        date: '开始日期',
+        time: '时间',
+        repeat: '重复',
+        ends: '结束',
+        manualOnly: '仅手动',
+        recurrence: {
+          none: '不重复',
+          daily: '每天',
+          weekdays: '每个工作日',
+          weekly: '每周',
+          monthly: '每月',
+          yearly: '每年',
+        },
       },
     },
   },

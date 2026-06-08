@@ -2388,3 +2388,104 @@
 .children {
   margin-left: var(--row-depth);
 }
+
+/* ── Command node (scheduled routine) controls ──────────────────────────────
+   The trigger strip under a command node's brief: a schedule chip + Run now,
+   and an inline schedule editor. Functional state stays neutral (B3/B4) — no
+   brand accent on the chip; everything derives from the --fill/--text ladders. */
+.command-node-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.command-node-controls__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.command-schedule-chip,
+.command-run-now {
+  font: inherit;
+  font-size: var(--font-ui-xs);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  background: var(--fill-1);
+  color: var(--text-secondary);
+}
+
+.command-schedule-chip:hover,
+.command-run-now:hover {
+  background: var(--fill-2);
+  color: var(--text-primary);
+}
+
+.command-schedule-chip[data-armed='true'] {
+  color: var(--text-primary);
+}
+
+.command-run-now:disabled {
+  color: var(--text-disabled);
+}
+
+.command-schedule-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+}
+
+.command-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-ui-xs);
+  color: var(--text-secondary);
+}
+
+.command-schedule-field input,
+.command-schedule-field select {
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  color: var(--text-primary);
+  background: var(--fill-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.command-schedule-editor__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.command-schedule-save,
+.command-schedule-clear,
+.command-schedule-cancel {
+  font: inherit;
+  font-size: var(--font-ui-xs);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  background: var(--fill-2);
+  color: var(--text-primary);
+}
+
+.command-schedule-save:disabled {
+  color: var(--text-disabled);
+  background: var(--fill-1);
+}
+
+.command-schedule-save:hover:not(:disabled),
+.command-schedule-clear:hover,
+.command-schedule-cancel:hover {
+  background: var(--fill-3);
+}

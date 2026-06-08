@@ -60,6 +60,7 @@ import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactio
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
 import { BlockNodeRow, isBlockNodeType } from './BlockNodeRow';
+import { CommandNodeControls } from './CommandNodeControls';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -857,6 +858,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       replaceLocalDraftContent(withoutTrigger);
       await api.replaceNodeText(targetEditId, withoutTrigger);
       return api.setCodeBlock(targetEditId);
+    }
+
+    if (commandId === 'command') {
+      await pendingTextPatchRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+      if (onDraftTrigger) {
+        const created = await api.createRichTextNode(props.parentId, null, withoutTrigger);
+        replaceLocalDraftContent(EMPTY_RICH_TEXT);
+        const nodeId = created.focus?.nodeId;
+        if (!nodeId) return created;
+        return api.setCommandNode(nodeId);
+      }
+      replaceLocalDraftContent(withoutTrigger);
+      await api.replaceNodeText(targetEditId, withoutTrigger);
+      return api.setCommandNode(targetEditId);
     }
 
     if (commandId === 'image') {
@@ -1732,6 +1748,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               props.setUi((prev) => clearPendingInputState(prev, input));
             }}
           />
+          {displayed.type === 'command' && (
+            <CommandNodeControls
+              schedule={displayed.commandSchedule ?? null}
+              labels={tf.command}
+              onSetSchedule={(schedule) => {
+                void props.run(() => api.setCommandSchedule(displayed.id, schedule));
+              }}
+              onRunNow={() => {
+                void api.runCommandNow(displayed.id).catch((error) => {
+                  console.error('[command] run now failed', error);
+                });
+              }}
+            />
+          )}
           {showSelectedReferenceOptionPicker && props.optionField && props.onSelectOption && (
             <SelectedReferenceOptionPicker
               anchorRef={optionAnchorRef}
@@ -1799,7 +1829,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           applyTag={onDraftTrigger ? applyDraftTag : undefined}
           createTagAndApply={onDraftTrigger ? createAndApplyDraftTag : undefined}
           executeSlashCommand={executeSlashCommand}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
           existingTagIds={displayed.tags}
         />

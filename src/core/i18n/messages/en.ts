@@ -582,6 +582,7 @@ commandPalette: {
         code: 'Code block',
         image: 'Image',
         command_palette: 'Command palette',
+        command: 'Command',
       },
       // Image block toolbar + missing state.
       image: {
@@ -619,6 +620,28 @@ commandPalette: {
         noOptions: 'No options',
         create: ({ label }: { label: string }) => `Create "${label}"`,
         optionsListLabel: ({ name }: { name: string }) => `${name} options`,
+      },
+      // Command node (scheduled routine) controls: the schedule chip + editor +
+      // Run now. Arming the schedule is the user-only "bright line".
+      command: {
+        enableSchedule: 'Enable schedule…',
+        runNow: 'Run now',
+        save: 'Save',
+        cancel: 'Cancel',
+        clear: 'Clear',
+        date: 'Start date',
+        time: 'Time',
+        repeat: 'Repeat',
+        ends: 'Ends',
+        manualOnly: 'Manual only',
+        recurrence: {
+          none: 'Does not repeat',
+          daily: 'Daily',
+          weekdays: 'Every weekday',
+          weekly: 'Weekly',
+          monthly: 'Monthly',
+          yearly: 'Yearly',
+        },
       },
     },
   },

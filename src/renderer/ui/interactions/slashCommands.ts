@@ -7,6 +7,7 @@ export type SlashCommandId =
   | 'checkbox'
   | 'code'
   | 'image'
+  | 'command'
   | 'command_palette';
 
 export interface SlashCommandDefinition {
@@ -58,9 +59,15 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     enabled: true,
   },
   {
+    id: 'command',
+    label: 'Command',
+    keywords: ['command', 'routine', 'schedule', 'agent', 'task', 'cron'],
+    enabled: true,
+  },
+  {
     id: 'command_palette',
     label: 'Command palette',
-    keywords: ['command', 'palette', 'search'],
+    keywords: ['palette', 'search'],
     shortcutHint: 'Cmd+K',
     enabled: true,
   },
