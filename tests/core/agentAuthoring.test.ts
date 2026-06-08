@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -162,5 +162,27 @@ describe('agent authoring file operations', () => {
       .rejects.toThrow(/outside the agents directories/);
     await expect(deleteAgentDefinitionFile({ existing: outside, localRoot: root }))
       .rejects.toThrow(/outside the agents directories/);
+  });
+
+  test('refuses to follow a symlink inside the agents dir that escapes the root', async () => {
+    // A hostile project workspace can commit `.agents/agents/escape -> /outside`.
+    // Lexically `escape` is a child of the agents dir, so containment MUST resolve
+    // symlinks (realpath) or the write/delete lands at the symlink target.
+    const agentsDir = path.join(root, '.agents', 'agents');
+    await mkdir(agentsDir, { recursive: true });
+    const outsideTarget = await mkdtemp(path.join(tmpdir(), 'agent-authoring-escape-'));
+    const link = path.join(agentsDir, 'escape');
+    await symlink(outsideTarget, link, 'dir');
+    const escaped: AgentDefinition = {
+      name: 'escape', source: 'project', rootDir: link, agentFile: path.join(link, 'AGENT.md'),
+      description: 'x', body: '',
+    };
+    await expect(updateAgentDefinitionFile({ existing: escaped, input: SAMPLE, localRoot: root }))
+      .rejects.toThrow(/outside the agents directories/);
+    await expect(deleteAgentDefinitionFile({ existing: escaped, localRoot: root }))
+      .rejects.toThrow(/outside the agents directories/);
+    // The escape target must be untouched.
+    await expect(stat(path.join(outsideTarget, 'AGENT.md'))).rejects.toThrow();
+    await rm(outsideTarget, { recursive: true, force: true });
   });
 });

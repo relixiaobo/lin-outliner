@@ -10,6 +10,7 @@
 // (`rootDir === 'built-in'`) are never writable. The *model* never reaches this
 // surface — only the user, through the settings UI (see [[agent-authoring]]).
 
+import { existsSync, realpathSync } from 'node:fs';
 import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -125,16 +126,48 @@ function assertWritableSource(agent: AgentDefinition): void {
 }
 
 function assertContainedInAgentsDir(targetDir: string, localRoot: string): void {
-  const resolved = path.resolve(targetDir);
+  // Containment must resolve symlinks, not just normalize lexically: the registry
+  // scan follows symlinks (agentSubagents.ts), so a symlink committed inside a
+  // `project` `.agents/agents/` dir (git-trackable, shippable in a hostile
+  // workspace) that points elsewhere would pass a lexical `path.relative` check
+  // yet redirect the write THROUGH the link to an arbitrary file. Resolve the real
+  // path of both target and roots (via the nearest existing ancestor, since the
+  // target dir may not exist yet on create) before comparing — mirrors
+  // resolveWorkspacePath in agentLocalTools.ts.
+  const resolvedTarget = realResolve(targetDir);
   const writableDirs = [
     agentsDirForStorage('user', localRoot),
     agentsDirForStorage('project', localRoot),
-  ].map((dir) => path.resolve(dir));
+  ].map(realResolve);
   // The target must be a strict child of an agents dir (not the dir itself).
-  const ok = writableDirs.some((dir) => isStrictChild(resolved, dir));
+  const ok = writableDirs.some((dir) => isStrictChild(resolvedTarget, dir));
   if (!ok) {
     throw new Error('Refusing to write an agent definition outside the agents directories.');
   }
+}
+
+/**
+ * Resolve a path with symlinks followed, tolerating a not-yet-created leaf:
+ * realpath the nearest existing ancestor, then re-append the remaining
+ * (not-yet-existing) segments. So a symlinked ancestor is dereferenced, but
+ * creating a brand-new agent dir still resolves to its real intended location.
+ */
+function realResolve(target: string): string {
+  const requested = path.resolve(target);
+  const existing = nearestExistingPath(requested);
+  const existingReal = realpathSync.native(existing);
+  const suffix = path.relative(existing, requested);
+  return suffix ? path.resolve(existingReal, suffix) : existingReal;
+}
+
+function nearestExistingPath(input: string): string {
+  let current = path.resolve(input);
+  while (!existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+  return current;
 }
 
 function isStrictChild(target: string, parent: string): boolean {

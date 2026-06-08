@@ -659,6 +659,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
         onSuccess?.(agents, priorIds);
         setNotice(successNotice);
       }
+      // Broadcast settings-changed so the main window's chat composer refreshes its
+      // subagent picker — a newly authored agent must be pickable (and a deleted one
+      // gone) without a restart. Mirrors runProviderMutation.
+      await onApplied();
     } catch (caught) {
       if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -1241,7 +1245,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                       {allAgents.map((agent) => (
                         <InsetRow
                           ariaLabel={agent.name}
-                          disabled={isAgentDisabled(agent.agentId)}
+                          dimmed={isAgentDisabled(agent.agentId)}
                           key={agent.agentId}
                           label={(
                             <>
