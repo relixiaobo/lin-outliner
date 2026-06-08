@@ -210,14 +210,6 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-.definition-auto-init-group {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-5);
-}
-
 .definition-done-mapping {
   display: flex;
   min-width: 0;

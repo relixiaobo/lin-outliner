@@ -62,7 +62,11 @@ test.describe('definition configuration parity', () => {
     await page.getByLabel('Minimum value').blur();
     await page.getByLabel('Maximum value').fill('5');
     await page.getByLabel('Maximum value').blur();
-    await page.getByRole('switch', { name: 'Ancestor field value' }).click();
+    // Auto-initialize is a multi-select picker (a field can carry several
+    // strategies); pick one, then close the still-open checklist with Escape.
+    await page.getByLabel('Auto-initialize').click();
+    await page.getByRole('option', { name: 'Ancestor field value', exact: true }).click();
+    await page.keyboard.press('Escape');
     const requiredSwitch = page.getByRole('switch', { name: 'Required' });
     const requiredSwitchMark = requiredSwitch.locator('.switch-mark');
     await expect(requiredSwitchMark).toHaveCount(1);

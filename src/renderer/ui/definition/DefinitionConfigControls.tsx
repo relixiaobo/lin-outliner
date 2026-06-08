@@ -229,25 +229,26 @@ export function DefinitionAutoInitializeControl(props: {
   const enabledSet = new Set(enabled);
   const strategies = autoInitStrategiesForField(props.fieldType);
 
+  // A field can carry several auto-init strategies at once (a date field offers
+  // three), so this is one multi-select picker — not N indistinguishable toggles.
+  // The row shows the chosen strategies; the popover is a checklist. The on-disk
+  // value contract (a comma-joined strategy string) is unchanged.
+  const toggle = (strategy: AutoInitStrategy) => {
+    const next = new Set(enabledSet);
+    if (next.has(strategy)) next.delete(strategy);
+    else next.add(strategy);
+    props.onChange(serializeAutoInitStrategies(strategies.filter((candidate) => next.has(candidate))));
+  };
+
   return (
-    <span className="definition-auto-init-group" aria-label={props.label}>
-      {strategies.map((strategy) => {
-        const checked = enabledSet.has(strategy);
-        return (
-          <DefinitionSwitchControl
-            key={strategy}
-            label={autoInitLabels[strategy]}
-            checked={checked}
-            onChange={(nextChecked) => {
-              const next = new Set(enabled);
-              if (nextChecked) next.add(strategy);
-              else next.delete(strategy);
-              props.onChange(serializeAutoInitStrategies(strategies.filter((candidate) => next.has(candidate))));
-            }}
-          />
-        );
-      })}
-    </span>
+    <NodeValuePicker
+      multiple
+      ariaLabel={props.label}
+      options={strategies.map((strategy) => ({ id: strategy, label: autoInitLabels[strategy] }))}
+      selectedIds={enabled}
+      onSelect={(strategy) => toggle(strategy as AutoInitStrategy)}
+      placeholder={t.definition.controls.none}
+    />
   );
 }
 
