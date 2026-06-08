@@ -416,10 +416,12 @@ type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 export class AgentRuntime {
   private sessions = new Map<string, AgentSessionState>();
   private osNotifier?: OsNotifier;
-  // The conversation the renderer currently displays (last restored/created/opened).
-  // Used to suppress an OS banner for a task whose conversation the user is already
-  // looking at — see main.ts's notifier and getActiveConversationId().
-  private activeConversationId: string | null = null;
+  // The conversation the user is actually VIEWING, reported by the renderer:
+  // the displayed conversation when the agent dock is open, else null (the dock
+  // collapses CSS-only while keeping the conversation loaded, so the runtime cannot
+  // infer this from restore alone). Used to suppress an OS banner for a task whose
+  // conversation the user is already looking at — see main.ts's notifier.
+  private viewedConversationId: string | null = null;
   private debugProjectionCache = new Map<string, {
     history: AgentDebugSnapshot[];
     latestSeq: number;
@@ -525,17 +527,22 @@ export class AgentRuntime {
     if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
-    // Restoring loads a conversation's state; it does NOT mark it read. Marking read
-    // is a separate, explicit user-open signal (markConversationRead) so a config
-    // reload — which also restores — never clears unread. Track it as the active
-    // conversation for OS-notification suppression.
-    this.activeConversationId = conversationId;
+    // Restoring loads a conversation's state; it does NOT mark it read, and it does
+    // NOT imply the user is viewing it (the dock may be collapsed). Marking read and
+    // the viewed-conversation signal are both driven explicitly by the renderer.
     return this.conversationResponse(sessionId, session);
   }
 
-  /** The conversation the renderer is currently displaying, or null. */
-  getActiveConversationId(): string | null {
-    return this.activeConversationId;
+  /**
+   * Renderer-reported: the conversation the user can actually see (dock open), or
+   * null (dock collapsed / agent not focused). Authoritative for OS suppression.
+   */
+  setViewedConversation(conversationId: string | null): void {
+    this.viewedConversationId = conversationId;
+  }
+
+  getViewedConversation(): string | null {
+    return this.viewedConversationId;
   }
 
   /**
@@ -580,7 +587,6 @@ export class AgentRuntime {
     }
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
-    this.activeConversationId = conversationIdFromSessionId(sessionId);
     return this.conversationResponse(sessionId, session);
   }
 
@@ -600,17 +606,19 @@ export class AgentRuntime {
     this.publishPersistedEvents(sessionId, created);
     const session = await this.createSessionWithEventState(eventState);
     await this.refreshAgentTaskCache();
-    this.activeConversationId = conversationIdFromSessionId(sessionId);
     return this.conversationResponse(sessionId, session);
   }
 
   async listConversations() {
     const entries = await this.getEventStore().listConversationIndexEntries();
+    const listed = entries.filter((entry) => !!entry.goal);
     // Seed cross-conversation unread badges on launch: the live conversation_attention
     // event only fires for sessions touched this run, so a conversation that went
     // unread before the app closed would show no badge until it is reopened. Re-emit
-    // the persisted unread (sourced from replay state) for every still-unread one.
-    for (const entry of entries) {
+    // the persisted unread — but only for conversations that have a list row to carry
+    // the badge (goal-less conversations like the default DM are masked when active
+    // and have nowhere to render an orphaned count).
+    for (const entry of listed) {
       if ((entry.unreadCount ?? 0) > 0) {
         this.emit({
           type: 'conversation_attention',
@@ -620,8 +628,7 @@ export class AgentRuntime {
         });
       }
     }
-    return entries
-      .filter((entry) => !!entry.goal)
+    return listed
       .map((entry) => ({
         id: entry.id,
         title: sanitizeSessionTitle(entry.title),

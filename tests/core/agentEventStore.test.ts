@@ -102,6 +102,46 @@ describe('agent event store', () => {
     });
   });
 
+  test('folds unreadCount into the index incrementally without bumping updatedAt', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Untitled', goal: 'g' },
+        {
+          ...base(sessionId, 2, 'user_message.created', userActor),
+          messageId: 'message-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+      ]);
+      const afterMessage = (await store.listConversationIndexEntries())[0]!;
+      expect(afterMessage.unreadCount).toBe(0);
+      expect(afterMessage.updatedAt).toBe(1_700_000_000_002);
+
+      // Two off-floor deliveries fold to unreadCount 2, and DO NOT bump updatedAt
+      // (a background delivery is not conversation activity — review #5).
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 3, 'notification.created'), notificationId: 'n-1', conversationId: sessionId, kind: 'task_completed', title: 'A' },
+        { ...base(sessionId, 4, 'notification.created'), notificationId: 'n-2', conversationId: sessionId, kind: 'task_failed', title: 'B' },
+      ] as AgentEvent[]);
+      const afterNotifs = (await store.listConversationIndexEntries())[0]!;
+      expect(afterNotifs.unreadCount).toBe(2);
+      expect(afterNotifs.updatedAt).toBe(1_700_000_000_002);
+
+      // A read through the tail clears the fold to 0 (still no updatedAt bump). The
+      // index value matches an authoritative full replay (no incremental drift).
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 5, 'notification.read'), conversationId: sessionId, throughSeq: 4 },
+      ] as AgentEvent[]);
+      const afterRead = (await store.listConversationIndexEntries())[0]!;
+      expect(afterRead.unreadCount).toBe(0);
+      expect(afterRead.updatedAt).toBe(1_700_000_000_002);
+      expect(afterRead.unreadCount).toBe(
+        (await store.replay(sessionId)).attentionByConversationId[sessionId]?.unreadCount ?? 0,
+      );
+    });
+  });
+
   test('writes checkpoints and replays tail events after a checkpoint', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';

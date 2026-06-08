@@ -1167,13 +1167,6 @@ export class AgentEventStore {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readConversationIndex() ?? { conversations: {} };
       let entry: AgentConversationIndexEntry | null = index.conversations[sessionId] ?? null;
-      // notification.created/read fold attention via a partial-read cursor that
-      // the single-event incremental path cannot reconstruct without drift; when
-      // the batch carries one, rebuild the entry from replay state (the single
-      // source of truth for unreadCount) instead of incrementing in two places.
-      const touchesAttention = events.some(
-        (event) => event.type === 'notification.created' || event.type === 'notification.read',
-      );
       for (const event of events) {
         if (event.type === 'session.created') {
           entry = {
@@ -1191,9 +1184,7 @@ export class AgentEventStore {
           entry = updateConversationIndexEntry(entry, event);
         }
       }
-      if (!entry || touchesAttention) {
-        entry = conversationIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
-      }
+      if (!entry) entry = conversationIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
       if (entry) index.conversations[sessionId] = entry;
       await this.writeConversationIndex(index);
     });
@@ -1404,8 +1395,7 @@ function updateConversationIndexEntry(
 ): AgentConversationIndexEntry {
   // notification.created/read are off-floor attention bookkeeping, not activity:
   // they must not bump updatedAt (which sorts + timestamps the list). Mirrors the
-  // replay reducer's touchSessionUpdatedAt skip; unreadCount for these is folded
-  // via the replay rebuild in updateConversationIndex, not here.
+  // replay reducer's touchSessionUpdatedAt skip.
   const isAttentionEvent =
     event.type === 'notification.created' || event.type === 'notification.read';
   const next: AgentConversationIndexEntry = {
@@ -1413,6 +1403,17 @@ function updateConversationIndexEntry(
     updatedAt: isAttentionEvent ? entry.updatedAt : Math.max(entry.updatedAt, event.createdAt),
     latestSeq: Math.max(entry.latestSeq, event.seq),
   };
+  // Fold unreadCount in O(1), not via a full replay. A created notification always
+  // carries the highest seq (so it is unread by construction → +1); the only emitter
+  // of notification.read (markConversationRead) always reads through the conversation
+  // tail, so a read clears the whole conversation (→ 0). The replay reducer remains
+  // the authority for the full-rebuild path (conversationIndexEntryFromReplayState),
+  // which this matches for those emitters.
+  if (event.type === 'notification.created') {
+    next.unreadCount += 1;
+  } else if (event.type === 'notification.read') {
+    next.unreadCount = 0;
+  }
   if (event.type === 'session.renamed') {
     next.title = event.title;
     next.goal = event.goal ?? next.goal;
