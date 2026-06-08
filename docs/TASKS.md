@@ -380,6 +380,14 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-task-model redirect** (cc, PR #168) — docs-only. The drafted standalone **Agent(profile)+Task(run)**
+  plan was reviewed and **redirected**: it reinvented the already-approved in-progress agent program
+  (`agent-program` / `agent-conversation-model` / `agent-data-model`) and conflicted with ratified decisions
+  (no stored conversation `kind`, the protected `agentSubagentIdentity.ts` / `agentSubagentTranscript.ts`
+  seams, Task = off-floor `background` run). `docs/plans/agent-task-model.md` archived as `status: superseded`
+  (path-not-taken record + verified conflict table); only the sound post-#167 kernel folded into
+  `agent-conversation-model.md` §Code mapping as a bounded clean-cut — retire `general`, `fork` as a context
+  *mode*, capability profile-only (drop per-call `model`/`effort` overrides). No code or spec change.
 - **agent-authoring** (cc, PR #167) — user-facing **create / edit / duplicate / manage agent definitions**
   (`AGENT.md` persona files), the agent-side analogue of skills authoring (M2). One **Form ⇄ Raw editor**
   for every agent (built-ins read-only with "Duplicate to my agents"), global-vs-workspace storage choice,

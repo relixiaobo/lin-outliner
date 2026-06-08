@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Redirect `agent-task-model` → fold post-#167 cleanup into the conversation model (PR #168)** — docs-only.
+  A drafted standalone "dissolve subagent into Agent(profile)+Task(run)" plan was reviewed and found to
+  reinvent the already-approved, in-progress agent program (`agent-program` M0–M3 / `agent-conversation-model`
+  / `agent-data-model`) and to conflict with several ratified decisions. **Redirected:**
+  `docs/plans/agent-task-model.md` archived as `status: superseded` (slimmed to the path-not-taken record +
+  a verified conflict table), and only the sound post-#167 kernel folded into `agent-conversation-model.md`
+  §Code mapping as a **bounded CLEAN-CUT** note — retire `general` (empty-body built-in post-#167, redundant
+  with the primary identity run fresh), `fork` as a context *mode* (not a pseudo-`AgentDefinition`), and drop
+  the `Agent` tool's per-call `model`/`effort` overrides (capability is profile-only). Bounds held at the
+  gate: no stored conversation `kind` (F2), no redesign of the protected `agentSubagentIdentity.ts` /
+  `agentSubagentTranscript.ts` seams, "Task" stays the off-floor `background` run (`RunMeta.kind`), the
+  model-facing rename is contract + UX only (storage names may stay), and any identity-string change (e.g.
+  retiring `general`'s owner key) is a dev-`userData` wipe — not a no-op rename. No code or spec change.
+  ([#168](https://github.com/relixiaobo/lin-outliner/pull/168))
+
 - **Revise agent memory planning toward the target write/read surface (PR #157)** — docs-only plan
   adjustment (PM-ratified 2026-06-07) across four `docs/plans/*.md`, no production or spec change. Pins two
   decisions for the M2 build. **Write authority — DECIDED:** the durable memory line is written by exactly
