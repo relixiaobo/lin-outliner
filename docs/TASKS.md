@@ -208,6 +208,15 @@ terminal result, not a mid-run ask) — see the M2 milestone row in `agent-progr
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
+- **agent-authoring** (P2, M2, *draft — for a dev to pick up*) — the user-facing path
+  to **create / edit / duplicate / manage agent definitions** (`AGENT.md` persona files),
+  the agent-side analogue of `agent-skills-authoring`. Today authoring is filesystem-only
+  + restart-required and settings is read-only; this adds a registry write + hot-reload
+  (main), a create/edit UI (settings), and a directories-UI + disable-by-identity cleanup.
+  **Scoped to run in parallel with `agent-scheduled-routines`**: reuses the existing
+  `AgentDefinition` shape and deliberately does **not** touch `src/core/types.ts`. Model-
+  driven authoring is a non-goal (write surface stays user-driven). See
+  `docs/plans/agent-authoring.md`.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
