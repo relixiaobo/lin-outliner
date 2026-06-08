@@ -53,8 +53,8 @@ A Task carries only:
 `effort`, `tools` / `disallowedTools`, `permissionMode`, **`maxTurns`**, `skills`.
 The Task names *which* runner, never restates *how capable* it is. (Today the
 `Agent` tool also accepts per-call `model`/`effort` overrides,
-`agentSubagents.ts:635-636` — a convenience, not part of the Task's essence; see
-Open Q6.)
+`agentSubagents.ts:635-636` — a convenience, not part of the Task's essence;
+**decided: dropped**, capability is profile-only.)
 
 ```
    capability / budget                 delegation (per call)
@@ -74,18 +74,25 @@ We have not launched ([[no-backward-compat-pre-launch]]), so we take the
 surface-only half-rename, no per-task duplication of profile config.
 
 **The clean target: there is no special "main agent."** One uniform concept — an
-**Agent profile** (a built-in default + user-defined) — and two ways a profile is
-*run*:
+**Agent profile** = a *participant* (persona + capability; a built-in default +
+user-defined) — that shows up in **three run-shapes**:
 
-- **foreground**: the interactive session with the user;
-- **task**: a delegated run (`fresh|fork` × `sync|async`).
+- in a **DM**: a 1:1 interactive conversation with the user. Today's "main chat"
+  is just the **default DM**, with the built-in default agent.
+- in a **Channel**: a multi-agent interactive conversation (several profiles + the
+  user).
+- as a **Task**: a headless delegated run (`fresh|fork` × `sync|async`) that
+  reports a result back into the conversation that spawned it.
 
-"primary/main" = whichever profile the foreground currently runs; "general" = the
-default profile run as a fresh task. This collapses { main agent, general, user
-agents } into ONE concept (**profiles**) and the foreground/subagent split into a
-*run mode*, not a kind of agent — which also dissolves the three seams the bounded
-version left (the runner×mode coupling, per-task capability, the split config
-surface).
+**The foreground is a *conversation*, switched at the top** (the chat-app idiom): a
+list of **DMs** and **Channels** — the user switches *which conversation they are
+in*, NOT "which profile is active". "primary/main" = the default DM's agent;
+"general" = the default agent run as a fresh task.
+
+This collapses { main agent, general, user agents } into ONE concept (**profiles /
+participants**) and { foreground, subagent } into *how a participant runs* (DM /
+Channel / Task) — dissolving the three seams the bounded version left (the
+runner×mode coupling, per-task capability, the split config surface).
 
 **Decided (clean cutover — resolves the mechanical Open Questions):**
 
@@ -99,9 +106,17 @@ surface).
 - The built-in default profile's persona is **user-editable** like any other
   profile (uniformity), with reset-to-default; still **never** model-writable —
   authoring stays user-driven ([[agent-authoring]]) (was Q1).
+- **Config: Option A (locked).** A profile owns its *entire* config (persona +
+  `model` + `permissionMode` + tools). The **Providers** pane becomes
+  credentials-only (model picking moves onto the profile); permission is
+  per-profile. No account-wide "active model" separate from the profile (was Q-config).
 
-**The one remaining fork (needs ratify):** how far to unify config — see Open
-Questions. Everything above is settled by "go cleanest".
+**Build scope of THIS plan vs follow-on:** ship the **DM** foreground (1:1 — the
+reframed current chat) + the full Agent/Task cleanup + Option-A config. **Channels
+(multi-agent) are in the target model but built as a separate follow-on plan**
+([[agent-channels]]); this plan only keeps the types/model **channel-ready** (a
+conversation is `DM | Channel`; a participant set; an agent-addresses-agent seam) —
+it does not build multi-agent turn-taking, mentions, or cross-agent messaging.
 
 ## Goal
 
@@ -122,7 +137,10 @@ Reprocess the agent subsystem so the code, the data model, and the UX all expres
 
 - **Not** changing the execution engine (pi-agent-core `Agent` loop, isolation
   tiers, sidechain transcript storage) beyond what the identity/rename require.
-- **Not** multi-agent messaging / teams / channels.
+- **Channels (multi-agent foreground) are in the target *model* but built later**
+  ([[agent-channels]], a separate follow-on plan). This plan ships only the **DM**
+  foreground and keeps the types channel-ready — no multi-agent turn-taking,
+  mentions, or agent↔agent messaging here.
 - **Not** changing memory extraction / dream semantics — only clarifying ownership
   wording under the Task framing.
 - **Not** a visual redesign of Agent Profiles beyond "the primary agent appears as
@@ -173,8 +191,8 @@ persona becomes a *named, listed* profile. It is the **default runner**.
 ### D3 — Retire `general`
 A `fresh` task with no explicit runner resolves to the **primary** agent. Remove
 `general` as a separate built-in; skill-default and unknown-type fallback point at
-the primary. (Open Q3: keep `general`/`general-purpose` as a model-facing alias,
-or hard-remove per no-backcompat.)
+the primary. **`general`/`general-purpose` are hard-removed** — no model-facing
+alias (decided: go cleanest, [[no-backward-compat-pre-launch]]).
 
 ### D4 — `fork` is a mode, not a pseudo-agent
 Drop `createForkAgentDefinition` as a "definition." A `fork` task inherits the
@@ -194,8 +212,8 @@ and the implicit caller-context.
 
 ### Security / safety
 The headless task directive (never ask the user, concise result) stays. Authoring
-remains **user-driven only** ([[agent-authoring]] Non-goal); the primary persona
-must not be model-writable (Open Q1 decides whether it is *user*-editable at all).
+remains **user-driven only** ([[agent-authoring]] Non-goal); the primary persona is
+**user-editable** (with reset-to-default) but **never model-writable**.
 
 ### Collision self-check (vs in-flight work)
 
@@ -220,31 +238,28 @@ contract changes. Decide ordering at ratification.
 
 Q1/Q2/Q3/Q5/Q6 are **resolved by "go cleanest"** (see North star): user-editable
 default persona; full rename; hard-remove `general`; full code rename; drop
-per-task overrides. The genuinely open call is **how far to unify config** — the
-one place "cleanest" expands scope:
+per-task overrides. **Config is now locked too: Option A** — a profile owns its
+*entire* config; the Providers pane becomes credentials-only (model picking moves
+onto the profile); permission is per-profile. So the design forks are decided; what
+remains is **scope/sequencing judgment for the PM + main**, not direction:
 
-1. **Config unification + foreground switching.** The pure uniform model says a
-   profile owns its *entire* config (persona + `model` + `permissionMode` + tools),
-   and the **foreground just runs the active profile** — so you could switch the
-   foreground to a user profile, and "primary" is not special. That reorganizes the
-   **Providers** pane (model picking moves onto the profile) and the **Permissions**
-   pane (per-profile permission) around profiles. Cleanest, but the biggest scope.
-   - **Option A — full unify (maximal clean):** one profile = one complete config;
-     foreground = active profile; Providers becomes "credentials only", model moves
-     onto the profile. Switching the foreground persona is a first-class feature.
-   - **Option B — bounded clean:** keep Providers (account-wide model) +
-     Permissions where they are; the primary becomes a *listed, editable persona*
-     profile, default runner, but its model/permission still come from the global
-     panes. Achieves ~90% of the clarity; foreground-switching deferred.
-   The North star is A; B is the smaller cut if A is too much for one pass. **Need
-   the PM/main call** before the interface-first PR, because A vs B changes the
-   `types.ts` / settings shape.
+1. **DM/Channel foreground — how much lands here.** The foreground reframes from
+   "the main chat" to a **conversation switcher** (DM | Channel list at the top,
+   chat-app idiom). This plan builds the **DM** half (1:1 — the reframed current
+   chat, plus the switcher shell + types that are channel-ready); **Channels**
+   (multi-agent) are a separate follow-on ([[agent-channels]]). Confirm that split
+   is the right first cut, or whether the switcher shell should also defer.
+2. **Sequencing vs #165.** Real overlap on `types.ts` + `agentRuntime.ts` (see
+   Collision self-check). This plan must land **behind #167** (depends on the
+   `audience` split) and be ordered w.r.t. #165 via a human-led interface-first PR.
+   Decide ordering at ratification.
 
-## Subtasks (build — only after ratification + the A/B config call)
+## Subtasks (build — only after ratification)
 
 - [ ] Interface-first PR: `types.ts` / `commands.ts` (default-profile
-  `AgentDefinition`, task-run rename, runner param, capability fields finalized) —
-  human-led, sequenced vs #165. Shape depends on the **A vs B** decision.
+  `AgentDefinition`; task-run rename + runner param; capability fields finalized on
+  the profile; **conversation type `DM | Channel`** kept channel-ready) — human-led,
+  sequenced vs #165.
 - [ ] Default profile (built-in) as a definition + default runner; roster shows it;
   persona user-editable with reset-to-default.
 - [ ] Retire `general` + `general-purpose` alias; `fresh`-no-runner → default
@@ -253,7 +268,11 @@ one place "cleanest" expands scope:
 - [ ] Drop the `Agent` tool's per-call `model`/`effort` overrides; capability is
   profile-only (`maxTurns` never a task input).
 - [ ] Full rename subagent → task (types, files, storage, tool contract, UX copy).
-- [ ] **(Option A only)** move model onto the profile (Providers → credentials),
-  per-profile permission, foreground-switching.
+- [ ] **Config Option A:** move model onto the profile (Providers pane →
+  credentials-only); per-profile permission (Permissions pane reorganized around
+  profiles).
+- [ ] **DM foreground reframe:** the current main chat becomes the *default DM*;
+  add the top **conversation switcher** (DM list now; Channel list stubbed,
+  channel-ready types). Channels (multi-agent) ship later as [[agent-channels]].
 - [ ] Spec rewrite (`docs/spec/agent-subagent-runtime-plan.md` → the Agent/Task
   model) + tests; fold this plan's design into the spec on ship.
