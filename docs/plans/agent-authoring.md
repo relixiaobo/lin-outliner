@@ -188,8 +188,15 @@ that ever changes, sequence shared-interface-first behind Lane B's types change.
 3. **Hot-reload mechanism:** **invalidation-on-write** (the lean).
    `AgentDefinitionRegistry.reload()` after every write across all live sessions;
    `fs.watch` deferred.
-4. **Built-in editing:** **duplicate-to-user** confirmed. Built-ins render
-   read-only with a one-click "Duplicate to my agents".
+4. **Built-in editing:** **duplicate-to-user** confirmed. Built-ins render through
+   the **same** `AgentEditor` as a user agent, just **read-only** (every control
+   disabled; the Form/Raw toggle stays live so the AGENT.md is viewable; the only
+   action is "Duplicate to my agents") — so `general` and a user agent are one
+   abstraction, not two surfaces (redesign 2026-06-08: the earlier bespoke
+   read-only specs card was dropped). A **new** agent seeds a scaffold (real
+   defaults: `permission-mode: restricted`, `effort: medium`, `max-turns: 20`, a
+   starter persona; all tools on; model inherit) so neither Form nor Raw starts
+   blank.
 5. **Priority / sequencing:** ran as a **parallel lane** alongside Lane B; the
    only shared file is `src/core/commands.ts` (additive — new command names
    appended at the end, no overlap with Lane B's mid-list insertion).

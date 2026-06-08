@@ -19,12 +19,17 @@ import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
-// The create/edit surface for a user-authored agent definition. Two modes that
-// convert on toggle (the form decision in [[agent-authoring]]): a structured
-// **Form** and a raw **AGENT.md** editor — switching Form→Raw serializes the
-// current fields, Raw→Form re-parses, so the two are always the same data. A
-// built-in renders read-only with a one-click "Duplicate to my agents". The
-// component owns its form state and is reset by the parent via `key`.
+// The create / edit / view surface for an agent definition. ONE abstraction for
+// every agent: two modes that convert on toggle (the form decision in
+// [[agent-authoring]]) — a structured **Form** and a raw **AGENT.md** editor.
+// Switching Form→Raw serializes the current fields, Raw→Form re-parses, so the
+// two views are always the same data. A built-in is rendered through the SAME
+// editor, just **read-only** (every control disabled, the only action is
+// "Duplicate to my agents") — so opening `general` and opening a user agent look
+// the same; the difference is only whether you can change it. A new agent seeds
+// a useful **scaffold** (sensible defaults + a starter persona) so neither mode
+// starts blank. The component owns its form state and is reset by the parent via
+// `key`.
 
 const REASONING_OPTIONS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
@@ -39,8 +44,8 @@ const TOOL_CATALOG: readonly string[] = [
 type EditorMode = 'form' | 'raw';
 
 interface AgentEditorProps {
-  // null → create mode (blank form). Otherwise edit (user/project) or read-only
-  // display (built-in).
+  // null → create mode (scaffold form). Otherwise edit (user/project) or
+  // read-only view (built-in).
   agent: AgentDefinitionView | null;
   availableSkills: SkillDefinition[];
   busy: boolean;
@@ -76,8 +81,11 @@ interface AgentFormState {
 export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, onDelete, onDuplicate }: AgentEditorProps) {
   const t = useT().settings.agents;
   const isBuiltIn = agent?.source === 'built-in';
+  // Built-ins render through the SAME editor, just read-only — same abstraction
+  // as a user agent, so the only difference a user sees is "can I change it".
+  const readOnly = isBuiltIn;
   const skillNames = useMemo(() => availableSkills.map((skill) => skill.name), [availableSkills]);
-  const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames));
+  const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames, newAgentScaffold(t)));
   const [mode, setMode] = useState<EditorMode>('form');
   const [rawText, setRawText] = useState('');
   const [storage, setStorage] = useState<AgentStorageLocation>('user');
@@ -113,31 +121,17 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
     else onCreate(input, storage);
   }
 
-  // Read-only built-in: specs + the only available action (duplicate).
-  if (agent && isBuiltIn) {
-    return (
-      <div className="agent-editor agent-editor-readonly">
-        <header className="agent-editor-header">
-          <h4 className="agent-profile-title">{agent.displayName || agent.name}</h4>
-          <span className="agent-profile-source-label">{t.sourceLabel({ source: agent.source })}</span>
-        </header>
-        <p className="agent-editor-hint">{t.builtInReadOnly}</p>
-        <AgentSpecsReadonly agent={agent} />
-        <div className="agent-editor-actions">
-          <ButtonControl className="agent-settings-primary" disabled={busy} onClick={() => onDuplicate(agent)}>
-            {t.duplicateToMine}
-          </ButtonControl>
-        </div>
-      </div>
-    );
-  }
-
   const toolsAll = TOOL_CATALOG.every((name) => form.tools.includes(name)) && form.extraTools.length === 0;
+  const headerTitle = agent
+    ? (isBuiltIn ? (agent.displayName || agent.name) : t.editTitle({ name: agent.displayName || agent.name }))
+    : t.createTitle;
 
   return (
     <div className="agent-editor">
       <header className="agent-editor-header">
-        <h4 className="agent-profile-title">{agent ? t.editTitle({ name: agent.displayName || agent.name }) : t.createTitle}</h4>
+        <h4 className="agent-profile-title">{headerTitle}</h4>
+        {/* The mode toggle stays interactive even for a read-only built-in, so a
+            user can flip to Raw to read its AGENT.md before duplicating. */}
         <SegmentedControl<EditorMode>
           label={t.modeLabel}
           onChange={switchMode}
@@ -149,12 +143,15 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
         />
       </header>
 
+      {isBuiltIn ? <p className="agent-editor-hint">{t.builtInReadOnly}</p> : null}
+
       {mode === 'raw' ? (
         <FormField as="label" className="agent-editor-persona" label={<span className="agent-profile-field-label">{t.rawLabel}</span>}>
           <textarea
             aria-label={t.rawLabel}
             className="agent-profile-prompt-editor agent-editor-raw"
             onChange={(event) => { setRawText(event.target.value); setLocalError(null); }}
+            readOnly={readOnly}
             spellCheck={false}
             value={rawText}
           />
@@ -163,22 +160,23 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
         <>
           <div className="inset-card agent-editor-fields" role="group">
             <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.nameLabel}</span>}>
-              <TextInputControl className="settings-sheet-row-input" label={t.nameLabel} onChange={(e) => update('name', e.target.value)} placeholder={t.namePlaceholder} value={form.name} />
+              <TextInputControl className="settings-sheet-row-input" label={t.nameLabel} onChange={(e) => update('name', e.target.value)} placeholder={t.namePlaceholder} readOnly={readOnly} value={form.name} />
             </FormField>
             <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.descriptionLabel}</span>}>
-              <TextInputControl className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} value={form.description} />
+              <TextInputControl className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} readOnly={readOnly} value={form.description} />
             </FormField>
             <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.modelOverride}</span>}>
-              <TextInputControl className="settings-sheet-row-input" label={t.modelOverride} onChange={(e) => update('model', e.target.value)} placeholder={t.modelPlaceholder} value={form.model} />
+              <TextInputControl className="settings-sheet-row-input" label={t.modelOverride} onChange={(e) => update('model', e.target.value)} placeholder={t.modelPlaceholder} readOnly={readOnly} value={form.model} />
             </FormField>
             <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.thinkingLevel}</span>}>
-              <SelectControl className="settings-sheet-row-input" label={t.thinkingLevel} onChange={(e) => update('effort', e.target.value)} value={form.effort} variant="popup">
+              <SelectControl className="settings-sheet-row-input" disabled={readOnly} label={t.thinkingLevel} onChange={(e) => update('effort', e.target.value)} value={form.effort} variant="popup">
                 <option value="">{t.effortDefault}</option>
                 {REASONING_OPTIONS.map((level) => <option key={level} value={level}>{level}</option>)}
               </SelectControl>
             </FormField>
             <FormField as="div" className="settings-sheet-row settings-sheet-row-control" label={<span className="settings-sheet-row-label">{t.permissionMode}</span>}>
               <SegmentedControl<'' | AgentPermissionMode>
+                disabled={readOnly}
                 label={t.permissionMode}
                 onChange={(value) => update('permissionMode', value)}
                 options={[
@@ -190,14 +188,14 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
               />
             </FormField>
             <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.maxTurns}</span>}>
-              <NumberInputControl className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} value={form.maxTurns} />
+              <NumberInputControl className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} readOnly={readOnly} value={form.maxTurns} />
             </FormField>
             <div className="settings-sheet-row settings-sheet-row-switch">
               <div className="settings-sheet-row-text">
                 <span className="settings-sheet-row-label">{t.backgroundLabel}</span>
                 <span className="agent-editor-field-hint">{t.backgroundSublabel}</span>
               </div>
-              <SwitchControl checked={form.background} label={t.backgroundLabel} onCheckedChange={(v) => update('background', v)}>
+              <SwitchControl checked={form.background} disabled={readOnly} label={t.backgroundLabel} onCheckedChange={(v) => update('background', v)}>
                 <SwitchMark checked={form.background} />
               </SwitchControl>
             </div>
@@ -205,6 +203,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
 
           <ToggleList
             ariaLabel={t.toolsLabel}
+            disabled={readOnly}
             footnote={toolsAll ? t.toolsAllEnabled : t.toolsSublabel}
             items={TOOL_CATALOG.map((name) => ({ key: name, label: name, on: form.tools.includes(name) }))}
             label={t.toolsLabel}
@@ -214,6 +213,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
 
           <ToggleList
             ariaLabel={t.skillsLabel}
+            disabled={readOnly}
             emptyText={t.skillsEmpty}
             footnote={t.skillsSublabel}
             items={availableSkills.map((skill) => ({ key: skill.name, label: skill.displayName || skill.name, on: form.skills.includes(skill.name) }))}
@@ -223,7 +223,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
           />
 
           <FormField as="label" className="agent-editor-persona" label={<span className="agent-profile-field-label">{t.personaPromptLabel}</span>}>
-            <textarea aria-label={t.personaPromptLabel} className="agent-profile-prompt-editor" onChange={(e) => update('body', e.target.value)} placeholder={t.personaPlaceholder} value={form.body} />
+            <textarea aria-label={t.personaPromptLabel} className="agent-profile-prompt-editor" onChange={(e) => update('body', e.target.value)} placeholder={t.personaPlaceholder} readOnly={readOnly} value={form.body} />
           </FormField>
         </>
       )}
@@ -245,14 +245,30 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
       {localError ? <div className="agent-settings-alert" role="alert"><span>{localError}</span></div> : null}
 
       <div className="agent-editor-actions">
-        {agent ? (
-          <ButtonControl className="agent-settings-secondary agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)}>
-            {t.deleteAgent}
-          </ButtonControl>
-        ) : <span />}
-        <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
-          {agent ? t.saveAgent : t.createAgent}
-        </ButtonControl>
+        {isBuiltIn && agent ? (
+          <>
+            <span />
+            <ButtonControl className="agent-settings-primary" disabled={busy} onClick={() => onDuplicate(agent)}>
+              {t.duplicateToMine}
+            </ButtonControl>
+          </>
+        ) : agent ? (
+          <>
+            <ButtonControl className="agent-settings-secondary agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)}>
+              {t.deleteAgent}
+            </ButtonControl>
+            <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
+              {t.saveAgent}
+            </ButtonControl>
+          </>
+        ) : (
+          <>
+            <span />
+            <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
+              {t.createAgent}
+            </ButtonControl>
+          </>
+        )}
       </div>
     </div>
   );
@@ -264,11 +280,12 @@ interface ToggleListProps {
   items: Array<{ key: string; label: string; on: boolean }>;
   footnote?: string;
   emptyText?: string;
+  disabled?: boolean;
   onToggle: (key: string) => void;
   toggleLabel: (key: string) => string;
 }
 
-function ToggleList({ ariaLabel, label, items, footnote, emptyText, onToggle, toggleLabel }: ToggleListProps) {
+function ToggleList({ ariaLabel, label, items, footnote, emptyText, disabled, onToggle, toggleLabel }: ToggleListProps) {
   if (items.length === 0 && emptyText) {
     return (
       <InsetGroup ariaLabel={ariaLabel} label={label} footnote={footnote}>
@@ -283,7 +300,7 @@ function ToggleList({ ariaLabel, label, items, footnote, emptyText, onToggle, to
           key={item.key}
           label={item.label}
           trailing={(
-            <SwitchControl checked={item.on} label={toggleLabel(item.key)} onCheckedChange={() => onToggle(item.key)}>
+            <SwitchControl checked={item.on} disabled={disabled} label={toggleLabel(item.key)} onCheckedChange={() => onToggle(item.key)}>
               <SwitchMark checked={item.on} />
             </SwitchControl>
           )}
@@ -293,55 +310,28 @@ function ToggleList({ ariaLabel, label, items, footnote, emptyText, onToggle, to
   );
 }
 
-function AgentSpecsReadonly({ agent }: { agent: AgentDefinitionView }) {
-  const t = useT().settings.agents;
-  return (
-    <>
-      <div className="agent-profile-field">
-        <span className="agent-profile-field-label">{t.personaPromptLabel}</span>
-        <textarea className="agent-profile-prompt-preview" readOnly value={agent.body || t.noInstructionBody} />
-      </div>
-      <div className="agent-profile-specs">
-        <div className="spec-item">
-          <span className="spec-label">{t.modelOverride}</span>
-          <span className="spec-value">{agent.model || t.inheritParent}</span>
-        </div>
-        <div className="spec-item">
-          <span className="spec-label">{t.thinkingLevel}</span>
-          <span className="spec-value">{typeof agent.effort === 'string' && agent.effort ? agent.effort : t.defaultValue}</span>
-        </div>
-        <div className="spec-item">
-          <span className="spec-label">{t.permissionMode}</span>
-          <span className="spec-value">{agent.permissionMode || t.restricted}</span>
-        </div>
-        <div className="spec-item">
-          <span className="spec-label">{t.maxTurns}</span>
-          <span className="spec-value">{agent.maxTurns || t.unlimited}</span>
-        </div>
-      </div>
-      {agent.tools && agent.tools.length > 0 ? (
-        <div className="agent-profile-field">
-          <span className="agent-profile-field-label">{t.enabledTools}</span>
-          <div className="agent-profile-tags-container">
-            {agent.tools.map((tool) => <span className="settings-chip" key={tool}>{tool}</span>)}
-          </div>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
 function toggleMember(list: string[], member: string): string[] {
   return list.includes(member) ? list.filter((item) => item !== member) : [...list, member];
 }
 
-function seedForm(agent: AgentDefinitionView | null, skillNames: string[]): AgentFormState {
-  if (!agent) {
-    return {
-      name: '', description: '', body: '', model: '', effort: '', permissionMode: '', maxTurns: '', background: false,
-      tools: [...TOOL_CATALOG], extraTools: [], skills: [], extraSkills: [], disallowedTools: [],
-    };
-  }
+// A fresh agent is pre-filled with a useful scaffold (real default values, not
+// empty placeholders), so the Form starts populated and the Raw AGENT.md is a
+// fill-in template rather than a bare `name: ""`. Tools default to all-on
+// (unrestricted) and `model` to inherit, so neither shows in Raw — the secure,
+// minimal defaults. Text comes from i18n so it follows the display language.
+function newAgentScaffold(t: { namePlaceholder: string; descriptionPlaceholder: string; scaffoldBody: string }): AgentAuthoringInput {
+  return {
+    name: t.namePlaceholder,
+    description: t.descriptionPlaceholder,
+    body: t.scaffoldBody,
+    effort: 'medium',
+    permissionMode: 'restricted',
+    maxTurns: 20,
+  };
+}
+
+function seedForm(agent: AgentDefinitionView | null, skillNames: string[], scaffold: AgentAuthoringInput): AgentFormState {
+  if (!agent) return inputToForm(scaffold, skillNames);
   return inputToForm(
     {
       name: agent.displayName || agent.name,

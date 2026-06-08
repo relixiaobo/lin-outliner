@@ -10,72 +10,11 @@
   line-height: var(--line-ui-sm-tight);
 }
 
-.agent-profile-source-label {
-  color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-}
-
-.agent-profile-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
 .agent-profile-field-label {
   color: var(--text-soft);
   font-size: var(--font-meta);
   font-weight: 600;
   line-height: var(--line-meta);
-}
-
-.agent-profile-prompt-preview {
-  width: 100%;
-  height: 120px;
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--fill-1);
-  color: var(--text-body);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs-tight);
-  resize: none;
-  outline: none;
-}
-
-.agent-profile-specs {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-4) 0;
-}
-
-.spec-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.spec-label {
-  color: var(--muted-2);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.spec-value {
-  color: var(--text-strong);
-  font-size: var(--font-meta);
-  font-weight: 600;
-  line-height: var(--line-meta);
-}
-
-.agent-profile-tags-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
 /* Authoring editor (create / edit a user agent). Reuses the inset-card +
@@ -201,10 +140,6 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-}
-
-.agent-editor-readonly {
-  gap: var(--space-4);
 }
 
 @media (max-width: 560px) {

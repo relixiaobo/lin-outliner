@@ -672,7 +672,8 @@ delete:
   main, so a renderer-supplied name can never escape via traversal. Built-in
   agents (`rootDir === 'built-in'`) are never a write target — editing one means
   **duplicating** to a user copy.
-- **Editor UI** (`AgentEditor.tsx`): two switchable modes behind a header
+- **Editor UI** (`AgentEditor.tsx`): **one** editor abstraction for every agent —
+  built-in, user, or new — with two switchable modes behind a header
   `SegmentedControl`. **Form** = structured controls (name / description / model /
   effort / permission-mode / max-turns / background) plus on/off **toggle lists**
   for tools and skills — all-on or all-off ⇒ the agent inherits every tool (the
@@ -680,7 +681,14 @@ delete:
   the curated catalog is preserved so Form editing never drops it. **Raw** = the
   full `AGENT.md` text. The toggle converts losslessly through the format layer
   (`serializeAgentMarkdown` Form→Raw, `parseAgentAuthoringInput` Raw→Form). A
-  built-in renders read-only with a one-click "Duplicate to my agents".
+  **built-in** renders through this same editor but **read-only** (every control
+  disabled; the mode toggle stays live so Raw is viewable; the only action is
+  "Duplicate to my agents") — so opening `general` and opening a user agent look
+  identical, the difference is only editability. A **new** agent seeds a
+  **scaffold** (real defaults — `permission-mode: restricted`, `effort: medium`,
+  `max-turns: 20`, a starter persona — plus all tools on and model inherit), so
+  the Form starts populated and the Raw is a fill-in template rather than a bare
+  `name: ""`. Default mode is Form.
 - **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
   (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
   authoring write `AgentRuntime` reloads **every live session's** registry, so a

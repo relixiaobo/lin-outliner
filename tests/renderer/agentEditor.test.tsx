@@ -67,27 +67,49 @@ function skill(name: string): SkillDefinition {
 }
 
 describe('AgentEditor', () => {
-  test('built-in renders read-only with a Duplicate action', async () => {
+  test('built-in renders through the same editor, read-only, with a Duplicate action', async () => {
     let duplicated: AgentDefinitionView | null = null;
     const rendered = renderComponent(
       <AgentEditor agent={builtIn()} availableSkills={[]} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
     );
     expect(rendered.container.textContent).toContain('Built-in agents are read-only');
-    expect(rendered.document.querySelector('input[aria-label="Name"]')).toBeNull();
+    // Same Form editor as a user agent — the Name field exists and is pre-filled;
+    // the controls are read-only (the tool toggles render natively disabled).
+    const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
+    expect(nameInput?.value).toBe('general');
+    expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
+    // The only action is Duplicate (no Save / Delete).
+    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(false);
     await click(rendered, textButton(rendered, 'Duplicate to my agents'));
     expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('built-in:tenon:general');
   });
 
-  test('create mode is blank, has a storage choice, and blocks an empty name', async () => {
+  test('create mode is a pre-filled scaffold with a storage choice', async () => {
     const calls: Array<{ input: AgentAuthoringInput; storage: AgentStorageLocation }> = [];
     const rendered = renderComponent(
       <AgentEditor agent={null} availableSkills={[]} busy={false} {...NOOP} onCreate={(input, storage) => { calls.push({ input, storage }); }} />,
     );
-    expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null)?.value).toBe('');
+    // Pre-filled with the scaffold (not blank), so neither mode starts empty.
+    expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null)?.value).toBe('my-agent');
     expect(rendered.container.textContent).toContain('Storage location');
     await click(rendered, textButton(rendered, 'Create'));
-    expect(calls.length).toBe(0);
-    expect(rendered.container.textContent).toContain('Enter an agent name');
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.input.name).toBe('my-agent');
+    expect(calls[0]?.input.permissionMode).toBe('restricted');
+    expect(calls[0]?.storage).toBe('user');
+  });
+
+  test('a new agent scaffolds the Raw AGENT.md with sensible default fields', async () => {
+    const rendered = renderComponent(<AgentEditor agent={null} availableSkills={[]} busy={false} {...NOOP} />);
+    await click(rendered, textButton(rendered, 'Raw'));
+    const raw = textareaValue(rendered.document.querySelector('textarea[aria-label="AGENT.md"]'));
+    expect(raw).toContain('name: my-agent');
+    expect(raw).toContain('permission-mode: restricted');
+    expect(raw).toContain('max-turns: 20');
+    expect(raw).toContain('You are a focused subagent.');
+    // All tools on + model inherit by default ⇒ neither key appears in Raw.
+    expect(raw).not.toContain('tools:');
+    expect(raw).not.toContain('model:');
   });
 
   test('edit mode exposes Save and Delete for a user agent', async () => {
