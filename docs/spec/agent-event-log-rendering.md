@@ -431,11 +431,16 @@ Replay projects two derived structures on `AgentEventReplayState`:
 **not** conversation activity: they do not bump the session's `updatedAt` (so a
 background delivery or a read never reorders or re-timestamps the conversation
 list). The folded `unreadCount` is also carried on the persisted conversation index
-(sourced from replay state, single source of truth) so a badge can be **seeded on
-launch** before its conversation is reopened. Marking a conversation read is an
-**explicit user-open signal** (`markConversationRead` → a `notification.read`
-cursor), driven by the renderer on a genuine open / the active+focused conversation
-/ regaining focus — never by a config reload (which also restores the conversation).
+(folded incrementally — `+1` per created, `0` per read-through-tail — matching the
+replay reducer, so no full replay per delivery) so a badge can be **seeded on
+launch** for listed conversations before they are reopened. Marking a conversation
+read is an **explicit signal that the user can see it** (`markConversationRead` → a
+`notification.read` cursor): the renderer drives it only when the **agent dock is
+actually open** (it collapses CSS-only while keeping the conversation loaded, so
+"loaded" ≠ "viewed") showing that conversation — never on a config reload (which also
+restores). The same dock-open + window-focus signal (reported to main as the *viewed
+conversation*) governs OS-banner suppression: a banner is suppressed only when the
+user is actually looking at that task's conversation.
 
 Agent-owned memory events live in the separate per-agent memory log.
 `memory.entry_*` events project to editable durable memory entries;

@@ -674,20 +674,22 @@ events never bump the conversation's `updatedAt` (no list reorder / timestamp ch
 The count is pushed to the renderer over a `conversation_attention` runtime event (in
 `agentTypes.ts`, **not** `core/types.ts` — stays off the sibling scheduled-routines
 lane's protocol surface) and rendered as a neutral unread badge on the conversation
-list; it is **seeded on launch** by re-emitting the persisted unread (carried on the
-conversation index) so a badge survives restart before its conversation is reopened.
-Marking a conversation read is an **explicit user-open signal** (dedicated
+list; the persisted unread is folded incrementally on the conversation index (no
+full replay per delivery) and **seeded on launch** for listed conversations so a
+badge survives restart before its conversation is reopened. Marking a conversation
+read is an **explicit "the user can see it" signal** (dedicated
 `lin:agent-mark-conversation-read` IPC + `markConversationRead`), driven by the
-renderer on a genuine open / the active+focused conversation / regaining window
-focus — **never** by a config reload (which also restores). The optional OS
-notification is wired through an injectable `OsNotifier` (`agentRuntime.setOsNotifier`)
-to a native Electron `Notification`, gated on a self-contained opt-in preference
-(default OFF, folded into the shared `appPreferences` store, read synchronously);
-it is suppressed only when the user is already viewing that task's conversation
-(window focused **and** active conversation), truncates its body, and routes a
-banner click to the originating conversation. The existing idle-gated
-`pendingSubagentNotifications` model-injection stays as the live-session composed-turn
-layer.
+renderer only when the **agent dock is actually open** (it collapses CSS-only while
+keeping the conversation loaded, so "loaded" ≠ "viewed") showing that conversation —
+**never** by a config reload (which also restores). The optional OS notification is
+wired through an injectable `OsNotifier` (`agentRuntime.setOsNotifier`) to a native
+Electron `Notification`, gated on a self-contained opt-in preference (default OFF,
+folded into the shared `appPreferences` store, read synchronously); it is suppressed
+only when the user is actually looking at that task's conversation (window focused
+**and** it is the renderer-reported *viewed conversation* — dock open showing it),
+truncates its body, and routes a banner click to the originating conversation. The
+existing idle-gated `pendingSubagentNotifications` model-injection stays as the
+live-session composed-turn layer.
 
 **DECIDED (PM, 2026-06-08): subagents never ask the user mid-execution.** A
 subagent is invoked *only* when its information and goal are clear enough to run to
