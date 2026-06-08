@@ -100,6 +100,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent notifications + off-floor attention delivery (PR #166)** — long-running background tasks and
+  subagents no longer go silent. Per-conversation unread is event-sourced (`notification.created` /
+  `notification.read`) and folded incrementally onto the persisted conversation index, so a badge is **seeded
+  on launch** for listed conversations before they are reopened. Optional **OS banners** fire only from the
+  main process (`new Notification` — the A2/A3 seam is untouched) behind a **default-OFF** opt-in preference
+  (consolidated in `appPreferences.ts`), are suppressed only when the user can actually see the conversation
+  (main layers a window-focus check over the renderer-reported **viewed conversation**, which is dock-open and
+  CSS-collapse aware), and deep-link to the conversation on click. Durable mark-read is renderer-driven on
+  genuine opens only (never a config reload), and its `notification.read` cursor takes `throughSeq` **inside**
+  the serialized append so the incremental unread fold can never drift from the replay reducer when a delivery
+  races a read. *Needs-input is intentionally deferred* — a subagent surfaces a clarification through its
+  terminal result, not a mid-run prompt.
 - **Agent-owned subagent memory + `dream` trigger tool (PR #164)** — extends the Dream milestone to
   subagents. Run records, task projections, tool results, and persisted transcript envelopes now carry an
   explicit **execution + memory-owner identity**: a fresh typed subagent routes its `<agent-memory>` reminder,

@@ -143,10 +143,11 @@ M1 single-agent self → M2 off-floor+extension → M3 multi-agent**. Members be
 it; standalone agent items (not in the program) follow at the end. **The program is
 PM-ratified; M0 + M0.5 landed (#150/#151), M1 landed its core (memory v1 #152, plus
 #153/#155/#156), and M2 is underway** — recall clean-cut (#158), Dream extraction (#159 →
-reflective Dream #161/#162/#163), task panel (#160), and **agent-owned subagent memory +
-the `dream` trigger tool + Dream chat feedback (#164)**. **Next M2 direction is open (PM to
-pick): notifications + needs-input · `agent-scheduled-routines` wiring · prompt-only hooks —
-see the M2 milestone row in `agent-program.md`.**
+reflective Dream #161/#162/#163), task panel (#160), **agent-owned subagent memory +
+the `dream` trigger tool + Dream chat feedback (#164)**, and **off-floor notifications +
+attention delivery (#166)**. **Next M2 direction is open (PM to pick): `agent-scheduled-routines`
+wiring · prompt-only hooks (needs-input deferred — subagents surface clarifications via their
+terminal result, not a mid-run ask) — see the M2 milestone row in `agent-program.md`.**
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
@@ -369,6 +370,20 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-notifications** (cc, PR #166) — off-floor **notifications + attention delivery** so long-running
+  background tasks/subagents don't go silent (M2, plan-less; needs-input deferred — subagents surface a
+  clarification via their **terminal result**, not a mid-run ask). Per-conversation unread is event-sourced
+  (`notification.created` / `notification.read`) and folded onto the persisted conversation index so a badge
+  **seeds on launch** before a conversation is reopened. OS banners fire only from **main** (`new Notification`,
+  A2/A3 seam intact) behind a **default-OFF** opt-in pref consolidated in `appPreferences.ts`, and are
+  suppressed only when the user can actually see the conversation — main layers a window-focus check over the
+  renderer-reported **viewed conversation** (dock open, CSS-collapse-aware). Banner click deep-links to the
+  conversation. Durable mark-read is renderer-driven (genuine opens only, never a config reload). Gate: four
+  review rounds (one xhigh) → all 15 first-pass findings + 6 second-pass defects fixed, and a **confirmed
+  incremental-fold↔replay divergence** (the O(1) unread fold drifted permanently when a delivery raced
+  `markConversationRead`'s pre-queue `throughSeq` snapshot) fixed **at the mechanism** — `appendSessionEvents`
+  now evaluates a tail-derived builder **inside** the serial append, with a deterministic interleave regression
+  test; typecheck + `test:core` 695/0 + `test:renderer` 363/0.
 - **agent-owned-subagent-memory** (codex, PR #164) — extends the Dream milestone to subagents (M2, plan-less).
   Adds explicit execution + **memory-owner identity** to run records / task projections / tool results /
   persisted transcript envelopes: a fresh typed subagent routes its `<agent-memory>` reminder, `recall`, and
