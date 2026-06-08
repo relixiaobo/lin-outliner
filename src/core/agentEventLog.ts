@@ -802,10 +802,14 @@ export interface TaskCompletedEvent extends AgentEventBase {
 }
 
 export type AgentNotificationKind =
+  // Off-floor task terminal states — the only kinds with an emitter today.
   | 'task_completed'
   | 'task_failed'
-  | 'task_stopped'
+  // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
+  // user decision while the user is elsewhere. Subagents never ask the user
+  // mid-execution, so there is deliberately no subagent→user needs_input trigger.
   | 'needs_input'
+  // Reserved (no emitter yet): a cheap no-LLM progress post for a long task.
   | 'status';
 
 /**
@@ -827,7 +831,6 @@ export interface NotificationCreatedEvent extends AgentEventBase {
    */
   conversationId: string;
   kind: AgentNotificationKind;
-  target: AgentPrincipal;
   title: string;
   body?: string;
   /** The off-floor run/subagent that produced this notification, when any. */
@@ -1148,7 +1151,6 @@ export interface AgentNotificationRecord {
   notificationId: string;
   conversationId: string;
   kind: AgentNotificationKind;
-  target: AgentPrincipal;
   title: string;
   body?: string;
   source?: AgentTaskSource;
@@ -1161,7 +1163,6 @@ export interface AgentConversationAttention {
   conversationId: string;
   unreadCount: number;
   lastReadThroughSeq: number;
-  lastNotificationSeq: number;
 }
 
 export interface AgentEventReplayState {
@@ -1677,7 +1678,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         notificationId: event.notificationId,
         conversationId: event.conversationId,
         kind: event.kind,
-        target: event.target,
         title: event.title,
         body: event.body,
         source: event.source,
@@ -1685,7 +1685,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         createdAt: event.createdAt,
         read,
       };
-      attention.lastNotificationSeq = Math.max(attention.lastNotificationSeq, event.seq);
       if (!read) attention.unreadCount += 1;
       return;
     }
@@ -1710,7 +1709,7 @@ function ensureConversationAttention(
 ): AgentConversationAttention {
   let attention = state.attentionByConversationId[conversationId];
   if (!attention) {
-    attention = { conversationId, unreadCount: 0, lastReadThroughSeq: 0, lastNotificationSeq: 0 };
+    attention = { conversationId, unreadCount: 0, lastReadThroughSeq: 0 };
     state.attentionByConversationId[conversationId] = attention;
   }
   return attention;
@@ -1718,6 +1717,10 @@ function ensureConversationAttention(
 
 function touchSessionUpdatedAt(state: AgentEventReplayState, event: AgentEvent) {
   if (!state.session) return;
+  // Off-floor attention bookkeeping is not conversation activity: a background
+  // notification arriving (or being read) must not reorder the conversation list
+  // or change its displayed timestamp. Only genuine content/state events touch it.
+  if (event.type === 'notification.created' || event.type === 'notification.read') return;
   state.session.updatedAt = Math.max(state.session.updatedAt, event.createdAt);
 }
 

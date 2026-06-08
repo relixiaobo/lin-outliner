@@ -93,6 +93,7 @@ describe('agent event store', () => {
         updatedAt: 1_700_000_000_004,
         messageCount: 2,
         latestSeq: 4,
+        unreadCount: 0,
       }]);
       const index = JSON.parse(await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')) as {
         conversations: Record<string, unknown>;

@@ -808,15 +808,12 @@ describe('agent event log', () => {
 });
 
 describe('notification + attention projection', () => {
-  const userTarget = { type: 'user', userId: 'user-1' } as const;
-
   function notificationCreated(seq: number, conversationId: string, overrides: Partial<Record<string, unknown>> = {}) {
     return {
       ...base(seq, 'notification.created'),
       notificationId: `notif-${seq}`,
       conversationId,
       kind: 'task_completed' as const,
-      target: userTarget,
       title: `Task ${seq} done`,
       ...overrides,
     } as AgentEvent;
@@ -877,5 +874,23 @@ describe('notification + attention projection', () => {
 
     expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(1);
     expect(Object.keys(state.notifications)).toEqual(['notif-2']);
+  });
+
+  test('notification.created/read do not bump the conversation updatedAt (no list reorder)', () => {
+    // A background delivery and a read must not look like conversation activity:
+    // updatedAt stays pinned to the last real content event (the user message).
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      } as AgentEvent,
+      notificationCreated(5, 'conv-a'),
+      { ...base(6, 'notification.read'), conversationId: 'conv-a', throughSeq: 5 },
+    ]);
+
+    expect(state.session?.updatedAt).toBe(1_700_000_000_000 + 2);
   });
 });

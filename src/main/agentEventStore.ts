@@ -156,6 +156,12 @@ export interface AgentConversationIndexEntry {
   updatedAt: number;
   messageCount: number;
   latestSeq: number;
+  /**
+   * Folded off-floor unread count for this conversation, persisted so the badge
+   * survives restart (the live `conversation_attention` event only fires for
+   * sessions touched this run). Sourced from replay state, single source of truth.
+   */
+  unreadCount: number;
 }
 
 export interface AgentEventCheckpoint {
@@ -1161,6 +1167,13 @@ export class AgentEventStore {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readConversationIndex() ?? { conversations: {} };
       let entry: AgentConversationIndexEntry | null = index.conversations[sessionId] ?? null;
+      // notification.created/read fold attention via a partial-read cursor that
+      // the single-event incremental path cannot reconstruct without drift; when
+      // the batch carries one, rebuild the entry from replay state (the single
+      // source of truth for unreadCount) instead of incrementing in two places.
+      const touchesAttention = events.some(
+        (event) => event.type === 'notification.created' || event.type === 'notification.read',
+      );
       for (const event of events) {
         if (event.type === 'session.created') {
           entry = {
@@ -1172,12 +1185,15 @@ export class AgentEventStore {
             updatedAt: event.createdAt,
             messageCount: entry?.messageCount ?? 0,
             latestSeq: event.seq,
+            unreadCount: entry?.unreadCount ?? 0,
           };
         } else if (entry) {
           entry = updateConversationIndexEntry(entry, event);
         }
       }
-      if (!entry) entry = conversationIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
+      if (!entry || touchesAttention) {
+        entry = conversationIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
+      }
       if (entry) index.conversations[sessionId] = entry;
       await this.writeConversationIndex(index);
     });
@@ -1386,9 +1402,15 @@ function updateConversationIndexEntry(
   entry: AgentConversationIndexEntry,
   event: AgentEvent,
 ): AgentConversationIndexEntry {
+  // notification.created/read are off-floor attention bookkeeping, not activity:
+  // they must not bump updatedAt (which sorts + timestamps the list). Mirrors the
+  // replay reducer's touchSessionUpdatedAt skip; unreadCount for these is folded
+  // via the replay rebuild in updateConversationIndex, not here.
+  const isAttentionEvent =
+    event.type === 'notification.created' || event.type === 'notification.read';
   const next: AgentConversationIndexEntry = {
     ...entry,
-    updatedAt: Math.max(entry.updatedAt, event.createdAt),
+    updatedAt: isAttentionEvent ? entry.updatedAt : Math.max(entry.updatedAt, event.createdAt),
     latestSeq: Math.max(entry.latestSeq, event.seq),
   };
   if (event.type === 'session.renamed') {
@@ -1419,6 +1441,7 @@ function conversationIndexEntryFromReplayState(
     updatedAt: state.session.updatedAt,
     messageCount: Object.keys(state.messages).length,
     latestSeq: state.latestSeq,
+    unreadCount: state.attentionByConversationId[sessionId]?.unreadCount ?? 0,
   };
 }
 

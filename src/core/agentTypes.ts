@@ -11,7 +11,6 @@ import type {
 } from '@earendil-works/pi-ai';
 import type { AgentRenderProjection } from './agentRenderProjection';
 import type {
-  AgentNotificationKind,
   AgentPayloadRef,
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
@@ -19,6 +18,13 @@ import type {
 import type { NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
+
+/**
+ * Main → renderer one-shot: route the active agent panel to a conversation.
+ * Fired when the user clicks an OS notification banner for an off-floor task so
+ * the click lands on the originating conversation, not whatever was last active.
+ */
+export const LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL = 'lin:agent-navigate-conversation';
 
 export type {
   AssistantMessage,
@@ -351,11 +357,6 @@ export interface AgentConversationAttentionEvent {
   type: 'conversation_attention';
   conversationId: string;
   unreadCount: number;
-  lastNotification?: {
-    notificationId: string;
-    kind: AgentNotificationKind;
-    title: string;
-  };
   timestamp: number;
 }
 
