@@ -26,20 +26,44 @@ The word "subagent" conflated two orthogonal things. Separate them:
 
 | Concept | Is | Set / values |
 |---|---|---|
-| **Agent** = a *profile / persona* | an identity: name + system prompt + model/tools/permission config. Answers **who runs**. | { the **primary** agent, user-defined agents } |
-| **Task** = a *delegated run* | a bounded execution: brief(prompt) + context **mode** + owning identity + isolated transcript + optional background + returned result. Answers **what / how**. | every `Agent`-tool invocation |
+| **Agent** = a *profile / persona* | an identity + its **capability/budget**: system prompt, `model`, `effort`, `tools`/`disallowedTools`, `permissionMode`, **`maxTurns`**, `skills`. Answers **who runs and how capable**. | { the **primary** agent, user-defined agents } |
+| **Task** = a *delegated run* | the **delegation**: brief(prompt) + context **mode** + sync/async disposition + name. Answers **what to do, and does the caller wait**. | every `Agent`-tool invocation |
 
 So what gets "spawned" is **not another agent** — it is the (same or a chosen)
-agent **running a task**. A Task's parameters:
+agent **running a task**. The boundary is **capability vs delegation**: the runner's
+budget lives on the *Agent*, the per-call choices live on the *Task*.
 
-- **runner**: which profile executes — default = the **primary** agent; or a named
-  user agent (today's `subagent_type`).
-- **context mode**: `fresh` (clean slate) or `fork` (inherit the caller's
-  prepared context). Today's "omit `subagent_type` ⇒ fork".
-- **memory owner**: `fresh` → the runner; `fork` → the caller. (Already true:
-  `resolveSubagentMemoryOwner`, `agentSubagentIdentity.ts:11-19`.)
-- **bounds / isolation / result**: `maxTurns`, background, sidechain transcript,
-  returned summary.
+A Task carries only:
+
+- **runner**: which Agent profile executes — default = the **primary** agent; or a
+  named user agent (today's `subagent_type`).
+- **context mode**: `fresh` (clean slate) or `fork` (inherit the caller's prepared
+  context). Today's "omit `subagent_type` ⇒ fork".
+- **disposition — sync or async**: does the **caller's message stream block** on
+  this run? Foreground (default) `await`s the run and returns the result inline
+  (`agentSubagents.ts:694`); `run_in_background` returns a handle immediately
+  (`:686-691`) and the result arrives later via notify / `AgentStatus`. A
+  per-delegation, caller-side choice — hence a Task property, not a profile one.
+- **name / description**: for addressing + tracking the run.
+- **memory owner** (derived, not a free param): `fresh` → the runner; `fork` → the
+  caller (`resolveSubagentMemoryOwner`, `agentSubagentIdentity.ts:11-19`).
+- → **produces**: an isolated sidechain transcript + a returned result.
+
+**NOT on the Task — these are the Agent (runner) profile's, set once:** `model`,
+`effort`, `tools` / `disallowedTools`, `permissionMode`, **`maxTurns`**, `skills`.
+The Task names *which* runner, never restates *how capable* it is. (Today the
+`Agent` tool also accepts per-call `model`/`effort` overrides,
+`agentSubagents.ts:635-636` — a convenience, not part of the Task's essence; see
+Open Q6.)
+
+```
+   capability / budget                 delegation (per call)
+   ── AGENT (profile) ──               ── TASK (run) ──
+   persona, model, effort,      runs   runner (which profile),
+   tools, permissionMode,  ◄────────   mode (fresh|fork),
+   maxTurns, skills                    brief, sync|async, name
+                                       └► memory owner (derived), transcript, result
+```
 
 "Subagent" as a distinct *kind of agent* dissolves into "an agent running a task."
 
@@ -95,10 +119,14 @@ Reprocess the agent subsystem so the code, the data model, and the UX all expres
 ## Design
 
 ### D1 — Name the two concepts in the model
-Keep `AgentDefinition` as the **Agent/profile** shape. Introduce a **Task** vocab
-for the *run*: rename `AgentSubagentRun*` → task-run types on the surface (storage
-may stay; the rename is about the contract + UX). A task carries
-`{ runner: agentId, mode: 'fresh' | 'fork', brief, bounds… }`.
+Keep `AgentDefinition` as the **Agent/profile** shape — and it **owns the
+capability/budget** (`model`, `effort`, `tools`, `permissionMode`, `maxTurns`,
+`skills`). Introduce a **Task** vocab for the *run*: rename `AgentSubagentRun*` →
+task-run types on the surface (storage may stay; the rename is about the contract
++ UX). A task carries only `{ runner: agentId, mode: 'fresh' | 'fork', brief,
+disposition: sync | async, name? }` — **no capability fields** (they would
+duplicate the runner's profile). `maxTurns` in particular is the runner's budget,
+never a per-task input.
 
 ### D2 — Primary agent as a first-class profile
 Promote the foreground agent to an `AgentDefinition` (e.g. `source:'built-in'`,
@@ -164,6 +192,10 @@ contract changes. Decide ordering at ratification.
    agent (switch the primary), or strictly task runners for now?
 5. **Rename depth** — surface-only (UX + docs + tool schema) vs full code rename
    (types, file names, storage). Cheapest correct cut?
+6. **Per-task capability overrides** — today the `Agent` tool accepts per-call
+   `model`/`effort` overrides (`agentSubagents.ts:635-636`). Keep them as a
+   convenience, or drop them so capability lives **only** on the profile (purest
+   Agent/Task split)? Either way `maxTurns` stops being a task input.
 
 ## Subtasks (build — only after ratification)
 
