@@ -659,15 +659,28 @@ the write surface is user-driven only, mirroring the closed memory-write
 surface). The settings "Agent Profiles" pane exposes create / edit / duplicate /
 delete:
 
+- **Format layer** (`src/core/agentMarkdown.ts`, pure — `yaml` only, no fs):
+  `serializeAgentMarkdown(AgentAuthoringInput) → AGENT.md` text and its inverses
+  `parseAgentMarkdownDocument` / `parseAgentAuthoringInput`. Shared by **both**
+  main (the write surface below) and the renderer (the Form⇄Raw editor toggle), so
+  the AGENT.md format lives in exactly one place and the two sides cannot drift.
 - **Write surface** (`src/main/agentAuthoring.ts`, pure filesystem): serialize an
-  `AgentAuthoringInput` to `AGENT.md` (`serializeAgentMarkdown`, the inverse of
-  `parseAgentMarkdown`) and atomic-write it under a writable agents dir. The
-  target is forced inside `~/.agents/agents/<slug>` (`source: user`) or
-  `<workspace>/.agents/agents/<slug>` (`source: project`); the name is slugged to
-  a filesystem-safe segment and path containment is asserted in main, so a
-  renderer-supplied name can never escape via traversal. Built-in agents
-  (`rootDir === 'built-in'`) are never a write target — editing one means
+  `AgentAuthoringInput` via `serializeAgentMarkdown` and atomic-write it under a
+  writable agents dir. The target is forced inside `~/.agents/agents/<slug>`
+  (`source: user`) or `<workspace>/.agents/agents/<slug>` (`source: project`); the
+  name is slugged to a filesystem-safe segment and path containment is asserted in
+  main, so a renderer-supplied name can never escape via traversal. Built-in
+  agents (`rootDir === 'built-in'`) are never a write target — editing one means
   **duplicating** to a user copy.
+- **Editor UI** (`AgentEditor.tsx`): two switchable modes behind a header
+  `SegmentedControl`. **Form** = structured controls (name / description / model /
+  effort / permission-mode / max-turns / background) plus on/off **toggle lists**
+  for tools and skills — all-on or all-off ⇒ the agent inherits every tool (the
+  `tools` field is omitted), a proper subset is stored, and any tool/skill outside
+  the curated catalog is preserved so Form editing never drops it. **Raw** = the
+  full `AGENT.md` text. The toggle converts losslessly through the format layer
+  (`serializeAgentMarkdown` Form→Raw, `parseAgentAuthoringInput` Raw→Form). A
+  built-in renders read-only with a one-click "Duplicate to my agents".
 - **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
   (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
   authoring write `AgentRuntime` reloads **every live session's** registry, so a

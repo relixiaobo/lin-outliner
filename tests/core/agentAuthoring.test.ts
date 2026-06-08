@@ -7,9 +7,9 @@ import {
   deleteAgentDefinitionFile,
   duplicateAgentDefinitionFile,
   normalizeAgentSlug,
-  serializeAgentMarkdown,
   updateAgentDefinitionFile,
 } from '../../src/main/agentAuthoring';
+import { serializeAgentMarkdown } from '../../src/core/agentMarkdown';
 import { createAgentDefinition, parseAgentMarkdown } from '../../src/main/agentSubagents';
 import type { AgentAuthoringInput } from '../../src/core/agentTypes';
 import type { AgentDefinition } from '../../src/core/types';

@@ -171,10 +171,17 @@ that ever changes, sequence shared-interface-first behind Lane B's types change.
 
 ## Open questions — resolved (PM-ratified 2026-06-08)
 
-1. **Edit affordance:** **structured form for the common fields + a raw body
-   editor for the persona** (the lean). `AgentEditor.tsx`: structured controls for
-   name / description / model / effort / permission-mode / max-turns + comma-list
-   text inputs for tools / skills; the persona body is a multiline mono editor.
+1. **Edit affordance:** **a structured Form ⇄ a raw `AGENT.md` editor, switchable
+   modes** (redesigned 2026-06-08 from the original form-only lean, per PM
+   screenshots). `AgentEditor.tsx` carries a `SegmentedControl` Form/Raw toggle in
+   the header: **Form** shows structured controls (name / description / model /
+   effort / permission-mode / max-turns / background) plus **toggle lists** for
+   tools and skills (each catalog/installed item is a `SwitchControl` row — all-on
+   or all-off ⇒ unrestricted, a proper subset is stored); **Raw** is the full
+   `AGENT.md` text. Switching converts losslessly through the shared
+   `src/core/agentMarkdown.ts` (`serializeAgentMarkdown` on Form→Raw,
+   `parseAgentAuthoringInput` on Raw→Form) so the two views are always the same
+   data and the renderer never re-implements the format that main's loader reads.
 2. **Default storage location on create:** **offer a choice, default global**
    (the lean). A `user` / `project` segmented control on the create form, seeded
    to `user` (`~/.agents/agents`).
@@ -190,8 +197,11 @@ that ever changes, sequence shared-interface-first behind Lane B's types change.
    directories UI), not split out.
 
 Reversible locals decided during build (recorded per AGENTS.md): tools/skills are
-comma-separated text inputs (a chip/multi-select picker is a future enhancement);
-`model` is a free-text override (placeholder `inherit`); the editor's
+**on/off toggle lists** — the tool list is a curated catalog of the common
+subagent tools (`TOOL_CATALOG` in `AgentEditor.tsx`; the internal outliner/node
+tools are omitted), and any tool/skill the file carries outside the catalog is
+preserved (`extraTools`/`extraSkills`) so editing in Form mode never silently
+drops it; `model` is a free-text override (placeholder `inherit`); the editor's
 Save/Delete/Duplicate commit to disk immediately and are a separate surface from
 the footer (which still owns the runtime-settings save: enable/disable +
 directories), mirroring how provider config and runtime settings already split.
@@ -199,12 +209,17 @@ directories), mirroring how provider config and runtime settings already split.
 ## Subtasks
 
 - [x] **Slice 1** — authoring write surface (`src/main/agentAuthoring.ts`:
-  create/update/delete/duplicate + `serializeAgentMarkdown`, the inverse of
-  `parseAgentMarkdown`); `AgentDefinitionRegistry.reload()` +
+  create/update/delete/duplicate) + the shared format layer
+  (`src/core/agentMarkdown.ts`: `serializeAgentMarkdown` /
+  `parseAgentAuthoringInput` / `parseAgentMarkdownDocument`, the inverse of the
+  registry's `parseAgentMarkdown`, pure — used by **both** main and the renderer
+  so the Form⇄Raw toggle can't drift); `AgentDefinitionRegistry.reload()` +
   `AgentRuntime.reloadAgentDefinitions` (all live sessions); additive IPC; path
   containment + slug sanitization; unit tests (`tests/core/agentAuthoring.test.ts`
-  — round-trip, duplicate-rejection, traversal guard, built-in-not-writable).
-- [x] **Slice 2** — settings editor (`AgentEditor.tsx`) + "New agent" +
+  — round-trip, duplicate-rejection, traversal guard, built-in-not-writable;
+  `tests/core/agentMarkdown.test.ts` — serialize⇄parse round-trip + tolerance).
+- [x] **Slice 2** — settings editor (`AgentEditor.tsx`) with the Form ⇄ Raw mode
+  toggle and tools/skills as on/off toggle lists + "New agent" +
   duplicate-built-in; validation; list/picker refresh via the reloaded view list;
   renderer tests (`tests/renderer/agentEditor.test.tsx`).
 - [x] **Slice 3** — `additionalAgentDirectories` settings UI; `disabledAgents`

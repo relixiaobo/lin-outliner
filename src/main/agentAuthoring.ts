@@ -13,7 +13,7 @@
 import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
+import { serializeAgentMarkdown } from '../core/agentMarkdown';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import type { AgentDefinition } from '../core/types';
 
@@ -40,35 +40,6 @@ export function normalizeAgentSlug(name: string): string {
     .replace(/^[-.]+|[-.]+$/g, '');
   if (!slug || slug === '.' || slug === '..') return '';
   return slug;
-}
-
-/**
- * Serialize an authoring input to `AGENT.md` text — the inverse of
- * `parseAgentMarkdown`. Only set fields are emitted; the frontmatter keys are
- * the canonical kebab-case forms the parser reads back.
- */
-export function serializeAgentMarkdown(input: AgentAuthoringInput): string {
-  const frontmatter: Record<string, unknown> = {};
-  frontmatter.name = input.name.trim();
-  const description = input.description.trim();
-  if (description) frontmatter.description = description;
-  if (input.model && input.model.trim() && input.model !== 'inherit') frontmatter.model = input.model.trim();
-  if (input.effort && input.effort.trim()) frontmatter.effort = input.effort.trim();
-  if (input.permissionMode) frontmatter['permission-mode'] = input.permissionMode;
-  if (typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns) && input.maxTurns > 0) {
-    frontmatter['max-turns'] = input.maxTurns;
-  }
-  const tools = cleanList(input.tools);
-  if (tools) frontmatter.tools = tools;
-  const disallowedTools = cleanList(input.disallowedTools);
-  if (disallowedTools) frontmatter['disallowed-tools'] = disallowedTools;
-  const skills = cleanList(input.skills);
-  if (skills) frontmatter.skills = skills;
-  if (input.background) frontmatter.background = true;
-
-  const yaml = stringifyYaml(frontmatter).trimEnd();
-  const body = input.body.trim();
-  return `---\n${yaml}\n---\n\n${body}\n`;
 }
 
 /** Create a brand-new user/project agent. Rejects if the target already exists. */
@@ -169,12 +140,6 @@ function assertContainedInAgentsDir(targetDir: string, localRoot: string): void 
 function isStrictChild(target: string, parent: string): boolean {
   const relative = path.relative(parent, target);
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-}
-
-function cleanList(value: string[] | undefined): string[] | undefined {
-  if (!value?.length) return undefined;
-  const items = [...new Set(value.map((item) => item.trim()).filter(Boolean))];
-  return items.length > 0 ? items : undefined;
 }
 
 async function pathExists(target: string): Promise<boolean> {

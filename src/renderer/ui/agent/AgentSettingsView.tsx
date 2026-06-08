@@ -457,6 +457,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
       setLoadingAgents(true);
       setError(null);
       setNotice(null);
+      // The editor's Skills toggle list needs the installed skills, so load both.
+      void api.agentListAllSkills(conversationId || 'workspace')
+        .then((skills) => { if (isCurrentRequest(id)) setAllSkills(skills); })
+        .catch(() => { /* the editor degrades to no skill list */ });
       api.agentListAllDefinitions(conversationId || 'workspace')
         .then((agents) => {
           if (isCurrentRequest(id)) setAllAgents(agents);
@@ -1195,6 +1199,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                     <AgentEditor
                       key={selectedAgent.agentId}
                       agent={selectedAgent}
+                      availableSkills={allSkills}
                       busy={agentBusy}
                       onCreate={createAgent}
                       onUpdate={updateAgent}
@@ -1211,6 +1216,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                 <AgentEditor
                   key="agent-create-new"
                   agent={null}
+                  availableSkills={allSkills}
                   busy={agentBusy}
                   onCreate={createAgent}
                   onUpdate={updateAgent}
@@ -1253,7 +1259,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                     <div className="inset-group">
                       <div className="inset-group-header">{t.settings.agents.directoriesGroup}</div>
                       <div className="inset-card" role="group">
-                        <label className="settings-sheet-row">
+                        <label className="settings-sheet-row settings-sheet-row-stack">
                           <span className="settings-sheet-row-label">{t.settings.agents.directoriesLabel}</span>
                           <TextInputControl
                             className="settings-sheet-row-input"
