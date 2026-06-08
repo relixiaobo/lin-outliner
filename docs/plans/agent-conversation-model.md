@@ -958,6 +958,38 @@ branch-semantics for rooms, the main-agent registry refactor, mixed-resolution o
 segments, or the memory subsystem. The real builds are the **memory line** and the
 **sequential multi-member room layer**.
 
+**CLEAN-CUT (post-#167) — "subagent" is no longer an agent *type*.** After
+[[agent-authoring]] (#167) unified the fresh-subagent system prompt onto the shared
+core, the only thing separating "the agent" from "a subagent" is *which task it
+runs*, not *what kind of thing it is*. Three now-redundant artifacts fall out and
+are removed as terminology/redundancy cleanup (M1/M2) — **not** the §3 main-agent
+registry refactor, which stays P3:
+
+- **Retire `general`.** Post-#167 `createGeneralAgentDefinition` is an empty-body
+  built-in (`agentSubagents.ts:1295`) — identical to "the primary identity run
+  fresh." A `fresh` task with no explicit runner, the skill default, and the
+  unknown-type fallback all resolve to the primary identity; `general` and the
+  `general-purpose` alias are deleted (no back-compat).
+- **`fork` is a context *mode*, not a pseudo-`AgentDefinition`.** Drop
+  `createForkAgentDefinition` as a throwaway "definition" (it never belongs in a
+  roster); a `fork` task is the caller's identity + prepared context + a fork
+  directive (memory → caller, per `resolveSubagentMemoryOwner`).
+- **Capability is profile-only.** Drop the `Agent` tool's per-call `model`/`effort`
+  overrides (`agentSubagents.ts:635-636`); a runner's model/effort/tools/permission/
+  `maxTurns` come from its profile — consistent with model moving onto the agent
+  profile (§Agent).
+
+Bounds (do not over-reach): honor **F2 no stored `kind`**; do **not** redesign the
+protected `agentSubagentIdentity.ts` / `agentSubagentTranscript.ts` seams
+([[agent-program]] M3 note); "Task" keeps meaning the off-floor `background` run
+([[agent-data-model]] `RunMeta.kind`), not "every `Agent` call"; the model-facing
+rename is contract + UX only (storage names may stay); and any identity-string
+change (e.g. retiring `general`'s `built-in:tenon:general` owner key) is a
+dev-`userData` **wipe**, not a no-op rename. The broader standalone reframe that
+proposed a stored `DM|Channel` kind, a storage-level rename, and redefining "Task"
+was reviewed and **redirected** (archived `agent-task-model.md`); only this bounded
+cleanup survives.
+
 **Protocol-surface coordination (A4 / A7).** This plan's surface items — `actor` on
 `AgentEventMessageRecord` (`src/core/agentEventLog.ts`), `forAgentId` derivation, the
 `Principal` type + conversation `members` (with `cursors` as a separate per-principal
