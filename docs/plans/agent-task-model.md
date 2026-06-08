@@ -67,6 +67,42 @@ Open Q6.)
 
 "Subagent" as a distinct *kind of agent* dissolves into "an agent running a task."
 
+## North star — pre-launch, go cleanest
+
+We have not launched ([[no-backward-compat-pre-launch]]), so we take the
+**maximally clean cutover**, not a staged / risk-hedged one: no aliases, no
+surface-only half-rename, no per-task duplication of profile config.
+
+**The clean target: there is no special "main agent."** One uniform concept — an
+**Agent profile** (a built-in default + user-defined) — and two ways a profile is
+*run*:
+
+- **foreground**: the interactive session with the user;
+- **task**: a delegated run (`fresh|fork` × `sync|async`).
+
+"primary/main" = whichever profile the foreground currently runs; "general" = the
+default profile run as a fresh task. This collapses { main agent, general, user
+agents } into ONE concept (**profiles**) and the foreground/subagent split into a
+*run mode*, not a kind of agent — which also dissolves the three seams the bounded
+version left (the runner×mode coupling, per-task capability, the split config
+surface).
+
+**Decided (clean cutover — resolves the mechanical Open Questions):**
+
+- Capability (`model`, `effort`, `tools`, `permissionMode`, `maxTurns`, `skills`)
+  lives **only** on the profile — **drop** the `Agent` tool's per-call
+  `model`/`effort` overrides (was Q6).
+- **Full** rename subagent → task across types, files, storage, and the model-facing
+  contract — not surface-only (was Q2 + Q5).
+- **Hard-remove** `general` and the `general-purpose` alias — no back-compat (Q3).
+- `fork` = a context mode, never a profile.
+- The built-in default profile's persona is **user-editable** like any other
+  profile (uniformity), with reset-to-default; still **never** model-writable —
+  authoring stays user-driven ([[agent-authoring]]) (was Q1).
+
+**The one remaining fork (needs ratify):** how far to unify config — see Open
+Questions. Everything above is settled by "go cleanest".
+
 ## Goal
 
 Reprocess the agent subsystem so the code, the data model, and the UX all express
@@ -182,28 +218,42 @@ contract changes. Decide ordering at ratification.
 
 ## Open questions (for main + PM)
 
-1. **Primary persona editability** — read-only built-in, or user-editable (reusing
-   the [[agent-authoring]] editor)? Affects the authoring/security surface.
-2. **Model-facing contract churn** — rename `subagent_type` → `agent`/`runner`, or
-   keep the param name and only re-document? (Every caller/prompt mentions it.)
-3. **`general` cutover** — hard-remove (no-backcompat) or keep `general` /
-   `general-purpose` as an alias to the primary for a while?
-4. **Foreground switching** — in scope to run the *whole session* as a chosen user
-   agent (switch the primary), or strictly task runners for now?
-5. **Rename depth** — surface-only (UX + docs + tool schema) vs full code rename
-   (types, file names, storage). Cheapest correct cut?
-6. **Per-task capability overrides** — today the `Agent` tool accepts per-call
-   `model`/`effort` overrides (`agentSubagents.ts:635-636`). Keep them as a
-   convenience, or drop them so capability lives **only** on the profile (purest
-   Agent/Task split)? Either way `maxTurns` stops being a task input.
+Q1/Q2/Q3/Q5/Q6 are **resolved by "go cleanest"** (see North star): user-editable
+default persona; full rename; hard-remove `general`; full code rename; drop
+per-task overrides. The genuinely open call is **how far to unify config** — the
+one place "cleanest" expands scope:
 
-## Subtasks (build — only after ratification)
+1. **Config unification + foreground switching.** The pure uniform model says a
+   profile owns its *entire* config (persona + `model` + `permissionMode` + tools),
+   and the **foreground just runs the active profile** — so you could switch the
+   foreground to a user profile, and "primary" is not special. That reorganizes the
+   **Providers** pane (model picking moves onto the profile) and the **Permissions**
+   pane (per-profile permission) around profiles. Cleanest, but the biggest scope.
+   - **Option A — full unify (maximal clean):** one profile = one complete config;
+     foreground = active profile; Providers becomes "credentials only", model moves
+     onto the profile. Switching the foreground persona is a first-class feature.
+   - **Option B — bounded clean:** keep Providers (account-wide model) +
+     Permissions where they are; the primary becomes a *listed, editable persona*
+     profile, default runner, but its model/permission still come from the global
+     panes. Achieves ~90% of the clarity; foreground-switching deferred.
+   The North star is A; B is the smaller cut if A is too much for one pass. **Need
+   the PM/main call** before the interface-first PR, because A vs B changes the
+   `types.ts` / settings shape.
 
-- [ ] Interface-first PR: `types.ts` / `commands.ts` (primary `AgentDefinition`,
-  task-run rename, runner param) — human-led, sequenced vs #165.
-- [ ] Primary agent as a definition + default runner; roster shows it.
-- [ ] Retire `general`; `fresh`-no-runner → primary; skill-default + fallback → primary.
+## Subtasks (build — only after ratification + the A/B config call)
+
+- [ ] Interface-first PR: `types.ts` / `commands.ts` (default-profile
+  `AgentDefinition`, task-run rename, runner param, capability fields finalized) —
+  human-led, sequenced vs #165. Shape depends on the **A vs B** decision.
+- [ ] Default profile (built-in) as a definition + default runner; roster shows it;
+  persona user-editable with reset-to-default.
+- [ ] Retire `general` + `general-purpose` alias; `fresh`-no-runner → default
+  profile; skill-default + unknown-type fallback → default profile.
 - [ ] `fork` as a pure context mode (drop the pseudo-definition).
-- [ ] Terminology rename (subagent → task on the run surface).
+- [ ] Drop the `Agent` tool's per-call `model`/`effort` overrides; capability is
+  profile-only (`maxTurns` never a task input).
+- [ ] Full rename subagent → task (types, files, storage, tool contract, UX copy).
+- [ ] **(Option A only)** move model onto the profile (Providers → credentials),
+  per-profile permission, foreground-switching.
 - [ ] Spec rewrite (`docs/spec/agent-subagent-runtime-plan.md` → the Agent/Task
   model) + tests; fold this plan's design into the spec on ship.
