@@ -3,7 +3,7 @@ status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-06
+updated: 2026-06-09
 ---
 
 # Agent Program — Foundation, Dependency Graph, Release Milestones
@@ -26,11 +26,12 @@ mostly the *same* set of seams every agent plan was independently planning to cu
 |---|---|---|
 | [[agent-data-model]] | The **authoritative** persistence + context contract: types, the three log instances, on-disk layout, distillation ladder, assembly invariants (F2/F3/F6 cut against it) | M0 (the data foundation) |
 | [[agent-conversation-model]] | Agent identity, DM/Channel conversations, the memory line, background tasks, multi-agent + coordinator routing | M0–M3 (the spine) |
+| [[agent-memory-model]] | The **render** projection of distilled memory + **Dream** consolidation semantics + the **user-as-agent** proposal (a thin layer atop data-model) | M1–M3 |
 | [[agent-skills-authoring]] | Skill **structure** (unified library + binding + `built-in` floor) and **governed self-authoring** | M0–M2 |
 | [[agent-self-modification]] | Self-observation, the `config` tool, **hooks**, config recovery, curation policy | M1–M3 |
-| [[agent-ask-user-question-tool]] | The `ask_user_question` tool (structured pause/resume) | M1 |
+| [[agent-ask-user-question-tool]] | The `ask_user_question` tool (structured pause/resume) | M1 — **v1 landed #153**; full version (refs/attachments/clarification) pending |
 | [[agent-import-skill]] | Data import from other products (consumer of skills + ask_user_question) | M1–M2 |
-| [[agent-scheduled-routines]] | `command` NodeType + anacron scheduler + triggered runs | M2 |
+| [[agent-scheduled-routines]] | `command` NodeType + anacron scheduler + triggered runs | **done (#165)** |
 | [[agent-generative-ui]] | Inline HTML/SVG widgets in chat | M1–M2 (P3 priority) |
 | `docs/plans/archive/agent-tool-permissions-hardening.md` | Post-#60 permission correctness/hardening | done (#154) |
 | `agent-tool-result-trim` | Model-visible tool-result trimming | shipping (#128) |
@@ -71,11 +72,27 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
 - **Subagents** — fresh / fork / background runs + sidechain transcripts + background
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
   (`docs/spec/agent-subagent-runtime-plan.md`).
+- **Memory v1 + retrieval authority** — event-sourced per-agent durable memory
+  (`memory.entry_*`), global-default retrieval with opt-in isolation tiers, and the single
+  read-only `recall` tool (#152/#158). Write authority is exactly Settings/Profile UI +
+  Dream — no model-visible write tool (#157; [[agent-data-model]] D1/D2).
+- **Dream (reflective memory write-back)** — agent-level no-tools reflective run on a
+  built-in daily schedule + manual `/dream`; summaries-as-locators then raw evidence;
+  add/update/forget; extended to agent-owned subagent memory + a model-visible `dream`
+  trigger + a chat-feedback boundary (#159/#161/#162/#163/#164).
+- **Background visibility** — the conversation **task panel** listing subagent runs (#160)
+  and **off-floor notifications** + attention delivery (#166).
+- **Scheduled commands** — `command` NodeType + anacron scheduler + builder UI + run-on-boot
+  catch-up (#165; [[agent-scheduled-routines]], now done).
+- **Agent authoring** — user-facing create / edit / duplicate / manage `AGENT.md`
+  definitions (Form⇄Raw editor, hot-reload, disable-by-identity) + subagent system-prompt
+  unification (#167).
 
-**Not shipped (the remaining build surface):** prompt-only hook policy/execution;
-config recovery/rollback; background task panel + notifications + needs-input;
-memory v2 extraction/consolidation; skill curation; durable multi-agent
-registry/coordinator; a unified visible task panel.
+**Not shipped (the remaining build surface, as of #169 / 2026-06-09):** prompt-only hook
+policy/execution; config recovery/rollback; skill curation; durable multi-agent
+registry/coordinator + per-agent POV; the user-as-agent / cross-agent memory sharing
+extension ([[agent-memory-model]] §4). Mid-run **`needs-input` is deferred by decision** —
+subagents surface clarifications via their terminal result, not a mid-run ask.
 
 ## Execution policy — pre-release clean cut
 
@@ -162,10 +179,10 @@ list — `src/core/types.ts`, `commands.ts`, `agentEventLog.ts`):
 - Canonical `tool.permission.*` names + request-id join (the archived hardening
   pass reconciled the `checked/resolved` + `approval.*` dual-track).
 - `'built-in'` on `SkillDefinition.source` ([[agent-skills-authoring]]).
-- Pending-interaction types for `user_question.*` ([[agent-ask-user-question-tool]]).
-- `widget_state.updated` event ([[agent-generative-ui]]).
+- Pending-interaction types for `user_question.*` ([[agent-ask-user-question-tool]]) — **landed #153**.
+- `widget_state.updated` event ([[agent-generative-ui]]) — still reserved (gen-ui not built).
 - `command` NodeType + protected-field property + `sys:lastRunAt`
-  (`CommandNode.sysLastRunAt`) ([[agent-scheduled-routines]]).
+  (`CommandNode.sysLastRunAt`) ([[agent-scheduled-routines]]) — **landed #165**.
 - Review/approval-card + `ConfigChange` event types ([[agent-self-modification]]).
 
 (Not every item must land in one PR — but the **event taxonomy and naming** are decided
@@ -207,11 +224,11 @@ mostly independent).
 
 | Milestone | Content | User-visible value |
 |---|---|---|
-| **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
-| **M0.5 — Clean cut** | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
-| **M1 — Single-agent "self"** | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
-| **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · single read-only `recall` tool over active memory entries with optional nested evidence expansion · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals; old conversations not distilled into memory are intentionally not foreground-recallable |
-| **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
+| **M0 — Foundation** · ✅ #150 | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
+| **M0.5 — Clean cut** · ✅ #151 | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
+| **M1 — Single-agent "self"** · ✅ #152–#156 | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
+| **M2 — Off-floor + extension** · ▣ mostly landed #157–#167 (remaining: prompt-only hooks · config recovery · skill curation) | background task panel + notifications + needs-input · prompt-only hooks · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · single read-only `recall` tool over active memory entries with optional nested evidence expansion · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals; old conversations not distilled into memory are intentionally not foreground-recallable |
+| **M3 — Multi-agent** · ◻ not started | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
 
 **Cross-milestone note — per-agent identity started early (2026-06-07, #164).** Agent-owned
 subagent memory (an M2 slice on top of the Dream milestone) gives every fresh typed subagent its
