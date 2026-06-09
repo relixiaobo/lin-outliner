@@ -183,7 +183,9 @@ consumers, not a one-line change.
 ## 4. User as an ordinary agent + cross-agent sharing (proposal to data-model)
 
 This is the one genuinely **new** idea and the one **not yet** in the data model — so it is
-written as a **proposal to ratify there**, not a decision taken here.
+written as a **proposal to ratify there**, not a decision taken here. **PM greenlit pursuing
+it (2026-06-09)**: the next step is to draft the concrete D2 extension into [[agent-data-model]]
+for ratification — it is no longer deferred behind single-agent work.
 
 **The idea.** Every agent carries `principal: Principal` (data-model's exact type — `{user}` or
 `{agent}`) = the entity whose self-model its memory is. A normal agent's principal is itself;
@@ -244,7 +246,8 @@ user-as-agent framing (§4); the rest is now mostly *consumed* from the data mod
 These gate this plan's spine (storage/recall OQs live in [[agent-data-model]]):
 
 1. **Cross-agent sharing mechanism** (→ data-model) — how does §4 extend the D2 visibility
-   axis, and what is its precedence vs `isolated`/`read-only-global`?
+   axis, and what is its precedence vs `isolated`/`read-only-global`? *(PM greenlit 2026-06-09:
+   being drafted into agent-data-model for ratification.)*
 2. **Render budget & freshness** — how much of `[3]` to render, and is segment-boundary
    compaction a frequent-enough re-anchor, or is a delta-count threshold also needed? Measure (A9).
 3. **`<principal>` provenance for the user-agent** — first-person ("I am you") vs second-person
@@ -260,7 +263,7 @@ These gate this plan's spine (storage/recall OQs live in [[agent-data-model]]):
 - [ ] **Phase 2 — Dream quality.** The `add`/`update`/`invalidate` semantics on the existing
       events + watermark, the subject-elided writer contract, the prose heuristics; coordinate
       any `dream.completed.changes` rename across its four consumers.
-- [ ] **Phase 3 — user-as-agent + sharing (proposal first).** Ratify §4 into
+- [ ] **Phase 3 — user-as-agent + sharing (PM greenlit 2026-06-09 — draft the data-model extension now).** Ratify §4 into
       [[agent-data-model]] (the `principal` field, the D2 sharing extension + precedence, the
       cross-principal read-path security gate); then build. Highest blast radius; interface-first.
 

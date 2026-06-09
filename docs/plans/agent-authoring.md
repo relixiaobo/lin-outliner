@@ -3,7 +3,7 @@ status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-06-08
-updated: 2026-06-08
+updated: 2026-06-09
 ---
 
 # Agent Authoring & Management
@@ -16,6 +16,12 @@ read-only everywhere ([[agent-self-modification]] treats them as a read-only
 self-observation target; [[agent-conversation-model]] loads them startup-cached
 and read-only). This plan does **not** touch the agent runtime, invocation,
 memory, or isolation semantics.
+
+**Status (2026-06-09).** **Core landed (#167)** — create/edit/duplicate/manage `AGENT.md`
+with a Form⇄Raw editor, hot-reload, disable-by-identity, plus subagent system-prompt
+unification. **Remaining:** the review-gate follow-ups (consolidate the two `AGENT.md`
+parsers; read-only render for `additionalAgentDirectories`; `effort`-outside-catalog guard;
+a `TOOL_CATALOG` link guard-test).
 
 ## Goal
 

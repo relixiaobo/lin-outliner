@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-07
+updated: 2026-06-09
 ---
 
 # Agent Ask User Question Tool
@@ -18,6 +18,11 @@ include cc-2.1-style preview single-choice questions.
 M0 dependency: build directly on run-scoped `user_question.*` events and the
 conversation/run store. Do not add session-level pending-question state or a
 legacy approval-card compatibility path.
+
+**Status (2026-06-09).** **v1 landed in M1 (#153)** — main-agent-only, persisted
+requested/answered/cancelled, pause/resume. **Remaining:** the full version (refs/attachments
+in answers, a dedicated clarification action, cancellation UX), gated on the open UX
+questions below. Consumed by [[agent-import-skill]].
 
 ## Goal
 

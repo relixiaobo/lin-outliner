@@ -146,9 +146,11 @@ PM-ratified; M0 + M0.5 landed (#150/#151), M1 landed its core (memory v1 #152, p
 reflective Dream #161/#162/#163), task panel (#160), **agent-owned subagent memory +
 the `dream` trigger tool + Dream chat feedback (#164)**, **off-floor notifications +
 attention delivery (#166)**, and **scheduled command nodes + anacron scheduler (#165)**. **Next M2
-direction is open (PM to pick): prompt-only hooks (needs-input deferred — subagents surface clarifications
-via their terminal result, not a mid-run ask) · config recovery + skill curation — see the M2 milestone
-row in `agent-program.md`.**
+direction — DECIDED (PM, 2026-06-09):** defer the remaining self-mod M2 (prompt-only hooks ·
+config recovery · skill curation; mid-run needs-input stays deferred) and **prioritize
+memory/render** ([[agent-memory-model]] Phase 1) + single-agent polish. Separately,
+**user-as-agent / cross-agent memory sharing is greenlit to pursue now** — draft the §4
+extension into `agent-data-model` for ratification (see `agent-memory-model` §4).**
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.

@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-06
+updated: 2026-06-09
 ---
 
 # Agent Skills — Structure & Governed Self-Authoring
@@ -15,6 +15,12 @@ taxonomy) and [[agent-self-modification]] (§7 Skill Maintenance + §8 Curation 
 the workflow/policy) so the **same capability lives in one place** instead of two.
 Sits on the **M0 foundation** defined in [[agent-program]]; the program doc owns the
 cross-plan event taxonomy and the protocol-surface change list this plan depends on.
+
+**Status (2026-06-09).** Structure (unified library, by-name binding, the `built-in` floor)
+and self-authoring v1 (`/skillify`, governed `.agents/skills` writes, hot-reload,
+no-escalation guard) **landed in M1 (#153)** — design in `docs/spec/agent-skills.md`.
+**Remaining:** natural-language "save as skill", diff/preview, snapshot UI, and curation
+dry-run (curation deferred alongside M2 self-mod per PM 2026-06-09).
 
 ## Goal
 

@@ -682,6 +682,15 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 These are data-model-local; the experience/sequencing OQs live in
 [[agent-conversation-model]] and [[agent-program]].
 
+- **Cross-agent memory sharing (user-as-agent) — PM greenlit to pursue (2026-06-09); shape
+  pending ratification.** Today the global pool is per-`agentId`, not cross-agent. Proposed
+  extension (shape in [[agent-memory-model]] §4): a uniform `principal: Principal` on
+  `AgentIdentity` (the user-agent's principal is a person); extend the D2 visibility axis so an
+  agent may **publish** its pool for read by named principals, with **defined precedence** vs
+  `isolated` / `read-only-global`; and a **cross-principal read-path security gate** — a
+  subscribed read returns the distilled fact only, never expanding another principal's raw
+  `sources` evidence. Interface-first when ratified.
+
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
   topic files. Memory is runtime-owned state, not an agent-writable file tree.
 - **Per-turn memory injection budget** — whole index vs top-N by recency/salience; bound

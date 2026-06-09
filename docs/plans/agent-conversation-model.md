@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-07
+updated: 2026-06-09
 ---
 
 # Agent Conversation Model — Agents, Conversations, Memory
@@ -25,6 +25,12 @@ Foundation work (AGENTS.md A7): settle the mechanism before layering features.
 **This revision is code-grounded** — every load-bearing claim was stress-tested
 against the real runtime (see *Adversarial review*), and several were wrong. The
 design below is the post-stress-test version.
+
+**Status (2026-06-09).** The M0 seams + the M1 spine **landed** (#150–#153: identity /
+`actor` / conversation↔run split, canonical DM + Channels, the memory line, mixed-resolution
+assembly); M2 background visibility **landed** (task panel #160, notifications #166) — design
+folded into `docs/spec/`. **Remaining:** mid-run `needs-input` (deferred by decision) and the
+**M3** multi-agent spine (sequential Channels + coordinator routing + per-agent POV).
 
 ## Goal
 
