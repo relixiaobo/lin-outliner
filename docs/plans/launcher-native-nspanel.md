@@ -21,8 +21,37 @@ The global launcher must satisfy **all of** the following at once:
 
 Today we get at most three of these because the mechanism we use to achieve (3),
 Electron's `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`, breaks
-(1) and (2). This plan replaces that mechanism with a **native NSWindow
-collectionBehavior** set, which keeps all four.
+(1) and (2).
+
+## Correction (shipped approach — supersedes the Background/Design below)
+
+The first attempt at this plan (the **native NSWindow `collectionBehavior`**
+approach in the Design section below) was built, packaged, and **failed packaged
+verification**: summoning the launcher still dropped the dock icon and still made
+the first ⌘Q only close the window. Empirical investigation (a reliable local
+repro via `System Events` → `background only`) found the real root cause and a
+simpler fix:
+
+- **Root cause (one, not two):** the all-Spaces behavior transforms the app's
+  process type to `NSApplicationActivationPolicyAccessory` / `UIElementApplication`.
+  That single transform is what hides the dock icon **and** makes AppKit swallow the
+  first ⌘Q — they are the same bug (electron#26350), not two. Setting
+  `collectionBehavior` natively did **not** avoid it (the original Design's premise
+  was wrong), and toggling it on hide does **not** undo the damage within a session.
+- **Fix:** keep Electron's `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen:
+  true })` but add the option **`skipTransformProcessType: true`** — Electron's
+  purpose-built flag (added for exactly electron#26350) that performs the all-Spaces
+  join **without** the process-type transform. Verified locally: with the option the
+  app's `background only` stays `false` through show/hide; without it, it flips to
+  `true` the instant the launcher is shown.
+- **Net:** **no native addon, no new dependency** — strictly simpler than the
+  Design below. The `window_corner` addon is left untouched (corner radius only).
+  The show/hide toggle is kept as belt-and-suspenders for the quit path. The
+  `cbcbf71` `setActivationPolicy('regular')` line is kept (dev-from-terminal case),
+  comment corrected.
+
+The Background/Design sections below are **retained as the path not taken** (the
+native-collectionBehavior theory). Read them as history, not as the shipped design.
 
 ## Non-goals
 
@@ -210,31 +239,33 @@ Run both the packaged `.dmg` and `dev:cc`. Light + dark for the launcher UI.
 verification above. Not an agent-permissions/security change, so no
 `/security-review` required.
 
-## Subtasks
+## Subtasks (shipped — see Correction above)
 
-- [x] Native `setWindowSpaceBehavior` in `window_corner.mm` + `Init` registration.
-- [x] TS wrapper `setLauncherSpaceBehavior` (reuse the addon loader).
-- [x] `launcherWindow.ts`: remove both `setVisibleOnAllWorkspaces` calls; wire the
-      native toggle into show/hide; update the creation comment.
-- [x] Reconcile `cbcbf71` activation-policy line — **kept** + comment corrected:
-      it now guards only the dev-from-terminal accessory case (idempotent for a
-      normally-launched packaged app); the packaged dock-hiding root cause is fixed
-      at the source by the native collection behavior. (Open question 3 resolved:
-      keep, because removing it can only be verified safe by the packaged+dev gate,
-      and the call is harmless when already regular.)
-- [x] `docs/spec/launcher.md` updated (native collectionBehavior rationale).
-- [x] `bun run build:native` + `bun run typecheck` green; `test:core` 766/0; headless
-      addon smoke test (new export callable, nil/empty handle → safe `false`).
-- [ ] **Gate (main + PM):** packaged `.dmg` + `dev:cc` five-point manual
+- [x] `launcherWindow.ts`: `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen:
+      true, skipTransformProcessType: true })` on show; `(false, {
+      skipTransformProcessType: true })` on hide; creation comment updated.
+- [x] **No** native addon change — the `window_corner.mm` / `nativeWindowCorner.ts`
+      space-behavior code from the first attempt was reverted; the addon is corner-
+      radius only again.
+- [x] Reconcile `cbcbf71` activation-policy line — **kept** (dev-from-terminal
+      accessory case; idempotent for a normal packaged launch); comment corrected to
+      point at the `skipTransformProcessType` fix.
+- [x] `docs/spec/launcher.md` updated (process-type-transform root cause +
+      `skipTransformProcessType` rationale).
+- [x] `bun run build:native` + `bun run typecheck` green; `test:core` 766/0.
+- [x] **Local repro + fix verified** via `System Events` → `background only`:
+      plain `setVisibleOnAllWorkspaces({visibleOnFullScreen})` → `background
+      only=true` (accessory); adding `skipTransformProcessType: true` → stays
+      `false`.
+- [ ] **Gate (main + PM):** repackage the `.dmg` and re-run the five-point manual
       verification (dock icon · ⌘Tab · first ⌘Q quits · floats over fullscreen ·
-      non-activating), light + dark. No headless substitute.
+      non-activating), light + dark. **This is a repackage** — the installed
+      12:28 `.dmg` is the failed native build.
 
-### Open-question resolutions (build-time defaults, kept)
+### Open-question resolutions
 
-1. Float level — kept `setAlwaysOnTop(true, 'pop-up-menu')` + `fullScreenAuxiliary`
-   (the nspanel-package combo). If fullscreen-float fails the manual gate, add a
-   native window-level set (`NSPopUpMenuWindowLevel`/`NSStatusWindowLevel`) to the
-   same function — not done now (no evidence it's needed; avoid untested level bump).
-2. Permanent vs toggled — kept the **toggle** (matches the proven ⌘Q-safe #170
-   lifecycle); not switched to permanent (couldn't headlessly verify it keeps ⌘Q safe).
-3. `cbcbf71` keep-or-remove — **kept** (see subtask above).
+1. Float level — kept `setAlwaysOnTop(true, 'pop-up-menu')` + `visibleOnFullScreen`.
+2. Permanent vs toggled — kept the **toggle** (set on show / clear on hide) as
+   belt-and-suspenders; with `skipTransformProcessType` the process never goes
+   accessory, so the quit path is safe regardless.
+3. `cbcbf71` keep-or-remove — **kept** + comment corrected.

@@ -12,9 +12,6 @@ import { loadOptionalMacAddon } from './nativeAddon';
 
 interface WindowCornerAddon {
   setWindowCornerRadius(handle: Buffer, radius: number): boolean;
-  // Optional: present only in addon builds that include the space-behavior toggle.
-  // An older .node without it makes setLauncherSpaceBehavior a silent no-op.
-  setWindowSpaceBehavior?(handle: Buffer, joinAllSpaces: boolean): boolean;
 }
 
 // undefined = not yet attempted; null = attempted and unavailable.
@@ -40,26 +37,6 @@ export function applyMacWindowCorner(window: BrowserWindow, radius: number): boo
   if (!addon) return false;
   try {
     return addon.setWindowCornerRadius(window.getNativeWindowHandle(), radius);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Toggle the launcher panel's macOS Space/float collection behavior natively.
- * When `joinAllSpaces` is true the window joins all Spaces and floats over other
- * apps' full-screen (`canJoinAllSpaces | fullScreenAuxiliary`); when false the
- * behavior is cleared. We set this natively instead of Electron's
- * `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` because that
- * Electron path hides the macOS dock icon (electron#26350). Returns true if the
- * native addon ran; false (silently) off macOS, on an unbuilt/older addon, or any
- * failure — the launcher then simply stays on its current Space.
- */
-export function setLauncherSpaceBehavior(window: BrowserWindow, joinAllSpaces: boolean): boolean {
-  const addon = loadAddon();
-  if (!addon?.setWindowSpaceBehavior) return false;
-  try {
-    return addon.setWindowSpaceBehavior(window.getNativeWindowHandle(), joinAllSpaces);
   } catch {
     return false;
   }

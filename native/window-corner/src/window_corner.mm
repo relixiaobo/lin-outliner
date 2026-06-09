@@ -197,56 +197,11 @@ static napi_value SetWindowCornerRadius(napi_env env, napi_callback_info info) {
   return result;
 }
 
-// setWindowSpaceBehavior(handle: Buffer, joinAllSpaces: boolean) -> boolean
-//
-// Toggle the NSWindow collectionBehavior natively so the launcher panel floats
-// across Spaces + over other apps' full-screen WITHOUT Electron's
-// setVisibleOnAllWorkspaces({visibleOnFullScreen:true}). That Electron path hides
-// the macOS dock icon (electron#26350) and never restores it; setting the
-// collection behavior directly gives the same cross-Space + over-fullscreen float
-// without touching the dock. We OR/AND only our two bits so any other behavior
-// Electron set on the panel (e.g. the panel style) is preserved.
-static napi_value SetWindowSpaceBehavior(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value args[2];
-  napi_get_cb_info(env, info, &argc, args, NULL, NULL);
-  napi_value result;
-
-  void* handleData = NULL;
-  size_t handleLen = 0;
-  if (argc < 1 || napi_get_buffer_info(env, args[0], &handleData, &handleLen) != napi_ok ||
-      handleData == NULL || handleLen < sizeof(void*)) {
-    napi_get_boolean(env, false, &result);
-    return result;
-  }
-  bool joinAllSpaces = false;
-  if (argc >= 2) napi_get_value_bool(env, args[1], &joinAllSpaces);
-
-  NSView* view = *reinterpret_cast<NSView**>(handleData);
-  bool ok = false;
-  if (view != nil) {
-    NSWindow* window = [view window];
-    if (window != nil) {
-      NSWindowCollectionBehavior bits =
-          NSWindowCollectionBehaviorCanJoinAllSpaces |
-          NSWindowCollectionBehaviorFullScreenAuxiliary;
-      if (joinAllSpaces) window.collectionBehavior |= bits;
-      else               window.collectionBehavior &= ~bits;
-      ok = true;
-    }
-  }
-  napi_get_boolean(env, ok, &result);
-  return result;
-}
-
 static napi_value Init(napi_env env, napi_value exports) {
   napi_value fn;
   napi_create_function(env, "setWindowCornerRadius", NAPI_AUTO_LENGTH,
                        SetWindowCornerRadius, NULL, &fn);
   napi_set_named_property(env, exports, "setWindowCornerRadius", fn);
-  napi_create_function(env, "setWindowSpaceBehavior", NAPI_AUTO_LENGTH,
-                       SetWindowSpaceBehavior, NULL, &fn);
-  napi_set_named_property(env, exports, "setWindowSpaceBehavior", fn);
   return exports;
 }
 

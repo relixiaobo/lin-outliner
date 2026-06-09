@@ -2073,11 +2073,10 @@ if (!app.requestSingleInstanceLock()) {
     // ⌘Tab); `app.dock.show()` does NOT reliably restore it (it only un-does an
     // explicit `dock.hide()`), so we assert the regular policy here. This is
     // idempotent for a normally-launched packaged app. (The separate packaged
-    // dock-hiding bug — the launcher joining all Spaces via Electron's
-    // `setVisibleOnAllWorkspaces({visibleOnFullScreen:true})`, electron#26350 — is
-    // fixed at the source in launcherWindow.ts by setting the collection behavior
-    // natively instead.) Does not affect the launcher panel's per-window
-    // non-activating behavior.
+    // dock-hiding bug — the launcher's all-Spaces behavior transforming the app to
+    // an accessory process, electron#26350 — is fixed in launcherWindow.ts via the
+    // `skipTransformProcessType` option on setVisibleOnAllWorkspaces.) Does not
+    // affect the launcher panel's per-window non-activating behavior.
     if (process.platform === 'darwin') app.setActivationPolicy('regular');
     const hotkey = registerLauncherHotkey(() => void toggleLauncher());
     launcherHotkeyAccelerator = hotkey.accelerator;

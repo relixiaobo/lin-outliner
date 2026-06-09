@@ -23,19 +23,16 @@ navigation commands.
   `backgroundThrottling: false` keeps the hidden renderer painting-ready.
 - **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'pop-up-menu'`): a
   non-activating floating overlay that can take key focus for typing without
-  activating the app. It joins all Spaces (incl. other apps' full-screen) by
-  setting the NSWindow `collectionBehavior` (`canJoinAllSpaces |
-  fullScreenAuxiliary`) **natively** through the `window_corner` addon
-  (`setLauncherSpaceBehavior`), **not** Electron's
-  `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`. The Electron
-  path hides the macOS dock icon and never restores it (electron#26350); setting
-  the collection behavior directly gives the same cross-Space + over-fullscreen
-  float while the **dock icon and ⌘Tab entry stay**. The behavior is toggled
-  **only while visible** — set on `show`, cleared on `hide` — because a window that
-  permanently joins all Spaces makes macOS swallow the first ⌘Q (AppKit skips
-  `applicationShouldTerminate:`, so the before-quit flush never fires and the app
-  needs two presses); clearing it on hide keeps the common quit path — launcher
-  hidden — free of that bug.
+  activating the app. It joins all Spaces (incl. other apps' full-screen) via
+  `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true,
+  skipTransformProcessType: true })`. The all-Spaces behavior would otherwise
+  transform the app's process type to `UIElementApplication` (accessory), which
+  **hides the macOS dock icon AND makes AppKit swallow the first ⌘Q** (both are the
+  same root cause — electron#26350); `skipTransformProcessType: true` is Electron's
+  purpose-built option to suppress that transform, so the **dock icon, ⌘Tab entry,
+  and first-⌘Q-quits all survive**. The behavior is additionally toggled **only
+  while visible** — set on `show`, cleared on `hide` — as belt-and-suspenders so the
+  common quit path (launcher hidden) carries no residual all-Spaces state.
 - **Fixed golden rectangle** (760 × ~470), top-biased placement (0.18 of the
   work area) on the display under the cursor; never resizes to its result count
   (the body scrolls). Native 16px corner via the `window_corner` addon.
