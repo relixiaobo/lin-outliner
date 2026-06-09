@@ -9,6 +9,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useT } from '../../i18n/I18nProvider';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 import {
   PopoverBulletIcon,
   PopoverEmpty,
@@ -44,6 +45,15 @@ interface NodeValuePickerProps {
   selectedId?: string;
   selectedMarkerWhenPresent?: NodeValuePickerMarker;
   width?: number;
+  /**
+   * Multi-select mode: the row shows every selected option's label (comma-joined),
+   * the popover renders a checkbox per option, and activating an option toggles its
+   * membership WITHOUT closing the popover. `onSelect` is the toggle signal — the
+   * parent flips `selectedIds`. The single-select path (default) is unchanged.
+   */
+  multiple?: boolean;
+  /** The selected option ids in multi-select mode (ignored unless `multiple`). */
+  selectedIds?: string[];
 }
 
 type PickerAction =
@@ -68,6 +78,8 @@ export function NodeValuePicker({
   selectedId,
   selectedMarkerWhenPresent = 'bullet',
   width = 280,
+  multiple = false,
+  selectedIds,
 }: NodeValuePickerProps) {
   const tp = useT().outliner.field.valuePicker;
   const resolvedClearLabel = clearLabel ?? tp.clearSelection;
@@ -82,6 +94,12 @@ export function NodeValuePicker({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const selectedOption = selectedId ? options.find((option) => option.id === selectedId) : undefined;
   const selectedLabel = selectedOption?.label ?? selectedFallbackLabel ?? '';
+  const selectedSet = useMemo(() => new Set(selectedIds ?? []), [selectedIds]);
+  const selectedLabels = useMemo(
+    () => (multiple ? options.filter((option) => selectedSet.has(option.id)).map((option) => option.label) : []),
+    [multiple, options, selectedSet],
+  );
+  const hasSelection = multiple ? selectedLabels.length > 0 : Boolean(selectedLabel);
   const canClearSelection = Boolean(allowClear && onClear);
   const normalizedQuery = query.trim();
   const filteredOptions = useMemo(() => {
@@ -152,12 +170,18 @@ export function NodeValuePicker({
   };
 
   const openPicker = () => {
-    setQuery(selectedLabel);
+    setQuery(multiple ? '' : selectedLabel);
     setOpen(true);
   };
 
   const runAction = (action: PickerAction | undefined) => {
     if (!action) return;
+    // Multi-select: toggle membership and keep the popover open so several options
+    // can be picked in one pass; the parent flips `selectedIds` via `onSelect`.
+    if (action.type === 'option' && multiple) {
+      void Promise.resolve(onSelect(action.option.id));
+      return;
+    }
     close();
     if (action.type === 'option') {
       void Promise.resolve(onSelect(action.option.id));
@@ -206,8 +230,10 @@ export function NodeValuePicker({
     }
   };
 
-  const displayLabel = selectedLabel || placeholder;
-  const selectedMarker = selectedOption?.marker ?? (selectedLabel ? selectedMarkerWhenPresent : 'bullet');
+  const displayLabel = (multiple ? selectedLabels.join(', ') : selectedLabel) || placeholder;
+  const selectedMarker = multiple
+    ? 'bullet'
+    : selectedOption?.marker ?? (selectedLabel ? selectedMarkerWhenPresent : 'bullet');
 
   return (
     <div
@@ -217,7 +243,7 @@ export function NodeValuePicker({
       <div
         role="button"
         tabIndex={0}
-        className={`field-option-picker-row ${selectedLabel ? '' : 'empty'}`}
+        className={`field-option-picker-row ${hasSelection ? '' : 'empty'}`}
         aria-label={ariaLabel}
         aria-expanded={open}
         onClick={openPicker}
@@ -258,16 +284,20 @@ export function NodeValuePicker({
           style={menuStyle}
         >
           {actions.length === 0 && <PopoverEmpty>{resolvedEmptyLabel}</PopoverEmpty>}
-          {actions.map((action, index) => (
-            <PopoverListItem
-              key={actionKey(action)}
-              active={index === activeIndex}
-              icon={actionIcon(action)}
-              label={actionLabel(action, { clearLabel: resolvedClearLabel, createLabel: resolvedCreateLabel })}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => runAction(action)}
-            />
-          ))}
+          {actions.map((action, index) => {
+            const optionChecked = multiple && action.type === 'option' && selectedSet.has(action.option.id);
+            return (
+              <PopoverListItem
+                key={actionKey(action)}
+                active={index === activeIndex}
+                aria-selected={multiple && action.type === 'option' ? optionChecked : undefined}
+                icon={multiple && action.type === 'option' ? <CheckboxMark checked={optionChecked} /> : actionIcon(action)}
+                label={actionLabel(action, { clearLabel: resolvedClearLabel, createLabel: resolvedCreateLabel })}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => runAction(action)}
+              />
+            );
+          })}
         </PopoverListbox>,
         document.body,
       )}
