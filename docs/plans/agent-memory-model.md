@@ -185,8 +185,10 @@ consumers, not a one-line change.
 
 This is the one genuinely **new** idea and the one **not yet** in the data model — so it is
 written as a **proposal to ratify there**, not a decision taken here. **PM greenlit pursuing
-it (2026-06-09)**: the next step is to draft the concrete D2 extension into [[agent-data-model]]
-for ratification — it is no longer deferred behind single-agent work.
+it (2026-06-09)**, and the concrete contract is now **drafted into [[agent-data-model]]** as
+its *"Proposed extension — cross-principal memory sharing (user-as-agent)"* section (pending
+ratification). The sketch below is the originating rationale; the data-model section is the
+ratification target.
 
 **The idea.** Every agent carries `principal: Principal` (data-model's exact type — `{user}` or
 `{agent}`) = the entity whose self-model its memory is. A normal agent's principal is itself;
@@ -247,8 +249,10 @@ user-as-agent framing (§4); the rest is now mostly *consumed* from the data mod
 These gate this plan's spine (storage/recall OQs live in [[agent-data-model]]):
 
 1. **Cross-agent sharing mechanism** (→ data-model) — how does §4 extend the D2 visibility
-   axis, and what is its precedence vs `isolated`/`read-only-global`? *(PM greenlit 2026-06-09:
-   being drafted into agent-data-model for ratification.)*
+   axis, and what is its precedence vs `isolated`/`read-only-global`? *(PM greenlit 2026-06-09;
+   concrete contract now drafted into [[agent-data-model]] "Proposed extension" section, pending
+   ratification — `publishMemoryTo` publish-side grant, precedence rules, read-path security gate,
+   and three forks for the PM.)*
 2. **Render budget & freshness** — how much of `[3]` to render, and is segment-boundary
    compaction a frequent-enough re-anchor, or is a delta-count threshold also needed? Measure (A9).
 3. **`<principal>` provenance for the user-agent** — first-person ("I am you") vs second-person
@@ -303,9 +307,11 @@ re-anchor trigger.
       `applyDreamMemoryActions`. Kept the `{added, updated, forgotten, skipped}`
       `dream.completed.changes` shape (the `forgotten`→`invalidate` rename was *not* taken —
       it is a coordinated four-consumer edit and out of scope for this PR).
-- [ ] **Phase 3 — user-as-agent + sharing (PM greenlit 2026-06-09 — draft the data-model extension now).** Ratify §4 into
-      [[agent-data-model]] (the `principal` field, the D2 sharing extension + precedence, the
-      cross-principal read-path security gate); then build. Highest blast radius; interface-first.
+- [ ] **Phase 3 — user-as-agent + sharing (PM greenlit 2026-06-09).** Contract **drafted** into
+      [[agent-data-model]] "Proposed extension" section (the `principal` + `publishMemoryTo` fields,
+      the D2 publish/subscribe extension + precedence, the cross-principal read-path security gate,
+      three forks for the PM) — **awaiting PM ratification**. Once ratified: land the `src/core/*`
+      interface first, then build. Highest blast radius; interface-first.
 
 > When implemented, fold §2/§3 into `docs/spec/`, push §4 into [[agent-data-model]], and move
 > this plan to `docs/plans/archive/`.
