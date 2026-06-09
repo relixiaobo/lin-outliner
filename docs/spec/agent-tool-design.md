@@ -2064,8 +2064,12 @@ Parameters:
   memory entry's recorded `sources`.
 - `max_chars`: total evidence character budget, default 4000, max 12000.
 
-The authoritative store remains `agents/<agentId>/memory/events.jsonl`. The
-runtime projects entries from `memory.entry_added`, `memory.entry_updated`, and
+Memory is keyed **per-principal** (the subject a fact is *about*): every
+`MemoryEntry` and memory event carries `principal: Principal`, addressed via
+`principalKey` (`user:<userId> | agent:<agentId>`). An **agent-principal pool**
+is its existing identity directory `agents/<agentId>/memory/events.jsonl`; the
+**user pool** is `principals/user-<userId>/memory/events.jsonl`. The runtime
+projects entries from `memory.entry_added`, `memory.entry_updated`, and
 `memory.entry_removed` events, and projects Dream state from `dream.completed`.
 Forgetting remains idempotent through the Settings/Profile management path.
 High-churn memory logs are compacted by rewriting the log to the current
@@ -2084,7 +2088,7 @@ for agent-run sources are payload-bound: if `eventId` is present, the runtime
 reads that exact transcript payload instead of the run's current payload. Runtime
 setting `agent.runtime.memoryIsolation` controls recall visibility:
 
-- `global` (default): recall can read the agent's full active memory pool.
+- `global` (default): recall can read the reader's full active memory pool.
 - `isolated`: recall reads only entries whose `originWorkspace` matches the
   current workspace.
 - `read-only-global`: recall reads the global active memory pool. The foreground
@@ -2092,16 +2096,38 @@ setting `agent.runtime.memoryIsolation` controls recall visibility:
   skips writes in this mode, so facts learned in the workspace do not enter the
   global memory pool.
 
+Reads are **cross-principal by conversation membership**: both the resident
+briefing and `recall` surface the reader's own pool plus every co-member
+principal's pool. The user is always a co-member, so the user's self-model is
+shared into every agent (the reader's own pool renders second-person `<self>`; a
+co-member pool renders third-person `<principal name>`). Agent↔agent reading of
+other agents' pools is not enabled yet. A **read-path security gate** bounds raw
+evidence: `recall(include_evidence:true)` dereferences `sources` to raw
+transcript **only** for entries in the reader's own pool; a cross-principal fact
+reaches the reader distilled (fact only), never as another principal's raw
+conversation.
+
 Explicit fact management is not a foreground model tool. The Settings/Profile UI
 can list, edit, and forget memory through IPC-backed runtime methods, and the
-runtime-owned Dream path can write memory after it verifies raw conversation/run
-evidence. Dream is not fired after every foreground turn. Automatic Dream uses a
-per-agent `date` schedule and skips thin evidence below its minimum-volume gate;
-manual `/dream` bypasses that heuristic and runs a consolidate-only pass when
-there is no new raw evidence for the current foreground agent. The foreground
-`dream` tool is permission-gated and trigger-only: the model can ask the runtime
-to run Dream for the current agent, but it cannot provide facts, select another
-agent, or bypass scope checks. `agent.memory.dream` cannot be globally allowed;
+runtime-owned Dream path can write memory after it verifies raw evidence. Dream
+is **per-principal — one writer per pool**: the **agent-Dream** reads an agent's
+run log (execution) and writes that agent's pool; the **user-Dream** reads the
+conversations the user is a member of (communication) and writes the user pool.
+The two extraction prompts are subject-aware — the agent prompt writes a
+self-model ("You <fact>"), the user prompt writes a person profile ("The user
+<fact>") and refuses to absorb the agent's own working habits. Dream is not
+fired after every foreground turn. Automatic Dream uses a `date` schedule and
+skips thin evidence below its minimum-volume gate; it fires the user-Dream once
+and the agent-Dream per agent. Manual `/dream` consolidates the conversation into
+the user pool (the complete conversation-consolidation; agent self-models
+consolidate on schedule) and bypasses the thin-evidence gate, running a
+consolidate-only pass when there is no new evidence. The user-Dream is executed
+by the main agent (its run-meta stays agent-anchored) and is the single writer of
+the user pool — concurrent passes are safe because the store serializes by
+`principalKey` and the per-conversation watermark skips already-consolidated
+evidence. The foreground `dream` tool is permission-gated and trigger-only: the
+model can ask the runtime to run Dream, but it cannot provide facts, select a
+pool, or bypass scope checks. `agent.memory.dream` cannot be globally allowed;
 each model-triggered Dream request needs explicit approval. The no-tools model
 call receives raw evidence since the last Dream watermark plus the currently
 visible memory entries. It returns structured add/update/forget proposals only;

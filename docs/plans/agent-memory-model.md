@@ -183,11 +183,11 @@ consumers, not a one-line change.
 
 ## 4. Principal-keyed memory (the user is an ordinary principal) — proposal to data-model
 
-This is the one genuinely **new** idea and the one **not yet** in the data model — so it is
-written as a **proposal to ratify there**, not a decision taken here. **PM ratified the
-direction (2026-06-09)**, and the concrete contract is now **drafted into [[agent-data-model]]**
-as its *"Proposed extension — principal-keyed memory"* section (details pending ratification).
-The sketch below is the originating rationale; the data-model section is the authority.
+This is the one genuinely **new** idea over P1+P2. **PM ratified the direction (2026-06-09)**;
+the concrete contract lives in [[agent-data-model]] *"Proposed extension — principal-keyed
+memory"* (now marked RATIFIED + IMPLEMENTED, pending the review gate), and it is **built** on
+branch `cc-2/agent-data-model-memory-sharing`. The sketch below is the originating rationale;
+the data-model section is the authority for the shipped contract.
 
 **The reframe.** A `MemoryEntry` is keyed by **`principal: Principal`** (the subject it is
 about) instead of `agentId` (who owns it). A pool = one principal's self-model. The **user is
@@ -248,15 +248,17 @@ user-as-agent framing (§4); the rest is now mostly *consumed* from the data mod
 
 These gate this plan's spine (storage/recall OQs live in [[agent-data-model]]):
 
-1. **Cross-agent sharing mechanism** (→ data-model) — *(PM ratified the direction 2026-06-09:
-   principal-keyed memory + per-principal Dream + visibility-by-membership. Concrete contract
-   drafted into [[agent-data-model]] "Proposed extension — principal-keyed memory" section;
-   remaining forks for the PM: agent↔agent reading now/defer, `<principal>` person, user-Dream
-   cadence.)*
+1. **Cross-agent sharing mechanism** (→ data-model) — *RESOLVED + BUILT (2026-06-09):
+   principal-keyed memory + per-principal Dream + visibility-by-membership, shipped per the
+   [[agent-data-model]] "principal-keyed memory" contract. Forks resolved: agent↔agent reading
+   deferred (additive later), third-person `<principal>`, user-Dream scheduled + manual and
+   watermark-serialized.*
 2. **Render budget & freshness** — how much of `[3]` to render, and is segment-boundary
    compaction a frequent-enough re-anchor, or is a delta-count threshold also needed? Measure (A9).
-3. **`<principal>` provenance for the user-principal** — first-person ("I am you") vs second-person
-   ("here's your record") render; leaning second (keeps the human as authority over identity).
+   (Open follow-up: the briefing now lists self-first then the user pool under one resident cap;
+   a fair per-pool budget split is a future refinement — recall reaches anything beyond the cap.)
+3. **`<principal>` provenance for the user-principal** — *RESOLVED: third person ("The user …"),
+   keeping the human as the authority over identity. Only the reader's own pool is `<self>`.*
 
 # Phasing
 
@@ -307,14 +309,18 @@ re-anchor trigger.
       `applyDreamMemoryActions`. Kept the `{added, updated, forgotten, skipped}`
       `dream.completed.changes` shape (the `forgotten`→`invalidate` rename was *not* taken —
       it is a coordinated four-consumer edit and out of scope for this PR).
-- [ ] **Phase 3 — principal-keyed memory + per-principal Dream (PM ratified direction 2026-06-09).**
-      Contract **drafted** into [[agent-data-model]] "Proposed extension — principal-keyed memory"
-      section (`MemoryEntry.principal` replaces `agentId`; the user is an ordinary principal;
-      per-principal Dream — agent-Dream over runs, user-Dream over the user's conversations;
-      visibility by `conversation.members`; cross-principal read-path security gate) — **forks
-      awaiting PM ratification**. Once ratified: land the `src/core/*` interface first (the
-      `MemoryEntry` re-key), then build. Highest blast radius; interface-first. Lightly revises the
-      shipped P1+P2 render key + P2 Dream (pre-launch clean cut, no migration).
+- [x] **Phase 3 — principal-keyed memory + per-principal Dream (PM ratified direction 2026-06-09;
+      built on branch `cc-2/agent-data-model-memory-sharing`, pending review gate).** Shipped per
+      the [[agent-data-model]] "principal-keyed memory" contract: `MemoryEntry.principal` (also
+      `AgentMemoryEventBase.principal` + `AgentMemoryEntryView.principal`) replaces `agentId`,
+      keyed via `principalKey`; the user is an ordinary principal whose pool lives at
+      `principals/user-<id>/memory/` while agent pools stay in `agents/<id>/memory/`. Per-principal
+      Dream (agent-Dream over runs → agent pool; user-Dream over the user's member-conversations →
+      user pool, with subject-aware extraction prompts); membership read (own pool `<self>` +
+      co-member user pool `<principal>`); cross-principal read-path gate (distilled fact only;
+      evidence dereferences only for the reader's own pool). Forks resolved: agent↔agent reading
+      deferred; third-person `<principal>`; manual `/dream` = conversation → user pool. Revised the
+      shipped P1 render key + P2 Dream in place (pre-launch clean cut, no migration).
 
 > When implemented, fold §2/§3 into `docs/spec/`, push §4 into [[agent-data-model]], and move
 > this plan to `docs/plans/archive/`.

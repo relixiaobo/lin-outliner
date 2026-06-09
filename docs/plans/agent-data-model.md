@@ -679,13 +679,14 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 
 ## Proposed extension — principal-keyed memory (the user is an ordinary principal)
 
-**Status: PROPOSED — pending ratification.** PM ratified the *direction* (2026-06-09:
-principal-keyed memory + per-principal Dream, over the earlier publish/subscribe
-sketch). This is the concrete contract; it is **interface-first** — the `src/core/*`
-surface lands in one coordinated PR ([[agent-program]] F6) before any consumer builds
-on it. It adds **no new storage family and no parallel visibility system**, reuses the
-existing `Principal` type + `conversation.members`, and lightly **revises shipped
-P1+P2** (PR #172) — pre-launch clean cut, no migration.
+**Status: RATIFIED (direction) + IMPLEMENTED on branch `cc-2/agent-data-model-memory-sharing`,
+pending review gate.** PM ratified the *direction* (2026-06-09: principal-keyed memory +
+per-principal Dream, over the earlier publish/subscribe sketch) and said begin; the contract
+below is now built. It is **interface-first** — the `src/core/*` surface (`MemoryEntry.principal`)
+landed first, then consumers. It adds **no new storage family and no parallel visibility
+system**, reuses the existing `Principal` type + `conversation.members`, and **revises shipped
+P1+P2** (PR #172) — pre-launch clean cut, no migration. The detail forks are resolved as noted
+below (defer agent↔agent reading; third-person `<principal>`; watermark-serialized user-Dream).
 
 ### The gap
 
@@ -769,10 +770,13 @@ cross-principal read must never dereference another principal's raw conversation
 
 ### Consolidated `src/core/*` surface (interface-first)
 
-- `MemoryEntry.principal: Principal` **replaces** `agentId`; the memory event log is
-  keyed **per-principal** (on disk `principals/<principalKey>/memory/events.jsonl`,
-  `principalKey = user:<userId> | agent:<agentId>`). **No new event types** — the same
-  `memory.entry_added/updated/removed` surface (D1).
+- `MemoryEntry.principal: Principal` **replaces** `agentId` (also on
+  `AgentMemoryEventBase.principal` and the renderer-facing `AgentMemoryEntryView.principal`);
+  the memory event log is keyed **per-principal** via `principalKey(principal)`
+  (`user:<userId> | agent:<agentId>`). On disk an **agent-principal pool stays in its existing
+  identity directory** (`agents/<agentId>/memory/events.jsonl` — the agent's dir *is* its pool,
+  not relocated); the **user pool** lives at `principals/user-<userId>/memory/events.jsonl`.
+  **No new event types** — the same `memory.entry_added/updated/removed` surface (D1).
 - A reserved **user-principal** pool, created by the runtime; its writer is the
   user-Dream.
 - **Per-principal Dream**: the agent-Dream over the run log; a new user-Dream over the
@@ -788,16 +792,20 @@ cross-principal read must never dereference another principal's raw conversation
 - **Dream** splits into per-principal (agent-Dream → runs/self; new user-Dream →
   conversations/user) instead of one per-agent Dream writing a mixed pool.
 
-### Genuine forks for ratification
+### Forks — resolved (decide-and-note, within the ratified direction)
 
-1. **Agent↔agent reading** — inject co-member *agent* pools into `<principal>` now, or
-   defer (core = agent reads self + user)? *Recommend defer.*
-2. **`<principal>` provenance render** — second-person "here's your record about the
-   user" *(recommend; keeps the human as identity authority)* vs first-person ("I am
-   you"). ([[agent-memory-model]] OQ3.)
-3. **User-Dream cadence/anchor** — a scheduled reflective Dream over the user's
-   conversation-membership set, reusing the per-conversation watermark. *(Mechanism,
-   not direction.)*
+1. **Agent↔agent reading** — **deferred.** The briefing/recall inject the reader's own pool
+   and the co-member *user* pool only; co-member *agent* pools are not read yet. The membership
+   rule already supports them (same `samePrincipal` check), so it is purely additive later.
+2. **`<principal>` provenance render** — **third person.** A foreign principal's pool renders
+   as a named third-person zone (`<principal name="The user">` → "The user prefers …"), keeping
+   the human as the identity authority; only the reader's own pool is second-person `<self>`.
+3. **User-Dream cadence/anchor** — **scheduled + manual, watermark-serialized.** The user-Dream
+   runs on the daily schedule and on manual `/dream` (which consolidates the conversation into
+   the user pool — the complete conversation-consolidation; agent self-models consolidate on
+   schedule). It is executed by the main agent (run-meta stays agent-anchored) and is the single
+   writer of the user pool; concurrent passes are safe because the store serializes by
+   `principalKey` and the per-conversation watermark skips already-consolidated evidence.
 
 ## Open questions
 
