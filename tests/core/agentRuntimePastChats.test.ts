@@ -30,6 +30,8 @@ import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
+// Mirrors LOCAL_USER_ID in agentRuntime — the single-user principal that owns the user pool.
+const USER_PRINCIPAL: AgentPrincipal = { type: 'user', userId: 'local-user' };
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -357,7 +359,8 @@ describe('agent runtime past chats integration', () => {
         .map((part) => ({ name: part.name, arguments: part.arguments }))
     ));
     const toolResults = activePath.filter((message) => message.role === 'toolResult');
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
+    // Conversation-derived facts land in the user pool (the user-Dream), not the agent pool.
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL);
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -470,6 +473,102 @@ describe('agent runtime past chats integration', () => {
     expect(finalAssistantText).toBe('We chose cobalt blue for focus rings.');
   });
 
+  test('recall reaches the user pool distilled but gates raw evidence to the reader own pool', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-gate-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-gate-data-'));
+    roots.push(localRoot, dataRoot);
+    await seedPastSession(dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    // A second conversation whose raw text must NOT leak when the user-pool fact is recalled.
+    const userEvidenceSession = 'past-session-reviews';
+    await store.appendEvents(userEvidenceSession, [
+      { ...base(userEvidenceSession, 1, 'session.created'), title: 'Review style' },
+      {
+        ...base(userEvidenceSession, 2, 'user_message.created', userActor),
+        messageId: 'past-user-reviews',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Secret phrasing: I always want terse reviews from the start.' }],
+      },
+    ]);
+    // Agent-pool fact → own pool, evidence dereferences. User-pool fact → cross-principal, distilled only.
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+      id: 'memory-focus-ring',
+      fact: 'Cobalt blue was chosen for focus rings.',
+      sources: [{
+        conversationId: 'past-session-focus',
+        messageRange: ['past-user-focus', 'past-assistant-focus'],
+        runId: 'past-run-focus',
+        eventId: 'past-session-focus-event-4',
+      }],
+      createdAt: 30,
+    });
+    await store.addMemoryEntry(USER_PRINCIPAL, {
+      id: 'memory-review-style',
+      fact: 'prefers terse code reviews',
+      sources: [{
+        conversationId: userEvidenceSession,
+        messageRange: ['past-user-reviews', 'past-user-reviews'],
+        eventId: 'past-session-reviews-event-2',
+      }],
+      createdAt: 31,
+    });
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('recall', { query: 'reviews focus rings', include_evidence: true }, { id: 'tool-recall-gate' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          contexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Recalled.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'What do we know about reviews and focus rings?');
+    const contextText = contexts.join('\n');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    // Both pools are reachable: the agent's own fact and the co-member user fact appear.
+    expect(contextText).toContain('Cobalt blue was chosen for focus rings.');
+    expect(contextText).toContain('prefers terse code reviews');
+    // Own-pool evidence dereferences to raw transcript…
+    expect(contextText).toContain('We chose cobalt blue for focus rings in the agent UI.');
+    // …but a cross-principal (user) fact never leaks another principal's raw conversation.
+    expect(contextText).not.toContain('Secret phrasing: I always want terse reviews from the start.');
+  });
+
   test('injects remembered facts into the next user prompt context', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-data-'));
@@ -528,6 +627,75 @@ describe('agent runtime past chats integration', () => {
     // The briefing renders reader-relative prose and hides storage scaffolding (the id).
     expect(contextText).not.toContain('memory-direct-style');
     expect(contextText).toContain('You prefer direct, concise engineering answers.');
+  });
+
+  test('shares the user pool into an agent briefing as a third-person principal zone', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-user-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-user-data-'));
+    roots.push(localRoot, dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    // The user's self-model (user pool) and the agent's own pool both feed the briefing by
+    // membership: the user is always a co-member, so its model is shared into every agent.
+    await store.addMemoryEntry(USER_PRINCIPAL, {
+      id: 'memory-user-pref',
+      fact: 'prefers terse code reviews',
+      sources: [{ conversationId: 'past-conversation' }],
+      createdAt: 30,
+    });
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+      id: 'memory-agent-habit',
+      fact: 'verify a worktree HEAD before trusting a gate run',
+      sources: [{ conversationId: 'past-conversation' }],
+      createdAt: 31,
+    });
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Acknowledged.'))],
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Please answer directly.');
+    const contextText = contexts.join('\n');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    // The reader's own pool renders second-person <self>; the co-member user pool renders as a
+    // named third-person <principal> zone. (contextText is JSON, so attribute quotes are escaped.)
+    expect(contextText).toContain('<self>');
+    expect(contextText).toContain('You verify a worktree HEAD before trusting a gate run.');
+    expect(contextText).toContain('<principal name=');
+    expect(contextText).toContain('The user prefers terse code reviews.');
+    expect(contextText).not.toContain('memory-user-pref');
   });
 
   test('isolated memory mode injects only current-workspace memories', async () => {
@@ -764,11 +932,12 @@ describe('agent runtime past chats integration', () => {
 
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, 'Please keep engineering answers concise from now on.');
-    expect(await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'))).toEqual([]);
+    // Conversation evidence consolidates into the user pool (the user-Dream), not the agent pool.
+    expect(await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL)).toEqual([]);
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL);
     const source = entries[0]?.sources[0];
 
     expect(script.pendingCount()).toBe(0);
@@ -781,7 +950,7 @@ describe('agent runtime past chats integration', () => {
     expect(dreamRequests.join('\n')).toContain('Please keep engineering answers concise from now on.');
     expect(dreamRequests.join('\n')).toContain('I will keep future engineering answers concise.');
     expect(dreamRequests.join('\n')).toContain('"tools":[]');
-    expect((await new AgentEventStore(dataRoot).readDreamState(agentPrincipal('built-in:tenon:assistant'))).watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
+    expect((await new AgentEventStore(dataRoot).readDreamState(USER_PRINCIPAL)).watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
     const projection = latestProjectionEvent(sink.events)?.renderProjection;
     const dreamRow = projection?.transcriptRows.find((row) => row.kind === 'dream');
     expect(dreamRow?.kind).toBe('dream');
@@ -916,13 +1085,13 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, 'Prefer compact acknowledgements.');
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     expect(dreamCalls).toBe(0);
-    expect(await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'))).toEqual([]);
+    expect(await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL)).toEqual([]);
 
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
-    const dreamState = await new AgentEventStore(dataRoot).readDreamState(agentPrincipal('built-in:tenon:assistant'));
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL);
+    const dreamState = await new AgentEventStore(dataRoot).readDreamState(USER_PRINCIPAL);
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -986,8 +1155,10 @@ describe('agent runtime past chats integration', () => {
     await flushProjectionCoalescing();
 
     const store = new AgentEventStore(dataRoot);
-    const entries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
-    const dreamState = await store.readDreamState(agentPrincipal('built-in:tenon:assistant'));
+    // Scheduled dream consolidates conversation evidence into the user pool (the user-Dream),
+    // executed by the main agent so its run-meta stays agent-anchored.
+    const entries = await store.listMemoryEntries(USER_PRINCIPAL);
+    const dreamState = await store.readDreamState(USER_PRINCIPAL);
     const runId = dreamState.lastCompleted?.runId;
     const runMeta = runId ? await store.readRunMetaProjection(runId) : null;
     const projection = latestProjectionEvent(sink.events)?.renderProjection;
@@ -1019,7 +1190,7 @@ describe('agent runtime past chats integration', () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-data-'));
     roots.push(localRoot, dataRoot);
-    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+    await new AgentEventStore(dataRoot).addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-stable',
       fact: 'User prefers stable concise memory.',
       originWorkspace: memoryOriginWorkspace(localRoot),
@@ -1079,7 +1250,7 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.sendMessage(created.conversationId, '/dream');
 
-    const updated = await new AgentEventStore(dataRoot).getMemoryEntry(agentPrincipal('built-in:tenon:assistant'), 'memory-stable');
+    const updated = await new AgentEventStore(dataRoot).getMemoryEntry(USER_PRINCIPAL, 'memory-stable');
     const secondRequest = dreamRequests[1] ?? '';
 
     expect(script.pendingCount()).toBe(0);
@@ -1095,14 +1266,14 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
-    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+    await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-current-style',
       fact: 'Current workspace prefers verbose answers.',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'old-current-conversation' }],
       createdAt: 30,
     });
-    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+    await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-other-style',
       fact: 'Other workspace prefers terse answers.',
       originWorkspace: 'workspace:other',
@@ -1165,7 +1336,7 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'), {
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL, {
       includeInvalidated: true,
       limit: 10,
     });
@@ -1185,7 +1356,7 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-noop-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
-    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+    await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-style',
       fact: 'User prefers concise engineering answers.',
       originWorkspace: memoryOriginWorkspace(localRoot),
@@ -1241,8 +1412,8 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const events = await new AgentEventStore(dataRoot).readMemoryEvents(agentPrincipal('built-in:tenon:assistant'));
-    const entry = await new AgentEventStore(dataRoot).getMemoryEntry(agentPrincipal('built-in:tenon:assistant'), 'memory-style');
+    const events = await new AgentEventStore(dataRoot).readMemoryEvents(USER_PRINCIPAL);
+    const entry = await new AgentEventStore(dataRoot).getMemoryEntry(USER_PRINCIPAL, 'memory-style');
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);

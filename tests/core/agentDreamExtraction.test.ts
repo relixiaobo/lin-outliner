@@ -4,7 +4,11 @@ import {
   type AgentActor,
   type AgentEventMessageRecord,
 } from '../../src/core/agentEventLog';
-import { buildDreamMemoryExtractionSpan } from '../../src/main/agentDreamExtraction';
+import {
+  buildConsolidateOnlyDreamMemoryExtractionSpan,
+  buildDreamMemoryExtractionRequest,
+  buildDreamMemoryExtractionSpan,
+} from '../../src/main/agentDreamExtraction';
 
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
@@ -141,5 +145,39 @@ describe('agent dream extraction', () => {
     expect(span?.sources[0]?.messageRange).toEqual(['user-new', 'assistant-new']);
     expect(span?.transcript).toContain('Remember that concise answers are preferred.');
     expect(span?.transcript).toContain('I will answer concisely.');
+  });
+
+  test('the agent-subject prompt frames facts as the agent self-model (You ...)', () => {
+    const request = buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+      subject: 'agent',
+    });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    expect(text).toContain("the agent's durable self-model");
+    expect(text).toContain('renders as "You <fact>"');
+    expect(text).toContain('name the third party instead');
+  });
+
+  test('the user-subject prompt frames facts as the user profile (The user ...)', () => {
+    const request = buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+      subject: 'user',
+    });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    expect(text).toContain('the person it works with (the user)');
+    expect(text).toContain('renders as "The user <fact>"');
+    // The user profile must not absorb the agent's own working habits.
+    expect(text).toContain("the agent's separate self-model");
+  });
+
+  test('defaults to the agent subject when none is given', () => {
+    const request = buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+    });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    expect(text).toContain("the agent's durable self-model");
   });
 });

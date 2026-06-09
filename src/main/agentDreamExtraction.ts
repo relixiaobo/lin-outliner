@@ -48,10 +48,21 @@ export type DreamMemoryAction =
   | { type: 'update'; memoryId: string; fact: string }
   | { type: 'forget'; memoryId: string; reason?: string };
 
+/**
+ * Which pool a Dream consolidates, and therefore who its facts are *about*. One writer
+ * per pool ([[agent-data-model]] §4): the agent-Dream models the agent's working self
+ * from its run log; the user-Dream models the person from the conversation. The subject
+ * is the elided subject of every fact it writes, so it drives both the framing and the
+ * "how to write a fact" guidance.
+ */
+export type AgentDreamSubjectKind = 'agent' | 'user';
+
 export interface DreamMemoryExtractionRequestInput {
   span: DreamMemoryExtractionSpan;
   existingMemories: readonly AgentMemoryEntry[];
   originWorkspace?: string;
+  /** Defaults to 'agent' (the agent's own self-model). */
+  subject?: AgentDreamSubjectKind;
 }
 
 export interface DreamMemoryExtractionConversationInput {
@@ -240,7 +251,8 @@ export function buildDreamMemoryExtractionRequest(input: DreamMemoryExtractionRe
   const evidenceMode = input.span.consolidateOnly
     ? 'There is no new raw evidence. Consolidate existing memory only: update or forget stale/duplicate/conflicting entries, but do not add new memories.'
     : 'Analyze the raw evidence since the last Dream and propose durable memory changes.';
-  const prompt = `You are Tenon's private Dream memory extractor: the agent's durable self-model.
+  const framing = dreamSubjectFraming(input.subject ?? 'agent');
+  const prompt = `${framing.role}
 
 You do not have tools. You cannot write files. Return JSON only.
 
@@ -249,23 +261,17 @@ ${evidenceMode}
 Propose at most ${DREAM_MAX_ACTIONS} durable memory changes.
 
 What to save:
-- Stable facts, user preferences, durable decisions, project conventions, or relationship context that should help future turns.
+${framing.whatToSave}
 - Do not save transient task steps, temporary status, command output, secrets, credentials, raw logs, or facts already represented as durable outline content.
 - Do not infer beyond the raw evidence. If the evidence is ambiguous, emit no action.
 - If there is no new raw evidence, do not add new memory entries.
 - Never mention that memory was saved. The foreground assistant did not call a memory write tool.
 - Ground every action in the raw evidence below, not in summaries.
 
-How to write a fact (these are read back verbatim into the agent's context):
-- Write a person-neutral, subject-elided predicate in BASE form — no leading subject. The
-  implied subject is the agent itself, so it renders as "You <fact>".
-  Good: "verify a worktree's HEAD before trusting a gate run"
-  Good: "work with lixiaobo, who wants everything in the repo written in English"
-  Bad:  "You verify a worktree's HEAD…"   (leading subject)
-  Bad:  "The user prefers terse reviews"  (leading subject; name the third party instead)
-- Name third parties explicitly (e.g. the user by name); never bake in a pronoun for the subject.
+How to write a fact (these are read back verbatim into context):
+${framing.howToWrite}
 - Make authority legible in the wording, not as a flag: a stated preference reads
-  "work with lixiaobo, who has said he wants…"; an inference reads "have noticed that…".
+  "${framing.statedExample}"; an inference reads "have noticed that…".
 - Keep each fact one self-contained sentence.
 
 How to consolidate (prefer reshaping over piling up):
@@ -297,6 +303,52 @@ ${input.span.transcript}
     role: 'user',
     timestamp: Date.now(),
     content: [{ type: 'text', text: prompt }],
+  };
+}
+
+interface DreamSubjectFraming {
+  role: string;
+  whatToSave: string;
+  howToWrite: string;
+  statedExample: string;
+}
+
+function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFraming {
+  if (subject === 'user') {
+    return {
+      role: "You are Tenon's private Dream profile-builder: the assistant's durable model of the person it works with (the user).",
+      whatToSave: [
+        "- The user's stable preferences, working style, recurring goals, decisions, and relationship context that should help future turns serve this person.",
+        '- Do NOT save the assistant\'s own working habits or conventions — those belong to the agent\'s separate self-model, not the user profile.',
+      ].join('\n'),
+      howToWrite: [
+        '- Write a subject-elided predicate in BASE form about the user — no leading subject. The',
+        '  implied subject is the user, so it renders as "The user <fact>".',
+        '  Good: "prefers terse code reviews"',
+        '  Good: "wants everything in the repo written in English"',
+        '  Bad:  "The user prefers terse reviews"  (leading subject)',
+        '  Bad:  "verify a worktree\'s HEAD…"       (that is the agent\'s habit, wrong pool)',
+        '- Name third parties other than the user explicitly; never bake in a pronoun for the subject.',
+      ].join('\n'),
+      statedExample: 'have said they want…',
+    };
+  }
+  return {
+    role: "You are Tenon's private Dream memory extractor: the agent's durable self-model.",
+    whatToSave: [
+      '- Stable facts, durable decisions, project conventions, or working habits the agent should carry forward.',
+      '- Relationship context the agent needs (e.g. how to work with a named person).',
+    ].join('\n'),
+    howToWrite: [
+      '- Write a person-neutral, subject-elided predicate in BASE form — no leading subject. The',
+      '  implied subject is the agent itself, so it renders as "You <fact>".',
+      '  Good: "verify a worktree\'s HEAD before trusting a gate run"',
+      '  Good: "work with lixiaobo, who wants everything in the repo written in English"',
+      '  Bad:  "You verify a worktree\'s HEAD…"   (leading subject)',
+      '  Bad:  "The user prefers terse reviews"  (leading subject; name the third party instead)',
+      '- Name third parties explicitly (e.g. the user by name); never bake in a pronoun for the subject.',
+    ].join('\n'),
+    statedExample: 'work with lixiaobo, who has said he wants…',
   };
 }
 
