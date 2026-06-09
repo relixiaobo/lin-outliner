@@ -169,6 +169,7 @@ import {
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
+import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
 import {
   evaluateAgentToolPermission,
   toPermissionClassifierInput,
@@ -1087,7 +1088,7 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, messageText, session);
+      const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, session);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
         memoryReminder,
@@ -1241,7 +1242,7 @@ export class AgentRuntime {
     session.queuedFollowUpSkillListingReservation = skillListingReservation;
     const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
     session.agent.followUp(buildUserPromptMessage(text, [], {
-      memoryReminder: await this.buildMemoryReminder(this.agentIdentity.agentId, text, session),
+      memoryReminder: await this.buildMemoryReminder(this.agentIdentity.agentId, session),
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder,
       skillListingReminder: skillListingReservation?.text ?? null,
@@ -1467,8 +1468,8 @@ export class AgentRuntime {
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
         getRuntimeSettings: () => this.getRuntimeSettings(),
-        buildMemoryReminder: (agentId, query, originWorkspace) => (
-          this.buildMemoryReminder(agentId, query, sessionRef.current, originWorkspace)
+        buildMemoryReminder: (agentId, originWorkspace) => (
+          this.buildMemoryReminder(agentId, sessionRef.current, originWorkspace)
         ),
         persistSubagentRun: (snapshot) => {
           const current = sessionRef.current;
@@ -3668,23 +3669,21 @@ export class AgentRuntime {
 
   private async buildMemoryReminder(
     agentId: string,
-    query: string,
     session: AgentSessionState | null,
     originWorkspace?: string,
   ): Promise<string | null> {
     try {
       const originWorkspaceFilter = this.memoryOriginWorkspaceFilter(session, originWorkspace);
-      const relevant = await this.getEventStore().listMemoryEntries(agentId, {
-        query,
-        limit: 8,
+      // Resident selection: the briefing is the distilled-memory prefix ([[agent-memory-model]]
+      // §2), so it lists recent active entries rather than query-specific hits — those arrive
+      // on demand through the `recall` tool ([5] tail). Keeping selection query-independent
+      // keeps the briefing stable turn-over-turn (cache-friendly); a mid-session Dream write
+      // surfaces through recall until the next turn folds it into the briefing.
+      const entries = await this.getEventStore().listMemoryEntries(agentId, {
+        limit: MEMORY_BRIEFING_MAX_ENTRIES,
         originWorkspace: originWorkspaceFilter,
       });
-      const latest = await this.getEventStore().listMemoryEntries(agentId, {
-        limit: 8,
-        originWorkspace: originWorkspaceFilter,
-      });
-      const entries = uniqueMemoryEntries([...relevant, ...latest]).slice(0, 8);
-      return formatMemoryReminder(entries);
+      return renderAgentMemoryBriefing(entries, { readerAgentId: agentId });
     } catch (error) {
       console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
       return null;
@@ -4934,30 +4933,6 @@ function buildEnvironmentContextReminder(now: Date): string {
     resolved.locale ? `Locale: ${escapeReminderText(resolved.locale)}` : '',
     '</environment-context>',
   ].filter(Boolean).join('\n');
-}
-
-function formatMemoryReminder(entries: readonly AgentMemoryEntry[]): string | null {
-  const activeEntries = entries.filter((entry) => entry.status === 'active').slice(0, 8);
-  if (activeEntries.length === 0) return null;
-  return [
-    '<agent-memory>',
-    'Durable remembered facts for this agent. Use them as background context. Durable memory writes are handled by Settings/Profile UI and runtime-owned extraction, not by a foreground tool.',
-    ...activeEntries.map((entry) => (
-      `- id=${escapeReminderText(entry.id)} fact="${escapeReminderText(entry.fact)}"`
-    )),
-    '</agent-memory>',
-  ].join('\n');
-}
-
-function uniqueMemoryEntries(entries: readonly AgentMemoryEntry[]): AgentMemoryEntry[] {
-  const seen = new Set<string>();
-  const result: AgentMemoryEntry[] = [];
-  for (const entry of entries) {
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
-    result.push(entry);
-  }
-  return result;
 }
 
 function groupDreamAgentRunInputsByOriginWorkspace(

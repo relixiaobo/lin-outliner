@@ -123,8 +123,9 @@ truth.
     append-only seq-log primitive with conversation/run logs
   - single model-visible `recall` tool over active durable memory entries, with
     optional nested evidence expansion through `MemoryEntry.sources`
-  - bounded `<agent-memory>` turn reminder injection with relevance ranking and
-    latest-entry backfill
+  - bounded `<memory>` turn briefing injection: resident newest-active selection
+    rendered into reader-relative `<self>` / `<principal>` zones (person-neutral
+    storage, reader-relative render; storage scaffolding hidden)
   - runtime `memoryIsolation` modes: global, isolated, and read-only-global
   - Settings Memory pane for list/edit/forget
   - runtime-owned Dream write-back as a scheduled/manual reflective run: the
@@ -135,7 +136,7 @@ truth.
     per agent and projected into the task panel; manual `/dream` projects a
     chat-stream Dream boundary, and the foreground `dream` tool can request the
     same runtime-owned path without supplying memory facts
-  - fresh typed subagents use their own agent identity for `<agent-memory>`,
+  - fresh typed subagents use their own agent identity for the `<memory>` briefing,
     `recall`, and sidechain-transcript Dream evidence; fork subagents inherit the
     parent agent's memory owner and use a persisted Dream evidence boundary;
     agent-run memory sources bind evidence to the recorded transcript payload id,

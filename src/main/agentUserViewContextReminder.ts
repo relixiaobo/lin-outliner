@@ -4,6 +4,7 @@ import type {
   AgentUserViewOutlineNodeContext,
   AgentUserViewPanelContext,
 } from '../core/agentTypes';
+import { escapeXml } from './agentReminderXml';
 
 export function buildUserViewContextReminder(context: AgentUserViewContext | null | undefined): string | null {
   const snapshot = createSnapshot(context);
@@ -245,14 +246,6 @@ function xmlAttrs(attrs: Record<string, string | null | undefined>): string {
     .filter((entry): entry is [string, string] => entry[1] !== null && entry[1] !== undefined && entry[1] !== '')
     .map(([key, value]) => `${key}="${escapeXml(value)}"`);
   return serialized.length ? ` ${serialized.join(' ')}` : '';
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 function annotationValue(value: string): string {

@@ -240,7 +240,7 @@ export function buildDreamMemoryExtractionRequest(input: DreamMemoryExtractionRe
   const evidenceMode = input.span.consolidateOnly
     ? 'There is no new raw evidence. Consolidate existing memory only: update or forget stale/duplicate/conflicting entries, but do not add new memories.'
     : 'Analyze the raw evidence since the last Dream and propose durable memory changes.';
-  const prompt = `You are Tenon's private Dream memory extractor.
+  const prompt = `You are Tenon's private Dream memory extractor: the agent's durable self-model.
 
 You do not have tools. You cannot write files. Return JSON only.
 
@@ -248,14 +248,31 @@ ${evidenceMode}
 
 Propose at most ${DREAM_MAX_ACTIONS} durable memory changes.
 
-Rules:
-- Save only stable facts, user preferences, durable decisions, project conventions, or relationship context that should help future turns.
+What to save:
+- Stable facts, user preferences, durable decisions, project conventions, or relationship context that should help future turns.
 - Do not save transient task steps, temporary status, command output, secrets, credentials, raw logs, or facts already represented as durable outline content.
 - Do not infer beyond the raw evidence. If the evidence is ambiguous, emit no action.
-- Prefer updating or forgetting an existing memory when the new evidence corrects or supersedes it.
 - If there is no new raw evidence, do not add new memory entries.
 - Never mention that memory was saved. The foreground assistant did not call a memory write tool.
 - Ground every action in the raw evidence below, not in summaries.
+
+How to write a fact (these are read back verbatim into the agent's context):
+- Write a person-neutral, subject-elided predicate in BASE form — no leading subject. The
+  implied subject is the agent itself, so it renders as "You <fact>".
+  Good: "verify a worktree's HEAD before trusting a gate run"
+  Good: "work with lixiaobo, who wants everything in the repo written in English"
+  Bad:  "You verify a worktree's HEAD…"   (leading subject)
+  Bad:  "The user prefers terse reviews"  (leading subject; name the third party instead)
+- Name third parties explicitly (e.g. the user by name); never bake in a pronoun for the subject.
+- Make authority legible in the wording, not as a flag: a stated preference reads
+  "work with lixiaobo, who has said he wants…"; an inference reads "have noticed that…".
+- Keep each fact one self-contained sentence.
+
+How to consolidate (prefer reshaping over piling up):
+- update when new evidence corrects, sharpens, or merges a duplicate of an existing memory.
+- update to conditionalize a contradiction into one conditional fact rather than keeping two
+  that disagree.
+- forget (invalidate) a memory that is now stale, wrong, or fully superseded.
 
 Output schema:
 {
