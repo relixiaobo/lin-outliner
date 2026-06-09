@@ -167,6 +167,14 @@ row in `agent-program.md`.**
   memory** (each fresh typed subagent owns its called-agent memory line; forks share the parent's),
   a model-visible **`dream` trigger tool** (trigger-only, no model-written facts), and a **Dream
   chat-feedback** boundary. Polish tracked in `agent-dream-followups` (P3) below.
+- **agent-memory-model** (P2, M2, **draft**) — the **subjective** memory layer *atop*
+  `agent-data-model` (which it defers all stored shapes / tools / cache to): the **render**
+  projection (storage→injection — XML-zoned prose briefing, person rule, confidence-as-phrasing)
+  replacing the flat `<agent-memory>` dump; **Dream** consolidation semantics
+  (`add`/`update`/`invalidate` on the existing memory events); and the **user-as-an-ordinary-agent**
+  + cross-agent sharing *proposal* (a ratifiable extension to `agent-data-model`, not a
+  re-decision). Rebased onto the data model after an xhigh review found the first draft
+  re-invented it. See `docs/plans/agent-memory-model.md`.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
