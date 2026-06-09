@@ -110,6 +110,17 @@ The cmd+k / launcher convergence and the capture pipeline behind it. The
 resolver track (`launcher-capture-resolvers`) superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
+- **launcher-native-nspanel** (P1, root fix — owner cc) — the launcher's dock-icon-disappears and
+  first-⌘Q-swallow bugs share one root: Electron's `setVisibleOnAllWorkspaces(true, {visibleOnFullScreen:true})`
+  hides the macOS dock icon (electron#26350) and the permanent all-Spaces behavior swallowed ⌘Q. PR #170's
+  show/hide toggle fixed ⌘Q but **can't restore the dock icon** (clearing to `false` doesn't bring it back).
+  Root fix: make the launcher a real **NSPanel** via the existing native macOS addon (where
+  `applyMacWindowCorner` lives) — `NSWindowStyleMaskNonactivatingPanel` + `collectionBehavior =
+  canJoinAllSpaces | fullScreenAuxiliary` + a floating level — and drop Electron's `visibleOnFullScreen` path
+  entirely (supersedes PR #170's toggle + reconciles the `cbcbf71` activation-policy line). Goal: dock icon +
+  ⌘Tab + first-⌘Q-quit + non-activating float over other apps' fullscreen, **all three** kept. One complete
+  PR; gate: `/code-review` + manual packaged verification (dock icon · ⌘Tab · ⌘Q · float-over-fullscreen ·
+  non-activating). Refs: `syed-umair/electron-window-nspanel`, `mznet/electron-nspanel`, electron#35815.
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
   build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
   command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
