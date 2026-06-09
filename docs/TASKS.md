@@ -384,6 +384,13 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **launcher: first ⌘Q quits the packaged app** (cc, PR #170) — the prewarmed global launcher window
+  permanently set `setVisibleOnAllWorkspaces(true)` (even while hidden), so AppKit skipped
+  `applicationShouldTerminate:` on the first ⌘Q and the `before-quit` flush never fired (two presses needed).
+  Now toggled **only while visible** — set on `showLauncherWindow`, cleared on `hideLauncherWindow` (every
+  dismissal routes through it). Gate: `/code-review` + hide/show path audit (sole `.hide()` /
+  `setVisibleOnAllWorkspaces` callers; launcher never closed) + typecheck + `test:core` 766/0; the packaged
+  first-⌘Q outcome still needs a one-time manual eyeball on the `.dmg`.
 - **agent-scheduled-routines** (cc-2, PR #165) — `command` NodeType + anacron scheduler + builder UI (M2):
   a natural-language brief that runs on a schedule (endpoint + optional `RRULE`), Run-now manual fires, a
   per-command delivery conversation with a subagent boundary, and a user-only bright line on arming. Gate:

@@ -10,6 +10,19 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Fixed
+
+- **First ⌘Q quits the packaged app (PR #170)** — the prewarmed global launcher window called
+  `setVisibleOnAllWorkspaces(true)` at creation and kept it forever, even while hidden; a window that
+  permanently joins all Spaces makes AppKit skip `applicationShouldTerminate:` on the first ⌘Q, so the
+  `before-quit` flush never fired and the app needed two presses. The all-Spaces (incl. other apps'
+  full-screen) collection behavior is now toggled **only while the launcher is visible** — set in
+  `showLauncherWindow`, cleared in `hideLauncherWindow` (every dismissal routes through it) — so the common
+  quit path (launcher hidden) is free of the bug, while cross-Space float is unchanged while it is open.
+  Gate: `/code-review` + hide/show path audit (sole `.hide()` / `setVisibleOnAllWorkspaces` callers) +
+  typecheck + `test:core` 766/0; the packaged first-⌘Q outcome still needs a one-time manual eyeball on the
+  `.dmg`. ([#170](https://github.com/relixiaobo/lin-outliner/pull/170))
+
 ### Internal
 
 - **Redirect `agent-task-model` → fold post-#167 cleanup into the conversation model (PR #168)** — docs-only.
