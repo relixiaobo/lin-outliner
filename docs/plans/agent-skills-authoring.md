@@ -409,32 +409,38 @@ deliberately conservative (self-modification §8):
 
 ### Convergence PR (one complete change; interface change rides in-PR)
 
-- [ ] **Seam 1** — collapse `SkillDefinition.source` to `AgentSourceKind`
+- [x] **Seam 1** — collapse `SkillDefinition.source` to `AgentSourceKind`
       (`'built-in' | 'user' | 'project'`); tag nested-discovered dirs by location
       (`isPathInside(dir, root) ? 'project' : 'user'`); remove every `| 'dynamic'` union
       (`types.ts`, `agentSkills.ts`, `agentSkillAuthoring.ts`, `agentEventLog.ts`,
       `agentRuntime.ts`).
-- [ ] **Seam 2** — add `AgentSkillRuntime.resolveSkillTarget(filePath)` as the single skill-
-      path source of truth (defaults + `additionalSkillDirectories` + on-demand
-      `discoverSkillDirsForPaths`); loader enumerates through it; the file-tool gateway
-      detects skill writes through it; delete the hardcoded regex in
+- [x] **Seam 2** — add `AgentSkillRuntime.resolveSkillTarget(filePath)` as the single skill-
+      path source of truth (defaults + `additionalSkillDirectories` + nested dirs);
+      loader enumerates through it; the file-tool gateway detects skill writes through
+      it; the `agent.skill.write` permission classifier shares it (skill-dir config
+      threaded into the permission policy); delete the hardcoded regex in
       `detectAgentSkillContentTarget`.
-- [ ] **Seam 2** — recognition ≠ permission: writability of additional dirs becomes a
-      permission policy (default read-only), enforced at the permission layer.
-- [ ] **Seam 3 / ratification** — gateway records `(skill file → content hash)` on every
-      agent `SKILL.md` write (in-memory in the registry; persisted store wired from main).
-      A skill is unratified iff its current hash matches the record. `SkillDefinition`
-      gains `ratified: boolean`.
-- [ ] **Seam 3** — listing: `getModelInvocableSkills` excludes unratified skills.
-      Invocation: `trigger: 'agent'` on an unratified skill is refused (beside the
-      existing `agentSkills.ts:392` check); slash invocation unaffected, `allowed-tools`
-      honored in full (user intent = per-run consent).
-- [ ] **Seam 3** — delete the write-time `RISKY_ALLOWED_TOOL_NAMES` no-escalation reject
+- [x] **Seam 2** — recognition ≠ permission. Resolution: a **uniform ask-gate** for every
+      recognized skill write (additional dirs included) — the user is the policy. No
+      separate read-only/writable mark; one less concept than the planned default-deny,
+      and the user can still refuse any write at the prompt.
+- [x] **Seam 3 / ratification** — gateway records `(skill file → content hash)` on every
+      agent `SKILL.md` write (in-memory in the registry; persisted to
+      `agent-skill-provenance.json` in userData, shared by subagent runtimes). A skill is
+      unratified iff its current hash matches the record. `SkillDefinition` gains
+      `ratified` + `contentHash`.
+- [x] **Seam 3** — listing: `getModelInvocableSkills` excludes unratified skills.
+      Invocation: `trigger: 'agent'` on an unratified skill is refused
+      (`skill_not_ratified`); slash invocation unaffected, `allowed-tools` honored in
+      full (user intent = per-run consent). Note: agent-definition skill *preload* also
+      runs as `trigger: 'agent'`, so a bound-but-unratified skill is refused at preload —
+      correct, since binding names the skill, not its content.
+- [x] **Seam 3** — delete the write-time `RISKY_ALLOWED_TOOL_NAMES` no-escalation reject
       and the forced `disable-model-invocation` requirement; update `/skillify`
       instructions + gateway feedback text to describe the ratification semantics.
-- [ ] **Seam 4 (corrected)** — validity/safety checks (size, hidden/exec support files,
+- [x] **Seam 4 (corrected)** — validity/safety checks (size, hidden/exec support files,
       secret scan, frontmatter shape) STAY at the write boundary as model feedback;
       loader stays tolerant of hand-authored files. No policy decisions at write.
-- [ ] `bun run typecheck` + `test:core` (+ guard tests); update `docs/spec/agent-skills.md`
-      in the SAME change (A6): collapsed source taxonomy, single resolver, the governance
-      layering, and the ratification model.
+- [x] `bun run typecheck` + `test:core` (779 pass) + `test:renderer` (389 pass); spec
+      updated in the SAME change (A6): collapsed source taxonomy, single resolver, the
+      no-policy-at-write contract, and the ratification model.
