@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -1861,6 +1861,10 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         args.attachments,
         args.userViewContext,
       );
+    case 'agent_run_command_now':
+      return agentRuntime.runCommandNow(String(args.nodeId));
+    case 'agent_ensure_command_conversation':
+      return agentRuntime.ensureCommandConversation(String(args.nodeId));
     case 'agent_edit_message':
       return agentRuntime.editMessage(
         conversationId(),
@@ -2052,6 +2056,9 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
+    // Anacron catch-up on system wake: a command whose occurrence elapsed while
+    // the device slept fires once on resume (coalesced via the watermark).
+    powerMonitor.on('resume', () => agentRuntime.runCommandCatchUp());
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),
@@ -2093,6 +2100,7 @@ if (!app.requestSingleInstanceLock()) {
     if (quitAfterFlush) return;
     event.preventDefault();
     quitAfterFlush = true;
+    agentRuntime.stopCommandScheduler();
     void documentService.flushPendingChanges()
       .catch((error) => console.error(error))
       .finally(() => app.quit());

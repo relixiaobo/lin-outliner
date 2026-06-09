@@ -18,6 +18,13 @@ Range:
 <endpoint>/<endpoint>
 ```
 
+Recurring single date (a repeat rule on a single endpoint; ranges never recur):
+
+```text
+<endpoint> RRULE:FREQ=DAILY
+<endpoint> RRULE:FREQ=WEEKLY;BYDAY=MO,WE;INTERVAL=2;UNTIL=2026-12-31
+```
+
 Rules:
 
 - Endpoints are local time values. They do not include seconds, milliseconds, or
@@ -26,6 +33,10 @@ Rules:
   time.
 - Ranges use `/` only. `..`, `to`, dashes, and localized date forms are not
   canonical range syntax.
+- A single endpoint may carry a recurrence rule, appended as ` RRULE:...` (one
+  space separator). The rule is `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` with optional
+  `INTERVAL=N`, `BYDAY=<weekdays>` (weekly only), and `UNTIL=<endpoint>`. A range
+  never carries a rule (`<start>/<end> RRULE:...` is rejected).
 - Normalizers may accept whitespace around `/`, but canonical output has no
   spaces.
 
@@ -42,6 +53,8 @@ Rules:
   the endpoint semantics above.
 - UI inputs may reorder reversed start/end selections before storing the
   canonical value.
+- A recurrence rule repeats the single anchor endpoint; `UNTIL` (the editor's
+  "Ends") bounds the repetition. Recurrence is a single-date concept only.
 
 ## Examples
 
@@ -53,6 +66,8 @@ Canonical:
 2026-05-20/2026-05-24
 2026-05-20T13:45/2026-05-24T17:00
 2026-05-20/2026-05-20
+2026-05-20T09:00 RRULE:FREQ=DAILY
+2026-05-20 RRULE:FREQ=WEEKLY;BYDAY=MO,WE;INTERVAL=2;UNTIL=2026-12-31
 ```
 
 Not canonical:
@@ -76,15 +91,23 @@ Not canonical:
 
 ## Implementation
 
-- Core parser and formatter: `src/core/dateFieldValue.ts`
-- Shared schedule recurrence primitive: `src/core/dateSchedule.ts`. It parses a
-  canonical `<endpoint> RRULE:...` schedule, computes the most recent due
-  occurrence, and returns an anacron-style fire decision for agent scheduling
-  work. Generic date fields do not yet accept `RRULE`; the user-facing grammar
-  above remains the current date field contract until the scheduled-routines
-  plan wires recurrence into field editing, search, and rendering.
-- Search date matching: `src/core/searchEngine.ts`
+- Core parser and formatter, plus the recurrence-rule primitives
+  (`DateRecurrenceRule`, `parseDateRecurrenceRule`, `formatDateRecurrenceRule`):
+  `src/core/dateFieldValue.ts`. The `single` value variant carries an optional
+  `recurrence`; a `range` never does.
+- Schedule fire evaluation builds on those primitives:
+  `src/core/dateSchedule.ts` parses a canonical `<endpoint> RRULE:...` schedule,
+  computes the most recent due occurrence, and returns an anacron-style fire
+  decision for command-node scheduling.
+- Search date matching: `src/core/searchEngine.ts` (matches on the anchor; a
+  recurring value's later occurrences are not expanded for search).
 - Date field UI: `src/renderer/ui/outliner/DateValuePicker.tsx` — a date value is a
   plain editable row whose picker is summoned additively (Space on an empty draft,
   or a calendar affordance on a committed value), not a dedicated whole-field
-  control (PR #64).
+  control (PR #64). The picker carries a **Repeat** control (single dates only;
+  hidden in range mode) backed by the shared recurrence helpers in
+  `src/renderer/ui/outliner/dateRecurrence.ts`.
+- The command node's **Schedule** field reuses this same picker in single-only
+  mode (`allowRange={false}`), but commits through the user-gated
+  `set_command_schedule` rather than the generic field-value write — the schedule
+  bright line is unchanged. See `commands.md`.

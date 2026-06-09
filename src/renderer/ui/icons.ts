@@ -27,6 +27,8 @@ export {
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
   Clock3 as RecentsIcon,
+  Clock as ClockIcon,
+  Play as PlayIcon,
   Code2 as CodeIcon,
   Command as CommandIcon,
   Copy as CopyIcon,

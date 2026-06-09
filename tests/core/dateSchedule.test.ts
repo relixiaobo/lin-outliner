@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   formatDateRecurrenceRule,
   formatDateSchedule,
+  isWeekdayPreset,
   mostRecentDateScheduleDue,
   parseDateRecurrenceRule,
   parseDateSchedule,
@@ -104,6 +105,41 @@ describe('date schedules', () => {
     expect(result.stdout).toBe('2026-03-08T03:30');
   });
 
+  test('keeps daily occurrences at the same wall-clock time across a spring-forward', () => {
+    // Daily 09:00 anchored before the 2026-03-08 spring-forward; the most recent
+    // occurrence on 03-10 must still land at 09:00 local (no one-hour drift from
+    // mixing local wall-clock with a UTC day index).
+    const result = spawnSync(process.execPath, ['--eval', `
+      import { mostRecentDateScheduleDue } from './src/core/dateSchedule.ts';
+      import { isoLocalDateTime } from './src/core/localDate.ts';
+      const due = mostRecentDateScheduleDue('2026-03-06T09:00 RRULE:FREQ=DAILY', new Date(2026, 2, 10, 12));
+      process.stdout.write(due ? isoLocalDateTime(due) : 'null');
+    `], {
+      cwd: path.resolve(import.meta.dir, '../..'),
+      encoding: 'utf8',
+      env: { ...process.env, TZ: 'America/New_York' },
+    });
+    if (result.status !== 0) throw new Error(result.stderr || `DST regression subprocess exited with ${result.status}`);
+    expect(result.stdout).toBe('2026-03-10T09:00');
+  });
+
+  test('keeps weekly occurrences at the same wall-clock time across a spring-forward', () => {
+    // Weekly 09:00 anchored 2026-03-02; the occurrence on 03-09 (after the
+    // 03-08 spring-forward) must still land at 09:00 local.
+    const result = spawnSync(process.execPath, ['--eval', `
+      import { mostRecentDateScheduleDue } from './src/core/dateSchedule.ts';
+      import { isoLocalDateTime } from './src/core/localDate.ts';
+      const due = mostRecentDateScheduleDue('2026-03-02T09:00 RRULE:FREQ=WEEKLY', new Date(2026, 2, 12, 12));
+      process.stdout.write(due ? isoLocalDateTime(due) : 'null');
+    `], {
+      cwd: path.resolve(import.meta.dir, '../..'),
+      encoding: 'utf8',
+      env: { ...process.env, TZ: 'America/New_York' },
+    });
+    if (result.status !== 0) throw new Error(result.stderr || `DST regression subprocess exited with ${result.status}`);
+    expect(result.stdout).toBe('2026-03-09T09:00');
+  });
+
   test('honors inclusive UNTIL endpoints', () => {
     const schedule = '2026-05-20T09:00 RRULE:FREQ=DAILY;UNTIL=2026-05-22';
     expect(formatDue(schedule, localDate(2026, 5, 23, 12))).toBe('2026-05-22T09:00');
@@ -122,3 +158,17 @@ function formatDue(schedule: string, now: Date): string | null {
 function localDate(year: number, month: number, day: number, hour = 0, minute = 0): Date {
   return new Date(year, month - 1, day, hour, minute);
 }
+
+describe('isWeekdayPreset', () => {
+  test('matches exactly Mon–Fri, order-independent', () => {
+    expect(isWeekdayPreset(['MO', 'TU', 'WE', 'TH', 'FR'])).toBe(true);
+    expect(isWeekdayPreset(['FR', 'TH', 'WE', 'TU', 'MO'])).toBe(true);
+  });
+
+  test('rejects partial, extended, or empty sets', () => {
+    expect(isWeekdayPreset(['MO', 'WE'])).toBe(false);
+    expect(isWeekdayPreset(['MO', 'TU', 'WE', 'TH', 'FR', 'SA'])).toBe(false);
+    expect(isWeekdayPreset([])).toBe(false);
+    expect(isWeekdayPreset(undefined)).toBe(false);
+  });
+});

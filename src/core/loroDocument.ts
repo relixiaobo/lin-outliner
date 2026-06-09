@@ -71,6 +71,13 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'queryTagDefId',
   'queryFieldDefId',
   'queryTargetId',
+  // command node: the user-armed schedule string + the system fire watermark
+  // (plus the at-most-once last-attempt marker), plus the executing-agent
+  // selection.
+  'commandSchedule',
+  'sysLastRunAt',
+  'sysLastAttemptAt',
+  'commandAgent',
   'codeLanguage',
   'assetId',
   'mediaUrl',
@@ -81,6 +88,9 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'embedId',
   'sourceUrl',
   'aiSummary',
+  // user-only-writable field keys (e.g. a command node's schedule); a string[]
+  // that round-trips through the generic clone path (same as `capture`).
+  'protectedFields',
   // Typed launcher-capture sidecar. A JSON-compatible object persists as a node
   // scalar via the generic writeNodeData/clone path (same as filterValues), and
   // round-trips through the JSON clone on read.

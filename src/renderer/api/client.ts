@@ -95,6 +95,20 @@ export const api = {
     command<CommandResult>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
   setCodeLanguage: (nodeId: string, codeLanguage: string) =>
     command<CommandResult>('set_code_language', { nodeId, codeLanguage }),
+  // Command nodes (scheduled routines). The brief is the node's text content;
+  // `setCommandSchedule` is user-only at the gateway (the bright line) — pass
+  // null to clear the schedule (manual-only).
+  setCommandNode: (nodeId: string) =>
+    command<CommandResult>('set_command_node', { nodeId }),
+  setCommandSchedule: (nodeId: string, schedule: string | null) =>
+    command<CommandResult>('set_command_schedule', { nodeId, schedule: schedule ?? null }),
+  // Which agent runs the command (an `AgentDefinition.name`; null = main agent).
+  setCommandAgent: (nodeId: string, agent: string | null) =>
+    command<CommandResult>('set_command_agent', { nodeId, agent: agent ?? null }),
+  runCommandNow: (nodeId: string) =>
+    command<{ conversationId: string }>('agent_run_command_now', { nodeId }),
+  ensureCommandConversation: (nodeId: string) =>
+    command<{ conversationId: string }>('agent_ensure_command_conversation', { nodeId }),
   // An image node's source is exactly one of `assetId` (local) or `mediaUrl`
   // (remote); the core validates that.
   createImageNode: (

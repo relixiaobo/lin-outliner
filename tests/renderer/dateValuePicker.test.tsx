@@ -84,6 +84,29 @@ describe('DateValuePicker', () => {
 
     expect(lastCommit(rendered)).toBe('');
   });
+
+  test('initializes the repeat control from a recurring value', () => {
+    const rendered = renderDatePicker('2026-05-20T09:00 RRULE:FREQ=DAILY');
+
+    const repeat = selectControl(rendered, 'typed-field-date-recurrence-select');
+    expect(repeat.value).toBe('daily');
+    // The "Ends" date input is present once a rule is set.
+    expect(rendered.document.querySelector('.typed-field-date-recurrence-until')).toBeTruthy();
+  });
+
+  test('hides the repeat control for date ranges (a range never recurs)', () => {
+    const rendered = renderDatePicker('2026-05-20/2026-05-24');
+
+    expect(rendered.document.querySelector('.typed-field-date-recurrence')).toBeNull();
+  });
+
+  test('keeps the recurrence rule when the anchor date changes', async () => {
+    const rendered = renderDatePicker('2026-05-20 RRULE:FREQ=DAILY');
+
+    await click(rendered, button(rendered, 'Select 2026-05-21'));
+
+    expect(lastCommit(rendered)).toBe('2026-05-21 RRULE:FREQ=DAILY');
+  });
 });
 
 function renderDatePicker(value: string): RenderedDateField {
@@ -164,6 +187,12 @@ function textButton(rendered: RenderedDateField, text: string): HTMLButtonElemen
 function input(rendered: RenderedDateField, ariaLabel: string): HTMLInputElement {
   const found = rendered.document.querySelector<HTMLInputElement>(`input[aria-label="${ariaLabel}"]`);
   if (!found) throw new Error(`Missing input: ${ariaLabel}`);
+  return found;
+}
+
+function selectControl(rendered: RenderedDateField, className: string): HTMLSelectElement {
+  const found = rendered.document.querySelector<HTMLSelectElement>(`select.${className}`);
+  if (!found) throw new Error(`Missing select: ${className}`);
   return found;
 }
 

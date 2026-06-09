@@ -126,10 +126,15 @@ function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
   return {
     getProjection: () => host.getProjection(),
     getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
-    handle: (command, args = {}, meta = {}) => host.handle(command, args, { origin: 'agent', ...meta }),
+    // On the MUTATION paths, `origin: 'agent'` MUST come last so a caller-supplied
+    // `meta` can never override the forced agent origin (the bright line trusts
+    // `origin === 'user'`; a spread that let meta win would be a fail-open).
+    handle: (command, args = {}, meta = {}) => host.handle(command, args, { ...meta, origin: 'agent' }),
     transaction: host.transaction
-      ? (meta, fn) => host.transaction!({ origin: 'agent', ...meta }, fn)
+      ? (meta, fn) => host.transaction!({ ...meta, origin: 'agent' }, fn)
       : undefined,
+    // operationHistory's `origin` is a READ FILTER, not a commit gate: the query's
+    // value (often undefined = list all origins) must win, so it spreads LAST.
     operationHistory: host.operationHistory
       ? (query) => host.operationHistory!({ origin: 'agent', ...query })
       : undefined,

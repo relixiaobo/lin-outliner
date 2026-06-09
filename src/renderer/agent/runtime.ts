@@ -76,7 +76,19 @@ export interface AgentActiveDreamEntry {
 
 export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
-export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry | AgentDreamEntry;
+// A subagent run surfaced inline in the transcript as a boundary — the permanent
+// record of the run in its conversation (its final result lives on the entity).
+export interface AgentSubagentEntry {
+  id: string;
+  kind: 'subagent';
+  subagent: AgentRenderSubagentEntity;
+}
+
+export type AgentConversationEntry =
+  | AgentMessageEntry
+  | AgentCompactionEntry
+  | AgentDreamEntry
+  | AgentSubagentEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
@@ -171,6 +183,12 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
           dream,
         });
       }
+      continue;
+    }
+
+    if (row.kind === 'subagent') {
+      const subagent = projection.entities.subagents[row.subagentId];
+      if (subagent) entries.push({ id: row.id, kind: 'subagent', subagent });
       continue;
     }
 
@@ -291,7 +309,7 @@ function activeAssistantAnchorTimestamp(entries: AgentConversationEntry[], proje
   }
   const lastUser = [...projection.rows]
     .reverse()
-    .map((row) => projection.entities.messages[row.messageId])
+    .map((row) => (row.messageId ? projection.entities.messages[row.messageId] : undefined))
     .find((entity) => entity?.role === 'user');
   if (lastUser) return lastUser.createdAt;
   return 0;

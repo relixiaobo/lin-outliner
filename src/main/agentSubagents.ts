@@ -155,6 +155,12 @@ export interface AgentSubagentCreateInput {
   allowedTools?: string[];
   disallowedTools?: string[];
   preapprovedToolRules?: string[];
+  /**
+   * Run with no interactive approval channel (unattended). A tool needing
+   * approval is denied + surfaced instead of waiting for a human; globally
+   * always-allowed tools still run. Set for scheduled command runs.
+   */
+  unattended?: boolean;
   afterToolResult?: (
     toolCallId: string,
     toolName: string,
@@ -273,6 +279,15 @@ interface AgentToolParams {
   run_in_background?: boolean;
   name?: string;
   preapprovedToolRules?: string[];
+  /**
+   * Run with no interactive approval channel: a tool needing approval is denied
+   * (and surfaced) instead of waiting for a human. Set for unattended scheduled
+   * command runs so an approval-gated tool can never hang an unwatched run.
+   * Tools covered by the global always-allow rules still run (they resolve to
+   * `allow` before any approval is sought). Internal-only — not part of the
+   * agent-facing Agent tool schema.
+   */
+  unattended?: boolean;
 }
 
 export interface AgentSubagentSkillRunInput {
@@ -643,6 +658,7 @@ export class AgentSubagentRuntime {
       allowedTools: definition.tools,
       disallowedTools: definition.disallowedTools,
       preapprovedToolRules: params.preapprovedToolRules,
+      unattended: params.unattended,
       afterToolResult: (toolCallId, toolName, result, isError) => (
         run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
       ),
@@ -1671,6 +1687,7 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     model: coerceString(raw.model),
     run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
+    unattended: raw.unattended === true,
   };
 }
 

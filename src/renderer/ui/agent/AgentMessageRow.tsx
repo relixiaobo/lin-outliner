@@ -360,6 +360,10 @@ function renderAssistantBlocks(
       if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
       return block.text.trim().length > 0 || streaming;
     }
+    // A subagent-spawn tool call is surfaced as its own inline transcript boundary
+    // (AgentSubagentBoundary) right after this turn — drop its tool-call block here
+    // so the run isn't shown twice (no "Used tools" header, no tool row).
+    if (block.type === 'toolCall' && subagentsByParentToolCallId?.has(block.id)) return false;
     return true;
   });
   const turnHasProse = visibleBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0);
@@ -668,6 +672,11 @@ export function AgentMessageRow({
     turnEnded,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
+
+  // A sealed assistant turn whose only content was a subagent spawn renders no
+  // blocks (the run is shown as the boundary that follows) — skip the empty bubble
+  // entirely rather than leave a blank frame.
+  if (assistantBlocks.length === 0 && !hasError && !turnActive) return null;
 
   return (
     <AgentMessageFrame role="assistant">

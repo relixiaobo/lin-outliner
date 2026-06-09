@@ -28,6 +28,9 @@ export const ids = {
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
+  commandNode: 'node-command',
+  commandScheduleEntry: 'field-entry-command-schedule',
+  commandAgentEntry: 'field-entry-command-agent',
 } as const;
 
 interface MockFixtureOptions {
@@ -38,6 +41,8 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
+  /** Adds an armed `command` (scheduled routine) node under today for the command-node specs. */
+  commandNode?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -200,6 +205,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      codeLanguage?: string;
 	      configKey?: string;
 	      refRole?: string;
+	      commandSchedule?: string;
+	      commandAgent?: string;
 	    };
     type CreateNodeTree = {
       content: RichText;
@@ -1248,6 +1255,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
+    if (options.commandNode) {
+      makeNode(ids.commandNode, 'Summarize my unread feeds and post the highlights', {
+        type: 'command',
+        parentId: ids.today,
+        commandSchedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
+        commandAgent: 'general',
+      });
+      // The two node-native config rows (Schedule / Agent) — real field entries
+      // pointing at the built-in system fields, as `setCommandNode` seeds them.
+      makeNode(ids.commandScheduleEntry, '', {
+        type: 'fieldEntry',
+        parentId: ids.commandNode,
+        fieldDefId: 'sys:commandSchedule',
+      });
+      makeNode(ids.commandAgentEntry, '', {
+        type: 'fieldEntry',
+        parentId: ids.commandNode,
+        fieldDefId: 'sys:commandAgent',
+      });
+    }
     appendChild(ids.workspace, ids.root);
     for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
 	    appendChild(ids.searches, ids.recents);
@@ -1270,6 +1297,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
     if (options.referenceField) appendChild(ids.today, ids.referencesEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
+    if (options.commandNode) {
+      appendChild(ids.today, ids.commandNode);
+      appendChild(ids.commandNode, ids.commandScheduleEntry);
+      appendChild(ids.commandNode, ids.commandAgentEntry);
+    }
 
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -2330,6 +2362,43 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ) {
           return clone(outcome());
         }
+        if (cmd === 'set_command_node') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            node.type = 'command';
+            // Seed the two node-native config rows (Schedule / Agent) if absent —
+            // find-or-create, mirroring `ensureCommandFieldEntriesDirect`.
+            const seedField = (defId: string, index: number) => {
+              const exists = node.children.some((childId) => {
+                const child = nodes.get(childId);
+                return child?.type === 'fieldEntry' && child.fieldDefId === defId;
+              });
+              if (exists) return;
+              const entryId = `field-entry-${++sequence}`;
+              makeNode(entryId, '', { type: 'fieldEntry', parentId: node.id, fieldDefId: defId });
+              appendChild(node.id, entryId, index);
+            };
+            seedField('sys:commandSchedule', 0);
+            seedField('sys:commandAgent', 1);
+          }
+          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+        }
+        if (cmd === 'set_command_schedule') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            const schedule = args.schedule == null ? '' : String(args.schedule);
+            if (schedule) node.commandSchedule = schedule; else delete node.commandSchedule;
+          }
+          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+        }
+        if (cmd === 'set_command_agent') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            const agent = args.agent == null ? '' : String(args.agent);
+            if (agent) node.commandAgent = agent; else delete node.commandAgent;
+          }
+          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+        }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
       },
       onAgentEvent: (listener: (event: unknown) => void) => {
@@ -2409,7 +2478,7 @@ export async function resolveOAuthLogin(page: Page, providerId: string) {
 export async function emitAgentProjection(page: Page, conversationId: string, state: Record<string, any>, revision = 1) {
   const entities: Record<string, any> = {};
   const compactions: Record<string, any> = {};
-  const rows: Array<{ id: string; kind: string; messageId: string; compactionId?: string }> = [];
+  const rows: Array<{ id: string; kind: string; messageId?: string; compactionId?: string; subagentId?: string }> = [];
 
   const persistedContent = (message: any) => {
     const content = typeof message.content === 'string'
@@ -2560,6 +2629,42 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     };
   }
 
+  // Mirror the core projection's insertSubagentRows: the full transcript carries
+  // an inline boundary row per subagent run (the active `rows` stays clean). A
+  // parented run anchors after its tool_result row, else after the assistant
+  // message that issued the call; a parentless run is ordered by start time.
+  const messageHasToolCall = (entity: any, toolCallId: string) =>
+    !!entity?.content?.some((block: any) => block.type === 'toolCall' && block.id === toolCallId);
+  const subagentInsertIndex = (currentRows: typeof rows, run: any) => {
+    if (run.parentToolCallId) {
+      const resultIndex = currentRows.findIndex(
+        (row) => row.kind === 'tool_result' && entities[row.messageId ?? '']?.toolCallId === run.parentToolCallId,
+      );
+      if (resultIndex >= 0) return resultIndex + 1;
+      const callIndex = currentRows.findIndex(
+        (row) => row.kind === 'message' && messageHasToolCall(entities[row.messageId ?? ''], run.parentToolCallId),
+      );
+      return callIndex >= 0 ? callIndex + 1 : -1;
+    }
+    let index = -1;
+    for (let position = 0; position < currentRows.length; position += 1) {
+      const messageId = currentRows[position]!.messageId;
+      const message = messageId ? entities[messageId] : undefined;
+      if (message && message.createdAt <= run.startedAt) index = position;
+    }
+    return index < 0 ? -1 : index + 1;
+  };
+  const subagentRows = [...rows];
+  const orderedRuns = Object.values(subagents).sort(
+    (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
+  );
+  for (const run of orderedRuns as any[]) {
+    const row = { id: `subagent:${run.id}`, kind: 'subagent', subagentId: run.id };
+    const insertAt = subagentInsertIndex(subagentRows, run);
+    if (insertAt < 0) subagentRows.push(row);
+    else subagentRows.splice(insertAt, 0, row);
+  }
+
   await emitAgentEvent(page, {
     type: 'projection',
     conversationId,
@@ -2577,7 +2682,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       pendingToolCallIds: state.pendingToolCallIds ?? [],
       errorMessage: state.errorMessage ?? null,
       rows,
-      transcriptRows: state.transcriptRows ?? rows,
+      transcriptRows: state.transcriptRows ?? subagentRows,
       taskIds,
       subagentRunIds,
       entities: { messages: entities, subagents, compactions, tasks },

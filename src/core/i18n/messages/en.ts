@@ -625,6 +625,7 @@ commandPalette: {
         code: 'Code block',
         image: 'Image',
         command_palette: 'Command palette',
+        command: 'Command',
       },
       // Image block toolbar + missing state.
       image: {
@@ -653,8 +654,19 @@ commandPalette: {
         endTime: 'End time',
         endDateToggle: 'End date',
         includeTimeToggle: 'Include time',
+        repeat: 'Repeat',
+        ends: 'Ends',
         today: 'Today',
         clear: 'Clear',
+        recurrence: {
+          none: 'Does not repeat',
+          daily: 'Daily',
+          weekdays: 'Every weekday',
+          weekly: 'Weekly',
+          monthly: 'Monthly',
+          yearly: 'Yearly',
+          custom: 'Custom',
+        },
       },
       // Generic node value picker (NodeValuePicker) defaults.
       valuePicker: {
@@ -662,6 +674,18 @@ commandPalette: {
         noOptions: 'No options',
         create: ({ label }: { label: string }) => `Create "${label}"`,
         optionsListLabel: ({ name }: { name: string }) => `${name} options`,
+      },
+      // Command node (scheduled routine) controls: the Schedule value reuses the
+      // standard date editor; the Agent value is a standard registry picker; Run
+      // lives at the start of the command title. Arming the schedule is the
+      // user-only "bright line".
+      command: {
+        enableSchedule: 'Enable schedule…',
+        runNow: 'Run',
+        edit: 'Edit schedule',
+        mainAgent: 'Main agent',
+        selectAgent: 'Select agent',
+        agentPlaceholder: 'Press Space to pick an agent…',
       },
     },
   },
@@ -951,6 +975,16 @@ commandPalette: {
     // The subagent details panel + inline subagent details.
     subagent: {
       summary: ({ description }: { description: string }) => `Subagent · ${description}`,
+      // The inline transcript divider that records a subagent run in its conversation.
+      boundary: {
+        label: 'Subagent',
+        running: 'Running…',
+        ranAt: ({ time }: { time: string }) => `ran ${time}`,
+        failed: 'Failed',
+        stopped: 'Stopped',
+        viewFullRun: 'View full run',
+        noResult: 'No result recorded.',
+      },
       heading: 'Subagent',
       status: 'Status',
       mode: 'Mode',

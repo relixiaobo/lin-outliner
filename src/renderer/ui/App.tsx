@@ -24,6 +24,7 @@ import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import { useCommandRunner } from './shared';
 import { buildAgentUserViewContext } from './agent/userViewContext';
+import { onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
@@ -46,6 +47,9 @@ export function App() {
   // open/collapsed in React; the chip is a pure :hover affordance in CSS.
   const [agentOpen, setAgentOpen] = useState(true);
   const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
+  // A content row (e.g. a command node's Run button) can ask to surface the agent
+  // panel on its delivery conversation; open the rail so the run is visible.
+  useEffect(() => onAgentRevealRequest(() => setAgentOpen(true)), []);
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [error, setError] = useState<string | null>(null);

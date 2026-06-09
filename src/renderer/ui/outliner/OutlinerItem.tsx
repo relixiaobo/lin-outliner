@@ -69,6 +69,7 @@ import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
+import { CommandRunButton, useCommandRun } from './CommandFieldValue';
 import { makeDraftNode } from './draftRow';
 import { TrailingOptionsPopover } from './TrailingOptionsPopover';
 import { TrailingReferencePopover } from './TrailingReferencePopover';
@@ -149,6 +150,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // Date value rows summon their picker overlay additively (Space / calendar
   // affordance); it is never a separate editing mode.
   const [dateOverlayOpen, setDateOverlayOpen] = useState(false);
+  // A command node's attended run (engaged from the title Run button). Cheap for
+  // every row — just local state + a callback — so it stays an unconditional hook.
+  const commandRun = useCommandRun(props.nodeId);
   const draftContentRef = useRef<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -300,7 +304,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       ? 'tag'
       : displayed.type === 'fieldDef'
         ? 'fieldDef'
-        : 'content';
+        : displayed.type === 'command'
+          ? 'command'
+          : 'content';
+  const isCommandNode = leadingVariant === 'command';
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
     .filter((tag): tag is NodeProjection => Boolean(tag));
@@ -857,6 +864,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       replaceLocalDraftContent(withoutTrigger);
       await api.replaceNodeText(targetEditId, withoutTrigger);
       return api.setCodeBlock(targetEditId);
+    }
+
+    if (commandId === 'command') {
+      await pendingTextPatchRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+      if (onDraftTrigger) {
+        const created = await api.createRichTextNode(props.parentId, null, withoutTrigger);
+        replaceLocalDraftContent(EMPTY_RICH_TEXT);
+        const nodeId = created.focus?.nodeId;
+        if (!nodeId) return created;
+        return api.setCommandNode(nodeId);
+      }
+      replaceLocalDraftContent(withoutTrigger);
+      await api.replaceNodeText(targetEditId, withoutTrigger);
+      return api.setCommandNode(targetEditId);
     }
 
     if (commandId === 'image') {
@@ -1454,6 +1476,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           expanded={row.expanded}
           variant={leadingVariant}
           fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
+          processing={isCommandNode && commandRun.running}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
           onToggleExpand={row.toggleExpandOrSelect}
@@ -1470,6 +1493,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           onClickCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
           onDoubleClick={focusReferenceTargetFromDoubleClick}
         >
+          {isCommandNode && (
+            // Run lives at the start of the command title; the command bullet's
+            // spinner (driven by commandRun.running below) is the running indicator.
+            <CommandRunButton labels={tf.command} onRun={commandRun.run} />
+          )}
           {showDoneCheckbox && (
             <DoneCheckbox
               checked={Boolean(displayed.completedAt)}
@@ -1799,7 +1827,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           applyTag={onDraftTrigger ? applyDraftTag : undefined}
           createTagAndApply={onDraftTrigger ? createAndApplyDraftTag : undefined}
           executeSlashCommand={executeSlashCommand}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
           existingTagIds={displayed.tags}
         />

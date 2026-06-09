@@ -5,18 +5,29 @@ import {
 } from './localDate';
 import {
   dateFieldEndpointHasTime,
+  formatDateRecurrenceRule,
   normalizedDateFieldEndpoint,
+  parseDateRecurrenceRule,
+  RRULE_SEPARATOR_PATTERN,
+  WEEKDAY_TO_WEEK_OFFSET,
+  type DateRecurrenceRule,
+  type DateScheduleWeekday,
 } from './dateFieldValue';
 
-export type DateScheduleFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
-export type DateScheduleWeekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
-
-export interface DateRecurrenceRule {
-  frequency: DateScheduleFrequency;
-  interval: number;
-  byDay?: DateScheduleWeekday[];
-  until?: string;
-}
+// The recurrence-rule primitives now live in the value-model layer
+// (`dateFieldValue.ts`); re-export them so existing importers can keep pulling
+// the rule surface from here alongside the fire-evaluation helpers.
+export {
+  formatDateRecurrenceRule,
+  isWeekdayPreset,
+  parseDateRecurrenceRule,
+  WEEKDAY_PRESET,
+} from './dateFieldValue';
+export type {
+  DateRecurrenceRule,
+  DateScheduleFrequency,
+  DateScheduleWeekday,
+} from './dateFieldValue';
 
 export interface DateSchedule {
   anchor: string;
@@ -29,20 +40,7 @@ export interface DateScheduleFireDecision {
   reason: 'not_due' | 'already_fired' | 'due';
 }
 
-const RRULE_SEPARATOR_PATTERN = /\s+RRULE:/i;
-const DECIMAL_INTEGER_PATTERN = /^[0-9]+$/;
-const WEEKDAYS: readonly DateScheduleWeekday[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
-const WEEKDAY_SET = new Set<DateScheduleWeekday>(WEEKDAYS);
 const JS_DAY_TO_WEEKDAY: readonly DateScheduleWeekday[] = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-const WEEKDAY_TO_WEEK_OFFSET: Record<DateScheduleWeekday, number> = {
-  MO: 0,
-  TU: 1,
-  WE: 2,
-  TH: 3,
-  FR: 4,
-  SA: 5,
-  SU: 6,
-};
 
 export function parseDateSchedule(raw: string): DateSchedule | null {
   const trimmed = raw.trim();
@@ -59,57 +57,10 @@ export function parseDateSchedule(raw: string): DateSchedule | null {
   return recurrence ? { anchor, recurrence } : null;
 }
 
-export function parseDateRecurrenceRule(raw: string): DateRecurrenceRule | null {
-  const segments = raw.trim().split(';').filter(Boolean);
-  if (segments.length === 0) return null;
-
-  const values = new Map<string, string>();
-  for (const segment of segments) {
-    const [rawKey, ...rawValueParts] = segment.split('=');
-    const key = rawKey?.trim().toUpperCase();
-    const value = rawValueParts.join('=').trim().toUpperCase();
-    if (!key || !value || values.has(key)) return null;
-    values.set(key, value);
-  }
-
-  const frequency = parseFrequency(values.get('FREQ'));
-  if (!frequency) return null;
-
-  const intervalValue = values.get('INTERVAL');
-  if (intervalValue !== undefined && !DECIMAL_INTEGER_PATTERN.test(intervalValue)) return null;
-  const interval = intervalValue !== undefined ? Number(intervalValue) : 1;
-  if (!Number.isSafeInteger(interval) || interval < 1) return null;
-
-  const byDay = values.has('BYDAY') ? parseByDay(values.get('BYDAY') ?? '') : undefined;
-  if (values.has('BYDAY') && (!byDay || frequency !== 'weekly')) return null;
-
-  const until = values.has('UNTIL') ? normalizedDateFieldEndpoint(values.get('UNTIL') ?? '') : undefined;
-  if (values.has('UNTIL') && !until) return null;
-
-  for (const key of values.keys()) {
-    if (key !== 'FREQ' && key !== 'INTERVAL' && key !== 'BYDAY' && key !== 'UNTIL') return null;
-  }
-
-  return {
-    frequency,
-    interval,
-    ...(byDay ? { byDay } : {}),
-    ...(until ? { until } : {}),
-  };
-}
-
 export function formatDateSchedule(schedule: DateSchedule): string {
   return schedule.recurrence
     ? `${schedule.anchor} RRULE:${formatDateRecurrenceRule(schedule.recurrence)}`
     : schedule.anchor;
-}
-
-export function formatDateRecurrenceRule(rule: DateRecurrenceRule): string {
-  const parts = [`FREQ=${rule.frequency.toUpperCase()}`];
-  if (rule.interval !== 1) parts.push(`INTERVAL=${rule.interval}`);
-  if (rule.byDay?.length) parts.push(`BYDAY=${sortWeekdays(rule.byDay).join(',')}`);
-  if (rule.until) parts.push(`UNTIL=${rule.until}`);
-  return parts.join(';');
 }
 
 export function mostRecentDateScheduleDue(input: DateSchedule | string, now = new Date()): Date | null {
@@ -150,40 +101,6 @@ export function shouldFireDateSchedule(
     return { shouldFire: false, dueAt, reason: 'already_fired' };
   }
   return { shouldFire: true, dueAt, reason: 'due' };
-}
-
-function parseFrequency(value: string | undefined): DateScheduleFrequency | null {
-  switch (value) {
-    case 'DAILY':
-      return 'daily';
-    case 'WEEKLY':
-      return 'weekly';
-    case 'MONTHLY':
-      return 'monthly';
-    case 'YEARLY':
-      return 'yearly';
-    default:
-      return null;
-  }
-}
-
-function parseByDay(value: string): DateScheduleWeekday[] | null {
-  const days = value.split(',').map((day) => day.trim().toUpperCase()).filter(Boolean);
-  if (days.length === 0) return null;
-  const result: DateScheduleWeekday[] = [];
-  const seen = new Set<DateScheduleWeekday>();
-  for (const day of days) {
-    if (!WEEKDAY_SET.has(day as DateScheduleWeekday)) return null;
-    const weekday = day as DateScheduleWeekday;
-    if (seen.has(weekday)) return null;
-    seen.add(weekday);
-    result.push(weekday);
-  }
-  return sortWeekdays(result);
-}
-
-function sortWeekdays(days: readonly DateScheduleWeekday[]): DateScheduleWeekday[] {
-  return [...days].sort((left, right) => WEEKDAY_TO_WEEK_OFFSET[left] - WEEKDAY_TO_WEEK_OFFSET[right]);
 }
 
 function dateFromScheduleEndpoint(endpoint: string): Date {
