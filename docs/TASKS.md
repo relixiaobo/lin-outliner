@@ -19,26 +19,19 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | `cc/launcher-native-nspanel` (pending) | launcher-native-nspanel (assigned 2026-06-09) |
-| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/memory-model` (pending) | agent-memory-model render+Dream (assigned 2026-06-09) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory-model P1+P2 merged, PR #172) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-Two parallel lanes assigned 2026-06-09 (Draft PRs pending — dev start imminent):
-
 - **cc → `launcher-native-nspanel`** (P1) — root fix: native NSWindow
   `collectionBehavior` replacing Electron's dock-hiding `visibleOnFullScreen`; keeps
   dock icon + ⌘Q + fullscreen float + non-activating. Execution-ready plan
   `docs/plans/launcher-native-nspanel.md`. Supersedes PR #170's toggle.
-- **cc-2 → `agent-memory-model` render+Dream** (P1, the prioritized memory/render
-  lane) — Phase 1 render + Phase 2 Dream as one complete PR (Phase 3 user-as-agent
-  excluded, gated on the `agent-data-model` §4 ratify). Execution-ready plan
-  `docs/plans/agent-memory-model.md` (#Phasing).
 
-Disjoint file scopes (launcher files vs `agentRuntime.ts` memory/dream) → true
-parallel. Merge order at the gate: independent; when cc later picks up skills, its
-`agentRuntime.ts` overlap with memory is resolved memory-first + rebase.
+`agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
+Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
 
 
 ## Backlog
@@ -404,6 +397,16 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-memory: `<memory>` briefing render + subject-elided Dream writer** (cc-2, PR #172) — Phase 1+2 of
+  [[agent-memory-model]] as one complete PR, zero protocol change. New pure `agentMemoryBriefing.ts` projects
+  resident (newest-active, ≤12) entries into a `<memory>` briefing with reader-relative `<self>` /
+  `<principal>` zones (person-neutral storage, hidden `id`/`status`, XML-escaped); the old `<agent-memory>`
+  `id=…` reminder and the `query` arg are gone (query retrieval stays on `recall`). Dream extraction gains the
+  subject-elided base-form writer contract + consolidation heuristics; `dream.completed.changes` shape
+  unchanged. Gate: high-effort `/code-review` (7 findings) → all must-fix verified fixed on the merged tree —
+  the fragile leading-subject strip regex was dropped for a faithful subject-prepend (Dream is the single
+  enforcement point), shared `escapeXml` extracted to `agentReminderXml.ts`, constant de-duplicated; typecheck
+  + `test:core` 774/0. Phase 3 (user-as-agent + sharing) excluded, gated on `agent-data-model` §4 ratify.
 - **launcher: Tenon dock icon restored** (main, fast-track) — the packaged app ran in macOS "accessory"
   activation policy (window + menu bar, but no dock icon / no ⌘Tab) — a side effect of the always-present
   non-activating launcher NSPanel. `app.dock.show()` was insufficient; replaced with

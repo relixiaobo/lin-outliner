@@ -70,6 +70,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Distilled-memory `<memory>` briefing + subject-elided Dream writer (PR #172)** — Phase 1+2 of
+  [[agent-memory-model]] as one complete PR, **zero protocol change** (`MemoryEntry`, the `recall` tool,
+  and the `memory.*` / `dream.completed` events are consumed as-is). **Render:** the old
+  `<agent-memory>` `id=…/fact=…` reminder is replaced by a new pure module `agentMemoryBriefing.ts`
+  that projects selected entries into a `<memory>` briefing with reader-relative zones — the reading
+  agent's own pool renders second-person `<self>` ("You verify…"), any other principal's pool renders
+  third-person `<principal name>` (a Phase-3 affordance, unit-tested but unreachable until §4 sharing
+  ships). Storage stays person-neutral; render hides scaffolding (`id`/`status`), XML-escapes, and
+  returns null when empty. Selection is now **resident** (newest active, capped at 12) — the stable
+  distilled prefix — with query-specific retrieval left to the `recall` tool (the volatile tail); the
+  now-dead `query` arg was dropped from `buildMemoryReminder` and the subagent host interface/cache key.
+  **Dream:** the extraction prompt gains the subject-elided base-form writer contract (no leading
+  subject; name third parties; authority-as-phrasing) plus merge/conditionalize/invalidate consolidation
+  heuristics; the `{added,updated,forgotten,skipped}` `dream.completed.changes` shape is unchanged.
+  Gate: `/code-review high` (7 findings) → fixes verified — fragile leading-subject strip regex removed
+  in favor of faithful subject-prepend (Dream is the single enforcement point), shared `escapeXml`
+  extracted to `agentReminderXml.ts`, constant de-duplicated; typecheck + `test:core` 774/0.
+  ([#172](https://github.com/relixiaobo/lin-outliner/pull/172))
+
 - **Auto-initialize field config is one multi-select picker (PR #169)** — a `date` field's Auto-initialize
   strategies previously rendered as several identical-looking "No" switches (the strategy name lived only in an
   invisible `aria-label`); they now collapse into a single multi-select picker (closed: the chosen strategies
