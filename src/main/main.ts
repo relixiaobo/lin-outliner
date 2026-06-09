@@ -2097,23 +2097,28 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  // Release the global hotkey(s) on quit so we never leave a dangling binding.
-  app.on('will-quit', () => unregisterLauncherHotkeys());
-
   app.on('before-quit', (event) => {
     if (quitAfterFlush) return;
-    // Defer termination until the document flush completes, then exit the process
-    // directly. We must NOT re-issue `app.quit()`: after preventDefault() cancels
-    // the OS-initiated ⌘Q terminate, Electron's graceful re-quit takes several
-    // seconds to actually exit the process (it lingers alive with windows closed),
-    // so ⌘Q reads as "doesn't quit until I press it again". The document is already
-    // persisted once the flush resolves, so `process.exit(0)` ends it immediately —
-    // the only on-quit cleanup is the hotkey unregister, which the OS does on exit.
     event.preventDefault();
     quitAfterFlush = true;
+    // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
+    // here: stop the command scheduler and release the global hotkey(s).
     agentRuntime.stopCommandScheduler();
-    void documentService.flushPendingChanges()
-      .catch((error) => console.error(error))
-      .finally(() => process.exit(0));
+    unregisterLauncherHotkeys();
+    // Settle in-flight writes, then exit. We force-exit instead of re-issuing
+    // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
+    // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q
+    // reads as "didn't quit, press again". But a bare exit would truncate in-flight
+    // async writes, so we first drain them — the document mutation queue and the
+    // agent runtime's session event-log appends — bounded by a hard timeout so a
+    // slow/hung write (e.g. an in-flight Dream LLM call, which is crash-safe and
+    // re-fires next launch) can't block the quit.
+    void Promise.race([
+      Promise.allSettled([
+        documentService.flushPendingChanges(),
+        agentRuntime.drainPendingWrites(),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]).finally(() => app.exit(0));
   });
 }
