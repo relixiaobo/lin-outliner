@@ -677,130 +677,139 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 - `RunMeta.usage` aggregate + per-turn total on the final reply; `RunMeta.fingerprint`
   (`appVersion` + prompt/tool-schema/skill/model hashes) + `retention` state.
 
-## Proposed extension — cross-principal memory sharing (user-as-agent)
+## Proposed extension — principal-keyed memory (the user is an ordinary principal)
 
-**Status: PROPOSED — pending ratification.** PM greenlit pursuing it (2026-06-09);
-this is the concrete shape to ratify (the open-question stub below points here, and
-[[agent-memory-model]] §4 is the originating sketch). It is **interface-first**:
-once ratified, the `src/core/*` surface lands in one coordinated PR
-([[agent-program]] F6) *before* any consumer builds on it. It adds **no new storage
-family and no parallel visibility system** — it extends the existing `Principal`
-type, `AgentIdentity`, and the D2 retrieval axis. It is the *only* genuinely new
-idea atop [[agent-memory-model]] P1+P2 (already shipped, PR #172).
+**Status: PROPOSED — pending ratification.** PM ratified the *direction* (2026-06-09:
+principal-keyed memory + per-principal Dream, over the earlier publish/subscribe
+sketch). This is the concrete contract; it is **interface-first** — the `src/core/*`
+surface lands in one coordinated PR ([[agent-program]] F6) before any consumer builds
+on it. It adds **no new storage family and no parallel visibility system**, reuses the
+existing `Principal` type + `conversation.members`, and lightly **revises shipped
+P1+P2** (PR #172) — pre-launch clean cut, no migration.
 
 ### The gap
 
-Today the global memory pool is **per-`agentId`** (inv. 13): an agent retrieves its
-own pool across workspaces, never another agent's. So "how does agent B know the
-user?" has no answer — B has never modelled the user; only the conversations the
-user joined did, and those are *objective record*, not B's *subjective memory*.
-Memory is an agent's self-model, and no agent's self is "the user."
+Today the global pool is **per-`agentId`** (inv. 13): one pool mixes facts *about the
+user* with facts *about the agent itself*, and an agent never reads another's pool. So
+"how does agent B know the user?" has no answer, and P1's render must *guess* person
+with an `agentId === me` heuristic because one pool holds two subjects.
 
-### The idea — the user is an ordinary agent
+### The reframe — a memory is a fact *about a Principal*
 
-Every agent carries the entity **whose self-model its memory is**:
+Key a `MemoryEntry` by **who it is about**, not who owns it:
 
 ```ts
-interface AgentIdentity {
-  …
-  principal: Principal;            // the subject this agent's MemoryEntry pool models
-  publishMemoryTo?: Principal[] | 'self-agents';   // who may READ this pool's distilled facts
+interface MemoryEntry {
+  id: string;
+  principal: Principal;   // WHOSE self-model this fact is — REPLACES `agentId`
+  fact: string;           // subject-elided, person-neutral (renders to any reader)
+  originWorkspace?: string;
+  sources: …;             // provenance (who observed it) stays here — subject ≠ author
+  status: 'active' | 'invalidated';
+  createdAt: number;
 }
 ```
 
-- A **normal agent**'s principal is **itself**: `{type:'agent', agentId:<self>}`.
-  Its pool is its working self-model. (Runtime defaults it; no authoring burden.)
-- The **user-agent**'s principal is the **person**: `{type:'user', userId}`. It is a
-  real `AgentIdentity` *instance, not a subtype* — same shape, reserved `agentId`
-  (`built-in:user:<userId>`), no foreground runs. Its pool is written by the same
-  runtime-owned append surface (D1), with a scheduled **user-Dream** that reads the
-  conversations the person is a member of and models the person.
+- A **pool = one Principal's self-model.** `{type:'agent', agentId}` pools an agent's
+  working self-model; `{type:'user', userId}` pools the person. The **user is just a
+  Principal that owns a pool** — no "user-agent" `AgentIdentity` instance with its
+  fields nulled.
+- `principal` is the **elided subject** of every fact in the pool, so it is *also*
+  exactly what the render reads — subject and pool key are one field.
+- This is the only genuinely new idea atop [[agent-memory-model]] P1+P2. `Principal`
+  is reused verbatim — no new `AgentActor`/union.
 
-`principal` is the **elided subject** of every `MemoryEntry` in that pool, so the
-render's person rule ([[agent-memory-model]] §2) reads it directly: pool whose
-principal == the reader → `<self>` (second person); any other principal →
-`<principal>` (third person, named). Dream's one rule — *"read your principal's
-activity, model your principal"* — then covers the user-agent with no special case.
+### Writing — per-principal Dream (one writer per pool)
 
-### Sharing — extend the D2 axis, do not parallel it
+**A principal's Dream reads that principal's own activity, models that principal, and
+writes only that principal's pool.** One writer per pool → no cross-pool writes, no
+N-writers-to-one-pool contention; dedup stays within a single writer. This maps onto
+the conversation/run split (inv. 3):
 
-D2 (inv. 13) is an **intra-principal** axis: it scopes an agent's *own* pool by
-`originWorkspace` (`global` | `isolated` | `read-only-global`). Cross-principal
-sharing is the orthogonal question — *which other principals' pools may this agent
-read?* — answered on the **publish side** via `publishMemoryTo`:
+| Dream | reads (its principal's activity) | models / writes |
+|---|---|---|
+| **agent-principal Dream** | the agent's **run log** (execution) | the agent's self-model |
+| **user-principal Dream** | the **conversations the user is a member of** (communication, both sides) | the user's self-model |
 
-- The **user-agent** defaults to `publishMemoryTo:'self-agents'` — every agent
-  serving the same `userId` may read it. (Single-user product: that is "all of the
-  user's agents.")
-- A reader B assembles its `<principal>` zones from **every pool that published to
-  B's principal**; for B that is the user-agent's pool → `<principal name=<user>>`.
-- Publishing is **read-only by construction** (you cannot write another principal's
-  pool), so a subscribed pool is always retrieved like `read-only-global` for B.
+So user preferences — stated ("I want terse reviews") or inferred from the back-and-
+forth — are captured by the **user-Dream reading the conversation**; an agent's
+working habits ("verify HEAD before a gate run") by the **agent-Dream reading its
+runs**. Each Dream is independent, has its own watermark, and is parallelizable. (This
+replaces P2's single per-agent Dream that read both layers into one mixed pool — the
+clean rule is one writer, one subject, one activity layer each.)
 
-**Precedence (the defined interaction the OQ demands):**
-1. **Own pool** → the agent's own D2 tier, unchanged.
-2. **Subscribed pools** → filtered by the **publisher's** D2 tier + grant, never the
-   reader's; always read-only; always a distinct `<principal>` zone — they never
-   merge into `<self>`, so there is no precedence *conflict* at render, only at the
-   injection **budget**.
-3. **Budget** → `<self>` first, then subscribed `<principal>` pools, capped at the
-   resident `[3]` budget (the per-turn-injection OQ governs the cap).
+### Reading — visibility = conversation membership (no publish ACL)
 
-One publish/subscribe relation layered on the existing axis — not a second isolation
-system with undefined interaction.
+Writes are per-principal; **reads are cross-principal, by membership.** A reader R
+assembles its briefing from:
+- **R's own pool** → `<self>` (second person), and
+- **every co-member principal's pool** in the current conversation → `<principal name>`
+  (third person).
 
-### Security — the read-path gate (lands WITH sharing, not after)
+The **user is always a member** of an agent's conversation, so the user's self-model
+is **automatically** shared across all the user's agents — no `publishMemoryTo`, no
+precedence table; visibility reuses `conversation.members` (already first-class). D2's
+isolation tiers still scope each pool's *own* retrieval by `originWorkspace`, unchanged
+and orthogonal. (Agent↔agent reading — A reads co-member B's self-model — is the same
+membership rule and can ship later; the core need is *agent → user*.)
 
-`recall(include_evidence:true)` expands an entry's `sources` to **raw transcript**.
-A naive cross-principal read would dereference **another principal's raw
-conversations**. Gate:
+### Security — the read-path gate
 
-- **Cross-principal recall returns the distilled `fact` only.** `sources` evidence
-  expansion is permitted **only** for entries whose pool-principal == the reader's
-  principal; the runtime evidence service refuses to expand a foreign-principal
-  entry's `sources`. (inv. 6's down-pointer stays; the dereference is principal-gated.)
-- A published entry is a **persistent injection vector** reaching every subscriber's
-  prefix each turn → cross-principal/published writes carry the **highest
-  load-time-scan bar** (the [[agent-memory-model]] Hardening layer's load-time
-  injection scan applies to any pool a reader did not author).
-- **Scope: same-`userId` cross-agent only.** Cross-*user* sharing (multiple people)
-  is out of scope for the single-user product and is a separate trust-domain problem
-  — `'self-agents'` does not enable it.
+`recall(include_evidence:true)` expands `sources` to **raw transcript**. A
+cross-principal read must never dereference another principal's raw conversations:
 
-### Consolidated `src/core/*` surface (interface-first, when ratified)
+- **Cross-principal recall returns the distilled `fact` only**; `sources` evidence
+  expansion is permitted **only** for entries whose `principal` == the reader's own
+  (the runtime evidence service principal-gates the dereference). inv. 6's down-pointer
+  stays; the dereference is principal-gated.
+- A foreign-principal fact reaches the reader's prefix every turn → it carries the
+  **highest load-time-scan bar** (the [[agent-memory-model]] Hardening layer).
+- **Scope: one user.** Cross-*user* sharing (multiple people) is a separate
+  trust-domain problem, out of scope for the single-user product.
 
-- `Principal` (exists) reused verbatim — no new `AgentActor`/union.
-- `AgentIdentity.principal: Principal` (required; runtime defaults a normal agent's
-  to itself) + `publishMemoryTo?` (optional).
-- A reserved user-agent identity (`built-in:user:<userId>`), created by the runtime.
-- Assembly may read pools published to the reader's principal, returning **distilled
-  facts only** for foreign principals; the evidence service principal-gates `sources`.
-- **No new event types** — the user-agent's pool uses the existing
+### Consolidated `src/core/*` surface (interface-first)
+
+- `MemoryEntry.principal: Principal` **replaces** `agentId`; the memory event log is
+  keyed **per-principal** (on disk `principals/<principalKey>/memory/events.jsonl`,
+  `principalKey = user:<userId> | agent:<agentId>`). **No new event types** — the same
   `memory.entry_added/updated/removed` surface (D1).
+- A reserved **user-principal** pool, created by the runtime; its writer is the
+  user-Dream.
+- **Per-principal Dream**: the agent-Dream over the run log; a new user-Dream over the
+  user's conversation-membership set (reusing the existing watermark machinery).
+- Assembly reads the reader's own pool + co-member pools (distilled-only for foreign
+  principals); the evidence service principal-gates `sources` expansion.
+
+### Revises shipped P1+P2 (pre-launch, no migration)
+
+- **Render** keys zones on `entry.principal` vs the reader's principal (was
+  `agentId === me`) — the `<self>`/`<principal>` split becomes a stored-field read, and
+  the person-neutral storage rule becomes *principled* (one pool is read by many readers).
+- **Dream** splits into per-principal (agent-Dream → runs/self; new user-Dream →
+  conversations/user) instead of one per-agent Dream writing a mixed pool.
 
 ### Genuine forks for ratification
 
-1. **Publish default** — `'self-agents'` (recommended: matches single-user reality)
-   vs explicit `Principal[]` grants only.
-2. **User-Dream trigger/anchor** — a `date`-scheduled reflective run like agent Dream,
-   but the user is a member of many conversations. Recommend a synthetic
-   user-anchored reflective run over the user's membership set, reusing the existing
-   per-conversation Dream watermark machinery.
-3. **`<principal>` provenance render** — second-person "here's your record about the
-   user" (recommended: keeps the human as authority over identity) vs first-person
-   ("I am you"). ([[agent-memory-model]] OQ3.)
+1. **Agent↔agent reading** — inject co-member *agent* pools into `<principal>` now, or
+   defer (core = agent reads self + user)? *Recommend defer.*
+2. **`<principal>` provenance render** — second-person "here's your record about the
+   user" *(recommend; keeps the human as identity authority)* vs first-person ("I am
+   you"). ([[agent-memory-model]] OQ3.)
+3. **User-Dream cadence/anchor** — a scheduled reflective Dream over the user's
+   conversation-membership set, reusing the per-conversation watermark. *(Mechanism,
+   not direction.)*
 
 ## Open questions
 
 These are data-model-local; the experience/sequencing OQs live in
 [[agent-conversation-model]] and [[agent-program]].
 
-- **Cross-agent memory sharing (user-as-agent) — PM greenlit (2026-06-09); concrete shape
-  drafted, pending ratification.** The full proposed contract — `principal: Principal` +
-  `publishMemoryTo` on `AgentIdentity`, the D2 publish/subscribe extension with defined
-  precedence, the cross-principal read-path security gate, and the three forks for the PM —
-  is the **"Proposed extension — cross-principal memory sharing (user-as-agent)"** section
-  above. Interface-first once ratified.
+- **Cross-agent memory sharing — PM ratified direction (2026-06-09); concrete contract
+  drafted, pending ratification of the details.** The contract — `MemoryEntry.principal`
+  (replacing `agentId`, the user being an ordinary principal), per-principal Dream
+  (write side), visibility by `conversation.members` (read side), and the cross-principal
+  read-path security gate — is the **"Proposed extension — principal-keyed memory"** section
+  above. Interface-first once the remaining forks are ratified.
 
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
   topic files. Memory is runtime-owned state, not an agent-writable file tree.
