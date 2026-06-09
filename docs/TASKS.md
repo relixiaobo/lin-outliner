@@ -18,14 +18,27 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
+| Claude Code | `lin-outliner-cc/` | `cc/launcher-native-nspanel` (pending) | launcher-native-nspanel (assigned 2026-06-09) |
+| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/memory-model` (pending) | agent-memory-model render+Dream (assigned 2026-06-09) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-_(nothing actively in flight)_
+Two parallel lanes assigned 2026-06-09 (Draft PRs pending — dev start imminent):
+
+- **cc → `launcher-native-nspanel`** (P1) — root fix: native NSWindow
+  `collectionBehavior` replacing Electron's dock-hiding `visibleOnFullScreen`; keeps
+  dock icon + ⌘Q + fullscreen float + non-activating. Execution-ready plan
+  `docs/plans/launcher-native-nspanel.md`. Supersedes PR #170's toggle.
+- **cc-2 → `agent-memory-model` render+Dream** (P1, the prioritized memory/render
+  lane) — Phase 1 render + Phase 2 Dream as one complete PR (Phase 3 user-as-agent
+  excluded, gated on the `agent-data-model` §4 ratify). Execution-ready plan
+  `docs/plans/agent-memory-model.md` (#Phasing).
+
+Disjoint file scopes (launcher files vs `agentRuntime.ts` memory/dream) → true
+parallel. Merge order at the gate: independent; when cc later picks up skills, its
+`agentRuntime.ts` overlap with memory is resolved memory-first + rebase.
 
 
 ## Backlog
@@ -176,7 +189,7 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   memory** (each fresh typed subagent owns its called-agent memory line; forks share the parent's),
   a model-visible **`dream` trigger tool** (trigger-only, no model-written facts), and a **Dream
   chat-feedback** boundary. Polish tracked in `agent-dream-followups` (P3) below.
-- **agent-memory-model** (P2, M2, **draft**) — the **subjective** memory layer *atop*
+- **agent-memory-model** (P1, M2, **draft — executor cc-2, render+Dream is one complete PR**) — the **subjective** memory layer *atop*
   `agent-data-model` (which it defers all stored shapes / tools / cache to): the **render**
   projection (storage→injection — XML-zoned prose briefing, person rule, confidence-as-phrasing)
   replacing the flat `<agent-memory>` dump; **Dream** consolidation semantics

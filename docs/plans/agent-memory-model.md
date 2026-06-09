@@ -1,7 +1,8 @@
 ---
 status: draft
-priority: P2
+priority: P1
 owner: relixiaobo
+executor: cc-2
 created: 2026-06-08
 updated: 2026-06-09
 ---
@@ -254,6 +255,36 @@ These gate this plan's spine (storage/recall OQs live in [[agent-data-model]]):
    ("here's your record") render; leaning second (keeps the human as authority over identity).
 
 # Phasing
+
+**Execution (complete-per-PR).** cc-2's deliverable = **Phase 1 (render) + Phase 2
+(Dream) as ONE complete PR** (`cc-2/memory-model`): a person-neutral writer (Dream)
+feeding a reader-relative render, verifiable end-to-end (chat → Dream consolidates
+person-neutral facts → render injects the briefing). **Phase 3 (user-as-agent) is
+NOT in this PR** — greenlit but gated on ratifying the §4 extension into
+[[agent-data-model]] first (interface-first, a separate PR). No storage-shape or
+protocol change: `MemoryEntry` / `recall` / the memory + `dream.completed` event
+types already exist in `agentEventLog.ts`.
+
+**File scope (the Draft-PR claim):**
+- *Render* — `src/main/agentRuntime.ts`: replace `buildMemoryReminder` /
+  `formatMemoryReminder` / `uniqueMemoryEntries` (the per-turn `<agent-memory>`
+  build) with the select→render briefing; it flows out through
+  `buildUserPromptMessage` / `buildTurnReminderBlocks`. Reuse
+  `src/core/agentAttachments.ts` (`systemReminder` / `isHiddenAgentContextBlock`)
+  read-only.
+- *Dream* — `src/main/agentDreamExtraction.ts` (extraction request / parse / source
+  merge + the subject-elided writer contract) + `src/main/agentRuntime.ts`
+  `applyDreamMemoryActions` (add / update / invalidate on the existing events +
+  watermark). Coordinate any `dream.completed.changes` rename across its consumers.
+- Does **not** touch `src/core/{agentEventLog,types,commands}.ts` or the launcher
+  files `cc` holds — disjoint from cc's in-flight launcher work.
+
+**Verification:** typecheck + `test:core` (memory/dream unit tests) + a real run:
+chat, trigger Dream, confirm the rendered `<principal>` / `<self>` briefing appears
+with correct person and that update/invalidate fold correctly. Cache: the memory
+block injects once and mid-session updates ride the volatile tail; the [3] prefix
+is only re-anchored at compaction (§2) — measure (A9) before adding any extra
+re-anchor trigger.
 
 - [ ] **Phase 1 — render.** Replace `formatMemoryReminder`/`<agent-memory>` with the
       select→render briefing (§2): XML zones, person-neutral storage + reader-relative render,
