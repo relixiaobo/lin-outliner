@@ -588,6 +588,18 @@ Events should include:
 
 ## Rollout
 
+**Execution (complete-per-PR).** Shape (b): each stage below is an **independent
+complete capability shipped as its own PR** — the ordering is a safety/permission
+ramp and dependency order, not one feature sliced across stages. Ship each
+capability end-to-end within its PR (e.g. Stage 3 = the `config` write tool *plus*
+its approval cards, version checks, and runtime write path — never the tool
+without its approval UI). Recovery (snapshots + rollback) and curation are
+**separate** complete features, not one Stage-5 bundle; a dry-run curator is a
+complete PR only if dry-run is the shipped behavior, with the live curator a later
+complete PR. **Landed (M1, #153):** Stage 1 self-observation + the Stage 3
+`config` tool. **Deferred (PM, 2026-06-09):** Stages 4–6 (prompt hooks, recovery,
+curation, command hooks).
+
 ### Stage 1: Read-Only Self-Observation
 
 - Add `runtime_status`.

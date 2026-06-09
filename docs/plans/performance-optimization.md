@@ -61,6 +61,14 @@ Concretely, in priority order:
 Severity = impact at scale. Effort = rough build size. "Unlocked by P1" means the
 fix is mostly free once stable per-node identity exists in the renderer.
 
+**Execution (complete-per-PR).** Shape (b): each tier item (P0-1, P0-2, P1,
+P2-1…, the P3 items) is an **independent complete optimization shipped as its own
+PR** — the tiers are priority + dependency order, not one optimization sliced
+across PRs. P1's interface-first step is the shared-surface carve-out (the
+delta-projection *feature* still ships complete: core emit + renderer ingestion
+together). "Unlocked by P1" is a measurement/dependency relation, not a partial
+slice — a P3 item still ships whole.
+
 ---
 
 ## The cross-cutting insight (why P1 is the keystone)

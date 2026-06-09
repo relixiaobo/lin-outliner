@@ -282,26 +282,30 @@ for its own plan + research. We deliberately do not speculate its shape here.
 - `remote-url` `ReferenceTarget` kind: confirm interface-first ordering with
   whoever owns `src/core/types.ts` at S6 time.
 
-## Stages (one PR, dependency-ordered commits)
+## Complete PRs (dependency-ordered)
 
-Each stage = a reviewable, bisectable slice. The whole PR is **blocked on**
-`workspace-tabs-to-single-pane`. Gate: protocol/shared + UI → `/code-review
-ultra` + visual verification (light + dark), reviewed stage-by-stage.
+**Execution (complete-per-PR).** Shape (b): each PR below is a complete, usable
+preview capability — not a partial slice. The shell alone isn't independently
+useful, so it bundles with the cheap web renderers into the first PR; each later
+renderer class is a complete feature on its own ("PDF preview works", "Office
+preview works"). The whole line is **blocked on**
+`workspace-tabs-to-single-pane`. Gate per PR: protocol/shared + UI → `/code-review
+ultra` + visual verification (light + dark).
 
-- [ ] **S1 — Skeleton.** `local://` protocol + main path-read/validate;
-  `PreviewSource(file)`; preview pane shell (back / file identity /
-  source-aware open-externally / loading·error·unsupported); renderer registry +
-  `fallback` metadata-card entry; unified click router wired into all entry
-  points (coverage checklist). *Outcome: every file opens the same pane with at
-  least the card — the long tail is usable immediately.*
-- [ ] **S2 — Web-native cheap.** text/code (shiki), markdown
-  (react-markdown + DOMPurify), images (SVG-as-img), CSV/TSV.
-- [ ] **S3 — PDF.** pdfjs-dist → canvas; local worker; same-origin serving;
+- [ ] **PR 1 — Shell + web-native renderers (the first usable feature).**
+  `local://` protocol + main path-read/validate; `PreviewSource(file)`; preview
+  pane shell (back / file identity / source-aware open-externally /
+  loading·error·unsupported); renderer registry + `fallback` metadata-card entry;
+  unified click router wired into all entry points (coverage checklist); plus the
+  cheap web-native renderers — text/code (shiki), markdown (react-markdown +
+  DOMPurify), images (SVG-as-img), CSV/TSV. *Outcome: every file opens the pane
+  and the common types render — a complete, usable preview.*
+- [ ] **PR 2 — PDF.** pdfjs-dist → canvas; local worker; same-origin serving;
   per-type toolbar (page/zoom).
-- [ ] **S4 — Media.** `<video>`/`<audio>` + `local://` Range streaming; codec
+- [ ] **PR 3 — Media.** `<video>`/`<audio>` + `local://` Range streaming; codec
   failure → fallback card.
-- [ ] **S5 — Office.** docx (mammoth/docx-preview), xlsx (SheetJS + react-data-grid;
+- [ ] **PR 4 — Office.** docx (mammoth/docx-preview), xlsx (SheetJS + react-data-grid;
   CSV reuse), **pptx (best-effort; library selection + verification first)**.
-- [ ] **S6 — url-reader.** `PreviewSource(url)`; main fetch + defuddle + DOMPurify
+- [ ] **PR 5 — url-reader.** `PreviewSource(url)`; main fetch + defuddle + DOMPurify
   + remote-image policy; router url arm; "Open original" escape; `remote-url`
   `ReferenceTarget` kind interface-first.

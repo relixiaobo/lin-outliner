@@ -361,6 +361,15 @@ directional calls to confirm with the PM (escalate-don't-guess):
 
 ## Checklist
 
+**Execution (complete-per-PR).** Shape (b): Phase A (the `<EmptyState>` /
+`<ErrorState>` primitive **plus** its core consumer migrations — popover, subagent
+panel, session list, debug panel, launcher) is a complete feature and the
+foundation the rest build on (A7). Phases B–E are **independent complete
+improvements**, each its own PR, each visibly verifiable on its own (B outliner
+empty states, C loading policy, D error unification, E aborted-turn marker); they
+depend only on A's primitive. No PR ships the primitive alone or a half-migrated
+surface.
+
 Phase A — primitive (no #118 dependency):
 - [ ] `src/renderer/ui/primitives/FeedbackState.tsx` — `<EmptyState>` +
   `<ErrorState>` per §1 API.

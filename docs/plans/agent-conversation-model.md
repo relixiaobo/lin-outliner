@@ -1007,6 +1007,18 @@ target surface directly; do not preserve old session-shaped protocol branches.
 
 ## Phases (revised effort)
 
+**Execution (complete-per-PR).** This is a large subsystem, so the plan is shape
+(b): a **set of independent complete features**, each its own PR, dependency-
+ordered — *not* one feature sliced across phases. The table is the roadmap; each
+named capability (identity record, DM, Channels, memory foundation, memory v2 +
+recall, task panel, notifications, multi-member routing) ships as a complete,
+verifiable PR. Foundation/protocol seams (the identity tuple, the `actor` field)
+land interface-first as their own infra PRs (the shared-surface carve-out), but no
+*feature* PR ships a partial slice that only becomes useful in a later one.
+**Landed:** M0/M0.5 seams + M1 spine and M2 background visibility (task panel +
+notifications). **Remaining:** mid-run `needs-input` (deferred by decision) and the
+M3 multi-member spine — each its own complete PR.
+
 | Phase | Scope | Honest size |
 |---|---|---|
 | **P0** | Give the main agent a stable identity record — the `sourceKind:sourceInstanceId:name` **tuple** ([[agent-data-model]] §3), not a bare `name` — that memory keys off. **Not** the registry refactor. Pinning the full tuple here is what avoids the cross-project same-name memory collision (a bare `name` would reintroduce it). | small (incl. the tuple decision) |

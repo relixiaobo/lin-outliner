@@ -524,7 +524,11 @@ Deferred at the PM's instruction; resolve at build kickoff, not now:
 - Is "clarify / discuss" a normal steering message that keeps the question open, or
   a dedicated `feedback` action on the pending question?
 
-Recommended build sequencing (WIP discipline / shared-interface-first): (1) protocol
-+ tool + event-log contract as an interface-first PR; (2) renderer pending-interaction
-state + base UI; (3) refs/attachments in answers; (4) composer-state cleanup +
-edit-message alignment.
+**Execution (complete-per-PR).** v1 (main-agent-only ask + base answer) shipped in
+M1 (#153). For the **full version**: the protocol + tool + event-log contract
+lands first as an interface-first PR (the standard shared-surface carve-out, not a
+feature slice); then the rest of the feature — renderer pending-interaction state +
+UI, refs/attachments in answers, the clarify/discuss action, and the
+composer-state / edit-message alignment — ships as **one complete, independently
+verifiable PR**. Do not land the renderer state, refs/attachments, or the
+clarify action as separate partial slices that aren't usable on their own.

@@ -92,9 +92,13 @@ restart:
 
 ## Design
 
-Three slices. Slice 1 (main) is the foundation; Slice 2 (renderer UI) builds on
-it; Slice 3 is cleanup that can land independently. Slices 1+3 can start in
-parallel; Slice 2 depends on Slice 1's IPC.
+**Execution (complete-per-PR): one feature, landed via #167.** The three slices
+below are **build-order within that single shipped feature** (cf. A7), not
+separate partial releases: Slice 1 (main) is the write/hot-reload foundation;
+Slice 2 (renderer UI) builds on its IPC; Slice 3 (directories UI +
+disable-by-identity) is independent cleanup that rode along. Any remaining
+follow-up (e.g. the review-gate items) is its own complete PR, never a partial
+slice.
 
 ### Slice 1 — registry write + hot-reload (main)
 

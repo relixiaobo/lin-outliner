@@ -88,7 +88,13 @@ never keyboard-focused, so suppression is correct per B8.
 
 ### Migration list (~18 classes)
 
-**Wave 1 (this PR — non-settings):**
+**Execution (complete-per-PR).** Shape (a): the primitive **plus every call-site
+migration** ship in **one PR** — introducing `<Button>` while leaving call sites
+on the old classes would be a partial slice. (The earlier Wave 1 / Wave 2 split
+existed only because the settings buttons were blocked on #118; that gate is now
+merged, so the waves collapse into one.)
+
+**Migrate to variants:**
 - `confirm-dialog-confirm` → `primary` *(or neutral — Q-A)*; `confirm-dialog-cancel`
   → `ghost`/`secondary`; `.is-danger` → `danger tone=solid` (and gains a hover).
 - `launcher-actionbar-primary` → `primary`/`ghost`; `launcher-actionbar-item` → `ghost`.
@@ -96,8 +102,6 @@ never keyboard-focused, so suppression is correct per B8.
 - `command-action-button` → `ghost`.
 - `agent-subagent-send-button` → `primary size=sm`; `-stop-button` → `danger size=sm`;
   `-small`/`-transcript-button` → `ghost size=sm`.
-
-**Wave 2 (settings buttons — #118 merged, gate OPEN; may collapse into Wave 1):**
 - `agent-settings-primary`/`-secondary`/`-danger`, `settings-sheet-primary`/
   `-secondary`/`-danger`/`-cancel-test` → the matching variants.
 

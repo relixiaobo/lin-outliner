@@ -81,6 +81,13 @@ fix, and the approach. Defects 1–3 share the `useResizableLayout` /
 `useWorkspaceLayout` hooks and the canvas-width measurement, so they are designed
 together; 4–6 are independent.
 
+**Execution (complete-per-PR).** Shape (b): not one "responsive" feature sliced
+into seven steps, but a set of complete fixes. **D1–D3 ship together as one
+complete PR** (they're interdependent through the shared width hooks — D1 without
+D2 leaves resize broken, so none is shippable alone). **D4, D5, D6, D7 each ship
+as their own complete PR** (independent localized fixes). No PR lands a partial
+slice that needs a follow-up to be coherent.
+
 ### D1 — Rail sum is never validated against window width (the pane-crush bug)
 
 **Current behavior.** `sidebarWidth` and `agentWidth` are independent React state

@@ -372,3 +372,17 @@ one question lives in one document; every document has a lifecycle.
 When a plan is implemented, move its **Design** into the relevant `spec/`
 document, flip status to `done`, and move it to `archive/`. A plan is not a place
 for daily progress notes — those go in commit messages.
+
+**Each PR ships a complete feature — no partial slices.** A plan's execution
+units must each be a complete, independently-verifiable thing — a refactor, an
+optimization, or a new capability that works and can be reviewed on its own.
+Never plan a PR that only lays groundwork a *later* PR makes useful ("Phase 1
+scaffold → Phase 2 fills it in"). Every plan is therefore exactly one of: **(a)
+ONE complete feature in one PR** — any internal "phases/slices/stages" are
+build-order *within* that single PR (cf. A7 foundation-before-consumers), not
+separate releases and never a standalone partial MVP; or **(b) a SET of
+independent complete features**, each its own PR, ordered only by genuine
+dependency or priority, each shippable alone. When you write a plan, say which
+shape it is. Pre-release we carry **no migration / back-compat / legacy
+readers**: on a format change, wipe `~/.lin-outliner-*` dev userData and delete
+the old reader rather than ship a migration.
