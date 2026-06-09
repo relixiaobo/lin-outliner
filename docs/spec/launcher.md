@@ -21,14 +21,20 @@ navigation commands.
 - **Prewarmed singleton.** Created hidden at startup and shown/hidden on the
   hotkey — never recreated, so the hotkey-to-visible path is a native `show()`.
   `backgroundThrottling: false` keeps the hidden renderer painting-ready.
-- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop`): a non-activating floating
-  overlay that can take key focus for typing without activating the app. It joins
-  all Spaces (incl. other apps' full-screen) via `setVisibleOnAllWorkspaces`, but
-  **only while visible** — set on `show`, cleared on `hide`. A window that
-  permanently joins all Spaces makes macOS swallow the first ⌘Q (AppKit skips
-  `applicationShouldTerminate:`, so the before-quit flush never fires and the app
-  needs two presses); toggling it keeps the common quit path — launcher hidden —
-  free of that bug.
+- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'pop-up-menu'`): a
+  non-activating floating overlay that can take key focus for typing without
+  activating the app. It joins all Spaces (incl. other apps' full-screen) via
+  `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true,
+  skipTransformProcessType: true })`. The all-Spaces behavior would otherwise
+  transform the app's process type to `UIElementApplication` (accessory), which
+  **hides the macOS dock icon** (and the ⌘Tab entry) — electron#26350;
+  `skipTransformProcessType: true` is Electron's purpose-built option to suppress
+  that transform, so the **dock icon + ⌘Tab entry survive** while the launcher
+  floats over fullscreen. The behavior is toggled **only while visible** — set on
+  `show`, cleared on `hide`. (The separate "first ⌘Q needs two presses" bug is NOT
+  caused by the launcher — it is the app's `before-quit` flush handler in
+  `main.ts`, which now `process.exit(0)`s after the flush instead of re-issuing a
+  graceful `app.quit()` that lingered for seconds.)
 - **Fixed golden rectangle** (760 × ~470), top-biased placement (0.18 of the
   work area) on the display under the cursor; never resizes to its result count
   (the body scrolls). Native 16px corner via the `window_corner` addon.

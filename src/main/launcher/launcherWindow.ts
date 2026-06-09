@@ -93,12 +93,14 @@ export function createLauncherWindow(deps: LauncherWindowDeps): BrowserWindow {
   deps.harden(win.webContents);
   // Float above normal windows, including other apps' full-screen spaces.
   win.setAlwaysOnTop(true, 'pop-up-menu');
-  // NOTE: the all-Spaces collection behavior (setVisibleOnAllWorkspaces) is
-  // deliberately NOT set here. A window that permanently joins all Spaces makes
-  // macOS swallow the first ⌘Q — the app needs two presses to quit, because
-  // AppKit never fires applicationShouldTerminate: (our before-quit flush) on the
-  // first press. Since this prewarmed window lives hidden almost all the time, we
-  // toggle the behavior on show and clear it on hide instead (see show/hide).
+  // NOTE: the all-Spaces / over-fullscreen float (setVisibleOnAllWorkspaces) is
+  // deliberately NOT set here at creation — it is toggled on show and cleared on
+  // hide (see show/hide). The all-Spaces collection behavior transforms the app's
+  // process type to UIElementApplication (accessory), which hides the macOS dock
+  // icon AND makes AppKit swallow the first ⌘Q. We suppress that transform with the
+  // `skipTransformProcessType: true` option (Electron's purpose-built fix for
+  // electron#26350) so the dock icon + ⌘Tab + first-⌘Q-quits all survive; keeping
+  // the show/hide toggle on top of that is belt-and-suspenders for the quit path.
   // Custom native corner (matches the CSS surface curve). No-op off macOS / if the
   // addon is unbuilt — the window just keeps the OS-default corner.
   applyMacWindowCorner(win, LAUNCHER_CORNER_RADIUS);
@@ -139,10 +141,12 @@ export async function showLauncherWindow(beforeFocus?: () => Promise<void> | voi
   win.setBounds({ x: originX, y: originY, width: LAUNCHER_WIDTH, height: LAUNCHER_HEIGHT });
   // Re-assert the native corner: setBounds / re-show can drop the custom radius.
   applyMacWindowCorner(win, LAUNCHER_CORNER_RADIUS);
-  // Join all Spaces (incl. other apps' full-screen) only while visible. Clearing
-  // this on hide keeps the common ⌘Q path (launcher hidden) free of the AppKit
-  // first-quit-swallow bug — see the note in createLauncherWindow + hide below.
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Join all Spaces (incl. other apps' full-screen) only while visible.
+  // `skipTransformProcessType: true` keeps the app a regular foreground process —
+  // without it the all-Spaces behavior flips the app to accessory, dropping the
+  // dock icon and swallowing the first ⌘Q (electron#26350). Clearing on hide keeps
+  // the common ⌘Q path free of any residual all-Spaces quit interference.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   // Visible immediately, but do NOT steal focus yet — keep the old app frontmost
   // so beforeFocus can read it.
   win.showInactive();
@@ -164,9 +168,9 @@ export function hideLauncherWindow(): void {
   const win = getLauncherWindow();
   if (!win?.isVisible()) return;
   win.hide();
-  // Drop the all-Spaces collection behavior while hidden so the prewarmed window
-  // doesn't make macOS swallow the first ⌘Q (set again on the next show).
-  win.setVisibleOnAllWorkspaces(false);
+  // Drop the all-Spaces behavior while hidden (set again on the next show). Pass
+  // skipTransformProcessType so the hide can't transform the process either.
+  win.setVisibleOnAllWorkspaces(false, { skipTransformProcessType: true });
 }
 
 export async function toggleLauncherWindow(beforeFocus?: () => Promise<void> | void): Promise<void> {

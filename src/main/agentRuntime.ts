@@ -2213,6 +2213,21 @@ export class AgentRuntime {
     this.commandSchedulerTimer = null;
   }
 
+  /**
+   * Settle in-flight best-effort writes so a force-exit on quit (see main.ts's
+   * before-quit, which `app.exit`s after this) doesn't truncate them mid-write:
+   * each session's event-log append (the integrity-critical fast local write),
+   * plus the dream-extraction and command-sweep tails. The latter two are
+   * crash-safe — their watermarks only advance on success, so a cut dream/sweep
+   * simply re-fires next launch — so the CALLER SHOULD bound this with a timeout;
+   * a slow in-flight dream (an LLM call) must not block ⌘Q.
+   */
+  async drainPendingWrites(): Promise<void> {
+    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
+    for (const session of this.sessions.values()) pending.push(session.pendingEventAppend);
+    await Promise.allSettled(pending);
+  }
+
   // Catch-up hook for app launch (see ready()) and `powerMonitor.resume` (wired
   // in main.ts). Idle-safe: queued behind any in-flight sweep.
   runCommandCatchUp() {
