@@ -2102,11 +2102,18 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', (event) => {
     if (quitAfterFlush) return;
+    // Defer termination until the document flush completes, then exit the process
+    // directly. We must NOT re-issue `app.quit()`: after preventDefault() cancels
+    // the OS-initiated ⌘Q terminate, Electron's graceful re-quit takes several
+    // seconds to actually exit the process (it lingers alive with windows closed),
+    // so ⌘Q reads as "doesn't quit until I press it again". The document is already
+    // persisted once the flush resolves, so `process.exit(0)` ends it immediately —
+    // the only on-quit cleanup is the hotkey unregister, which the OS does on exit.
     event.preventDefault();
     quitAfterFlush = true;
     agentRuntime.stopCommandScheduler();
     void documentService.flushPendingChanges()
       .catch((error) => console.error(error))
-      .finally(() => app.quit());
+      .finally(() => process.exit(0));
   });
 }

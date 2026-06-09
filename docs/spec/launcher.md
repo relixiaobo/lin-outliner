@@ -27,12 +27,14 @@ navigation commands.
   `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true,
   skipTransformProcessType: true })`. The all-Spaces behavior would otherwise
   transform the app's process type to `UIElementApplication` (accessory), which
-  **hides the macOS dock icon AND makes AppKit swallow the first ⌘Q** (both are the
-  same root cause — electron#26350); `skipTransformProcessType: true` is Electron's
-  purpose-built option to suppress that transform, so the **dock icon, ⌘Tab entry,
-  and first-⌘Q-quits all survive**. The behavior is additionally toggled **only
-  while visible** — set on `show`, cleared on `hide` — as belt-and-suspenders so the
-  common quit path (launcher hidden) carries no residual all-Spaces state.
+  **hides the macOS dock icon** (and the ⌘Tab entry) — electron#26350;
+  `skipTransformProcessType: true` is Electron's purpose-built option to suppress
+  that transform, so the **dock icon + ⌘Tab entry survive** while the launcher
+  floats over fullscreen. The behavior is toggled **only while visible** — set on
+  `show`, cleared on `hide`. (The separate "first ⌘Q needs two presses" bug is NOT
+  caused by the launcher — it is the app's `before-quit` flush handler in
+  `main.ts`, which now `process.exit(0)`s after the flush instead of re-issuing a
+  graceful `app.quit()` that lingered for seconds.)
 - **Fixed golden rectangle** (760 × ~470), top-biased placement (0.18 of the
   work area) on the display under the cursor; never resizes to its result count
   (the body scrolls). Native 16px corner via the `window_corner` addon.
