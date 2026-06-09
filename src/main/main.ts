@@ -2068,12 +2068,14 @@ if (!app.requestSingleInstanceLock()) {
       onBlurHide: dismissLauncher,
     });
     // Tenon is a regular foreground app (dock icon + menu bar). Creating the
-    // launcher as a non-activating NSPanel, plus launching the dev binary straight
-    // from the terminal (not via LaunchServices), can leave the app in macOS
-    // "accessory" activation policy (background-only → no dock icon). Re-assert the
-    // regular policy after the launcher exists so the dock icon is always present;
-    // this does NOT affect the launcher panel's per-window non-activating behavior.
-    if (process.platform === 'darwin') void app.dock?.show();
+    // launcher as a non-activating NSPanel — and, in dev, launching the binary
+    // straight from the terminal (not via LaunchServices) — can leave the app in
+    // macOS "accessory" activation policy (background-only → no dock icon, no ⌘Tab).
+    // `app.dock.show()` does NOT reliably restore it (it only un-does an explicit
+    // `dock.hide()`); `setActivationPolicy('regular')` forces the app back to a
+    // regular foreground app. Does not affect the launcher panel's per-window
+    // non-activating behavior.
+    if (process.platform === 'darwin') app.setActivationPolicy('regular');
     const hotkey = registerLauncherHotkey(() => void toggleLauncher());
     launcherHotkeyAccelerator = hotkey.accelerator;
     if (hotkey.accelerator) console.log(`[launcher] global hotkey: ${hotkey.accelerator}`);

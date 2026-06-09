@@ -384,6 +384,11 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **launcher: Tenon dock icon restored** (main, fast-track) — the packaged app ran in macOS "accessory"
+  activation policy (window + menu bar, but no dock icon / no ⌘Tab) — a side effect of the always-present
+  non-activating launcher NSPanel. `app.dock.show()` was insufficient; replaced with
+  `app.setActivationPolicy('regular')` after the launcher is created. typecheck green; needs a packaged-build
+  eyeball to confirm the icon appears.
 - **launcher: first ⌘Q quits the packaged app** (cc, PR #170) — the prewarmed global launcher window
   permanently set `setVisibleOnAllWorkspaces(true)` (even while hidden), so AppKit skipped
   `applicationShouldTerminate:` on the first ⌘Q and the `before-quit` flush never fired (two presses needed).

@@ -12,6 +12,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Tenon shows its dock icon again (fast-track)** — the packaged app ran in macOS "accessory" activation
+  policy (window + menu bar present, but no dock icon and no ⌘Tab entry) — a side effect of the always-present
+  non-activating launcher NSPanel. The prior `app.dock.show()` re-assert did not restore it (that API only
+  un-does an explicit `dock.hide()`); replaced with `app.setActivationPolicy('regular')` right after the
+  launcher is created, which forces the app back to a regular foreground app. Verified by typecheck; the dock
+  icon itself needs a one-time packaged-build eyeball (same as the ⌘Q fix).
 - **First ⌘Q quits the packaged app (PR #170)** — the prewarmed global launcher window called
   `setVisibleOnAllWorkspaces(true)` at creation and kept it forever, even while hidden; a window that
   permanently joins all Spaces makes AppKit skip `applicationShouldTerminate:` on the first ⌘Q, so the
