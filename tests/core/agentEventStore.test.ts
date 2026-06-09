@@ -487,6 +487,13 @@ describe('agent event store', () => {
         fact: 'Legacy memory should not cross the clean cut.',
         sources: [{ conversationId: sessionId }],
       });
+      // The user pool is a first-class principal pool; the clean cut must wipe it too (review #10).
+      const userPrincipal: AgentPrincipal = { type: 'user', userId: 'local-user' };
+      await store.addMemoryEntry(userPrincipal, {
+        id: 'memory-legacy-user',
+        fact: 'Legacy user fact should not cross the clean cut either.',
+        sources: [{ conversationId: sessionId }],
+      });
 
       await mkdir(path.join(root, 'sessions', 'legacy-session'), { recursive: true });
       await writeFile(path.join(root, 'indexes', 'session-index.json'), JSON.stringify({
@@ -510,6 +517,7 @@ describe('agent event store', () => {
       await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
       await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
       await expect(restarted.readMemoryEvents(principal)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
     });
   });
 

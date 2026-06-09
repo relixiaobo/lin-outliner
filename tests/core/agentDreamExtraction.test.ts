@@ -157,6 +157,8 @@ describe('agent dream extraction', () => {
     expect(text).toContain("the agent's durable self-model");
     expect(text).toContain('renders as "You <fact>"');
     expect(text).toContain('name the third party instead');
+    // The inference example is base-form so it renders "You have noticed that…".
+    expect(text).toContain('an inference reads "have noticed that…"');
   });
 
   test('the user-subject prompt frames facts as the user profile (The user ...)', () => {
@@ -170,6 +172,11 @@ describe('agent dream extraction', () => {
     expect(text).toContain('renders as "The user <fact>"');
     // The user profile must not absorb the agent's own working habits.
     expect(text).toContain("the agent's separate self-model");
+    // Examples must be third-person singular so they render grammatically under "The user …" —
+    // never base-form agent voice ("The user have noticed…"). (Review #8.)
+    expect(text).toContain('an inference reads "has noticed that…"');
+    expect(text).toContain('a stated preference reads\n  "has said they want…"');
+    expect(text).not.toContain('have noticed that…');
   });
 
   test('defaults to the agent subject when none is given', () => {

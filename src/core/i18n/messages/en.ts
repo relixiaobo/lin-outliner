@@ -197,6 +197,8 @@ export const en = {
       empty: 'No remembered facts yet.',
       activeStatus: 'Active',
       invalidatedStatus: 'Forgotten',
+      poolAgentLabel: 'Assistant',
+      poolUserLabel: 'You',
       createdAt: ({ date }: { date: string }) => `Created ${date}`,
       editFactLabel: 'Memory fact',
       editEntry: 'Edit memory',

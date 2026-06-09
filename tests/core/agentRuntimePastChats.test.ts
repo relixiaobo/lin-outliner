@@ -1482,4 +1482,71 @@ describe('agent runtime past chats integration', () => {
     expect(entries).toEqual([]);
   });
 
+  test('the Settings management surface lists and forgets across the agent and user pools', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-manage-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-manage-data-'));
+    roots.push(localRoot, dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    // One fact in each managed pool. The user-Dream writes the user pool, so it must be
+    // inspectable/editable through the same surface as the agent self-model (review #6).
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
+      id: 'memory-agent-managed',
+      fact: 'verify a worktree HEAD before trusting a gate run',
+      sources: [{ conversationId: 'past-conversation' }],
+      createdAt: 40,
+    });
+    await store.addMemoryEntry(USER_PRINCIPAL, {
+      id: 'memory-user-managed',
+      fact: 'prefers terse code reviews',
+      sources: [{ conversationId: 'past-conversation' }],
+      createdAt: 41,
+    });
+
+    const script = scriptedStream([], () => undefined);
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    // listMemory unions both pools; each entry's principal distinguishes them.
+    const listed = await runtime.listMemory();
+    const byId = new Map(listed.map((entry) => [entry.id, entry]));
+    expect(byId.get('memory-agent-managed')?.principal).toEqual(agentPrincipal('built-in:tenon:assistant'));
+    expect(byId.get('memory-user-managed')?.principal).toEqual(USER_PRINCIPAL);
+
+    // forgetMemory resolves the owning pool from the id — a user-pool id forgets in the user pool.
+    const forgotten = await runtime.forgetMemory('memory-user-managed');
+    expect(forgotten?.principal).toEqual(USER_PRINCIPAL);
+    expect(forgotten?.status).toBe('invalidated');
+    // Read disk truth through a fresh store (the seeding `store` has a stale projection cache).
+    const disk = new AgentEventStore(dataRoot);
+    const userActive = await disk.listMemoryEntries(USER_PRINCIPAL);
+    expect(userActive.map((entry) => entry.id)).not.toContain('memory-user-managed');
+    // The agent pool is untouched.
+    const agentActive = await disk.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
+    expect(agentActive.map((entry) => entry.id)).toContain('memory-agent-managed');
+  });
+
 });

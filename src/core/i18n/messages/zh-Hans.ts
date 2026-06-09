@@ -166,6 +166,8 @@ export const zhHans: PartialMessages = {
       empty: '还没有已记住的事实。',
       activeStatus: '有效',
       invalidatedStatus: '已忘记',
+      poolAgentLabel: '助手',
+      poolUserLabel: '你',
       createdAt: ({ date }) => `创建于 ${date}`,
       editFactLabel: '记忆事实',
       editEntry: '编辑记忆',

@@ -729,8 +729,15 @@ export class AgentEventStore {
   }
 
   private async cleanAgentMemoryLogs(): Promise<void> {
+    // Wipe every memory pool: each agent's `agents/<id>/memory/` AND the user pools under
+    // `principals/user-*/` (review #10 — the user pool is a first-class principal pool, not a
+    // legacy artifact, so the legacy-layout wipe must drop it alongside the agent pools or stale
+    // user facts survive a clean cut). `principals/` holds nothing but per-user pools, so it is
+    // removed wholesale.
     const agentsDir = this.paths('__placeholder__').agentsDir;
+    const principalsDir = path.join(this.rootDir, 'principals');
     try {
+      await rm(principalsDir, { recursive: true, force: true });
       const entries = await readdir(agentsDir, { withFileTypes: true });
       await Promise.all(entries
         .filter((entry) => entry.isDirectory())

@@ -271,7 +271,7 @@ ${framing.whatToSave}
 How to write a fact (these are read back verbatim into context):
 ${framing.howToWrite}
 - Make authority legible in the wording, not as a flag: a stated preference reads
-  "${framing.statedExample}"; an inference reads "have noticed that…".
+  "${framing.statedExample}"; an inference reads "${framing.inferenceExample}".
 - Keep each fact one self-contained sentence.
 
 How to consolidate (prefer reshaping over piling up):
@@ -310,7 +310,10 @@ interface DreamSubjectFraming {
   role: string;
   whatToSave: string;
   howToWrite: string;
+  /** A stated-authority example predicate, in the subject's render person. */
   statedExample: string;
+  /** An inferred-authority example predicate, in the subject's render person. */
+  inferenceExample: string;
 }
 
 function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFraming {
@@ -322,15 +325,17 @@ function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFramin
         '- Do NOT save the assistant\'s own working habits or conventions — those belong to the agent\'s separate self-model, not the user profile.',
       ].join('\n'),
       howToWrite: [
-        '- Write a subject-elided predicate in BASE form about the user — no leading subject. The',
-        '  implied subject is the user, so it renders as "The user <fact>".',
+        '- Write a subject-elided predicate in THIRD-PERSON SINGULAR present about the user — no',
+        '  leading subject. The implied subject is the user, so it renders as "The user <fact>".',
         '  Good: "prefers terse code reviews"',
         '  Good: "wants everything in the repo written in English"',
         '  Bad:  "The user prefers terse reviews"  (leading subject)',
+        '  Bad:  "prefer terse reviews"            (base form; renders "The user prefer…")',
         '  Bad:  "verify a worktree\'s HEAD…"       (that is the agent\'s habit, wrong pool)',
         '- Name third parties other than the user explicitly; never bake in a pronoun for the subject.',
       ].join('\n'),
-      statedExample: 'have said they want…',
+      statedExample: 'has said they want…',
+      inferenceExample: 'has noticed that…',
     };
   }
   return {
@@ -349,6 +354,7 @@ function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFramin
       '- Name third parties explicitly (e.g. the user by name); never bake in a pronoun for the subject.',
     ].join('\n'),
     statedExample: 'work with lixiaobo, who has said he wants…',
+    inferenceExample: 'have noticed that…',
   };
 }
 
