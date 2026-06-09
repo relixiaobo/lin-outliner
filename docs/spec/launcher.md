@@ -21,9 +21,14 @@ navigation commands.
 - **Prewarmed singleton.** Created hidden at startup and shown/hidden on the
   hotkey — never recreated, so the hotkey-to-visible path is a native `show()`.
   `backgroundThrottling: false` keeps the hidden renderer painting-ready.
-- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop`, `visibleOnAllWorkspaces`
-  incl. full-screen): a non-activating floating overlay that can take key focus
-  for typing without activating the app.
+- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop`): a non-activating floating
+  overlay that can take key focus for typing without activating the app. It joins
+  all Spaces (incl. other apps' full-screen) via `setVisibleOnAllWorkspaces`, but
+  **only while visible** — set on `show`, cleared on `hide`. A window that
+  permanently joins all Spaces makes macOS swallow the first ⌘Q (AppKit skips
+  `applicationShouldTerminate:`, so the before-quit flush never fires and the app
+  needs two presses); toggling it keeps the common quit path — launcher hidden —
+  free of that bug.
 - **Fixed golden rectangle** (760 × ~470), top-biased placement (0.18 of the
   work area) on the display under the cursor; never resizes to its result count
   (the body scrolls). Native 16px corner via the `window_corner` addon.
