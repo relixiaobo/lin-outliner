@@ -1,10 +1,17 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-06-08
 updated: 2026-06-09
 ---
+
+> **Shipped as PR #167** (2026-06-08). Design folded into
+> `docs/spec/agent-subagent-runtime-plan.md` (Authoring & hot-reload / Disabling by
+> identity / Fresh-subagent system prompt). The four review-gate follow-ups
+> (parser consolidation, read-only render of `additionalAgentDirectories` agents,
+> out-of-catalog `effort` → `off`, `TOOL_CATALOG` guard test) live as small
+> fast-track items in `docs/TASKS.md`, not as open scope here. Kept for history.
 
 # Agent Authoring & Management
 
@@ -257,5 +264,6 @@ directories), mirroring how provider config and runtime settings already split.
 - [x] Spec: folded the authoring/management surface into
   `docs/spec/agent-subagent-runtime-plan.md` (registry → Authoring & hot-reload /
   Disabling by identity; Fresh Subagent → System prompt) per A6.
-- [ ] Gate (main agent): `/code-review`; add `/security-review` (renderer-driven
-  file write); visual verification (light + dark) for the new settings editor.
+- [x] Gate (main agent): max-effort `/code-review` + `/security-review` + visual verification
+  ran at the #167 gate (caught + fixed a symlink containment escape with a regression test;
+  `test:core` 720/0 + `test:renderer` 369/0).

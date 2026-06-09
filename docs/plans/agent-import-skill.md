@@ -182,11 +182,11 @@ date-align. Codify a **sampling strategy** for large files (never load whole —
 `file_read` limits aren't hit.
 
 **Dependency order:** the fidelity "default ask" UX wants
-`agent-ask-user-question-tool.md`, which **does not exist yet** (`grep
-ask_user_question src/main/` is empty). So either this skill lands *after* that
-tool, or it **degrades to plain conversational turns** (the agent asks in prose,
-the user replies) — the skill must not list `ask_user_question` in
-`allowed-tools` or assume it. Treat it as an enhancement, not a hard dependency.
+`ask_user_question`, which **now ships** (v1 landed in #153 —
+`src/main/agentAskUserQuestionTool.ts`). It can use it directly; or it
+**degrades to plain conversational turns** (the agent asks in prose, the user
+replies). Keep it a soft dependency — the skill must not list `ask_user_question`
+in `allowed-tools` or assume it. Treat it as an enhancement, not a hard dependency.
 
 ### Safety
 

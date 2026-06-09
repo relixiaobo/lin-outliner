@@ -660,17 +660,21 @@ Stage 3's permission/audit machinery.
 ## Implementation Checklist
 
 - [x] Define protocol types for self-maintenance tools.
-- [ ] Define review/approval card payloads beyond permission prompts.
 - [x] Add `runtime_status`.
 - [x] Add read-only `config` reads.
 - [x] Add read-only doctor workflow.
 - [x] Add accepted config write adapter for whitelisted settings.
 - [x] Persist applied config changes as `config.change` events.
 - [x] Route config writes through the permission layer.
-- [ ] Add dedicated review/approval event types beyond permission prompts.
-- [ ] Add review/approval card UI.
-- [ ] Add config base version/hash checks and write queue.
-- [ ] Add prompt-only hook registry (on the program F4 event bus — [[agent-program]]).
-- [ ] Add last-known-good config snapshots.
-- [ ] Add rollback events and UI.
+
+<!-- The remaining items below are PM-DEFERRED (2026-06-09) + security-sensitive — NOT a ready
+     lane; escalate the capability boundary before any build, and add /security-review at the gate.
+     Re-cut into COMPLETE features per AGENTS.md + the Rollout (§ "Stage 3 = … never the tool
+     without its approval UI"): each line is ONE shippable PR, not a scaffold-then-fill slice. -->
+- [ ] **Config-write review/approval feature (one complete PR):** approval-card payloads +
+      dedicated review/approval event types + card UI + base-version/hash checks + write queue,
+      shipped together (the `config` write tool is never delivered without its approval UI).
+- [ ] **Config recovery feature (one complete PR):** last-known-good snapshots + rollback events
+      + rollback UI, shipped together (a snapshot store without a rollback path delivers nothing).
+- [ ] Prompt-only hook registry (Stage 4, on the program F4 event bus — [[agent-program]]) — its own complete PR.
 - [ ] (Skill authoring + curation checklist → [[agent-skills-authoring]].)

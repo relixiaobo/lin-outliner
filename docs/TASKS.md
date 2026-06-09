@@ -102,10 +102,18 @@ forget), 3 IPC commands, a per-turn bounded `<agent-memory>` reminder (score-ran
 to 8), and a Memory settings UI. Per a PM scope call, the three event-log families (conversation/run/memory)
 were **unified onto one `AppendOnlySeqLog<TEvent>` primitive** (single-sourced serialize/read/tail — the #150
 tail-bug class now lives in one place — + seq/queue/cache + offset reads), and memory got a projected-state
-cache + churn-based compaction + clean-cut coverage. **Next: rest of M1** (canonical DM + Channels ·
-mixed-resolution memory retrieval · ask_user_question · config tool · skill self-authoring — the bulk of
-perceived value). Remaining needs-PM decisions are lower-priority (doc snapshot+delta, group
-default-`addressedTo` (M3), who-configures-whom (M3)). Escalate before behavior-changing code.
+cache + churn-based compaction + clean-cut coverage. **M1 is now substantially LANDED** (#153
+"complete agent M1" + follow-ups): canonical DM + Channels, mixed-resolution memory retrieval/compaction,
+`ask_user_question` v1, `config`/`runtime_status`/doctor tools, skill self-authoring v1 + `/skillify`,
+task panel (#160), notifications/attention M2 (#166), agent authoring (#167), memory render+Dream P1/P2
+(#172) — **all shipped**. What remains is **(a) feature-completion tails** on already-scaffolded tools
+(ask-user-question: clarify action + answer @refs/attachments; skills-authoring: NL save-as-skill +
+diff/preview + snapshot/rollback + sandbox gate), **(b) the M3 multi-agent spine** (rooms/POV/turn-taking/
+coordinator routing — gated on the agent-data-model §4 principal/membership foundation, cc-2's PR #173),
+**(c) memory Phase 3** (user-as-agent + sharing, cc-2, gated on §4), and **(d) PM-deferred self-mod M2**
+(review/approval + config recovery — security-sensitive, escalate before build). Remaining needs-PM
+decisions: doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3). Escalate before
+behavior-changing code.
 
 ### Command surface & capture
 
@@ -225,16 +233,14 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-authoring** (P2, M2, **in-progress — core shipped in #167**) — the user-facing
-  create / edit / duplicate / manage path for agent definitions (`AGENT.md`) landed (Form⇄Raw
-  editor, hot-reload, disable-by-identity, + subagent system-prompt unification). **Remaining
-  follow-ups** (from the #167 review gate): (a) **consolidate the two AGENT.md parsers** —
+- **agent-authoring follow-ups** (P2, *fast-track*) — the plan itself is **done** (core shipped
+  in #167; archived at `docs/plans/archive/agent-authoring.md`). Only four small #167-review-gate
+  cleanups remain as independent fast-track items: (a) **consolidate the two AGENT.md parsers** —
   `core/agentMarkdown.ts` vs the registry loader's own copy in `agentSubagents.ts` (byte-equal
   today, drift risk); (b) agents from `additionalAgentDirectories` show Save/Delete but every
   write rejects on containment → render them **read-only** like built-ins; (c) an `effort` value
   outside the 6 catalog options renders as `off` in the form `<select>`; (d) `TOOL_CATALOG` has
-  no compile-time link to the real tool registry → guard-test against `filterAgentTools`. See
-  `docs/plans/agent-authoring.md`.
+  no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
