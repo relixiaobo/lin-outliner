@@ -51,6 +51,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Auto-initialize field config is one multi-select picker (PR #169)** — a `date` field's Auto-initialize
+  strategies previously rendered as several identical-looking "No" switches (the strategy name lived only in an
+  invisible `aria-label`); they now collapse into a single multi-select picker (closed: the chosen strategies
+  inline; open: a checklist that toggles membership without closing). Implemented as an additive, gated
+  `multiple` mode on the shared `NodeValuePicker` — the single-select callers pass no new props and are
+  unchanged. Also fixes a **silent data-loss bug** found at the gate: changing a field's type left stored
+  strategies the new type doesn't offer lingering invisibly, to be dropped on the next unrelated edit — now
+  `setFieldConfig` prunes auto-init strategies to the new type's valid set at the core seam (the deep fix), not
+  just in the picker. The on-disk value contract (comma-joined strategy string) is unchanged.
+  ([#169](https://github.com/relixiaobo/lin-outliner/pull/169))
+
 - **Runtime-owned Dream memory extraction, per-turn slice (PR #159)** — the automatic half of the #157 M2
   write authority. After each completed foreground run, a runtime-owned worker (`agentDreamExtraction.ts` +
   `AgentRuntime` wiring) sends the raw current-turn evidence (user/assistant/tool messages, not summaries)
@@ -114,6 +125,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   fixed before merge (29dd688) with regression tests. ([#154](https://github.com/relixiaobo/lin-outliner/pull/154))
 
 ### Added
+
+- **Scheduled command nodes (PR #165)** — a new `command` NodeType whose content is a natural-language brief
+  to the agent; arming its schedule field (one field carrying both *when to start* and *how to repeat*, an
+  endpoint + optional `RRULE`) makes it run on an anacron-style schedule, with **Run now** for manual fires.
+  A fire spawns a triggered subagent run (optionally a chosen `commandAgent`) that posts back into a per-command
+  delivery conversation, rendered with a subagent boundary. The **user-only bright line** (only the user can
+  arm a schedule) is enforced inline in `setCommandSchedule`, keyed to the `node.type === 'command'` invariant.
+  Review-gate hardening landed with it: **at-most-once crash recovery** (a `sysLastAttemptAt` marker persisted
+  before the run + a startup reconciliation skips an interrupted occurrence instead of re-firing its
+  non-idempotent side effects), the fire watermark is **agent-barred** (`markCommandFired`/`markCommandAttempted`
+  reject `agent` origin — symmetric with the arm gate), failure **backoff is measured from the failure moment**
+  (not the sweep start, so the 30s→1h ladder can't collapse into a 60s retry loop), and **unattended runs have
+  no interactive approval channel** — a tool needing approval is denied-and-surfaced rather than hanging the
+  unwatched run, while globally always-allowed tools still run. The agent-tool-host origin stamp was flipped to
+  `{ ...meta, origin: 'agent' }` so a caller can never override the forced origin. Verified on the merged tree:
+  typecheck + `test:core` 766/0 + `test:renderer` 389/0; merged with two trivial import-union conflicts
+  resolved at the gate (it predated #166/#167). ([#165](https://github.com/relixiaobo/lin-outliner/pull/165))
 
 - **Agent authoring & management (PR #167)** — create, edit, duplicate, enable/disable, and locate your
   own **agent definitions** (`AGENT.md` persona files) from Settings → Agents, without hand-editing files

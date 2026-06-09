@@ -144,10 +144,11 @@ it; standalone agent items (not in the program) follow at the end. **The program
 PM-ratified; M0 + M0.5 landed (#150/#151), M1 landed its core (memory v1 #152, plus
 #153/#155/#156), and M2 is underway** — recall clean-cut (#158), Dream extraction (#159 →
 reflective Dream #161/#162/#163), task panel (#160), **agent-owned subagent memory +
-the `dream` trigger tool + Dream chat feedback (#164)**, and **off-floor notifications +
-attention delivery (#166)**. **Next M2 direction is open (PM to pick): `agent-scheduled-routines`
-wiring · prompt-only hooks (needs-input deferred — subagents surface clarifications via their
-terminal result, not a mid-run ask) — see the M2 milestone row in `agent-program.md`.**
+the `dream` trigger tool + Dream chat feedback (#164)**, **off-floor notifications +
+attention delivery (#166)**, and **scheduled command nodes + anacron scheduler (#165)**. **Next M2
+direction is open (PM to pick): prompt-only hooks (needs-input deferred — subagents surface clarifications
+via their terminal result, not a mid-run ask) · config recovery + skill curation — see the M2 milestone
+row in `agent-program.md`.**
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
@@ -197,13 +198,12 @@ terminal result, not a mid-run ask) — see the M2 milestone row in `agent-progr
   (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
   (degrades to conversational turns until it exists). See
   `docs/plans/agent-import-skill.md`.
-- **agent-scheduled-routines** (P2, M2) — a "command node" whose content is a
-  natural-language brief to the agent; setting its `date` field (one field
-  carrying both *when to start* and *how to repeat*) makes it run on a schedule.
-  Needs the `AgentSessionState` split (M0). **Its per-agent `date` scheduler
-  primitive is now on `agent-dream-memory`'s critical path (Dream is its first
-  consumer) — build the primitive once, shared, so the two don't fork it.** See
-  `docs/plans/agent-scheduled-routines.md`.
+- **agent-scheduled-routines** (P2, M2, **SHIPPED in #165**) — a "command node" whose content is a
+  natural-language brief to the agent; arming its schedule field (one field carrying both *when to start*
+  and *how to repeat*) makes it run on an anacron-style schedule, with **Run now** for manual fires. Landed
+  with the review-gate hardening (at-most-once crash recovery, agent-barred fire watermark, failure backoff
+  from the failure moment, unattended-run approval fence). See `docs/plans/agent-scheduled-routines.md`
+  (fold its design into `docs/spec/` + archive on the next pass).
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
@@ -380,6 +380,23 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-scheduled-routines** (cc-2, PR #165) — `command` NodeType + anacron scheduler + builder UI (M2):
+  a natural-language brief that runs on a schedule (endpoint + optional `RRULE`), Run-now manual fires, a
+  per-command delivery conversation with a subagent boundary, and a user-only bright line on arming. Gate:
+  high-effort `/code-review` (7 finder angles → verify) surfaced a cluster of scheduler/permission defects;
+  all confirmed ones were fixed before merge — **at-most-once crash recovery** (`sysLastAttemptAt` + startup
+  reconciliation, no double-fire of side effects), **agent-barred fire watermark** (`markCommandFired`/
+  `markCommandAttempted` reject `agent` origin), **failure backoff from the failure moment** (no 60s
+  tight-retry), **unattended-run approval fence** (deny-and-surface, no wedge), origin-stamp spread flipped to
+  `{ ...meta, origin: 'agent' }`, and the dead `isProtectedField` removed (inline node-type guard is the real
+  bright line). Merged with two trivial import-union conflicts resolved at the gate (stale branch predating
+  #166/#167); verified on the merged tree: typecheck + `test:core` 766/0 + `test:renderer` 389/0.
+- **field-config: Auto-initialize multi-select picker** (cc-2, PR #169) — a `date` field's Auto-initialize
+  strategies rendered as several identical "No" switches; collapsed into one multi-select picker via an
+  additive `multiple` mode on the shared `NodeValuePicker` (single-select callers unchanged). Gate review
+  also caught and fixed a **silent data-loss bug** (a stored strategy the new field type doesn't offer was
+  dropped on the next edit) at the core seam — `setFieldConfig` now prunes auto-init to the new type's valid
+  set. On-disk value contract unchanged. typecheck + `test:core` + `test:renderer` green.
 - **agent-task-model redirect** (cc, PR #168) — docs-only. The drafted standalone **Agent(profile)+Task(run)**
   plan was reviewed and **redirected**: it reinvented the already-approved in-progress agent program
   (`agent-program` / `agent-conversation-model` / `agent-data-model`) and conflicted with ratified decisions
