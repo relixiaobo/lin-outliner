@@ -826,6 +826,16 @@ export interface SkillDefinition {
   whenToUse?: string;
   userInvocable: boolean;
   modelInvocable: boolean;
+  /**
+   * Trust state: false while the skill's current content hash matches the last
+   * agent-written hash (recorded by the file-tool gateway). Unratified skills are
+   * excluded from the model skill listing and refuse model-triggered invocation;
+   * slash invocation always works (the user's command is per-run consent). A user
+   * hand-edit changes the hash and self-ratifies the skill.
+   */
+  ratified: boolean;
+  /** sha256 of the raw SKILL.md content; absent for code-registered built-ins. */
+  contentHash?: string;
   allowedTools: string[];
   argumentHint?: string;
   argumentNames: string[];

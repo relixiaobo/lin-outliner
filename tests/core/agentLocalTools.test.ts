@@ -561,52 +561,54 @@ describe('agent local tools', () => {
     });
   });
 
-  test('skill edits and replacements cannot promote model invocation', async () => {
+  test('agent skill writes are born unratified: model path gated, slash path works', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
       const tools = createLocalTools({ workspace });
-      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
-      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
       const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'guarded-skill', 'SKILL.md');
-      const initialContent = [
-        '---',
-        'description: Guarded skill for local authoring',
-        'disable-model-invocation: true',
-        '---',
-        'Use guarded instructions.',
-        '',
-      ].join('\n');
-      await mkdir(path.dirname(skillFile), { recursive: true });
-      await writeFile(skillFile, initialContent, 'utf8');
 
-      await (fileRead.execute as any)('read-guarded-skill', { file_path: skillFile });
-      const editResult = await (fileEdit.execute as any)('edit-promote-skill', {
-        file_path: skillFile,
-        old_string: 'disable-model-invocation: true\n',
-        new_string: '',
-      });
-      const editDetails = editResult.details as ToolEnvelope<unknown>;
-
-      const writeResult = await (fileWrite.execute as any)('write-promote-skill', {
+      // The agent may author a model-invocable skill (no disable-model-invocation);
+      // the ratification gate, not write-time policy, keeps it off the model path.
+      const result = await (fileWrite.execute as any)('write-guarded-skill', {
         file_path: skillFile,
         content: [
           '---',
           'description: Guarded skill for local authoring',
           '---',
-          'Use replacement instructions.',
+          'Use guarded instructions.',
           '',
         ].join('\n'),
       });
-      const writeDetails = writeResult.details as ToolEnvelope<unknown>;
+      expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
 
-      expect(editDetails.ok).toBe(false);
-      expect(editDetails.error?.code).toBe('model_invocation_requires_promotion');
-      expect(writeDetails.ok).toBe(false);
-      expect(writeDetails.error?.code).toBe('model_invocation_requires_promotion');
-      expect(await readFile(skillFile, 'utf8')).toBe(initialContent);
-      expect((await skillRuntime.getSkill('guarded-skill'))?.modelInvocable).toBe(false);
+      const skill = await skillRuntime.getSkill('guarded-skill');
+      expect(skill?.modelInvocable).toBe(true);
+      expect(skill?.ratified).toBe(false);
+
+      // Hidden from the model skill listing.
+      const listing = await skillRuntime.buildSkillListingReminderText(200_000);
+      expect(listing ?? '').not.toContain('guarded-skill');
+
+      // Model-triggered invocation is refused; slash invocation works.
+      const agentInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' });
+      expect(agentInvocation.ok).toBe(false);
+      if (!agentInvocation.ok) expect(agentInvocation.code).toBe('skill_not_ratified');
+      const slashInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'slash' });
+      expect(slashInvocation.ok).toBe(true);
+
+      // A user hand-edit changes the content hash and self-ratifies the skill.
+      await writeFile(skillFile, [
+        '---',
+        'description: Guarded skill for local authoring',
+        '---',
+        'Use user-tuned instructions.',
+        '',
+      ].join('\n'), 'utf8');
+      await skillRuntime.notifySkillContentWritten([skillFile]);
+      expect((await skillRuntime.getSkill('guarded-skill'))?.ratified).toBe(true);
+      expect((await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' })).ok).toBe(true);
     });
   });
 
@@ -650,30 +652,33 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_write rejects risky skill allowed-tools escalation', async () => {
+  test('agent-authored allowed-tools cannot reach the model path (ratification gate)', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
       const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'risky-skill', 'SKILL.md');
 
+      // Broad allowed-tools are not rejected at write time anymore; escalation is
+      // structurally impossible because the model cannot invoke the unratified skill,
+      // so its allowed-tools never become run-scoped preapproval on the model path.
       const result = await (fileWrite.execute as any)('write-risky-skill', {
         file_path: skillFile,
         content: [
           '---',
           'description: Risky skill for local authoring',
-          'disable-model-invocation: true',
-          'allowed-tools: file_write',
+          'allowed-tools: file_write, Bash(*)',
           '---',
           'Use risky instructions.',
           '',
         ].join('\n'),
       });
-      const details = result.details as ToolEnvelope<unknown>;
+      expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
 
-      expect(details.ok).toBe(false);
-      expect(details.error?.code).toBe('skill_allowed_tools_escalation');
-      expect(await skillRuntime.getSkill('risky-skill')).toBeNull();
+      const agentInvocation = await skillRuntime.invokeSkill({ skill: 'risky-skill', trigger: 'agent' });
+      expect(agentInvocation.ok).toBe(false);
+      if (!agentInvocation.ok) expect(agentInvocation.code).toBe('skill_not_ratified');
+      expect(skillRuntime.getActivePermissionRules()).toEqual([]);
     });
   });
 

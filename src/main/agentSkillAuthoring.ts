@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AgentSourceKind } from '../core/agentEventLog';
-import { type AgentSkillContentTarget, parseSkillMarkdown, parseToolListFromFrontmatter } from './agentSkills';
+import { type AgentSkillContentTarget, parseSkillMarkdown } from './agentSkills';
 
 export interface AgentSkillWriteAudit {
   skillName: string;
@@ -48,24 +48,6 @@ const EXECUTABLE_SUPPORT_EXTENSIONS = new Set([
   '.ts',
   '.zsh',
 ]);
-const RISKY_ALLOWED_TOOL_NAMES = new Set([
-  'agent',
-  'agent_send',
-  'agent_stop',
-  'ask_user_question',
-  'bash',
-  'config',
-  'doctor',
-  'file_edit',
-  'file_write',
-  'node_create',
-  'node_delete',
-  'node_edit',
-  'runtime_status',
-  'task_stop',
-  'web_fetch',
-]);
-
 export function validateAgentSkillContentWrite(input: {
   target: AgentSkillContentTarget;
   content: string;
@@ -76,7 +58,7 @@ export function validateAgentSkillContentWrite(input: {
   assertValidSkillTarget(target);
   const previous = input.previousContent;
   if (target.isSkillFile) {
-    validateSkillMarkdown(input.content, previous);
+    validateSkillMarkdown(input.content);
   } else {
     validateSupportFile(target, input.content);
   }
@@ -96,7 +78,7 @@ export function validateAgentSkillContentWrite(input: {
     previousBytes,
     nextBytes,
     warnings: target.isSkillFile
-      ? ['Newly authored skills stay user-invocable unless explicitly promoted outside the file tool path.']
+      ? ['Agent-written skills start unratified: slash-invocable immediately, excluded from the model listing until the user accepts the skill or edits it by hand.']
       : ['Support files are not loaded automatically; the skill must reference them explicitly.'],
   };
 }
@@ -113,7 +95,7 @@ function assertValidSkillTarget(target: AgentSkillContentTarget): void {
   }
 }
 
-function validateSkillMarkdown(content: string, previousContent: string | null): void {
+function validateSkillMarkdown(content: string): void {
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes > MAX_SKILL_MARKDOWN_BYTES) {
     throw new AgentSkillAuthoringError(
@@ -142,28 +124,9 @@ function validateSkillMarkdown(content: string, previousContent: string | null):
     );
   }
 
-  if (parsed.frontmatter['disable-model-invocation'] !== true) {
-    throw new AgentSkillAuthoringError(
-      'model_invocation_requires_promotion',
-      'Agent-authored skills must set disable-model-invocation: true.',
-      'Keep the skill user-invocable. Promote model invocation only through an explicit later review.',
-    );
-  }
-
-  const previousTools = previousContent === null
-    ? new Set<string>()
-    : new Set(parseToolListFromFrontmatter(parseSkillMarkdown(previousContent).frontmatter['allowed-tools']).map(normalizeRule));
-  const addedRisky = parseToolListFromFrontmatter(parsed.frontmatter['allowed-tools'])
-    .map(normalizeRule)
-    .filter((rule) => !previousTools.has(rule))
-    .filter(isRiskyAllowedToolRule);
-  if (addedRisky.length > 0) {
-    throw new AgentSkillAuthoringError(
-      'skill_allowed_tools_escalation',
-      `SKILL.md adds high-risk allowed-tools rules: ${addedRisky.join(', ')}`,
-      'Do not grant mutating, control, wildcard, or broad shell permissions from a self-authored skill.',
-    );
-  }
+  // No policy checks here: model-invocability and allowed-tools escalation are
+  // enforced by the ratification gate at listing/invocation time, not at write time.
+  // The write boundary only validates validity and safety.
 }
 
 function validateSupportFile(target: AgentSkillContentTarget, content: string): void {
@@ -193,14 +156,10 @@ function validateSupportFile(target: AgentSkillContentTarget, content: string): 
   rejectSecretLookingContent(content);
 }
 
-function isRiskyAllowedToolRule(rule: string): boolean {
-  if (!rule || rule === '*' || /\(\s*\*\s*\)$/.test(rule)) return true;
-  const toolName = normalizeToolName(rule.split(/[(:]/)[0] ?? '');
-  if (toolName === 'bash') return !/^bash\((?:git status|git diff|git log|git show|ls|pwd|echo)(?::|\s|\)|\*)/i.test(rule);
-  if (RISKY_ALLOWED_TOOL_NAMES.has(toolName)) return true;
-  return false;
-}
-
+// Secret scanning is intentionally skill-specific (not generalized to all file writes):
+// skills are durable instructions injected into future model contexts, which makes a
+// leaked credential an exfiltration amplifier; a global secret block on ordinary file
+// writes would false-positive on normal code.
 function rejectSecretLookingContent(content: string): void {
   if (
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)
@@ -213,14 +172,6 @@ function rejectSecretLookingContent(content: string): void {
       'Remove credentials or secret-looking values from the skill and describe placeholders instead.',
     );
   }
-}
-
-function normalizeRule(rule: string): string {
-  return rule.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-function normalizeToolName(value: string): string {
-  return value.trim().replace(/-/g, '_').toLowerCase();
 }
 
 function sha256(content: string): string {

@@ -567,7 +567,17 @@ async function notifySuccessfulFileTouch(workspace: WorkspaceContext, filePath: 
   await workspace.skillRuntime?.notifyFileTouched([filePath]);
 }
 
-async function notifySuccessfulSkillContentWrite(workspace: WorkspaceContext, filePath: string): Promise<void> {
+async function notifySuccessfulSkillContentWrite(
+  workspace: WorkspaceContext,
+  filePath: string,
+  skillWrite: AgentSkillWriteAudit,
+): Promise<void> {
+  // Record provenance BEFORE the registry reload so the reloaded skill is born with
+  // the correct (unratified) state. Only SKILL.md defines the skill's identity;
+  // support files don't affect ratification.
+  if (skillWrite.changeType !== 'support-file-write') {
+    await workspace.skillRuntime?.recordAgentSkillWrite(filePath, skillWrite.nextHash);
+  }
   await workspace.skillRuntime?.notifySkillContentWritten([filePath]);
 }
 
@@ -598,7 +608,7 @@ function validateSkillContentWriteOrThrow(input: {
 }
 
 function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
-  return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback.`;
+  return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now; it joins the automatic model skill listing once the user accepts it or edits it by hand.`;
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
@@ -940,7 +950,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           ...(skillWrite ? { skillWrite } : {}),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath);
+        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath, skillWrite);
         return agentToolResult(successEnvelope('file_edit', data, {
           instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
           metrics: metrics(started, data),
@@ -1015,7 +1025,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           ...(skillWrite ? { skillWrite } : {}),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath);
+        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath, skillWrite);
         return agentToolResult(successEnvelope('file_write', data, {
           instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
           metrics: metrics(started, data),

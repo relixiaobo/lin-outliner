@@ -142,6 +142,7 @@ import {
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
+import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   AGENT_SUBAGENT_TOOL_NAME,
   AgentSubagentRuntime,
@@ -1409,6 +1410,7 @@ export class AgentRuntime {
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
       sessionId,
       executeSkillShell: async ({ command, skill }) => {
         const activeSettings = await this.getRuntimeSettings();

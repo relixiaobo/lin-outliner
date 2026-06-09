@@ -147,11 +147,13 @@ fix the skill that failed
   **skill-content write**, not a generic document edit — distinct permission / audit
   / snapshot path.
 - **Agent-initiated** writes must show the full `SKILL.md` or a focused diff and ask
-  for explicit confirmation; they are born **unratified** (carry `agent-created`
-  provenance; excluded from the model listing and their `allowed-tools` inert until the
-  user accepts — see *Governance layering*). **User-directed** writes ("save this as a
-  skill") may use a compact approval — the user's command is already the intent — and are
-  born **ratified** when the user asks for that.
+  for explicit confirmation; they are born **unratified** (gateway records the content
+  hash; excluded from the model listing and model invocation refused until accepted —
+  slash invocation works immediately, see *Governance layering*). The file-tool gateway
+  cannot distinguish user-directed from agent-initiated writes (both arrive as the same
+  tool calls), so **all** agent-channel skill writes are born unratified; the user's
+  acceptance (PR A) or any hand-edit promotes. Slash availability keeps the `/skillify`
+  flow fully usable meanwhile.
   *(The shipped M1 instead force-writes `disable-model-invocation: true`; the convergence
   moves this to the runtime ratification gate — `disable-model-invocation` stays only as a
   user-set frontmatter knob, not a policy lin writes for the agent.)*
@@ -245,45 +247,64 @@ restricted mode (`:311`), so the "don't preapprove risky tools" portion is **not
 redundant. cc-2.1 handles the latter by human review (skillify confirm) + the floor, not a
 write-time string guard.
 
-→ **Fix — re-layer along the cc-2.1 split.** Each write-time check moves to the layer
-where it is robust:
+→ **Fix — re-layer along the cc-2.1 split** (corrected in the 2026-06-10 re-review;
+two rows of the first draft were mis-layered):
 
-| Current write-time check | Moves to | Why |
+| Current write-time check | Layer | Why |
 |---|---|---|
 | skill-path detection | **write boundary** (the resolver, Seam 2) | thin routing gate; must be here |
-| frontmatter / support-file validation | **load time** (malformed skill fails to load) | one source of validity; write-time keeps at most a courtesy parse |
+| frontmatter / support-file validation | **write boundary as model feedback; load time as enforcement** | a bad write must fail loudly back to the model (a "successful" write whose skill silently fails to load is a worse feedback loop); the loader stays tolerant of hand-authored files |
 | no-escalation (`RISKY_ALLOWED_TOOL_NAMES` reject) | **invocation time** (ratification gate, below) | structural + robust; deletes the leaky string heuristic |
-| forced `disable-model-invocation` | **listing time** (ratification gate) | stop mutating the authored file; policy lives in runtime |
-| secret scan | **general file-write safety** | any write can carry secrets — not skill-specific |
-| path-traversal / symlink / exec support files | **general filesystem safety / sandbox** | generic safety, de-skill-specialized |
+| forced `disable-model-invocation` | **listing + invocation time** (ratification gate) | stop mutating the authored file; policy lives in runtime |
+| secret scan | **stays at the skill write boundary** | skills are durable instructions injected into future contexts (an exfil amplifier) — skill-specific; a global secret block on all file writes would false-positive on ordinary code |
+| hidden / executable support files, size caps | **stays at the skill write boundary** | support files ride skill invocation — skill-specific; lin has no sandbox to delegate to |
 | audit events (`skill.created/...`) | **write boundary** | they are *about* the write |
-| snapshot / rollback metadata | **write boundary** | must capture prior content at the write |
+| snapshot / rollback metadata + provenance hash record | **write boundary** | must capture prior content + record authorship at the write |
 | hot-reload | **write boundary** | registry must see the new file |
 
-The **thin write boundary** that remains: resolver gate → permission decision (with
-cc-2.1-style per-skill narrowing) → audit → snapshot → hot-reload. All genuinely
-write-time.
+The write boundary's contract: **no policy decisions at write — only validity, safety,
+and recording** (resolver gate → permission → validation feedback → audit → snapshot →
+provenance hash → hot-reload). The two *policy* checks move to the ratification gate.
 
-**The ratification model (the centerpiece).** The two heaviest write-time checks —
-no-escalation (#4) and forced model-invocation-off (#10) — are the *same* idea: *a skill
-the user has not accepted should neither be auto-invoked by the model nor have its
-`allowed-tools` silently honored.* Unify them into one **ratification state**, enforced at
-listing + invocation, not at write:
+**The ratification model (the centerpiece — simplified in the 2026-06-10 re-review).**
+The two write-time policy checks — no-escalation and forced model-invocation-off — are
+the *same* idea: *a skill the user has not accepted must not be wielded by the model on
+its own initiative.* The runtime already distinguishes the trigger at invocation
+(`trigger: 'agent' | 'slash'`, `agentSkills.ts:392,400`), which permits a much simpler
+gate than the first draft's "inert allowed-tools" machinery:
 
 - **Unratified** (agent-authored, not yet accepted): excluded from the model skill
-  listing; its `allowed-tools` are **inert** — at invocation, risky tools still `ask`
-  rather than being preapproved. Escalation becomes structurally impossible regardless of
-  what was written.
-- **Ratified** (`built-in` · user-authored · a user-accepted agent skill · a
-  workspace-trusted `project` skill): model-invocable per frontmatter; `allowed-tools`
-  live as preapproval.
+  listing, and a `trigger: 'agent'` invocation is **refused** outright. **Slash
+  invocation always works, with `allowed-tools` honored in full** — the user typing
+  `/name` is per-run consent, the same consent model as cc-2.1's skillify confirm.
+  Escalation is structurally impossible: the model path is closed entirely, and the
+  slash path is user-initiated.
+- **Ratified** (`built-in` · user-authored · accepted agent skills · `project` skills —
+  the workspace-trust boundary for cloned-repo skills is a named follow-up, not this
+  PR): model-invocable per frontmatter; `allowed-tools` live as preapproval.
 
-This cleanly splits **authorship** from **trust**: the **file** carries *provenance* (who
-wrote it — a fact), the **runtime** carries *ratification* (did the user accept it — a
-decision). Promotion / rollback flip the runtime record; the file is never rewritten to
-encode policy. User-directed `skillify` writes are born ratified (the confirm step is the
-acceptance, like cc-2.1); agent-initiated writes are born unratified and promote on
-explicit acceptance.
+**The marker is a runtime hash record, not frontmatter** (decided by the threat model,
+not preference): frontmatter provenance is self-reported — a hostile repo can write
+`provenance: user`, and trust cannot live inside the artifact being trusted. Instead the
+file-tool gateway records `(skill file → content hash)` at every agent `SKILL.md` write
+(in-memory always, persisted to userData when wired). A skill is unratified iff its
+current content hash matches the recorded agent-written hash. Consequences that fall out
+for free:
+
+- **A user hand-edit changes the hash → the skill self-ratifies** — today's escape hatch
+  ("the user edits the file") is preserved with clean semantics: touched by a human =
+  the human's.
+- `disable-model-invocation` returns to being an ordinary user-set frontmatter knob; lin
+  never force-writes policy into an authored file.
+- An agent patch to a user-authored skill records the new hash → the skill drops to
+  slash-only until the user touches/accepts it. Safe direction; documented behavior.
+- Record loss (wiped userData) fails open to ratified — acceptable for the agent-write
+  threat; PR A's acceptance record hardens this.
+
+Authorship and trust stay split: the gateway-recorded hash carries *provenance* (who
+wrote this version — a fact), ratification (did the user accept — a decision) is derived
+now and becomes an explicit acceptance record in PR A. The file is never rewritten to
+encode policy.
 
 ### Curation (later — opt-in, agent-created only)
 
@@ -356,12 +377,15 @@ deliberately conservative (self-modification §8):
 - **Where bundled adapters ship** (from [[agent-import-skill]]): a built-in
   `import/adapters/` skill bundle (versions with the app → `built-in`) vs the user
   `~/.agents/skills` dir. Leaning `built-in` now that the source exists.
-- **Authorship metadata shape** — **now load-bearing** (the ratification model depends on
-  it). Proposed split: the **file** carries *provenance* (a frontmatter fact — who
-  authored it, e.g. `provenance: agent-authored`), the **runtime** carries *ratification*
-  (a trust record — did the user accept it — keyed by skill id + content hash, never
-  written back into the file). Confirm the exact frontmatter field(s) and the runtime
-  record shape in the convergence PR.
+- ~~**Authorship metadata shape**~~ — **resolved (2026-06-10 re-review):** not
+  frontmatter (self-reported, forgeable by a hostile repo) — a **gateway-recorded
+  content-hash record** (in-memory always; persisted to userData when wired). Ratified
+  iff the current file hash differs from the last agent-written hash; a user hand-edit
+  self-ratifies. PR A adds the explicit acceptance record on top.
+- **Workspace trust for `project` skills** (named follow-up, not this PR): a cloned
+  repo's `.agents/skills` with broad `allowed-tools` is model-invocable today; cc-2.1
+  gates this behind workspace trust. Orthogonal to agent self-authoring — needs its own
+  plan.
 
 ## Build checklist
 
@@ -397,18 +421,20 @@ deliberately conservative (self-modification §8):
       `detectAgentSkillContentTarget`.
 - [ ] **Seam 2** — recognition ≠ permission: writability of additional dirs becomes a
       permission policy (default read-only), enforced at the permission layer.
-- [ ] **Seam 3 / ratification** — introduce skill ratification state (file `provenance` +
-      runtime ratification record). Listing excludes unratified skills; invocation treats an
-      unratified skill's `allowed-tools` as inert (no preapproval).
-- [ ] **Seam 3** — move frontmatter/support validation to load-time as the enforcement
-      point; keep at most a courtesy parse at write.
+- [ ] **Seam 3 / ratification** — gateway records `(skill file → content hash)` on every
+      agent `SKILL.md` write (in-memory in the registry; persisted store wired from main).
+      A skill is unratified iff its current hash matches the record. `SkillDefinition`
+      gains `ratified: boolean`.
+- [ ] **Seam 3** — listing: `getModelInvocableSkills` excludes unratified skills.
+      Invocation: `trigger: 'agent'` on an unratified skill is refused (beside the
+      existing `agentSkills.ts:392` check); slash invocation unaffected, `allowed-tools`
+      honored in full (user intent = per-run consent).
 - [ ] **Seam 3** — delete the write-time `RISKY_ALLOWED_TOOL_NAMES` no-escalation reject
-      (now structural via ratification); stop force-writing `disable-model-invocation` into
-      the file (now a listing-time policy).
-- [ ] **Seam 3** — de-skill-specialize secret-scan + path-traversal/symlink/exec checks
-      into the general file-write / filesystem-safety layer.
-- [ ] Thin write boundary remains: resolver gate → permission (per-skill narrowing) →
-      audit → snapshot → hot-reload.
+      and the forced `disable-model-invocation` requirement; update `/skillify`
+      instructions + gateway feedback text to describe the ratification semantics.
+- [ ] **Seam 4 (corrected)** — validity/safety checks (size, hidden/exec support files,
+      secret scan, frontmatter shape) STAY at the write boundary as model feedback;
+      loader stays tolerant of hand-authored files. No policy decisions at write.
 - [ ] `bun run typecheck` + `test:core` (+ guard tests); update `docs/spec/agent-skills.md`
       in the SAME change (A6): collapsed source taxonomy, single resolver, the governance
       layering, and the ratification model.

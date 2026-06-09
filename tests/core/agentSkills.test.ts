@@ -9,6 +9,7 @@ import {
   createSlashSkillPrompt,
   parseSkillSlashCommand,
   resolveSkillContentTarget,
+  sha256Hex,
 } from '../../src/main/agentSkills';
 
 const execFile = promisify(execFileCallback);
@@ -51,6 +52,46 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
         additionalSkillDirectories: [],
       }),
     ).toBeNull();
+  });
+});
+
+describe('skill ratification provenance', () => {
+  test('ratification survives a restart through the provenance store', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
+    const skillFile = path.join(root, '.agents', 'skills', 'authored', 'SKILL.md');
+    const content = [
+      '---',
+      'description: Agent-authored skill awaiting acceptance',
+      '---',
+      'Follow the authored workflow.',
+      '',
+    ].join('\n');
+    await mkdir(path.dirname(skillFile), { recursive: true });
+    await writeFile(skillFile, content, 'utf8');
+
+    // A trivial in-memory store standing in for the userData-backed file store.
+    const records: Record<string, string> = {};
+    const store = {
+      load: async () => ({ ...records }),
+      record: async (file: string, hash: string) => {
+        records[file] = hash;
+      },
+    };
+
+    const first = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await first.recordAgentSkillWrite(skillFile, sha256Hex(content));
+    await first.notifySkillContentWritten([skillFile]);
+    expect((await first.getSkill('authored'))?.ratified).toBe(false);
+
+    // "Restart": a fresh runtime sharing only the persisted store still gates it.
+    const second = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    expect((await second.getSkill('authored'))?.ratified).toBe(false);
+    const invocation = await second.invokeSkill({ skill: 'authored', trigger: 'agent' });
+    expect(invocation.ok).toBe(false);
+
+    // Without the store (record lost), the gate fails open to ratified.
+    const third = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    expect((await third.getSkill('authored'))?.ratified).toBe(true);
   });
 });
 
@@ -247,7 +288,7 @@ describe('agent skills', () => {
     });
     const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
     expect(text).toContain('Skill authoring workflow');
-    expect(text).toContain('disable-model-invocation: true');
+    expect(text).toContain('start unratified');
   });
 
   test('records model and effort effects for slash and agent-invoked skills', async () => {
