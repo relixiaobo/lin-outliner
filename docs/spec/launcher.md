@@ -21,14 +21,21 @@ navigation commands.
 - **Prewarmed singleton.** Created hidden at startup and shown/hidden on the
   hotkey — never recreated, so the hotkey-to-visible path is a native `show()`.
   `backgroundThrottling: false` keeps the hidden renderer painting-ready.
-- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop`): a non-activating floating
-  overlay that can take key focus for typing without activating the app. It joins
-  all Spaces (incl. other apps' full-screen) via `setVisibleOnAllWorkspaces`, but
-  **only while visible** — set on `show`, cleared on `hide`. A window that
+- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'pop-up-menu'`): a
+  non-activating floating overlay that can take key focus for typing without
+  activating the app. It joins all Spaces (incl. other apps' full-screen) by
+  setting the NSWindow `collectionBehavior` (`canJoinAllSpaces |
+  fullScreenAuxiliary`) **natively** through the `window_corner` addon
+  (`setLauncherSpaceBehavior`), **not** Electron's
+  `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`. The Electron
+  path hides the macOS dock icon and never restores it (electron#26350); setting
+  the collection behavior directly gives the same cross-Space + over-fullscreen
+  float while the **dock icon and ⌘Tab entry stay**. The behavior is toggled
+  **only while visible** — set on `show`, cleared on `hide` — because a window that
   permanently joins all Spaces makes macOS swallow the first ⌘Q (AppKit skips
   `applicationShouldTerminate:`, so the before-quit flush never fires and the app
-  needs two presses); toggling it keeps the common quit path — launcher hidden —
-  free of that bug.
+  needs two presses); clearing it on hide keeps the common quit path — launcher
+  hidden — free of that bug.
 - **Fixed golden rectangle** (760 × ~470), top-biased placement (0.18 of the
   work area) on the display under the cursor; never resizes to its result count
   (the body scrolls). Native 16px corner via the `window_corner` addon.

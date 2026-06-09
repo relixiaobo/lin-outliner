@@ -2067,13 +2067,16 @@ if (!app.requestSingleInstanceLock()) {
       harden: hardenWebContents,
       onBlurHide: dismissLauncher,
     });
-    // Tenon is a regular foreground app (dock icon + menu bar). Creating the
-    // launcher as a non-activating NSPanel — and, in dev, launching the binary
-    // straight from the terminal (not via LaunchServices) — can leave the app in
-    // macOS "accessory" activation policy (background-only → no dock icon, no ⌘Tab).
-    // `app.dock.show()` does NOT reliably restore it (it only un-does an explicit
-    // `dock.hide()`); `setActivationPolicy('regular')` forces the app back to a
-    // regular foreground app. Does not affect the launcher panel's per-window
+    // Tenon is a regular foreground app (dock icon + menu bar). In dev, launching
+    // the binary straight from the terminal (not via LaunchServices) can leave the
+    // app in macOS "accessory" activation policy (background-only → no dock icon, no
+    // ⌘Tab); `app.dock.show()` does NOT reliably restore it (it only un-does an
+    // explicit `dock.hide()`), so we assert the regular policy here. This is
+    // idempotent for a normally-launched packaged app. (The separate packaged
+    // dock-hiding bug — the launcher joining all Spaces via Electron's
+    // `setVisibleOnAllWorkspaces({visibleOnFullScreen:true})`, electron#26350 — is
+    // fixed at the source in launcherWindow.ts by setting the collection behavior
+    // natively instead.) Does not affect the launcher panel's per-window
     // non-activating behavior.
     if (process.platform === 'darwin') app.setActivationPolicy('regular');
     const hotkey = registerLauncherHotkey(() => void toggleLauncher());

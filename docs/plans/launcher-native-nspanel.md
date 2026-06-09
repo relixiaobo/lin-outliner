@@ -1,6 +1,6 @@
 ---
 title: Launcher native NSPanel — keep the dock icon while floating over fullscreen
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 executor: cc
@@ -212,11 +212,29 @@ verification above. Not an agent-permissions/security change, so no
 
 ## Subtasks
 
-- [ ] Native `setWindowSpaceBehavior` in `window_corner.mm` + `Init` registration.
-- [ ] TS wrapper `setLauncherSpaceBehavior` (reuse the addon loader).
-- [ ] `launcherWindow.ts`: remove both `setVisibleOnAllWorkspaces` calls; wire the
+- [x] Native `setWindowSpaceBehavior` in `window_corner.mm` + `Init` registration.
+- [x] TS wrapper `setLauncherSpaceBehavior` (reuse the addon loader).
+- [x] `launcherWindow.ts`: remove both `setVisibleOnAllWorkspaces` calls; wire the
       native toggle into show/hide; update the creation comment.
-- [ ] Reconcile `cbcbf71` activation-policy line (keep+fix-comment or remove).
-- [ ] `docs/spec/launcher.md` updated (native collectionBehavior rationale).
-- [ ] `bun run build:native` + `bun run typecheck`; package and run the five-point
-      verification (packaged + `dev:cc`, light + dark).
+- [x] Reconcile `cbcbf71` activation-policy line — **kept** + comment corrected:
+      it now guards only the dev-from-terminal accessory case (idempotent for a
+      normally-launched packaged app); the packaged dock-hiding root cause is fixed
+      at the source by the native collection behavior. (Open question 3 resolved:
+      keep, because removing it can only be verified safe by the packaged+dev gate,
+      and the call is harmless when already regular.)
+- [x] `docs/spec/launcher.md` updated (native collectionBehavior rationale).
+- [x] `bun run build:native` + `bun run typecheck` green; `test:core` 766/0; headless
+      addon smoke test (new export callable, nil/empty handle → safe `false`).
+- [ ] **Gate (main + PM):** packaged `.dmg` + `dev:cc` five-point manual
+      verification (dock icon · ⌘Tab · first ⌘Q quits · floats over fullscreen ·
+      non-activating), light + dark. No headless substitute.
+
+### Open-question resolutions (build-time defaults, kept)
+
+1. Float level — kept `setAlwaysOnTop(true, 'pop-up-menu')` + `fullScreenAuxiliary`
+   (the nspanel-package combo). If fullscreen-float fails the manual gate, add a
+   native window-level set (`NSPopUpMenuWindowLevel`/`NSStatusWindowLevel`) to the
+   same function — not done now (no evidence it's needed; avoid untested level bump).
+2. Permanent vs toggled — kept the **toggle** (matches the proven ⌘Q-safe #170
+   lifecycle); not switched to permanent (couldn't headlessly verify it keeps ⌘Q safe).
+3. `cbcbf71` keep-or-remove — **kept** (see subtask above).
