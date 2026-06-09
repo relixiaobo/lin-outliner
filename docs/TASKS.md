@@ -18,20 +18,20 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | `cc/launcher-native-nspanel` (pending) | launcher-native-nspanel (assigned 2026-06-09) |
+| Claude Code | `lin-outliner-cc/` | — | idle (launcher-native-nspanel merged, PR #171) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory-model P1+P2 merged, PR #172) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-- **cc → `launcher-native-nspanel`** (P1) — root fix: native NSWindow
-  `collectionBehavior` replacing Electron's dock-hiding `visibleOnFullScreen`; keeps
-  dock icon + ⌘Q + fullscreen float + non-activating. Execution-ready plan
-  `docs/plans/launcher-native-nspanel.md`. Supersedes PR #170's toggle.
+Both 2026-06-09 lanes merged — board is between batches.
 
-`agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
-Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
+- `launcher-native-nspanel` (cc) **merged** as PR #171 — see Recently completed.
+  Remaining: a one-time packaged `.dmg` eyeball (⌘Tab lists Tenon · floats over
+  another app's fullscreen · summon doesn't steal focus · dock icon · light+dark).
+- `agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
+  Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
 
 
 ## Backlog
@@ -397,6 +397,18 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **launcher: root fix for dock icon + first-⌘Q** (cc, PR #171) — investigation found the reported symptoms
+  were **two independent bugs**, superseding PR #170's show/hide toggle and the dock-icon fast-track. (1) The
+  launcher's all-Spaces behavior transformed the app to an accessory process (`UIElementApplication`), dropping
+  the dock icon + ⌘Tab (electron#26350) — fixed with Electron's `skipTransformProcessType: true` on
+  `setVisibleOnAllWorkspaces`; the native `collectionBehavior` attempt (cea2998) didn't avoid the transform and
+  is reverted. (2) First ⌘Q lingered because `before-quit` re-issued `app.quit()` after `preventDefault()` —
+  now drains in-flight writes then `app.exit(0)`. Gate: high-effort `/code-review` surfaced 3 findings
+  (runtime-write durability under force-exit, `app.exit` over `process.exit`, the now-dead `will-quit` trap);
+  cc fixed all three — `AgentRuntime.drainPendingWrites()` settles session event-log appends + the crash-safe
+  Dream/command-sweep tails under a 2.5s timeout, `app.exit(0)`, and the hotkey unregister inlined into
+  `before-quit`. Verified on the merged tree (clean auto-merge with #172's `agentRuntime.ts` changes):
+  typecheck + `test:core` 774/0. Remaining: a one-time packaged `.dmg` eyeball for the manual launcher checks.
 - **agent-memory: `<memory>` briefing render + subject-elided Dream writer** (cc-2, PR #172) — Phase 1+2 of
   [[agent-memory-model]] as one complete PR, zero protocol change. New pure `agentMemoryBriefing.ts` projects
   resident (newest-active, ≤12) entries into a `<memory>` briefing with reader-relative `<self>` /

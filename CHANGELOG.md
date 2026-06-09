@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Launcher keeps the dock icon + first ⌘Q quits promptly, at the root (PR #171)** — supersedes PR #170's
+  show/hide toggle and the dock-icon fast-track with the actual root causes, found to be **two independent
+  bugs**. (1) *Dock icon vanished when the launcher was summoned:* the launcher's all-Spaces collection
+  behavior (`setVisibleOnAllWorkspaces`) transforms the app's process type to `UIElementApplication`
+  (accessory), dropping the dock icon + ⌘Tab entry (electron#26350); the native `collectionBehavior` attempt
+  (commit cea2998) did **not** avoid the transform and is reverted (addon byte-identical to `main`). Fixed by
+  adding Electron's purpose-built **`skipTransformProcessType: true`** to `setVisibleOnAllWorkspaces` on
+  show/hide, so it joins all Spaces without the transform. (2) *First ⌘Q needed two presses* (reproduced on a
+  fresh launch with the launcher never summoned — unrelated to all-Spaces): the `before-quit` handler
+  `preventDefault()`s the OS ⌘Q to flush, and the prior re-issued `app.quit()` lingered for seconds before the
+  process actually exited. Now the handler drains in-flight writes then **`app.exit(0)`**s — review-hardened to
+  first `AgentRuntime.drainPendingWrites()` (session event-log appends + the crash-safe Dream/command-sweep
+  tails) under a 2.5s hard timeout so a slow in-flight Dream LLM call can't block the quit, with the global-
+  hotkey unregister inlined into `before-quit` (since `app.exit` skips `will-quit`). Gate: high-effort
+  `/code-review` (3 findings — runtime-write durability, `app.exit` over `process.exit`, the `will-quit` trap —
+  all fixed and verified on the merged tree) + typecheck + `test:core` 774/0; the packaged ⌘Tab / over-
+  fullscreen-float / no-focus-steal / dock-icon checks remain a one-time manual eyeball on the `.dmg`.
+  ([#171](https://github.com/relixiaobo/lin-outliner/pull/171))
+
 - **Tenon shows its dock icon again (fast-track)** — the packaged app ran in macOS "accessory" activation
   policy (window + menu bar present, but no dock icon and no ⌘Tab entry) — a side effect of the always-present
   non-activating launcher NSPanel. The prior `app.dock.show()` re-assert did not restore it (that API only
