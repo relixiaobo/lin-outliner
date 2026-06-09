@@ -3,7 +3,7 @@ status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-05-26
-updated: 2026-06-08
+updated: 2026-06-09
 ---
 
 # Proactive Agent — Command Nodes
@@ -106,6 +106,29 @@ prompt as **ordinary child nodes**. Architecture (ratified):
 
 Status: **shipped** in this PR. The substance is folded into
 `docs/spec/commands.md`.
+
+Review-fix hardening (2026-06-09, main review on PR #165), all folded into
+`docs/spec/commands.md`:
+
+- **At-most-once across a crash.** A new `sysLastAttemptAt` marker is persisted
+  via `mark_command_attempted(dueAt)` **before** each fire; a one-time startup
+  `reconcileCommandAttempts()` advances the watermark past any occurrence whose
+  attempt is newer than its fire (a crash mid-run is **skipped, not re-fired**).
+  The due check still reads only `sysLastRunAt`, so an in-process failure keeps
+  retrying through the backoff ladder.
+- **Watermark writes are agent-barred.** `mark_command_fired` /
+  `mark_command_attempted` now reject `origin === 'agent'` (symmetric to the
+  schedule bright line — an agent can't suppress a schedule by jumping the
+  watermark). The gate is keyed to the `command` node-type invariant;
+  `protectedFields` is descriptive metadata, not the enforcement.
+- **Unattended permission model.** Scheduled fires pass `unattended: true` → no
+  `approvalHandler` → `interactionAvailable: false`: an **ask** decision denies
+  and reports (the run never hangs) while the global **always-allow** list still
+  runs. Run-now stays attended.
+- **Backoff from failure time.** The ladder is measured from the failure
+  timestamp rather than the sweep-start time, so a slow run doesn't collapse it.
+- Latent fail-opens closed (agent-tool `meta.origin` spread ordering); daily +
+  weekly DST spring-forward regression tests added.
 
 Deviations from the directional calls, for the gate:
 

@@ -20,6 +20,7 @@ export const DOCUMENT_COMMANDS = [
   'set_command_schedule',
   'set_command_agent',
   'mark_command_fired',
+  'mark_command_attempted',
   'create_image_node',
   'set_node_image',
   'set_view_toolbar_visible',

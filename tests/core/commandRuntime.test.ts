@@ -166,3 +166,95 @@ describe('command runtime — failed fires', () => {
     runtime.stopCommandScheduler();
   });
 });
+
+describe('command runtime — at-most-once', () => {
+  const due = {
+    nodeId: 'cmd-1',
+    brief: 'Summarize my unread feeds',
+    schedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
+    dueAt: new Date(2026, 5, 9, 9, 0).getTime(),
+    lastSuccessAt: null,
+    commandAgent: undefined,
+  };
+
+  test('a successful fire records the attempt BEFORE advancing the watermark', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    const runtime = await createRuntime(dataRoot, Core.new(), calls);
+    (runtime as unknown as { runCommandSubagent: () => Promise<void> }).runCommandSubagent = async () => undefined;
+
+    await (runtime as unknown as { fireCommand: (d: typeof due, now: Date) => Promise<void> })
+      .fireCommand(due, new Date(2026, 5, 9, 10, 0));
+
+    const attemptIdx = calls.findIndex((c) => c.command === 'mark_command_attempted');
+    const firedIdx = calls.findIndex((c) => c.command === 'mark_command_fired');
+    // The attempt is persisted (with the occurrence's dueAt) before the run, and
+    // strictly before the success watermark — so a crash in between is recoverable.
+    expect(attemptIdx).toBeGreaterThanOrEqual(0);
+    expect(firedIdx).toBeGreaterThan(attemptIdx);
+    expect(calls[attemptIdx]!.args.attemptedAt).toBe(due.dueAt);
+    runtime.stopCommandScheduler();
+  });
+
+  test('a failed fire still records the attempt (so a crash mid-run is reconciled, not re-run)', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    // No provider → the run cannot complete (failure branch).
+    const runtime = await createRuntime(dataRoot, Core.new(), calls);
+
+    await (runtime as unknown as { fireCommand: (d: typeof due, now: Date) => Promise<void> })
+      .fireCommand(due, new Date(2026, 5, 9, 10, 0));
+
+    // The attempt was recorded before the (failing) run; the watermark was NOT
+    // advanced (the occurrence stays due for the in-memory backoff retry).
+    expect(calls.some((c) => c.command === 'mark_command_attempted')).toBe(true);
+    expect(calls.some((c) => c.command === 'mark_command_fired')).toBe(false);
+    runtime.stopCommandScheduler();
+  });
+
+  test('startup reconciliation skips an interrupted occurrence (advances watermark, no re-fire)', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const nodeId = core.createNode(libraryId, null, 'Summarize my unread feeds').focus!.nodeId;
+    core.setCommandNode(nodeId);
+    // A prior occurrence was attempted (T2) but never recorded success (T1 < T2):
+    // the app crashed mid-run.
+    core.markCommandFired(nodeId, 1_000, 'system');
+    core.markCommandAttempted(nodeId, 2_000, 'system');
+    const runtime = await createRuntime(dataRoot, core, calls);
+
+    await (runtime as unknown as { reconcileCommandAttempts: () => Promise<void> }).reconcileCommandAttempts();
+
+    // At-most-once: the watermark is advanced past the attempted occurrence rather
+    // than re-firing it — no run is started.
+    const fired = calls.filter((c) => c.command === 'mark_command_fired');
+    expect(fired).toHaveLength(1);
+    expect(fired[0]!.args.nodeId).toBe(nodeId);
+    expect(fired[0]!.args.firedAt).toBe(2_000);
+    runtime.stopCommandScheduler();
+  });
+
+  test('reconciliation leaves a cleanly-fired command alone', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const nodeId = core.createNode(libraryId, null, 'Summarize my unread feeds').focus!.nodeId;
+    core.setCommandNode(nodeId);
+    // Last run completed cleanly: success (T2) is at/after the attempt (T1).
+    core.markCommandAttempted(nodeId, 1_000, 'system');
+    core.markCommandFired(nodeId, 2_000, 'system');
+    const runtime = await createRuntime(dataRoot, core, calls);
+
+    await (runtime as unknown as { reconcileCommandAttempts: () => Promise<void> }).reconcileCommandAttempts();
+
+    expect(calls.some((c) => c.command === 'mark_command_fired')).toBe(false);
+    runtime.stopCommandScheduler();
+  });
+});

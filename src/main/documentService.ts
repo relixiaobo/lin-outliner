@@ -411,7 +411,17 @@ export class DocumentService {
       case 'set_command_agent':
         return this.core.setCommandAgent(String(args.nodeId), nullableString(args.agent) ?? undefined);
       case 'mark_command_fired':
-        return this.core.markCommandFired(String(args.nodeId), nullableNumber(args.firedAt) ?? Date.now());
+        return this.core.markCommandFired(
+          String(args.nodeId),
+          nullableNumber(args.firedAt) ?? Date.now(),
+          meta.origin ?? 'system',
+        );
+      case 'mark_command_attempted':
+        return this.core.markCommandAttempted(
+          String(args.nodeId),
+          nullableNumber(args.attemptedAt) ?? Date.now(),
+          meta.origin ?? 'system',
+        );
       case 'create_image_node':
         return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
           assetId: nullableString(args.assetId) ?? undefined,

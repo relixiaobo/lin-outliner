@@ -514,6 +514,11 @@ export class AgentRuntime {
   ready() {
     this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
     this.queueScheduledDream(new Date());
+    // Crash recovery FIRST: reconcile any occurrence that was attempted but never
+    // recorded success (the app crashed/quit/slept mid-run) — at-most-once, so it
+    // is skipped, not re-fired. Chained on the same sweep tail, so the catch-up
+    // sweep below sees the reconciled watermark.
+    this.queueCommandReconcile();
     // Anacron catch-up on launch: fire any command whose occurrence elapsed
     // while the app was closed (coalesced to one fire per command).
     this.queueCommandSweep(new Date());
@@ -1513,11 +1518,18 @@ export class AgentRuntime {
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
-      approvalHandler: (approvalInput, signal) => {
-        const parentSession = parentSessionRef.current;
-        if (!parentSession) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
-        return this.requestToolApproval(parentSessionId, parentSession, approvalInput, signal);
-      },
+      // Unattended (scheduled command) runs have NO interactive approval channel:
+      // leaving it undefined makes an 'ask' decision resolve to a denial that is
+      // surfaced in the conversation, rather than hanging on a human who will
+      // never answer. Globally always-allowed tools still run (they resolve to
+      // 'allow' before any approval is sought).
+      approvalHandler: input.unattended
+        ? undefined
+        : (approvalInput, signal) => {
+          const parentSession = parentSessionRef.current;
+          if (!parentSession) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
+          return this.requestToolApproval(parentSessionId, parentSession, approvalInput, signal);
+        },
       afterToolResult: input.afterToolResult,
     }, async (payload, modelForPayload) => {
       try {
@@ -1951,6 +1963,39 @@ export class AgentRuntime {
       .then(() => this.sweepCommandSchedules(now));
   }
 
+  private queueCommandReconcile() {
+    this.commandSweepTail = this.commandSweepTail
+      .catch(() => undefined)
+      .then(() => this.reconcileCommandAttempts());
+  }
+
+  // One-time startup crash recovery for at-most-once scheduled runs. An occurrence
+  // is attempted (`mark_command_attempted` → `sysLastAttemptAt = dueAt`) BEFORE it
+  // runs; success advances `sysLastRunAt` past it. So at launch, any command with
+  // `sysLastAttemptAt > sysLastRunAt` was interrupted mid-run (crash/quit/sleep):
+  // advance the watermark past that occurrence rather than re-firing it — the
+  // brief's non-idempotent side effects must not repeat. The due check never reads
+  // the attempt marker, so an in-process run *failure* still retries (it is gated
+  // by the in-memory backoff, not by this reconciliation).
+  private async reconcileCommandAttempts() {
+    let projection;
+    try {
+      projection = this.outlinerToolHost.getProjection();
+    } catch {
+      return;
+    }
+    for (const node of projection.nodes) {
+      if (node.type !== 'command') continue;
+      const attemptedAt = node.sysLastAttemptAt;
+      if (attemptedAt === undefined || attemptedAt <= (node.sysLastRunAt ?? 0)) continue;
+      await this.outlinerToolHost.handle(
+        'mark_command_fired',
+        { nodeId: node.id, firedAt: attemptedAt },
+        { origin: 'system', summary: 'Reconciled an interrupted command run.' },
+      ).catch(() => undefined);
+    }
+  }
+
   private async sweepCommandSchedules(now: Date) {
     let projection;
     try {
@@ -2001,6 +2046,17 @@ export class AgentRuntime {
     this.firingCommandNodeIds.add(command.nodeId);
     this.knownCommandConversationNodeIds.add(command.nodeId);
     try {
+      // At-most-once: persist the attempted occurrence BEFORE running, so a
+      // crash / quit / sleep mid-run is reconciled at startup (the occurrence is
+      // skipped, not re-fired) instead of repeating the brief's non-idempotent
+      // side effects. Done first inside the try: if even this write fails we back
+      // off rather than run un-recorded. (An in-process run failure still retries
+      // — the due check ignores this marker; only startup reconciliation reads it.)
+      await this.outlinerToolHost.handle(
+        'mark_command_attempted',
+        { nodeId: command.nodeId, attemptedAt: command.dueAt },
+        { origin: 'system', summary: 'Command occurrence attempted.' },
+      );
       await this.startTriggeredRun(command);
       // Success: advance the watermark (system origin — never agent-written) so
       // the occurrence is not re-fired, and clear any failure backoff. Use the
@@ -2022,7 +2078,10 @@ export class AgentRuntime {
       const attempt = this.commandFailureCounts.get(command.nodeId) ?? 0;
       this.commandFailureCounts.set(command.nodeId, attempt + 1);
       const delay = COMMAND_FAILURE_BACKOFF_MS[Math.min(attempt, COMMAND_FAILURE_BACKOFF_MS.length - 1)];
-      this.commandBackoffUntil.set(command.nodeId, now.getTime() + delay);
+      // Backoff from the FAILURE moment, not the sweep-start `now`: a slow run can
+      // straddle the next sweep, and `now + delay` could already be in the past,
+      // collapsing the 30s/1m/5m/15m/1h ladder into a 60s tight-retry loop.
+      this.commandBackoffUntil.set(command.nodeId, Date.now() + delay);
       this.emitError(
         this.commandConversationSessionId(command.nodeId),
         error instanceof Error ? error.message : String(error),
@@ -2140,6 +2199,10 @@ export class AgentRuntime {
       description: commandConversationTitle(brief),
       prompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
       run_in_background: false,
+      // Unattended: a scheduled run has no human watching, so a tool needing
+      // approval is denied + surfaced (never hangs the run); globally
+      // always-allowed tools still run. Run-now keeps the interactive channel.
+      unattended: true,
     });
     // `run_in_background: false` awaits completion, but an agent definition flagged
     // `background: true` launches detached regardless — poll to completion so the

@@ -177,7 +177,7 @@ describe('Core.markCommandFired', () => {
     const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
     core.setCommandNode(id);
 
-    core.markCommandFired(id, 1_750_000_000_000);
+    core.markCommandFired(id, 1_750_000_000_000, 'system');
 
     expect(commandNode(core, id).sysLastRunAt).toBe(1_750_000_000_000);
   });
@@ -188,11 +188,25 @@ describe('Core.markCommandFired', () => {
     const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
     core.setCommandNode(id);
 
-    core.markCommandFired(id, 1_750_000_000_000);
+    core.markCommandFired(id, 1_750_000_000_000, 'system');
     // A long run that captured an older sweep-start time must not move it back
     // (which would re-expose a covered occurrence / clobber a user re-arm).
-    core.markCommandFired(id, 1_740_000_000_000);
+    core.markCommandFired(id, 1_740_000_000_000, 'system');
 
+    expect(commandNode(core, id).sysLastRunAt).toBe(1_750_000_000_000);
+  });
+
+  test('the agent cannot advance the watermark (symmetric to the schedule bright line)', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
+    core.setCommandNode(id);
+
+    // An agent push would let it suppress the user's schedule by jumping the
+    // watermark far ahead; the gate rejects it. system/user are accepted.
+    expect(() => core.markCommandFired(id, 1_750_000_000_000, 'agent')).toThrow();
+    expect(commandNode(core, id).sysLastRunAt ?? 0).toBe(0);
+    core.markCommandFired(id, 1_750_000_000_000, 'system');
     expect(commandNode(core, id).sysLastRunAt).toBe(1_750_000_000_000);
   });
 
@@ -200,6 +214,38 @@ describe('Core.markCommandFired', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;
     const id = mustFocus(core.createNode(libraryId, null, 'plain'));
-    expect(() => core.markCommandFired(id, 1_750_000_000_000)).toThrow();
+    expect(() => core.markCommandFired(id, 1_750_000_000_000, 'system')).toThrow();
+  });
+});
+
+describe('Core.markCommandAttempted (at-most-once marker)', () => {
+  test('advances the last-attempt marker, forward-only', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
+    core.setCommandNode(id);
+
+    core.markCommandAttempted(id, 1_750_000_000_000, 'system');
+    expect(commandNode(core, id).sysLastAttemptAt).toBe(1_750_000_000_000);
+    // Forward-only — an older attempt never regresses it.
+    core.markCommandAttempted(id, 1_740_000_000_000, 'system');
+    expect(commandNode(core, id).sysLastAttemptAt).toBe(1_750_000_000_000);
+  });
+
+  test('the agent cannot advance the attempt marker', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
+    core.setCommandNode(id);
+
+    expect(() => core.markCommandAttempted(id, 1_750_000_000_000, 'agent')).toThrow();
+    expect(commandNode(core, id).sysLastAttemptAt ?? 0).toBe(0);
+  });
+
+  test('refuses to mark a node that is not a command node', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'plain'));
+    expect(() => core.markCommandAttempted(id, 1_750_000_000_000, 'system')).toThrow();
   });
 });

@@ -834,15 +834,34 @@ export class Core {
 
   // Advance a command node's system fire watermark after a successful run. Not
   // user-facing and not protected (system-managed, never agent-written): the
-  // anacron scheduler calls this via a `system`-origin command. Forward-only —
-  // a fire whose captured timestamp is older than the current watermark (a long
-  // run that straddled a user re-arm) must never move it backward and re-expose
-  // a covered occurrence.
-  markCommandFired(nodeId: string, firedAt: number): CommandOutcome {
+  // anacron scheduler calls this via a `system`-origin command. The agent is
+  // barred — otherwise a future agent→document-command path could push the
+  // watermark to the far future and permanently suppress the user's schedule
+  // (the symmetric counterpart to the user-only `setCommandSchedule` gate).
+  // Forward-only — a fire whose captured timestamp is older than the current
+  // watermark (a long run that straddled a user re-arm) must never move it
+  // backward and re-expose a covered occurrence.
+  markCommandFired(nodeId: string, firedAt: number, origin: CommitOrigin): CommandOutcome {
     return this.patchNode(nodeId, (node) => {
       if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
+      if (origin === 'agent') throw CoreError.invalidOperation('the agent cannot advance a command fire watermark');
       const command = node as CommandNode;
       command.sysLastRunAt = Math.max(command.sysLastRunAt ?? 0, firedAt);
+    });
+  }
+
+  // Record that a command occurrence is being ATTEMPTED, before its run starts.
+  // System-managed (same agent bar as `markCommandFired`); forward-only. Used
+  // only by the startup reconciliation: if a crash/quit/sleep left
+  // `sysLastAttemptAt > sysLastRunAt`, that occurrence is treated as consumed and
+  // not re-fired (at-most-once). The due check never reads this field, so an
+  // in-process run failure still retries (watermark un-advanced + backoff).
+  markCommandAttempted(nodeId: string, attemptedAt: number, origin: CommitOrigin): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
+      if (origin === 'agent') throw CoreError.invalidOperation('the agent cannot advance a command attempt marker');
+      const command = node as CommandNode;
+      command.sysLastAttemptAt = Math.max(command.sysLastAttemptAt ?? 0, attemptedAt);
     });
   }
 

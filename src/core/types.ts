@@ -370,11 +370,13 @@ export interface NodeBase {
   autoCollected: boolean;
   aiSummary?: string;
   /**
-   * Field keys on this node that only the user may write (the mutation gateway
-   * rejects `agent`/`system`-origin writes to them). The enforcement primitive
-   * behind the command-node bright line — a `command` node carries
-   * `[COMMAND_SCHEDULE_FIELD]` so the agent can never arm an unattended run.
-   * See `isProtectedField` and `docs/plans/agent-scheduled-routines.md`.
+   * Descriptive metadata only: field keys on this node that are *intended* to be
+   * user-only-writable (a `command` node carries `[COMMAND_SCHEDULE_FIELD]`).
+   * This array is NOT the enforcement mechanism. The command-node bright line is
+   * enforced inline in `OutlinerCore.setCommandSchedule`, keyed to the
+   * `node.type === 'command'` invariant (not this array, which could drift and
+   * fail open). Do not add a field here expecting the gateway to protect it.
+   * See `docs/plans/agent-scheduled-routines.md`.
    */
   protectedFields?: string[];
   /**
@@ -486,7 +488,8 @@ export interface CommandNode extends NodeBase {
    * Canonical schedule string — a date endpoint with an optional recurrence
    * rule, `"<endpoint> RRULE:..."`, parsed by `src/core/dateSchedule.ts`. One
    * field carries both *when to start* (the endpoint) and *how to repeat* (the
-   * rule). **User-only-writable** (listed in `protectedFields`): the agent may
+   * rule). **User-only-writable** (the bright line — enforced inline in
+   * `setCommandSchedule`, keyed to `node.type === 'command'`): the agent may
    * draft the brief and propose a schedule as text, but only the user can arm an
    * unattended run. Empty/absent = manual-only (Run now still works).
    */
@@ -499,6 +502,17 @@ export interface CommandNode extends NodeBase {
    */
   sysLastRunAt?: number;
   /**
+   * System-managed "last attempted occurrence" marker (ms epoch), set to the
+   * occurrence's due time BEFORE a scheduled run starts. A crash / quit / sleep
+   * mid-run leaves `sysLastAttemptAt > sysLastRunAt`; the one-time startup
+   * reconciliation then advances the watermark past that occurrence rather than
+   * re-firing it (at-most-once — a brief's non-idempotent side effects must not
+   * repeat). An in-process run *failure* still retries via the in-memory backoff;
+   * this marker is consulted ONLY by the startup reconciliation, never by the due
+   * check. Never written by the agent. Forward-only.
+   */
+  sysLastAttemptAt?: number;
+  /**
    * Which agent definition runs this command. Matches an `AgentDefinition.name`
    * from the subagent registry (see `listAllAgentDefinitions`); a fire spawns the
    * brief as a subagent of this type so the run shows in the delivery
@@ -509,18 +523,13 @@ export interface CommandNode extends NodeBase {
   commandAgent?: string;
 }
 
-/** The single user-only-writable field key on a `command` node (the bright line). */
-export const COMMAND_SCHEDULE_FIELD = 'commandSchedule';
-
 /**
- * Whether `field` is declared user-only-writable on `node` (see
- * `NodeBase.protectedFields`). The mutation gateway rejects non-`user`-origin
- * writes to a protected field; this is the enforcement primitive behind the
- * command-node bright line and is reusable for any future protected field.
+ * The user-only-writable field key carried in a `command` node's
+ * `protectedFields` (descriptive metadata). The bright line itself is enforced
+ * inline in `OutlinerCore.setCommandSchedule`, keyed to `node.type === 'command'`
+ * — not by reading this constant or `protectedFields`.
  */
-export function isProtectedField(node: Pick<NodeBase, 'protectedFields'>, field: string): boolean {
-  return node.protectedFields?.includes(field) ?? false;
-}
+export const COMMAND_SCHEDULE_FIELD = 'commandSchedule';
 
 export type Node =
   | ContentNode

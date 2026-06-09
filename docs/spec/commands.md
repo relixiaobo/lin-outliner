@@ -108,11 +108,17 @@ it run unattended on a timer. See `docs/plans/agent-scheduled-routines.md`.
   matches an `AgentDefinition.name` from the subagent registry
   (`agent_list_all_definitions`); empty/absent = the main agent. Agent-editable
   (not part of the bright line — only arming the *schedule* is user-gated).
-- `mark_command_fired(nodeId, firedAt)` advances the system fire watermark after
-  a successful run (system-managed, never agent-written). **Forward-only** — a
-  fire that captured an older sweep-start time never moves the watermark backward
-  (so a long run that straddled a user re-arm can't re-expose a covered
-  occurrence).
+- `mark_command_fired(nodeId, firedAt)` advances the system fire watermark
+  (`sysLastRunAt`) after a successful run. **Forward-only** — a fire that captured
+  an older sweep-start time never moves the watermark backward (so a long run that
+  straddled a user re-arm can't re-expose a covered occurrence). Like the schedule
+  bright line it is **system-managed**: an `origin === 'agent'` write is rejected
+  at the gateway (symmetric to `set_command_schedule`, so an agent can never
+  suppress a user's schedule by jumping the watermark ahead).
+- `mark_command_attempted(nodeId, attemptedAt)` records the at-most-once marker
+  (`sysLastAttemptAt`) **before** a run starts, so a crash mid-run can be told
+  apart from a clean failure on the next launch. Forward-only and agent-rejected,
+  exactly like `mark_command_fired`.
 
 The anacron scheduler (main process) sweeps command nodes on a 60s tick, on app
 launch, and on `powerMonitor.resume`, firing each due node once (catch-up
@@ -132,9 +138,29 @@ children (the Schedule / Agent rows) are config, not prompt, and are excluded. A
 empty brief is skipped (never fires, never advances the watermark). **Only a run
 that actually
 completes advances the watermark** — a failed run (no provider, bad key, rate
-limit) leaves the occurrence due and arms an in-memory backoff ladder. The sweep
-also prunes backoff state and deletes the delivery conversation of a command node
-that was permanently removed.
+limit) leaves the occurrence due and arms an in-memory backoff ladder (measured
+from the failure time, not the sweep-start time, so the ladder doesn't collapse
+on a slow run). The sweep also prunes backoff state and deletes the delivery
+conversation of a command node that was permanently removed.
+
+**At-most-once across a crash.** Before each fire the scheduler persists
+`mark_command_attempted(dueAt)`, then starts the run. The due check itself reads
+only `sysLastRunAt`, so an in-process failure still retries through the backoff
+ladder. But a crash *during* a run would otherwise re-fire the same occurrence on
+the next launch (the watermark never advanced). To prevent that, a one-time
+startup pass — `reconcileCommandAttempts()`, run once before the first sweep —
+advances the watermark past any occurrence whose `sysLastAttemptAt` is newer than
+its `sysLastRunAt`: an interrupted run is **skipped, not re-fired** (at-most-once
+for the crash case; the user re-arms or the next occurrence picks it up). A clean
+node (`sysLastAttemptAt <= sysLastRunAt`) is left untouched.
+
+**Unattended permission model.** A scheduled fire runs with no interactive
+approval channel (`unattended: true` → no `approvalHandler` →
+`interactionAvailable: false`), so it can never hang waiting on a human. Tools
+whose policy resolves to **ask** are denied and reported (the run continues and
+records the denial) rather than blocking; the global **always-allow** list is
+still honored, so pre-approved tools run normally. `agent_run_command_now` runs
+attended (the human is present), so it keeps the interactive approval channel.
 
 `agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
 now: the same no-human-turn execution with a `{type:'node'}` trigger and **no
@@ -244,8 +270,11 @@ serialized to the run brief by `commandBriefText`.
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. See `src/core/loroDocument.ts`.
 - `NodeType` reserves `command` plus `CommandNode.commandSchedule`,
-  `CommandNode.sysLastRunAt`, `CommandNode.commandAgent`, and
-  `NodeBase.protectedFields` for scheduled-routines work. The two config field
+  `CommandNode.sysLastRunAt`, `CommandNode.sysLastAttemptAt`,
+  `CommandNode.commandAgent`, and `NodeBase.protectedFields`
+  (descriptive metadata only — the bright line is enforced inline on the
+  `command` node-type invariant, not on this array) for scheduled-routines work.
+  The two config field
   rows surface those scalars through the built-in system fields
   `sys:commandSchedule` / `sys:commandAgent` (see `src/core/systemFields.ts`).
 - When adding or renaming a command, update `DOCUMENT_COMMANDS` or
