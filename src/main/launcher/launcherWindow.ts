@@ -93,7 +93,12 @@ export function createLauncherWindow(deps: LauncherWindowDeps): BrowserWindow {
   deps.harden(win.webContents);
   // Float above normal windows, including other apps' full-screen spaces.
   win.setAlwaysOnTop(true, 'pop-up-menu');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // NOTE: the all-Spaces collection behavior (setVisibleOnAllWorkspaces) is
+  // deliberately NOT set here. A window that permanently joins all Spaces makes
+  // macOS swallow the first ⌘Q — the app needs two presses to quit, because
+  // AppKit never fires applicationShouldTerminate: (our before-quit flush) on the
+  // first press. Since this prewarmed window lives hidden almost all the time, we
+  // toggle the behavior on show and clear it on hide instead (see show/hide).
   // Custom native corner (matches the CSS surface curve). No-op off macOS / if the
   // addon is unbuilt — the window just keeps the OS-default corner.
   applyMacWindowCorner(win, LAUNCHER_CORNER_RADIUS);
@@ -134,6 +139,10 @@ export async function showLauncherWindow(beforeFocus?: () => Promise<void> | voi
   win.setBounds({ x: originX, y: originY, width: LAUNCHER_WIDTH, height: LAUNCHER_HEIGHT });
   // Re-assert the native corner: setBounds / re-show can drop the custom radius.
   applyMacWindowCorner(win, LAUNCHER_CORNER_RADIUS);
+  // Join all Spaces (incl. other apps' full-screen) only while visible. Clearing
+  // this on hide keeps the common ⌘Q path (launcher hidden) free of the AppKit
+  // first-quit-swallow bug — see the note in createLauncherWindow + hide below.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // Visible immediately, but do NOT steal focus yet — keep the old app frontmost
   // so beforeFocus can read it.
   win.showInactive();
@@ -153,7 +162,11 @@ export async function showLauncherWindow(beforeFocus?: () => Promise<void> | voi
 
 export function hideLauncherWindow(): void {
   const win = getLauncherWindow();
-  if (win?.isVisible()) win.hide();
+  if (!win?.isVisible()) return;
+  win.hide();
+  // Drop the all-Spaces collection behavior while hidden so the prewarmed window
+  // doesn't make macOS swallow the first ⌘Q (set again on the next show).
+  win.setVisibleOnAllWorkspaces(false);
 }
 
 export async function toggleLauncherWindow(beforeFocus?: () => Promise<void> | void): Promise<void> {
