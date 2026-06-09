@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent, AgentPrincipal } from '../../src/core/agentEventLog';
 import {
   AgentEventStore,
   agentCheckpointFileName,
@@ -478,10 +478,11 @@ describe('agent event store', () => {
     await withStore(async (store, root) => {
       const sessionId = 'session-1';
       const agentId = 'built-in:tenon:assistant';
+      const principal: AgentPrincipal = { type: 'agent', agentId };
       await store.appendEvents(sessionId, [
         { ...base(sessionId, 1, 'session.created'), title: 'Current layout' },
       ]);
-      await store.addMemoryEntry(agentId, {
+      await store.addMemoryEntry(principal, {
         id: 'memory-legacy',
         fact: 'Legacy memory should not cross the clean cut.',
         sources: [{ conversationId: sessionId }],
@@ -508,7 +509,7 @@ describe('agent event store', () => {
       }]);
       await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
       await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
-      await expect(restarted.readMemoryEvents(agentId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(principal)).resolves.toEqual([]);
     });
   });
 
@@ -1056,14 +1057,15 @@ describe('agent event store', () => {
   test('projects agent memory from per-agent JSONL events', async () => {
     await withStore(async (store, root) => {
       const agentId = 'built-in:tenon:assistant';
-      const first = await store.addMemoryEntry(agentId, {
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      const first = await store.addMemoryEntry(principal, {
         id: 'memory-1',
         fact: '  User prefers concise engineering answers.  ',
         originWorkspace: 'workspace:abc',
         sources: [{ conversationId: 'conversation-1', runId: 'run-1', messageRange: ['user-1', 'user-1'] }],
         createdAt: 10,
       });
-      const second = await store.addMemoryEntry(agentId, {
+      const second = await store.addMemoryEntry(principal, {
         id: 'memory-2',
         fact: 'Project codename is Tenon.',
         sources: [{ conversationId: 'conversation-2' }],
@@ -1074,26 +1076,26 @@ describe('agent event store', () => {
       expect(second.fact).toBe('Project codename is Tenon.');
       await expect(readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8')).resolves.toContain('memory.entry_added');
 
-      const updated = await store.updateMemoryEntry(agentId, 'memory-1', {
+      const updated = await store.updateMemoryEntry(principal, 'memory-1', {
         fact: 'User prefers direct, concise engineering answers.',
       });
       expect(updated?.fact).toBe('User prefers direct, concise engineering answers.');
 
-      const removed = await store.removeMemoryEntry(agentId, 'memory-1', 'test');
+      const removed = await store.removeMemoryEntry(principal, 'memory-1', 'test');
       expect(removed?.status).toBe('invalidated');
-      await store.removeMemoryEntry(agentId, 'memory-1', 'test-again');
+      await store.removeMemoryEntry(principal, 'memory-1', 'test-again');
 
-      expect(await store.listMemoryEntries(agentId)).toMatchObject([
+      expect(await store.listMemoryEntries(principal)).toMatchObject([
         { id: 'memory-2', status: 'active' },
       ]);
-      expect(await store.listMemoryEntries(agentId, { includeInvalidated: true, query: 'direct concise' })).toMatchObject([
+      expect(await store.listMemoryEntries(principal, { includeInvalidated: true, query: 'direct concise' })).toMatchObject([
         { id: 'memory-1', status: 'invalidated' },
       ]);
 
       const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n')).toHaveLength(4);
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listMemoryEntries(agentId, { includeInvalidated: true })).toMatchObject([
+      expect(await restarted.listMemoryEntries(principal, { includeInvalidated: true })).toMatchObject([
         { id: 'memory-2', status: 'active' },
         { id: 'memory-1', status: 'invalidated' },
       ]);
@@ -1103,7 +1105,8 @@ describe('agent event store', () => {
   test('rejects empty memory updates and keeps normalized facts within the max length', async () => {
     await withStore(async (store) => {
       const agentId = 'built-in:tenon:assistant';
-      const entry = await store.addMemoryEntry(agentId, {
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      const entry = await store.addMemoryEntry(principal, {
         id: 'memory-long',
         fact: 'x'.repeat(2_100),
         sources: [{ conversationId: 'conversation-1' }],
@@ -1111,14 +1114,15 @@ describe('agent event store', () => {
 
       expect(entry.fact).toHaveLength(2_000);
       expect(entry.fact.endsWith('...')).toBe(true);
-      await expect(store.updateMemoryEntry(agentId, 'memory-long', { fact: '   ' })).rejects.toThrow(/cannot be empty/);
+      await expect(store.updateMemoryEntry(principal, 'memory-long', { fact: '   ' })).rejects.toThrow(/cannot be empty/);
     });
   });
 
   test('compacts high-churn memory logs to the current projection', async () => {
     await withStore(async (store) => {
       const agentId = 'built-in:tenon:assistant';
-      await store.appendDreamCompleted(agentId, {
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      await store.appendDreamCompleted(principal, {
         runId: 'dream-run-before-churn',
         trigger: 'schedule',
         startedAt: 40,
@@ -1144,22 +1148,22 @@ describe('agent event store', () => {
         },
         changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
       });
-      await store.addMemoryEntry(agentId, {
+      await store.addMemoryEntry(principal, {
         id: 'memory-churn',
         fact: 'Version 0.',
         sources: [{ conversationId: 'conversation-1' }],
       });
 
       for (let index = 1; index <= 70; index += 1) {
-        await store.updateMemoryEntry(agentId, 'memory-churn', { fact: `Version ${index}.` });
+        await store.updateMemoryEntry(principal, 'memory-churn', { fact: `Version ${index}.` });
       }
 
       const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n').length).toBeLessThan(20);
-      expect(await store.listMemoryEntries(agentId)).toMatchObject([
+      expect(await store.listMemoryEntries(principal)).toMatchObject([
         { id: 'memory-churn', fact: 'Version 70.' },
       ]);
-      expect((await store.readDreamState(agentId)).watermark.conversations['conversation-1']).toEqual({
+      expect((await store.readDreamState(principal)).watermark.conversations['conversation-1']).toEqual({
         seq: 12,
         eventId: 'event-12',
       });

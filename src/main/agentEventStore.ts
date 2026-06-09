@@ -32,7 +32,7 @@ import type {
   AgentMemorySource,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { appendAgentEventToReplayState, conversationIdOfRun, replayAgentEvents } from '../core/agentEventLog';
+import { appendAgentEventToReplayState, conversationIdOfRun, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -235,7 +235,7 @@ export class AgentEventStore {
   private readonly agentEventLog = new AppendOnlySeqLog<AgentEvent>('agent event', parseEventsJsonl);
   private readonly memoryEventLog = new AppendOnlySeqLog<AgentMemoryEvent>('agent memory event', parseMemoryEventsJsonl);
   private indexQueue = Promise.resolve();
-  private readonly memoryProjectionByAgentId = new Map<string, AgentMemoryProjectionCache>();
+  private readonly memoryProjectionByPrincipal = new Map<string, AgentMemoryProjectionCache>();
   private storageLayoutPromise: Promise<void> | null = null;
 
   constructor(private readonly rootDir: string) {}
@@ -282,6 +282,19 @@ export class AgentEventStore {
       memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
       runIndexPath: path.join(agentDir, AGENT_RUN_INDEX_FILE),
     };
+  }
+
+  /**
+   * On-disk location of a principal's memory pool. An agent-principal reuses its
+   * existing identity directory (`agents/<agentId>/memory/`); a user-principal
+   * gets a dedicated `principals/user-<userId>/memory/` pool. The pool is the
+   * subject's self-model — see [[agent-data-model]] §4.
+   */
+  memoryPaths(principal: AgentPrincipal): { poolDir: string; memoryEventsPath: string } {
+    const poolDir = principal.type === 'agent'
+      ? this.agentPaths(principal.agentId).agentDir
+      : path.join(this.rootDir, 'principals', `user-${encodeAgentDirName(principal.userId)}`);
+    return { poolDir, memoryEventsPath: path.join(poolDir, 'memory', RUN_EVENT_LOG_FILE) };
   }
 
   async appendEvents(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
@@ -532,13 +545,14 @@ export class AgentEventStore {
     }
   }
 
-  async addMemoryEntry(agentId: string, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
+  async addMemoryEntry(principal: AgentPrincipal, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
       const createdAt = input.createdAt ?? Date.now();
       const entry = normalizeMemoryEntry({
         id: input.id ?? `memory-${randomUUID()}`,
-        agentId,
+        principal,
         fact: input.fact,
         originWorkspace: input.originWorkspace,
         sources: input.sources,
@@ -546,80 +560,83 @@ export class AgentEventStore {
         createdAt,
       });
       if (!entry) throw new Error('Invalid agent memory entry.');
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'memory.entry_added',
         createdAt,
         entry,
       });
-      const projection = await this.getMemoryProjection(agentId);
-      await this.appendMemoryEvents(agentId, [event]);
+      const projection = await this.getMemoryProjection(principal);
+      await this.appendMemoryEvents(principal, [event]);
       projection.entries.set(entry.id, entry);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return entry;
     });
   }
 
   async updateMemoryEntry(
-    agentId: string,
+    principal: AgentPrincipal,
     entryId: string,
     patch: AgentMemoryEntryPatch,
   ): Promise<AgentMemoryEntry | null> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
       if ('fact' in patch && !normalizeMemoryFact(patch.fact)) {
         throw new Error('Memory fact cannot be empty.');
       }
-      const projection = await this.getMemoryProjection(agentId);
+      const projection = await this.getMemoryProjection(principal);
       const current = projection.entries.get(entryId);
       if (!current) return null;
       const normalizedPatch = normalizeMemoryEntryPatch(patch);
       if (Object.keys(normalizedPatch).length === 0) return current;
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'memory.entry_updated',
         createdAt: Date.now(),
         entryId,
         patch: normalizedPatch,
       });
-      await this.appendMemoryEvents(agentId, [event]);
+      await this.appendMemoryEvents(principal, [event]);
       const next = normalizeMemoryEntry({ ...current, ...normalizedPatch }) ?? current;
       projection.entries.set(next.id, next);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return next;
     });
   }
 
-  async removeMemoryEntry(agentId: string, entryId: string, reason?: string): Promise<AgentMemoryEntry | null> {
+  async removeMemoryEntry(principal: AgentPrincipal, entryId: string, reason?: string): Promise<AgentMemoryEntry | null> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
-      const projection = await this.getMemoryProjection(agentId);
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
+      const projection = await this.getMemoryProjection(principal);
       const current = projection.entries.get(entryId);
       if (!current) return null;
       if (current.status === 'invalidated') return current;
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'memory.entry_removed',
         createdAt: Date.now(),
         entryId,
         reason,
       });
-      await this.appendMemoryEvents(agentId, [event]);
+      await this.appendMemoryEvents(principal, [event]);
       const next: AgentMemoryEntry = { ...current, status: 'invalidated' };
       projection.entries.set(next.id, next);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return next;
     });
   }
 
-  async appendDreamCompleted(agentId: string, input: AgentDreamCompletedInput): Promise<Extract<AgentMemoryEvent, { type: 'dream.completed' }>> {
+  async appendDreamCompleted(principal: AgentPrincipal, input: AgentDreamCompletedInput): Promise<Extract<AgentMemoryEvent, { type: 'dream.completed' }>> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
       const completedAt = input.completedAt ?? Date.now();
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'dream.completed',
         createdAt: completedAt,
         dreamId: input.dreamId ?? `dream-${randomUUID()}`,
@@ -637,40 +654,40 @@ export class AgentEventStore {
         },
         changes: normalizeDreamChanges(input.changes),
       }) as Extract<AgentMemoryEvent, { type: 'dream.completed' }>;
-      const projection = await this.getMemoryProjection(agentId);
-      await this.appendMemoryEvents(agentId, [event]);
+      const projection = await this.getMemoryProjection(principal);
+      await this.appendMemoryEvents(principal, [event]);
       projection.dream = dreamStateFromCompleted(event);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return event;
     });
   }
 
-  async readDreamState(agentId: string): Promise<AgentDreamState> {
+  async readDreamState(principal: AgentPrincipal): Promise<AgentDreamState> {
     await this.ensureStorageLayout();
-    return cloneDreamState((await this.getMemoryProjection(agentId)).dream);
+    return cloneDreamState((await this.getMemoryProjection(principal)).dream);
   }
 
-  async getMemoryEntry(agentId: string, entryId: string): Promise<AgentMemoryEntry | null> {
+  async getMemoryEntry(principal: AgentPrincipal, entryId: string): Promise<AgentMemoryEntry | null> {
     await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(agentId);
+    const projection = await this.getMemoryProjection(principal);
     return projection.entries.get(entryId) ?? null;
   }
 
   async listMemoryEntries(
-    agentId: string,
+    principal: AgentPrincipal,
     options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
   ): Promise<AgentMemoryEntry[]> {
-    return (await this.queryMemoryEntries(agentId, options)).entries;
+    return (await this.queryMemoryEntries(principal, options)).entries;
   }
 
   async queryMemoryEntries(
-    agentId: string,
+    principal: AgentPrincipal,
     options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
   ): Promise<{ entries: AgentMemoryEntry[]; totalEntries: number }> {
     await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(agentId);
+    const projection = await this.getMemoryProjection(principal);
     const entries = rankMemoryEntries([...projection.entries.values()]
       .filter((entry) => options.includeInvalidated || entry.status === 'active')
       .filter((entry) => !options.originWorkspace || entry.originWorkspace === options.originWorkspace),
@@ -681,9 +698,9 @@ export class AgentEventStore {
     };
   }
 
-  async readMemoryEvents(agentId: string): Promise<AgentMemoryEvent[]> {
+  async readMemoryEvents(principal: AgentPrincipal): Promise<AgentMemoryEvent[]> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.readIfExists(this.agentPaths(agentId).memoryEventsPath);
+    return this.memoryEventLog.readIfExists(this.memoryPaths(principal).memoryEventsPath);
   }
 
   private ensureStorageLayout(): Promise<void> {
@@ -718,7 +735,7 @@ export class AgentEventStore {
       await Promise.all(entries
         .filter((entry) => entry.isDirectory())
         .map((entry) => rm(path.join(agentsDir, entry.name, 'memory'), { recursive: true, force: true })));
-      this.memoryProjectionByAgentId.clear();
+      this.memoryProjectionByPrincipal.clear();
       this.memoryEventLog.clear();
     } catch (error) {
       if (isNotFoundError(error)) return;
@@ -769,33 +786,35 @@ export class AgentEventStore {
   }
 
   private async nextMemoryEvent(
-    agentId: string,
-    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>,
+    principal: AgentPrincipal,
+    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'principal'>,
   ): Promise<AgentMemoryEvent> {
-    const seq = await this.memoryEventLog.latestSeq(agentId, () => [this.agentPaths(agentId).memoryEventsPath]) + 1;
+    const key = principalKey(principal);
+    const seq = await this.memoryEventLog.latestSeq(key, () => [this.memoryPaths(principal).memoryEventsPath]) + 1;
     return {
       v: 1,
       eventId: `memory-event-${randomUUID()}`,
       seq,
-      agentId,
+      principal,
       ...input,
     } as AgentMemoryEvent;
   }
 
-  private async appendMemoryEvents(agentId: string, events: readonly AgentMemoryEvent[]): Promise<void> {
+  private async appendMemoryEvents(principal: AgentPrincipal, events: readonly AgentMemoryEvent[]): Promise<void> {
     if (events.length === 0) return;
-    await this.memoryEventLog.appendForKey(agentId, this.agentPaths(agentId).memoryEventsPath, events);
+    await this.memoryEventLog.appendForKey(principalKey(principal), this.memoryPaths(principal).memoryEventsPath, events);
   }
 
-  private async getMemoryProjection(agentId: string): Promise<AgentMemoryProjectionCache> {
-    const latestSeq = await this.memoryEventLog.latestSeq(agentId, () => [this.agentPaths(agentId).memoryEventsPath]);
-    const cached = this.memoryProjectionByAgentId.get(agentId);
+  private async getMemoryProjection(principal: AgentPrincipal): Promise<AgentMemoryProjectionCache> {
+    const key = principalKey(principal);
+    const latestSeq = await this.memoryEventLog.latestSeq(key, () => [this.memoryPaths(principal).memoryEventsPath]);
+    const cached = this.memoryProjectionByPrincipal.get(key);
     if (cached && cached.latestSeq === latestSeq) return cached;
 
-    const events = await this.readMemoryEvents(agentId);
+    const events = await this.readMemoryEvents(principal);
     const projected = projectMemoryEvents(events);
     const projection: AgentMemoryProjectionCache = {
       latestSeq,
@@ -803,23 +822,23 @@ export class AgentEventStore {
       entries: projected.entries,
       dream: projected.dream,
     };
-    this.memoryProjectionByAgentId.set(agentId, projection);
+    this.memoryProjectionByPrincipal.set(key, projection);
     return projection;
   }
 
-  private async maybeCompactMemoryLog(agentId: string, projection: AgentMemoryProjectionCache): Promise<void> {
+  private async maybeCompactMemoryLog(principal: AgentPrincipal, projection: AgentMemoryProjectionCache): Promise<void> {
     if (projection.eventCount < MEMORY_COMPACTION_MIN_EVENTS) return;
     const projectedEntryCount = Math.max(1, projection.entries.size);
     if (projection.eventCount < projectedEntryCount * MEMORY_COMPACTION_CHURN_FACTOR) return;
 
-    const events = compactMemoryProjection(agentId, projection.entries, projection.dream.lastCompleted);
-    const filePath = this.agentPaths(agentId).memoryEventsPath;
+    const events = compactMemoryProjection(principal, projection.entries, projection.dream.lastCompleted);
+    const filePath = this.memoryPaths(principal).memoryEventsPath;
     await mkdir(path.dirname(filePath), { recursive: true });
     await atomicWriteFile(filePath, serializeJsonl(events));
     const latestSeq = events.at(-1)?.seq ?? 0;
     projection.latestSeq = latestSeq;
     projection.eventCount = events.length;
-    this.memoryEventLog.setLatestSeq(agentId, latestSeq);
+    this.memoryEventLog.setLatestSeq(principalKey(principal), latestSeq);
   }
 
   private async readEventFileTail(sessionId: string): Promise<AgentEventFileTail> {
@@ -1887,10 +1906,6 @@ function mergePrincipals(current: readonly AgentPrincipal[], next: readonly Agen
   return [...byKey.values()].sort((left, right) => principalKey(left).localeCompare(principalKey(right)));
 }
 
-function principalKey(principal: AgentPrincipal): string {
-  return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
-}
-
 function emptyRunFingerprint(): AgentRunFingerprint {
   return {
     appVersion: 'unknown',
@@ -2027,6 +2042,13 @@ function isAgentPrincipal(value: unknown): value is AgentPrincipal {
   if (value.type === 'user') return typeof value.userId === 'string';
   if (value.type === 'agent') return typeof value.agentId === 'string';
   return false;
+}
+
+function normalizePrincipal(value: unknown): AgentPrincipal | null {
+  if (!isRecord(value)) return null;
+  if (value.type === 'user' && typeof value.userId === 'string') return { type: 'user', userId: value.userId };
+  if (value.type === 'agent' && typeof value.agentId === 'string') return { type: 'agent', agentId: value.agentId };
+  return null;
 }
 
 function isAgentRunKind(value: unknown): value is AgentRunKind {
@@ -2191,7 +2213,7 @@ function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
 }
 
 function compactMemoryProjection(
-  agentId: string,
+  principal: AgentPrincipal,
   entries: ReadonlyMap<string, AgentMemoryEntry>,
   lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
 ): AgentMemoryEvent[] {
@@ -2203,7 +2225,7 @@ function compactMemoryProjection(
       type: 'memory.entry_added',
       eventId: `memory-compact-${randomUUID()}`,
       seq: index + 1,
-      agentId,
+      principal,
       createdAt,
       entry,
     }));
@@ -2220,20 +2242,21 @@ function compactMemoryProjection(
 
 function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
   if (!isRecord(value) || value.v !== 1) return null;
-  if (typeof value.eventId !== 'string' || typeof value.agentId !== 'string') return null;
+  const principal = normalizePrincipal(value.principal);
+  if (typeof value.eventId !== 'string' || !principal) return null;
   const seq = numberOrNull(value.seq);
   const createdAt = numberOrNull(value.createdAt);
   if (seq === null || createdAt === null) return null;
 
   if (value.type === 'memory.entry_added') {
     const entry = normalizeMemoryEntry(value.entry);
-    if (!entry || entry.agentId !== value.agentId) return null;
+    if (!entry || !samePrincipal(entry.principal, principal)) return null;
     return {
       v: 1,
       type: 'memory.entry_added',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       entry,
     };
@@ -2246,7 +2269,7 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       type: 'memory.entry_updated',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       entryId: value.entryId,
       patch: normalizeMemoryEntryPatch(isRecord(value.patch) ? value.patch : {}),
@@ -2260,7 +2283,7 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       type: 'memory.entry_removed',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       entryId: value.entryId,
       reason: typeof value.reason === 'string' ? value.reason : undefined,
@@ -2281,7 +2304,7 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       type: 'dream.completed',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       dreamId: value.dreamId,
       runId: value.runId,
@@ -2299,13 +2322,14 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
 
 function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
   if (!isRecord(value)) return null;
-  if (typeof value.id !== 'string' || typeof value.agentId !== 'string') return null;
+  const principal = normalizePrincipal(value.principal);
+  if (typeof value.id !== 'string' || !principal) return null;
   const fact = normalizeMemoryFact(value.fact);
   const createdAt = numberOrNull(value.createdAt);
   if (!fact || createdAt === null) return null;
   return {
     id: value.id,
-    agentId: value.agentId,
+    principal,
     fact,
     originWorkspace: normalizeOptionalString(value.originWorkspace),
     sources: Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [],

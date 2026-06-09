@@ -23,10 +23,13 @@ import {
   type AgentActor,
   type AgentEvent,
   type AgentPersistedContent,
+  type AgentPrincipal,
 } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+
+const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -354,7 +357,7 @@ describe('agent runtime past chats integration', () => {
         .map((part) => ({ name: part.name, arguments: part.arguments }))
     ));
     const toolResults = activePath.filter((message) => message.role === 'toolResult');
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -374,7 +377,7 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-past-chats-data-'));
     roots.push(localRoot, dataRoot);
     await seedPastSession(dataRoot);
-    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-focus-ring',
       fact: 'Cobalt blue was chosen for focus rings.',
       sources: [{
@@ -471,7 +474,7 @@ describe('agent runtime past chats integration', () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-data-'));
     roots.push(localRoot, dataRoot);
-    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-direct-style',
       fact: 'prefer direct, concise engineering answers',
       sources: [{ conversationId: 'past-conversation' }],
@@ -532,14 +535,14 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-current-workspace',
       fact: 'use slate focus rings in the current workspace',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'current-workspace-conversation' }],
       createdAt: 30,
     });
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-other-workspace',
       fact: 'use amber focus rings in the other workspace',
       originWorkspace: 'workspace:other',
@@ -600,34 +603,34 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-isolated-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-current-recall',
       fact: 'Current workspace recall fact mentions teal focus rings.',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'current-recall-conversation' }],
       createdAt: 30,
     });
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-other-recall',
       fact: 'Other workspace recall fact mentions amber focus rings.',
       originWorkspace: 'workspace:other',
       sources: [{ conversationId: 'other-recall-conversation' }],
       createdAt: 31,
     });
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-unscoped-recall',
       fact: 'Unscoped recall fact mentions violet focus rings.',
       sources: [{ conversationId: 'unscoped-recall-conversation' }],
       createdAt: 32,
     });
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-invalidated-recall',
       fact: 'Invalidated recall fact mentions orange focus rings.',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'invalidated-recall-conversation' }],
       createdAt: 33,
     });
-    await store.removeMemoryEntry('built-in:tenon:assistant', 'memory-invalidated-recall', 'test');
+    await store.removeMemoryEntry(agentPrincipal('built-in:tenon:assistant'), 'memory-invalidated-recall', 'test');
 
     const contexts: string[] = [];
     const script = scriptedStream(
@@ -761,11 +764,11 @@ describe('agent runtime past chats integration', () => {
 
     const created = await runtime.createConversation();
     await runtime.sendMessage(created.conversationId, 'Please keep engineering answers concise from now on.');
-    expect(await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant')).toEqual([]);
+    expect(await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'))).toEqual([]);
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
     const source = entries[0]?.sources[0];
 
     expect(script.pendingCount()).toBe(0);
@@ -778,7 +781,7 @@ describe('agent runtime past chats integration', () => {
     expect(dreamRequests.join('\n')).toContain('Please keep engineering answers concise from now on.');
     expect(dreamRequests.join('\n')).toContain('I will keep future engineering answers concise.');
     expect(dreamRequests.join('\n')).toContain('"tools":[]');
-    expect((await new AgentEventStore(dataRoot).readDreamState('built-in:tenon:assistant')).watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
+    expect((await new AgentEventStore(dataRoot).readDreamState(agentPrincipal('built-in:tenon:assistant'))).watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
     const projection = latestProjectionEvent(sink.events)?.renderProjection;
     const dreamRow = projection?.transcriptRows.find((row) => row.kind === 'dream');
     expect(dreamRow?.kind).toBe('dream');
@@ -913,13 +916,13 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, 'Prefer compact acknowledgements.');
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     expect(dreamCalls).toBe(0);
-    expect(await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant')).toEqual([]);
+    expect(await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'))).toEqual([]);
 
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
-    const dreamState = await new AgentEventStore(dataRoot).readDreamState('built-in:tenon:assistant');
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
+    const dreamState = await new AgentEventStore(dataRoot).readDreamState(agentPrincipal('built-in:tenon:assistant'));
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -983,8 +986,8 @@ describe('agent runtime past chats integration', () => {
     await flushProjectionCoalescing();
 
     const store = new AgentEventStore(dataRoot);
-    const entries = await store.listMemoryEntries('built-in:tenon:assistant');
-    const dreamState = await store.readDreamState('built-in:tenon:assistant');
+    const entries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
+    const dreamState = await store.readDreamState(agentPrincipal('built-in:tenon:assistant'));
     const runId = dreamState.lastCompleted?.runId;
     const runMeta = runId ? await store.readRunMetaProjection(runId) : null;
     const projection = latestProjectionEvent(sink.events)?.renderProjection;
@@ -1016,7 +1019,7 @@ describe('agent runtime past chats integration', () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-data-'));
     roots.push(localRoot, dataRoot);
-    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-stable',
       fact: 'User prefers stable concise memory.',
       originWorkspace: memoryOriginWorkspace(localRoot),
@@ -1076,7 +1079,7 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.sendMessage(created.conversationId, '/dream');
 
-    const updated = await new AgentEventStore(dataRoot).getMemoryEntry('built-in:tenon:assistant', 'memory-stable');
+    const updated = await new AgentEventStore(dataRoot).getMemoryEntry(agentPrincipal('built-in:tenon:assistant'), 'memory-stable');
     const secondRequest = dreamRequests[1] ?? '';
 
     expect(script.pendingCount()).toBe(0);
@@ -1092,14 +1095,14 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-current-style',
       fact: 'Current workspace prefers verbose answers.',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'old-current-conversation' }],
       createdAt: 30,
     });
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-other-style',
       fact: 'Other workspace prefers terse answers.',
       originWorkspace: 'workspace:other',
@@ -1162,7 +1165,7 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant', {
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'), {
       includeInvalidated: true,
       limit: 10,
     });
@@ -1182,7 +1185,7 @@ describe('agent runtime past chats integration', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-noop-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
-    await store.addMemoryEntry('built-in:tenon:assistant', {
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-style',
       fact: 'User prefers concise engineering answers.',
       originWorkspace: memoryOriginWorkspace(localRoot),
@@ -1238,8 +1241,8 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const events = await new AgentEventStore(dataRoot).readMemoryEvents('built-in:tenon:assistant');
-    const entry = await new AgentEventStore(dataRoot).getMemoryEntry('built-in:tenon:assistant', 'memory-style');
+    const events = await new AgentEventStore(dataRoot).readMemoryEvents(agentPrincipal('built-in:tenon:assistant'));
+    const entry = await new AgentEventStore(dataRoot).getMemoryEntry(agentPrincipal('built-in:tenon:assistant'), 'memory-style');
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -1300,7 +1303,7 @@ describe('agent runtime past chats integration', () => {
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
 
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries('built-in:tenon:assistant');
+    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);

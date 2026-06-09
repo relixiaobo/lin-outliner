@@ -751,7 +751,8 @@ export interface AgentMemorySourceView {
 
 export interface AgentMemoryEntryView {
   id: string;
-  agentId: string;
+  /** The subject this fact is about — the pool it belongs to. */
+  principal: AgentPrincipal;
   fact: string;
   originWorkspace?: string;
   sources: AgentMemorySourceView[];

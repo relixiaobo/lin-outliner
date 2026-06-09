@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentMemoryEntry } from '../../src/core/agentEventLog';
+import type { AgentMemoryEntry, AgentPrincipal } from '../../src/core/agentEventLog';
 import { renderAgentMemoryBriefing } from '../../src/main/agentMemoryBriefing';
 
-const READER = 'built-in:tenon:assistant';
+const READER: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+const USER: AgentPrincipal = { type: 'user', userId: 'lixiaobo' };
 
 function entry(input: Partial<AgentMemoryEntry> & { id: string; fact: string }): AgentMemoryEntry {
   return {
     id: input.id,
-    agentId: input.agentId ?? READER,
+    principal: input.principal ?? READER,
     fact: input.fact,
     originWorkspace: input.originWorkspace,
     sources: input.sources ?? [{ conversationId: 'c1' }],
@@ -23,7 +24,7 @@ describe('renderAgentMemoryBriefing', () => {
         entry({ id: 'm1', fact: 'verify a worktree HEAD before trusting a gate run' }),
         entry({ id: 'm2', fact: 'work with lixiaobo, who wants the repo in English' }),
       ],
-      { readerAgentId: READER },
+      { reader: READER },
     );
 
     expect(briefing).not.toBeNull();
@@ -40,8 +41,8 @@ describe('renderAgentMemoryBriefing', () => {
 
   test('renders a non-reader pool as a named third-person <principal> zone', () => {
     const briefing = renderAgentMemoryBriefing(
-      [entry({ id: 'p1', agentId: 'user:person:lixiaobo', fact: 'prefers terse code reviews' })],
-      { readerAgentId: READER, principalNameFor: () => 'lixiaobo' },
+      [entry({ id: 'p1', principal: USER, fact: 'prefers terse code reviews' })],
+      { reader: READER, principalNameFor: () => 'lixiaobo' },
     );
 
     expect(briefing).toContain('<principal name="lixiaobo">');
@@ -51,13 +52,23 @@ describe('renderAgentMemoryBriefing', () => {
     expect(briefing).not.toContain('You prefers');
   });
 
+  test('defaults a user pool name to "The user" when no resolver is given', () => {
+    const briefing = renderAgentMemoryBriefing(
+      [entry({ id: 'p1', principal: USER, fact: 'prefers terse code reviews' })],
+      { reader: READER },
+    );
+
+    expect(briefing).toContain('<principal name="The user">');
+    expect(briefing).toContain('The user prefers terse code reviews.');
+  });
+
   test('orders principal zones before self and separates the two pools', () => {
     const briefing = renderAgentMemoryBriefing(
       [
         entry({ id: 's1', fact: 'verify HEAD before a gate run' }),
-        entry({ id: 'p1', agentId: 'user:person:lixiaobo', fact: 'wants the repo in English' }),
+        entry({ id: 'p1', principal: USER, fact: 'wants the repo in English' }),
       ],
-      { readerAgentId: READER, principalNameFor: () => 'lixiaobo' },
+      { reader: READER, principalNameFor: () => 'lixiaobo' },
     );
 
     expect(briefing).not.toBeNull();
@@ -76,7 +87,7 @@ describe('renderAgentMemoryBriefing', () => {
         entry({ id: 'm1', fact: 'the user interface uses slate focus rings' }),
         entry({ id: 'm2', fact: 'we work on the launcher this week' }),
       ],
-      { readerAgentId: READER },
+      { reader: READER },
     );
 
     expect(briefing).toContain('the user interface uses slate focus rings');
@@ -88,7 +99,7 @@ describe('renderAgentMemoryBriefing', () => {
   test('collapses internal whitespace so a fact cannot inject an extra line', () => {
     const briefing = renderAgentMemoryBriefing(
       [entry({ id: 'm1', fact: 'verify HEAD\nthen trust the gate run' })],
-      { readerAgentId: READER },
+      { reader: READER },
     );
 
     expect(briefing).toContain('You verify HEAD then trust the gate run.');
@@ -103,7 +114,7 @@ describe('renderAgentMemoryBriefing', () => {
         entry({ id: 'm1', fact: 'duplicate id should be dropped' }),
         entry({ id: 'm2', fact: 'this one is gone', status: 'invalidated' }),
       ],
-      { readerAgentId: READER },
+      { reader: READER },
     );
 
     expect(briefing).toContain('You keep this active fact.');
@@ -112,11 +123,11 @@ describe('renderAgentMemoryBriefing', () => {
   });
 
   test('returns null when there is no active memory', () => {
-    expect(renderAgentMemoryBriefing([], { readerAgentId: READER })).toBeNull();
+    expect(renderAgentMemoryBriefing([], { reader: READER })).toBeNull();
     expect(
       renderAgentMemoryBriefing(
         [entry({ id: 'm1', fact: 'gone', status: 'invalidated' })],
-        { readerAgentId: READER },
+        { reader: READER },
       ),
     ).toBeNull();
   });
@@ -125,9 +136,9 @@ describe('renderAgentMemoryBriefing', () => {
     const briefing = renderAgentMemoryBriefing(
       [
         entry({ id: 'm1', fact: 'prefer a < b style comparisons & terse output' }),
-        entry({ id: 'p1', agentId: 'user:person:x', fact: 'likes "quotes"' }),
+        entry({ id: 'p1', principal: { type: 'user', userId: 'x' }, fact: 'likes "quotes"' }),
       ],
-      { readerAgentId: READER, principalNameFor: () => 'A & "B"' },
+      { reader: READER, principalNameFor: () => 'A & "B"' },
     );
 
     expect(briefing).toContain('&lt; b style comparisons &amp; terse');

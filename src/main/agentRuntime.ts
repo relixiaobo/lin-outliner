@@ -396,6 +396,8 @@ interface AgentSessionState {
 interface AgentDreamMemoryExtractionTask {
   runId: string;
   agentId: string;
+  /** The memory pool this Dream consolidates (the subject it models). */
+  principal: AgentPrincipal;
   trigger: AgentDreamTrigger;
   startedAt: number;
   dueAt?: number;
@@ -705,7 +707,7 @@ export class AgentRuntime {
   }
 
   async listMemory(options: { includeInvalidated?: boolean; limit?: number } = {}): Promise<AgentMemoryEntryView[]> {
-    const entries = await this.getEventStore().listMemoryEntries(this.agentIdentity.agentId, {
+    const entries = await this.getEventStore().listMemoryEntries(this.agentPrincipal(), {
       includeInvalidated: options.includeInvalidated,
       limit: options.limit ?? 200,
     });
@@ -718,12 +720,12 @@ export class AgentRuntime {
     if (normalizedFact.length > MAX_AGENT_MEMORY_FACT_CHARS) {
       throw new Error(`Memory fact must be ${MAX_AGENT_MEMORY_FACT_CHARS} characters or fewer.`);
     }
-    const entry = await this.getEventStore().updateMemoryEntry(this.agentIdentity.agentId, memoryId, { fact: normalizedFact });
+    const entry = await this.getEventStore().updateMemoryEntry(this.agentPrincipal(), memoryId, { fact: normalizedFact });
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
   async forgetMemory(memoryId: string): Promise<AgentMemoryEntryView | null> {
-    const entry = await this.getEventStore().removeMemoryEntry(this.agentIdentity.agentId, memoryId, 'user');
+    const entry = await this.getEventStore().removeMemoryEntry(this.agentPrincipal(), memoryId, 'user');
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -2554,7 +2556,8 @@ export class AgentRuntime {
     if (memoryScope.readOnly) return null;
     if (!await this.getActiveProviderConfig()) return null;
 
-    const dreamState = await this.getEventStore().readDreamState(agentId);
+    const principal: AgentPrincipal = { type: 'agent', agentId };
+    const dreamState = await this.getEventStore().readDreamState(principal);
     const scheduleDecision = shouldFireDateSchedule(DEFAULT_DREAM_SCHEDULE, now, dreamState.lastSuccessAt);
     if (trigger === 'schedule' && !scheduleDecision.shouldFire) return null;
 
@@ -2594,6 +2597,7 @@ export class AgentRuntime {
     return {
       runId,
       agentId,
+      principal,
       trigger,
       startedAt: Date.now(),
       dueAt: scheduleDecision.dueAt?.getTime(),
@@ -2725,7 +2729,7 @@ export class AgentRuntime {
       const runtimeSettings = await this.getRuntimeSettings();
       const changes = emptyDreamChanges();
       for (const [index, batch] of task.batches.entries()) {
-        const existingMemories = await this.getEventStore().listMemoryEntries(task.agentId, {
+        const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, {
           limit: 50,
           originWorkspace: batch.originWorkspaceFilter,
         });
@@ -2747,7 +2751,7 @@ export class AgentRuntime {
           throw new Error(response.errorMessage || 'Dream memory extraction failed.');
         }
         const actions = parseDreamMemoryActions(assistantMessageText(response));
-        const currentMemories = await this.getEventStore().listMemoryEntries(task.agentId, {
+        const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, {
           limit: 50,
           originWorkspace: batch.originWorkspaceFilter,
         });
@@ -2755,7 +2759,7 @@ export class AgentRuntime {
           ? await this.applyDreamMemoryActions(task, batch, actions, currentMemories)
           : emptyDreamChanges());
       }
-      const completed = await this.getEventStore().appendDreamCompleted(task.agentId, {
+      const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
         trigger: task.trigger,
         startedAt: task.startedAt,
@@ -2845,7 +2849,7 @@ export class AgentRuntime {
     const taskGroups = await Promise.all(agentIds.map(async (agentId) => {
       const [runs, dreamState] = await Promise.all([
         store.listAgentRunMetaProjections(agentId as AgentRunMetaProjection['agentId'], { limit: 50 }),
-        store.readDreamState(agentId),
+        store.readDreamState({ type: 'agent', agentId }),
       ]);
       return { runs, lastCompleted: dreamState.lastCompleted };
     }));
@@ -2885,7 +2889,7 @@ export class AgentRuntime {
           changes.skipped += 1;
           continue;
         }
-        const entry = await this.getEventStore().addMemoryEntry(task.agentId, {
+        const entry = await this.getEventStore().addMemoryEntry(task.principal, {
           fact: action.fact,
           originWorkspace: batch.originWorkspace,
           sources: batch.span.sources,
@@ -2902,7 +2906,7 @@ export class AgentRuntime {
         continue;
       }
       if (action.type === 'forget') {
-        await this.getEventStore().removeMemoryEntry(task.agentId, current.id, action.reason ?? 'dream');
+        await this.getEventStore().removeMemoryEntry(task.principal, current.id, action.reason ?? 'dream');
         entriesById.delete(current.id);
         activeFactKeys.delete(memoryFactKey(current.fact));
         changes.forgotten += 1;
@@ -2919,7 +2923,7 @@ export class AgentRuntime {
         changes.skipped += 1;
         continue;
       }
-      const updated = await this.getEventStore().updateMemoryEntry(task.agentId, current.id, {
+      const updated = await this.getEventStore().updateMemoryEntry(task.principal, current.id, {
         fact: action.fact,
         originWorkspace: current.originWorkspace ?? batch.originWorkspace,
         sources: mergeMemorySources(current.sources, batch.span.sources),
@@ -3269,7 +3273,7 @@ export class AgentRuntime {
     return {
       recall: async (options) => {
         const session = getSession();
-        const result = await this.getEventStore().queryMemoryEntries(agentId, {
+        const result = await this.getEventStore().queryMemoryEntries({ type: 'agent', agentId }, {
           query: options.query,
           limit: options.limit,
           originWorkspace: this.memoryOriginWorkspaceFilter(session, originWorkspace),
@@ -3673,17 +3677,18 @@ export class AgentRuntime {
     originWorkspace?: string,
   ): Promise<string | null> {
     try {
+      const reader: AgentPrincipal = { type: 'agent', agentId };
       const originWorkspaceFilter = this.memoryOriginWorkspaceFilter(session, originWorkspace);
       // Resident selection: the briefing is the distilled-memory prefix ([[agent-memory-model]]
       // §2), so it lists recent active entries rather than query-specific hits — those arrive
       // on demand through the `recall` tool ([5] tail). Keeping selection query-independent
       // keeps the briefing stable turn-over-turn (cache-friendly); a mid-session Dream write
       // surfaces through recall until the next turn folds it into the briefing.
-      const entries = await this.getEventStore().listMemoryEntries(agentId, {
+      const entries = await this.getEventStore().listMemoryEntries(reader, {
         limit: MEMORY_BRIEFING_MAX_ENTRIES,
         originWorkspace: originWorkspaceFilter,
       });
-      return renderAgentMemoryBriefing(entries, { readerAgentId: agentId });
+      return renderAgentMemoryBriefing(entries, { reader });
     } catch (error) {
       console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
       return null;
@@ -5193,7 +5198,7 @@ function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationL
 function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
   return {
     id: entry.id,
-    agentId: entry.agentId,
+    principal: entry.principal,
     fact: entry.fact,
     originWorkspace: entry.originWorkspace,
     sources: entry.sources.map((source) => ({

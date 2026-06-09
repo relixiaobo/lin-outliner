@@ -104,6 +104,20 @@ export type AgentPrincipal =
   | { type: 'user'; userId: string }
   | { type: 'agent'; agentId: string };
 
+/**
+ * Stable string key for a principal, used both as a Map/Record key and as the
+ * on-disk pool directory segment. `user:<userId>` / `agent:<agentId>`. The
+ * agent form intentionally matches the existing `agents/<agentId>/` layout so an
+ * agent-principal's memory pool stays in its own identity directory.
+ */
+export function principalKey(principal: AgentPrincipal): string {
+  return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
+}
+
+export function samePrincipal(left: AgentPrincipal, right: AgentPrincipal): boolean {
+  return principalKey(left) === principalKey(right);
+}
+
 export type AgentConversationActor = AgentPrincipal | { type: 'system' };
 
 export interface AgentConversationMeta {
@@ -383,7 +397,8 @@ export interface AgentMemorySource {
 
 export interface AgentMemoryEntry {
   id: string;
-  agentId: string;
+  /** The subject this fact is about — the pool it belongs to. */
+  principal: AgentPrincipal;
   fact: string;
   originWorkspace?: string;
   sources: AgentMemorySource[];
@@ -437,7 +452,8 @@ export interface AgentMemoryEventBase {
   v: typeof AGENT_EVENT_VERSION;
   eventId: string;
   seq: number;
-  agentId: string;
+  /** Identifies the pool this event belongs to (the subject's self-model). */
+  principal: AgentPrincipal;
   type: AgentMemoryEventType;
   createdAt: number;
 }
