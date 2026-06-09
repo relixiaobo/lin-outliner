@@ -473,7 +473,7 @@ describe('agent runtime past chats integration', () => {
     roots.push(localRoot, dataRoot);
     await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
       id: 'memory-direct-style',
-      fact: 'User prefers direct, concise engineering answers.',
+      fact: 'prefer direct, concise engineering answers',
       sources: [{ conversationId: 'past-conversation' }],
       createdAt: 30,
     });
@@ -520,9 +520,11 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(contextText).toContain('"recall"');
-    expect(contextText).toContain('<agent-memory>');
-    expect(contextText).toContain('memory-direct-style');
-    expect(contextText).toContain('User prefers direct, concise engineering answers.');
+    expect(contextText).toContain('<memory>');
+    expect(contextText).toContain('<self>');
+    // The briefing renders reader-relative prose and hides storage scaffolding (the id).
+    expect(contextText).not.toContain('memory-direct-style');
+    expect(contextText).toContain('You prefer direct, concise engineering answers.');
   });
 
   test('isolated memory mode injects only current-workspace memories', async () => {
@@ -532,14 +534,14 @@ describe('agent runtime past chats integration', () => {
     const store = new AgentEventStore(dataRoot);
     await store.addMemoryEntry('built-in:tenon:assistant', {
       id: 'memory-current-workspace',
-      fact: 'Current workspace uses slate focus rings.',
+      fact: 'use slate focus rings in the current workspace',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'current-workspace-conversation' }],
       createdAt: 30,
     });
     await store.addMemoryEntry('built-in:tenon:assistant', {
       id: 'memory-other-workspace',
-      fact: 'Other workspace uses amber focus rings.',
+      fact: 'use amber focus rings in the other workspace',
       originWorkspace: 'workspace:other',
       sources: [{ conversationId: 'other-workspace-conversation' }],
       createdAt: 31,
@@ -587,10 +589,10 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(contextText).toContain('memory-current-workspace');
-    expect(contextText).toContain('Current workspace uses slate focus rings.');
+    expect(contextText).not.toContain('memory-current-workspace');
+    expect(contextText).toContain('use slate focus rings in the current workspace');
     expect(contextText).not.toContain('memory-other-workspace');
-    expect(contextText).not.toContain('Other workspace uses amber focus rings.');
+    expect(contextText).not.toContain('use amber focus rings in the other workspace');
   });
 
   test('recall tool respects isolated workspace and invalidated memory', async () => {

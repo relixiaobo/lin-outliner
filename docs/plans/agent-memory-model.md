@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 executor: cc-2
@@ -286,14 +286,23 @@ block injects once and mid-session updates ride the volatile tail; the [3] prefi
 is only re-anchored at compaction (§2) — measure (A9) before adding any extra
 re-anchor trigger.
 
-- [ ] **Phase 1 — render.** Replace `formatMemoryReminder`/`<agent-memory>` with the
-      select→render briefing (§2): XML zones, person-neutral storage + reader-relative render,
-      confidence-as-phrasing, via `systemReminder()`/`isHiddenAgentContextBlock`. Consumes the
-      existing `MemoryEntry` and `recall` tool unchanged. No storage-shape change, no
-      identity-seam change. This is the whole no-protocol-risk win.
-- [ ] **Phase 2 — Dream quality.** The `add`/`update`/`invalidate` semantics on the existing
-      events + watermark, the subject-elided writer contract, the prose heuristics; coordinate
-      any `dream.completed.changes` rename across its four consumers.
+- [x] **Phase 1 — render.** Replaced `formatMemoryReminder`/`<agent-memory>` with the
+      select→render briefing (§2): `<memory>` with `<self>`/`<principal>` XML zones,
+      person-neutral storage + reader-relative render, confidence-as-phrasing, emitted through
+      `systemReminder()`/`isHiddenAgentContextBlock`. Lives in `src/main/agentMemoryBriefing.ts`
+      (pure, unit-tested) and is wired in `agentRuntime.ts` `buildMemoryReminder` (now resident
+      selection — query-specific retrieval stays on the `recall` tool). Consumes the existing
+      `MemoryEntry` + `recall` tool unchanged; no storage-shape / identity-seam change.
+      *Note:* today's single-agent runtime only reads its own pool, so a live run renders just
+      `<self>`; the `<principal>` (third-person, foreign-`agentId`) path is implemented + unit-
+      tested and lights up with Phase 3's subscribed principals.
+- [x] **Phase 2 — Dream quality.** Subject-elided, base-form writer contract + consolidation
+      heuristics added to the Dream extraction prompt (`agentDreamExtraction.ts`). The
+      `add`/`update`/`invalidate` semantics already map to the existing events
+      (`removeMemoryEntry` already invalidates-not-deletes) + watermark in
+      `applyDreamMemoryActions`. Kept the `{added, updated, forgotten, skipped}`
+      `dream.completed.changes` shape (the `forgotten`→`invalidate` rename was *not* taken —
+      it is a coordinated four-consumer edit and out of scope for this PR).
 - [ ] **Phase 3 — user-as-agent + sharing (PM greenlit 2026-06-09 — draft the data-model extension now).** Ratify §4 into
       [[agent-data-model]] (the `principal` field, the D2 sharing extension + precedence, the
       cross-principal read-path security gate); then build. Highest blast radius; interface-first.

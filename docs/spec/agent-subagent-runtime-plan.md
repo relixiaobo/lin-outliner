@@ -950,13 +950,13 @@ Implemented.
 - `Agent` with `subagent_type` creates a fresh sidechain pi-mono `Agent`.
 - The child receives its agent definition system prompt plus the supplied task.
 - The child derives `executingAgentId` and `memoryOwnerAgentId` from the called
-  agent definition. Its `<agent-memory>` reminder and `recall` tool read that
+  agent definition. Its `<memory>` briefing and `recall` tool read that
   owner id, not the parent agent id. In isolated memory mode, its memory origin
   workspace is derived from the called agent definition root, not the caller's
   workspace.
 - Explicit agent-definition `tools` remain an allow-list. Fresh subagents do not
   receive `recall` unless the definition allows it, either directly or by using
-  an unrestricted tool profile; the hidden `<agent-memory>` reminder is still
+  an unrestricted tool profile; the hidden `<memory>` briefing is still
   owner-scoped background context.
 - The parent receives only the final result or error.
 - Sidechain transcript snapshots are persisted as `subagent_transcript`

@@ -2119,7 +2119,7 @@ updated, or forgotten durable facts through a tool call unless `recall` returns
 those facts after Dream completes.
 
 Subagent memory ownership is explicit. A fresh typed subagent runs as the called
-agent definition: its `<agent-memory>` reminder and `recall` tool read that
+agent definition: its `<memory>` briefing and `recall` tool read that
 agent's memory, and its sidechain transcript is Dream evidence for that same
 agent. The parent agent's Dream sees only the parent conversation surface, such
 as the `Agent` tool call and compact result projection, not the full fresh
@@ -2132,12 +2132,21 @@ subagent reminders, recall, and Dream writes use the called agent definition's
 origin workspace. Agent-definition `tools` remain an allow-list: `recall` is not
 injected into a fresh subagent that explicitly omits it.
 
-Each normal user turn receives a bounded `<agent-memory>` reminder built from
-the active projection. Reminder retrieval ranks by memory-specific relevance
-(phrase/term overlap) and backfills with latest active facts so stale ids remain
-visible when the user corrects related facts. The reminder is background context;
-the foreground model can call `recall` when the reminder or current context is
-insufficient.
+Each normal user turn receives a bounded `<memory>` briefing built from the
+active projection (storage representation ≠ injection representation: the assembly
+layer keeps the structured `MemoryEntry` fields to select, the model gets coherent
+prose). Selection is **resident**, not query-ranked — the newest active facts up to
+a fixed budget — because the briefing is the stable distilled-memory prefix;
+query-specific retrieval is the `recall` tool's job (the volatile tail). The render
+is a pure projection that hides storage scaffolding (`id`, `status`) and assigns
+**person by reader relationship**: the reading agent's own pool renders as a
+second-person `<self>` zone ("You verify…"); any other principal's subscribed pool
+renders as a third-person `<principal name="…">` zone (a forward-looking affordance —
+today's single-agent runtime only reads its own pool, so only `<self>` appears).
+Storage stays person-neutral: Dream writes subject-elided, base-form predicates,
+naming third parties explicitly, so one entry can render to any reader. The briefing
+is background context; the foreground model can call `recall` when it or the current
+context is insufficient.
 
 Evidence expansion is always nested under a returned memory entry. The runtime
 expands only that entry's `MemoryEntry.sources` through the internal evidence

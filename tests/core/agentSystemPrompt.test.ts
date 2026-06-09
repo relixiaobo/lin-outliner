@@ -34,7 +34,7 @@ describe('agent system prompt', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_search');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_fetch');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Use recall for durable facts');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<agent-memory>');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<memory>');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('do not claim you saved, updated, or forgot memory');
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Use past_chats');
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Text attachments are included');
@@ -77,6 +77,6 @@ describe('agent system prompt', () => {
     expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('You are Tenon Agent');
     expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('# Memory');
     expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('Use recall for durable facts');
-    expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('<agent-memory>');
+    expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('<memory>');
   });
 });

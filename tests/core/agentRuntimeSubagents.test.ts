@@ -306,7 +306,9 @@ describe('agent runtime subagents', () => {
     expect(contexts.some((text) => text.includes('Research result from child.'))).toBe(true);
     expect(contexts.some((text) => text.includes('"toolName":"Agent"'))).toBe(true);
     const childContext = contexts.find((text) => text.includes('RESEARCHER_AGENT_BODY')) ?? '';
-    expect(childContext).toContain('memory-researcher-own');
+    // The subagent reads its own pool, rendered as a <self> briefing with the id hidden.
+    expect(childContext).toContain('<self>');
+    expect(childContext).not.toContain('memory-researcher-own');
     expect(childContext).toContain('Researcher agent prefers teal source notes.');
     expect(childContext).not.toContain('"recall"');
     expect(childContext).not.toContain('memory-parent-only');
