@@ -169,7 +169,7 @@ import {
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
-import { renderAgentMemoryBriefing } from './agentMemoryBriefing';
+import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
 import {
   evaluateAgentToolPermission,
   toPermissionClassifierInput,
@@ -289,8 +289,6 @@ const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
 const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
 const LOCAL_USER_ID = 'local-user';
-// Resident `[3]` budget: how many active memory entries the briefing renders (newest first).
-const MEMORY_BRIEFING_MAX_ENTRIES = 12;
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
@@ -1470,9 +1468,7 @@ export class AgentRuntime {
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
         getRuntimeSettings: () => this.getRuntimeSettings(),
-        // The subagent host still passes a query (its interface predates resident selection);
-        // the briefing is query-independent now, so we ignore it here — recall covers query.
-        buildMemoryReminder: (agentId, _query, originWorkspace) => (
+        buildMemoryReminder: (agentId, originWorkspace) => (
           this.buildMemoryReminder(agentId, sessionRef.current, originWorkspace)
         ),
         persistSubagentRun: (snapshot) => {
@@ -3687,10 +3683,7 @@ export class AgentRuntime {
         limit: MEMORY_BRIEFING_MAX_ENTRIES,
         originWorkspace: originWorkspaceFilter,
       });
-      return renderAgentMemoryBriefing(entries, {
-        readerAgentId: agentId,
-        maxEntries: MEMORY_BRIEFING_MAX_ENTRIES,
-      });
+      return renderAgentMemoryBriefing(entries, { readerAgentId: agentId });
     } catch (error) {
       console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
       return null;

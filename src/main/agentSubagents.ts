@@ -174,7 +174,7 @@ export interface AgentSubagentRuntimeHost {
   getParentMessages(): AgentMessage[];
   getParentSystemPrompt(): string;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
-  buildMemoryReminder(agentId: string, query: string, originWorkspace?: string): Promise<string | null>;
+  buildMemoryReminder(agentId: string, originWorkspace?: string): Promise<string | null>;
   persistSubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
   notifySubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
   persistToolOutputPayload(
@@ -618,7 +618,7 @@ export class AgentSubagentRuntime {
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
-        buildMemoryReminder: (agentId, query, originWorkspace) => this.host.buildMemoryReminder(agentId, query, originWorkspace),
+        buildMemoryReminder: (agentId, originWorkspace) => this.host.buildMemoryReminder(agentId, originWorkspace),
         persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
         notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -854,7 +854,7 @@ export class AgentSubagentRuntime {
     const source = ((run.agent?.state.messages as unknown[]) ?? run.messages)
       .filter(isRecordableAgentMessage)
       .map(cloneAgentMessage);
-    const memoryReminder = await this.runMemoryReminder(run, latestUserQuery(source) ?? run.prompt);
+    const memoryReminder = await this.runMemoryReminder(run);
     throwIfAborted(signal);
     const selection = collectAgentMessageToolResultBudgetSelections(source, run.toolResultBudgetState, {
       limit: MAX_TOOL_RESULTS_PER_BATCH_CHARS,
@@ -903,10 +903,12 @@ export class AgentSubagentRuntime {
     return withMemoryReminder(await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages, memoryReminder);
   }
 
-  private async runMemoryReminder(run: AgentRunRecord, query: string): Promise<string | null> {
-    const key = JSON.stringify([run.memoryOwnerAgentId, run.memoryOriginWorkspace ?? null, query]);
+  private async runMemoryReminder(run: AgentRunRecord): Promise<string | null> {
+    // The briefing is resident (query-independent), so the cache key is just owner + workspace —
+    // it stays warm across a long subagent run instead of thrashing on per-turn query text.
+    const key = JSON.stringify([run.memoryOwnerAgentId, run.memoryOriginWorkspace ?? null]);
     if (run.memoryReminderCache?.key === key) return run.memoryReminderCache.text;
-    const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId, query, run.memoryOriginWorkspace);
+    const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId, run.memoryOriginWorkspace);
     run.memoryReminderCache = { key, text };
     return text;
   }
@@ -1033,7 +1035,7 @@ export class AgentSubagentRuntime {
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
-        buildMemoryReminder: (agentId, query, originWorkspace) => this.host.buildMemoryReminder(agentId, query, originWorkspace),
+        buildMemoryReminder: (agentId, originWorkspace) => this.host.buildMemoryReminder(agentId, originWorkspace),
         persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
         notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -1632,16 +1634,6 @@ function createHiddenUserMessage(text: string): UserMessage {
 function withMemoryReminder(messages: AgentMessage[], memoryReminder: string | null): AgentMessage[] {
   if (!memoryReminder) return messages;
   return [createHiddenUserMessage(memoryReminder), ...messages.map(cloneAgentMessage)];
-}
-
-function latestUserQuery(messages: readonly AgentMessage[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role !== 'user') continue;
-    const text = messageTextParts(message).join('\n').trim();
-    if (text) return text;
-  }
-  return null;
 }
 
 function extractFinalAssistantText(messages: readonly AgentMessage[]): string {

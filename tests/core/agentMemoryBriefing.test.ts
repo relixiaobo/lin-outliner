@@ -67,19 +67,33 @@ describe('renderAgentMemoryBriefing', () => {
     expect(selfAt).toBeGreaterThan(principalAt);
   });
 
-  test('does not double the subject when a fact leaks a leading pronoun', () => {
+  test('never deletes leading words — a noun-phrase head is not a leaked subject', () => {
+    // Regression: the render must not strip "the user"/"we"/etc. from the FRONT of a fact, which
+    // would change its meaning. Person assignment only prepends the subject; the subject-elided
+    // contract is enforced at the Dream layer, not by mangling stored prose here.
     const briefing = renderAgentMemoryBriefing(
       [
-        entry({ id: 'm1', fact: 'You verify HEAD before a gate run' }),
-        entry({ id: 'm2', fact: "The user prefers terse reviews" }),
+        entry({ id: 'm1', fact: 'the user interface uses slate focus rings' }),
+        entry({ id: 'm2', fact: 'we work on the launcher this week' }),
       ],
       { readerAgentId: READER },
     );
 
-    expect(briefing).toContain('You verify HEAD before a gate run.');
-    expect(briefing).not.toContain('You You verify');
-    expect(briefing).toContain('You prefers terse reviews.');
-    expect(briefing).not.toContain('You The user prefers');
+    expect(briefing).toContain('the user interface uses slate focus rings');
+    expect(briefing).not.toContain('You interface uses');
+    expect(briefing).toContain('we work on the launcher this week');
+    expect(briefing).not.toContain('You work on the launcher');
+  });
+
+  test('collapses internal whitespace so a fact cannot inject an extra line', () => {
+    const briefing = renderAgentMemoryBriefing(
+      [entry({ id: 'm1', fact: 'verify HEAD\nthen trust the gate run' })],
+      { readerAgentId: READER },
+    );
+
+    expect(briefing).toContain('You verify HEAD then trust the gate run.');
+    // The only newlines are the structural ones around the zone, never inside a fact.
+    expect(briefing).toBe('<memory>\n<self>\nYou verify HEAD then trust the gate run.\n</self>\n</memory>');
   });
 
   test('skips invalidated entries and dedupes by id', () => {
