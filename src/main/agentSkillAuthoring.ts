@@ -1,7 +1,6 @@
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AgentSourceKind } from '../core/agentEventLog';
-import { type AgentSkillContentTarget, parseSkillMarkdown } from './agentSkills';
+import { type AgentSkillContentTarget, parseSkillMarkdown, skillContentHash } from './agentSkills';
 
 export interface AgentSkillWriteAudit {
   skillName: string;
@@ -73,8 +72,10 @@ export function validateAgentSkillContentWrite(input: {
     changeType: target.isSkillFile
       ? previous === null ? 'create' : input.operation === 'file_edit' ? 'patch' : 'replace'
       : 'support-file-write',
-    previousHash: previous === null ? undefined : sha256(previous),
-    nextHash: sha256(input.content),
+    // Canonical skill hash (shared with the loader) so the provenance record built
+    // from nextHash matches what the registry computes from disk after the write.
+    previousHash: previous === null ? undefined : skillContentHash(previous),
+    nextHash: skillContentHash(input.content),
     previousBytes,
     nextBytes,
     warnings: target.isSkillFile
@@ -174,6 +175,3 @@ function rejectSecretLookingContent(content: string): void {
   }
 }
 
-function sha256(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}

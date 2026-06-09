@@ -652,6 +652,44 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_edit on a CRLF/BOM skill still records matching provenance (no fail-open)', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'crlf-skill', 'SKILL.md');
+      // A hand-authored skill with BOM + CRLF line endings (e.g. written on Windows).
+      const initialContent = `﻿${[
+        '---',
+        'description: Hand-authored CRLF skill',
+        '---',
+        'Use hand-tuned instructions.',
+        '',
+      ].join('\r\n')}`;
+      await mkdir(path.dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, initialContent, 'utf8');
+      expect((await skillRuntime.getSkill('crlf-skill'))?.ratified).toBe(true);
+
+      // An agent patch must drop the skill to unratified even though writeTextFile
+      // restores CRLF/BOM on disk — the canonical hash normalizes both sides.
+      await (fileRead.execute as any)('read-crlf-skill', { file_path: skillFile });
+      const result = await (fileEdit.execute as any)('edit-crlf-skill', {
+        file_path: skillFile,
+        old_string: 'Use hand-tuned instructions.',
+        new_string: 'Use agent-patched instructions.',
+      });
+      expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
+
+      const patched = await skillRuntime.getSkill('crlf-skill');
+      expect(patched?.body).toContain('agent-patched');
+      expect(patched?.ratified).toBe(false);
+      const agentInvocation = await skillRuntime.invokeSkill({ skill: 'crlf-skill', trigger: 'agent' });
+      expect(agentInvocation.ok).toBe(false);
+    });
+  });
+
   test('agent-authored allowed-tools cannot reach the model path (ratification gate)', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });

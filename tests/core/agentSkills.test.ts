@@ -9,7 +9,7 @@ import {
   createSlashSkillPrompt,
   parseSkillSlashCommand,
   resolveSkillContentTarget,
-  sha256Hex,
+  skillContentHash,
 } from '../../src/main/agentSkills';
 
 const execFile = promisify(execFileCallback);
@@ -79,7 +79,7 @@ describe('skill ratification provenance', () => {
     };
 
     const first = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    await first.recordAgentSkillWrite(skillFile, sha256Hex(content));
+    await first.recordAgentSkillWrite(skillFile, skillContentHash(content));
     await first.notifySkillContentWritten([skillFile]);
     expect((await first.getSkill('authored'))?.ratified).toBe(false);
 

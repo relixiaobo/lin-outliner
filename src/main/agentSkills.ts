@@ -988,14 +988,24 @@ async function loadSkillsFromDir(
       source,
       body: parsed.body,
       frontmatter: parsed.frontmatter,
-      contentHash: sha256Hex(raw),
+      contentHash: skillContentHash(raw),
     }));
   }
   return skills;
 }
 
-export function sha256Hex(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
+/**
+ * The canonical skill content hash, used by BOTH the provenance record (gateway, over
+ * in-memory normalized content) and the loader (over raw disk bytes). Both sides must
+ * hash the same domain or the ratification gate fails open: file tools normalize to
+ * BOM-stripped LF in memory while writeTextFile restores the file's original CRLF/BOM
+ * on disk, so hashing raw disk bytes would never match the recorded hash for a
+ * CRLF/BOM skill an agent edited. Normalizing here is a no-op for LF files.
+ */
+export function skillContentHash(content: string): string {
+  return createHash('sha256')
+    .update(content.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'))
+    .digest('hex');
 }
 
 function createSkillDefinition(input: {

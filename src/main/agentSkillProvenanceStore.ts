@@ -23,6 +23,10 @@ export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
       return entries;
     },
     async record(skillFile: string, contentHash: string): Promise<void> {
+      // load→mutate→write is racy across concurrent store instances (subagents share
+      // the same userData file and tmp name). Accepted: skill writes are ask-gated and
+      // approved serially, and a lost record only narrows to the in-memory guard for
+      // that session.
       const entries = await this.load();
       entries[skillFile] = contentHash;
       await writeJsonFile(provenancePath(), entries);
