@@ -8,14 +8,14 @@ export interface AgentSkillContentTarget {
   skillName: string;
   skillRoot: string;
   skillsDir: string;
-  source: AgentSourceKind | 'dynamic';
+  source: AgentSourceKind;
   relativePath: string;
   isSkillFile: boolean;
 }
 
 export interface AgentSkillWriteAudit {
   skillName: string;
-  source: AgentSourceKind | 'dynamic';
+  source: AgentSourceKind;
   skillRoot: string;
   relativePath: string;
   changeType: 'create' | 'patch' | 'replace' | 'support-file-write';
@@ -94,7 +94,7 @@ export function detectAgentSkillContentTarget(
   for (let index = parts.length - 3; index >= 0; index -= 1) {
     if (parts[index] !== '.agents' || parts[index + 1] !== 'skills') continue;
     const skillsDir = parts.slice(0, index + 2).join(path.sep) || path.sep;
-    const target = targetInsideSkillsDir(filePath, skillsDir, 'dynamic');
+    const target = targetInsideSkillsDir(filePath, skillsDir, 'project');
     if (target) return target;
   }
   return null;
@@ -141,7 +141,7 @@ export function validateAgentSkillContentWrite(input: {
 function targetInsideSkillsDir(
   filePath: string,
   skillsDirInput: string,
-  source: AgentSourceKind | 'dynamic',
+  source: AgentSourceKind,
 ): AgentSkillContentTarget | null {
   const skillsDir = path.resolve(skillsDirInput);
   if (!isPathInside(skillsDir, filePath)) return null;

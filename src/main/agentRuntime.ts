@@ -5366,7 +5366,7 @@ function skillAuditEventType(
 function parseAgentSkillWriteAudit(value: unknown): AgentSkillWriteAudit | null {
   if (!isRecord(value)) return null;
   if (typeof value.skillName !== 'string') return null;
-  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in' && value.source !== 'dynamic') return null;
+  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in') return null;
   if (typeof value.skillRoot !== 'string') return null;
   if (typeof value.relativePath !== 'string') return null;
   if (

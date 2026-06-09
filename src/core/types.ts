@@ -818,7 +818,7 @@ export interface SkillDefinition {
   name: string;
   identity?: string;
   displayName?: string;
-  source: 'built-in' | 'user' | 'project' | 'dynamic';
+  source: 'built-in' | 'user' | 'project';
   rootDir: string;
   skillFile: string;
   description: string;

@@ -695,9 +695,10 @@ class SkillRegistry {
   async activateForFilePaths(filePaths: string[]): Promise<boolean> {
     await this.ensureLoaded();
     let changed = false;
-    const dynamicDirs = await this.discoverSkillDirsForPaths(filePaths);
-    for (const dir of dynamicDirs) {
-      const loaded = await loadSkillsFromDir(dir, 'dynamic');
+    const nestedDirs = await this.discoverSkillDirsForPaths(filePaths);
+    for (const dir of nestedDirs) {
+      // Nested .agents/skills dirs are always under the work root → project source.
+      const loaded = await loadSkillsFromDir(dir, 'project');
       for (const skill of loaded) {
         if (await this.addLoadedSkill(skill)) changed = true;
       }
