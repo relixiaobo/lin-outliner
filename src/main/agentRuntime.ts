@@ -142,6 +142,7 @@ import {
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
+import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   AGENT_SUBAGENT_TOOL_NAME,
   AgentSubagentRuntime,
@@ -1409,6 +1410,7 @@ export class AgentRuntime {
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
       sessionId,
       executeSkillShell: async ({ command, skill }) => {
         const activeSettings = await this.getRuntimeSettings();
@@ -5366,7 +5368,7 @@ function skillAuditEventType(
 function parseAgentSkillWriteAudit(value: unknown): AgentSkillWriteAudit | null {
   if (!isRecord(value)) return null;
   if (typeof value.skillName !== 'string') return null;
-  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in' && value.source !== 'dynamic') return null;
+  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in') return null;
   if (typeof value.skillRoot !== 'string') return null;
   if (typeof value.relativePath !== 'string') return null;
   if (
@@ -5648,6 +5650,7 @@ function createConfiguredAgent(
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
           ],
+          ...(skillRuntime?.getSkillDirConfig() ?? {}),
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;

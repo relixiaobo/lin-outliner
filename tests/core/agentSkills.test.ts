@@ -8,9 +8,92 @@ import {
   AgentSkillRuntime,
   createSlashSkillPrompt,
   parseSkillSlashCommand,
+  resolveSkillContentTarget,
+  skillContentHash,
 } from '../../src/main/agentSkills';
 
 const execFile = promisify(execFileCallback);
+
+describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
+  const root = path.join(path.sep, 'work', 'project');
+
+  test('recognizes the default project skills dir', () => {
+    const target = resolveSkillContentTarget(
+      path.join(root, '.agents', 'skills', 'demo', 'SKILL.md'),
+      { root, includeUserSkills: false, additionalSkillDirectories: [] },
+    );
+    expect(target).toMatchObject({ skillName: 'demo', source: 'project', isSkillFile: true });
+  });
+
+  test('recognizes a nested .agents/skills under root as project, even for a new dir', () => {
+    const target = resolveSkillContentTarget(
+      path.join(root, 'packages', 'a', '.agents', 'skills', 'nested', 'SKILL.md'),
+      { root, includeUserSkills: false, additionalSkillDirectories: [] },
+    );
+    expect(target).toMatchObject({ skillName: 'nested', source: 'project', isSkillFile: true });
+  });
+
+  test('recognizes an additional dir OUTSIDE root (the closed governance hole)', () => {
+    // Before convergence this path bypassed agent.skill.write classification entirely
+    // because the detector hardcoded .agents/skills paths and ignored configured dirs.
+    const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
+    const target = resolveSkillContentTarget(
+      path.join(teamSkills, 'shared', 'SKILL.md'),
+      { root, includeUserSkills: false, additionalSkillDirectories: [teamSkills] },
+    );
+    expect(target).toMatchObject({ skillName: 'shared', source: 'user', isSkillFile: true });
+  });
+
+  test('returns null for a non-skill file', () => {
+    expect(
+      resolveSkillContentTarget(path.join(root, 'notes.txt'), {
+        root,
+        includeUserSkills: false,
+        additionalSkillDirectories: [],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('skill ratification provenance', () => {
+  test('ratification survives a restart through the provenance store', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
+    const skillFile = path.join(root, '.agents', 'skills', 'authored', 'SKILL.md');
+    const content = [
+      '---',
+      'description: Agent-authored skill awaiting acceptance',
+      '---',
+      'Follow the authored workflow.',
+      '',
+    ].join('\n');
+    await mkdir(path.dirname(skillFile), { recursive: true });
+    await writeFile(skillFile, content, 'utf8');
+
+    // A trivial in-memory store standing in for the userData-backed file store.
+    const records: Record<string, string> = {};
+    const store = {
+      load: async () => ({ ...records }),
+      record: async (file: string, hash: string) => {
+        records[file] = hash;
+      },
+    };
+
+    const first = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await first.recordAgentSkillWrite(skillFile, skillContentHash(content));
+    await first.notifySkillContentWritten([skillFile]);
+    expect((await first.getSkill('authored'))?.ratified).toBe(false);
+
+    // "Restart": a fresh runtime sharing only the persisted store still gates it.
+    const second = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    expect((await second.getSkill('authored'))?.ratified).toBe(false);
+    const invocation = await second.invokeSkill({ skill: 'authored', trigger: 'agent' });
+    expect(invocation.ok).toBe(false);
+
+    // Without the store (record lost), the gate fails open to ratified.
+    const third = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    expect((await third.getSkill('authored'))?.ratified).toBe(true);
+  });
+});
 
 describe('agent skills', () => {
   test('lists model-invocable skills once per session', async () => {
@@ -205,7 +288,7 @@ describe('agent skills', () => {
     });
     const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
     expect(text).toContain('Skill authoring workflow');
-    expect(text).toContain('disable-model-invocation: true');
+    expect(text).toContain('start unratified');
   });
 
   test('records model and effort effects for slash and agent-invoked skills', async () => {
