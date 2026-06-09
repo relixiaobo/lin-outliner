@@ -221,6 +221,7 @@ describe('agent local tools', () => {
         notifyFileTouched: async (paths: string[]) => {
           touched.push(...paths);
         },
+        resolveSkillTarget: () => null,
       };
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime as any);
       const tools = createLocalTools({ workspace });

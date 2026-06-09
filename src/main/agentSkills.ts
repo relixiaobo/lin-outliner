@@ -355,6 +355,14 @@ export class AgentSkillRuntime {
     if (listing) this.enqueueSteeringMessage(listing);
   }
 
+  resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
+    return this.registry.resolveSkillTarget(filePath);
+  }
+
+  getSkillDirConfig(): { includeUserSkills: boolean; additionalSkillDirectories: readonly string[] } {
+    return this.registry.getSkillDirConfig();
+  }
+
   async getSkill(name: string): Promise<SkillDefinition | null> {
     return this.registry.resolveSkill(name);
   }
@@ -659,6 +667,21 @@ class SkillRegistry {
     this.reloadAll();
   }
 
+  getSkillDirConfig(): { includeUserSkills: boolean; additionalSkillDirectories: readonly string[] } {
+    return {
+      includeUserSkills: this.includeUserSkills,
+      additionalSkillDirectories: [...this.additionalSkillDirectories],
+    };
+  }
+
+  resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
+    return resolveSkillContentTarget(filePath, {
+      root: this.root,
+      includeUserSkills: this.includeUserSkills,
+      additionalSkillDirectories: this.additionalSkillDirectories,
+    });
+  }
+
   reloadAll(): void {
     this.loaded = false;
     this.skills.clear();
@@ -795,6 +818,73 @@ function skillSearchDirs(
     seen.add(normalized);
     return true;
   });
+}
+
+/** A `.agents/skills/<name>/...` write target, resolved against the live skill-dir set. */
+export interface AgentSkillContentTarget {
+  skillName: string;
+  skillRoot: string;
+  skillsDir: string;
+  source: SkillDefinition['source'];
+  relativePath: string;
+  isSkillFile: boolean;
+}
+
+/** Config that defines the skill-dir set. Shared by the loader and write governance. */
+export interface SkillDirConfig {
+  root: string;
+  includeUserSkills: boolean;
+  additionalSkillDirectories: readonly string[];
+}
+
+function targetInsideSkillsDir(
+  filePath: string,
+  skillsDirInput: string,
+  source: SkillDefinition['source'],
+): AgentSkillContentTarget | null {
+  const skillsDir = path.resolve(skillsDirInput);
+  if (!isPathInside(filePath, skillsDir)) return null;
+  const parts = path.relative(skillsDir, filePath).split(path.sep).filter(Boolean);
+  if (parts.length < 2) return null;
+  const skillName = parts[0] ?? '';
+  return {
+    skillName,
+    skillRoot: path.join(skillsDir, skillName),
+    skillsDir,
+    source,
+    relativePath: parts.slice(1).join('/'),
+    isSkillFile: parts.length === 2 && parts[1] === SKILL_FILE_NAME,
+  };
+}
+
+/**
+ * The single source of truth for "is this file a skill-content write, and which skill?".
+ * Both the loader (via the registry) and write governance (the file-tool gateway and the
+ * permission layer) resolve through this, so the two can never disagree. Built-in skills
+ * are code-registered and have no writable directory, so a target is never `built-in`.
+ */
+export function resolveSkillContentTarget(
+  filePathInput: string,
+  config: SkillDirConfig,
+): AgentSkillContentTarget | null {
+  const filePath = path.resolve(filePathInput);
+  // 1. The configured skill-dir set the loader enumerates (defaults + additional dirs).
+  for (const { dir, source } of skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories)) {
+    const target = targetInsideSkillsDir(filePath, dir, source);
+    if (target) return target;
+  }
+  // 2. Nested .agents/skills under the work root (project) — matched by path so a
+  //    brand-new nested skill dir is still governed on its first write.
+  const root = path.resolve(config.root);
+  if (!isPathInside(filePath, root)) return null;
+  const parts = filePath.split(path.sep);
+  for (let index = parts.length - 3; index >= 0; index -= 1) {
+    if (parts[index] !== '.agents' || parts[index + 1] !== 'skills') continue;
+    const skillsDir = parts.slice(0, index + 2).join(path.sep) || path.sep;
+    const target = targetInsideSkillsDir(filePath, skillsDir, 'project');
+    if (target) return target;
+  }
+  return null;
 }
 
 async function loadSkillsFromDir(

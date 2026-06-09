@@ -1,17 +1,7 @@
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSourceKind } from '../core/agentEventLog';
-import { parseSkillMarkdown, parseToolListFromFrontmatter } from './agentSkills';
-
-export interface AgentSkillContentTarget {
-  skillName: string;
-  skillRoot: string;
-  skillsDir: string;
-  source: AgentSourceKind;
-  relativePath: string;
-  isSkillFile: boolean;
-}
+import { type AgentSkillContentTarget, parseSkillMarkdown, parseToolListFromFrontmatter } from './agentSkills';
 
 export interface AgentSkillWriteAudit {
   skillName: string;
@@ -76,40 +66,13 @@ const RISKY_ALLOWED_TOOL_NAMES = new Set([
   'web_fetch',
 ]);
 
-export function detectAgentSkillContentTarget(
-  filePathInput: string,
-  workspaceRootInput: string,
-): AgentSkillContentTarget | null {
-  const filePath = path.resolve(filePathInput);
-  const workspaceRoot = path.resolve(workspaceRootInput);
-  const userSkillsDir = path.join(homedir(), '.agents', 'skills');
-  const workspaceSkillsDir = path.join(workspaceRoot, '.agents', 'skills');
-  const userTarget = targetInsideSkillsDir(filePath, userSkillsDir, 'user');
-  if (userTarget) return userTarget;
-  const workspaceTarget = targetInsideSkillsDir(filePath, workspaceSkillsDir, 'project');
-  if (workspaceTarget) return workspaceTarget;
-  if (!isPathInside(workspaceRoot, filePath)) return null;
-
-  const parts = filePath.split(path.sep);
-  for (let index = parts.length - 3; index >= 0; index -= 1) {
-    if (parts[index] !== '.agents' || parts[index + 1] !== 'skills') continue;
-    const skillsDir = parts.slice(0, index + 2).join(path.sep) || path.sep;
-    const target = targetInsideSkillsDir(filePath, skillsDir, 'project');
-    if (target) return target;
-  }
-  return null;
-}
-
 export function validateAgentSkillContentWrite(input: {
-  filePath: string;
-  workspaceRoot: string;
+  target: AgentSkillContentTarget;
   content: string;
   previousContent: string | null;
   operation: 'file_edit' | 'file_write';
-}): AgentSkillWriteAudit | null {
-  const target = detectAgentSkillContentTarget(input.filePath, input.workspaceRoot);
-  if (!target) return null;
-
+}): AgentSkillWriteAudit {
+  const { target } = input;
   assertValidSkillTarget(target);
   const previous = input.previousContent;
   if (target.isSkillFile) {
@@ -138,41 +101,14 @@ export function validateAgentSkillContentWrite(input: {
   };
 }
 
-function targetInsideSkillsDir(
-  filePath: string,
-  skillsDirInput: string,
-  source: AgentSourceKind,
-): AgentSkillContentTarget | null {
-  const skillsDir = path.resolve(skillsDirInput);
-  if (!isPathInside(skillsDir, filePath)) return null;
-  const relative = path.relative(skillsDir, filePath);
-  const parts = relative.split(path.sep).filter(Boolean);
-  if (parts.length < 2) return null;
-  const skillName = parts[0] ?? '';
-  const skillRoot = path.join(skillsDir, skillName);
-  return {
-    skillName,
-    skillRoot,
-    skillsDir,
-    source,
-    relativePath: parts.slice(1).join('/'),
-    isSkillFile: parts.length === 2 && parts[1] === SKILL_FILE_NAME,
-  };
-}
-
 function assertValidSkillTarget(target: AgentSkillContentTarget): void {
+  // The resolver never yields a built-in target (built-ins have no writable dir), so the
+  // immutable floor needs no check here — only the skill-name shape.
   if (!SKILL_NAME_PATTERN.test(target.skillName)) {
     throw new AgentSkillAuthoringError(
       'invalid_skill_name',
       `Invalid skill name: ${target.skillName}`,
       'Use a simple skill directory name with letters, numbers, dots, underscores, or hyphens.',
-    );
-  }
-  if (target.source === 'built-in') {
-    throw new AgentSkillAuthoringError(
-      'built_in_skill_immutable',
-      'Built-in skills are immutable.',
-      'Write only user or project skills under .agents/skills.',
     );
   }
 }
@@ -289,9 +225,4 @@ function normalizeToolName(value: string): string {
 
 function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
-}
-
-function isPathInside(root: string, filePath: string): boolean {
-  const relative = path.relative(root, filePath);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }

@@ -8,9 +8,51 @@ import {
   AgentSkillRuntime,
   createSlashSkillPrompt,
   parseSkillSlashCommand,
+  resolveSkillContentTarget,
 } from '../../src/main/agentSkills';
 
 const execFile = promisify(execFileCallback);
+
+describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
+  const root = path.join(path.sep, 'work', 'project');
+
+  test('recognizes the default project skills dir', () => {
+    const target = resolveSkillContentTarget(
+      path.join(root, '.agents', 'skills', 'demo', 'SKILL.md'),
+      { root, includeUserSkills: false, additionalSkillDirectories: [] },
+    );
+    expect(target).toMatchObject({ skillName: 'demo', source: 'project', isSkillFile: true });
+  });
+
+  test('recognizes a nested .agents/skills under root as project, even for a new dir', () => {
+    const target = resolveSkillContentTarget(
+      path.join(root, 'packages', 'a', '.agents', 'skills', 'nested', 'SKILL.md'),
+      { root, includeUserSkills: false, additionalSkillDirectories: [] },
+    );
+    expect(target).toMatchObject({ skillName: 'nested', source: 'project', isSkillFile: true });
+  });
+
+  test('recognizes an additional dir OUTSIDE root (the closed governance hole)', () => {
+    // Before convergence this path bypassed agent.skill.write classification entirely
+    // because the detector hardcoded .agents/skills paths and ignored configured dirs.
+    const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
+    const target = resolveSkillContentTarget(
+      path.join(teamSkills, 'shared', 'SKILL.md'),
+      { root, includeUserSkills: false, additionalSkillDirectories: [teamSkills] },
+    );
+    expect(target).toMatchObject({ skillName: 'shared', source: 'user', isSkillFile: true });
+  });
+
+  test('returns null for a non-skill file', () => {
+    expect(
+      resolveSkillContentTarget(path.join(root, 'notes.txt'), {
+        root,
+        includeUserSkills: false,
+        additionalSkillDirectories: [],
+      }),
+    ).toBeNull();
+  });
+});
 
 describe('agent skills', () => {
   test('lists model-invocable skills once per session', async () => {

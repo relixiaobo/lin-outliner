@@ -13,7 +13,7 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
-import { detectAgentSkillContentTarget } from './agentSkillAuthoring';
+import { resolveSkillContentTarget } from './agentSkills';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
@@ -46,6 +46,10 @@ export interface AgentPermissionPolicy {
   allowOutsideWorkspaceRead: boolean;
   allowOutsideWorkspaceWrite: boolean;
   globalPermissions: GlobalToolPermissionConfig;
+  // Skill-dir config, so `agent.skill.write` classification uses the same skill-path
+  // source of truth as the loader and the file-tool gateway (resolveSkillContentTarget).
+  includeUserSkills: boolean;
+  additionalSkillDirectories: readonly string[];
 }
 
 export interface AgentPermissionPolicyInput {
@@ -56,6 +60,8 @@ export interface AgentPermissionPolicyInput {
   allowOutsideWorkspaceRead?: boolean;
   allowOutsideWorkspaceWrite?: boolean;
   globalPermissions?: unknown;
+  includeUserSkills?: boolean;
+  additionalSkillDirectories?: readonly string[];
 }
 
 interface AgentPermissionDecisionBase {
@@ -259,6 +265,8 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,
     allowOutsideWorkspaceWrite: input.allowOutsideWorkspaceWrite ?? false,
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
+    includeUserSkills: input.includeUserSkills ?? true,
+    additionalSkillDirectories: input.additionalSkillDirectories ?? [],
   };
 }
 
@@ -747,7 +755,13 @@ function derivePathToolActionDescriptor(
     });
   }
 
-  const skillTarget = isWrite ? detectAgentSkillContentTarget(resolved, policy.workspaceRoot) : null;
+  const skillTarget = isWrite
+    ? resolveSkillContentTarget(resolved, {
+      root: policy.workspaceRoot,
+      includeUserSkills: policy.includeUserSkills,
+      additionalSkillDirectories: policy.additionalSkillDirectories,
+    })
+    : null;
   if (skillTarget) {
     return descriptor(toolName, 'agent.skill.write', {
       accessScope: 'allowed_file_area',

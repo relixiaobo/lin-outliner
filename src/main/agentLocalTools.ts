@@ -578,10 +578,13 @@ function validateSkillContentWriteOrThrow(input: {
   previousContent: string | null;
   operation: 'file_edit' | 'file_write';
 }): AgentSkillWriteAudit | null {
+  // One source of truth for "is this a skill write": the live skill registry. Without a
+  // skill runtime there are no skills to govern, so a write is an ordinary file write.
+  const target = input.workspace.skillRuntime?.resolveSkillTarget(input.filePath) ?? null;
+  if (!target) return null;
   try {
     return validateAgentSkillContentWrite({
-      workspaceRoot: input.workspace.root,
-      filePath: input.filePath,
+      target,
       content: input.content,
       previousContent: input.previousContent,
       operation: input.operation,

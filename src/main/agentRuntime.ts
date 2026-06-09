@@ -5648,6 +5648,7 @@ function createConfiguredAgent(
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
           ],
+          ...(skillRuntime?.getSkillDirConfig() ?? {}),
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;
