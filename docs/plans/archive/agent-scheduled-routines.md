@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-05-26
@@ -7,6 +7,15 @@ updated: 2026-06-09
 ---
 
 # Proactive Agent — Command Nodes
+
+**Shipped in PR #165 (M2).** The current-behavior design now lives in
+`docs/spec/commands.md` (§ "Document — command nodes (scheduled routines)" — the
+command surface, bright line, anacron scheduler, at-most-once crash recovery,
+backoff, and unattended permission model), `docs/spec/date-field-values.md` (the
+schedule string / `RRULE` on the date field), and
+`docs/spec/agent-event-log-rendering.md` (the triggered-run delivery conversation
++ subagent-boundary rendering). This plan is kept whole as the design history /
+path-not-taken record.
 
 ## Build status (2026-06-08, PR #165, cc-2)
 

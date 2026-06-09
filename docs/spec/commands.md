@@ -87,7 +87,7 @@ toggles the owner node's done state.
 A `command` node is **node-native**: its text content is a natural-language brief,
 its body (the non-field child outline) is the prompt detail, and its config lives
 in two real child field rows — `Schedule` and `Agent`. Arming its schedule makes
-it run unattended on a timer. See `docs/plans/agent-scheduled-routines.md`.
+it run unattended on a timer. (Design history: `docs/plans/archive/agent-scheduled-routines.md`.)
 
 - `set_command_node(nodeId)` converts a plain content row into a `command` node
   (brief stays in the node's content), seeds the user-only `commandSchedule`

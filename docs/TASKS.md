@@ -198,12 +198,6 @@ row in `agent-program.md`.**
   (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
   (degrades to conversational turns until it exists). See
   `docs/plans/agent-import-skill.md`.
-- **agent-scheduled-routines** (P2, M2, **SHIPPED in #165**) — a "command node" whose content is a
-  natural-language brief to the agent; arming its schedule field (one field carrying both *when to start*
-  and *how to repeat*) makes it run on an anacron-style schedule, with **Run now** for manual fires. Landed
-  with the review-gate hardening (at-most-once crash recovery, agent-barred fire watermark, failure backoff
-  from the failure moment, unattended-run approval fence). See `docs/plans/agent-scheduled-routines.md`
-  (fold its design into `docs/spec/` + archive on the next pass).
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
