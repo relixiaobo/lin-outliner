@@ -22,6 +22,17 @@ no-escalation guard) **landed in M1 (#153)** — design in `docs/spec/agent-skil
 **Remaining:** natural-language "save as skill", diff/preview, snapshot UI, and curation
 dry-run (curation deferred alongside M2 self-mod per PM 2026-06-09).
 
+**Convergence pass (PM-ratified 2026-06-09).** A design review found the shipped M1
+has three seams worth fixing pre-launch (see *Governance layering & single-source
+identity* below): a redundant `dynamic` `source` value, two disagreeing definitions of
+"what is a skill" (a real governance hole), and write-time governance that is heavier
+than it needs to be. The fix is **one convergence PR** that collapses the `source`
+taxonomy, gives skill-path identity a single source of truth, and re-layers governance
+along the cc-2.1 split (validation→load, no-escalation→invocation, model-invocability→
+listing). The `types.ts` interface change rides **in the same PR** (PM call — not carved
+out). This PR is a prerequisite for the remaining creative-UX work (`save as skill` +
+preview/confirm), which sits cleanly on top.
+
 ## Goal
 
 - **One unified skill library; agents bind by name** — no per-agent skill storage.
@@ -136,10 +147,14 @@ fix the skill that failed
   **skill-content write**, not a generic document edit — distinct permission / audit
   / snapshot path.
 - **Agent-initiated** writes must show the full `SKILL.md` or a focused diff and ask
-  for explicit confirmation; they default to **draft / disabled** until accepted, and
-  carry `agent-created` provenance. **User-directed** writes ("save this as a skill")
-  may use a compact approval — the user's command is already the intent — and may
-  enable immediately when the user asked for that.
+  for explicit confirmation; they are born **unratified** (carry `agent-created`
+  provenance; excluded from the model listing and their `allowed-tools` inert until the
+  user accepts — see *Governance layering*). **User-directed** writes ("save this as a
+  skill") may use a compact approval — the user's command is already the intent — and are
+  born **ratified** when the user asks for that.
+  *(The shipped M1 instead force-writes `disable-model-invocation: true`; the convergence
+  moves this to the runtime ratification gate — `disable-model-invocation` stays only as a
+  user-set frontmatter knob, not a policy lin writes for the agent.)*
 - Write atomically; snapshot the previous version; expose undo. Validate frontmatter,
   size, paths, supported subdirs before/after write; surface failures as repairable.
 - Reject path traversal, symlinks escaping the skill dir, executable/binary support
@@ -165,6 +180,110 @@ skill **without a process restart**: the registry is **startup-loaded and cached
 (`agentSubagents.ts:1141,1255`) — the same startup-cache problem as memory in
 `.agents/` ([[agent-conversation-model]] §5) — so this extends the existing on-demand
 `discoverSkillDirsForPaths` path to hot-reload a freshly authored skill.
+
+### Governance layering & single-source identity (convergence, 2026-06-09)
+
+The shipped M1 works but carries three seams. Each is grounded in code; the fix is one
+coherent convergence PR. The reference is **cc-2.1** (Claude Code 2.1), whose skill
+authoring is: ordinary `Write`/`Edit` file tools (no typed skill-CRUD tool), path-keyed
+write detection in the filesystem-permission layer, skills confined to canonical
+locations, and preview/confirm carried as *skillify instructions* — not a runtime
+pipeline (`~/.research-repos/cc-2.1/src/skills/bundled/skillify.ts`,
+`utils/permissions/filesystem.ts:101`).
+
+**Seam 1 — `dynamic` is a category error on the `source` axis.** `SkillDefinition.source`
+is `'built-in' | 'user' | 'project' | 'dynamic'` (`types.ts:821`) while
+`AgentDefinition.source` is `'built-in' | 'user' | 'project'` (`:802`) — the claimed
+agent/skill symmetry is broken. No code branches on `source === 'dynamic'`; it is only
+ever unioned on (`AgentSourceKind | 'dynamic'` at `agentSkillAuthoring.ts:11/18/144`,
+`agentEventLog.ts:890`, `agentRuntime.ts:5369`). A `dynamic` skill physically lives under
+the work root (a nested `.agents/skills`); "dynamic" describes *how it was discovered*
+(runtime walk-up from touched files, gitignore-aware, `discoverSkillDirsForPaths`,
+`agentSkills.ts:751`), not *where it lives*. Path-conditional activation is already a
+separate mechanism (`conditionalSkills` + `paths`, `agentSkills.ts:644,706`), so
+`dynamic` carries no weight.
+
+→ **Fix:** collapse `source` to `'built-in' | 'user' | 'project'` (= `AgentSourceKind`,
+symmetric with agents). Nested-discovered dirs classify by the *same* location rule the
+configured-dir branch already uses (`isPathInside(dir, root) ? 'project' : 'user'`,
+`agentSkills.ts:787`). Drop the `| 'dynamic'` unions. No behavior change (nothing reads
+it). The collapsed taxonomy equals the natural mental model: **`built-in` (app, immutable)
+· `user` (your unified library — hand-authored + imported) · `project` (came with the
+work context, whether root-level or nested-discovered)**.
+
+**Seam 2 — two disagreeing definitions of "what is a skill" (governance hole).** The
+loader recognizes skill dirs from the *real configured set* (defaults +
+`additionalSkillDirectories`, classified by location, `agentSkills.ts:782-787`). The
+write-governance detector recognizes them from a *hardcoded path regex* (only
+`~/.agents/skills`, `<root>/.agents/skills`, and nested `.agents/skills`,
+`agentSkillAuthoring.ts:85-99`). They disagree: a skill in an additional configured dir
+that is outside the root and not named `.agents/skills` (e.g. `~/team-skills/`) is loaded
+as a real, model-invocable `user` skill, but a `file_edit` to its `SKILL.md` is **not**
+classified as `agent.skill.write` — no validation, no audit, no no-escalation guard, no
+hot-reload. This hole exists *because* lin added `additionalSkillDirectories`, which
+cc-2.1 does not have (cc-2.1's path-regex is trivially single-source because skills only
+live in canonical locations). We keep the feature (PM 2026-06-09: cannot drop it).
+
+→ **Fix:** one authoritative resolver. The `AgentSkillRuntime`/registry exposes
+`resolveSkillTarget(filePath): SkillTarget | null`, built from the *same* dir set the
+loader enumerates (defaults + `additionalSkillDirectories` + on-demand
+`discoverSkillDirsForPaths([filePath])`). The loader uses it to enumerate; the file-tool
+gateway (`agentLocalTools.ts:911,986`) calls it to detect a skill write. The hardcoded
+regex in `detectAgentSkillContentTarget` is deleted. **Recognition ≠ permission:** every
+real skill dir is recognized/governed; whether a given dir is *writable* (the
+additional-dirs question) becomes a separate permission policy (default read-only), denied
+at the permission layer — never by the detector failing to see it.
+
+**Seam 3 — write-time governance is heavier than it needs to be.** lin runs frontmatter
+validation, support-file shape checks, a `RISKY_ALLOWED_TOOL_NAMES` no-escalation guard,
+secret scanning, path-traversal/symlink/exec checks, audit, snapshot, and forced
+`disable-model-invocation` all at write time (`agentSkillAuthoring.ts`). Verified against
+the invocation path: catastrophic/platform hard-blocks and global denies are enforced at
+invocation regardless of preapproval (`agentPermissions.ts:271,281,297`), so the guard's
+"can't exceed the floor" portion is **redundant**; but skill `allowed-tools` *do* grant in
+restricted mode (`:311`), so the "don't preapprove risky tools" portion is **not**
+redundant. cc-2.1 handles the latter by human review (skillify confirm) + the floor, not a
+write-time string guard.
+
+→ **Fix — re-layer along the cc-2.1 split.** Each write-time check moves to the layer
+where it is robust:
+
+| Current write-time check | Moves to | Why |
+|---|---|---|
+| skill-path detection | **write boundary** (the resolver, Seam 2) | thin routing gate; must be here |
+| frontmatter / support-file validation | **load time** (malformed skill fails to load) | one source of validity; write-time keeps at most a courtesy parse |
+| no-escalation (`RISKY_ALLOWED_TOOL_NAMES` reject) | **invocation time** (ratification gate, below) | structural + robust; deletes the leaky string heuristic |
+| forced `disable-model-invocation` | **listing time** (ratification gate) | stop mutating the authored file; policy lives in runtime |
+| secret scan | **general file-write safety** | any write can carry secrets — not skill-specific |
+| path-traversal / symlink / exec support files | **general filesystem safety / sandbox** | generic safety, de-skill-specialized |
+| audit events (`skill.created/...`) | **write boundary** | they are *about* the write |
+| snapshot / rollback metadata | **write boundary** | must capture prior content at the write |
+| hot-reload | **write boundary** | registry must see the new file |
+
+The **thin write boundary** that remains: resolver gate → permission decision (with
+cc-2.1-style per-skill narrowing) → audit → snapshot → hot-reload. All genuinely
+write-time.
+
+**The ratification model (the centerpiece).** The two heaviest write-time checks —
+no-escalation (#4) and forced model-invocation-off (#10) — are the *same* idea: *a skill
+the user has not accepted should neither be auto-invoked by the model nor have its
+`allowed-tools` silently honored.* Unify them into one **ratification state**, enforced at
+listing + invocation, not at write:
+
+- **Unratified** (agent-authored, not yet accepted): excluded from the model skill
+  listing; its `allowed-tools` are **inert** — at invocation, risky tools still `ask`
+  rather than being preapproved. Escalation becomes structurally impossible regardless of
+  what was written.
+- **Ratified** (`built-in` · user-authored · a user-accepted agent skill · a
+  workspace-trusted `project` skill): model-invocable per frontmatter; `allowed-tools`
+  live as preapproval.
+
+This cleanly splits **authorship** from **trust**: the **file** carries *provenance* (who
+wrote it — a fact), the **runtime** carries *ratification* (did the user accept it — a
+decision). Promotion / rollback flip the runtime record; the file is never rewritten to
+encode policy. User-directed `skillify` writes are born ratified (the confirm step is the
+acceptance, like cc-2.1); agent-initiated writes are born unratified and promote on
+explicit acceptance.
 
 ### Curation (later — opt-in, agent-created only)
 
@@ -192,7 +311,13 @@ deliberately conservative (self-modification §8):
 ## Protocol surface & events (M0 dependency)
 
 - **`SkillDefinition.source += 'built-in'`** (`src/core/types.ts`) — protocol surface;
-  land **interface-first** in M0 ([[agent-program]] foundation).
+  landed in M1 (#153).
+- **Convergence: `SkillDefinition.source` collapses to `AgentSourceKind`**
+  (`'built-in' | 'user' | 'project'`, dropping `'dynamic'`) — protocol surface. Per PM
+  2026-06-09 this interface change rides **in the convergence PR** (not carved out into a
+  standalone interface-only PR), because the enum literal has compile fallout (loader
+  tagging + the `| 'dynamic'` unions) that must move with it and the change is pure cleanup
+  with no behavior effect.
 - **`skill.*` events** (create / patch / replace / support-file-write / enable /
   disable / rollback / curation-report) live in the **program event taxonomy**
   ([[agent-program]] — design once, shared with hooks/notifications), not invented here.
@@ -206,6 +331,11 @@ deliberately conservative (self-modification §8):
   unified library); `skillify` + file-tool authoring; `.agents/skills/**` write
   classification; provenance / snapshot / rollback; registry **hot-reload**;
   draft-default for agent-initiated writes.
+- **M1 convergence** — collapse the `source` taxonomy, single skill-path resolver, and
+  governance re-layering (validation→load, no-escalation→invocation ratification,
+  model-invocability→listing). One PR; interface change rides in-PR. See *Governance
+  layering & single-source identity*. Prerequisite for the creative-UX work
+  (`save as skill` + preview/confirm).
 - **M2 (off-floor + extension)** — opt-in curation **dry-run reports** (agent-created
   only). Skill-declared hooks register as run-scoped or conversation-scoped
   transients and ride the hooks work in [[agent-self-modification]] (on the
@@ -214,15 +344,24 @@ deliberately conservative (self-modification §8):
 ## Open questions
 
 - **Compact card vs full diff** for explicit user-requested skill writes by default?
-- **Writable additional dirs** — keep additional configured skill dirs read-only, or
-  allow an explicit `writable` mark?
+  (Now an instruction-layer concern — carried in `skillify` like cc-2.1, resolved in the
+  creative-UX PR, not the convergence PR.)
+- ~~**Writable additional dirs**~~ — **resolved (convergence):** recognition ≠ permission.
+  All real skill dirs are recognized/governed via the single resolver; writability is a
+  separate permission policy (default read-only), denied at the permission layer.
 - **Per-skill permission suggestions** — adopt cc-2.1-style per-skill invocation
-  permission hints, or is the global permission center enough?
+  permission hints, or is the global permission center enough? (cc-2.1 narrows write
+  permission per skill — `getClaudeSkillScope`, `filesystem.ts:101`; the convergence keeps
+  this as the write-boundary's permission step.)
 - **Where bundled adapters ship** (from [[agent-import-skill]]): a built-in
   `import/adapters/` skill bundle (versions with the app → `built-in`) vs the user
   `~/.agents/skills` dir. Leaning `built-in` now that the source exists.
-- **Authorship metadata shape** — which frontmatter fields record author / provenance
-  / promotion state (reuse `version`, add `source-author` / `provenance`?).
+- **Authorship metadata shape** — **now load-bearing** (the ratification model depends on
+  it). Proposed split: the **file** carries *provenance* (a frontmatter fact — who
+  authored it, e.g. `provenance: agent-authored`), the **runtime** carries *ratification*
+  (a trust record — did the user accept it — keyed by skill id + content hash, never
+  written back into the file). Confirm the exact frontmatter field(s) and the runtime
+  record shape in the convergence PR.
 
 ## Build checklist
 
@@ -243,3 +382,33 @@ deliberately conservative (self-modification §8):
 - [ ] Ratify + sandbox gate for executable-script support files.
 - [ ] Curation dry-run reports (agent-created only) — M2.
 - [x] Spec update: `docs/spec/agent-skills.md` (built-in source + authoring + hot-reload).
+
+### Convergence PR (one complete change; interface change rides in-PR)
+
+- [ ] **Seam 1** — collapse `SkillDefinition.source` to `AgentSourceKind`
+      (`'built-in' | 'user' | 'project'`); tag nested-discovered dirs by location
+      (`isPathInside(dir, root) ? 'project' : 'user'`); remove every `| 'dynamic'` union
+      (`types.ts`, `agentSkills.ts`, `agentSkillAuthoring.ts`, `agentEventLog.ts`,
+      `agentRuntime.ts`).
+- [ ] **Seam 2** — add `AgentSkillRuntime.resolveSkillTarget(filePath)` as the single skill-
+      path source of truth (defaults + `additionalSkillDirectories` + on-demand
+      `discoverSkillDirsForPaths`); loader enumerates through it; the file-tool gateway
+      detects skill writes through it; delete the hardcoded regex in
+      `detectAgentSkillContentTarget`.
+- [ ] **Seam 2** — recognition ≠ permission: writability of additional dirs becomes a
+      permission policy (default read-only), enforced at the permission layer.
+- [ ] **Seam 3 / ratification** — introduce skill ratification state (file `provenance` +
+      runtime ratification record). Listing excludes unratified skills; invocation treats an
+      unratified skill's `allowed-tools` as inert (no preapproval).
+- [ ] **Seam 3** — move frontmatter/support validation to load-time as the enforcement
+      point; keep at most a courtesy parse at write.
+- [ ] **Seam 3** — delete the write-time `RISKY_ALLOWED_TOOL_NAMES` no-escalation reject
+      (now structural via ratification); stop force-writing `disable-model-invocation` into
+      the file (now a listing-time policy).
+- [ ] **Seam 3** — de-skill-specialize secret-scan + path-traversal/symlink/exec checks
+      into the general file-write / filesystem-safety layer.
+- [ ] Thin write boundary remains: resolver gate → permission (per-skill narrowing) →
+      audit → snapshot → hot-reload.
+- [ ] `bun run typecheck` + `test:core` (+ guard tests); update `docs/spec/agent-skills.md`
+      in the SAME change (A6): collapsed source taxonomy, single resolver, the governance
+      layering, and the ratification model.
