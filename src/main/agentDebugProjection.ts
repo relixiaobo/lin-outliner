@@ -205,7 +205,7 @@ function debugTotalsFromHistory(history: readonly AgentDebugSnapshot[]): AgentDe
 function conversationTitleFromEvents(events: readonly AgentEvent[]): string | null {
   let title: string | null = null;
   for (const event of events) {
-    if (event.type === 'session.created' || event.type === 'session.renamed') title = event.title;
+    if (event.type === 'conversation.created' || event.type === 'conversation.renamed') title = event.title;
   }
   return title;
 }

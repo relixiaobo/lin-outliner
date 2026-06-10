@@ -330,7 +330,7 @@ describe('agent runtime skill integration', () => {
     expect(payloadSnapshots.map((snapshot) => snapshot.queryIndex)).toEqual([1, 2, 3]);
   });
 
-  test('runs automatic skill loading through a real pi agent session and keeps compact replay short', async () => {
+  test('runs automatic skill loading through a real pi agent conversation and keeps compact replay short', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skills-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-data-'));
     roots.push(localRoot, dataRoot);
@@ -1164,7 +1164,7 @@ describe('agent runtime skill integration', () => {
     ))).toBe(true);
   });
 
-  test('records runtime-denied approval resolutions when closing a session', async () => {
+  test('records runtime-denied approval resolutions when closing a conversation', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-approval-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-approval-data-'));
     roots.push(localRoot, dataRoot);
@@ -1302,7 +1302,7 @@ describe('agent runtime skill integration', () => {
     expect(restored.renderProjection.rows).toHaveLength(2);
   });
 
-  test('refreshes configured skill directories for existing sessions', async () => {
+  test('refreshes configured skill directories for existing conversations', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-refresh-'));
     const extraRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-extra-skills-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-refresh-data-'));

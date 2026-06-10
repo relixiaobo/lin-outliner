@@ -14,7 +14,7 @@ export function buildUserViewContextReminder(context: AgentUserViewContext | nul
 export class AgentUserViewContextReminderTracker {
   private snapshots = new Map<string, UserViewSnapshot>();
 
-  prepare(sessionId: string, context: AgentUserViewContext | null | undefined): {
+  prepare(conversationId: string, context: AgentUserViewContext | null | undefined): {
     reminder: string | null;
     commit: () => void;
   } {
@@ -22,18 +22,18 @@ export class AgentUserViewContextReminderTracker {
     if (!next) {
       return {
         reminder: null,
-        commit: () => this.snapshots.delete(sessionId),
+        commit: () => this.snapshots.delete(conversationId),
       };
     }
-    const previous = this.snapshots.get(sessionId) ?? null;
+    const previous = this.snapshots.get(conversationId) ?? null;
     return {
       reminder: previous ? renderDiff(previous, next) : renderSnapshot(next),
-      commit: () => this.snapshots.set(sessionId, next),
+      commit: () => this.snapshots.set(conversationId, next),
     };
   }
 
-  reset(sessionId?: string) {
-    if (sessionId) this.snapshots.delete(sessionId);
+  reset(conversationId?: string) {
+    if (conversationId) this.snapshots.delete(conversationId);
     else this.snapshots.clear();
   }
 }

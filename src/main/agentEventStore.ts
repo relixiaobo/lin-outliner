@@ -42,17 +42,19 @@ import {
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
 const AGENT_RUN_INDEX_FILE = 'runs.json';
-const LEGACY_SESSIONS_DIR = 'sessions';
 const RUN_EVENT_LOG_FILE = 'events.jsonl';
 const RUN_META_FILE = 'meta.json';
 const AGENT_IDENTITY_FILE = 'identity.json';
 const CONVERSATION_INDEX_FILE = 'conversation-index.json';
+// Pre-clean-cut artifact names, referenced ONLY by the old-format detector
+// (hasLegacyStorageArtifacts) — never constructed for reads or writes.
+const LEGACY_SESSIONS_DIR = 'sessions';
 const LEGACY_SESSION_INDEX_FILE = 'session-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
-const CHECKPOINT_VERSION = 3;
-const SEARCH_INDEX_VERSION = 1;
+const CHECKPOINT_VERSION = 4;
+const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
-const MAX_CHECKPOINTS_PER_SESSION = 3;
+const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
 const SEARCH_INDEX_PREVIEW_CHARS = 240;
 export const MAX_AGENT_MEMORY_FACT_CHARS = 2_000;
@@ -159,14 +161,14 @@ export interface AgentConversationIndexEntry {
   /**
    * Folded off-floor unread count for this conversation, persisted so the badge
    * survives restart (the live `conversation_attention` event only fires for
-   * sessions touched this run). Sourced from replay state, single source of truth.
+   * conversations touched this run). Sourced from replay state, single source of truth.
    */
   unreadCount: number;
 }
 
 export interface AgentEventCheckpoint {
   v: typeof CHECKPOINT_VERSION;
-  sessionId: string;
+  conversationId: string;
   seq: number;
   latestEventId: string | null;
   createdAt: number;
@@ -209,7 +211,7 @@ interface AgentMemoryProjectionCache {
 }
 
 export interface AgentEventSearchIndexEntry {
-  sessionId: string;
+  conversationId: string;
   messageId: string;
   role: AgentEventMessageRole;
   parentMessageId: string | null;
@@ -232,7 +234,7 @@ interface AgentEventSearchIndex {
   v: typeof SEARCH_INDEX_VERSION;
   messages: Record<string, AgentEventSearchIndexEntry>;
   userMessages: Record<string, AgentEventUserMessageIndexEntry>;
-  latestSeqBySessionId: Record<string, number>;
+  latestSeqByConversationId: Record<string, number>;
 }
 
 export class AgentEventStore {
@@ -244,9 +246,9 @@ export class AgentEventStore {
 
   constructor(private readonly rootDir: string) {}
 
-  paths(sessionId: string): AgentEventStorePaths {
+  paths(conversationId: string): AgentEventStorePaths {
     const conversationsDir = path.join(this.rootDir, 'conversations');
-    const conversationDir = path.join(conversationsDir, agentConversationDirName(sessionId));
+    const conversationDir = path.join(conversationsDir, agentConversationDirName(conversationId));
     const conversationSegmentsDir = path.join(conversationDir, 'segments');
     return {
       rootDir: this.rootDir,
@@ -278,25 +280,22 @@ export class AgentEventStore {
     };
   }
 
-  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string } {
+  /** The agent's identity directory — holds ONLY `identity.json`; pools live under `principals/`. */
+  agentPaths(agentId: string): { agentDir: string; identityPath: string } {
     const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
     return {
       agentDir,
       identityPath: path.join(agentDir, AGENT_IDENTITY_FILE),
-      memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
     };
   }
 
   /**
-   * On-disk location of a principal's memory pool. An agent-principal reuses its
-   * existing identity directory (`agents/<agentId>/memory/`); a user-principal
-   * gets a dedicated `principals/user-<userId>/memory/` pool. The pool is the
-   * subject's self-model — see [[agent-data-model]] §4.
+   * On-disk location of a principal's memory pool. One path rule for every
+   * principal type: `principals/<agent-<agentId> | user-<userId>>/memory/`.
+   * The pool is the subject's self-model — see [[agent-data-model]] §4.
    */
   memoryPaths(principal: AgentPrincipal): { poolDir: string; memoryEventsPath: string; runIndexPath: string } {
-    const poolDir = principal.type === 'agent'
-      ? this.agentPaths(principal.agentId).agentDir
-      : path.join(this.rootDir, 'principals', `user-${encodeAgentDirName(principal.userId)}`);
+    const poolDir = path.join(this.rootDir, 'principals', agentPrincipalDirName(principal));
     return {
       poolDir,
       memoryEventsPath: path.join(poolDir, 'memory', RUN_EVENT_LOG_FILE),
@@ -306,20 +305,20 @@ export class AgentEventStore {
     };
   }
 
-  async appendEvents(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
+  async appendEvents(conversationId: string, events: readonly AgentEvent[]): Promise<void> {
     if (events.length === 0) return;
     await this.ensureStorageLayout();
-    this.assertEventBatch(sessionId, events);
-    await this.agentEventLog.enqueue(sessionId, async () => {
-      const latestSeq = await this.getLatestSeq(sessionId);
+    this.assertEventBatch(conversationId, events);
+    await this.agentEventLog.enqueue(conversationId, async () => {
+      const latestSeq = await this.getLatestSeq(conversationId);
       const firstSeq = events[0]!.seq;
       if (firstSeq <= latestSeq) {
         throw new Error(`Agent event seq ${firstSeq} is not after existing seq ${latestSeq}`);
       }
 
-      await this.appendSplitEvents(sessionId, events);
-      this.agentEventLog.setLatestSeq(sessionId, events.at(-1)!.seq);
-      // Streaming assistant deltas carry no index content: the session/search
+      await this.appendSplitEvents(conversationId, events);
+      this.agentEventLog.setLatestSeq(conversationId, events.at(-1)!.seq);
+      // Streaming assistant deltas carry no index content: the conversation/search
       // indexes derive assistant text from assistant_message.completed, and a
       // delta only nudges latestSeq/updatedAt (cosmetic ordering, self-healed by
       // the completed/run events that follow). Skipping the whole-file index
@@ -327,65 +326,65 @@ export class AgentEventStore {
       // index files on every streamed token. The events.jsonl append above is
       // the source of truth and still happens per delta.
       if (events.some((event) => !isStreamingDeltaEvent(event))) {
-        await this.updateConversationIndex(sessionId, events);
-        await this.updateSearchIndex(sessionId, events);
+        await this.updateConversationIndex(conversationId, events);
+        await this.updateSearchIndex(conversationId, events);
       }
     });
   }
 
-  async readEvents(sessionId: string): Promise<AgentEvent[]> {
+  async readEvents(conversationId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
-    const paths = this.paths(sessionId);
+    const paths = this.paths(conversationId);
     const events = [
       ...await this.agentEventLog.readIfExists(paths.conversationEventsPath),
-      ...await this.readRunEventsForSession(sessionId),
+      ...await this.readRunEventsForConversation(conversationId),
     ];
     return events.sort(compareAgentEventsForReplay);
   }
 
-  async replay(sessionId: string): Promise<AgentEventReplayState> {
+  async replay(conversationId: string): Promise<AgentEventReplayState> {
     await this.ensureStorageLayout();
-    const checkpointed = await this.replayFromCheckpoint(sessionId);
+    const checkpointed = await this.replayFromCheckpoint(conversationId);
     if (checkpointed) return checkpointed;
-    return replayAgentEvents(await this.readEvents(sessionId));
+    return replayAgentEvents(await this.readEvents(conversationId));
   }
 
-  async writeCheckpoint(sessionId: string, state: AgentEventReplayState): Promise<AgentEventCheckpoint | null> {
-    if (!state.session || state.session.id !== sessionId || state.latestSeq <= 0) return null;
+  async writeCheckpoint(conversationId: string, state: AgentEventReplayState): Promise<AgentEventCheckpoint | null> {
+    if (!state.conversation || state.conversation.id !== conversationId || state.latestSeq <= 0) return null;
     await this.ensureStorageLayout();
-    return this.agentEventLog.enqueue(sessionId, async () => {
-      const tail = await this.readEventFileTail(sessionId);
+    return this.agentEventLog.enqueue(conversationId, async () => {
+      const tail = await this.readEventFileTail(conversationId);
       if (tail.seq !== state.latestSeq || tail.eventId !== state.latestEventId) return null;
       const checkpoint: AgentEventCheckpoint = {
         v: CHECKPOINT_VERSION,
-        sessionId,
+        conversationId,
         seq: state.latestSeq,
         latestEventId: state.latestEventId,
         createdAt: Date.now(),
-        targets: await this.checkpointTargets(sessionId),
+        targets: await this.checkpointTargets(conversationId),
         state: cloneReplayState(state),
       };
-      const paths = this.paths(sessionId);
+      const paths = this.paths(conversationId);
       await mkdir(paths.checkpointsDir, { recursive: true });
-      await atomicWriteFile(this.checkpointPath(sessionId, checkpoint.seq), `${JSON.stringify(checkpoint)}\n`);
-      await this.pruneCheckpoints(sessionId).catch(() => undefined);
+      await atomicWriteFile(this.checkpointPath(conversationId, checkpoint.seq), `${JSON.stringify(checkpoint)}\n`);
+      await this.pruneCheckpoints(conversationId).catch(() => undefined);
       return checkpoint;
     });
   }
 
   async maybeWriteCheckpoint(
-    sessionId: string,
+    conversationId: string,
     state: AgentEventReplayState,
     options: { minEventDelta?: number; force?: boolean } = {},
   ): Promise<AgentEventCheckpoint | null> {
-    if (!state.session || state.session.id !== sessionId || state.latestSeq <= 0) return null;
-    const latest = await this.readLatestCheckpoint(sessionId);
+    if (!state.conversation || state.conversation.id !== conversationId || state.latestSeq <= 0) return null;
+    const latest = await this.readLatestCheckpoint(conversationId);
     const minEventDelta = options.minEventDelta ?? DEFAULT_CHECKPOINT_EVENT_INTERVAL;
     if (!options.force && latest && state.latestSeq - latest.seq < minEventDelta) return null;
-    return this.writeCheckpoint(sessionId, state);
+    return this.writeCheckpoint(conversationId, state);
   }
 
-  async writePayload(sessionId: string, input: AgentPayloadWriteInput): Promise<AgentPayloadRef> {
+  async writePayload(conversationId: string, input: AgentPayloadWriteInput): Promise<AgentPayloadRef> {
     await this.ensureStorageLayout();
     const bytes = typeof input.data === 'string'
       ? Buffer.from(input.data, input.encoding ?? 'utf8')
@@ -398,45 +397,45 @@ export class AgentEventStore {
       byteLength: bytes.byteLength,
       sha256: createHash('sha256').update(bytes).digest('hex'),
       scope: input.runId
-        ? { type: 'run', conversationId: sessionId, runId: input.runId }
-        : { type: 'conversation', conversationId: sessionId },
+        ? { type: 'run', conversationId: conversationId, runId: input.runId }
+        : { type: 'conversation', conversationId: conversationId },
       role: input.role,
       summary: input.summary,
       truncated: input.truncated,
       display: input.display,
     };
 
-    const payloadDir = input.runId ? this.runPaths(input.runId).payloadsDir : this.paths(sessionId).conversationPayloadsDir;
+    const payloadDir = input.runId ? this.runPaths(input.runId).payloadsDir : this.paths(conversationId).conversationPayloadsDir;
     await mkdir(payloadDir, { recursive: true });
-    await writeFile(this.payloadPath(sessionId, payload), bytes);
+    await writeFile(this.payloadPath(conversationId, payload), bytes);
     return payload;
   }
 
-  async readPayload(sessionId: string, payload: AgentPayloadRef): Promise<Buffer> {
+  async readPayload(conversationId: string, payload: AgentPayloadRef): Promise<Buffer> {
     await this.ensureStorageLayout();
-    return readFile(this.payloadPath(sessionId, payload));
+    return readFile(this.payloadPath(conversationId, payload));
   }
 
   payloadPath(
-    sessionId: string,
+    conversationId: string,
     payload: Pick<AgentPayloadRef, 'id' | 'mimeType'> & Partial<Pick<AgentPayloadRef, 'scope'>>,
   ): string {
     const scope = payload.scope;
     const payloadDir = scope?.type === 'run'
       ? this.runPaths(scope.runId).payloadsDir
-      : this.paths(sessionId).conversationPayloadsDir;
+      : this.paths(conversationId).conversationPayloadsDir;
     return path.join(payloadDir, agentPayloadFileName(payload.id, payload.mimeType));
   }
 
-  async deleteConversation(sessionId: string): Promise<void> {
+  async deleteConversation(conversationId: string): Promise<void> {
     await this.ensureStorageLayout();
-    await rm(this.paths(sessionId).conversationDir, { recursive: true, force: true });
-    await Promise.all((await this.listRunIdsForSession(sessionId)).map((runId) => (
+    await rm(this.paths(conversationId).conversationDir, { recursive: true, force: true });
+    await Promise.all((await this.listRunIdsForConversation(conversationId)).map((runId) => (
       rm(this.runPaths(runId).runDir, { recursive: true, force: true })
     )));
-    this.agentEventLog.deleteKey(sessionId);
-    await this.removeConversationFromIndex(sessionId);
-    await this.removeSessionFromSearchIndex(sessionId);
+    this.agentEventLog.deleteKey(conversationId);
+    await this.removeConversationFromIndex(conversationId);
+    await this.removeConversationFromSearchIndex(conversationId);
   }
 
   async listConversationIds(): Promise<string[]> {
@@ -459,11 +458,11 @@ export class AgentEventStore {
     return this.rebuildConversationIndex();
   }
 
-  async listUserMessageIndexEntries(sessionId?: string): Promise<AgentEventUserMessageIndexEntry[]> {
+  async listUserMessageIndexEntries(conversationId?: string): Promise<AgentEventUserMessageIndexEntry[]> {
     await this.ensureStorageLayout();
     const index = await this.getSearchIndex();
     return Object.values(index.userMessages)
-      .filter((entry) => !sessionId || entry.sessionId === sessionId)
+      .filter((entry) => !conversationId || entry.conversationId === conversationId)
       .sort((left, right) => right.createdAt - left.createdAt);
   }
 
@@ -484,7 +483,7 @@ export class AgentEventStore {
 
   async searchMessages(
     query: string,
-    options: { sessionId?: string; limit?: number } = {},
+    options: { conversationId?: string; limit?: number } = {},
   ): Promise<AgentEventSearchIndexEntry[]> {
     await this.ensureStorageLayout();
     const terms = normalizeSearchTerms(query);
@@ -492,14 +491,14 @@ export class AgentEventStore {
     const analysis = { ...analyzeTextSearchQuery(query), terms };
     const index = await this.getSearchIndex();
     return Object.values(index.messages)
-      .filter((entry) => !options.sessionId || entry.sessionId === options.sessionId)
+      .filter((entry) => !options.conversationId || entry.conversationId === options.conversationId)
       .filter((entry) => textSearchTextMatchesQuery(entry.normalizedText, analysis))
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, clampSearchLimit(options.limit));
   }
 
-  checkpointPath(sessionId: string, seq: number): string {
-    return path.join(this.paths(sessionId).checkpointsDir, agentCheckpointFileName(seq));
+  checkpointPath(conversationId: string, seq: number): string {
+    return path.join(this.paths(conversationId).checkpointsDir, agentCheckpointFileName(seq));
   }
 
   async writeAgentIdentity(identity: AgentIdentityRecord): Promise<void> {
@@ -719,57 +718,70 @@ export class AgentEventStore {
     return this.storageLayoutPromise;
   }
 
+  /**
+   * Pre-release clean-cut (no migration, no legacy reader): when any
+   * pre-conversation-vocabulary artifact is detected, the WHOLE agent data root
+   * is deleted and recreated lazily — identities, conversations, runs, pools and
+   * indexes all start fresh (M0 #150 precedent; [[agent-storage-clean-cut]]).
+   */
   private async cleanLegacyStorageLayout(): Promise<void> {
-    const legacySessionsDir = path.join(this.rootDir, LEGACY_SESSIONS_DIR);
-    const indexesDir = this.paths('__placeholder__').indexesDir;
-    if (await pathExists(legacySessionsDir)) {
-      await rm(legacySessionsDir, { recursive: true, force: true });
-      await rm(indexesDir, { recursive: true, force: true });
-      await this.cleanAgentMemoryLogs();
-      return;
-    }
-
-    if (
-      !await pathExists(this.paths('__placeholder__').conversationsDir)
-      && (await pathExists(this.conversationIndexPath()) || await pathExists(this.legacySessionIndexPath()))
-    ) {
-      await rm(indexesDir, { recursive: true, force: true });
-      await this.cleanAgentMemoryLogs();
-    }
-    await rm(this.legacySessionIndexPath(), { force: true });
+    if (!await this.hasLegacyStorageArtifacts()) return;
+    await rm(this.rootDir, { recursive: true, force: true });
+    this.agentEventLog.clear();
+    this.memoryEventLog.clear();
+    this.memoryProjectionByPrincipal.clear();
   }
 
-  private async cleanAgentMemoryLogs(): Promise<void> {
-    // Wipe every memory pool: each agent's `agents/<id>/memory/` AND the user pools under
-    // `principals/user-*/` (review #10 — the user pool is a first-class principal pool, not a
-    // legacy artifact, so the legacy-layout wipe must drop it alongside the agent pools or stale
-    // user facts survive a clean cut). `principals/` holds nothing but per-user pools, so it is
-    // removed wholesale.
+  private async hasLegacyStorageArtifacts(): Promise<boolean> {
+    // Pre-#151 layout: a flat `sessions/` tree or its derived index.
+    if (await pathExists(path.join(this.rootDir, LEGACY_SESSIONS_DIR))) return true;
+    if (await pathExists(path.join(this.rootDir, 'indexes', LEGACY_SESSION_INDEX_FILE))) return true;
+    // Pre-clean-cut pool layout: an agent pool inside the identity directory.
+    if (await this.hasLegacyAgentPool()) return true;
+    // Pre-clean-cut event vocabulary: a conversation log written with `session.*` events.
+    return this.hasLegacyEventVocabulary();
+  }
+
+  private async hasLegacyAgentPool(): Promise<boolean> {
     const agentsDir = this.paths('__placeholder__').agentsDir;
-    const principalsDir = path.join(this.rootDir, 'principals');
     try {
-      await rm(principalsDir, { recursive: true, force: true });
-      const entries = await readdir(agentsDir, { withFileTypes: true });
-      await Promise.all(entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => rm(path.join(agentsDir, entry.name, 'memory'), { recursive: true, force: true })));
-      this.memoryProjectionByPrincipal.clear();
-      this.memoryEventLog.clear();
+      for (const entry of await readdir(agentsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (await pathExists(path.join(agentsDir, entry.name, 'memory'))) return true;
+      }
     } catch (error) {
-      if (isNotFoundError(error)) return;
-      throw error;
+      if (!isNotFoundError(error)) throw error;
     }
+    return false;
   }
 
-  private async replayFromCheckpoint(sessionId: string): Promise<AgentEventReplayState | null> {
-    const checkpoint = await this.readLatestCheckpoint(sessionId);
+  private async hasLegacyEventVocabulary(): Promise<boolean> {
+    // Every old event carried a `sessionId` field (and logs opened with a
+    // `session.created` head), so one head line tells the vocabularies apart.
+    const conversationsDir = this.paths('__placeholder__').conversationsDir;
+    try {
+      for (const entry of await readdir(conversationsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const head = await readFirstLine(
+          path.join(conversationsDir, entry.name, 'segments', CONVERSATION_SEGMENT_FILE),
+        );
+        if (head && (head.includes('"sessionId"') || head.includes('"type":"session.'))) return true;
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    return false;
+  }
+
+  private async replayFromCheckpoint(conversationId: string): Promise<AgentEventReplayState | null> {
+    const checkpoint = await this.readLatestCheckpoint(conversationId);
     if (!checkpoint) return null;
     try {
-      const tail = await this.readEventFileTail(sessionId);
+      const tail = await this.readEventFileTail(conversationId);
       if (tail.seq < checkpoint.seq) return null;
       if (tail.seq === checkpoint.seq && tail.eventId !== checkpoint.latestEventId) return null;
-      if (!await this.checkpointTargetsAreUsable(sessionId, checkpoint.targets)) return null;
-      const tailEvents = await this.readEventsAfterCheckpoint(sessionId, checkpoint);
+      if (!await this.checkpointTargetsAreUsable(conversationId, checkpoint.targets)) return null;
+      const tailEvents = await this.readEventsAfterCheckpoint(conversationId, checkpoint);
       const state = cloneReplayState(checkpoint.state);
       for (const event of tailEvents) {
         appendAgentEventToReplayState(state, event);
@@ -781,16 +793,16 @@ export class AgentEventStore {
     }
   }
 
-  private async getLatestSeq(sessionId: string): Promise<number> {
-    return this.agentEventLog.latestSeq(sessionId, () => this.eventLogPathsForSession(sessionId));
+  private async getLatestSeq(conversationId: string): Promise<number> {
+    return this.agentEventLog.latestSeq(conversationId, () => this.eventLogPathsForConversation(conversationId));
   }
 
-  private assertEventBatch(sessionId: string, events: readonly AgentEvent[]) {
+  private assertEventBatch(conversationId: string, events: readonly AgentEvent[]) {
     let previousSeq = 0;
     const eventIds = new Set<string>();
     for (const event of events) {
-      if (event.sessionId !== sessionId) {
-        throw new Error(`Agent event session mismatch: ${event.sessionId}`);
+      if (event.conversationId !== conversationId) {
+        throw new Error(`Agent event conversation mismatch: ${event.conversationId}`);
       }
       if (eventIds.has(event.eventId)) {
         throw new Error(`Duplicate agent event id in append batch: ${event.eventId}`);
@@ -859,20 +871,20 @@ export class AgentEventStore {
     this.memoryEventLog.setLatestSeq(principalKey(principal), latestSeq);
   }
 
-  private async readEventFileTail(sessionId: string): Promise<AgentEventFileTail> {
-    return this.agentEventLog.latestTailForFiles(await this.eventLogPathsForSession(sessionId));
+  private async readEventFileTail(conversationId: string): Promise<AgentEventFileTail> {
+    return this.agentEventLog.latestTailForFiles(await this.eventLogPathsForConversation(conversationId));
   }
 
-  private async eventLogPathsForSession(sessionId: string): Promise<string[]> {
-    const paths = this.paths(sessionId);
+  private async eventLogPathsForConversation(conversationId: string): Promise<string[]> {
+    const paths = this.paths(conversationId);
     return [
       paths.conversationEventsPath,
-      ...(await this.listRunIdsForSession(sessionId)).map((runId) => this.runPaths(runId).runEventsPath),
+      ...(await this.listRunIdsForConversation(conversationId)).map((runId) => this.runPaths(runId).runEventsPath),
     ];
   }
 
-  private async appendSplitEvents(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
-    const paths = this.paths(sessionId);
+  private async appendSplitEvents(conversationId: string, events: readonly AgentEvent[]): Promise<void> {
+    const paths = this.paths(conversationId);
     const conversationEvents: AgentEvent[] = [];
     const runEvents = new Map<string, AgentEvent[]>();
 
@@ -898,34 +910,34 @@ export class AgentEventStore {
       const metaEvents = group.filter((event) => !isStreamingDeltaEvent(event));
       await this.agentEventLog.append(runPaths.runEventsPath, group);
       if (metaEvents.length > 0) {
-        const meta = await this.updateRunMeta(sessionId, runId, metaEvents);
+        const meta = await this.updateRunMeta(conversationId, runId, metaEvents);
         if (meta) await this.updateRunIndexes(meta);
       }
     }
 
     const metaEvents = events.filter((event) => !isStreamingDeltaEvent(event));
-    if (metaEvents.length > 0) await this.updateConversationMeta(sessionId, metaEvents);
+    if (metaEvents.length > 0) await this.updateConversationMeta(conversationId, metaEvents);
   }
 
-  private async readRunEventsForSession(sessionId: string): Promise<AgentEvent[]> {
+  private async readRunEventsForConversation(conversationId: string): Promise<AgentEvent[]> {
     const events: AgentEvent[] = [];
-    for (const runId of await this.listRunIdsForSession(sessionId)) {
+    for (const runId of await this.listRunIdsForConversation(conversationId)) {
       events.push(...await this.agentEventLog.readIfExists(this.runPaths(runId).runEventsPath));
     }
     return events;
   }
 
-  private async listRunIdsForSession(sessionId: string): Promise<string[]> {
-    return (await this.ensureConversationRunIndex(sessionId)).runIds;
+  private async listRunIdsForConversation(conversationId: string): Promise<string[]> {
+    return (await this.ensureConversationRunIndex(conversationId)).runIds;
   }
 
-  private async ensureConversationRunIndex(sessionId: string): Promise<AgentConversationRunIndex> {
-    const index = await this.readConversationRunIndex(sessionId);
+  private async ensureConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex> {
+    const index = await this.readConversationRunIndex(conversationId);
     if (index) return index;
-    if (!await this.conversationDirExists(sessionId)) {
+    if (!await this.conversationDirExists(conversationId)) {
       return { v: 1, runIds: [], latestSeqByRunId: {} };
     }
-    return this.rebuildConversationRunIndex(sessionId);
+    return this.rebuildConversationRunIndex(conversationId);
   }
 
   private async ensurePrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex> {
@@ -934,9 +946,9 @@ export class AgentEventStore {
     return this.rebuildPrincipalRunIndex(principal);
   }
 
-  private async conversationDirExists(sessionId: string): Promise<boolean> {
+  private async conversationDirExists(conversationId: string): Promise<boolean> {
     try {
-      await readdir(this.paths(sessionId).conversationDir);
+      await readdir(this.paths(conversationId).conversationDir);
       return true;
     } catch (error) {
       if (isNotFoundError(error)) return false;
@@ -944,8 +956,8 @@ export class AgentEventStore {
     }
   }
 
-  private async rebuildConversationRunIndex(sessionId: string): Promise<AgentConversationRunIndex> {
-    const paths = this.paths(sessionId);
+  private async rebuildConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex> {
+    const paths = this.paths(conversationId);
     const latestSeqByRunId: Record<string, number> = {};
     try {
       const entries = await readdir(paths.runsDir, { withFileTypes: true });
@@ -954,7 +966,7 @@ export class AgentEventStore {
         const runDir = path.join(paths.runsDir, entry.name);
         try {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
-          if (!meta || conversationIdOfRun(meta) !== sessionId) continue;
+          if (!meta || conversationIdOfRun(meta) !== conversationId) continue;
           latestSeqByRunId[meta.id] = Math.max(latestSeqByRunId[meta.id] ?? 0, meta.latestSeq);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
@@ -1006,10 +1018,10 @@ export class AgentEventStore {
   }
 
   private async readEventsAfterCheckpoint(
-    sessionId: string,
+    conversationId: string,
     checkpoint: AgentEventCheckpoint,
   ): Promise<AgentEvent[]> {
-    const paths = this.paths(sessionId);
+    const paths = this.paths(conversationId);
     const events = [
       ...await this.agentEventLog.readFromOffsetIfExists(
         paths.conversationEventsPath,
@@ -1017,7 +1029,7 @@ export class AgentEventStore {
         checkpoint.seq,
       ),
     ];
-    for (const runId of await this.listRunIdsForSession(sessionId)) {
+    for (const runId of await this.listRunIdsForConversation(conversationId)) {
       events.push(...await this.agentEventLog.readFromOffsetIfExists(
         this.runPaths(runId).runEventsPath,
         checkpoint.targets.runByteOffsets[runId] ?? 0,
@@ -1027,10 +1039,10 @@ export class AgentEventStore {
     return events.sort(compareAgentEventsForReplay);
   }
 
-  private async checkpointTargets(sessionId: string): Promise<AgentEventCheckpointTargets> {
-    const paths = this.paths(sessionId);
+  private async checkpointTargets(conversationId: string): Promise<AgentEventCheckpointTargets> {
+    const paths = this.paths(conversationId);
     const runByteOffsets: Record<string, number> = {};
-    for (const runId of await this.listRunIdsForSession(sessionId)) {
+    for (const runId of await this.listRunIdsForConversation(conversationId)) {
       runByteOffsets[runId] = await this.agentEventLog.fileSizeIfExists(this.runPaths(runId).runEventsPath);
     }
     return {
@@ -1040,10 +1052,10 @@ export class AgentEventStore {
   }
 
   private async checkpointTargetsAreUsable(
-    sessionId: string,
+    conversationId: string,
     targets: AgentEventCheckpointTargets,
   ): Promise<boolean> {
-    const paths = this.paths(sessionId);
+    const paths = this.paths(conversationId);
     if (targets.conversationByteOffset > await this.agentEventLog.fileSizeIfExists(paths.conversationEventsPath)) return false;
     for (const [runId, byteOffset] of Object.entries(targets.runByteOffsets)) {
       if (byteOffset > await this.agentEventLog.fileSizeIfExists(this.runPaths(runId).runEventsPath)) return false;
@@ -1062,9 +1074,9 @@ export class AgentEventStore {
     }
   }
 
-  private async readConversationRunIndex(sessionId: string): Promise<AgentConversationRunIndex | null> {
+  private async readConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex | null> {
     try {
-      const raw = await readFile(this.paths(sessionId).conversationRunIndexPath, 'utf8');
+      const raw = await readFile(this.paths(conversationId).conversationRunIndexPath, 'utf8');
       return normalizeConversationRunIndex(JSON.parse(raw));
     } catch (error) {
       if (isNotFoundError(error)) return null;
@@ -1094,9 +1106,9 @@ export class AgentEventStore {
     }
   }
 
-  private async updateConversationRunIndex(sessionId: string, runId: string, latestSeq: number) {
-    const paths = this.paths(sessionId);
-    const existing = await this.ensureConversationRunIndex(sessionId);
+  private async updateConversationRunIndex(conversationId: string, runId: string, latestSeq: number) {
+    const paths = this.paths(conversationId);
+    const existing = await this.ensureConversationRunIndex(conversationId);
     const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
     const index: AgentConversationRunIndex = {
       v: 1,
@@ -1130,14 +1142,14 @@ export class AgentEventStore {
     await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
   }
 
-  private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
+  private async updateRunMeta(conversationId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
     const existing = await this.readRunMeta(runId);
     const latest = events.at(-1);
     if (!latest) return null;
     const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
     const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? (started.anchor ? agentIdOfRunAnchor(started.anchor) : undefined) : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
-    const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, sessionId);
+    const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, conversationId);
     const meta: AgentRunMetaProjection = {
       v: 1,
       id: runId,
@@ -1160,17 +1172,17 @@ export class AgentEventStore {
     return meta;
   }
 
-  private async updateConversationMeta(sessionId: string, events: readonly AgentEvent[]) {
-    const paths = this.paths(sessionId);
-    const existing = await this.readConversationMeta(sessionId);
-    const created = events.find((event) => event.type === 'session.created');
-    const renamed = [...events].reverse().find((event) => event.type === 'session.renamed');
+  private async updateConversationMeta(conversationId: string, events: readonly AgentEvent[]) {
+    const paths = this.paths(conversationId);
+    const existing = await this.readConversationMeta(conversationId);
+    const created = events.find((event) => event.type === 'conversation.created');
+    const renamed = [...events].reverse().find((event) => event.type === 'conversation.renamed');
     const latest = events.at(-1);
     if (!created && !renamed && !latest) return;
     const members = mergePrincipals(existing?.members ?? [], events.flatMap(principalsFromEvent));
     const meta: AgentConversationMetaProjection = {
       v: 1,
-      id: sessionId,
+      id: conversationId,
       members,
       goal: renamed?.goal ?? created?.goal ?? existing?.goal,
       createdAt: existing?.createdAt ?? created?.createdAt ?? latest!.createdAt,
@@ -1183,9 +1195,9 @@ export class AgentEventStore {
     await atomicWriteFile(paths.conversationMetaPath, `${JSON.stringify(meta)}\n`);
   }
 
-  private async readConversationMeta(sessionId: string): Promise<AgentConversationMetaProjection | null> {
+  private async readConversationMeta(conversationId: string): Promise<AgentConversationMetaProjection | null> {
     try {
-      const raw = await readFile(this.paths(sessionId).conversationMetaPath, 'utf8');
+      const raw = await readFile(this.paths(conversationId).conversationMetaPath, 'utf8');
       return normalizeConversationMeta(JSON.parse(raw));
     } catch (error) {
       if (isNotFoundError(error)) return null;
@@ -1200,14 +1212,14 @@ export class AgentEventStore {
     return next;
   }
 
-  private async updateConversationIndex(sessionId: string, events: readonly AgentEvent[]) {
+  private async updateConversationIndex(conversationId: string, events: readonly AgentEvent[]) {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readConversationIndex() ?? { conversations: {} };
-      let entry: AgentConversationIndexEntry | null = index.conversations[sessionId] ?? null;
+      let entry: AgentConversationIndexEntry | null = index.conversations[conversationId] ?? null;
       for (const event of events) {
-        if (event.type === 'session.created') {
+        if (event.type === 'conversation.created') {
           entry = {
-            id: sessionId,
+            id: conversationId,
             title: event.title,
             members: event.members?.slice() ?? [],
             goal: event.goal,
@@ -1221,17 +1233,17 @@ export class AgentEventStore {
           entry = updateConversationIndexEntry(entry, event);
         }
       }
-      if (!entry) entry = conversationIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
-      if (entry) index.conversations[sessionId] = entry;
+      if (!entry) entry = conversationIndexEntryFromReplayState(conversationId, await this.replay(conversationId));
+      if (entry) index.conversations[conversationId] = entry;
       await this.writeConversationIndex(index);
     });
   }
 
-  private async removeConversationFromIndex(sessionId: string) {
+  private async removeConversationFromIndex(conversationId: string) {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readConversationIndex();
-      if (!index || !index.conversations[sessionId]) return;
-      delete index.conversations[sessionId];
+      if (!index || !index.conversations[conversationId]) return;
+      delete index.conversations[conversationId];
       await this.writeConversationIndex(index);
     });
   }
@@ -1253,7 +1265,7 @@ export class AgentEventStore {
     return await this.readSearchIndex() ?? await this.rebuildSearchIndex();
   }
 
-  private async updateSearchIndex(_sessionId: string, events: readonly AgentEvent[]) {
+  private async updateSearchIndex(_conversationId: string, events: readonly AgentEvent[]) {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readSearchIndex() ?? await this.buildSearchIndexFromEventLogs();
       for (const event of events) applyAgentEventToSearchIndex(index, event);
@@ -1261,17 +1273,17 @@ export class AgentEventStore {
     });
   }
 
-  private async removeSessionFromSearchIndex(sessionId: string) {
+  private async removeConversationFromSearchIndex(conversationId: string) {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readSearchIndex();
       if (!index) return;
       for (const [key, entry] of Object.entries(index.messages)) {
-        if (entry.sessionId === sessionId) delete index.messages[key];
+        if (entry.conversationId === conversationId) delete index.messages[key];
       }
       for (const [key, entry] of Object.entries(index.userMessages)) {
-        if (entry.sessionId === sessionId) delete index.userMessages[key];
+        if (entry.conversationId === conversationId) delete index.userMessages[key];
       }
-      delete index.latestSeqBySessionId[sessionId];
+      delete index.latestSeqByConversationId[conversationId];
       await this.writeSearchIndex(index);
     });
   }
@@ -1293,8 +1305,8 @@ export class AgentEventStore {
     return index;
   }
 
-  private async readLatestCheckpoint(sessionId: string): Promise<AgentEventCheckpoint | null> {
-    const paths = this.paths(sessionId);
+  private async readLatestCheckpoint(conversationId: string): Promise<AgentEventCheckpoint | null> {
+    const paths = this.paths(conversationId);
     let entries: string[] = [];
     try {
       entries = await readdir(paths.checkpointsDir);
@@ -1314,7 +1326,7 @@ export class AgentEventStore {
     for (const candidate of candidates) {
       try {
         const raw = await readFile(path.join(paths.checkpointsDir, candidate.name), 'utf8');
-        const checkpoint = normalizeCheckpoint(JSON.parse(raw), sessionId);
+        const checkpoint = normalizeCheckpoint(JSON.parse(raw), conversationId);
         if (!checkpoint) continue;
         return checkpoint;
       } catch {
@@ -1324,8 +1336,8 @@ export class AgentEventStore {
     return null;
   }
 
-  private async pruneCheckpoints(sessionId: string) {
-    const paths = this.paths(sessionId);
+  private async pruneCheckpoints(conversationId: string) {
+    const paths = this.paths(conversationId);
     let entries: string[] = [];
     try {
       entries = await readdir(paths.checkpointsDir);
@@ -1344,7 +1356,7 @@ export class AgentEventStore {
       }
       try {
         const raw = await readFile(path.join(paths.checkpointsDir, name), 'utf8');
-        if (normalizeCheckpoint(JSON.parse(raw), sessionId)) valid.push({ name, seq });
+        if (normalizeCheckpoint(JSON.parse(raw), conversationId)) valid.push({ name, seq });
         else stale.push(name);
       } catch {
         stale.push(name);
@@ -1352,7 +1364,7 @@ export class AgentEventStore {
     }
 
     valid.sort((left, right) => right.seq - left.seq);
-    stale.push(...valid.slice(MAX_CHECKPOINTS_PER_SESSION).map((entry) => entry.name));
+    stale.push(...valid.slice(MAX_CHECKPOINTS_PER_CONVERSATION).map((entry) => entry.name));
     await Promise.all(stale.map(async (name) => {
       try {
         await rm(path.join(paths.checkpointsDir, name), { force: true });
@@ -1364,10 +1376,6 @@ export class AgentEventStore {
 
   private conversationIndexPath(): string {
     return path.join(this.rootDir, 'indexes', CONVERSATION_INDEX_FILE);
-  }
-
-  private legacySessionIndexPath(): string {
-    return path.join(this.rootDir, 'indexes', LEGACY_SESSION_INDEX_FILE);
   }
 
   private searchIndexPath(): string {
@@ -1432,7 +1440,7 @@ function updateConversationIndexEntry(
 ): AgentConversationIndexEntry {
   // notification.created/read are off-floor attention bookkeeping, not activity:
   // they must not bump updatedAt (which sorts + timestamps the list). Mirrors the
-  // replay reducer's touchSessionUpdatedAt skip.
+  // replay reducer's touchConversationUpdatedAt skip.
   const isAttentionEvent =
     event.type === 'notification.created' || event.type === 'notification.read';
   const next: AgentConversationIndexEntry = {
@@ -1453,7 +1461,7 @@ function updateConversationIndexEntry(
   } else if (event.type === 'notification.read') {
     next.unreadCount = 0;
   }
-  if (event.type === 'session.renamed') {
+  if (event.type === 'conversation.renamed') {
     next.title = event.title;
     next.goal = event.goal ?? next.goal;
   }
@@ -1468,20 +1476,20 @@ function updateConversationIndexEntry(
 }
 
 function conversationIndexEntryFromReplayState(
-  sessionId: string,
+  conversationId: string,
   state: AgentEventReplayState,
 ): AgentConversationIndexEntry | null {
-  if (!state.session) return null;
+  if (!state.conversation) return null;
   return {
-    id: sessionId,
-    title: state.session.title,
-    members: state.session.members.slice(),
-    goal: state.session.goal,
-    createdAt: state.session.createdAt,
-    updatedAt: state.session.updatedAt,
+    id: conversationId,
+    title: state.conversation.title,
+    members: state.conversation.members.slice(),
+    goal: state.conversation.goal,
+    createdAt: state.conversation.createdAt,
+    updatedAt: state.conversation.updatedAt,
     messageCount: Object.keys(state.messages).length,
     latestSeq: state.latestSeq,
-    unreadCount: state.attentionByConversationId[sessionId]?.unreadCount ?? 0,
+    unreadCount: state.attentionByConversationId[conversationId]?.unreadCount ?? 0,
   };
 }
 
@@ -1490,13 +1498,13 @@ function createEmptySearchIndex(): AgentEventSearchIndex {
     v: SEARCH_INDEX_VERSION,
     messages: {},
     userMessages: {},
-    latestSeqBySessionId: {},
+    latestSeqByConversationId: {},
   };
 }
 
 function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: AgentEvent) {
-  index.latestSeqBySessionId[event.sessionId] = Math.max(
-    index.latestSeqBySessionId[event.sessionId] ?? 0,
+  index.latestSeqByConversationId[event.conversationId] = Math.max(
+    index.latestSeqByConversationId[event.conversationId] ?? 0,
     event.seq,
   );
 
@@ -1507,7 +1515,7 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
       ...(event.attachments ?? []).map((payload) => payload.id),
     ]);
     const entry: AgentEventUserMessageIndexEntry = {
-      sessionId: event.sessionId,
+      conversationId: event.conversationId,
       messageId: event.messageId,
       role: 'user',
       parentMessageId: event.parentMessageId,
@@ -1521,14 +1529,14 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
       replacesMessageId: event.replacesMessageId,
       hasAttachments: payloadIds.length > 0 || event.content.some((part) => part.type === 'image' || part.type === 'payload_ref'),
     };
-    const key = searchIndexKey(event.sessionId, event.messageId);
+    const key = searchIndexKey(event.conversationId, event.messageId);
     index.messages[key] = entry;
     index.userMessages[key] = entry;
     return;
   }
 
   if (event.type === 'user_message.edited') {
-    const key = searchIndexKey(event.sessionId, event.messageId);
+    const key = searchIndexKey(event.conversationId, event.messageId);
     const current = index.messages[key];
     if (!current || current.role !== 'user') return;
     const content = indexDetailsFromContent(event.content);
@@ -1552,9 +1560,9 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
   }
 
   if (event.type === 'assistant_message.started') {
-    const key = searchIndexKey(event.sessionId, event.messageId);
+    const key = searchIndexKey(event.conversationId, event.messageId);
     index.messages[key] ??= {
-      sessionId: event.sessionId,
+      conversationId: event.conversationId,
       messageId: event.messageId,
       role: 'assistant',
       parentMessageId: event.parentMessageId,
@@ -1570,11 +1578,11 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
   }
 
   if (event.type === 'assistant_message.completed') {
-    const key = searchIndexKey(event.sessionId, event.messageId);
+    const key = searchIndexKey(event.conversationId, event.messageId);
     const current = index.messages[key];
     const content = indexDetailsFromContent(event.content);
     index.messages[key] = {
-      sessionId: event.sessionId,
+      conversationId: event.conversationId,
       messageId: event.messageId,
       role: 'assistant',
       parentMessageId: current?.parentMessageId ?? null,
@@ -1590,7 +1598,7 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
   }
 
   if (event.type === 'tool_result.created' || event.type === 'tool_result.replaced') {
-    const key = searchIndexKey(event.sessionId, event.messageId);
+    const key = searchIndexKey(event.conversationId, event.messageId);
     const current = index.messages[key];
     const content = indexDetailsFromContent([
       ...event.content,
@@ -1598,7 +1606,7 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
     ]);
     const outputPayloadIds = event.outputRef ? [event.outputRef.id] : [];
     index.messages[key] = {
-      sessionId: event.sessionId,
+      conversationId: event.conversationId,
       messageId: event.messageId,
       role: 'toolResult',
       parentMessageId: event.type === 'tool_result.created'
@@ -1655,19 +1663,19 @@ function indexDetailsFromContent(content: readonly AgentPersistedContent[]): {
 function normalizeSearchIndex(value: unknown): AgentEventSearchIndex | null {
   if (!isRecord(value) || value.v !== SEARCH_INDEX_VERSION) return null;
   if (!isRecord(value.messages) || !isRecord(value.userMessages)) return null;
-  const latestSeqBySessionId = isRecord(value.latestSeqBySessionId)
-    ? value.latestSeqBySessionId as Record<string, number>
+  const latestSeqByConversationId = isRecord(value.latestSeqByConversationId)
+    ? value.latestSeqByConversationId as Record<string, number>
     : {};
   return {
     v: SEARCH_INDEX_VERSION,
     messages: value.messages as Record<string, AgentEventSearchIndexEntry>,
     userMessages: value.userMessages as Record<string, AgentEventUserMessageIndexEntry>,
-    latestSeqBySessionId,
+    latestSeqByConversationId,
   };
 }
 
-function searchIndexKey(sessionId: string, messageId: string): string {
-  return `${encodeURIComponent(sessionId)}:${encodeURIComponent(messageId)}`;
+function searchIndexKey(conversationId: string, messageId: string): string {
+  return `${encodeURIComponent(conversationId)}:${encodeURIComponent(messageId)}`;
 }
 
 function normalizeSearchTerms(query: string): string[] {
@@ -1914,6 +1922,29 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+/** First line of a file (bounded read), or null when the file is missing or empty. */
+async function readFirstLine(filePath: string, maxBytes = 64 * 1024): Promise<string | null> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(filePath, 'r');
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+  try {
+    const stats = await handle.stat();
+    const size = Math.min(stats.size, maxBytes);
+    if (size === 0) return null;
+    const buffer = Buffer.alloc(size);
+    await handle.read(buffer, 0, size, 0);
+    const text = buffer.toString('utf8');
+    const newlineIndex = text.indexOf('\n');
+    return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
+  } finally {
+    await handle.close();
+  }
+}
+
 function compareAgentEventsForReplay(left: AgentEvent, right: AgentEvent): number {
   return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
 }
@@ -1927,9 +1958,9 @@ function isRunLogEvent(event: AgentEvent): boolean {
     case 'payload.created':
     case 'payload.derived':
       return event.payload.scope?.type === 'run' || agentRunIdForEvent(event) !== null;
-    case 'session.created':
-    case 'session.renamed':
-    case 'session.settings_changed':
+    case 'conversation.created':
+    case 'conversation.renamed':
+    case 'conversation.settings_changed':
     case 'branch.selected':
     case 'user_message.created':
     case 'user_message.edited':
@@ -1968,7 +1999,7 @@ function agentIdFromEvents(events: readonly AgentEvent[]): string | null {
 }
 
 function principalsFromEvent(event: AgentEvent): AgentPrincipal[] {
-  if (event.type === 'session.created') return event.members?.slice() ?? [];
+  if (event.type === 'conversation.created') return event.members?.slice() ?? [];
   if (event.actor.type === 'user') return [{ type: 'user', userId: event.actor.userId }];
   if (event.actor.type === 'agent') return [{ type: 'agent', agentId: event.actor.agentId }];
   return [];
@@ -2151,8 +2182,8 @@ function nonNegativeInteger(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-export function agentConversationDirName(sessionId: string): string {
-  return encodeAgentDirName(sessionId);
+export function agentConversationDirName(conversationId: string): string {
+  return encodeAgentDirName(conversationId);
 }
 
 export function decodeAgentConversationDirName(dirName: string): string {
@@ -2169,6 +2200,13 @@ export function decodeAgentRunDirName(dirName: string): string {
 
 export function agentIdentityDirName(agentId: string): string {
   return encodeAgentDirName(agentId);
+}
+
+/** Pool directory name under `principals/`: `agent-<agentId>` / `user-<userId>`, filesystem-encoded. */
+export function agentPrincipalDirName(principal: AgentPrincipal): string {
+  return principal.type === 'agent'
+    ? `agent-${encodeAgentDirName(principal.agentId)}`
+    : `user-${encodeAgentDirName(principal.userId)}`;
 }
 
 export function decodeAgentIdentityDirName(dirName: string): string {
@@ -2657,10 +2695,10 @@ async function atomicWriteFile(filePath: string, data: string | Buffer) {
   }
 }
 
-function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheckpoint | null {
+function normalizeCheckpoint(value: unknown, conversationId: string): AgentEventCheckpoint | null {
   if (!isRecord(value)) return null;
   if (value.v !== CHECKPOINT_VERSION) return null;
-  if (value.sessionId !== sessionId) return null;
+  if (value.conversationId !== conversationId) return null;
   const seq = typeof value.seq === 'number' && Number.isSafeInteger(value.seq) ? value.seq : null;
   if (seq === null || seq <= 0) return null;
   const createdAt = typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
@@ -2676,7 +2714,7 @@ function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheck
   const state = value.state as Partial<AgentEventReplayState>;
   if (state.latestSeq !== seq) return null;
   if (state.latestEventId !== latestEventId) return null;
-  if (!isRecord(state.session) || state.session.id !== sessionId) return null;
+  if (!isRecord(state.conversation) || state.conversation.id !== conversationId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
   if (!isRecord(state.subagents) || !isRecord(state.compactionsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
@@ -2687,7 +2725,7 @@ function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheck
 
   return {
     v: CHECKPOINT_VERSION,
-    sessionId,
+    conversationId,
     seq,
     latestEventId,
     createdAt,

@@ -293,7 +293,7 @@ test.describe('typography tokens', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },

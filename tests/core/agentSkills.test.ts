@@ -296,18 +296,18 @@ describe('skill ratification provenance', () => {
     const { root, skillFile, content } = await writeAuthoredSkill('shared', 'Shared workflow.');
     const store = createMemoryProvenanceStore();
     const settingsRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    const sessionRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    const conversationRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
 
     await settingsRuntime.recordAgentSkillWrite(skillFile, skillContentHash(content));
     await settingsRuntime.notifySkillContentWritten([skillFile]);
-    expect((await sessionRuntime.getSkill('shared'))?.ratified).toBe(false);
+    expect((await conversationRuntime.getSkill('shared'))?.ratified).toBe(false);
 
-    // The sessionless Settings runtime accepts; the live session's own registry only
+    // The conversationless Settings runtime accepts; the live conversation's own registry only
     // sees it after a trust refresh (its in-memory snapshot is otherwise stale).
     await settingsRuntime.acceptSkill('shared', skillContentHash(content));
-    expect((await sessionRuntime.getSkill('shared'))?.ratified).toBe(false);
-    await sessionRuntime.refreshTrustRecords();
-    expect((await sessionRuntime.getSkill('shared'))?.ratified).toBe(true);
+    expect((await conversationRuntime.getSkill('shared'))?.ratified).toBe(false);
+    await conversationRuntime.refreshTrustRecords();
+    expect((await conversationRuntime.getSkill('shared'))?.ratified).toBe(true);
   });
 
   test('undo back to an earlier agent version re-derives unratified', async () => {
@@ -338,7 +338,7 @@ describe('skill ratification provenance', () => {
 });
 
 describe('agent skills', () => {
-  test('lists model-invocable skills once per session', async () => {
+  test('lists model-invocable skills once per conversation', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
         'description: Demo skill',

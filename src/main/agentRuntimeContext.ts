@@ -62,7 +62,7 @@ const TIME_BASED_MICROCOMPACT_GAP_MS = 30 * 60_000;
 const TIME_BASED_MICROCOMPACT_KEEP_RECENT = 3;
 const TOOL_RESULT_BUDGET_SKIP_TOOLS = new Set(['file_read']);
 
-export interface AgentRuntimeContextSession {
+export interface AgentRuntimeContextConversation {
   agent: {
     state: {
       isStreaming: boolean;
@@ -98,13 +98,13 @@ export type AgentRuntimeContextEventInput = {
   [key: string]: unknown;
 };
 
-export interface AgentRuntimeContextHost<TSession extends AgentRuntimeContextSession> {
-  refreshRuntimeSettings(session: TSession): Promise<AgentRuntimeSettings>;
-  deriveRuntimePiMessages(sessionId: string, eventState: AgentEventReplayState): Promise<AgentMessage[]>;
-  appendSessionEvents(sessionId: string, session: TSession, inputs: AgentRuntimeContextEventInput[]): Promise<void>;
+export interface AgentRuntimeContextHost<TConversation extends AgentRuntimeContextConversation> {
+  refreshRuntimeSettings(conversation: TConversation): Promise<AgentRuntimeSettings>;
+  deriveRuntimePiMessages(conversationId: string, eventState: AgentEventReplayState): Promise<AgentMessage[]>;
+  appendConversationEvents(conversationId: string, conversation: TConversation, inputs: AgentRuntimeContextEventInput[]): Promise<void>;
   appendCompactionRootEvent(
-    sessionId: string,
-    session: TSession,
+    conversationId: string,
+    conversation: TConversation,
     prompt: UserMessage,
     summary: string,
     source: AgentCompactionSourceRange,
@@ -112,29 +112,29 @@ export interface AgentRuntimeContextHost<TSession extends AgentRuntimeContextSes
     preservedMessages: readonly AgentMessage[],
   ): Promise<void>;
   persistToolOutputPayload(
-    sessionId: string,
+    conversationId: string,
     toolCallId: string,
     toolName: string,
     text: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }>;
-  captureDebugPayload(sessionId: string, payload: unknown, model: Model<any>): Promise<void>;
-  captureDebugResponse(sessionId: string, response: ProviderResponse, model: Model<any>): Promise<void>;
-  emitError(sessionId: string, message: string): void;
+  captureDebugPayload(conversationId: string, payload: unknown, model: Model<any>): Promise<void>;
+  captureDebugResponse(conversationId: string, response: ProviderResponse, model: Model<any>): Promise<void>;
+  emitError(conversationId: string, message: string): void;
   getActiveProviderConfig(): Promise<AgentProviderRuntimeConfig | null>;
   getProviderApiKey(providerId: string): Promise<string | undefined> | string | undefined;
   resolveProviderModel(providerConfig: AgentProviderRuntimeConfig): Model<Api>;
-  beginCompaction(sessionId: string, session: TSession, trigger: AgentCompactionTrigger): string;
-  finishCompaction(sessionId: string, session: TSession, compactionId: string, lastEventType: string): void;
-  startReactiveRetryRun(sessionId: string, session: TSession): Promise<void>;
+  beginCompaction(conversationId: string, conversation: TConversation, trigger: AgentCompactionTrigger): string;
+  finishCompaction(conversationId: string, conversation: TConversation, compactionId: string, lastEventType: string): void;
+  startReactiveRetryRun(conversationId: string, conversation: TConversation): Promise<void>;
   completeSimpleFn?: CompleteSimpleFn;
 }
 
-export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSession> {
-  constructor(private readonly host: AgentRuntimeContextHost<TSession>) {}
+export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContextConversation> {
+  constructor(private readonly host: AgentRuntimeContextHost<TConversation>) {}
 
   async afterToolResultForModelContext(
-    sessionId: string,
-    session: TSession,
+    conversationId: string,
+    conversation: TConversation,
     toolCallId: string,
     toolName: string,
     result: unknown,
@@ -146,54 +146,54 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
 
     let persisted: { payload: AgentPayloadRef; label: string };
     try {
-      persisted = await this.host.persistToolOutputPayload(sessionId, toolCallId, toolName, text);
+      persisted = await this.host.persistToolOutputPayload(conversationId, toolCallId, toolName, text);
     } catch (error) {
-      this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
       return undefined;
     }
-    session.activeRun?.toolOutputPayloads.set(toolCallId, persisted);
+    conversation.activeRun?.toolOutputPayloads.set(toolCallId, persisted);
     return {
       content: [{ type: 'text', text: persisted.label }],
     };
   }
 
-  async prepareModelContext(sessionId: string, session: TSession, signal?: AbortSignal): Promise<AgentMessage[]> {
+  async prepareModelContext(conversationId: string, conversation: TConversation, signal?: AbortSignal): Promise<AgentMessage[]> {
     try {
       throwIfAborted(signal);
-      await this.host.refreshRuntimeSettings(session);
+      await this.host.refreshRuntimeSettings(conversation);
       throwIfAborted(signal);
       let changed = false;
-      if (session.runtimeSettings.compactEnabled) {
-        changed = await this.applyToolResultBudget(sessionId, session) || changed;
+      if (conversation.runtimeSettings.compactEnabled) {
+        changed = await this.applyToolResultBudget(conversationId, conversation) || changed;
         throwIfAborted(signal);
-        changed = await this.applyTimeBasedMicrocompact(sessionId, session) || changed;
+        changed = await this.applyTimeBasedMicrocompact(conversationId, conversation) || changed;
         throwIfAborted(signal);
       }
 
-      let messages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
+      let messages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
       throwIfAborted(signal);
-      if (session.runtimeSettings.compactEnabled && await this.shouldAutoCompact(session, messages)) {
-        const compacted = await this.tryAutoCompact(sessionId, session, signal);
+      if (conversation.runtimeSettings.compactEnabled && await this.shouldAutoCompact(conversation, messages)) {
+        const compacted = await this.tryAutoCompact(conversationId, conversation, signal);
         if (compacted) {
           changed = true;
           messages = compacted;
         }
       }
       throwIfAborted(signal);
-      if (changed && !session.agent.state.isStreaming) {
-        session.agent.state.messages = messages as never;
+      if (changed && !conversation.agent.state.isStreaming) {
+        conversation.agent.state.messages = messages as never;
       }
       return messages;
     } catch (error) {
       if (isAbortError(error, signal)) throw error;
-      this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
-      return this.host.deriveRuntimePiMessages(sessionId, session.eventState);
+      this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      return this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
     }
   }
 
-  async compactSession(
-    sessionId: string,
-    session: TSession,
+  async compactConversation(
+    conversationId: string,
+    conversation: TConversation,
     options: {
       trigger: 'manual' | 'auto' | 'reactive';
       customInstructions?: string;
@@ -204,18 +204,18 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
     let activeCompactionId: string | null = null;
     try {
       throwIfAborted(options.signal);
-      let activeMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
+      let activeMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
       throwIfAborted(options.signal);
       if (options.trigger === 'reactive') {
-        const liveMessages = session.agent.state.messages as AgentMessage[];
+        const liveMessages = conversation.agent.state.messages as AgentMessage[];
         if (liveMessages.length > activeMessages.length) activeMessages = liveMessages;
       }
-      const selectedLeafMessageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
+      const selectedLeafMessageId = conversation.eventState.selectedLeafMessageId ?? conversation.eventState.latestMessageId;
       if (!selectedLeafMessageId || activeMessages.length < 2) {
         throw new Error('Not enough messages to compact.');
       }
 
-      const runtimeSettings = await this.host.refreshRuntimeSettings(session);
+      const runtimeSettings = await this.host.refreshRuntimeSettings(conversation);
       const providerConfig = await this.host.getActiveProviderConfig();
       if (!providerConfig) throw new Error('No enabled agent provider is configured.');
       const model = this.host.resolveProviderModel(providerConfig);
@@ -226,17 +226,17 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       if (
         options.trigger === 'reactive'
         && compactPlan.messagesToKeep.length === 0
-        && (session.activeRun?.lastSubmittedUserPrompt ?? session.lastRun?.lastSubmittedUserPrompt)
+        && (conversation.activeRun?.lastSubmittedUserPrompt ?? conversation.lastRun?.lastSubmittedUserPrompt)
       ) {
-        compactPlan.messagesToKeep.push((session.activeRun?.lastSubmittedUserPrompt ?? session.lastRun?.lastSubmittedUserPrompt)!);
+        compactPlan.messagesToKeep.push((conversation.activeRun?.lastSubmittedUserPrompt ?? conversation.lastRun?.lastSubmittedUserPrompt)!);
       }
       const source = compactionSourceForPlan(
-        getAgentEventActivePath(session.eventState),
+        getAgentEventActivePath(conversation.eventState),
         compactPlan.messagesToSummarize.length,
       ) ?? { fromMessageId: selectedLeafMessageId, throughMessageId: selectedLeafMessageId };
 
-      activeCompactionId = this.host.beginCompaction(sessionId, session, options.trigger);
-      const response = await this.completeCompactSummaryWithRetries(sessionId, model, apiKey, {
+      activeCompactionId = this.host.beginCompaction(conversationId, conversation, options.trigger);
+      const response = await this.completeCompactSummaryWithRetries(conversationId, model, apiKey, {
         messagesToSummarize: compactPlan.messagesToSummarize,
         customInstructions: options.customInstructions,
         mode: compactPlan.messagesToKeep.length > 0 ? 'up_to' : 'full',
@@ -247,8 +247,8 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       const summary = formatCompactSummary(assistantMessageText(response));
       if (!summary) throw new Error('Compaction failed: no summary text returned.');
 
-      session.skillRuntime.restoreInvokedSkillsFromMessages(activeMessages);
-      const restoredFiles = await restorePostCompactReadFiles(session.localWorkspace, {
+      conversation.skillRuntime.restoreInvokedSkillsFromMessages(activeMessages);
+      const restoredFiles = await restorePostCompactReadFiles(conversation.localWorkspace, {
         maxFiles: POST_COMPACT_MAX_FILES_TO_RESTORE,
         maxCharsPerFile: POST_COMPACT_MAX_CHARS_PER_FILE,
         maxTotalChars: POST_COMPACT_TOTAL_RESTORED_FILE_CHARS,
@@ -256,60 +256,60 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       });
       const compactMessage = createPostCompactMessage(
         summary,
-        session.skillRuntime.createInvokedSkillsReminder(),
-        session.skillRuntime.createSkillListingStateReminder(),
-        session.subagentRuntime?.createAgentListingStateReminder() ?? null,
+        conversation.skillRuntime.createInvokedSkillsReminder(),
+        conversation.skillRuntime.createSkillListingStateReminder(),
+        conversation.subagentRuntime?.createAgentListingStateReminder() ?? null,
         createPostCompactRestoredFilesReminder(restoredFiles),
         { recentMessagesPreserved: compactPlan.messagesToKeep.length > 0 },
       );
       await this.host.appendCompactionRootEvent(
-        sessionId,
-        session,
+        conversationId,
+        conversation,
         compactMessage,
         summary,
         source,
         options.trigger,
         compactPlan.messagesToKeep,
       );
-      const postCompactMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
-      session.toolResultBudgetState = restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(session.eventState));
-      if (options.updateAgentState) session.agent.state.messages = postCompactMessages as never;
-      this.host.finishCompaction(sessionId, session, activeCompactionId, 'compaction.completed');
+      const postCompactMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
+      conversation.toolResultBudgetState = restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(conversation.eventState));
+      if (options.updateAgentState) conversation.agent.state.messages = postCompactMessages as never;
+      this.host.finishCompaction(conversationId, conversation, activeCompactionId, 'compaction.completed');
       activeCompactionId = null;
       return postCompactMessages;
     } finally {
       if (activeCompactionId) {
-        this.host.finishCompaction(sessionId, session, activeCompactionId, 'compaction.finished');
+        this.host.finishCompaction(conversationId, conversation, activeCompactionId, 'compaction.finished');
       }
     }
   }
 
-  async runReactiveCompactRetryIfNeeded(sessionId: string, session: TSession): Promise<void> {
-    for (let attempt = 0; attempt < 2 && session.reactiveCompactRequested; attempt += 1) {
-      session.reactiveCompactRequested = false;
-      await this.host.refreshRuntimeSettings(session);
-      if (!session.runtimeSettings.compactEnabled) return;
-      if (session.autoCompactConsecutiveFailures >= AUTO_COMPACT_MAX_FAILURES) return;
+  async runReactiveCompactRetryIfNeeded(conversationId: string, conversation: TConversation): Promise<void> {
+    for (let attempt = 0; attempt < 2 && conversation.reactiveCompactRequested; attempt += 1) {
+      conversation.reactiveCompactRequested = false;
+      await this.host.refreshRuntimeSettings(conversation);
+      if (!conversation.runtimeSettings.compactEnabled) return;
+      if (conversation.autoCompactConsecutiveFailures >= AUTO_COMPACT_MAX_FAILURES) return;
       try {
-        await this.compactSession(sessionId, session, {
+        await this.compactConversation(conversationId, conversation, {
           trigger: 'reactive',
           updateAgentState: true,
         });
-        session.autoCompactConsecutiveFailures = 0;
-        session.skillRuntime.resetRunPermissionRules();
-        await this.host.startReactiveRetryRun(sessionId, session);
-        await continueFromActivePath(session.agent);
+        conversation.autoCompactConsecutiveFailures = 0;
+        conversation.skillRuntime.resetRunPermissionRules();
+        await this.host.startReactiveRetryRun(conversationId, conversation);
+        await continueFromActivePath(conversation.agent);
       } catch (error) {
-        session.autoCompactConsecutiveFailures += 1;
-        this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
+        conversation.autoCompactConsecutiveFailures += 1;
+        this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
         return;
       }
     }
   }
 
-  private async applyToolResultBudget(sessionId: string, session: TSession): Promise<boolean> {
-    const activePath = getAgentEventActivePath(session.eventState);
-    const selection = collectToolResultBudgetSelections(activePath, session.toolResultBudgetState, {
+  private async applyToolResultBudget(conversationId: string, conversation: TConversation): Promise<boolean> {
+    const activePath = getAgentEventActivePath(conversation.eventState);
+    const selection = collectToolResultBudgetSelections(activePath, conversation.toolResultBudgetState, {
       limit: MAX_TOOL_RESULTS_PER_BATCH_CHARS,
       skipToolNames: TOOL_RESULT_BUDGET_SKIP_TOOLS,
     });
@@ -324,14 +324,14 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       let persisted: { payload: AgentPayloadRef; label: string };
       try {
         persisted = await this.host.persistToolOutputPayload(
-          sessionId,
+          conversationId,
           candidate.toolCallId,
           candidate.toolName,
           candidate.contentText,
         );
       } catch (error) {
-        session.toolResultBudgetState.seenIds.add(candidate.toolCallId);
-        this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
+        conversation.toolResultBudgetState.seenIds.add(candidate.toolCallId);
+        this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
         continue;
       }
       persistedCandidates.push({ candidate, persisted });
@@ -354,21 +354,21 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
     }
 
     if (inputs.length === 0) return false;
-    await this.host.appendSessionEvents(sessionId, session, inputs);
+    await this.host.appendConversationEvents(conversationId, conversation, inputs);
     for (const { candidate, persisted } of persistedCandidates) {
-      session.toolResultBudgetState.seenIds.add(candidate.toolCallId);
-      session.toolResultBudgetState.replacements.set(candidate.toolCallId, persisted.label);
+      conversation.toolResultBudgetState.seenIds.add(candidate.toolCallId);
+      conversation.toolResultBudgetState.replacements.set(candidate.toolCallId, persisted.label);
     }
     return true;
   }
 
-  private async applyTimeBasedMicrocompact(sessionId: string, session: TSession): Promise<boolean> {
-    const activePath = getAgentEventActivePath(session.eventState);
+  private async applyTimeBasedMicrocompact(conversationId: string, conversation: TConversation): Promise<boolean> {
+    const activePath = getAgentEventActivePath(conversation.eventState);
     const lastAssistant = [...activePath].reverse().find((message) => message.role === 'assistant');
     if (!lastAssistant || Date.now() - lastAssistant.updatedAt < TIME_BASED_MICROCOMPACT_GAP_MS) return false;
     const candidates = collectMicrocompactCandidates(activePath, TIME_BASED_MICROCOMPACT_KEEP_RECENT);
     if (candidates.length === 0) return false;
-    await this.host.appendSessionEvents(sessionId, session, candidates.map((candidate): AgentRuntimeContextEventInput => ({
+    await this.host.appendConversationEvents(conversationId, conversation, candidates.map((candidate): AgentRuntimeContextEventInput => ({
       type: 'tool_result.replaced',
       actor: systemActor(),
       messageId: candidate.messageId,
@@ -379,9 +379,9 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
     return true;
   }
 
-  private async shouldAutoCompact(session: TSession, messages: AgentMessage[]): Promise<boolean> {
-    if (session.autoCompactInProgress) return false;
-    if (session.autoCompactConsecutiveFailures >= AUTO_COMPACT_MAX_FAILURES) return false;
+  private async shouldAutoCompact(conversation: TConversation, messages: AgentMessage[]): Promise<boolean> {
+    if (conversation.autoCompactInProgress) return false;
+    if (conversation.autoCompactConsecutiveFailures >= AUTO_COMPACT_MAX_FAILURES) return false;
     if (messages.length < 2) return false;
     const providerConfig = await this.host.getActiveProviderConfig();
     if (!providerConfig) return false;
@@ -392,30 +392,30 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
     return tokens >= threshold;
   }
 
-  private async tryAutoCompact(sessionId: string, session: TSession, signal?: AbortSignal): Promise<AgentMessage[] | null> {
-    session.autoCompactInProgress = true;
+  private async tryAutoCompact(conversationId: string, conversation: TConversation, signal?: AbortSignal): Promise<AgentMessage[] | null> {
+    conversation.autoCompactInProgress = true;
     try {
-      const compacted = await this.compactSession(sessionId, session, {
+      const compacted = await this.compactConversation(conversationId, conversation, {
         trigger: 'auto',
         updateAgentState: false,
         signal,
       });
-      session.autoCompactConsecutiveFailures = 0;
+      conversation.autoCompactConsecutiveFailures = 0;
       return compacted;
     } catch (error) {
       if (isAbortError(error, signal)) throw error;
-      session.autoCompactConsecutiveFailures += 1;
-      if (session.autoCompactConsecutiveFailures >= AUTO_COMPACT_MAX_FAILURES) {
-        this.host.emitError(sessionId, `Auto compact failed ${session.autoCompactConsecutiveFailures} times; continuing without automatic compact.`);
+      conversation.autoCompactConsecutiveFailures += 1;
+      if (conversation.autoCompactConsecutiveFailures >= AUTO_COMPACT_MAX_FAILURES) {
+        this.host.emitError(conversationId, `Auto compact failed ${conversation.autoCompactConsecutiveFailures} times; continuing without automatic compact.`);
       }
       return null;
     } finally {
-      session.autoCompactInProgress = false;
+      conversation.autoCompactInProgress = false;
     }
   }
 
   private async completeCompactSummaryWithRetries(
-    sessionId: string,
+    conversationId: string,
     model: Model<Api>,
     apiKey: string | undefined,
     options: {
@@ -439,21 +439,22 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
         ...providerStreamOptionsFromRuntimeSettings(options.runtimeSettings),
         apiKey,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
-        sessionId,
+        // pi-ai stream option (provider cache affinity) — the lib's own field name.
+        sessionId: conversationId,
         signal: options.signal,
         onPayload: async (payload, payloadModel) => {
           try {
-            await this.host.captureDebugPayload(sessionId, payload, payloadModel);
+            await this.host.captureDebugPayload(conversationId, payload, payloadModel);
           } catch (error) {
-            this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
+            this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
           return undefined;
         },
         onResponse: async (responsePayload, responseModel) => {
           try {
-            await this.host.captureDebugResponse(sessionId, responsePayload, responseModel);
+            await this.host.captureDebugResponse(conversationId, responsePayload, responseModel);
           } catch (error) {
-            this.host.emitError(sessionId, error instanceof Error ? error.message : String(error));
+            this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
         },
       }), { signal: options.signal });
@@ -495,7 +496,7 @@ function compactionSourceForPlan(
   return fromMessageId && throughMessageId ? { fromMessageId, throughMessageId } : null;
 }
 
-async function continueFromActivePath(agent: AgentRuntimeContextSession['agent']) {
+async function continueFromActivePath(agent: AgentRuntimeContextConversation['agent']) {
   if (!canContinueFromMessage(agent.state.messages.at(-1) as AgentMessage | undefined)) {
     throw new Error('Cannot continue without a trailing user or tool result message.');
   }

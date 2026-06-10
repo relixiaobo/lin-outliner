@@ -42,7 +42,7 @@ const PERMISSION_CLASSIFIER_TOOL = {
 } as unknown as Tool;
 
 export function createDefaultPermissionClassifier(options: {
-  sessionId: string;
+  conversationId: string;
   model: () => Model<Api>;
   providerConfig: AgentProviderRuntimeConfig;
   providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
@@ -78,7 +78,8 @@ export function createDefaultPermissionClassifier(options: {
         ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
         apiKey,
         maxTokens: Math.min(model.maxTokens ?? 256, 256),
-        sessionId: options.sessionId,
+        // pi-ai stream option (provider cache affinity) — the lib's own field name.
+        sessionId: options.conversationId,
         signal,
         temperature: 0,
         toolChoice: permissionClassifierToolChoice(model),

@@ -13,7 +13,7 @@ persistence, and undo stay inside Lin's TypeScript/Electron boundary.
 
 Agent persistence, debug, streaming, multimedia payloads, and transcript
 rendering now follow `docs/spec/agent-event-log-rendering.md`: the durable
-source of truth is the per-session event log plus referenced payloads, while
+source of truth is the per-conversation event log plus referenced payloads, while
 pi-mono messages, render rows, debug timelines, indexes, and checkpoints are
 derived projections.
 
@@ -88,17 +88,17 @@ truth.
     starts, plus provider response metadata capture before body consumption
   - debug projection restore regression coverage from event log plus payload refs
   - large tool output payload refs with stable model-visible preview references
-  - lightweight derived session index for listing
+  - lightweight derived conversation index for listing
   - on-demand full text loading and bounded rendering for large tool output
-  - transcript row virtualization for long agent sessions
+  - transcript row virtualization for long agent conversations
   - payload-aware assistant turn copy for persisted tool output
   - run-end checkpoint projection with target-offset tail replay and
     corrupt-checkpoint fallback
   - atomic checkpoint writes with best-effort retention of the latest three
-    valid checkpoint files per session
+    valid checkpoint files per conversation
   - checkpoint tail guards against stale replay state before writing checkpoints
-  - derived session/search/user-message indexes with event-log rebuild
-  - large-session regression coverage for checkpoint replay, indexes, render
+  - derived conversation/search/user-message indexes with event-log rebuild
+  - large-conversation regression coverage for checkpoint replay, indexes, render
     projection, and payload-bounded JSONL
 - [x] Agent skills, compaction, and subagents:
   - immutable code-registered built-in skills, including slash-only `/skillify`
@@ -109,7 +109,7 @@ truth.
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
-  - same-session `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
+  - same-conversation `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
   - fresh and fork subagents with sidechain transcripts and background
     notifications
   - task panel derived from the shared render task projection: subagent tasks keep
@@ -120,9 +120,9 @@ truth.
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation:
   - per-principal memory pools keyed by `MemoryEntry.principal` (`principalKey =
-    user:<userId> | agent:<agentId>`): an agent pool is its identity directory
-    `agents/<agentId>/memory/events.jsonl`, the user pool is
-    `principals/user-<userId>/memory/events.jsonl`, both on the shared append-only
+    user:<userId> | agent:<agentId>`): every pool lives under
+    `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
+    (`agents/<agentId>/` keeps only `identity.json`), on the shared append-only
     seq-log primitive with conversation/run logs
   - single model-visible `recall` tool over active durable memory entries, reading
     the reader's own pool + co-member user pool, with optional nested evidence
@@ -181,7 +181,7 @@ Finish runtime polish on top of the event log and subagent foundation.
   the log (PR #51, hardened after M1).
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
-- [ ] Refine checkpoint retention settings if real user sessions show unusual
+- [ ] Refine checkpoint retention settings if real user conversations show unusual
   storage pressure.
 
 ## Following Milestones

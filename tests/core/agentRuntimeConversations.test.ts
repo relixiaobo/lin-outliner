@@ -113,9 +113,9 @@ describe('agent runtime conversations', () => {
     expect(first.conversationId).toMatch(/^lin-agent-dm-/);
     expect(second.conversationId).toBe(first.conversationId);
     expect(await runtime.listConversations()).toEqual([]);
-    expect(state.session?.title).toBe('Tenon Assistant');
-    expect(state.session?.goal).toBeUndefined();
-    expect(state.session?.members).toEqual([
+    expect(state.conversation?.title).toBe('Tenon Assistant');
+    expect(state.conversation?.goal).toBeUndefined();
+    expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: 'built-in:tenon:assistant' },
     ]);
@@ -152,20 +152,20 @@ describe('agent runtime conversations', () => {
 
     await runtime.deleteConversation(channel.conversationId);
     expect(await runtime.listConversations()).toEqual([]);
-    expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).session?.title).toBe('Tenon Assistant');
+    expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).conversation?.title).toBe('Tenon Assistant');
   });
 
   test('restores and resolves durable pending user questions', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
-    const sessionId = 'lin-agent-channel-question';
+    const conversationId = 'lin-agent-channel-question';
     const events: AgentEvent[] = [
       {
         v: AGENT_EVENT_VERSION,
         eventId: 'event-1',
         seq: 1,
-        sessionId,
-        type: 'session.created',
+        conversationId,
+        type: 'conversation.created',
         createdAt: 1,
         actor: { type: 'system' },
         title: 'Question channel',
@@ -179,7 +179,7 @@ describe('agent runtime conversations', () => {
         v: AGENT_EVENT_VERSION,
         eventId: 'event-2',
         seq: 2,
-        sessionId,
+        conversationId,
         type: 'run.started',
         createdAt: 2,
         actor: { type: 'system' },
@@ -200,7 +200,7 @@ describe('agent runtime conversations', () => {
         v: AGENT_EVENT_VERSION,
         eventId: 'event-3',
         seq: 3,
-        sessionId,
+        conversationId,
         type: 'assistant_message.started',
         createdAt: 3,
         actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
@@ -214,7 +214,7 @@ describe('agent runtime conversations', () => {
         v: AGENT_EVENT_VERSION,
         eventId: 'event-4',
         seq: 4,
-        sessionId,
+        conversationId,
         type: 'tool_call.started',
         createdAt: 4,
         actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
@@ -229,7 +229,7 @@ describe('agent runtime conversations', () => {
         v: AGENT_EVENT_VERSION,
         eventId: 'event-5',
         seq: 5,
-        sessionId,
+        conversationId,
         type: 'assistant_message.completed',
         createdAt: 5,
         actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
@@ -247,7 +247,7 @@ describe('agent runtime conversations', () => {
         v: AGENT_EVENT_VERSION,
         eventId: 'event-6',
         seq: 6,
-        sessionId,
+        conversationId,
         type: 'user_question.requested',
         createdAt: 6,
         actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
@@ -267,26 +267,26 @@ describe('agent runtime conversations', () => {
         },
       },
     ];
-    await new AgentEventStore(dataRoot).appendEvents(sessionId, events);
+    await new AgentEventStore(dataRoot).appendEvents(conversationId, events);
     const { runtime } = await createRuntime(dataRoot);
 
-    const restored = await runtime.restoreConversation(sessionId);
+    const restored = await runtime.restoreConversation(conversationId);
     expect(restored.pendingUserQuestion?.requestId).toBe('question-1');
 
     await expectRejects(
-      () => runtime.resolveUserQuestion(sessionId, 'question-1', {
+      () => runtime.resolveUserQuestion(conversationId, 'question-1', {
         requestId: 'question-1',
         answers: [{ questionId: 'direction', selectedOptionIds: [] }],
       }),
       'Question direction is required.',
     );
 
-    await runtime.resolveUserQuestion(sessionId, 'question-1', {
+    await runtime.resolveUserQuestion(conversationId, 'question-1', {
       requestId: 'question-1',
       answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
     });
 
-    const replay = await new AgentEventStore(dataRoot).replay(sessionId);
+    const replay = await new AgentEventStore(dataRoot).replay(conversationId);
     expect(replay.userQuestions['question-1']).toMatchObject({
       status: 'answered',
       result: {

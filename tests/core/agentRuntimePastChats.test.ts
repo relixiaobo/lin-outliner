@@ -173,31 +173,31 @@ const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'agent-1' };
 
-function base(sessionId: string, seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
+function base(conversationId: string, seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
   return {
     v: 1 as const,
-    eventId: `${sessionId}-event-${seq}`,
+    eventId: `${conversationId}-event-${seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_800_000_000_000 + seq,
     actor,
   };
 }
 
-async function seedPastSession(dataRoot: string): Promise<void> {
+async function seedPastConversation(dataRoot: string): Promise<void> {
   const store = new AgentEventStore(dataRoot);
-  const sessionId = 'past-session-focus';
-  await store.appendEvents(sessionId, [
-    { ...base(sessionId, 1, 'session.created'), title: 'Focus ring decision' },
+  const conversationId = 'past-conversation-focus';
+  await store.appendEvents(conversationId, [
+    { ...base(conversationId, 1, 'conversation.created'), title: 'Focus ring decision' },
     {
-      ...base(sessionId, 2, 'user_message.created', userActor),
+      ...base(conversationId, 2, 'user_message.created', userActor),
       messageId: 'past-user-focus',
       parentMessageId: null,
       content: [{ type: 'text', text: 'We chose cobalt blue for focus rings in the agent UI.' }],
     },
     {
-      ...base(sessionId, 3, 'assistant_message.started', agentActor),
+      ...base(conversationId, 3, 'assistant_message.started', agentActor),
       runId: 'past-run-focus',
       messageId: 'past-assistant-focus',
       parentMessageId: 'past-user-focus',
@@ -205,7 +205,7 @@ async function seedPastSession(dataRoot: string): Promise<void> {
       modelId: 'test',
     },
     {
-      ...base(sessionId, 4, 'assistant_message.completed', agentActor),
+      ...base(conversationId, 4, 'assistant_message.completed', agentActor),
       messageId: 'past-assistant-focus',
       stopReason: 'stop',
       content: [{ type: 'text', text: 'Cobalt blue is the recorded focus-ring choice.' }],
@@ -379,15 +379,15 @@ describe('agent runtime past chats integration', () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-past-chats-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-past-chats-data-'));
     roots.push(localRoot, dataRoot);
-    await seedPastSession(dataRoot);
+    await seedPastConversation(dataRoot);
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-focus-ring',
       fact: 'Cobalt blue was chosen for focus rings.',
       sources: [{
-        conversationId: 'past-session-focus',
+        conversationId: 'past-conversation-focus',
         messageRange: ['past-user-focus', 'past-assistant-focus'],
         runId: 'past-run-focus',
-        eventId: 'past-session-focus-event-4',
+        eventId: 'past-conversation-focus-event-4',
       }],
       createdAt: 30,
     });
@@ -477,14 +477,14 @@ describe('agent runtime past chats integration', () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-gate-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-gate-data-'));
     roots.push(localRoot, dataRoot);
-    await seedPastSession(dataRoot);
+    await seedPastConversation(dataRoot);
     const store = new AgentEventStore(dataRoot);
     // A second conversation whose raw text must NOT leak when the user-pool fact is recalled.
-    const userEvidenceSession = 'past-session-reviews';
-    await store.appendEvents(userEvidenceSession, [
-      { ...base(userEvidenceSession, 1, 'session.created'), title: 'Review style' },
+    const userEvidenceConversation = 'past-conversation-reviews';
+    await store.appendEvents(userEvidenceConversation, [
+      { ...base(userEvidenceConversation, 1, 'conversation.created'), title: 'Review style' },
       {
-        ...base(userEvidenceSession, 2, 'user_message.created', userActor),
+        ...base(userEvidenceConversation, 2, 'user_message.created', userActor),
         messageId: 'past-user-reviews',
         parentMessageId: null,
         content: [{ type: 'text', text: 'Secret phrasing: I always want terse reviews from the start.' }],
@@ -495,10 +495,10 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-focus-ring',
       fact: 'Cobalt blue was chosen for focus rings.',
       sources: [{
-        conversationId: 'past-session-focus',
+        conversationId: 'past-conversation-focus',
         messageRange: ['past-user-focus', 'past-assistant-focus'],
         runId: 'past-run-focus',
-        eventId: 'past-session-focus-event-4',
+        eventId: 'past-conversation-focus-event-4',
       }],
       createdAt: 30,
     });
@@ -506,9 +506,9 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-review-style',
       fact: 'prefers terse code reviews',
       sources: [{
-        conversationId: userEvidenceSession,
+        conversationId: userEvidenceConversation,
         messageRange: ['past-user-reviews', 'past-user-reviews'],
-        eventId: 'past-session-reviews-event-2',
+        eventId: 'past-conversation-reviews-event-2',
       }],
       createdAt: 31,
     });

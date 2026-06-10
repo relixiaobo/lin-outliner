@@ -756,8 +756,8 @@ debug, or renderer components. The canonical event-store architecture lives in
 
 Currently emitted event categories:
 
-- `session.created`
-- `session.renamed`
+- `conversation.created`
+- `conversation.renamed`
 - `payload.created`
 - `debug.snapshot.created`
 - `branch.selected`

@@ -15,7 +15,7 @@ describe('agent domain event bus', () => {
     bus.publish({
       lane: 'trusted-observer',
       name: 'Notification',
-      sessionId: 'session-1',
+      conversationId: 'conversation-1',
       createdAt: 1,
     });
 
@@ -35,7 +35,7 @@ describe('agent domain event bus', () => {
     const delivered = bus.publish({
       lane: 'hook-interceptor',
       name: 'PreToolUse',
-      sessionId: 'session-1',
+      conversationId: 'conversation-1',
       payload: { blocked: false },
       createdAt: 1,
     });
@@ -56,7 +56,7 @@ describe('agent domain event bus', () => {
     bus.publish({
       lane: 'trusted-observer',
       name: 'Stop',
-      sessionId: 'session-1',
+      conversationId: 'conversation-1',
       createdAt: 1,
     });
 

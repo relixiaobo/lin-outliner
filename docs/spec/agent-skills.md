@@ -34,7 +34,7 @@ Supported frontmatter fields:
 - `model`: optional model override for inline skills, or child-agent model override for forked skills.
 - `effort`: optional reasoning effort override for inline skills, or child-agent effort override for forked skills.
 - `shell`: optional shell for embedded command expansion. Lin currently supports `bash`.
-- `context: fork`: runs the rendered skill body through the same-session subagent runtime instead of injecting it into the parent context.
+- `context: fork`: runs the rendered skill body through the same-conversation subagent runtime instead of injecting it into the parent context.
 - `agent`: optional agent definition for `context: fork` skills. If omitted, Lin uses the built-in `general` agent. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
 - `paths`: path-conditional activation patterns.
 
@@ -46,7 +46,7 @@ Base directory for this skill: <skill-directory>
 <SKILL.md body>
 ```
 
-Argument placeholders are `$ARGUMENTS`, `$ARGUMENTS[n]`, `$0`, `$name`, `${AGENT_SKILL_DIR}`, and `${AGENT_SESSION_ID}`.
+Argument placeholders are `$ARGUMENTS`, `$ARGUMENTS[n]`, `$0`, `$name`, `${AGENT_SKILL_DIR}`, and `${AGENT_CONVERSATION_ID}`.
 
 Skill bodies may include embedded shell commands using fenced blocks that start with ```` ```! ```` or inline `!` command spans. Commands are expanded only when the skill is invoked, after argument and environment placeholder substitution. They execute through the same local bash runner and permission policy used by normal agent tool calls; in `restricted` mode the skill must grant a matching `allowed-tools` rule such as `Bash(git status:*)`.
 
@@ -54,7 +54,7 @@ Additional files inside the skill directory are not inserted automatically. Skil
 
 ## Runtime Flow
 
-At the start of a normal user turn, Lin injects a hidden skill listing reminder containing only skills that have not already been listed in the session. This avoids repeated listing text and preserves provider prompt cache friendliness.
+At the start of a normal user turn, Lin injects a hidden skill listing reminder containing only skills that have not already been listed in the conversation. This avoids repeated listing text and preserves provider prompt cache friendliness.
 
 When the model calls the `skill` tool for an inline skill:
 
@@ -144,8 +144,8 @@ row-menu **Revoke acceptance** action. `agent_accept_skill` records
 persist, hot-reload the registry, and return the refreshed skill list. Accept
 carries the `expectedHash` the renderer displayed and is refused on mismatch,
 so an agent write landing between render and click can never be accepted
-sight-unseen. A trust action also re-derives trust in every live session's
-registry (the Settings panel runs sessionless; each session holds its own
+sight-unseen. A trust action also re-derives trust in every live conversation's
+registry (the Settings panel runs without a conversation; each conversation holds its own
 in-memory trust map over the same store), so an accepted skill joins running
 conversations' model listings without a restart.
 Acceptance grants nothing beyond the skill's own frontmatter — the permission
@@ -215,21 +215,21 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | --- | --- |
 | Directory skills | Supported as `<skill-name>/SKILL.md`. Single-file legacy command skills are intentionally not supported. |
 | Built-in skills | Supported as immutable code-registered skills loaded before mutable skill directories. Mutable local skills cannot shadow a built-in skill with the same name. |
-| Automatic listing | Supported. New model-invocable **ratified** skills are listed once per session and persisted across compact restore; unratified agent-authored skills stay out of the model listing. |
+| Automatic listing | Supported. New model-invocable **ratified** skills are listed once per conversation and persisted across compact restore; unratified agent-authored skills stay out of the model listing. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, permissions, model, and effort handling. |
 | Embedded shell | Supported for `bash` only, at invocation time, after argument and placeholder substitution. |
 | Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. |
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
-| `context: fork` and `agent` | Supported through the same-session `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
+| `context: fork` and `agent` | Supported through the same-conversation `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts them (Settings → Skills) or hand-edits them. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable workflow (`when_to_use`-gated to explicit user save requests). It uses the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
-| Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background session review that silently rewrites skills is not supported. |
+| Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 
 ## Compaction
@@ -241,7 +241,7 @@ The same compact engine is also used automatically:
 - before a model call when the active context crosses the auto-compact threshold
 - after a provider context-length error, followed by one retry from the compacted root
 
-Before model-context assembly, Lin runs tool-output slimming on the active path. Large tool results are persisted as payloads and replaced with stable `<persisted-output>` preview labels. Per-tool-batch budget decisions are frozen by `toolCallId` and recorded as event-log replacements, so restored sessions reuse the same model-visible content instead of re-deciding and breaking prompt-cache stability.
+Before model-context assembly, Lin runs tool-output slimming on the active path. Large tool results are persisted as payloads and replaced with stable `<persisted-output>` preview labels. Per-tool-batch budget decisions are frozen by `toolCallId` and recorded as event-log replacements, so restored conversations reuse the same model-visible content instead of re-deciding and breaking prompt-cache stability.
 
 If the compact summary request itself exceeds the provider context limit, Lin retries by dropping the oldest API-round groups from the summary input. Reactive compact also clones the latest pending user/tool tail after the compact root before retrying, so the model continues from the same work item instead of relying on the summary to restate it exactly.
 
@@ -257,7 +257,7 @@ After compaction, the model-context branch becomes a new root user message with:
 
 The renderer does not show this root as a normal user bubble. `compaction.completed` is projected as a dedicated compact boundary row with the trigger (`manual`, `auto`, or `reactive`) and an expandable summary. The hidden reminders remain model-only context.
 
-The listed-skills state reminder is intentionally tiny. It prevents a restored compacted session from re-injecting the full skill listing after app restart.
+The listed-skills state reminder is intentionally tiny. It prevents a restored compacted conversation from re-injecting the full skill listing after app restart.
 
 ## Memory Dream
 
@@ -301,7 +301,7 @@ Intentional omissions:
 - Session-memory compact: omitted because Lin does not use this memory model.
 - Pre/post/session-start compact hooks: omitted until Lin has a first-class hook system.
 - Plan-mode and plan-file attachments: omitted because Lin does not have that separate plan-mode runtime.
-- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. `AgentStatus` remains only for explicit same-session status/wait checks.
+- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. `AgentStatus` remains only for explicit same-conversation status/wait checks.
 - Deferred-tool/MCP delta re-announcement: omitted for now because Lin's tool registry is stable in `pi-agent-core`; future plugin/app tools should add their own compact restore state.
 - Provider-specific cache-edit microcompact: omitted because it depends on cache editing support that is not available through the generic pi provider path. Lin uses stable event-log replacements instead.
 - Prompt-cache telemetry and survey plumbing: omitted because it is observability, not model-visible behavior.

@@ -127,12 +127,12 @@ async function waitFor(condition: () => boolean, timeoutMs = 1000) {
 }
 
 async function sendMessageApprovingAgent(
-  runtime: { sendMessage: (sessionId: string, message: string) => Promise<unknown>; resolveApproval: (sessionId: string, requestId: string, approved: boolean) => Promise<unknown> },
-  sessionId: string,
+  runtime: { sendMessage: (conversationId: string, message: string) => Promise<unknown>; resolveApproval: (conversationId: string, requestId: string, approved: boolean) => Promise<unknown> },
+  conversationId: string,
   message: string,
   sink: ReturnType<typeof createWindowSink>,
 ) {
-  const sendPromise = runtime.sendMessage(sessionId, message);
+  const sendPromise = runtime.sendMessage(conversationId, message);
   const resolved = new Set<string>();
   let settled = false;
   sendPromise.finally(() => {
@@ -145,7 +145,7 @@ async function sendMessageApprovingAgent(
     ));
     if (approval) {
       resolved.add(approval.requestId);
-      await runtime.resolveApproval(sessionId, approval.requestId, true);
+      await runtime.resolveApproval(conversationId, approval.requestId, true);
       continue;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -331,8 +331,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent for this.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent for this.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.some((text) => text.includes('RESEARCHER_AGENT_BODY'))).toBe(true);
@@ -418,8 +418,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use the researcher agent.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use the researcher agent.', sink);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     await flushProjectionCoalescing();
 
@@ -437,7 +437,7 @@ describe('agent runtime subagents', () => {
       .map((taskId) => projection.entities.tasks[taskId])
       .find((task) => task?.kind === 'dream' && task.runId === dreamState.lastCompleted?.runId);
     const replacementPayload = runId
-      ? await store.writePayload(session.conversationId, {
+      ? await store.writePayload(conversation.conversationId, {
           id: `subagent-transcript-${runId}-replacement`,
           data: JSON.stringify({
             v: 1,
@@ -452,15 +452,15 @@ describe('agent runtime subagents', () => {
           summary: 'Replacement subagent transcript',
         })
       : null;
-    const replayBeforeReplacement = await store.replay(session.conversationId);
+    const replayBeforeReplacement = await store.replay(conversation.conversationId);
     const runBeforeReplacement = runId ? replayBeforeReplacement.subagents[runId] : null;
     if (runId && replacementPayload && runBeforeReplacement) {
-      await store.appendEvents(session.conversationId, [
+      await store.appendEvents(conversation.conversationId, [
         {
           v: 1,
           eventId: `test-payload-replacement-${runId}`,
           seq: replayBeforeReplacement.latestSeq + 1,
-          sessionId: session.conversationId,
+          conversationId: conversation.conversationId,
           createdAt: Date.now(),
           actor: { type: 'system' },
           type: 'payload.created',
@@ -470,7 +470,7 @@ describe('agent runtime subagents', () => {
           v: 1,
           eventId: `test-subagent-replacement-${runId}`,
           seq: replayBeforeReplacement.latestSeq + 2,
-          sessionId: session.conversationId,
+          conversationId: conversation.conversationId,
           createdAt: Date.now(),
           actor: { type: 'tool', toolName: 'Agent', toolCallId: runBeforeReplacement.parentToolCallId ?? 'tool-agent-1' },
           type: 'subagent_run.updated',
@@ -511,7 +511,7 @@ describe('agent runtime subagents', () => {
       .toBe(source?.eventId);
     expect(source).toMatchObject({
       kind: 'agent_run',
-      conversationId: session.conversationId,
+      conversationId: conversation.conversationId,
       agentId: researcherAgentId,
     });
     expect(runId).toMatch(/^subagent-/);
@@ -595,9 +595,9 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
+    const conversation = await runtime.createConversation();
     const store = new AgentEventStore(dataRoot);
-    const replay = await store.replay(session.conversationId);
+    const replay = await store.replay(conversation.conversationId);
     const seedSubagentRun = async (
       runId: string,
       toolCallId: string,
@@ -605,7 +605,7 @@ describe('agent runtime subagents', () => {
       evidence: string,
       seqOffset: number,
     ) => {
-      const payload = await store.writePayload(session.conversationId, {
+      const payload = await store.writePayload(conversation.conversationId, {
         id: `subagent-transcript-${runId}`,
         data: JSON.stringify({
           v: 1,
@@ -617,12 +617,12 @@ describe('agent runtime subagents', () => {
         role: 'subagent_transcript',
         summary: `Transcript for ${runId}`,
       });
-      await store.appendEvents(session.conversationId, [
+      await store.appendEvents(conversation.conversationId, [
         {
           v: 1,
           eventId: `test-payload-${runId}`,
           seq: replay.latestSeq + seqOffset,
-          sessionId: session.conversationId,
+          conversationId: conversation.conversationId,
           createdAt: Date.now() + seqOffset,
           actor: { type: 'system' },
           type: 'payload.created',
@@ -632,7 +632,7 @@ describe('agent runtime subagents', () => {
           v: 1,
           eventId: `test-subagent-start-${runId}`,
           seq: replay.latestSeq + seqOffset + 1,
-          sessionId: session.conversationId,
+          conversationId: conversation.conversationId,
           createdAt: Date.now() + seqOffset + 1,
           actor: { type: 'tool', toolName: 'Agent', toolCallId },
           type: 'subagent_run.started',
@@ -652,7 +652,7 @@ describe('agent runtime subagents', () => {
           v: 1,
           eventId: `test-subagent-complete-${runId}`,
           seq: replay.latestSeq + seqOffset + 2,
-          sessionId: session.conversationId,
+          conversationId: conversation.conversationId,
           createdAt: Date.now() + seqOffset + 2,
           actor: { type: 'tool', toolName: 'Agent', toolCallId },
           type: 'subagent_run.updated',
@@ -724,8 +724,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Parent context marker.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Parent context marker.', sink);
 
     const forkContext = contexts.join('\n');
     expect(forkContext).toContain('Parent context marker.');
@@ -786,8 +786,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent for large output.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent for large output.', sink);
 
     const slimmedContext = childContexts.find((context) => context.includes('<persisted-output>')) ?? '';
     expect(script.pendingCount()).toBe(0);
@@ -862,8 +862,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent that will compact.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent that will compact.', sink);
 
     const compactedChildContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
@@ -932,8 +932,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent that will hit a context error.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent that will hit a context error.', sink);
 
     const retriedContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
@@ -1043,18 +1043,18 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
+    const conversation = await runtime.createConversation();
     await sendMessageApprovingAgent(
       runtime,
-      session.conversationId,
+      conversation.conversationId,
       `Fork and verify the teal pipeline. ${'parent conversation evidence '.repeat(90)}`,
       sink,
     );
 
     const store = new AgentEventStore(dataRoot);
-    let replay = await store.replay(session.conversationId);
+    let replay = await store.replay(conversation.conversationId);
     await waitFor(() => {
-      void store.replay(session.conversationId).then((state) => {
+      void store.replay(conversation.conversationId).then((state) => {
         replay = state;
       });
       const run = Object.values(replay.subagents ?? {})[0];
@@ -1067,11 +1067,11 @@ describe('agent runtime subagents', () => {
 
     // Manual compaction of the parent conversation, in sequence after the fork's
     // auto-compaction and BEFORE anything was Dreamed.
-    await runtime.sendMessage(session.conversationId, '/compact');
+    await runtime.sendMessage(conversation.conversationId, '/compact');
 
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
 
-    const run = Object.values((await store.replay(session.conversationId)).subagents ?? {})[0]!;
+    const run = Object.values((await store.replay(conversation.conversationId)).subagents ?? {})[0]!;
     const agentRunRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
     // The fork's pre-compaction work survives only inside the compacted summary; the
     // summary must therefore reach extraction (it is the still-pending content).
@@ -1155,13 +1155,13 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
+    const conversation = await runtime.createConversation();
     const store = new AgentEventStore(dataRoot);
-    const replay = await store.replay(session.conversationId);
+    const replay = await store.replay(conversation.conversationId);
 
     // The original fork transcript: 3 copied parent-prefix messages + 1 child conclusion,
     // boundary recorded at 3 (only the conclusion is the fork's own evidence).
-    const originalPayload = await store.writePayload(session.conversationId, {
+    const originalPayload = await store.writePayload(conversation.conversationId, {
       id: `subagent-transcript-${runId}-original`,
       data: JSON.stringify({
         v: 1,
@@ -1179,12 +1179,12 @@ describe('agent runtime subagents', () => {
       role: 'subagent_transcript',
       summary: 'Original fork transcript',
     });
-    await store.appendEvents(session.conversationId, [
+    await store.appendEvents(conversation.conversationId, [
       {
         v: 1,
         eventId: `test-payload-${runId}-original`,
         seq: replay.latestSeq + 1,
-        sessionId: session.conversationId,
+        conversationId: conversation.conversationId,
         createdAt: Date.now(),
         actor: { type: 'system' },
         type: 'payload.created',
@@ -1194,7 +1194,7 @@ describe('agent runtime subagents', () => {
         v: 1,
         eventId: `test-subagent-start-${runId}`,
         seq: replay.latestSeq + 2,
-        sessionId: session.conversationId,
+        conversationId: conversation.conversationId,
         createdAt: Date.now() + 1,
         actor: { type: 'tool', toolName: 'Agent', toolCallId },
         type: 'subagent_run.started',
@@ -1214,7 +1214,7 @@ describe('agent runtime subagents', () => {
         v: 1,
         eventId: `test-subagent-complete-${runId}`,
         seq: replay.latestSeq + 3,
-        sessionId: session.conversationId,
+        conversationId: conversation.conversationId,
         createdAt: Date.now() + 2,
         actor: { type: 'tool', toolName: 'Agent', toolCallId },
         type: 'subagent_run.updated',
@@ -1236,7 +1236,7 @@ describe('agent runtime subagents', () => {
     // Supersede the payload with a compacted 1-message transcript. Neither the new
     // envelope nor the update event re-states the boundary — the event-model-legal shape
     // in which the old boundary (3) exceeds the new payload length (1).
-    const compactedPayload = await store.writePayload(session.conversationId, {
+    const compactedPayload = await store.writePayload(conversation.conversationId, {
       id: `subagent-transcript-${runId}-compacted`,
       data: JSON.stringify({
         v: 1,
@@ -1248,13 +1248,13 @@ describe('agent runtime subagents', () => {
       role: 'subagent_transcript',
       summary: 'Compacted fork transcript',
     });
-    const replayAfterFirstDream = await store.replay(session.conversationId);
-    await store.appendEvents(session.conversationId, [
+    const replayAfterFirstDream = await store.replay(conversation.conversationId);
+    await store.appendEvents(conversation.conversationId, [
       {
         v: 1,
         eventId: `test-payload-${runId}-compacted`,
         seq: replayAfterFirstDream.latestSeq + 1,
-        sessionId: session.conversationId,
+        conversationId: conversation.conversationId,
         createdAt: Date.now() + 3,
         actor: { type: 'system' },
         type: 'payload.created',
@@ -1264,7 +1264,7 @@ describe('agent runtime subagents', () => {
         v: 1,
         eventId: `test-subagent-compacted-${runId}`,
         seq: replayAfterFirstDream.latestSeq + 2,
-        sessionId: session.conversationId,
+        conversationId: conversation.conversationId,
         createdAt: Date.now() + 4,
         actor: { type: 'tool', toolName: 'Agent', toolCallId },
         type: 'subagent_run.updated',
@@ -1361,8 +1361,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start and inspect a background subagent.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start and inspect a background subagent.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.join('\n')).toContain('Background result.');
@@ -1415,8 +1415,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start a self-reporting background subagent.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a self-reporting background subagent.', sink);
 
     expect(script.pendingCount()).toBe(0);
     const notificationText = notificationContexts.join('\n');
@@ -1433,19 +1433,19 @@ describe('agent runtime subagents', () => {
     );
     expect(attentionEvents.length).toBeGreaterThan(0);
     const raised = attentionEvents[attentionEvents.length - 1]!;
-    expect(raised.conversationId).toBe(session.conversationId);
+    expect(raised.conversationId).toBe(conversation.conversationId);
     expect(raised.unreadCount).toBeGreaterThanOrEqual(1);
 
     // Restoring (the config-reload path also restores) must NOT mark read: the
     // durable unread is still present in the persisted log afterwards.
-    await runtime.restoreConversation(session.conversationId);
-    const afterRestore = await new AgentEventStore(dataRoot).replay(session.conversationId);
-    expect(afterRestore.attentionByConversationId[session.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
+    await runtime.restoreConversation(conversation.conversationId);
+    const afterRestore = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    expect(afterRestore.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
 
     // Marking the conversation read (the renderer's explicit user-open signal) is
     // what clears attention to zero, and it survives because it is a durable
     // notification.read cursor.
-    await runtime.markConversationRead(session.conversationId);
+    await runtime.markConversationRead(conversation.conversationId);
     const afterOpen = sink.events.filter(
       (event): event is Extract<AgentRuntimeEvent, { type: 'conversation_attention' }> =>
         event.type === 'conversation_attention',
@@ -1500,18 +1500,18 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start a commandable background subagent.', sink);
-    const restored = await runtime.restoreConversation(session.conversationId);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a commandable background subagent.', sink);
+    const restored = await runtime.restoreConversation(conversation.conversationId);
     const subagentId = restored.renderProjection.subagentRunIds[0]!;
 
-    const queued = await runtime.subagentSend(session.conversationId, subagentId, 'Continue with risks.');
+    const queued = await runtime.subagentSend(conversation.conversationId, subagentId, 'Continue with risks.');
     expect(queued).toMatchObject({
       agent_id: subagentId,
       status: 'queued',
     });
 
-    const status = await runtime.subagentStatus(session.conversationId, subagentId, { wait: true });
+    const status = await runtime.subagentStatus(conversation.conversationId, subagentId, { wait: true });
     expect(status).toMatchObject({
       agent_id: subagentId,
       result: 'Follow-up background result.',
@@ -1576,11 +1576,11 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start a stoppable background subagent.', sink);
+    const conversation = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background subagent.', sink);
     const subagentId = latestProjection(sink.events)?.subagentRunIds[0]!;
 
-    const stopped = await runtime.subagentStop(session.conversationId, subagentId);
+    const stopped = await runtime.subagentStop(conversation.conversationId, subagentId);
     expect(stopped).toMatchObject({
       agent_id: subagentId,
       status: 'stopped',
@@ -1589,17 +1589,17 @@ describe('agent runtime subagents', () => {
 
     // A user-initiated stop is the user's own action — it raises NO durable
     // notification/badge (the in-app model-injection still tells the parent).
-    const afterStop = await new AgentEventStore(dataRoot).replay(session.conversationId);
-    expect(afterStop.attentionByConversationId[session.conversationId]?.unreadCount ?? 0).toBe(0);
+    const afterStop = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    expect(afterStop.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
     expect(Object.values(afterStop.notifications)).toHaveLength(0);
 
-    const queued = await runtime.subagentSend(session.conversationId, subagentId, 'Resume after stop.');
+    const queued = await runtime.subagentSend(conversation.conversationId, subagentId, 'Resume after stop.');
     expect(queued).toMatchObject({
       agent_id: subagentId,
       status: 'queued',
     });
 
-    const status = await runtime.subagentStatus(session.conversationId, subagentId, { wait: true });
+    const status = await runtime.subagentStatus(conversation.conversationId, subagentId, { wait: true });
     expect(status).toMatchObject({
       agent_id: subagentId,
       result: 'Resumed stopped result.',
@@ -1614,7 +1614,7 @@ describe('agent runtime subagents', () => {
     let resumeNotification: { kind: string } | undefined;
     const deadline = Date.now() + 1000;
     while (!resumeNotification && Date.now() < deadline) {
-      const replay = await new AgentEventStore(dataRoot).replay(session.conversationId);
+      const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
       resumeNotification = Object.values(replay.notifications).find(
         (record) => record.source?.type === 'subagent' && record.source.subagentRunId === subagentId,
       );
@@ -1674,10 +1674,10 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await firstRuntime.createConversation();
-    await sendMessageApprovingAgent(firstRuntime, session.conversationId, 'Start a restorable background subagent.', firstSink);
-    firstRuntime.closeConversation(session.conversationId);
-    const transcriptPayloadEvents = (await new AgentEventStore(dataRoot).readEvents(session.conversationId))
+    const conversation = await firstRuntime.createConversation();
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background subagent.', firstSink);
+    firstRuntime.closeConversation(conversation.conversationId);
+    const transcriptPayloadEvents = (await new AgentEventStore(dataRoot).readEvents(conversation.conversationId))
       .filter((event) => event.type === 'payload.created' && event.payload?.role === 'subagent_transcript');
     expect(new Set(transcriptPayloadEvents.map((event) => event.payload?.sha256)).size)
       .toBe(transcriptPayloadEvents.length);
@@ -1716,7 +1716,7 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const restored = await secondRuntime.restoreConversation(session.conversationId);
+    const restored = await secondRuntime.restoreConversation(conversation.conversationId);
     expect(restored.renderProjection.subagentRunIds).toHaveLength(1);
     const subagent = restored.renderProjection.entities.subagents[restored.renderProjection.subagentRunIds[0]!];
     expect(subagent).toMatchObject({
@@ -1726,7 +1726,7 @@ describe('agent runtime subagents', () => {
     });
     expect(subagent?.transcriptMessageCount).toBeGreaterThan(0);
 
-    await secondRuntime.sendMessage(session.conversationId, 'Check the restored background subagent status.');
+    await secondRuntime.sendMessage(conversation.conversationId, 'Check the restored background subagent status.');
 
     expect(secondScript.pendingCount()).toBe(0);
     expect(restoredContexts.join('\n')).toContain('Restored background result.');
@@ -1784,14 +1784,14 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await firstRuntime.createConversation();
-    await sendMessageApprovingAgent(firstRuntime, session.conversationId, 'Start an interruptible background subagent.', firstSink);
+    const conversation = await firstRuntime.createConversation();
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start an interruptible background subagent.', firstSink);
     const subagentId = latestProjection(firstSink.events)?.subagentRunIds[0]!;
     expect(subagentId).toBeTruthy();
     // The run is still alive (blocked) — persisted as running, no terminal yet.
-    const beforeRestart = await new AgentEventStore(dataRoot).replay(session.conversationId);
+    const beforeRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
     expect(beforeRestart.subagents[subagentId]?.status).toBe('running');
-    expect(beforeRestart.attentionByConversationId[session.conversationId]?.unreadCount ?? 0).toBe(0);
+    expect(beforeRestart.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
 
     // Second runtime over the same data = a restart. Restoring marks the orphaned
     // run failed AND raises the durable "don't go silent" notification + badge.
@@ -1814,12 +1814,12 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const restored = await secondRuntime.restoreConversation(session.conversationId);
+    const restored = await secondRuntime.restoreConversation(conversation.conversationId);
     const restoredSubagent = restored.renderProjection.entities.subagents[subagentId];
     expect(restoredSubagent?.status).toBe('failed');
 
-    const afterRestart = await new AgentEventStore(dataRoot).replay(session.conversationId);
-    expect(afterRestart.attentionByConversationId[session.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
+    const afterRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    expect(afterRestart.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
     const interruptedNotification = Object.values(afterRestart.notifications).find(
       (record) => record.source?.type === 'subagent' && record.source.subagentRunId === subagentId,
     );
@@ -1827,7 +1827,7 @@ describe('agent runtime subagents', () => {
 
     const attentionRaised = secondSink.events.some(
       (event) => event.type === 'conversation_attention'
-        && event.conversationId === session.conversationId
+        && event.conversationId === conversation.conversationId
         && event.unreadCount >= 1,
     );
     expect(attentionRaised).toBe(true);
@@ -1877,11 +1877,11 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await firstRuntime.createConversation();
-    await sendMessageApprovingAgent(firstRuntime, session.conversationId, 'Start a background subagent that completes.', firstSink);
+    const conversation = await firstRuntime.createConversation();
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a background subagent that completes.', firstSink);
     // The completed background subagent left durable unread (never opened/read).
-    const persisted = await new AgentEventStore(dataRoot).replay(session.conversationId);
-    expect(persisted.attentionByConversationId[session.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
+    const persisted = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    expect(persisted.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
 
     // A fresh runtime (restart) never saw the live attention event. Listing the
     // conversations must re-emit the persisted unread so the badge is not lost.
@@ -1908,7 +1908,7 @@ describe('agent runtime subagents', () => {
     await secondRuntime.listConversations();
     const seeded = secondSink.events.some(
       (event) => event.type === 'conversation_attention'
-        && event.conversationId === session.conversationId
+        && event.conversationId === conversation.conversationId
         && event.unreadCount >= 1,
     );
     expect(seeded).toBe(true);
@@ -1938,8 +1938,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createConversation();
-    const conversationId = session.conversationId;
+    const conversation = await runtime.createConversation();
+    const conversationId = conversation.conversationId;
 
     // First delivery → unread 1.
     await runtime.appendNotificationForTest(conversationId, 'race-n-1');

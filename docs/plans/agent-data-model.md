@@ -61,8 +61,9 @@ the same change, per AGENTS.md A6.
   references the skills file tree as a storage family.
 - **Milestone sequencing + the full event taxonomy** — owned by [[agent-program]].
 - **Back-compat / migration** — none (pre-release; delete old shapes rather than
-  preserving them; the event store removes obsolete dev `sessions/` + derived
-  `indexes/` on first access).
+  preserving them; on first access the event store wipes the whole agent data
+  root when it detects any old-format artifact — `sessions/`, a legacy session
+  index, an `agents/<id>/memory/` pool, or `session.*` event vocabulary).
 
 ## Design — the converged data structure
 
@@ -137,7 +138,7 @@ interface ConversationMeta {            // meta.json = a PROJECTION of the strea
   createdAt: number;
   // product rules (NOT fields): canonical DM = find-or-create-unique on {user, oneAgent};
   //   adding an agent never mutates members in place → spawns a new Channel
-  //   (the session list = the Channel list). DM/Channel rendering lives in conversation-model.
+  //   (the conversation list = the Channel list). DM/Channel rendering lives in conversation-model.
 }
 // cursors are NOT a conversation field: per-principal read state is high-frequency UI state, kept OUT of the
 // objective record (else it churns the event log). Separate per-principal store, last-seen seq:
@@ -372,8 +373,10 @@ supply the evidence); titling; re-entry briefs.
 userData/agent/
   agents/<agentId>/
     identity.json                  # per-agent current state: name / model / persona / bound skill ids
+  principals/<agent-<agentId> | user-<userId>>/   # ONE path rule for every principal's pool
     memory/  events.jsonl          # memory.entry_added/updated/removed (runtime-owned append, D1) → projection = MemoryEntry set
                                    #   retrieval: one undivided pool (D2 revised — no workspace tiers); NOT written via file_write
+    runs.json                      # PROJECTION: reflective runs maintaining this pool
   conversations/<conversationId>/
     meta.json                      # PROJECTION of membership/rename events: members / goal / name (NOT authority)
     cursors.json                   # per-principal read state (UI state, kept out of the objective stream)
@@ -387,9 +390,10 @@ userData/agent/
   # outline document → Loro store (separate substrate, user-owned)
 ```
 
-M0 re-keys the old flat `sessions/<id>/` model into `conversations/<id>`
-(communication) **+** `runs/<id>` (execution) **+** `agents/<id>/memory`
-(the reserved memory line).
+M0 re-keyed the old flat `sessions/<id>/` model into `conversations/<id>`
+(communication) **+** `runs/<id>` (execution); the storage clean-cut then
+unified every memory pool under `principals/<principalKey>/memory/` and renamed
+the stored vocabulary to `conversation.*` / `conversationId`.
 
 ### 6. Three kinds of time (don't conflate)
 
@@ -644,10 +648,11 @@ agent.skills[]          ──▶ skills/ file tree
   scoped payloads; per-conversation run index; checkpoint replay by target offsets
   + `seq`; domain event bus; active-run state isolation; stateless pi-agent-core +
   the two seams.
-- **M0.5 clean cut:** remove remaining agent protocol/index/API names that still say
-  `session*`; the event store deletes obsolete `sessions/` + derived `indexes/`
-  on first access; do not write a legacy `sessions/<id>` reader, adapter, or
-  alias.
+- **M0.5 clean cut:** shipped in two steps — #151 cleaned the protocol/index/API
+  names; `agent-storage-clean-cut` finished the job (stored `conversation.*`
+  vocabulary, `conversationId` on every event, pools under
+  `principals/<principalKey>/memory/`, store-owned old-format wipe of the whole
+  agent data root). No legacy reader, adapter, or alias — ever.
 - **M1 build:** the memory line (+ `sources`); `addressedTo`; distillation-ladder
   consumers + two-step recall; mixed-resolution assembly over old summaries.
 - **PM-ratified (2026-06-05):** canonical DM + user-creatable Channels; split-now +

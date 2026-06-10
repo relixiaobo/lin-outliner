@@ -21,9 +21,9 @@ const listeners = new Set<RevealListener>();
 
 /** Select `conversationId` in the agent runtime and ask any listener (App opens
  *  the rail; the chat panel may open the task panel) to surface it. Returns the
- *  selection promise so callers can await the session being loaded before doing
+ *  selection promise so callers can await the conversation being loaded before doing
  *  anything that mutates it (e.g. starting a run) — selecting concurrently with a
- *  run recreates the session and diverges the event seq. The conversation must
+ *  run recreates the conversation and diverges the event seq. The conversation must
  *  already exist (selecting a not-yet-created one rejects). */
 export function requestRevealAgentConversation(
   conversationId: string,

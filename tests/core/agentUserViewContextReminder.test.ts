@@ -54,24 +54,24 @@ describe('agent user view context reminder', () => {
     expect(reminder).toContain('<node-ref id="node-ref-1" title="Referenced node" />');
   });
 
-  test('tracks per-session snapshots and sends diffs after the first view', () => {
+  test('tracks per-conversation snapshots and sends diffs after the first view', () => {
     const tracker = new AgentUserViewContextReminderTracker();
-    const first = tracker.prepare('session-1', sampleContext());
+    const first = tracker.prepare('conversation-1', sampleContext());
     expect(first.reminder).toContain('<user-view-context mode="snapshot">');
     first.commit();
 
-    const unchanged = tracker.prepare('session-1', sampleContext());
+    const unchanged = tracker.prepare('conversation-1', sampleContext());
     expect(unchanged.reminder).toContain('<user-view-context mode="diff" basis="previous-user-view-context">');
     expect(unchanged.reminder).toContain('<current active_panel_id="panel-1" focused_panel_id="panel-1" focused_node_id="node-1" focus_surface="row" />');
     expect(unchanged.reminder).not.toContain('<changes>');
     unchanged.commit();
 
-    const changed = tracker.prepare('session-1', focusedOnCollapsedBranchContext());
+    const changed = tracker.prepare('conversation-1', focusedOnCollapsedBranchContext());
     expect(changed.reminder).toContain('<focus-changed from_node_id="node-1" to_node_id="node-2" />');
     expect(changed.reminder).toContain('<panel-visible-outline-changed id="panel-1" root_id="root-1">');
     expect(changed.reminder).toContain('  - %%node:node-2 focused collapsed children=3%% Collapsed branch');
 
-    const referenced = tracker.prepare('session-1', {
+    const referenced = tracker.prepare('conversation-1', {
       ...focusedOnCollapsedBranchContext(),
       referencedNodes: [{ nodeId: 'node-ref-2', title: 'Second reference' }],
     });
@@ -79,8 +79,8 @@ describe('agent user view context reminder', () => {
     expect(referenced.reminder).toContain('<explicit-references>');
     expect(referenced.reminder).toContain('<node-ref id="node-ref-2" title="Second reference" />');
 
-    tracker.reset('session-1');
-    const afterReset = tracker.prepare('session-1', sampleContext());
+    tracker.reset('conversation-1');
+    const afterReset = tracker.prepare('conversation-1', sampleContext());
     expect(afterReset.reminder).toContain('<user-view-context mode="snapshot">');
   });
 });

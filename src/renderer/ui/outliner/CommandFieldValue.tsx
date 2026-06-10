@@ -42,8 +42,8 @@ export interface CommandAgentOption {
 
 // The selectable agents are global and rarely change, so fetch the list once and
 // share it across every command row (the cache survives remounts within the
-// session). The conversation id is irrelevant here — the main process falls back
-// to a registry listing when the id resolves to no live session.
+// conversation). The conversation id is irrelevant here — the main process falls back
+// to a registry listing when the id resolves to no live conversation.
 let commandAgentOptionsCache: CommandAgentOption[] | null = null;
 let commandAgentOptionsInflight: Promise<CommandAgentOption[]> | null = null;
 
@@ -65,8 +65,8 @@ export function useCommandAgentOptions(): readonly CommandAgentOption[] {
 }
 
 // Drives an attended "run now": 1) ensure the delivery conversation exists on
-// disk, 2) reveal + select it (loads the single in-memory session) and AWAIT that
-// so the run never recreates the session mid-flight, then 3) run it. The run
+// disk, 2) reveal + select it (loads the single in-memory conversation) and AWAIT that
+// so the run never recreates the conversation mid-flight, then 3) run it. The run
 // surfaces inline as a subagent boundary in the conversation (its permanent
 // record), so failures that reach the conversation show there — nothing is
 // reflected on the Run button. `running` drives ONLY the command bullet's

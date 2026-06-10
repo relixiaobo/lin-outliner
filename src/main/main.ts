@@ -92,7 +92,7 @@ if (process.env.ELECTRON_USER_DATA_DIR) {
 } else if (!app.isPackaged) {
   // Running from source (electron-vite dev) with no explicit override. Never
   // share the installed prod app's default userData, so a bare `bun run dev`
-  // can't read or clobber daily-use documents, agent sessions, or assets. The
+  // can't read or clobber daily-use documents, agent conversations, or assets. The
   // clone-specific dev scripts still set ELECTRON_USER_DATA_DIR for per-clone
   // isolation; this is the catch-all for runs that forget to.
   app.setPath('userData', join(app.getPath('home'), '.lin-outliner-dev'));
@@ -2116,7 +2116,7 @@ if (!app.requestSingleInstanceLock()) {
     // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q
     // reads as "didn't quit, press again". But a bare exit would truncate in-flight
     // async writes, so we first drain them — the document mutation queue and the
-    // agent runtime's session event-log appends — bounded by a hard timeout so a
+    // agent runtime's conversation event-log appends — bounded by a hard timeout so a
     // slow/hung write (e.g. an in-flight Dream LLM call, which is crash-safe and
     // re-fires next launch) can't block the quit.
     void Promise.race([

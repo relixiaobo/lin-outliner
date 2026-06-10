@@ -22,12 +22,12 @@ async function withStore<T>(fn: (store: AgentEventStore, root: string) => Promis
   }
 }
 
-function base(sessionId: string, seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
+function base(conversationId: string, seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
   return {
     v: 1 as const,
-    eventId: `${sessionId}-event-${seq}`,
+    eventId: `${conversationId}-event-${seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_700_000_000_000 + seq,
     actor,
@@ -35,47 +35,47 @@ function base(sessionId: string, seq: number, type: AgentEvent['type'], actor: A
 }
 
 describe('agent event store', () => {
-  test('appends JSONL events and replays a session', async () => {
+  test('appends JSONL events and replays a conversation', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
 
-      const raw = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
+      const raw = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
       expect(raw.trim().split('\n')).toHaveLength(2);
 
-      const events = await store.readEvents(sessionId);
+      const events = await store.readEvents(conversationId);
       expect(events.map((event) => event.seq)).toEqual([1, 2]);
 
-      const replayed = await store.replay(sessionId);
-      expect(replayed.session?.id).toBe(sessionId);
+      const replayed = await store.replay(conversationId);
+      expect(replayed.conversation?.id).toBe(conversationId);
       expect(replayed.messages['message-1']?.content).toEqual([{ type: 'text', text: 'Hello' }]);
     });
   });
 
-  test('maintains a lightweight session index for listing', async () => {
+  test('maintains a lightweight conversation index for listing', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 3, 'session.renamed'), title: 'Renamed' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 3, 'conversation.renamed'), title: 'Renamed' },
         {
-          ...base(sessionId, 4, 'assistant_message.started'),
+          ...base(conversationId, 4, 'assistant_message.started'),
           runId: 'run-1',
           messageId: 'assistant-1',
           parentMessageId: 'message-1',
@@ -86,7 +86,7 @@ describe('agent event store', () => {
 
       const entries = await store.listConversationIndexEntries();
       expect(entries).toEqual([{
-        id: sessionId,
+        id: conversationId,
         title: 'Renamed',
         members: [],
         createdAt: 1_700_000_000_001,
@@ -98,17 +98,17 @@ describe('agent event store', () => {
       const index = JSON.parse(await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')) as {
         conversations: Record<string, unknown>;
       };
-      expect(index.conversations[sessionId]).toBeDefined();
+      expect(index.conversations[conversationId]).toBeDefined();
     });
   });
 
   test('folds unreadCount into the index incrementally without bumping updatedAt', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled', goal: 'g' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled', goal: 'g' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
@@ -120,9 +120,9 @@ describe('agent event store', () => {
 
       // Two off-floor deliveries fold to unreadCount 2, and DO NOT bump updatedAt
       // (a background delivery is not conversation activity — review #5).
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 3, 'notification.created'), notificationId: 'n-1', conversationId: sessionId, kind: 'task_completed', title: 'A' },
-        { ...base(sessionId, 4, 'notification.created'), notificationId: 'n-2', conversationId: sessionId, kind: 'task_failed', title: 'B' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 3, 'notification.created'), notificationId: 'n-1', conversationId: conversationId, kind: 'task_completed', title: 'A' },
+        { ...base(conversationId, 4, 'notification.created'), notificationId: 'n-2', conversationId: conversationId, kind: 'task_failed', title: 'B' },
       ] as AgentEvent[]);
       const afterNotifs = (await store.listConversationIndexEntries())[0]!;
       expect(afterNotifs.unreadCount).toBe(2);
@@ -130,42 +130,42 @@ describe('agent event store', () => {
 
       // A read through the tail clears the fold to 0 (still no updatedAt bump). The
       // index value matches an authoritative full replay (no incremental drift).
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 5, 'notification.read'), conversationId: sessionId, throughSeq: 4 },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 5, 'notification.read'), conversationId: conversationId, throughSeq: 4 },
       ] as AgentEvent[]);
       const afterRead = (await store.listConversationIndexEntries())[0]!;
       expect(afterRead.unreadCount).toBe(0);
       expect(afterRead.updatedAt).toBe(1_700_000_000_002);
       expect(afterRead.unreadCount).toBe(
-        (await store.replay(sessionId)).attentionByConversationId[sessionId]?.unreadCount ?? 0,
+        (await store.replay(conversationId)).attentionByConversationId[conversationId]?.unreadCount ?? 0,
       );
     });
   });
 
   test('writes checkpoints and replays tail events after a checkpoint', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
 
-      const checkpointState = await store.replay(sessionId);
-      const checkpoint = await store.writeCheckpoint(sessionId, checkpointState);
+      const checkpointState = await store.replay(conversationId);
+      const checkpoint = await store.writeCheckpoint(conversationId, checkpointState);
       expect(checkpoint?.seq).toBe(2);
       expect(checkpoint?.targets.conversationByteOffset).toBeGreaterThan(0);
       expect(agentCheckpointFileName(2)).toBe('checkpoint-2.json');
-      await expect(readFile(store.checkpointPath(sessionId, 2), 'utf8')).resolves.toContain('"seq":2');
+      await expect(readFile(store.checkpointPath(conversationId, 2), 'utf8')).resolves.toContain('"seq":2');
 
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 3, 'session.renamed'), title: 'Renamed' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 3, 'conversation.renamed'), title: 'Renamed' },
         {
-          ...base(sessionId, 4, 'assistant_message.started'),
+          ...base(conversationId, 4, 'assistant_message.started'),
           runId: 'run-1',
           messageId: 'assistant-1',
           parentMessageId: 'message-1',
@@ -174,8 +174,8 @@ describe('agent event store', () => {
         },
       ]);
 
-      const replayed = await store.replay(sessionId);
-      expect(replayed.session?.title).toBe('Renamed');
+      const replayed = await store.replay(conversationId);
+      expect(replayed.conversation?.title).toBe('Renamed');
       expect(replayed.latestSeq).toBe(4);
       expect(replayed.messages['assistant-1']?.parentMessageId).toBe('message-1');
     });
@@ -183,13 +183,13 @@ describe('agent event store', () => {
 
   test('reads a long trailing JSONL event as the physical tail after restart', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const runId = 'run-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Long tail' },
-        { ...base(sessionId, 2, 'run.started'), runId },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Long tail' },
+        { ...base(conversationId, 2, 'run.started'), runId },
         {
-          ...base(sessionId, 3, 'assistant_message.completed'),
+          ...base(conversationId, 3, 'assistant_message.completed'),
           runId,
           messageId: 'assistant-1',
           stopReason: 'stop',
@@ -198,33 +198,33 @@ describe('agent event store', () => {
       ]);
 
       const restarted = new AgentEventStore(root);
-      await expect(restarted.appendEvents(sessionId, [
-        { ...base(sessionId, 4, 'run.completed'), runId },
+      await expect(restarted.appendEvents(conversationId, [
+        { ...base(conversationId, 4, 'run.completed'), runId },
       ])).resolves.toBeUndefined();
 
-      expect((await restarted.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+      expect((await restarted.readEvents(conversationId)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
     });
   });
 
   test('falls back to log replay when a checkpoint points past the physical tail', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
-      await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      await store.writeCheckpoint(conversationId, await store.replay(conversationId));
 
-      const eventsPath = store.paths(sessionId).conversationEventsPath;
+      const eventsPath = store.paths(conversationId).conversationEventsPath;
       const firstLine = (await readFile(eventsPath, 'utf8')).split('\n')[0]!;
       await writeFile(eventsPath, `${firstLine}\n`, 'utf8');
 
-      const replayed = await store.replay(sessionId);
+      const replayed = await store.replay(conversationId);
       expect(replayed.latestSeq).toBe(1);
       expect(replayed.messages['message-1']).toBeUndefined();
     });
@@ -232,27 +232,27 @@ describe('agent event store', () => {
 
   test('falls back to log replay when a checkpoint has a stale replay-state shape', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
-      const checkpoint = await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      const checkpoint = await store.writeCheckpoint(conversationId, await store.replay(conversationId));
       expect(checkpoint?.seq).toBe(2);
 
-      const checkpointPath = store.checkpointPath(sessionId, 2);
+      const checkpointPath = store.checkpointPath(conversationId, 2);
       const raw = JSON.parse(await readFile(checkpointPath, 'utf8')) as {
         state: Record<string, unknown>;
       };
       delete raw.state.dreamsByMessageId;
       await writeFile(checkpointPath, `${JSON.stringify(raw)}\n`, 'utf8');
 
-      const replayed = await store.replay(sessionId);
+      const replayed = await store.replay(conversationId);
 
       expect(replayed.latestSeq).toBe(2);
       expect(replayed.messages['message-1']?.content).toEqual([{ type: 'text', text: 'Hello' }]);
@@ -262,101 +262,101 @@ describe('agent event store', () => {
 
   test('does not write a checkpoint for stale replay state', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
-      const staleState = await store.replay(sessionId);
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 3, 'session.renamed'), title: 'Renamed' },
+      const staleState = await store.replay(conversationId);
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 3, 'conversation.renamed'), title: 'Renamed' },
       ]);
 
-      await expect(store.writeCheckpoint(sessionId, staleState)).resolves.toBeNull();
-      await expect(readFile(store.checkpointPath(sessionId, 2), 'utf8')).rejects.toThrow();
-      expect((await store.replay(sessionId)).latestSeq).toBe(3);
+      await expect(store.writeCheckpoint(conversationId, staleState)).resolves.toBeNull();
+      await expect(readFile(store.checkpointPath(conversationId, 2), 'utf8')).rejects.toThrow();
+      expect((await store.replay(conversationId)).latestSeq).toBe(3);
     });
   });
 
   test('uses an older valid checkpoint when a newer checkpoint is corrupt', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
-      const checkpoint = await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      const checkpoint = await store.writeCheckpoint(conversationId, await store.replay(conversationId));
       expect(checkpoint?.seq).toBe(2);
 
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 3, 'session.renamed'), title: 'Renamed' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 3, 'conversation.renamed'), title: 'Renamed' },
       ]);
-      await mkdir(store.paths(sessionId).checkpointsDir, { recursive: true });
-      await writeFile(store.checkpointPath(sessionId, 99), 'not-json\n', 'utf8');
+      await mkdir(store.paths(conversationId).checkpointsDir, { recursive: true });
+      await writeFile(store.checkpointPath(conversationId, 99), 'not-json\n', 'utf8');
 
-      const replayed = await store.replay(sessionId);
-      expect(replayed.session?.title).toBe('Renamed');
+      const replayed = await store.replay(conversationId);
+      expect(replayed.conversation?.title).toBe('Renamed');
       expect(replayed.latestSeq).toBe(3);
     });
   });
 
   test('retains only recent valid checkpoints and removes stale checkpoint temp files', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Title 1' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Title 1' },
       ]);
-      await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      await store.writeCheckpoint(conversationId, await store.replay(conversationId));
 
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 2, 'session.renamed'), title: 'Title 2' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 2, 'conversation.renamed'), title: 'Title 2' },
       ]);
-      await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      await store.writeCheckpoint(conversationId, await store.replay(conversationId));
 
-      await mkdir(store.paths(sessionId).checkpointsDir, { recursive: true });
-      await writeFile(store.checkpointPath(sessionId, 99), 'not-json\n', 'utf8');
-      await writeFile(`${store.checkpointPath(sessionId, 100)}.stale.tmp`, 'partial\n', 'utf8');
+      await mkdir(store.paths(conversationId).checkpointsDir, { recursive: true });
+      await writeFile(store.checkpointPath(conversationId, 99), 'not-json\n', 'utf8');
+      await writeFile(`${store.checkpointPath(conversationId, 100)}.stale.tmp`, 'partial\n', 'utf8');
 
       for (let seq = 3; seq <= 5; seq += 1) {
-        await store.appendEvents(sessionId, [
-          { ...base(sessionId, seq, 'session.renamed'), title: `Title ${seq}` },
+        await store.appendEvents(conversationId, [
+          { ...base(conversationId, seq, 'conversation.renamed'), title: `Title ${seq}` },
         ]);
-        await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+        await store.writeCheckpoint(conversationId, await store.replay(conversationId));
       }
 
-      const checkpointFiles = (await readdir(store.paths(sessionId).checkpointsDir)).sort();
+      const checkpointFiles = (await readdir(store.paths(conversationId).checkpointsDir)).sort();
       expect(checkpointFiles).toEqual([
         'checkpoint-3.json',
         'checkpoint-4.json',
         'checkpoint-5.json',
       ]);
-      expect((await store.replay(sessionId)).session?.title).toBe('Title 5');
+      expect((await store.replay(conversationId)).conversation?.title).toBe('Title 5');
     });
   });
 
   test('maintains derived search and user-message indexes', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Find quarterly planning notes' }],
         },
         {
-          ...base(sessionId, 3, 'assistant_message.started'),
+          ...base(conversationId, 3, 'assistant_message.started'),
           runId: 'run-1',
           messageId: 'assistant-1',
           parentMessageId: 'message-1',
@@ -364,19 +364,19 @@ describe('agent event store', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 4, 'assistant_message.completed'),
+          ...base(conversationId, 4, 'assistant_message.completed'),
           messageId: 'assistant-1',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'Quarterly planning is in the roadmap node.' }],
         },
       ]);
 
-      const userMessages = await store.listUserMessageIndexEntries(sessionId);
+      const userMessages = await store.listUserMessageIndexEntries(conversationId);
       expect(userMessages.map((entry) => entry.messageId)).toEqual(['message-1']);
       expect(userMessages[0]?.preview).toBe('Find quarterly planning notes');
       expect(userMessages[0]?.hasAttachments).toBe(false);
 
-      const results = await store.searchMessages('quarterly roadmap', { sessionId });
+      const results = await store.searchMessages('quarterly roadmap', { conversationId });
       expect(results.map((entry) => entry.messageId)).toEqual(['assistant-1']);
       expect(results[0]?.preview).toBe('Quarterly planning is in the roadmap node.');
     });
@@ -384,35 +384,35 @@ describe('agent event store', () => {
 
   test('updates the derived user-message index after edits', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Old prompt' }],
         },
         {
-          ...base(sessionId, 3, 'user_message.edited', userActor),
+          ...base(conversationId, 3, 'user_message.edited', userActor),
           messageId: 'message-1',
           content: [{ type: 'text', text: 'New product strategy prompt' }],
         },
       ]);
 
-      expect(await store.searchMessages('old prompt', { sessionId })).toEqual([]);
-      expect((await store.searchMessages('strategy', { sessionId })).map((entry) => entry.messageId)).toEqual(['message-1']);
-      expect((await store.listUserMessageIndexEntries(sessionId))[0]?.text).toBe('New product strategy prompt');
+      expect(await store.searchMessages('old prompt', { conversationId })).toEqual([]);
+      expect((await store.searchMessages('strategy', { conversationId })).map((entry) => entry.messageId)).toEqual(['message-1']);
+      expect((await store.listUserMessageIndexEntries(conversationId))[0]?.text).toBe('New product strategy prompt');
     });
   });
 
   test('rebuilds the derived search index when it is missing', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Recoverable index text' }],
@@ -420,18 +420,18 @@ describe('agent event store', () => {
       ]);
       await rm(path.join(root, 'indexes', 'search-index.json'), { force: true });
 
-      expect((await store.searchMessages('recoverable', { sessionId })).map((entry) => entry.messageId)).toEqual(['message-1']);
+      expect((await store.searchMessages('recoverable', { conversationId })).map((entry) => entry.messageId)).toEqual(['message-1']);
       await expect(readFile(path.join(root, 'indexes', 'search-index.json'), 'utf8')).resolves.toContain('message-1');
     });
   });
 
-  test('rebuilds the session index when the derived index is missing', async () => {
+  test('rebuilds the conversation index when the derived index is missing', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
@@ -440,22 +440,22 @@ describe('agent event store', () => {
       await rm(path.join(root, 'indexes'), { recursive: true, force: true });
 
       expect(await store.listConversationIndexEntries()).toMatchObject([{
-        id: sessionId,
+        id: conversationId,
         title: 'Untitled',
         messageCount: 1,
         latestSeq: 2,
       }]);
-      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
+      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(conversationId);
     });
   });
 
   test('rebuilds the conversation index when the derived index is malformed', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Hello' }],
@@ -465,74 +465,115 @@ describe('agent event store', () => {
       await writeFile(indexPath, 'not-json\n', 'utf8');
 
       expect(await store.listConversationIndexEntries()).toMatchObject([{
-        id: sessionId,
+        id: conversationId,
         title: 'Untitled',
         messageCount: 1,
         latestSeq: 2,
       }]);
-      await expect(readFile(indexPath, 'utf8')).resolves.toContain(sessionId);
+      await expect(readFile(indexPath, 'utf8')).resolves.toContain(conversationId);
     });
   });
 
-  test('drops legacy flat sessions and stale indexes on first access', async () => {
-    await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      const agentId = 'built-in:tenon:assistant';
-      const principal: AgentPrincipal = { type: 'agent', agentId };
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Current layout' },
-      ]);
-      await store.addMemoryEntry(principal, {
-        id: 'memory-legacy',
-        fact: 'Legacy memory should not cross the clean cut.',
-        sources: [{ conversationId: sessionId }],
-      });
-      // The user pool is a first-class principal pool; the clean cut must wipe it too (review #10).
-      const userPrincipal: AgentPrincipal = { type: 'user', userId: 'local-user' };
-      await store.addMemoryEntry(userPrincipal, {
-        id: 'memory-legacy-user',
-        fact: 'Legacy user fact should not cross the clean cut either.',
-        sources: [{ conversationId: sessionId }],
-      });
+  // --- Pre-release clean-cut: any old-format artifact wipes the WHOLE data root ---
 
-      await mkdir(path.join(root, 'sessions', 'legacy-session'), { recursive: true });
-      await writeFile(path.join(root, 'indexes', 'session-index.json'), JSON.stringify({
-        sessions: {
-          'legacy-session': {
-            id: 'legacy-session',
-            title: 'Legacy',
-            createdAt: 1,
-            updatedAt: 9_999,
-            messageCount: 1,
-            latestSeq: 1,
-          },
-        },
-      }), 'utf8');
+  async function seedCurrentLayout(store: AgentEventStore) {
+    const conversationId = 'conversation-1';
+    await store.appendEvents(conversationId, [
+      { ...base(conversationId, 1, 'conversation.created'), title: 'Current layout' },
+    ]);
+    const agentPrincipal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+    const userPrincipal: AgentPrincipal = { type: 'user', userId: 'local-user' };
+    await store.addMemoryEntry(agentPrincipal, {
+      id: 'memory-agent',
+      fact: 'Current-format agent fact.',
+      sources: [{ conversationId }],
+    });
+    await store.addMemoryEntry(userPrincipal, {
+      id: 'memory-user',
+      fact: 'Current-format user fact.',
+      sources: [{ conversationId }],
+    });
+    return { conversationId, agentPrincipal, userPrincipal };
+  }
+
+  test('a legacy sessions/ tree wipes the whole agent data root on first access', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
+      await mkdir(path.join(root, 'sessions'), { recursive: true });
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toMatchObject([{
-        id: sessionId,
-        title: 'Current layout',
-      }]);
-      await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
-      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
-      await expect(restarted.readMemoryEvents(principal)).resolves.toEqual([]);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
       await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
+      await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
     });
   });
 
-  test('drops an orphaned legacy session index from the current storage layout', async () => {
+  test('a legacy session-index.json wipes the root', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Current layout' },
-      ]);
-      const legacyIndexPath = path.join(root, 'indexes', 'session-index.json');
-      await writeFile(legacyIndexPath, JSON.stringify({
-        sessions: {
-          'legacy-session': {
-            id: 'legacy-session',
-            title: 'Legacy',
+      const { conversationId } = await seedCurrentLayout(store);
+      await mkdir(path.join(root, 'indexes'), { recursive: true });
+      await writeFile(path.join(root, 'indexes', 'session-index.json'), '{}', 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+    });
+  });
+
+  test('an agent pool inside the identity directory (agents/<id>/memory/) wipes the root', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId, agentPrincipal } = await seedCurrentLayout(store);
+      const legacyPoolDir = path.join(store.agentPaths(agentPrincipal.type === 'agent' ? agentPrincipal.agentId : '').agentDir, 'memory');
+      await mkdir(legacyPoolDir, { recursive: true });
+      await writeFile(path.join(legacyPoolDir, 'events.jsonl'), '', 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
+      await expect(readdir(legacyPoolDir)).rejects.toThrow();
+    });
+  });
+
+  test('a conversation log speaking the session.* vocabulary wipes the root', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId, userPrincipal } = await seedCurrentLayout(store);
+      const legacyDir = path.join(root, 'conversations', agentConversationDirName('legacy-1'), 'segments');
+      await mkdir(legacyDir, { recursive: true });
+      await writeFile(
+        path.join(legacyDir, '000001.jsonl'),
+        `${JSON.stringify({
+          v: 1,
+          eventId: 'legacy-event-1',
+          seq: 1,
+          sessionId: 'legacy-1',
+          type: 'session.created',
+          createdAt: 1,
+          actor: { type: 'system' },
+          title: 'Legacy vocabulary',
+        })}\n`,
+        'utf8',
+      );
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
+      await expect(readdir(path.join(root, 'conversations'))).rejects.toThrow();
+    });
+  });
+
+  test('current-vocabulary data survives a restart untouched (no false-positive wipe)', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
+      // An orphaned CURRENT index is a rebuild case, not a clean-cut marker.
+      await writeFile(path.join(root, 'indexes', 'conversation-index.json'), JSON.stringify({
+        conversations: {
+          'missing-conversation': {
+            id: 'missing-conversation',
+            title: 'Missing',
             createdAt: 1,
             updatedAt: 9_999,
             messageCount: 1,
@@ -543,24 +584,29 @@ describe('agent event store', () => {
 
       const restarted = new AgentEventStore(root);
       expect(await restarted.listConversationIndexEntries()).toMatchObject([{
-        id: sessionId,
+        id: conversationId,
         title: 'Current layout',
       }]);
-      await expect(readFile(legacyIndexPath, 'utf8')).rejects.toThrow();
-      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
+      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
+      expect(await restarted.listMemoryEntries(userPrincipal)).toMatchObject([{ id: 'memory-user' }]);
+      // The unified pool layout: every pool lives under principals/.
+      expect((await readdir(path.join(root, 'principals'))).sort()).toEqual([
+        'agent-built-in%3Atenon%3Aassistant',
+        'user-local-user',
+      ]);
     });
   });
 
   test('rebuilds stale conversation indexes that do not match conversations', async () => {
     await withStore(async (store, root) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Indexed conversation' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Indexed conversation' },
       ]);
       await writeFile(path.join(root, 'indexes', 'conversation-index.json'), JSON.stringify({
         conversations: {
-          'missing-session': {
-            id: 'missing-session',
+          'missing-conversation': {
+            id: 'missing-conversation',
             title: 'Missing',
             createdAt: 1,
             updatedAt: 9_999,
@@ -571,24 +617,24 @@ describe('agent event store', () => {
       }), 'utf8');
 
       expect(await new AgentEventStore(root).listConversationIndexEntries()).toMatchObject([{
-        id: sessionId,
+        id: conversationId,
         title: 'Indexed conversation',
       }]);
       const rebuilt = JSON.parse(await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')) as {
         conversations: Record<string, unknown>;
       };
-      expect(Object.keys(rebuilt.conversations)).toEqual([sessionId]);
+      expect(Object.keys(rebuilt.conversations)).toEqual([conversationId]);
     });
   });
 
   test('removes deleted conversations from the derived conversation index', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
       ]);
 
-      await store.deleteConversation(sessionId);
+      await store.deleteConversation(conversationId);
 
       expect(await store.listConversationIndexEntries()).toEqual([]);
       expect(await store.listConversationIds()).toEqual([]);
@@ -597,45 +643,45 @@ describe('agent event store', () => {
 
   test('rejects appends that are not after the persisted tail seq', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
       ]);
 
-      await expect(store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.renamed'), eventId: 'event-late', title: 'Late' },
+      await expect(store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.renamed'), eventId: 'event-late', title: 'Late' },
       ])).rejects.toThrow(/not after existing seq/);
     });
   });
 
-  test('encodes session ids as safe directory names', async () => {
+  test('encodes conversation ids as safe directory names', async () => {
     await withStore(async (store, root) => {
-      const sessionId = '../session.with/slashes';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
+      const conversationId = '../conversation.with/slashes';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
       ]);
 
-      expect(agentConversationDirName(sessionId)).not.toContain('..');
-      expect(store.paths(sessionId).conversationDir.startsWith(path.join(root, 'conversations'))).toBe(true);
-      expect(await store.listConversationIds()).toEqual([sessionId]);
+      expect(agentConversationDirName(conversationId)).not.toContain('..');
+      expect(store.paths(conversationId).conversationDir.startsWith(path.join(root, 'conversations'))).toBe(true);
+      expect(await store.listConversationIds()).toEqual([conversationId]);
     });
   });
 
   test('splits conversation events from run execution events and joins them for replay', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const runId = 'run-1';
 
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Split test' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Split test' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'message-1',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Run a tool' }],
         },
         {
-          ...base(sessionId, 3, 'run.started'),
+          ...base(conversationId, 3, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
           kind: 'turn',
@@ -650,7 +696,7 @@ describe('agent event store', () => {
           retention: 'hot',
         },
         {
-          ...base(sessionId, 4, 'assistant_message.started'),
+          ...base(conversationId, 4, 'assistant_message.started'),
           runId,
           messageId: 'assistant-1',
           parentMessageId: 'message-1',
@@ -658,20 +704,20 @@ describe('agent event store', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 5, 'assistant_message.completed'),
+          ...base(conversationId, 5, 'assistant_message.completed'),
           runId,
           messageId: 'assistant-1',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'Done' }],
         },
         {
-          ...base(sessionId, 6, 'run.completed'),
+          ...base(conversationId, 6, 'run.completed'),
           runId,
         },
       ]);
 
-      const conversationRaw = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
-      expect(conversationRaw).toContain('session.created');
+      const conversationRaw = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
+      expect(conversationRaw).toContain('conversation.created');
       expect(conversationRaw).toContain('user_message.created');
       expect(conversationRaw).not.toContain('assistant_message.started');
 
@@ -689,20 +735,20 @@ describe('agent event store', () => {
       };
       expect(runMeta).toMatchObject({
         agentId: 'built-in:tenon:assistant',
-        anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: sessionId },
+        anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: conversationId },
         trigger: { type: 'message', messageId: 'message-1' },
         fingerprint: { appVersion: 'test' },
         status: 'completed',
         retention: 'hot',
       });
-      const runIndex = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+      const runIndex = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
       expect(runIndex.runIds).toEqual([runId]);
 
-      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
       expect(await store.listConversationIndexEntries()).toMatchObject([{
-        id: sessionId,
+        id: conversationId,
         title: 'Split test',
         latestSeq: 6,
       }]);
@@ -711,13 +757,13 @@ describe('agent event store', () => {
 
   test('rebuilds the derived per-conversation run index when it is missing', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const runId = 'run-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Run index rebuild' },
-        { ...base(sessionId, 2, 'run.started'), runId },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Run index rebuild' },
+        { ...base(conversationId, 2, 'run.started'), runId },
         {
-          ...base(sessionId, 3, 'assistant_message.started'),
+          ...base(conversationId, 3, 'assistant_message.started'),
           runId,
           messageId: 'assistant-1',
           parentMessageId: null,
@@ -726,10 +772,10 @@ describe('agent event store', () => {
         },
       ]);
 
-      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+      await rm(store.paths(conversationId).conversationRunIndexPath, { force: true });
 
-      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3]);
-      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1, 2, 3]);
+      const rebuilt = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
       expect(rebuilt.runIds).toEqual([runId]);
@@ -738,13 +784,13 @@ describe('agent event store', () => {
 
   test('rebuilds the run index from legacy flat conversation run metadata', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-legacy-run-meta';
+      const conversationId = 'conversation-legacy-run-meta';
       const runId = 'run-legacy-meta';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Legacy run meta' },
-        { ...base(sessionId, 2, 'run.started'), runId },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Legacy run meta' },
+        { ...base(conversationId, 2, 'run.started'), runId },
         {
-          ...base(sessionId, 3, 'assistant_message.started'),
+          ...base(conversationId, 3, 'assistant_message.started'),
           runId,
           messageId: 'assistant-1',
           parentMessageId: null,
@@ -756,7 +802,7 @@ describe('agent event store', () => {
         v: 1,
         id: runId,
         agentId: 'built-in:tenon:assistant',
-        conversationId: sessionId,
+        conversationId: conversationId,
         kind: 'turn',
         status: 'running',
         trigger: { type: 'manual' },
@@ -772,10 +818,10 @@ describe('agent event store', () => {
         updatedAt: 1_700_000_000_003,
         latestSeq: 3,
       })}\n`);
-      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+      await rm(store.paths(conversationId).conversationRunIndexPath, { force: true });
 
-      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3]);
-      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1, 2, 3]);
+      const rebuilt = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
       expect(rebuilt.runIds).toEqual([runId]);
@@ -784,10 +830,10 @@ describe('agent event store', () => {
 
   test('leaves principal-anchored runs out of a conversation run index rebuild', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-agent-anchor';
+      const conversationId = 'conversation-agent-anchor';
       const runId = 'run-agent-anchor';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Agent anchor filter' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Agent anchor filter' },
       ]);
       const runPaths = store.runPaths(runId);
       await mkdir(runPaths.runDir, { recursive: true });
@@ -811,10 +857,10 @@ describe('agent event store', () => {
         updatedAt: 1_700_000_000_003,
         latestSeq: 3,
       })}\n`);
-      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+      await rm(store.paths(conversationId).conversationRunIndexPath, { force: true });
 
-      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1]);
-      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1]);
+      const rebuilt = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
       expect(rebuilt.runIds).toEqual([]);
@@ -823,12 +869,12 @@ describe('agent event store', () => {
 
   test('leaves live-appended principal-anchored runs out of the conversation run index', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-live-agent-anchor';
+      const conversationId = 'conversation-live-agent-anchor';
       const runId = 'run-live-agent-anchor';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Live agent anchor filter' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Live agent anchor filter' },
         {
-          ...base(sessionId, 2, 'run.started'),
+          ...base(conversationId, 2, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
           anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
@@ -852,22 +898,22 @@ describe('agent event store', () => {
       };
       expect(runMeta.anchor).toEqual({ type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } });
 
-      const index = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+      const index = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
       expect(index.runIds).toEqual([]);
-      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1]);
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1]);
     });
   });
 
   test('preserves existing runs when appending after the derived run index is missing', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Run index merge' },
-        { ...base(sessionId, 2, 'run.started'), runId: 'run-1' },
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Run index merge' },
+        { ...base(conversationId, 2, 'run.started'), runId: 'run-1' },
         {
-          ...base(sessionId, 3, 'assistant_message.started'),
+          ...base(conversationId, 3, 'assistant_message.started'),
           runId: 'run-1',
           messageId: 'assistant-1',
           parentMessageId: null,
@@ -875,14 +921,14 @@ describe('agent event store', () => {
           modelId: 'test',
         },
       ]);
-      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+      await rm(store.paths(conversationId).conversationRunIndexPath, { force: true });
 
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 4, 'run.started'), runId: 'run-2' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 4, 'run.started'), runId: 'run-2' },
       ]);
 
-      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
-      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+      const rebuilt = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
       expect(rebuilt.runIds).toEqual(['run-1', 'run-2']);
@@ -891,12 +937,12 @@ describe('agent event store', () => {
 
   test('does not rewrite metadata for streaming delta-only appends', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const runId = 'run-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Delta test' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Delta test' },
         {
-          ...base(sessionId, 2, 'run.started'),
+          ...base(conversationId, 2, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
           kind: 'turn',
@@ -911,12 +957,12 @@ describe('agent event store', () => {
           retention: 'hot',
         },
       ]);
-      const conversationMetaBefore = await readFile(store.paths(sessionId).conversationMetaPath, 'utf8');
+      const conversationMetaBefore = await readFile(store.paths(conversationId).conversationMetaPath, 'utf8');
       const runMetaBefore = await readFile(store.runPaths(runId).runMetaPath, 'utf8');
-      const runIndexBefore = await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8');
+      const runIndexBefore = await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8');
 
-      await store.appendEvents(sessionId, [{
-        ...base(sessionId, 3, 'assistant_message.delta'),
+      await store.appendEvents(conversationId, [{
+        ...base(conversationId, 3, 'assistant_message.delta'),
         runId,
         messageId: 'assistant-1',
         delta: { type: 'text_delta', text: 'stream' },
@@ -925,15 +971,15 @@ describe('agent event store', () => {
         endedAt: 1_700_000_000_003,
       }]);
 
-      await expect(readFile(store.paths(sessionId).conversationMetaPath, 'utf8')).resolves.toBe(conversationMetaBefore);
+      await expect(readFile(store.paths(conversationId).conversationMetaPath, 'utf8')).resolves.toBe(conversationMetaBefore);
       await expect(readFile(store.runPaths(runId).runMetaPath, 'utf8')).resolves.toBe(runMetaBefore);
-      await expect(readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')).resolves.toBe(runIndexBefore);
+      await expect(readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')).resolves.toBe(runIndexBefore);
     });
   });
 
   test('persists terminal usage for failed and cancelled runs', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const usage = {
         input: 1,
         output: 2,
@@ -942,12 +988,12 @@ describe('agent event store', () => {
         totalTokens: 10,
         cost: { input: 0.1, output: 0.2, cacheRead: 0.03, cacheWrite: 0.04, total: 0.37 },
       };
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Usage test' },
-        { ...base(sessionId, 2, 'run.started'), runId: 'run-failed' },
-        { ...base(sessionId, 3, 'run.failed'), runId: 'run-failed', errorMessage: 'Nope', usage },
-        { ...base(sessionId, 4, 'run.started'), runId: 'run-cancelled' },
-        { ...base(sessionId, 5, 'run.cancelled'), runId: 'run-cancelled', usage },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Usage test' },
+        { ...base(conversationId, 2, 'run.started'), runId: 'run-failed' },
+        { ...base(conversationId, 3, 'run.failed'), runId: 'run-failed', errorMessage: 'Nope', usage },
+        { ...base(conversationId, 4, 'run.started'), runId: 'run-cancelled' },
+        { ...base(conversationId, 5, 'run.cancelled'), runId: 'run-cancelled', usage },
       ]);
 
       const failedMeta = JSON.parse(await readFile(store.runPaths('run-failed').runMetaPath, 'utf8')) as { usage?: unknown };
@@ -959,25 +1005,25 @@ describe('agent event store', () => {
 
   test('keeps any run-scoped event with a runId in the run log', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const runId = 'run-1';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Run scoped' },
-        { ...base(sessionId, 2, 'run.started'), runId },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Run scoped' },
+        { ...base(conversationId, 2, 'run.started'), runId },
         {
-          ...base(sessionId, 3, 'task.created'),
+          ...base(conversationId, 3, 'task.created'),
           runId,
           taskId: 'task-1',
           title: 'Run-local task',
         },
       ]);
 
-      const conversationRaw = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
+      const conversationRaw = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
       const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
       expect(conversationRaw).not.toContain('task.created');
       expect(runRaw).toContain('task.created');
-      expect((await store.readEvents(sessionId)).map((event) => event.type)).toEqual([
-        'session.created',
+      expect((await store.readEvents(conversationId)).map((event) => event.type)).toEqual([
+        'conversation.created',
         'run.started',
         'task.created',
       ]);
@@ -986,19 +1032,19 @@ describe('agent event store', () => {
 
   test('reports malformed JSONL line numbers', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      const eventsPath = store.paths(sessionId).conversationEventsPath;
+      const conversationId = 'conversation-1';
+      const eventsPath = store.paths(conversationId).conversationEventsPath;
       await mkdir(path.dirname(eventsPath), { recursive: true });
       await writeFile(eventsPath, '{"v":1}\nnot-json\n', 'utf8');
 
-      await expect(store.readEvents(sessionId)).rejects.toThrow(/\.jsonl:2/);
+      await expect(store.readEvents(conversationId)).rejects.toThrow(/\.jsonl:2/);
     });
   });
 
   test('stores payload bytes outside the JSONL event stream', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
-      const payload = await store.writePayload(sessionId, {
+      const conversationId = 'conversation-1';
+      const payload = await store.writePayload(conversationId, {
         id: 'screen/shot',
         data: Buffer.from('image-bytes'),
         mimeType: 'image/png',
@@ -1019,16 +1065,16 @@ describe('agent event store', () => {
       expect(agentPayloadFileName(payload.id, payload.mimeType)).toMatch(/^screen_shot-[a-f0-9]{12}\.png$/);
       expect(agentPayloadFileName('screen:shot', payload.mimeType)).not.toBe(agentPayloadFileName(payload.id, payload.mimeType));
       expect(agentPayloadFileName('screen_shot', payload.mimeType)).not.toBe(agentPayloadFileName(payload.id, payload.mimeType));
-      await expect(readFile(store.payloadPath(sessionId, payload), 'utf8')).resolves.toBe('image-bytes');
-      await expect(store.readPayload(sessionId, payload)).resolves.toEqual(Buffer.from('image-bytes'));
+      await expect(readFile(store.payloadPath(conversationId, payload), 'utf8')).resolves.toBe('image-bytes');
+      await expect(store.readPayload(conversationId, payload)).resolves.toEqual(Buffer.from('image-bytes'));
     });
   });
 
   test('stores run-scoped payload bytes under the owning run', async () => {
     await withStore(async (store) => {
-      const sessionId = 'session-1';
+      const conversationId = 'conversation-1';
       const runId = 'run-1';
-      const payload = await store.writePayload(sessionId, {
+      const payload = await store.writePayload(conversationId, {
         runId,
         id: 'tool-output-1',
         data: 'tool bytes',
@@ -1036,9 +1082,9 @@ describe('agent event store', () => {
         role: 'tool_output',
       });
 
-      expect(payload.scope).toEqual({ type: 'run', conversationId: sessionId, runId });
-      await expect(readFile(store.payloadPath(sessionId, payload), 'utf8')).resolves.toBe('tool bytes');
-      expect(store.payloadPath(sessionId, payload).startsWith(store.runPaths(runId).payloadsDir)).toBe(true);
+      expect(payload.scope).toEqual({ type: 'run', conversationId: conversationId, runId });
+      await expect(readFile(store.payloadPath(conversationId, payload), 'utf8')).resolves.toBe('tool bytes');
+      expect(store.payloadPath(conversationId, payload).startsWith(store.runPaths(runId).payloadsDir)).toBe(true);
     });
   });
 
@@ -1082,7 +1128,7 @@ describe('agent event store', () => {
 
       expect(first.fact).toBe('User prefers concise engineering answers.');
       expect(second.fact).toBe('Project codename is Tenon.');
-      await expect(readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8')).resolves.toContain('memory.entry_added');
+      await expect(readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8')).resolves.toContain('memory.entry_added');
 
       const updated = await store.updateMemoryEntry(principal, 'memory-1', {
         fact: 'User prefers direct, concise engineering answers.',
@@ -1100,7 +1146,7 @@ describe('agent event store', () => {
         { id: 'memory-1', status: 'invalidated' },
       ]);
 
-      const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
+      const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n')).toHaveLength(4);
       const restarted = new AgentEventStore(root);
       expect(await restarted.listMemoryEntries(principal, { includeInvalidated: true })).toMatchObject([
@@ -1126,7 +1172,7 @@ describe('agent event store', () => {
         sources: [{ conversationId: 'conversation-2' }],
         createdAt: 20,
       });
-      const eventsPath = store.agentPaths(agentId).memoryEventsPath;
+      const eventsPath = store.memoryPaths(principal).memoryEventsPath;
       const intact = await readFile(eventsPath, 'utf8');
 
       // Interrupted append (e.g. quit mid-Dream) leaves a torn FINAL line: drop it, keep reading.
@@ -1237,7 +1283,7 @@ describe('agent event store', () => {
         await store.updateMemoryEntry(principal, 'memory-churn', { fact: `Version ${index}.` });
       }
 
-      const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
+      const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n').length).toBeLessThan(20);
       expect(await store.listMemoryEntries(principal)).toMatchObject([
         { id: 'memory-churn', fact: 'Version 70.' },

@@ -452,7 +452,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const debugSnapshot = {
       id: 'debug-snapshot-1',
       source: 'provider_payload',
-      conversationId: 'mock-agent-session',
+      conversationId: 'mock-agent-conversation',
       conversationTitle: 'conversation',
       turnIndex: 1,
       queryIndex: 1,
@@ -522,14 +522,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const agentConversations = [
       {
-        id: 'mock-agent-session',
+        id: 'mock-agent-conversation',
         title: 'Agent System',
         createdAt: now - 100_000,
         updatedAt: now - 1_000,
         messageCount: 33,
       },
       {
-        id: 'mock-agent-session-2',
+        id: 'mock-agent-conversation-2',
         title: null,
         createdAt: now - 200_000,
         updatedAt: now - 80_000,
@@ -545,7 +545,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         fact: 'Prefer concise, direct implementation notes in agent review work.',
         originWorkspace: '/mock/local-root',
         sources: [{
-          conversationId: 'mock-agent-session',
+          conversationId: 'mock-agent-conversation',
           runId: 'run-memory-e2e',
           eventId: 'event-memory-e2e',
         }],
@@ -555,10 +555,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       {
         id: 'memory-forgotten',
         principal: { type: 'user', userId: 'local-user' },
-        fact: 'Use the old session vocabulary in public UI.',
+        fact: 'Use the old conversation vocabulary in public UI.',
         originWorkspace: '/mock/local-root',
         sources: [{
-          conversationId: 'mock-agent-session',
+          conversationId: 'mock-agent-conversation',
           runId: 'run-memory-old',
           eventId: 'event-memory-old',
         }],
@@ -1421,9 +1421,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         calls.push({ cmd, args: clone(args) });
         if (cmd === 'agent_create_conversation' || cmd === 'agent_restore_latest_conversation' || cmd === 'agent_restore_conversation') {
           return clone({
-            conversationId: 'mock-agent-session',
+            conversationId: 'mock-agent-conversation',
             renderProjection: {
-              conversationId: 'mock-agent-session',
+              conversationId: 'mock-agent-conversation',
               revision: 1,
               conversationTitle: 'Agent System',
               activeRunId: null,
@@ -1445,7 +1445,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
         if (cmd === 'agent_list_conversations') return clone(agentConversations) as T;
         if (cmd === 'agent_rename_conversation') {
-          const target = agentConversations.find((session) => session.id === args.conversationId);
+          const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
           if (target) {
             target.title = String(args.title ?? '');
             target.updatedAt = now += 1;
@@ -1453,7 +1453,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ ok: true }) as T;
         }
         if (cmd === 'agent_delete_conversation') {
-          const index = agentConversations.findIndex((session) => session.id === args.conversationId);
+          const index = agentConversations.findIndex((conversation) => conversation.id === args.conversationId);
           if (index >= 0) agentConversations.splice(index, 1);
           return clone({ ok: true }) as T;
         }
@@ -1645,10 +1645,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return undefined as T;
         }
         if (cmd === 'agent_debug_snapshot') {
-          return clone(String(args.conversationId) === 'mock-agent-session' ? debugSnapshot : null) as T;
+          return clone(String(args.conversationId) === 'mock-agent-conversation' ? debugSnapshot : null) as T;
         }
         if (cmd === 'agent_debug_history') {
-          return clone(String(args.conversationId) === 'mock-agent-session' ? [debugSnapshot] : []) as T;
+          return clone(String(args.conversationId) === 'mock-agent-conversation' ? [debugSnapshot] : []) as T;
         }
         if (cmd === 'agent_debug_totals') {
           return clone(debugTotals) as T;

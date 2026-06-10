@@ -217,8 +217,8 @@ export function buildAgentRenderProjection(
   state: AgentEventReplayState,
   options: BuildAgentRenderProjectionOptions,
 ): AgentRenderProjection {
-  if (!state.session) {
-    throw new Error('Cannot build agent render projection before session.created');
+  if (!state.conversation) {
+    throw new Error('Cannot build agent render projection before conversation.created');
   }
 
   const activePath = getAgentEventActivePath(state);
@@ -255,9 +255,9 @@ export function buildAgentRenderProjection(
   }
 
   return {
-    conversationId: state.session.id,
+    conversationId: state.conversation.id,
     revision: options.revision,
-    conversationTitle: state.session.title,
+    conversationTitle: state.conversation.title,
     activeRunId: options.activeRunId ?? null,
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,

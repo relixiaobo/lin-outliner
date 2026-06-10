@@ -779,7 +779,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('keeps the restored session through unsubscribe and resubscribe races', async () => {
+  test('keeps the restored conversation through unsubscribe and resubscribe races', async () => {
     const restore = deferred<AgentConversation>();
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('persisted'), branches: null },
@@ -800,7 +800,7 @@ describe('agent runtime store', () => {
     unsubscribeSecond();
   });
 
-  test('closes the previous runtime session only on explicit new session', async () => {
+  test('closes the previous runtime conversation only on explicit new conversation', async () => {
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },
     ]));
@@ -1020,7 +1020,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('ignores stale initial restore after an explicit session change', async () => {
+  test('ignores stale initial restore after an explicit conversation change', async () => {
     const restore = deferred<AgentConversation>();
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },

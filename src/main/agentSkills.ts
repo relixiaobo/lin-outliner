@@ -81,7 +81,7 @@ export interface SkillLoadOptions {
   includeUserSkills?: boolean;
   additionalSkillDirectories?: string[];
   builtInSkills?: BuiltInSkillInput[];
-  sessionId?: string;
+  conversationId?: string;
   executeSkillShell?: SkillShellExecutor;
   executeForkedSkill?: SkillForkExecutor;
   provenanceStore?: AgentSkillProvenanceStore;
@@ -115,7 +115,7 @@ export interface AgentSkillPreviousVersion {
 /**
  * Persists per-skill trust records (agent-write provenance, user acceptance, one undo
  * version), so ratification survives a restart. The registry always keeps an in-memory
- * record as well, so within a session the gate holds even without a wired store.
+ * record as well, so within a conversation the gate holds even without a wired store.
  */
 export interface AgentSkillProvenanceStore {
   load(): Promise<Record<string, AgentSkillProvenanceRecord>>;
@@ -274,7 +274,7 @@ class SkillListingState {
 
 export class AgentSkillRuntime {
   private readonly registry: SkillRegistry;
-  private readonly sessionId: string;
+  private readonly conversationId: string;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeForkedSkill?: SkillForkExecutor;
   private readonly listedSkills = new SkillListingState();
@@ -286,7 +286,7 @@ export class AgentSkillRuntime {
 
   constructor(options: SkillLoadOptions = {}) {
     this.registry = new SkillRegistry(options);
-    this.sessionId = options.sessionId?.trim() || 'lin-agent-session';
+    this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
     this.executeSkillShell = options.executeSkillShell;
     this.executeForkedSkill = options.executeForkedSkill;
   }
@@ -299,7 +299,7 @@ export class AgentSkillRuntime {
     this.disabledSkills = disabledSkills;
   }
 
-  resetSessionState(): void {
+  resetConversationState(): void {
     this.listedSkills.clear();
     this.pendingSteeringMessages.length = 0;
     this.activePermissionRules.clear();
@@ -427,8 +427,8 @@ export class AgentSkillRuntime {
 
   /**
    * Re-derive trust from the persisted store after a trust change made through a
-   * different runtime (the Settings panel runs sessionless). A freshly ratified
-   * skill is steered into the session's model listing like any skill write.
+   * different runtime (the Settings panel runs conversationless). A freshly ratified
+   * skill is steered into the conversation's model listing like any skill write.
    */
   async refreshTrustRecords(): Promise<void> {
     this.registry.refreshTrustRecords();
@@ -492,7 +492,7 @@ export class AgentSkillRuntime {
     }
     let renderedContent: string;
     try {
-      renderedContent = await renderSkillContent(skill, input.args ?? '', this.sessionId, this.executeSkillShell);
+      renderedContent = await renderSkillContent(skill, input.args ?? '', this.conversationId, this.executeSkillShell);
     } catch (error) {
       return {
         ok: false,
@@ -774,7 +774,7 @@ class SkillRegistry {
     try {
       await this.provenanceStore?.save(normalized, record);
     } catch {
-      // The in-memory record still guards this session; a persistence failure must
+      // The in-memory record still guards this conversation; a persistence failure must
       // not fail the skill write itself.
     }
   }
@@ -793,7 +793,7 @@ class SkillRegistry {
       acceptedHash: skill.contentHash,
     };
     // Acceptance exists to be durable: persist first and surface a failure instead
-    // of holding a session-only "accepted" state that silently vanishes on restart.
+    // of holding an in-memory-only "accepted" state that silently vanishes on restart.
     await this.provenanceStore?.save(normalized, record);
     this.provenance.set(normalized, record);
     this.reloadAll();
@@ -855,7 +855,7 @@ class SkillRegistry {
     }
     await writeFile(skill.skillFile, previous.content, 'utf8');
     // The file write is the primary mutation; provenance restore is best-effort like
-    // the agent-write path (the in-memory record still guards this session).
+    // the agent-write path (the in-memory record still guards this conversation).
     const record: AgentSkillProvenanceRecord = {
       ...(previous.agentHash ? { agentHash: previous.agentHash } : {}),
       ...(existing?.acceptedHash ? { acceptedHash: existing.acceptedHash } : {}),
@@ -897,7 +897,7 @@ class SkillRegistry {
   /**
    * Re-derive trust for this registry from the persisted store: drop the in-memory
    * trust map and reload. Used to propagate a trust change made through ANOTHER
-   * registry instance over the same store (each live session holds its own). The
+   * registry instance over the same store (each live conversation holds its own). The
    * in-memory-newer-wins merge is intentionally bypassed — after an explicit trust
    * action the store IS the newest state.
    */
@@ -920,7 +920,7 @@ class SkillRegistry {
       }
     } catch {
       // A corrupt provenance store must not break skill loading; the in-memory
-      // record still guards the current session.
+      // record still guards the current conversation.
     }
   }
 
@@ -1330,13 +1330,13 @@ const SKILL_SHELL_INLINE_PATTERN = /(?<=^|\s)!`([^`]+)`/gm;
 async function renderSkillContent(
   skill: SkillDefinition,
   args: string,
-  sessionId: string,
+  conversationId: string,
   executeSkillShell?: SkillShellExecutor,
 ): Promise<string> {
   let content = `Base directory for this skill: ${normalizePathForPrompt(skill.rootDir)}\n\n${skill.body}`;
   content = substituteArguments(content, args, true, skill.argumentNames);
   content = content.replace(/\$\{AGENT_SKILL_DIR\}/g, normalizePathForPrompt(skill.rootDir));
-  content = content.replace(/\$\{AGENT_SESSION_ID\}/g, sessionId);
+  content = content.replace(/\$\{AGENT_CONVERSATION_ID\}/g, conversationId);
   return executeShellCommandsInSkillContent(content, skill, executeSkillShell);
 }
 

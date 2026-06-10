@@ -19,7 +19,7 @@ Everything else is derived:
 - pi-agent-core `Agent.state`
 - transcript render rows
 - debug timelines
-- session list/search metadata
+- conversation list/search metadata
 - branch tree state
 - checkpoints
 
@@ -75,7 +75,7 @@ persisted product state.
 
 The current main branch implements this architecture through these modules:
 
-- `src/main/agentRuntime.ts`: owns session lifecycle, stable runtime agent
+- `src/main/agentRuntime.ts`: owns conversation lifecycle, stable runtime agent
   identity, active-run state, pi-agent-core execution, Tenon event append,
   projection emission, attachment persistence, debug capture, and checkpoint
   writes.
@@ -257,7 +257,7 @@ Authoritative:
 - `conversations/<id>/segments/*.jsonl`
 - `runs/<id>/events.jsonl`
 - `agents/<id>/identity.json`
-- `agents/<id>/memory/events.jsonl`
+- `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
 - payload files referenced by event payload refs
 
 Derived and rebuildable:
@@ -267,21 +267,25 @@ Derived and rebuildable:
 - `conversations/<id>/meta.json`
 - `conversations/<id>/runs.json`
 
-Clean-cut startup policy:
+Clean-cut startup policy (pre-release, no migration):
 
-- `sessions/` is the obsolete pre-M0 flat layout. The event store never reads or
-  migrates it.
-- On first store access, if `sessions/` exists, delete `sessions/` and
-  `indexes/`, and `agents/*/memory/` so stale session indexes or memory logs
-  cannot cross the storage-format cut. Agent identity records are preserved.
-- If a legacy session index survives without matching `conversations/`, treat it as a
-  stale projection and rebuild it from the current conversation directories.
+- On first store access, the store probes for any pre-conversation-vocabulary
+  artifact: a pre-M0 `sessions/` tree, a legacy `indexes/session-index.json`, an
+  agent pool inside the identity directory (`agents/<id>/memory/`), or a
+  conversation log whose head event still speaks `session.*` / carries
+  `sessionId`.
+- Any hit hard-deletes the WHOLE agent data root — identities, conversations,
+  runs, pools, indexes — and the layout is recreated lazily. There is no legacy
+  reader, adapter, or migration.
+- An orphaned CURRENT `conversation-index.json` (index without matching
+  `conversations/`) is not a legacy marker; it is rebuilt from the conversation
+  directories.
 
-Renderer IPC uses `conversationId` in command payloads. The lower-level event
-schema still names the delivery log key `sessionId`; in storage that value is
-the conversation id. `AgentEventStore.readEvents(sessionId)` joins the
-conversation segment and the run logs listed in `conversations/<id>/runs.json`,
-then sorts by seq before replay.
+The event vocabulary is `conversation` end to end: renderer IPC, the event
+schema, and storage all key the delivery log by `conversationId`.
+`AgentEventStore.readEvents(conversationId)` joins the conversation segment and
+the run logs listed in `conversations/<id>/runs.json`, then sorts by seq before
+replay.
 
 ## Event Store
 
@@ -292,14 +296,14 @@ seq-log primitive for JSONL serialization, per-key write queues, latest-seq
 caches, chunked physical-tail reads, offset-bounded replay, and file-size
 checkpoint guards. Conversation replay still joins the conversation segment with
 its indexed run logs and sorts by `seq`; memory uses the same primitive with its
-own per-agent key.
+own per-principal key.
 
 ```ts
 interface AgentEventBase {
   v: 1;
   eventId: string;
   seq: number;
-  sessionId: string;
+  conversationId: string;
   type: AgentEventType;
   createdAt: number;
   actor: AgentActor;
@@ -319,7 +323,7 @@ type AgentActor =
 
 Rules:
 
-- `seq` is monotonic per session.
+- `seq` is monotonic per conversation.
 - Events are append-only.
 - Corrections are new events.
 - Every persisted JSON shape has `v`.
@@ -334,9 +338,9 @@ Current event schema:
 
 ```ts
 type AgentEventType =
-  | 'session.created'
-  | 'session.renamed'
-  | 'session.settings_changed'
+  | 'conversation.created'
+  | 'conversation.renamed'
+  | 'conversation.settings_changed'
   | 'debug.snapshot.created'
   | 'branch.selected'
   | 'user_message.created'
@@ -428,7 +432,7 @@ Replay projects two derived structures on `AgentEventReplayState`:
   after a read cursor re-counts as unread.
 
 `notification.created` / `notification.read` are off-floor attention bookkeeping,
-**not** conversation activity: they do not bump the session's `updatedAt` (so a
+**not** conversation activity: they do not bump the conversation's `updatedAt` (so a
 background delivery or a read never reorders or re-timestamps the conversation
 list). The folded `unreadCount` is also carried on the persisted conversation index
 (folded incrementally — `+1` per created, `0` per read-through-tail — matching the
@@ -728,7 +732,7 @@ Deduplication:
 
 - Payload identity should be content-addressed by `sha256` where practical.
 - Multiple events may reference the same payload id.
-- Global cross-session dedupe is optional; session-local correctness is
+- Global cross-conversation dedupe is optional; per-conversation correctness is
   required.
 
 ## Projections
@@ -840,9 +844,9 @@ It must not:
 - force payload refs into normal chat state
 - block transcript rendering
 
-### Session index projection
+### Conversation index projection
 
-Session list/search metadata is a derived index.
+Conversation list/search metadata is a derived index.
 
 It may cache:
 
@@ -854,16 +858,17 @@ It may cache:
 - user message summaries
 - tags later if needed
 
-If session/search/user-message indexes are corrupt or missing, discard them and
+If conversation/search/user-message indexes are corrupt or missing, discard them and
 rebuild them from event logs.
 
 Search/user-message indexes are candidate projections, not authority. Their
 normalized text uses the shared text-search analyzer so node search and internal
 conversation-history lookup agree on whitespace, punctuation, CJK grams, and
 query-term handling. Internal conversation lookup must still apply
-session/date/current-session filters, replay each candidate session's visible
-active branch, and verify the visible message text before returning a hit. It
-sorts verified hits by relevance first, then session recency, then message
+conversation/date/current-conversation filters, replay each candidate
+conversation's visible active branch, and verify the visible message text before
+returning a hit. It sorts verified hits by relevance first, then conversation
+recency, then message
 recency; recent-user-message lookup stays recency-only. The foreground model sees
 only `recall` over active durable memory entries; raw conversation lookup is
 reserved for runtime-owned evidence expansion, Dream/extraction, and diagnostics.
@@ -880,7 +885,7 @@ provider chunks
   -> render projection flush <= 1/frame
 ```
 
-Do not persist or send a full session snapshot per token.
+Do not persist or send a full conversation snapshot per token.
 
 Canonical text deltas should be coalesced into short segments:
 
@@ -951,14 +956,14 @@ Checkpoint writes only commit when the supplied replay state matches the current
 event-log tail `seq` and event id; stale replay state must not write a
 checkpoint.
 
-## Large Session Performance
+## Large Conversation Performance
 
-A large session should not block normal outliner editing or chat rendering.
+A large conversation should not block normal outliner editing or chat rendering.
 
 The hot path must never do these things:
 
 - parse the whole event log for every token
-- send the whole session over IPC for every update
+- send the whole conversation over IPC for every update
 - keep every transcript row mounted in the DOM
 - inline large tool/media payloads into render rows
 - re-lex completed markdown blocks during streaming
@@ -972,7 +977,7 @@ Open-conversation policy:
 - If no usable checkpoint exists, replay falls back to the full joined log; a
   background progress UI can be added later if very large cold conversations need it.
 - The active transcript starts from the render projection and uses row
-  virtualization for long sessions.
+  virtualization for long conversations.
 
 Render policy:
 
@@ -980,7 +985,7 @@ Render policy:
 - The streaming row is the only row updated per frame.
 - Transcript virtualization starts before row count becomes visible to users.
 - Large text/tool outputs are windowed inside their own row.
-- Expanding media or debug payloads creates localized state, not a new session
+- Expanding media or debug payloads creates localized state, not a new conversation
   projection.
 
 Storage policy:
@@ -1015,7 +1020,7 @@ user sends prompt
 
 ```txt
 open app
-  -> clean obsolete agent/sessions + derived indexes if present
+  -> clean-cut probe: any old-format artifact wipes the agent data root
   -> load conversation-index cache if it matches conversations/
   -> load selected conversation checkpoint
   -> replay later events
@@ -1052,7 +1057,7 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Split conversation/run filesystem layout with conversation segments,
   run-local `events.jsonl`, run meta, scoped payloads, and agent identity
   records.
-- Strict append ordering, per-session write queues, and replay reducers.
+- Strict append ordering, per-conversation write queues, and replay reducers.
 - Parent-linked message chain with active branch projection.
 - pi-ai `Message[]` derivation from the joined conversation/run active event
   path.
@@ -1065,7 +1070,7 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - `AgentRenderProjection` IPC instead of full chat snapshots.
 - Provider debug payload refs and event-derived debug history/totals.
 - Large tool output payload refs with bounded model-visible labels.
-- Session index, search index, and user-message index as rebuildable projections.
+- Conversation index, search index, and user-message index as rebuildable projections.
 - Checkpoint writer/loader with target-offset + seq tail replay,
   corrupt-checkpoint fallback, atomic writes, stale-state guards, and best-effort retention of the latest three
   valid checkpoints.
@@ -1099,7 +1104,7 @@ The current renderer contract is `AgentRenderProjection`, carried by
   terminal/needs-input states, the durable per-conversation in-stream message,
   the unread badge in the conversation list, and the opt-in OS notification
   (M2 — [[agent-conversation-model]] §Background tasks).
-- Optional checkpoint retention preferences if real sessions show storage
+- Optional checkpoint retention preferences if real conversations show storage
   pressure.
 
 ## Success Criteria
@@ -1126,4 +1131,4 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Rendering raw event logs as the transcript.
 - Keeping mutable tree snapshots as durable truth.
 - Streaming outliner document edits token by token.
-- Building a global blob store before session-local payload correctness exists.
+- Building a global blob store before per-conversation payload correctness exists.

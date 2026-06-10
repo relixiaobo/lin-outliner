@@ -2066,9 +2066,9 @@ Parameters:
 
 Memory is keyed **per-principal** (the subject a fact is *about*): every
 `MemoryEntry` and memory event carries `principal: Principal`, addressed via
-`principalKey` (`user:<userId> | agent:<agentId>`). An **agent-principal pool**
-is its existing identity directory `agents/<agentId>/memory/events.jsonl`; the
-**user pool** is `principals/user-<userId>/memory/events.jsonl`. The runtime
+`principalKey` (`user:<userId> | agent:<agentId>`). Every pool lives under one
+path rule — `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
+(`agents/<agentId>/` keeps only `identity.json`). The runtime
 projects entries from `memory.entry_added`, `memory.entry_updated`, and
 `memory.entry_removed` events, and projects Dream state from `dream.completed`.
 Forgetting remains idempotent through the Settings/Profile management path.

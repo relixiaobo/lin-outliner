@@ -46,13 +46,14 @@ only in id scheme, writer, retention, and vocabulary.
 |---|---|---|---|
 | **Conversation** | `conversationId` | communication: user message + final assistant reply + membership | ~2 events/turn |
 | **Run** | `runId` (anchored to a conversation) | all execution: assistant deltas, `tool_call ↔ tool_result`, thinking, permission, ask/widget | 10–50+/turn, self-cleans |
-| **Memory** | `agentId` (or user principal) | memory-mutation + dream events | sub-linear |
+| **Memory** | principal (`agent-<agentId>` / `user-<userId>` pool under `principals/`) | memory-mutation + dream events | sub-linear |
 
 Write-time split routes run-execution events to the run log and only communication
 to the conversation log (`agentEventStore.ts` `appendSplitEvents` / `isRunLogEvent`),
-which is what keeps the conversation log at ~2 events/turn. The legacy flat `sessions/`
-log is hard-deleted on startup; the only residue is the internal field name `sessionId`
-(cosmetic — paths/methods are `conversation*`).
+which is what keeps the conversation log at ~2 events/turn. Storage and code speak one
+vocabulary end to end (`conversation.*` event types, `conversationId` on every event);
+on startup any old-format artifact hard-deletes the agent data root (pre-release
+clean-cut, no migration).
 
 ## Two kinds of agent-to-agent relationship
 
