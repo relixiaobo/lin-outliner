@@ -154,47 +154,74 @@ async function sendMessageApprovingAgent(
   await sendPromise;
 }
 
+/** Streams whatever `pick` returns for each model call — the content-dispatched base
+ *  that `scriptedStream` layers its ordered queue on top of. Use it directly when the
+ *  call order is not deterministic (e.g. a background fork racing its parent). */
+function respondingStream(
+  pick: (context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage | Promise<AssistantMessage>,
+): StreamFn {
+  return ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+    const stream = createAssistantMessageEventStream();
+    queueMicrotask(async () => {
+      try {
+        const message = normalizeAssistantMessage(await pick(context, options, model), model);
+        if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+          stream.push({ type: 'error', reason: message.stopReason, error: message });
+          stream.end(message);
+          return;
+        }
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
+        stream.end(message);
+      } catch (error) {
+        const message = normalizeAssistantMessage(
+          fauxAssistantMessage([], {
+            stopReason: 'error',
+            errorMessage: error instanceof Error ? error.message : String(error),
+          }),
+          model,
+        );
+        stream.push({ type: 'error', reason: 'error', error: message });
+        stream.end(message);
+      }
+    });
+    return stream;
+  }) as StreamFn;
+}
+
 function scriptedStream(
   responses: Array<AssistantMessage | ((context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage | Promise<AssistantMessage>)>,
   onCall: (model: Model<Api>, context: Context) => void,
 ): { streamFn: StreamFn; pendingCount: () => number } {
   const queue = [...responses];
+  const inner = respondingStream((context, options, model) => {
+    const step = queue.shift();
+    if (!step) return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'No more scripted responses queued.' });
+    return typeof step === 'function' ? step(context, options, model) : step;
+  });
   return {
     pendingCount: () => queue.length,
     streamFn: ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
       onCall(model, context);
-      const stream = createAssistantMessageEventStream();
-      const step = queue.shift();
-      queueMicrotask(async () => {
-        try {
-          const response = step
-            ? typeof step === 'function'
-              ? await step(context, options, model)
-              : step
-            : fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'No more scripted responses queued.' });
-          const message = normalizeAssistantMessage(response, model);
-          if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-            stream.push({ type: 'error', reason: message.stopReason, error: message });
-            stream.end(message);
-            return;
-          }
-          stream.push({ type: 'start', partial: { ...message, content: [] } });
-          stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
-          stream.end(message);
-        } catch (error) {
-          const message = normalizeAssistantMessage(
-            fauxAssistantMessage([], {
-              stopReason: 'error',
-              errorMessage: error instanceof Error ? error.message : String(error),
-            }),
-            model,
-          );
-          stream.push({ type: 'error', reason: 'error', error: message });
-          stream.end(message);
-        }
-      });
-      return stream;
+      return inner(model, context, options);
     }) as StreamFn,
+  };
+}
+
+/** contextWindow 20_000 is load-bearing: small enough that the scripted large tool
+ *  outputs push the estimated context past the auto-compact threshold. */
+function compactTestModel(id: string, name: string): Model<Api> {
+  return {
+    id,
+    name,
+    provider: 'openai',
+    api: 'openai-completions',
+    baseUrl: '',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 20_000,
+    maxTokens: 1_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   };
 }
 
@@ -232,6 +259,9 @@ describe('agent runtime subagents', () => {
     expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fresh' }, 5)).toBe(0);
     expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork', dreamEvidenceStartMessageIndex: 3 }, 5)).toBe(3);
     expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork' }, 5)).toBe(5);
+    // A boundary beyond the payload is stale coordinates from a superseded (compacted)
+    // transcript: the successor payload is fresh evidence in its entirety.
+    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork', dreamEvidenceStartMessageIndex: 40 }, 1)).toBe(0);
   });
 
   test('runs a fresh subagent from an AGENT.md definition and returns only the compact result to the parent', async () => {
@@ -795,18 +825,7 @@ describe('agent runtime subagents', () => {
       ],
       () => undefined,
     );
-    const compactModel: Model<Api> = {
-      id: 'subagent-compact-test-model',
-      name: 'Subagent Compact Test Model',
-      provider: 'openai',
-      api: 'openai-completions',
-      baseUrl: '',
-      reasoning: false,
-      input: ['text'],
-      contextWindow: 20_000,
-      maxTokens: 1_000,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
+    const compactModel = compactTestModel('subagent-compact-test-model', 'Subagent Compact Test Model');
 
     const { AgentRuntime } = await loadRuntimeModule();
     const sink = createWindowSink();
@@ -920,6 +939,374 @@ describe('agent runtime subagents', () => {
     expect(script.pendingCount()).toBe(0);
     expect(retriedContext).toContain('Conversation compacted.');
     expect(retriedContext).toContain('Reactive subagent compact summary.');
+  });
+
+  // Evidence-preserving compaction (the memory invariant, [[agent-data-model]]): for every
+  // run, across any sequence of auto/manual compactions, (already-Dreamed content) ∪
+  // (still-pending content) covers 100% of the run's semantic content — no content is ever
+  // both un-Dreamed AND unreachable. This drives a REAL auto-compaction in a fork subagent
+  // (whose compacted summary becomes the only durable evidence of its work) plus a REAL
+  // manual /compact on the parent conversation, then asserts one Dream pass still covers
+  // both sides — and that the distilled fact's source resolves back to the summary evidence.
+  test('a fork run that auto-compacts is still Dreamed: the compacted summary reaches extraction', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-compact-dream-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-compact-dream-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childContexts: string[] = [];
+    const dreamRequests: string[] = [];
+    let parentCalls = 0;
+    const pickResponse = (context: Context): AssistantMessage => {
+      const text = textFromContext(context);
+      if (text.includes('lin-fork-subagent') || text.includes('Conversation compacted.')) {
+        childContexts.push(text);
+        if (!text.includes('Conversation compacted.')) {
+          return fauxAssistantMessage(
+            Array.from({ length: 12 }, (_item, index) => fauxToolCall('bash', {
+              command: `python3 -c "print('${index}' * 60000)"`,
+              description: `Print fork output block ${index}`,
+            }, { id: `tool-fork-compact-bash-${index}` })),
+            { stopReason: 'toolUse' },
+          );
+        }
+        return fauxAssistantMessage(fauxText(
+          `Fork conclusion: the teal pipeline is verified end to end. ${'fork compact evidence '.repeat(90)}`,
+        ));
+      }
+      parentCalls += 1;
+      if (parentCalls === 1) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'fork compact dream',
+            prompt: 'Verify the teal pipeline in a fork.',
+          }, { id: 'tool-agent-fork-compact-dream' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('Parent final after fork.'));
+    };
+    // The fork runs in the background, racing the parent for model calls — dispatch by
+    // context content instead of a deterministic scripted order.
+    const streamFn = respondingStream((context) => pickResponse(context));
+    const compactModel = compactTestModel('fork-compact-dream-test-model', 'Fork Compact Dream Test Model');
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'fork-compact-dream-test-model',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        providerModelResolver: () => compactModel,
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn,
+        completeSimpleFn: async (model, context) => {
+          const request = textFromContext(context);
+          if (request.includes('<conversation>')) {
+            // Only the fork child's transcript contains its bash tool calls; the parent
+            // conversation transcript does not — distinct summaries let the Dream
+            // assertions tell the two compactions apart.
+            const summary = request.includes('Print fork output block')
+              ? 'Fork compact summary: teal pipeline verified.'
+              : `Parent compact summary: conversation evidence preserved. ${'parent summary detail '.repeat(60)}`;
+            return normalizeAssistantMessage(
+              fauxAssistantMessage(`<analysis>compact</analysis><summary>${summary}</summary>`),
+              model as Model<Api>,
+            );
+          }
+          dreamRequests.push(request);
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: request.includes('## Agent Run')
+                ? [{ type: 'add', fact: 'The teal pipeline is verified end to end.' }]
+                : [],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(
+      runtime,
+      session.conversationId,
+      `Fork and verify the teal pipeline. ${'parent conversation evidence '.repeat(90)}`,
+      sink,
+    );
+
+    const store = new AgentEventStore(dataRoot);
+    let replay = await store.replay(session.conversationId);
+    await waitFor(() => {
+      void store.replay(session.conversationId).then((state) => {
+        replay = state;
+      });
+      const run = Object.values(replay.subagents ?? {})[0];
+      return run?.status === 'completed';
+    }, 30_000);
+
+    // Auto-compaction really happened in the fork: the live payload is the compacted
+    // transcript, not the fork prefix copy.
+    expect(childContexts.join('\n')).toContain('Conversation compacted.');
+
+    // Manual compaction of the parent conversation, in sequence after the fork's
+    // auto-compaction and BEFORE anything was Dreamed.
+    await runtime.sendMessage(session.conversationId, '/compact');
+
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+
+    const run = Object.values((await store.replay(session.conversationId)).subagents ?? {})[0]!;
+    const agentRunRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
+    // The fork's pre-compaction work survives only inside the compacted summary; the
+    // summary must therefore reach extraction (it is the still-pending content).
+    expect(agentRunRequests.some((request) => request.includes('Fork compact summary: teal pipeline verified.'))).toBe(true);
+    // The manual /compact re-anchored the parent conversation's active path at the
+    // post-compact root, so the pre-compaction conversation content survives only inside
+    // the manual compaction summary — that summary must reach the user-pool Dream.
+    expect(dreamRequests.some((request) => (
+      !request.includes('## Agent Run') && request.includes('Parent compact summary: conversation evidence preserved.')
+    ))).toBe(true);
+
+    // The watermark advanced onto the compacted payload — the run is covered, not skipped.
+    const dreamState = await store.readDreamState(agentPrincipal('built-in:tenon:assistant'));
+    expect(dreamState.watermark.agentRuns?.[run.id]?.payloadId).toBe(run.transcriptPayloadId ?? null);
+
+    // The distilled fact's source binding resolves back to the summary evidence.
+    const entries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
+    const entry = entries.find((candidate) => candidate.fact === 'The teal pipeline is verified end to end.');
+    expect(entry).toBeDefined();
+    const evidence = await new AgentPastChatsService(store).readMemorySourceEvidence({ source: entry!.sources[0]!, maxChars: 4_000 });
+    expect(evidence.mode).toBe('evidence');
+    expect(evidence.mode === 'evidence' ? evidence.messages.map((message) => message.text).join('\n') : '')
+      .toContain('Fork compact summary: teal pipeline verified.');
+  });
+
+  // The plan's named trap (agent-memory-source-binding): the fork-prefix exclusion is
+  // recorded in pre-compaction message coordinates. Once the transcript payload is
+  // superseded by a (shorter) compacted one, a stale boundary must not be re-applied —
+  // clamping it into `min(evidenceStart, length)` silently skips the run FOREVER, so its
+  // compacted summary (now its only durable evidence) would never be distilled.
+  test('a payload-superseding compaction is Dreamed from index 0, never re-excluded as fork prefix', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-stale-boundary-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-stale-boundary-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const ownerAgentId = 'built-in:tenon:researcher';
+    const runId = 'subagent-stale-boundary';
+    const toolCallId = 'tool-stale-boundary';
+    const conclusionText = `Fork child conclusion: deployment pipeline verified. ${'fork conclusion evidence '.repeat(60)}`;
+    const compactedText = `Compacted fork summary persists the deployment outcome. ${'compacted summary evidence '.repeat(60)}`;
+    const dreamRequests: string[] = [];
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: scriptedStream([], () => undefined).streamFn,
+        completeSimpleFn: async (model, context) => {
+          const request = textFromContext(context);
+          dreamRequests.push(request);
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: request.includes('Fork child conclusion')
+                ? [{ type: 'add', fact: 'The deployment pipeline is verified.' }]
+                : [],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const session = await runtime.createConversation();
+    const store = new AgentEventStore(dataRoot);
+    const replay = await store.replay(session.conversationId);
+
+    // The original fork transcript: 3 copied parent-prefix messages + 1 child conclusion,
+    // boundary recorded at 3 (only the conclusion is the fork's own evidence).
+    const originalPayload = await store.writePayload(session.conversationId, {
+      id: `subagent-transcript-${runId}-original`,
+      data: JSON.stringify({
+        v: 1,
+        runId,
+        dreamEvidenceStartMessageIndex: 3,
+        messageCount: 4,
+        messages: [
+          fauxAssistantMessage(fauxText('Parent prefix message 1 — copied context, not fork evidence.')),
+          fauxAssistantMessage(fauxText('Parent prefix message 2 — copied context, not fork evidence.')),
+          fauxAssistantMessage(fauxText('Parent prefix message 3 — copied context, not fork evidence.')),
+          fauxAssistantMessage(fauxText(conclusionText)),
+        ],
+      }),
+      mimeType: 'application/json',
+      role: 'subagent_transcript',
+      summary: 'Original fork transcript',
+    });
+    await store.appendEvents(session.conversationId, [
+      {
+        v: 1,
+        eventId: `test-payload-${runId}-original`,
+        seq: replay.latestSeq + 1,
+        sessionId: session.conversationId,
+        createdAt: Date.now(),
+        actor: { type: 'system' },
+        type: 'payload.created',
+        payload: originalPayload,
+      },
+      {
+        v: 1,
+        eventId: `test-subagent-start-${runId}`,
+        seq: replay.latestSeq + 2,
+        sessionId: session.conversationId,
+        createdAt: Date.now() + 1,
+        actor: { type: 'tool', toolName: 'Agent', toolCallId },
+        type: 'subagent_run.started',
+        subagentRunId: runId,
+        parentToolCallId: toolCallId,
+        executingAgentId: ownerAgentId,
+        memoryOwnerAgentId: ownerAgentId,
+        description: 'stale boundary fork',
+        prompt: 'Verify the deployment pipeline.',
+        subagentType: 'lin-fork-subagent',
+        contextMode: 'fork',
+        dreamEvidenceStartMessageIndex: 3,
+        transcriptPayload: originalPayload,
+        transcriptMessageCount: 4,
+      },
+      {
+        v: 1,
+        eventId: `test-subagent-complete-${runId}`,
+        seq: replay.latestSeq + 3,
+        sessionId: session.conversationId,
+        createdAt: Date.now() + 2,
+        actor: { type: 'tool', toolName: 'Agent', toolCallId },
+        type: 'subagent_run.updated',
+        subagentRunId: runId,
+        status: 'completed',
+        completedAt: Date.now() + 2,
+        result: 'done',
+        transcriptPayload: originalPayload,
+        transcriptMessageCount: 4,
+      },
+    ]);
+
+    // Dream #1: only the fork's own evidence past the boundary is extracted.
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    const firstRunRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
+    expect(firstRunRequests.some((request) => request.includes('Fork child conclusion'))).toBe(true);
+    expect(firstRunRequests.some((request) => request.includes('Parent prefix message'))).toBe(false);
+
+    // Supersede the payload with a compacted 1-message transcript. Neither the new
+    // envelope nor the update event re-states the boundary — the event-model-legal shape
+    // in which the old boundary (3) exceeds the new payload length (1).
+    const compactedPayload = await store.writePayload(session.conversationId, {
+      id: `subagent-transcript-${runId}-compacted`,
+      data: JSON.stringify({
+        v: 1,
+        runId,
+        messageCount: 1,
+        messages: [fauxAssistantMessage(fauxText(compactedText))],
+      }),
+      mimeType: 'application/json',
+      role: 'subagent_transcript',
+      summary: 'Compacted fork transcript',
+    });
+    const replayAfterFirstDream = await store.replay(session.conversationId);
+    await store.appendEvents(session.conversationId, [
+      {
+        v: 1,
+        eventId: `test-payload-${runId}-compacted`,
+        seq: replayAfterFirstDream.latestSeq + 1,
+        sessionId: session.conversationId,
+        createdAt: Date.now() + 3,
+        actor: { type: 'system' },
+        type: 'payload.created',
+        payload: compactedPayload,
+      },
+      {
+        v: 1,
+        eventId: `test-subagent-compacted-${runId}`,
+        seq: replayAfterFirstDream.latestSeq + 2,
+        sessionId: session.conversationId,
+        createdAt: Date.now() + 4,
+        actor: { type: 'tool', toolName: 'Agent', toolCallId },
+        type: 'subagent_run.updated',
+        subagentRunId: runId,
+        status: 'completed',
+        completedAt: Date.now() + 4,
+        result: 'done',
+        transcriptPayload: compactedPayload,
+        transcriptMessageCount: 1,
+      },
+    ]);
+
+    // Dream #2: the compacted payload is fresh evidence in its entirety — the stale
+    // boundary must not clamp it into a permanent skip. (+48h from the real clock: the
+    // first dream recorded lastSuccessAt with Date.now(), so the schedule gate compares
+    // against real time.)
+    await runtime.runScheduledDreamsForTest(new Date(Date.now() + 48 * 60 * 60 * 1000));
+    const secondRunRequests = dreamRequests.filter((request) => request.includes('Compacted fork summary'));
+    expect(secondRunRequests.length).toBeGreaterThan(0);
+    const dreamState = await store.readDreamState(agentPrincipal(ownerAgentId));
+    expect(dreamState.watermark.agentRuns?.[runId]?.payloadId).toBe(compactedPayload.id);
+
+    // Resolution regression: the source pinned BEFORE the supersession still resolves to
+    // the ORIGINAL evidence text via its payload pin — never silently to the compacted
+    // replacement — and an unresolvable range fails loud.
+    const entries = await store.listMemoryEntries(agentPrincipal(ownerAgentId));
+    const entry = entries.find((candidate) => candidate.fact === 'The deployment pipeline is verified.');
+    expect(entry).toBeDefined();
+    const source = entry!.sources[0]!;
+    expect(source.eventId).toBe(originalPayload.id);
+    const pastChats = new AgentPastChatsService(store);
+    const evidence = await pastChats.readMemorySourceEvidence({ source, maxChars: 4_000 });
+    expect(evidence.mode).toBe('evidence');
+    const evidenceText = evidence.mode === 'evidence' ? evidence.messages.map((message) => message.text).join('\n') : '';
+    expect(evidenceText).toContain('Fork child conclusion');
+    expect(evidenceText).not.toContain('Compacted fork summary');
+    const tampered = await pastChats.readMemorySourceEvidence({
+      source: { ...source, messageRange: [`${runId}:message:98`, `${runId}:message:99`] },
+      maxChars: 4_000,
+    });
+    expect(tampered.mode).toBe('error');
+    expect(tampered.mode === 'error' ? tampered.code : null).toBe('SOURCE_NOT_FOUND');
   });
 
   test('tracks a background subagent through AgentStatus', async () => {

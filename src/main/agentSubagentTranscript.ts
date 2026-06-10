@@ -86,7 +86,13 @@ export function subagentDreamEvidenceStartMessageIndex(
 ): number {
   if (run.contextMode !== 'fork') return 0;
   if (typeof run.dreamEvidenceStartMessageIndex === 'number' && Number.isFinite(run.dreamEvidenceStartMessageIndex)) {
-    return Math.min(messageCount, Math.max(0, Math.trunc(run.dreamEvidenceStartMessageIndex)));
+    const boundary = Math.max(0, Math.trunc(run.dreamEvidenceStartMessageIndex));
+    // A fork-prefix boundary is recorded in the coordinates of the transcript payload it
+    // was computed against, where it is always <= that payload's length. A boundary BEYOND
+    // the current payload can only be stale coordinates from a longer, superseded
+    // (compacted) transcript — the successor payload is fresh evidence in its entirety,
+    // so Dream it from 0 instead of clamping into a permanent silent skip.
+    return boundary > messageCount ? 0 : boundary;
   }
   return messageCount;
 }

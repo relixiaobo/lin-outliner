@@ -11,6 +11,7 @@ import {
   replayAgentEvents,
 } from '../core/agentEventLog';
 import type { AgentMessage, UserMessage } from '../core/agentTypes';
+import { extractCompactSummaryFromReminder } from './agentCompaction';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
 import {
   agentRunMessageId,
@@ -435,11 +436,24 @@ function renderDreamRuntimeMessage(runId: string, message: AgentMessage, index: 
   return body ? `${header}\n${body}` : '';
 }
 
+/**
+ * Hidden boilerplate stays out of Dream evidence, with one exception: a compaction
+ * reminder. A compaction supersedes the runtime transcript payload (or re-anchors a
+ * conversation's active path at the post-compact root), so the reminder's summary is the
+ * only surviving carrier of the compacted-away content — dropping it would leave that
+ * content un-Dreamed and unreachable (the evidence-preserving compaction invariant,
+ * [[agent-data-model]] §13.17).
+ */
+function renderHiddenBlockEvidence(text: string): string[] {
+  const summary = extractCompactSummaryFromReminder(text);
+  return summary ? [`[summary of compacted earlier messages]\n${summary}`] : [];
+}
+
 function renderPersistedContent(content: readonly AgentPersistedContent[]): string {
   return content
     .flatMap((part) => {
       if (part.type === 'text') {
-        if (isHiddenAgentContextBlock(part.text)) return [];
+        if (isHiddenAgentContextBlock(part.text)) return renderHiddenBlockEvidence(part.text);
         return [part.text.trim()];
       }
       if (part.type === 'thinking') return ['[thinking omitted]'];
@@ -459,7 +473,7 @@ function renderRuntimeContent(content: AgentMessage['content']): string {
     .flatMap((part) => {
       if (!isRecord(part)) return [];
       if (part.type === 'text' && typeof part.text === 'string') {
-        if (isHiddenAgentContextBlock(part.text)) return [];
+        if (isHiddenAgentContextBlock(part.text)) return renderHiddenBlockEvidence(part.text);
         return [part.text.trim()];
       }
       if (part.type === 'thinking') return ['[thinking omitted]'];
