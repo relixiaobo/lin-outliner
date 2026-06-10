@@ -300,10 +300,20 @@ reinvent.
     (`parentRunId` relationship), one evidence scheme + one watermark shape +
     event-sourced compaction everywhere; the `Subagent` species leaves the type
     system. Plan: `agent-run-unification`. The #164/#178 guard family becomes
-    structural.
+    structural — and the homogeneous `{seq, eventId}` coordinates are the
+    foundation the realignment episodic layer builds on.
+  - **Memory-theory realignment (PM-ratified 2026-06-10, post-#181) — PR-1
+    immediately + in parallel; PR-2 between run unification and M3-B.** The
+    program (authority docs rewritten → PR-1 person rule / read surfaces →
+    PR-2 episodic layer (subsumes D3; memory-owned gist, `sources` →
+    discriminated union, 3-level zoom) → PR-3 forgetting (D1) → PR-4 retrieval
+    (D4)) lives in `docs/TASKS.md` Backlog § memory until the program one-pager
+    (cc-2) lands a plan file. PR-1 + PR-2 are **hard prerequisites for M3-B**.
   - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
     (the one new primitive; depends on Phase 1 + M3-A + the clean-cut + run
-    unification — its citing rides the unified evidence scheme). Plan:
+    unification — its citing rides the unified evidence scheme — **+ realignment
+    PR-1/PR-2**: cross-reading pools needs the reader-independent person rule and
+    the final `sources` union, so M3-B builds on final shapes). Plan:
     `agent-cross-agent-memory`.
   - **M3-C — per-agent POV inspector** (derived view over M3-A's assembly
     derivation). Plan: `agent-pov-projection`.

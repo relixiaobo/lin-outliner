@@ -145,5 +145,7 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
 Touches `agentEventLog.ts` (protocol surface, A4), `agentEventStore.ts`,
 `agentRuntime.ts`, `agentSubagents*.ts`, Dream/recall paths. Queues strictly
 behind `agent-storage-clean-cut` (cc-2, in build) and M3-A (#179, paused →
-resumes first); lands before M3-B/D1/D3. Re-verify all `file:line` anchors at
-claim time — both predecessors will have moved them.
+resumes first); lands before memory-realignment PR-2 (the episodic layer
+builds on the homogeneous `{seq, eventId}` coordinates this PR delivers —
+see `docs/TASKS.md` Backlog § memory) and therefore before M3-B/D1. Re-verify
+all `file:line` anchors at claim time — both predecessors will have moved them.

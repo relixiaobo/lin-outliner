@@ -2,7 +2,7 @@
 status: draft
 priority: P3
 owner: unassigned
-phase: memory-D4 (last of the memory deltas)
+phase: memory-realignment PR-4 (last; read side of the 3-level zoom)
 created: 2026-06-10
 updated: 2026-06-10
 ---

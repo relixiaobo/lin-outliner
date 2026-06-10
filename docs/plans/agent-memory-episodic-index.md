@@ -2,15 +2,29 @@
 status: draft
 priority: P2
 owner: unassigned
-phase: memory-D3 (post-M3-B)
+phase: memory-realignment PR-2 (after run-unification, BEFORE M3-B)
 created: 2026-06-10
 updated: 2026-06-10
 ---
 
 # Memory D3: the episodic index — episodes as a derived view + reverse lookup
 
+> **Resequenced + reframed 2026-06-10 (PM-ratified, post-#181):** this plan is
+> subsumed and upgraded by **memory-theory realignment PR-2** (see
+> `docs/TASKS.md` Backlog § memory). Its true identity is **the missing
+> episodic layer** (theory: raw ledgers are ground truth *below* memory), not a
+> retrieval enhancement. Scope grows: memory-owned episode gist production
+> (compaction summaries are a different, working-memory artifact — the #178
+> "Dream reads compaction summaries as evidence" stopgap is deleted here);
+> `AgentMemorySource` grab-bag → discriminated union
+> (`{stream, streamId, range} | {episodeId}`); storage side of the 3-level zoom
+> (fact → episode gist → raw span). It moves **before M3-B** and **after
+> run-unification** (needs homogeneous `{seq, eventId}`). The realignment
+> program one-pager (cc-2) rewrites this plan; the design below is the pre-
+> realignment draft kept for its reverse-lookup/episode-view substance.
+
 **Shape: (a) ONE complete feature in one PR.** Makes the index layer
-bidirectional; the experience substrate for M3-B cross-agent citing.
+bidirectional; the substrate M3-B cross-agent citing then builds on.
 
 ## Goal
 

@@ -2,7 +2,7 @@
 status: draft
 priority: P2
 owner: unassigned
-phase: memory-D1 (post-M3-B)
+phase: memory-realignment PR-3 (after PR-2 / episodic layer)
 created: 2026-06-10
 updated: 2026-06-10
 ---
@@ -82,6 +82,7 @@ restrengthens them — the retrieval-practice effect).
 ## Collision self-check (plan time 2026-06-10)
 
 Touches the memory ledger event union (protocol surface — coordinate per A4),
-the memory projected-state cache, and the briefing path. Scheduled post-M3-B
-(M3-B touches the same briefing path). Re-verify anchors + `gh pr list` at
-claim time.
+the memory projected-state cache, and the briefing path. Resequenced 2026-06-10
+(PM-ratified): now **realignment PR-3**, after PR-2 (episodic layer); relative
+order vs M3-B is unpinned, but M3-B touches the same briefing path — re-verify
+anchors + `gh pr list` at claim time.

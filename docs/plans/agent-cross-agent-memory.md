@@ -19,6 +19,13 @@ a co-member's distilled fact inherits its provenance integrity. **M3-A**
 (`agent-channel-peers`) — agent co-members only exist once Channels do.
 **`agent-run-unification`** — citing rides the unified seq/eventId evidence
 scheme (one addressing mode under the isolation gate, not two).
+**Memory-theory realignment PR-1 + PR-2 (added 2026-06-10, PM-ratified —
+see `docs/TASKS.md` Backlog § memory):** agents must not cross-read pools until
+the person rule is reader-independent (PR-1: uniform third-person-singular
+subject-elided facts + zone-tag render — today's base-form agent-pool facts
+misrender for any non-owner reader) and `AgentMemorySource` is the
+discriminated union with first-class episodes (PR-2) — so this plan builds on
+final shapes instead of re-cutting them.
 
 ## Goal
 
