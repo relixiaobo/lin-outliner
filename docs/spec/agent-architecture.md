@@ -85,10 +85,13 @@ clean-cut, no migration).
     indicator while the run is active (drill-in opens the run working-state
     panel), the whole reply lands in the thread on completion. The thread shows
     **utterances only** (final text; process blocks live behind the drill-in).
-  - **Queue-all:** a user message sent during an active round queues (no steer
-    in Channels); the round loop persists it when it routes it — never mid-run,
-    which would fork the event path past the in-flight reply — and the
-    projection's `queuedMessages` keeps it visible meanwhile. DM behavior is
+  - **Queue-all:** a user message sent during ANY active Channel run — a round
+    or a non-round turn (regenerate/retry, notification flush) — queues (no
+    steer in Channels); the round loop persists it when it routes it — never
+    mid-run, which would fork the event path past the in-flight reply — and the
+    projection's `queuedMessages` keeps it visible meanwhile. Non-round turns
+    drain the queue when they settle; quit flushes any still-queued messages
+    into the log unrouted so nothing the user typed vanishes. DM behavior is
     untouched (streaming, steer, inline process).
   - Each peer turn runs as that agent (own definition/model/skills/memory line,
     `actor` stamped on its messages) and reads the thread through the per-POV

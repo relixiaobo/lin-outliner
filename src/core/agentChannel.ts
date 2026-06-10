@@ -1,6 +1,5 @@
 import {
   isAgentConversationMessage,
-  principalKey,
   type AgentEventMessageRecord,
   type AgentPrincipal,
   type AgentRunRecord,
@@ -221,10 +220,6 @@ export function povIdentityPreamble(
     return label;
   }
   return '';
-}
-
-export function sameChannelPrincipal(left: AgentPrincipal, right: AgentPrincipal): boolean {
-  return principalKey(left) === principalKey(right);
 }
 
 function recordHasVisibleText(record: AgentEventMessageRecord): boolean {

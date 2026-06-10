@@ -351,10 +351,13 @@ describe('agent channel runtime', () => {
     expect(Object.values(state.runs)).toHaveLength(2);
   });
 
-  test('stop ends the round: unstarted same-round turns are discarded with a visible thread trace', async () => {
-    const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string } = {};
+  test('stop ends the round: unstarted turns discarded with a trace; queued messages persist unrouted', async () => {
+    const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string; secondSend?: Promise<void> } = {};
     const fixture = await setupChannelFixture([
       () => {
+        // Queue a message mid-round, then stop: the stopped round must persist
+        // it into the thread (the user typed it) without ever routing it.
+        holder.secondSend = holder.runtime!.sendMessage(holder.channelId!, 'QUEUED_BEHIND_STOP message') as Promise<void>;
         holder.runtime!.stopConversation(holder.channelId!);
         return fauxAssistantMessage(fauxText('Coordinator reply racing the stop.'));
       },
@@ -366,6 +369,7 @@ describe('agent channel runtime', () => {
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Stop test' });
     holder.channelId = channel.conversationId;
     await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
+    await holder.secondSend;
 
     expect(calls).toHaveLength(1);
     expect(script.pendingCount()).toBe(1);
@@ -375,6 +379,105 @@ describe('agent channel runtime', () => {
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
     expect(texts).toContain('The user stopped this round.');
     expect(texts).toContain('unstarted turn(s) were discarded');
+    expect(texts).toContain('queued message(s) were not routed');
+    expect(texts).toContain('QUEUED_BEHIND_STOP');
+  });
+
+  test('a non-round Channel run (regenerate) gates sends: the message queues and routes after it settles', async () => {
+    const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string; midSend?: Promise<void> } = {};
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage(fauxText('Reviewer original take.')),
+      () => {
+        // Fired while the regenerated (non-round) turn streams: channelRound is
+        // null here — the gate must still queue, never fork the leaf.
+        holder.midSend = holder.runtime!.sendMessage(holder.channelId!, 'sent during the regenerate') as Promise<void>;
+        return fauxAssistantMessage(fauxText('REVIEWER_REGEN_TAKE.'));
+      },
+      fauxAssistantMessage(fauxText('Coordinator answers the queued message.')),
+    ]);
+    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+    holder.runtime = runtime;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Gate test' });
+    holder.channelId = channel.conversationId;
+    await runtime.sendMessage(channel.conversationId, '@reviewer take one');
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const reviewerReply = Object.values(state.messages).find((record) => record.role === 'assistant')!;
+    await runtime.regenerateMessage(channel.conversationId, reviewerReply.id);
+    await holder.midSend;
+
+    expect(calls).toHaveLength(3);
+    // The queued message routed AFTER the regenerated turn settled, with the
+    // regenerated reply on its context path — the leaf was never forked.
+    expect(calls[2]!.serialized).toContain('REVIEWER_REGEN_TAKE');
+    expect(calls[2]!.serialized).toContain('sent during the regenerate');
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const runAgents = Object.values(state.runs).map((run) => run.agentId);
+    expect(runAgents).toEqual([reviewerAgentId, reviewerAgentId, MAIN_AGENT_ID]);
+  });
+
+  test('drainPendingWrites persists queued Channel messages so they survive quit mid-round', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', '---\ndescription: r\n---\nbody');
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    // The turn hangs forever (a stream that never emits), exactly the state a
+    // quit interrupts: the round is live, the queue holds an unrouted message.
+    let streamCalls = 0;
+    const hangingStream: StreamFn = (() => {
+      streamCalls += 1;
+      return createAssistantMessageEventStream();
+    }) as StreamFn;
+    const { runtime } = await createRuntime(dataRoot, localRoot, hangingStream);
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Quit flush test' });
+    const hungSend = runtime.sendMessage(channel.conversationId, '@reviewer long task') as Promise<void>;
+    while (streamCalls === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    // Round active → this queues in memory only.
+    await runtime.sendMessage(channel.conversationId, 'TYPED_BEFORE_QUIT message');
+    await runtime.drainPendingWrites();
+    void hungSend; // abandoned mid-stream, as a real quit would leave it
+
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('TYPED_BEFORE_QUIT');
+    const queuedRecord = Object.values(state.messages).find(
+      (record) => JSON.stringify(record.content).includes('TYPED_BEFORE_QUIT'),
+    );
+    expect(queuedRecord?.addressedTo).toEqual([agentPrincipal(MAIN_AGENT_ID)]);
+  });
+
+  test('a run that dies without agent_end never wedges the conversation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    await createAgentDefinition(localRoot, 'reviewer', '---\ndescription: r\n---\nbody');
+    const calls: RecordedCall[] = [];
+    const script = scriptedStream([fauxAssistantMessage(fauxText('Recovered fine.'))], calls);
+    let threw = false;
+    const throwingOnce: StreamFn = ((model, context, options) => {
+      if (!threw) {
+        threw = true;
+        throw new Error('synchronous stream construction failure');
+      }
+      return (script.streamFn as (...args: unknown[]) => ReturnType<StreamFn>)(model, context, options);
+    }) as StreamFn;
+    const { runtime, sink } = await createRuntime(dataRoot, localRoot, throwingOnce);
+
+    const dm = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(dm.conversationId, 'first message hits the throwing stream');
+    // Without recovery this second send would die on 'A run is already active'.
+    await runtime.sendMessage(dm.conversationId, 'second message must still run');
+
+    expect(calls).toHaveLength(1);
+    const wedgeErrors = sink.events.filter(
+      (event) => event.type === 'error' && String((event as { message?: string }).message ?? '').includes('already active'),
+    );
+    expect(wedgeErrors).toHaveLength(0);
+    const state = await new AgentEventStore(dataRoot).replay(dm.conversationId);
+    const statuses = Object.values(state.runs).map((run) => run.status).sort();
+    expect(statuses).toEqual(['completed', 'failed']);
   });
 
   test('edit re-resolves addressing; regenerate re-runs as the original speaker', async () => {

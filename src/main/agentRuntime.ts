@@ -94,6 +94,7 @@ import {
   channelMessageOwner,
   cutChannelPathForRun,
   flattenAgentPathForPov,
+  handOffTargets,
   isMultiAgentConversation,
   parseAgentMentionTargets,
 } from '../core/agentChannel';
@@ -1348,12 +1349,15 @@ export class AgentRuntime {
         // Queue-all (ratified, no steer in Channels): the message joins the
         // round queue and is shown immediately from the projection; the round
         // loop persists it when it routes it, keeping the event path linear
-        // past the in-flight reply. If a round is already draining, its loop
-        // picks this up — this call returns.
+        // past the in-flight reply. The gate covers ANY active Channel run —
+        // not just rounds: regenerate/retry and subagent-notification flushes
+        // run turns with no channelRound, and starting a round under them
+        // would re-point the leaf beneath the in-flight reply. Those paths
+        // drain the queue when they settle.
         userViewContextReminder.commit();
         conversation.pendingChannelMessages.push({ kind: 'prompt', prompt, messageText });
         this.emitProjection(conversationId, 'channel_message_queued');
-        if (conversation.channelRound) return;
+        if (conversation.channelRound || this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
         await this.runChannelRound(conversationId, conversation);
       } else {
         await this.appendUserPromptEvent(conversationId, conversation, prompt);
@@ -1364,6 +1368,7 @@ export class AgentRuntime {
       }
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
+      await this.recoverFromRunError(conversationId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -1412,6 +1417,7 @@ export class AgentRuntime {
       }
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
+      await this.recoverFromRunError(conversationId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -1436,8 +1442,11 @@ export class AgentRuntime {
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
       await this.rerunSettledTurn(conversationId, conversation, target, parentId);
+      // Messages queued while this non-round turn was live route now.
+      await this.drainChannelQueueIfIdle(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
+      await this.recoverFromRunError(conversationId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -1461,8 +1470,11 @@ export class AgentRuntime {
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
       await this.rerunSettledTurn(conversationId, conversation, target, parentId);
+      // Messages queued while this non-round turn was live route now.
+      await this.drainChannelQueueIfIdle(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
+      await this.recoverFromRunError(conversationId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -2302,10 +2314,13 @@ export class AgentRuntime {
         await this.persistAndEmitIdle(conversationId, conversation, { flushSubagentNotifications: false });
       }
     } catch (error) {
+      await this.recoverFromRunError(conversationId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     } finally {
       conversation.subagentNotificationFlushInProgress = false;
     }
+    // Messages queued while a notification-delivery run was live route now.
+    await this.drainChannelQueueIfIdle(conversationId, conversation);
   }
 
   private async persistToolOutputPayload(
@@ -2554,6 +2569,19 @@ export class AgentRuntime {
    * a slow in-flight dream (an LLM call) must not block ⌘Q.
    */
   async drainPendingWrites(): Promise<void> {
+    // Queued Channel messages live only in main-process memory until a round
+    // routes them — flush them into the log first (unrouted; they render in the
+    // thread after restart) so nothing the user typed vanishes on quit.
+    for (const [conversationId, conversation] of this.conversations.entries()) {
+      const queued = conversation.pendingChannelMessages.splice(0);
+      for (const entry of queued) {
+        try {
+          await this.persistPendingChannelMessage(conversationId, conversation, entry);
+        } catch {
+          // Best-effort on the quit path; the event-append settle below still runs.
+        }
+      }
+    }
     const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
     for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
     await Promise.allSettled(pending);
@@ -4662,6 +4690,34 @@ export class AgentRuntime {
     return this.agentIdentity.agentId;
   }
 
+  /**
+   * Recovery for a run that died without pi emitting `agent_end` (a rejected
+   * `prompt()`/`continue()`, a pre-stream failure): `agent_end` is the only
+   * normal path that clears `activeRun`, so without this every later run —
+   * DM or Channel — would hit the `startRun` guard until restart. Records the
+   * failure on the run ledger (best-effort) and frees the slot.
+   */
+  private async recoverFromRunError(conversationId: string) {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    const activeRun = conversation.activeRun;
+    if (!activeRun || conversation.agent.state.isStreaming) return;
+    try {
+      await this.appendConversationEvents(conversationId, conversation, [{
+        type: 'run.failed',
+        actor: systemActor(),
+        runId: activeRun.id,
+        errorMessage: conversation.agent.state.errorMessage ?? 'The run ended without a terminal agent event.',
+        usage: sumRunUsage(conversation.eventState, activeRun.id),
+      }]);
+    } catch {
+      // Recording the failure is best-effort; freeing the slot is the
+      // critical part — a wedged activeRun blocks the conversation forever.
+    }
+    conversation.lastRun = activeRun;
+    conversation.activeRun = null;
+  }
+
   private async startRun(
     conversationId: string,
     conversation: AgentConversationState,
@@ -4689,17 +4745,24 @@ export class AgentRuntime {
     };
     conversation.activeRun = runState;
     conversation.lastRun = null;
-    await this.appendConversationEvents(conversationId, conversation, [{
-      type: 'run.started',
-      actor: systemActor(),
-      runId,
-      agentId,
-      anchor: { type: 'conversation', agentId, conversationId },
-      kind: 'turn',
-      trigger: triggerOverride ?? this.runTrigger(conversation),
-      fingerprint: this.runFingerprint(conversation, agentId),
-      retention: 'hot',
-    }]);
+    try {
+      await this.appendConversationEvents(conversationId, conversation, [{
+        type: 'run.started',
+        actor: systemActor(),
+        runId,
+        agentId,
+        anchor: { type: 'conversation', agentId, conversationId },
+        kind: 'turn',
+        trigger: triggerOverride ?? this.runTrigger(conversation),
+        fingerprint: this.runFingerprint(conversation, agentId),
+        retention: 'hot',
+      }]);
+    } catch (error) {
+      // The run never made it into the ledger — release the slot, or every
+      // later run in this conversation hits the guard above until restart.
+      conversation.activeRun = null;
+      throw error;
+    }
   }
 
   /**
@@ -4730,64 +4793,103 @@ export class AgentRuntime {
     conversation: AgentConversationState,
   ): Promise<void> {
     if (conversation.channelRound) return;
+    // A non-round Channel run (regenerate/retry, notification flush) is live:
+    // starting a round under it would re-point the leaf beneath its in-flight
+    // reply. That path drains the queue when it settles.
+    if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
     const round = { stopRequested: false };
     conversation.channelRound = round;
-    let discardedTurns = 0;
     try {
-      while (conversation.pendingChannelMessages.length > 0 && !round.stopRequested) {
-        const pending = conversation.pendingChannelMessages.shift()!;
-        const { messageId, addressedTo } = await this.persistPendingChannelMessage(conversationId, conversation, pending);
-        const turns: ChannelTurnRequest[] = addressedTo
-          .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
-          .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId }));
-        while (turns.length > 0) {
-          if (round.stopRequested) break;
-          const request = turns.shift()!;
-          const members = conversation.eventState.conversation?.members ?? [];
-          if (!members.some((member) => member.type === 'agent' && member.agentId === request.agentId)) continue;
-          const turn = await this.runChannelTurn(conversationId, conversation, request);
-          if (turn.cancelled) {
-            round.stopRequested = true;
-            break;
+      // Outer loop: after a stop is handled, messages that arrived during the
+      // teardown route as a fresh logical round (a post-stop send is a new
+      // request, not part of the stopped round) — nothing strands in the queue.
+      while (conversation.pendingChannelMessages.length > 0) {
+        let discardedTurns = 0;
+        while (conversation.pendingChannelMessages.length > 0 && !round.stopRequested) {
+          const pending = conversation.pendingChannelMessages.shift()!;
+          let routed: { messageId: string; addressedTo: AgentPrincipal[] };
+          try {
+            routed = await this.persistPendingChannelMessage(conversationId, conversation, pending);
+          } catch (error) {
+            // One message's persist failure must not strand the rest of the queue.
+            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+            continue;
           }
-          if (!turn.completed) continue; // failed run: its error trace is in the log; siblings still run
-          if (!turn.assistantMessageId) continue;
-          // The reply's hand-off addressing was persisted at completion
-          // (assistant_message.completed.addressedTo) — route from the record,
-          // not a re-parse, so the log and the routing can never disagree.
-          const reply = conversation.eventState.messages[turn.assistantMessageId];
-          for (const target of channelAgentMembers(reply?.addressedTo ?? [])) {
-            if (target.agentId === request.agentId) continue;
-            turns.push({ agentId: target.agentId, addressedByMessageId: turn.assistantMessageId });
+          const turns: ChannelTurnRequest[] = routed.addressedTo
+            .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
+            .map((target) => ({ agentId: target.agentId, addressedByMessageId: routed.messageId }));
+          while (turns.length > 0) {
+            if (round.stopRequested) break;
+            const request = turns.shift()!;
+            const members = conversation.eventState.conversation?.members ?? [];
+            if (!members.some((member) => member.type === 'agent' && member.agentId === request.agentId)) continue;
+            const turn = await this.runChannelTurn(conversationId, conversation, request);
+            if (turn.cancelled) {
+              round.stopRequested = true;
+              break;
+            }
+            if (!turn.completed) continue; // failed run: its error trace is in the log; siblings still run
+            if (!turn.assistantMessageId) continue;
+            // The reply's hand-off addressing was persisted at completion
+            // (assistant_message.completed.addressedTo) — route from the record,
+            // not a re-parse, so the log and the routing can never disagree.
+            const reply = conversation.eventState.messages[turn.assistantMessageId];
+            for (const target of channelAgentMembers(reply?.addressedTo ?? [])) {
+              if (target.agentId === request.agentId) continue;
+              turns.push({ agentId: target.agentId, addressedByMessageId: turn.assistantMessageId });
+            }
           }
+          discardedTurns += turns.length;
         }
-        discardedTurns += turns.length;
-      }
-      const discardedMessages = round.stopRequested ? conversation.pendingChannelMessages.length : 0;
-      if (round.stopRequested && (discardedTurns > 0 || discardedMessages > 0)) {
-        // Unrouted queued messages still land in the thread (the user typed
-        // them; they must not vanish) — they just never produce runs.
+        if (!round.stopRequested) break; // queue drained normally
+        // Stop: persist the stopped round's unrouted queued messages (the user
+        // typed them; they must not vanish) — they just never produce runs.
         const unrouted = conversation.pendingChannelMessages;
         conversation.pendingChannelMessages = [];
         for (const pending of unrouted) {
-          await this.persistPendingChannelMessage(conversationId, conversation, pending);
+          try {
+            await this.persistPendingChannelMessage(conversationId, conversation, pending);
+          } catch (error) {
+            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+          }
         }
-        const parts = [
-          discardedTurns > 0 ? `${discardedTurns} unstarted turn(s) were discarded` : null,
-          discardedMessages > 0 ? `${discardedMessages} queued message(s) were not routed; they remain above and can be re-sent` : null,
-        ].filter((part): part is string => part !== null);
-        await this.appendSystemPromptEvent(conversationId, conversation, {
-          role: 'user',
-          content: [{
-            type: 'text',
-            text: systemReminder(`The user stopped this round. ${parts.join('; ')}.`),
-          }],
-          timestamp: Date.now(),
-        });
+        if (discardedTurns > 0 || unrouted.length > 0) {
+          const parts = [
+            discardedTurns > 0 ? `${discardedTurns} unstarted turn(s) were discarded` : null,
+            unrouted.length > 0 ? `${unrouted.length} queued message(s) were not routed; they remain above and can be re-sent` : null,
+          ].filter((part): part is string => part !== null);
+          await this.appendSystemPromptEvent(conversationId, conversation, {
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: systemReminder(`The user stopped this round. ${parts.join('; ')}.`),
+            }],
+            timestamp: Date.now(),
+          });
+        }
+        round.stopRequested = false;
       }
     } finally {
       conversation.channelRound = null;
     }
+    // A push that raced the teardown (channelRound was still set when its send
+    // checked the gate) re-enters as a fresh round. Reached only on a normal
+    // exit — a throw propagates to the caller and the next trigger (send,
+    // settle-drain, quit-flush) picks the queue up instead, so a persistent
+    // failure cannot loop.
+    if (conversation.pendingChannelMessages.length > 0) {
+      await this.runChannelRound(conversationId, conversation);
+    }
+  }
+
+  /**
+   * Drain trigger for non-round Channel runs (regenerate/retry, notification
+   * flush): messages queued while such a run was live are routed when it
+   * settles — sendMessage's gate returned without starting a round.
+   */
+  private async drainChannelQueueIfIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    if (conversation.pendingChannelMessages.length === 0) return;
+    await this.runChannelRound(conversationId, conversation);
   }
 
   /**
@@ -4848,16 +4950,22 @@ export class AgentRuntime {
       // Context overflow retries while the member's profile is still applied —
       // the retry run must execute as the SAME member, never the coordinator.
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-      const run = conversation.eventState.runs[runId];
+      // An overflow retry completes the turn under a NEW runId — evaluate the
+      // run that actually settled the turn (lastRun, set at its agent_end),
+      // falling back to the original when no run reached agent_end at all.
+      const settledRunId = conversation.lastRun?.id ?? runId;
+      const run = conversation.eventState.runs[settledRunId];
       return {
         completed: run?.status === 'completed',
         cancelled: run?.status === 'cancelled',
-        text: latestAssistantTextForRun(conversation.eventState, runId),
-        assistantMessageId: latestAssistantMessageIdForRun(conversation.eventState, runId),
+        text: latestAssistantTextForRun(conversation.eventState, settledRunId),
+        assistantMessageId: latestAssistantMessageIdForRun(conversation.eventState, settledRunId),
       };
     } catch (error) {
       // A pre-run failure (profile resolution, provider config) must not kill
-      // the round's sibling turns; surface it and let the loop continue.
+      // the round's sibling turns; surface it, free a wedged run slot, and let
+      // the loop continue.
+      await this.recoverFromRunError(conversationId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
       return { completed: false, cancelled: false, text: '', assistantMessageId: null };
     } finally {
@@ -5164,14 +5272,14 @@ export class AgentRuntime {
       ? message.errorMessage
       : null;
     // Hand-off routing record: a Channel reply's `@member` mentions are its
-    // addressedTo — persisted here so the relay decision lives in the log.
+    // addressedTo — persisted so the relay decision lives in the log. Stamped
+    // ONLY on the run's final segment (a `toolUse` stop means the turn
+    // continues), exactly the record the round loop routes from
+    // (`latestAssistantMessageIdForRun`) — the log never claims addressing
+    // that does not route.
     const members = conversation.eventState.conversation?.members ?? [];
-    const handOffAddressedTo = isMultiAgentConversation(members)
-      ? parseAgentMentionTargets(
-          assistantVisibleText(message),
-          members,
-          { excludeAgentId: activeRun.executingAgentId },
-        )
+    const handOffAddressedTo = isMultiAgentConversation(members) && message.stopReason !== 'toolUse'
+      ? handOffTargets(assistantVisibleText(message), members, activeRun.executingAgentId)
       : [];
     await this.appendConversationEvents(conversationId, conversation, [
       {
@@ -6367,7 +6475,7 @@ function buildChannelPeerSystemPrompt(
       '# Channel rules',
       '- Speak as yourself. Your reply is posted to the shared thread under your name.',
       '- Other members\' turns appear as quoted context with an identity preamble; never imitate another member or speak on their behalf.',
-      '- To hand off to another agent member, mention them as @<name> in your reply — only when they are clearly better suited. Hand-off is a sequential, budgeted relay; do not create mention loops.',
+      '- To hand off to another agent member, mention them as @<name> in your reply — only when they are clearly better suited. Every mention routes a turn and there is no relay limit, so mention deliberately and do not create mention loops; the user can stop the round at any time.',
       '- Stay within your description and instructions; defer outside work to better-suited members.',
     ].join('\n'),
     definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
