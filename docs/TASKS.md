@@ -19,7 +19,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (skill-governance-convergence merged, PR #174) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory-model P1+P2 merged, PR #172) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (principal-keyed memory merged, PR #173) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -30,8 +30,10 @@ Both 2026-06-09 lanes merged — board is between batches.
 - `launcher-native-nspanel` (cc) **merged** as PR #171 — see Recently completed.
   Remaining: a one-time packaged `.dmg` eyeball (⌘Tab lists Tenon · floats over
   another app's fullscreen · summon doesn't steal focus · dock icon · light+dark).
-- `agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
-  Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
+- `agent-memory-model` (cc-2) **complete and archived**: P1+P2 merged as PR #172,
+  Phase 3 (principal-keyed memory + per-principal Dream + membership read) merged
+  as PR #173 — see Recently completed. The §4 principal/membership foundation the
+  M3 multi-agent spine was gated on is now on `main`.
 - `agent-skills-authoring` convergence (cc) **merged** as PR #174 — see Recently
   completed.
   - **Next up (cc):** `agent-skill-acceptance` — PR A, the ratification loop's other half
@@ -116,11 +118,12 @@ cache + churn-based compaction + clean-cut coverage. **M1 is now substantially L
 "complete agent M1" + follow-ups): canonical DM + Channels, mixed-resolution memory retrieval/compaction,
 `ask_user_question` v1, `config`/`runtime_status`/doctor tools, skill self-authoring v1 + `/skillify`,
 task panel (#160), notifications/attention M2 (#166), agent authoring (#167), memory render+Dream P1/P2
-(#172) — **all shipped**. What remains is **(a) feature-completion tails** on already-scaffolded tools
-(ask-user-question: clarify action + answer @refs/attachments; skills-authoring: NL save-as-skill +
-diff/preview + snapshot/rollback + sandbox gate), **(b) the M3 multi-agent spine** (rooms/POV/turn-taking/
-coordinator routing — gated on the agent-data-model §4 principal/membership foundation, cc-2's PR #173),
-**(c) memory Phase 3** (user-as-agent + sharing, cc-2, gated on §4), and **(d) PM-deferred self-mod M2**
+(#172), **memory Phase 3: principal-keyed memory + per-principal Dream + membership read (#173, the
+agent-data-model §4 foundation)** — **all shipped**. What remains is **(a) feature-completion tails** on
+already-scaffolded tools (ask-user-question: clarify action + answer @refs/attachments; skills-authoring:
+NL save-as-skill + diff/preview + snapshot/rollback + sandbox gate), **(b) the M3 multi-agent spine**
+(rooms/POV/turn-taking/coordinator routing — its §4 principal/membership prerequisite shipped in #173,
+now unblocked), and **(d) PM-deferred self-mod M2**
 (review/approval + config recovery — security-sensitive, escalate before build). Remaining needs-PM
 decisions: doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3). Escalate before
 behavior-changing code.
@@ -413,6 +416,21 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **principal-keyed memory: the user is an ordinary principal** (cc-2, PR #173) — `agent-memory-model`
+  Phase 3, implementing the PM-ratified `agent-data-model` §4 contract; the plan is now complete and
+  archived (`done`). `MemoryEntry` re-keyed by `principal` (the subject a fact is *about*) replacing
+  `agentId`; the user owns a pool at `principals/user-<id>/memory/` on the same `AppendOnlySeqLog`.
+  Per-principal Dream (agent run-log → agent pool; user member-conversations → user pool,
+  principal-anchored, watermark-serialized, manual `/dream` on demand), membership read (`<self>` +
+  third-person `<principal>`, fair round-robin cap; user co-member everywhere, subagents inherit from the
+  parent session by design), and a read-path gate (cross-principal recall = distilled fact only, raw
+  evidence only for the reader's own pool). `isolated` retrieval tier removed — a pool is one undivided
+  self-model; `originWorkspace` is provenance only. Gate ran 3 rounds (protocol surface): e2e mock
+  regression, randomized Dream evidence fence (prompt-injection), and a write-side torn-tail repair
+  (pre-append truncate/newline-restore) all fixed and re-verified on the merged tree (typecheck ·
+  `test:core` 789/0 · `test:renderer` 389/0 · agent-settings e2e 20/20). Deferred fork: agent↔agent pool
+  reading (additive later via the same membership rule). **Post-merge: wipe `~/.lin-outliner-*` dev
+  userData** (stale `agentId`-keyed memory lines; dropped on read, but the clean cut is the policy).
 - **skill governance convergence: single-source identity + ratification gate** (cc, PR #174) — one
   convergence pass over the shipped M1 skill-authoring subsystem (design folded into
   `docs/spec/agent-skills.md`). (1) **Protocol:** `SkillDefinition.source` collapses to `AgentSourceKind`

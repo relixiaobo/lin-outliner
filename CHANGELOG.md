@@ -89,6 +89,33 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Principal-keyed memory: the user is an ordinary principal (PR #173)** — Phase 3 of
+  [[agent-memory-model]], implementing the PM-ratified (2026-06-09) `agent-data-model` §4 contract.
+  `MemoryEntry` (+ `AgentMemoryEntryView` / `AgentMemoryEventBase`) is re-keyed by **`principal`** — the
+  subject a fact is *about* — replacing `agentId`; a pool is one principal's undivided self-model. Agent
+  pools stay in `agents/<id>/memory/`, the user pool lives at `principals/user-<id>/memory/`; both ride the
+  same `AppendOnlySeqLog` primitive, no new event types, pre-release clean cut (no migration — wipe
+  `~/.lin-outliner-*` dev userData; stale `agentId`-keyed lines are dropped on read). **Per-principal Dream
+  (one writer per pool):** agent-Dream consolidates an agent's run log → its pool; user-Dream consolidates
+  the user's member-conversations → the user pool (executed by the main agent, principal-anchored run-meta,
+  single-writer, watermark-serialized; manual `/dream` fires it on demand). Extraction prompts are
+  subject-aware ("You …" vs "The user …"). **Membership read:** briefing/recall surface the reader's own
+  pool (`<self>`, second person) plus each co-member principal's pool (`<principal name="The user">`, third
+  person) under a fair round-robin resident cap; the user is always a co-member, so the user's self-model is
+  shared into every agent — subagents inherit visibility from the parent session by design. **Read-path
+  security gate:** cross-principal recall returns the distilled fact only; raw `sources` evidence
+  dereferences only for the reader's own pool. The former `isolated` retrieval tier is removed
+  (`originWorkspace` is provenance only); `read-only-global` (pause writes) remains. Gate (3 rounds,
+  protocol surface): r1 — an e2e mock regression (memory pane crash), a hollow subagent membership gate
+  (resolved as inheritance-by-design, honestly documented), and a Dream prompt-injection surface fixed with
+  a per-request randomized evidence fence; r2 — the torn-tail read fix was found to lose-then-brick on the
+  *write* side (append welds onto the torn fragment), fixed in r3 by a pre-append tail repair (newline-only
+  tears preserve the final event; mid-file corruption still fails loudly for reads and writes). Verified on
+  the merged tree: typecheck + `test:core` 789/0 + `test:renderer` 389/0 + agent-settings e2e 20/20; spec
+  updated in the same change (A6). GitHub flagged the merge CONFLICTING (modify/rename vs #174's plan
+  archive move) while ort merged clean — resolved by merging `main` into the branch at the gate.
+  ([#173](https://github.com/relixiaobo/lin-outliner/pull/173))
+
 - **Skill governance convergence: single-source identity + ratification gate (PR #174)** — one
   convergence pass over the shipped M1 skill-authoring subsystem, design in
   `docs/spec/agent-skills.md` + `docs/plans/agent-skills-authoring.md`. **(1) Protocol:**

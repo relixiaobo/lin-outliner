@@ -1,10 +1,10 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 executor: cc-2
 created: 2026-06-08
-updated: 2026-06-09
+updated: 2026-06-10
 ---
 
 # Agent Memory Model — Render, Dream & User-as-Agent (atop agent-data-model)
@@ -184,10 +184,9 @@ consumers, not a one-line change.
 ## 4. Principal-keyed memory (the user is an ordinary principal) — proposal to data-model
 
 This is the one genuinely **new** idea over P1+P2. **PM ratified the direction (2026-06-09)**;
-the concrete contract lives in [[agent-data-model]] *"Proposed extension — principal-keyed
-memory"* (now marked RATIFIED + IMPLEMENTED, pending the review gate), and it is **built** on
-branch `cc-2/agent-data-model-memory-sharing`. The sketch below is the originating rationale;
-the data-model section is the authority for the shipped contract.
+the concrete contract lives in [[agent-data-model]] *"Extension — principal-keyed memory"*
+(RATIFIED + SHIPPED, merged as PR #173 on 2026-06-10). The sketch below is the originating
+rationale; the data-model section is the authority for the shipped contract.
 
 **The reframe.** A `MemoryEntry` is keyed by **`principal: Principal`** (the subject it is
 about) instead of `agentId` (who owns it). A pool = one principal's self-model. The **user is
@@ -312,7 +311,7 @@ re-anchor trigger.
       `dream.completed.changes` shape (the `forgotten`→`invalidate` rename was *not* taken —
       it is a coordinated four-consumer edit and out of scope for this PR).
 - [x] **Phase 3 — principal-keyed memory + per-principal Dream (PM ratified direction 2026-06-09;
-      built on branch `cc-2/agent-data-model-memory-sharing`, pending review gate).** Shipped per
+      MERGED as PR #173, 2026-06-10 — all phases shipped, plan archived `done`).** Shipped per
       the [[agent-data-model]] "principal-keyed memory" contract: `MemoryEntry.principal` (also
       `AgentMemoryEventBase.principal` + `AgentMemoryEntryView.principal`) replaces `agentId`,
       keyed via `principalKey`; the user is an ordinary principal whose pool lives at

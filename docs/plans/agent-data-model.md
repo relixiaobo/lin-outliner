@@ -688,10 +688,10 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 - `RunMeta.usage` aggregate + per-turn total on the final reply; `RunMeta.fingerprint`
   (`appVersion` + prompt/tool-schema/skill/model hashes) + `retention` state.
 
-## Proposed extension — principal-keyed memory (the user is an ordinary principal)
+## Extension — principal-keyed memory (the user is an ordinary principal)
 
-**Status: RATIFIED (direction) + IMPLEMENTED on branch `cc-2/agent-data-model-memory-sharing`,
-pending review gate.** PM ratified the *direction* (2026-06-09: principal-keyed memory +
+**Status: RATIFIED + SHIPPED (merged as PR #173, 2026-06-10; 3-round review gate passed).**
+PM ratified the *direction* (2026-06-09: principal-keyed memory +
 per-principal Dream, over the earlier publish/subscribe sketch) and said begin; the contract
 below is now built. It is **interface-first** — the `src/core/*` surface (`MemoryEntry.principal`)
 landed first, then consumers. It adds **no new storage family and no parallel visibility
@@ -832,12 +832,13 @@ cross-principal read must never dereference another principal's raw conversation
 These are data-model-local; the experience/sequencing OQs live in
 [[agent-conversation-model]] and [[agent-program]].
 
-- **Cross-agent memory sharing — PM ratified direction (2026-06-09); concrete contract
-  drafted, pending ratification of the details.** The contract — `MemoryEntry.principal`
-  (replacing `agentId`, the user being an ordinary principal), per-principal Dream
-  (write side), visibility by `conversation.members` (read side), and the cross-principal
-  read-path security gate — is the **"Proposed extension — principal-keyed memory"** section
-  above. Interface-first once the remaining forks are ratified.
+- **Cross-agent memory sharing — RESOLVED + SHIPPED (PR #173, 2026-06-10).** The contract —
+  `MemoryEntry.principal` (replacing `agentId`, the user being an ordinary principal),
+  per-principal Dream (write side), visibility by `conversation.members` (read side), and the
+  cross-principal read-path security gate — is the **"Extension — principal-keyed memory"**
+  section above. Forks resolved: agent↔agent reading deferred (additive later via the same
+  membership rule); third-person `<principal>`; user-Dream scheduled + manual,
+  watermark-serialized.
 
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
   topic files. Memory is runtime-owned state, not an agent-writable file tree.
