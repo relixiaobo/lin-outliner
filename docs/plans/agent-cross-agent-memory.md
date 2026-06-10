@@ -99,15 +99,14 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
   data-model's open salience question; this plan uses the existing per-pool
   caps.
 
-## Open questions (PM gates — answer before build)
+## Decisions (PM gates — closed)
 
-- **Q1 — does the user's pool stay special?** Today the briefing reads the user
-  pool whenever the user is a member (always). With N agent co-members, the
-  recommended rule is uniform: all co-member pools read alike, user pool
-  included (it is just a principal). **Recommend: uniform** — no special case.
-- **Q2 — foreign-pool volume cap.** Per-foreign-pool entry cap in the briefing
-  (own-pool cap stays as is). Reversible local — dev decides and notes in the
-  PR (suggested start: half the own-pool cap).
+- **Q1 — uniform co-member pool rule: RATIFIED 2026-06-10.** All co-member
+  pools are read alike by membership; the user pool is just one principal's
+  pool, no special case. One rule, consistent with "user is an ordinary
+  Principal". Pinned — do not re-open.
+- **Q2 — foreign-pool volume cap.** Reversible local — dev decides and notes in
+  the PR (suggested start: half the own-pool cap).
 
 ## Acceptance
 

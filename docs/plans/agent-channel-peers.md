@@ -116,13 +116,13 @@ From `agent-conversation-model.md` / `agent-data-model.md`, all PM-ratified:
 - **NOT doc snapshot+delta** — context cache discipline belongs to the
   memory-prefix work, orthogonal.
 
-## Open questions (PM gates — answer before build)
+## Decisions (PM gates — closed)
 
-- **Q1 — group default-`addressedTo`.** When the user `@`s no one in an N-member
-  Channel: all / none / last-speaker / **coordinator (recommended — this is the
-  design's current answer; ratifying it here pins it)**.
-- **Q2 — relay loop budget.** Max agent→agent hand-offs per user turn. Reversible
-  local — dev decides and notes in the PR (suggested start: 3).
+- **Q1 — group default-`addressedTo`: RATIFIED 2026-06-10 → the coordinator.**
+  When the user `@`s no one, the coordinator (default = main agent) takes the
+  turn; it answers or hands off. Pinned — do not re-open.
+- **Q2 — relay loop budget.** Reversible local — dev decides and notes in the
+  PR (suggested start: 3).
 
 ## Acceptance
 
