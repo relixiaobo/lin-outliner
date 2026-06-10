@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **IME composition survives the split echo and empty rows (PR #177)** — fixes #176, the
+  P1 `skill` → `sk ill` mid-word tearing, with two independent root causes closed: (1) a
+  split echo's focusRequest landing ~60–80 ms into a live composition force-committed the
+  partial word — a global composition gate now parks focusRequest application while any
+  composition is live, and at compositionend the composing editor relays the (never-flushed)
+  composed text through the existing pendingInput rail to the echo's focus target, so the
+  word lands whole at the head of the new row; (2) an empty textblock has no #text node to
+  host the IME's marked range, so ProseMirror's first non-append composition rewrite redrew
+  the paragraph and killed the OS IME session — compositionstart now seeds empty blocks with
+  the existing zero-width sentinel anchor (stripped by the codec, never persisted). Renderer-
+  only; leg 1 pinned by a real-app CDP probe (`scripts/probe-ime-split.ts`), leg 2 verified
+  with a real Pinyin IME (CDP cannot emulate it — caveat recorded in `ui-behavior.md`).
+
 - **Agent memory evidence survives transcript compaction (PR #178)** — closes M3 Phase 1
   (`agent-memory-source-binding`, plan archived `done`). Both Dream evidence renderers dropped the
   post-compact reminder along with all hidden boilerplate — but after a subagent fork auto-compacts

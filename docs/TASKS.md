@@ -19,13 +19,20 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (memory-source-binding merged, PR #178) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (principal-keyed memory merged, PR #173) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (IME composition fix merged, PR #177) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
 Both 2026-06-09 lanes merged — board is between batches.
+
+- `ime-composition-focus-steal` (cc-2) **merged** as PR #177 — fixes #176 (`skill` →
+  `sk ill` IME tearing), both root causes: the echo focusRequest steal (global
+  composition gate + compositionend handoff through the pendingInput rail) and the
+  empty-row paragraph redraw (zero-width composition anchor). Renderer-only; spec
+  synced in-PR (`ui-behavior.md`); plan archived `done`. Live-IME verified by the PM;
+  CDP probe `scripts/probe-ime-split.ts` pins leg 1.
 
 - `launcher-native-nspanel` (cc) **merged** as PR #171 — see Recently completed.
   Remaining: a one-time packaged `.dmg` eyeball (⌘Tab lists Tenon · floats over

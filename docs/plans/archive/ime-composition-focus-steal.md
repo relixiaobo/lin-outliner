@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # IME composition hold + pendingInput handoff (issue #176)
