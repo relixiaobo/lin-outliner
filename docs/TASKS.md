@@ -313,10 +313,38 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
     principal-gated reverse lookup (episodic → citing facts); storage side of the
     3-level zoom (fact → episode gist → raw span).
   - **PR-3 forgetting** (was D1 `agent-memory-forgetting`): Bjork two-strength →
-    briefing ranking; strengths are projections, never stored fields.
-  - **PR-4 retrieval** (was D4 `agent-memory-retrieval-upgrade`): lexical → hybrid;
-    read side of the 3-level zoom; carries the **embedding-provider PM gate** — close
-    at claim.
+    briefing ranking; strengths are projections, never stored fields. Deliberate
+    `recall` hits append retrieval events (the use-strengthens half of the loop —
+    data the deferred associative mode will need).
+  - **PR-5 semantic overview / schema layer (PM-ratified 2026-06-10, with PR-3 =
+    "chronic activation"):** the breadth zoom axis — Dream-maintained schema nodes
+    (topic gist over fact clusters, same derived-node machinery as episode gist,
+    members = fact ids, rebuildable) extend the down-pointer ladder upward:
+    schema → fact → episode gist → raw. Briefing becomes overview + strength-
+    selected detail (replacing bare newest-12); `recall` with no query returns the
+    overview, not "recent 8". Doubles as **metamemory** (feeling-of-knowing: the
+    model knows what it knows before deciding to dig). PR-2 must build episode-gist
+    machinery schema nodes can reuse (A7).
+  - **PR-4 retrieval engine** (was D4 `agent-memory-retrieval-upgrade`,
+    **rescoped 2026-06-10**): lexical → hybrid serving the **deliberate `recall`
+    path only**; read side of the 3-level provenance zoom; carries the
+    **embedding-provider PM gate** — close at claim.
+  - **DEFERRED — automatic associative retrieval** (PM call 2026-06-10: wait for
+    data): the runtime-owned per-turn background faculty — current turn as cue,
+    top-k relevant facts/gists auto-surface in the `[5]` volatile tail
+    (will+digestion: association is a digestion-side faculty, the tool call is the
+    volitional act; the `[3]`/`[5]` cache contract already reserves the slot).
+    **Activation gate:** enough data to associate well — pool density + accumulated
+    retrieval events from PR-3/PR-4 usage; the program one-pager pins the
+    measurable threshold, PM closes the gate at claim.
+
+  **Usage contract (one-pager requirement):** define the three human-memory usage
+  modes × the zoom ladder in one table — chronic activation (briefing =
+  schema + strongest facts, always resident) · deliberate recall + verification
+  (the `recall` tool, provenance zoom) · automatic association (deferred, above).
+  PM-ratified order: deliberate recall correct first (PR-1) → data built (PR-2)
+  → chronic activation (PR-3 + PR-5) → deliberate engine (PR-4) → association
+  when the data supports it.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
