@@ -286,7 +286,8 @@ reinvent.
   - 2.3 Cross-agent memory sharing + the cross-principal isolation hard gate (the new
     primitive; depends on Phase 1).
   - 2.4 Per-agent POV projection (derived view).
-- **Parallel (orthogonal, not blocked):** `agent-skill-acceptance` (PR A, cc).
+- **Parallel (orthogonal, not blocked):** `agent-skill-acceptance` (PR A, cc) — **merged
+  #175** (skills-only; zero overlap with the M3 spine, confirmed by diff).
 
 ## How this reorg changes the member plans
 
