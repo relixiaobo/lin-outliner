@@ -73,7 +73,7 @@ export function idsAllowedForStructuralOutdentBatch(params: {
   byId: Map<NodeId, NodeProjection>;
   rowMap?: ReadonlyMap<NodeId, SelectableRow>;
 }): NodeId[] {
-  return params.ids.filter((id) => {
+  return idsAllowedForStructuralBatch(params).filter((id) => {
     const row = resolveSelectableRow({
       id,
       panelRootId: params.panelRootId,
@@ -81,9 +81,7 @@ export function idsAllowedForStructuralOutdentBatch(params: {
       rowMap: params.rowMap,
     });
     if (!row) return false;
-    return row.mutable
-      && row.kind !== 'fieldValue'
-      && row.parentId !== params.panelRootId;
+    return row.parentId !== params.panelRootId;
   });
 }
 

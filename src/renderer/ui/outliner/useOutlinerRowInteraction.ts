@@ -33,6 +33,7 @@ import {
   selectFocusState,
 } from '../focus/focusModel';
 import { buildOutlinerRows } from './row-model';
+import { trailingDraftPlacementEquals } from '../../state/trailingDraftPlacement';
 
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
@@ -126,12 +127,14 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   const updateSelection = useCallback(() => {
     setUi((prev) => {
       const next = selectFocusState(prev, rowFocusTarget(rowId, parentId, panelId));
-      return draft
-        ? {
-          ...next,
-          trailingDraftPlacement: { parentId, afterId: draftAfterId ?? null, panelId },
-        }
-        : next;
+      if (!draft) return next;
+      const placement = { parentId, afterId: draftAfterId ?? null, panelId };
+      return {
+        ...next,
+        trailingDraftPlacement: trailingDraftPlacementEquals(prev.trailingDraftPlacement, placement)
+          ? prev.trailingDraftPlacement
+          : placement,
+      };
     });
   }, [draft, draftAfterId, panelId, parentId, rowId, setUi]);
 

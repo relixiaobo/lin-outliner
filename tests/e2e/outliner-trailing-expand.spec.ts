@@ -336,6 +336,96 @@ test.describe('outliner trailing input and expansion parity', () => {
     });
   });
 
+  test('Tab returns a relocated trailing draft to the sibling it follows', async ({ page }) => {
+    await rowBody(page, ids.alpha).hover();
+    await row(page, ids.alpha).locator('.row-chevron-button').click();
+    await expect(trailingEditor(page, ids.alpha)).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(trailingEditor(page)).toBeFocused();
+
+    await page.keyboard.press('Tab');
+
+    await expect(trailingEditor(page, ids.alpha)).toBeFocused();
+    await expect(trailingEditor(page, ids.gamma)).toHaveCount(0);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return {
+        todayChildren: projection.nodes.find((node) => node.id === ids.today)?.children,
+        alphaChildren: projection.nodes.find((node) => node.id === ids.alpha)?.children,
+      };
+    }).toEqual({
+      todayChildren: [ids.alpha, ids.beta, ids.gamma],
+      alphaChildren: [],
+    });
+  });
+
+  test('empty Enter on a relocated trailing draft keeps the next draft in place', async ({ page }) => {
+    await rowBody(page, ids.alpha).hover();
+    await row(page, ids.alpha).locator('.row-chevron-button').click();
+    await expect(trailingEditor(page, ids.alpha)).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(trailingEditor(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(trailingEditor(page)).toBeFocused();
+    await page.keyboard.type('After empty');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const today = projection.nodes.find((node) => node.id === ids.today)!;
+      const inserted = projection.nodes.find((node) => node.content.text === 'After empty');
+      const empty = projection.nodes.find((node) => node.id === today.children[1]);
+      return {
+        insertedIndex: inserted ? today.children.indexOf(inserted.id) : -1,
+        emptyText: empty?.content.text,
+        before: today.children[0],
+        after: today.children[3],
+        last: today.children[4],
+      };
+    }).toEqual({
+      insertedIndex: 2,
+      emptyText: '',
+      before: ids.alpha,
+      after: ids.beta,
+      last: ids.gamma,
+    });
+  });
+
+  test('Enter on delayed relocated trailing text creates continuation in place', async ({ page }) => {
+    await delayCreateNode(page);
+    await rowBody(page, ids.alpha).hover();
+    await row(page, ids.alpha).locator('.row-chevron-button').click();
+    await expect(trailingEditor(page, ids.alpha)).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(trailingEditor(page)).toBeFocused();
+    await page.keyboard.type('Delayed anchor', { delay: 0 });
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const today = projection.nodes.find((node) => node.id === ids.today)!;
+      const committed = projection.nodes.find((node) => node.content.text === 'Delayed anchor');
+      const continuation = committed
+        ? projection.nodes.find((node) => node.id === today.children[today.children.indexOf(committed.id) + 1])
+        : undefined;
+      return {
+        committedIndex: committed ? today.children.indexOf(committed.id) : -1,
+        continuationText: continuation?.content.text,
+        before: today.children[0],
+        after: today.children[3],
+        last: today.children[4],
+      };
+    }).toEqual({
+      committedIndex: 1,
+      continuationText: '',
+      before: ids.alpha,
+      after: ids.beta,
+      last: ids.gamma,
+    });
+  });
+
   test('Enter then Tab creates a child from the real empty sibling', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('Fresh parent');

@@ -81,13 +81,7 @@ async function placeCursorAtTextOffset(page: Page, nodeId: string, offset: numbe
 async function selectEditorContents(page: Page, nodeId: string) {
   const editor = rowEditor(page, nodeId);
   await editor.click();
-  await editor.evaluate((element) => {
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
+  await page.keyboard.press('Meta+A');
   await page.waitForTimeout(25);
 }
 

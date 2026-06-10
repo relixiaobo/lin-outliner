@@ -8,20 +8,10 @@ import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
 import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem } from './row-model';
 import { useTrailingDraftId } from './draftRow';
+import { insertTrailingDraftRow, resolveTrailingDraftAfterId } from '../../state/trailingDraftPlacement';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
-
-function insertDraftRow(
-  rows: OutlinerRowItem[],
-  draftRow: OutlinerRowItem,
-  afterId: NodeId | null,
-): OutlinerRowItem[] {
-  if (!afterId) return [...rows, draftRow];
-  const index = rows.findIndex((row) => row.id === afterId);
-  if (index < 0) return [...rows, draftRow];
-  return [...rows.slice(0, index + 1), draftRow, ...rows.slice(index + 1)];
-}
 
 interface OutlinerViewProps {
   panelId: string;
@@ -80,19 +70,19 @@ export function OutlinerView(props: OutlinerViewProps) {
   // field values use 'auto', which is why the bug surfaced only there.
   const draftFocused = props.ui.focusedId === draftId
     && props.ui.focusedPanelId === props.panelId;
-  const placement = props.ui.trailingDraftPlacement;
-  const placementAfterId = placement
-    && placement.parentId === props.parentId
-    && (placement.panelId === null || placement.panelId === props.panelId)
-    ? placement.afterId
-    : null;
+  const placementAfterId = resolveTrailingDraftAfterId({
+    placement: props.ui.trailingDraftPlacement,
+    parentId: props.parentId,
+    panelId: props.panelId,
+    rows: builtRows,
+  });
   const showDraft = Boolean(parent) && (
     trailingMode === 'always'
     || (trailingMode === 'auto' && (builtRows.length === 0 || trailingFocused || draftFocused))
   );
   const draftRow: OutlinerRowItem = { id: draftId, type: 'content', draft: true, afterId: placementAfterId };
   const rows: OutlinerRowItem[] = showDraft
-    ? insertDraftRow(builtRows, draftRow, placementAfterId)
+    ? insertTrailingDraftRow(builtRows, draftRow, placementAfterId)
     : builtRows;
 
   useEffect(() => {

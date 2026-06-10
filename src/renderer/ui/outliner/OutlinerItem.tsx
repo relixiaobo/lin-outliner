@@ -30,7 +30,7 @@ import {
   replaceRichTextRangeWithText,
   richTextEquals,
 } from '../editor/richTextCodec';
-import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
@@ -70,6 +70,7 @@ import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
 import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import { buildOutlinerRows } from './row-model';
+import { draftCreateIndex, previousDraftSiblingId } from '../../state/trailingDraftPlacement';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { CommandRunButton, useCommandRun } from './CommandFieldValue';
@@ -142,6 +143,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
   const tf = useT().outliner.field;
   const realNode = props.index.byId.get(props.nodeId);
+  const parentNode = props.index.byId.get(props.parentId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
   const node = realNode ?? (props.draft ? makeDraftNode(props.nodeId, props.parentId) : undefined);
@@ -440,6 +442,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     return result.nodeId;
   };
 
+  const currentDraftCreateIndex = () => draftCreateIndex(parentNode, props.draftAfterId ?? null);
+  const placementAfterMaterializedDraft = () => (
+    props.draftAfterId && !props.fieldValue
+      ? { parentId: props.parentId, afterId: props.nodeId, panelId: props.panelId }
+      : null
+  );
+  const materializedDraftFocusState = (state: UiState) => ({
+    ...selectFocusState(
+      state,
+      rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+    ),
+    trailingDraftPlacement: placementAfterMaterializedDraft(),
+  });
+
   // Materialization: turn the draft into a real node under its stable id on
   // commit. Runs once; the create and the text patches that follow share one undo
   // group (see DocumentService). Keystrokes that land during the IPC round-trip
@@ -463,17 +479,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     materializeStartedRef.current = true;
     const seed = draftContentRef.current;
     const fieldValue = props.fieldValue;
-    const createIndex = (() => {
-      if (!props.draftAfterId) return null;
-      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-      const afterIndex = siblings.indexOf(props.draftAfterId);
-      return afterIndex < 0 ? null : afterIndex + 1;
-    })();
+    const createIndex = currentDraftCreateIndex();
     const runCreate = fieldValue
       ? () => fieldValue.materializeValue(props.nodeId, seed.text)
       : () => props.run(
         () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId),
-        { applyFocus: false },
+        {
+          applyFocus: false,
+          beforeApply: () => {
+            props.setUi(materializedDraftFocusState);
+          },
+        },
       );
     pendingTextPatchRef.current = pendingTextPatchRef.current
       .then(runCreate)
@@ -490,10 +506,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         }
       })
       .then(() => {
-        props.setUi((prev) => selectFocusState(
-          prev,
-          rowFocusTarget(props.nodeId, props.parentId, props.panelId),
-        ));
+        props.setUi(materializedDraftFocusState);
       });
     void pendingTextPatchRef.current;
   };
@@ -991,12 +1004,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // Used after a committed field value row's Enter and after the options overlay
   // picks/creates, so every "add another value" gesture funnels through the same
   // draft (everything is a node; values append via that draft).
-  const focusTrailingDraft = () => {
-    props.setUi((prev) => requestFocusState(
-      prev,
-      focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
-      cursorEnd(),
-    ));
+  const focusTrailingDraft = (afterId: NodeId | null = null) => {
+    props.setUi((prev) => {
+      const next = requestFocusState(
+        prev,
+        focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+        cursorEnd(),
+      );
+      return afterId
+        ? {
+          ...next,
+          trailingDraftPlacement: { parentId: props.parentId, afterId, panelId: props.panelId },
+        }
+        : next;
+    });
   };
 
   // Append an existing pool option as a reference (the additive options overlay),
@@ -1025,7 +1046,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const materializeDraftAndAdvance = async () => {
     materializeDraft();
     await pendingTextPatchRef.current;
-    focusTrailingDraft();
+    focusTrailingDraft(!props.fieldValue ? props.nodeId : null);
   };
 
   // Commit a date the picker produced. A draft materializes with the picked text
@@ -1063,11 +1084,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         // renderer trailing draft via materializeDraftAndAdvance, so Enter there never
         // leaks a stray empty sibling.)
         if (!payload.atEnd) replaceLocalDraftContent(payload.before);
+        const materializedIndex = currentDraftCreateIndex();
+        const continuationIndex = materializedIndex === null ? null : materializedIndex + 1;
         materializeDraft();
         await pendingTextPatchRef.current;
         await props.run(() => api.createNode(
           props.parentId,
-          null,
+          continuationIndex,
           payload.atEnd ? '' : payload.after.text,
         ));
         return;
@@ -1226,8 +1249,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       // Relocation is pure focus + expand — no create, no indent IPC, so there is
       // no materialize→indent flicker and no stray empty node.
       if (!shiftKey) {
-        const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-        const indentTarget = siblings[siblings.length - 1];
+        const siblingRows = buildOutlinerRows(
+          parentNode,
+          props.index.byId,
+          { expandedHiddenFields: props.uiRef.current.expandedHiddenFields },
+        );
+        const indentTarget = previousDraftSiblingId(siblingRows, props.draftAfterId ?? null);
         if (!indentTarget) return; // no previous sibling to nest under
         props.setUi((prev) => {
           const expanded = new Set(prev.expanded);
@@ -1266,8 +1293,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         beforeApply: () => {
           animateOutlinerRowMovementAfterNextCommit();
           props.setUi((prev) => {
-            const expanded = new Set(prev.expanded);
-            expanded.add(targetParentId);
+            const expanded = expandIndentTargets(prev.expanded, [props.nodeId], props.index.byId);
             return requestFocusState(
               { ...prev, expanded },
               rowFocusTarget(props.nodeId, null, props.panelId),
@@ -1278,8 +1304,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       });
       return;
     }
-    const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
     if (props.parentId === props.rootId) return;
+    const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
     await props.run(() => api.outdentNode(props.nodeId), {
       applyFocus: false,
       beforeApply: () => {

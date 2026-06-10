@@ -2,6 +2,7 @@ import type { NodeId, NodeProjection } from '../api/types';
 import { buildOutlinerRows, readViewConfig } from './outlinerRows';
 import { outlinerChildParentId } from './document';
 import type { TrailingDraftPlacement } from './document';
+import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 
 // A single flattened, depth-aware outliner row. The recursive
 // OutlinerView/OutlinerItem render is being replaced by one windowed flat list,
@@ -54,6 +55,8 @@ export interface VisualRowsOptions {
   // Parent whose trailing surface currently holds keyboard focus (drives the
   // 'auto' trailing draft just like OutlinerView's `trailingFocused`).
   trailingFocusedParentId?: NodeId | null;
+  // Parent whose renderer-only draft row currently holds settled row focus.
+  draftFocusedParentId?: NodeId | null;
   trailingDraftPlacement?: TrailingDraftPlacement | null;
 }
 
@@ -90,13 +93,20 @@ export function buildVisualRows(
 
     const builtRows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
     const showDraft = trailingMode === 'always'
-      || (trailingMode === 'auto' && (builtRows.length === 0 || options.trailingFocusedParentId === parentId));
+      || (
+        trailingMode === 'auto'
+        && (
+          builtRows.length === 0
+          || options.trailingFocusedParentId === parentId
+          || options.draftFocusedParentId === parentId
+        )
+      );
     const draftId = showDraft ? options.draftIdFor?.(parentId) ?? null : null;
-    const placement = options.trailingDraftPlacement;
-    const placementAfterId = placement
-      && placement.parentId === parentId
-      ? placement.afterId
-      : null;
+    const placementAfterId = resolveTrailingDraftAfterId({
+      placement: options.trailingDraftPlacement,
+      parentId,
+      rows: builtRows,
+    });
     const pushDraft = () => {
       if (!draftId) return;
       // Key by the draft's own id (not its position), identical to the key the

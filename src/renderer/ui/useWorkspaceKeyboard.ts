@@ -525,25 +525,27 @@ export function useWorkspaceKeyboard({
           ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)
           : new Set<NodeId>();
         const structuralAction = action === 'batch_indent' || action === 'batch_outdent';
+        const restoredSelection = {
+          selectedId: anchor,
+          selectedIds: new Set(batchIds),
+          selectionAnchorId: anchor,
+          selectionRootId,
+        };
         void run(() => batchOperation(operationIds), {
           applyFocus: false,
           beforeApply: structuralAction
             ? () => {
               animateOutlinerRowMovementAfterNextCommit();
               setUi((prev) => {
+                const liveIndex = latestStateRef.current.index ?? currentIndex;
                 const expanded = action === 'batch_indent'
-                  ? expandIndentTargets(prev.expanded, operationIds, currentIndex.byId)
+                  ? expandIndentTargets(prev.expanded, operationIds, liveIndex.byId)
                   : action === 'batch_outdent' && emptiedParentIds.size > 0
                     ? collapseExpandedParentIds(prev.expanded, emptiedParentIds)
                     : prev.expanded;
                 return selectKeyboardRowsState(
                   { ...prev, expanded },
-                  {
-                    selectedId: anchor,
-                    selectedIds: new Set(batchIds),
-                    selectionAnchorId: anchor,
-                    selectionRootId,
-                  },
+                  restoredSelection,
                 );
               });
             }
@@ -551,12 +553,7 @@ export function useWorkspaceKeyboard({
         }).then((result) => {
           if (!result) return;
           if (action === 'batch_checkbox') {
-            setUi((prev) => selectKeyboardRowsState(prev, {
-              selectedId: anchor,
-              selectedIds: new Set(batchIds),
-              selectionAnchorId: anchor,
-              selectionRootId,
-            }));
+            setUi((prev) => selectKeyboardRowsState(prev, restoredSelection));
             return;
           }
         });

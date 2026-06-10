@@ -71,11 +71,11 @@ keyboard or pointer change should be checked against this matrix.
 
 | Interaction | Expected behavior |
 | --- | --- |
-| Printable text on empty trailing row | Create an eager child and keep editing that node. |
-| `Enter` with text | Create content, then create/focus a new empty row in the same parent. |
-| Empty `Enter` | Create/focus an empty child. |
-| `Tab` | Relocate the trailing input under the last child and expand that child. The draft stays a draft — the cursor stays put and no node is created until text is typed. |
-| `Shift+Tab` | Relocate the trailing input one parent level up, immediately after the current parent in that scope (no node created until text is typed). |
+| Printable text on empty trailing row | Create an eager child at the draft's current visual position and keep editing that node. If the draft was relocated after a sibling, the fresh trailing draft stays after the newly materialized node. |
+| `Enter` with text | Create content at the draft's current visual position, then create/focus a new empty row immediately after it in the same parent. |
+| Empty `Enter` | Create/focus an empty child at the draft's current visual position and keep the next trailing draft immediately after it. |
+| `Tab` | Relocate the trailing input under the sibling immediately before the draft's current visual position and expand that sibling. At the scope end, this is the last child; after `Shift+Tab`, this is the parent the draft follows. The draft stays a draft — the cursor stays put and no node is created until text is typed. If there is no preceding sibling, `Tab` is a no-op. |
+| `Shift+Tab` | Relocate the trailing input one parent level up, immediately after the current parent in that scope (no node created until text is typed). At the current panel root, `Shift+Tab` is a no-op. |
 | Empty `Backspace` after a `Tab` relocate | The draft now sits under the (empty) sibling it was relocated into, so the "parent has no children" rule below applies: collapse that sibling and focus it. |
 | Empty `Backspace` when parent has no children | Collapse the parent and focus it. |
 | Empty `Backspace` when parent has children | Focus the last visible child. |
