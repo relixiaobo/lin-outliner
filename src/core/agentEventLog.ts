@@ -119,6 +119,16 @@ export function samePrincipal(left: AgentPrincipal, right: AgentPrincipal): bool
   return principalKey(left) === principalKey(right);
 }
 
+/** Merge principal lists, deduplicated by key, preserving first-seen order. */
+export function mergeUniquePrincipals(
+  current: readonly AgentPrincipal[],
+  next: readonly AgentPrincipal[],
+): AgentPrincipal[] {
+  const byKey = new Map<string, AgentPrincipal>();
+  for (const principal of [...current, ...next]) byKey.set(principalKey(principal), principal);
+  return [...byKey.values()];
+}
+
 export type AgentConversationActor = AgentPrincipal | { type: 'system' };
 
 export interface AgentConversationMeta {
@@ -692,6 +702,12 @@ export interface AssistantMessageCompletedEvent extends AgentEventBase {
   stopReason: AssistantMessage['stopReason'];
   content: AgentPersistedContent[];
   usage?: Usage;
+  /**
+   * Hand-off routing record: the members this reply `@`-addressed (Channel
+   * relay). Written at completion so the routing decision is in the durable
+   * log, not only re-derivable from text.
+   */
+  addressedTo?: AgentPrincipal[];
 }
 
 export interface AssistantMessageFailedEvent extends AgentEventBase {
@@ -1538,6 +1554,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       message.status = 'completed';
       message.stopReason = event.stopReason;
       message.usage = event.usage;
+      if (event.addressedTo) message.addressedTo = event.addressedTo.slice();
       message.updatedAt = event.createdAt;
       return;
     }

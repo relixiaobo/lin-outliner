@@ -105,6 +105,8 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationTitle: null,
   members: [],
   activeRunId: null,
+  activeRunAgentId: null,
+  queuedMessages: [],
   activeCompaction: null,
   activeDream: null,
   isStreaming: false,
@@ -119,6 +121,9 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   entities: { messages: {}, subagents: {}, compactions: {}, dreams: {}, tasks: {} },
   streaming: null,
 };
+
+const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
+const EMPTY_QUEUED_MESSAGES: string[] = [];
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -504,6 +509,10 @@ export interface LinAgentRuntimeView {
   conversationCost: number;
   /** Conversation members (user + agents); ≥2 agent members = a Channel. */
   members: AgentRenderMemberView[];
+  /** The active run's executing agent (Channel typing indicator subject). */
+  activeRunAgentId: string | null;
+  /** Channel user messages queued behind the active round (not yet in the log). */
+  queuedMessages: string[];
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
@@ -1054,7 +1063,13 @@ export class AgentRuntimeStore {
       conversationId: this.conversationId,
       conversationTitle: this.projection.conversationTitle,
       conversationCost: conversationCost(this.projection),
-      members: this.projection.members,
+      // Defensive fallbacks: projections from a mock/older main process without
+      // these fields must degrade to a DM view, never crash the panel at mount.
+      // The shared empty constants keep the reference stable across rebuilds so
+      // member-derived memos don't recompute on every projection tick.
+      members: this.projection.members ?? EMPTY_MEMBERS,
+      activeRunAgentId: this.projection.activeRunAgentId ?? null,
+      queuedMessages: this.projection.queuedMessages ?? EMPTY_QUEUED_MESSAGES,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
       subagentRunIds: this.projection.subagentRunIds,

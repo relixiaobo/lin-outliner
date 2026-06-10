@@ -15,13 +15,6 @@ import {
  * alone — no registry lookups here.
  */
 
-/**
- * Per-user-turn relay budget (PM gate Q2, reversible local): the maximum number
- * of agent runs one user message can produce, counting the first routed turn and
- * every hand-off. Caps circular `@` chains.
- */
-export const CHANNEL_RELAY_RUN_BUDGET = 3;
-
 /** A conversation routes between agents iff more than one agent is a member. */
 export function isMultiAgentConversation(members: readonly AgentPrincipal[]): boolean {
   return channelAgentMembers(members).length >= 2;
@@ -73,16 +66,18 @@ export function parseAgentMentionTargets(
 }
 
 /**
- * The first hand-off target named by an agent reply: the earliest `@member`
- * mention that is not the speaker. Hand-off is a relay — strictly one next
- * speaker — so only the first mention routes.
+ * Hand-off targets named by an agent reply: every `@member` mention that is not
+ * the speaker. Hand-off uses the same addressing rule as a user message
+ * (PM-ratified 2026-06-10): all addressees run, each addressed BY this reply —
+ * so their contexts cut at it (independence rule), and the chain is unbounded
+ * (user `stop` is the circuit breaker).
  */
-export function firstHandOffTarget(
+export function handOffTargets(
   text: string,
   members: readonly AgentPrincipal[],
   speakerAgentId: string,
-): Extract<AgentPrincipal, { type: 'agent' }> | null {
-  return parseAgentMentionTargets(text, members, { excludeAgentId: speakerAgentId })[0] ?? null;
+): Extract<AgentPrincipal, { type: 'agent' }>[] {
+  return parseAgentMentionTargets(text, members, { excludeAgentId: speakerAgentId });
 }
 
 export type ChannelMessageOwner = AgentPrincipal | { type: 'system' };
@@ -107,6 +102,35 @@ export function channelMessageOwner(
   if (runAgentId) return { type: 'agent', agentId: runAgentId };
   if (record.actor.type === 'agent') return { type: 'agent', agentId: record.actor.agentId };
   return { type: 'agent', agentId: mainAgentId };
+}
+
+/**
+ * Independence cut (PM-ratified 2026-06-10): an addressed run's context is the
+ * transcript path up to and including the message that addressed it, plus the
+ * POV agent's OWN records after that point (its in-flight turn). Same-round
+ * co-addressees are therefore mutually invisible; a hand-off target — addressed
+ * by the handing-off reply — sees that reply and everything before it.
+ *
+ * If the addressing message is no longer on the path (e.g. compaction rewrote
+ * history mid-round), the cut fails open to the full path: a stale boundary
+ * must never silently truncate real history.
+ */
+export function cutChannelPathForRun(
+  path: readonly AgentEventMessageRecord[],
+  runs: Record<string, AgentRunRecord>,
+  povAgentId: string,
+  addressedByMessageId: string | null,
+  mainAgentId: string,
+): AgentEventMessageRecord[] {
+  if (!addressedByMessageId) return [...path];
+  const cutIndex = path.findIndex((record) => record.id === addressedByMessageId);
+  if (cutIndex === -1) return [...path];
+  const result = path.slice(0, cutIndex + 1);
+  for (const record of path.slice(cutIndex + 1)) {
+    const owner = channelMessageOwner(record, runs, mainAgentId);
+    if (owner.type === 'agent' && owner.agentId === povAgentId) result.push(record);
+  }
+  return result;
 }
 
 /** One source turn inside a coalesced user-role block of the POV flatten. */

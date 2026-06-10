@@ -67,16 +67,38 @@ clean-cut, no migration).
   M3-A, before M3-B) makes child runs ordinary run ledgers and deletes the species.
 - **Peer agent (a Channel member)** — multiple agent Principals share one conversation
   with the user; routed by `addressedTo` (a run is produced iff a principal is addressed;
-  coordinator = the default addressee, PM-ratified 2026-06-10). ✅ (M3-A #179) —
-  composer `@`-mentions resolve against the member set; no `@` routes to the
-  coordinator; an agent reply containing `@member` hands the turn off (sequential
-  relay, capped at `CHANNEL_RELAY_RUN_BUDGET = 3` runs per user turn); each peer
-  turn runs as that agent (own definition/model/skills/memory line, `actor`
-  stamped on its messages) and reads the thread through the per-POV flatten
-  (`agentChannel.ts` `flattenAgentPathForPov`: own turns verbatim, other
-  principals coalesced into identity-preambled user-role blocks; assembled
-  transiently in `deriveRuntimePiMessages` — never persisted, the shared log
-  stays reader-neutral).
+  coordinator = the default addressee, PM-ratified 2026-06-10). ✅ (M3-A #179,
+  IM group-chat semantics ratified 2026-06-10) — a Channel behaves like an IM
+  group, not a streaming DM:
+  - **Routing:** explicit user `@`s all run, uncounted; no `@` → the
+    coordinator; an agent reply `@`-ing members hands off (the addressing is
+    persisted on the reply's `assistant_message.completed.addressedTo` and the
+    round loop routes from the record). The hand-off chain is **unbounded** —
+    user `stop` is the only circuit breaker (kills the active run, discards
+    unstarted routing with a visible thread trace).
+  - **Independence cut:** an addressed run's context = the log up to and
+    including the message that addressed it, plus its own later records
+    (`agentChannel.ts` `cutChannelPathForRun`; fails open if compaction removed
+    the boundary). Same-round co-addressees are mutually invisible; a hand-off
+    target sees the reply that addressed it.
+  - **Delivery (typing model):** Channel replies are not streamed — a typing
+    indicator while the run is active (drill-in opens the run working-state
+    panel), the whole reply lands in the thread on completion. The thread shows
+    **utterances only** (final text; process blocks live behind the drill-in).
+  - **Queue-all:** a user message sent during an active round queues (no steer
+    in Channels); the round loop persists it when it routes it — never mid-run,
+    which would fork the event path past the in-flight reply — and the
+    projection's `queuedMessages` keeps it visible meanwhile. DM behavior is
+    untouched (streaming, steer, inline process).
+  - Each peer turn runs as that agent (own definition/model/skills/memory line,
+    `actor` stamped on its messages) and reads the thread through the per-POV
+    flatten (`agentChannel.ts` `flattenAgentPathForPov`, composed with the
+    independence cut: own turns verbatim, other principals coalesced into
+    identity-preambled user-role blocks; assembled transiently in
+    `deriveRuntimePiMessages` — never persisted, the shared log stays
+    reader-neutral). POV applies whenever the transcript contains another
+    agent's records — keyed on content, not the live roster — and mention
+    tokens are collision-checked at create/add time.
 
 ## User ↔ Agent (concept direction, not yet built)
 
@@ -140,8 +162,8 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Typed sub-agent identity + per-agent memory line (#164) | ✅ built | the groundwork multi-agent builds on |
 | `addressedTo`, `member.added/removed`, `<principal>` render hook | ✅ built | connected in M3-A (#179): `addressedTo` written on user messages + read by routing; membership events applied on replay + folded into the conversation index |
-| Create a >1-agent conversation (Channel) | ✅ built | `agent_create_conversation` takes `{agentIds, goal, seedText}`; add/remove member commands; "add agent to DM" spawns a seeded Channel (DM itself never converts) |
-| Routing / coordinator / peer-agent reply | ✅ built | `@`-mention routing, coordinator default, sequential hand-off relay with a per-user-turn budget (3); UI: composer member typeahead, header/list member display, actor badges |
+| Create a >1-agent conversation (Channel) | ✅ built | `agent_create_conversation` takes `{agentIds, goal, seedText}`; add/remove member commands + header "+" member menu in the UI; "add agent to DM" spawns a seeded Channel (DM itself never converts); mention-token collisions rejected at create/add |
+| Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery + queue-all rounds; UI: composer member typeahead, header/list member display, actor badges, typing indicator + run drill-in |
 | Cross-agent memory sharing + isolation gate | ◻ missing | the one new primitive (M3-B) |
 | Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |
 | Memory source binding under compaction (#164) | ✅ built | `sources[]` were already ID-pinned + fail-loud; PR #178 closed the two residual holes: the Dream renderers now surface a compaction summary as evidence (after compaction it is the only surviving carrier of the compacted content), and the fork-prefix boundary is read in the live payload's own coordinates (envelope-first; a stale boundary beyond the payload means "Dream from 0", never a permanent skip). Invariant pinned: `agent-data-model` §13.17, *compaction is evidence-preserving*. |

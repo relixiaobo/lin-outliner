@@ -237,8 +237,9 @@ describe('agent channel runtime', () => {
     expect(run?.agentId).toBe(reviewerAgentId);
   });
 
-  test('no-@ routes to the coordinator; a coordinator @member hand-off produces that member run; the budget caps the chain', async () => {
-    // Every reply mentions the other member — without the budget this relays forever.
+  test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {
+    // Four runs — past the old relay budget of 3; the chain ends only because the
+    // last reply mentions nobody (stop is the sole circuit breaker otherwise).
     const fixture = await setupChannelFixture([
       (context) => {
         expect(context.systemPrompt ?? '').not.toContain('REVIEWER_AGENT_BODY');
@@ -246,18 +247,18 @@ describe('agent channel runtime', () => {
       },
       fauxAssistantMessage(fauxText('@assistant back to you.')),
       fauxAssistantMessage(fauxText('@reviewer once more.')),
-      fauxAssistantMessage(fauxText('This response must never be requested.')),
+      fauxAssistantMessage(fauxText('Done; no further hand-off.')),
     ]);
     const { runtime, calls, script, reviewerAgentId, dataRoot } = fixture;
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Relay test' });
     await runtime.sendMessage(channel.conversationId, 'someone take a look');
 
-    // CHANNEL_RELAY_RUN_BUDGET = 3: coordinator → reviewer → coordinator, then stop.
-    expect(calls).toHaveLength(3);
-    expect(script.pendingCount()).toBe(1);
+    expect(calls).toHaveLength(4);
+    expect(script.pendingCount()).toBe(0);
     expect(calls[1]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
     expect(calls[2]!.systemPrompt).not.toContain('REVIEWER_AGENT_BODY');
+    expect(calls[3]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
     // Hand-off context: the reviewer sees the coordinator's reply as a preambled user block.
     expect(calls[1]!.serialized).toContain('@assistant (agent');
     expect(calls[1]!.serialized).toContain('Tenon Assistant');
@@ -265,9 +266,197 @@ describe('agent channel runtime', () => {
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const runAgents = Object.values(state.runs).map((run) => run.agentId);
-    expect(runAgents).toEqual([MAIN_AGENT_ID, reviewerAgentId, MAIN_AGENT_ID]);
+    expect(runAgents).toEqual([MAIN_AGENT_ID, reviewerAgentId, MAIN_AGENT_ID, reviewerAgentId]);
     const userRecord = Object.values(state.messages).find((record) => record.role === 'user');
     expect(userRecord?.addressedTo).toEqual([agentPrincipal(MAIN_AGENT_ID)]);
+    // Hand-off addressing is persisted on the handing-off reply itself — the
+    // routing is visible in the log, not just runtime behavior.
+    const assistantRecords = Object.values(state.messages)
+      .filter((record) => record.role === 'assistant')
+      .sort((left, right) => left.createdAt - right.createdAt);
+    expect(assistantRecords[0]!.addressedTo).toEqual([agentPrincipal(reviewerAgentId)]);
+    expect(assistantRecords[3]!.addressedTo ?? []).toEqual([]);
+  });
+
+  test('multi-@ runs every addressee with contexts cut at the user message (independent answers)', async () => {
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage(fauxText('MAIN_TAKE_ALPHA — coordinator view.')),
+      fauxAssistantMessage(fauxText('REVIEWER_TAKE_BETA — reviewer view.')),
+    ]);
+    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Independent takes' });
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer give me independent takes');
+
+    expect(calls).toHaveLength(2);
+    // Independence cut: the second addressee never sees its sibling's same-round reply.
+    expect(calls[1]!.serialized).toContain('independent takes');
+    expect(calls[1]!.serialized).not.toContain('MAIN_TAKE_ALPHA');
+
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const userRecord = Object.values(state.messages).find((record) => record.role === 'user');
+    expect(userRecord?.addressedTo).toEqual([agentPrincipal(MAIN_AGENT_ID), agentPrincipal(reviewerAgentId)]);
+    // Both replies still land in the shared thread as messages.
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('MAIN_TAKE_ALPHA');
+    expect(texts).toContain('REVIEWER_TAKE_BETA');
+  });
+
+  test('one addressee failing leaves its trace and never skips siblings', async () => {
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'scripted coordinator failure' }),
+      fauxAssistantMessage(fauxText('REVIEWER_STILL_RAN.')),
+    ]);
+    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Failure isolation' });
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('REVIEWER_STILL_RAN');
+    const runStatuses = Object.values(state.runs).map((run) => run.status);
+    expect(runStatuses).toContain('failed');
+    expect(runStatuses).toContain('completed');
+  });
+
+  test('a user message during an active round queues (no steer) and routes when the round ends', async () => {
+    const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string; secondSend?: Promise<void> } = {};
+    const fixture = await setupChannelFixture([
+      () => {
+        // Fired mid-round, while this first turn is still streaming: must queue,
+        // never steer-inject into the live run.
+        holder.secondSend = holder.runtime!.sendMessage(holder.channelId!, 'second message please') as Promise<void>;
+        return fauxAssistantMessage(fauxText('FIRST_REPLY_OK.'));
+      },
+      fauxAssistantMessage(fauxText('SECOND_REPLY_OK.')),
+    ]);
+    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+    holder.runtime = runtime;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Queue test' });
+    holder.channelId = channel.conversationId;
+    await runtime.sendMessage(channel.conversationId, 'first message');
+    await holder.secondSend;
+
+    // Two separate runs — the second message produced its own coordinator turn
+    // whose context includes the settled first reply (cut at the second message).
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.serialized).not.toContain('second message please');
+    expect(calls[1]!.serialized).toContain('FIRST_REPLY_OK');
+    expect(calls[1]!.serialized).toContain('second message please');
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(Object.values(state.runs)).toHaveLength(2);
+  });
+
+  test('stop ends the round: unstarted same-round turns are discarded with a visible thread trace', async () => {
+    const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string } = {};
+    const fixture = await setupChannelFixture([
+      () => {
+        holder.runtime!.stopConversation(holder.channelId!);
+        return fauxAssistantMessage(fauxText('Coordinator reply racing the stop.'));
+      },
+      fauxAssistantMessage(fauxText('This sibling turn must never be requested.')),
+    ]);
+    const { runtime, calls, script, reviewerAgentId, dataRoot } = fixture;
+    holder.runtime = runtime;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Stop test' });
+    holder.channelId = channel.conversationId;
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
+
+    expect(calls).toHaveLength(1);
+    expect(script.pendingCount()).toBe(1);
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const runAgents = Object.values(state.runs).map((run) => run.agentId);
+    expect(runAgents).toEqual([MAIN_AGENT_ID]);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('The user stopped this round.');
+    expect(texts).toContain('unstarted turn(s) were discarded');
+  });
+
+  test('edit re-resolves addressing; regenerate re-runs as the original speaker', async () => {
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage(fauxText('Reviewer first take.')),
+      fauxAssistantMessage(fauxText('Coordinator take after the edit.')),
+      fauxAssistantMessage(fauxText('Reviewer regenerated take.')),
+    ]);
+    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Edit and regenerate' });
+    await runtime.sendMessage(channel.conversationId, '@reviewer please review');
+    expect(calls[0]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
+
+    // Edit drops the mention: the replacement message re-resolves to the
+    // coordinator (finding #5 — addressedTo must not silently carry over).
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const originalUser = Object.values(state.messages).find((record) => record.role === 'user')!;
+    await runtime.editMessage(channel.conversationId, originalUser.id, 'actually, coordinator: summarize instead');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.systemPrompt).not.toContain('REVIEWER_AGENT_BODY');
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const editedUser = Object.values(state.messages).find(
+      (record) => record.role === 'user' && record.id !== originalUser.id,
+    );
+    expect(editedUser?.addressedTo).toEqual([agentPrincipal(MAIN_AGENT_ID)]);
+
+    // Regenerating the reviewer's settled reply re-runs AS the reviewer (finding
+    // #5 — identity from the record, not the coordinator default).
+    const reviewerRun = Object.values(state.runs).find((run) => run.agentId === reviewerAgentId)!;
+    const reviewerReply = Object.values(state.messages).find(
+      (record) => record.role === 'assistant' && record.runId === reviewerRun.id,
+    )!;
+    await runtime.switchBranch(channel.conversationId, originalUser.id);
+    await runtime.regenerateMessage(channel.conversationId, reviewerReply.id);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const regeneratedRun = Object.values(state.runs).at(-1);
+    expect(regeneratedRun?.agentId).toBe(reviewerAgentId);
+  });
+
+  test('a removed member stays removed in the list index even after later activity (fold regression)', async () => {
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage(fauxText('Reviewer spoke once.')),
+      fauxAssistantMessage(fauxText('Coordinator continues without the reviewer.')),
+    ]);
+    const { runtime, reviewerAgentId, dataRoot } = fixture;
+    const reviewer = agentPrincipal(reviewerAgentId);
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Fold test' });
+    await runtime.sendMessage(channel.conversationId, '@reviewer say something');
+    await runtime.removeConversationMember(channel.conversationId, reviewerAgentId);
+    // Later events carry no membership change: the fold must not resurrect the
+    // removed member from ordinary event actors (finding #6).
+    await runtime.sendMessage(channel.conversationId, 'carry on');
+
+    const listed = await runtime.listConversations();
+    const entry = listed.find((candidate) => candidate.id === channel.conversationId);
+    expect(entry?.members).not.toContainEqual(reviewer);
+    expect(entry?.members).toContainEqual(agentPrincipal(MAIN_AGENT_ID));
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.conversation?.members).not.toContainEqual(reviewer);
+  });
+
+  test('a mention-token collision is rejected at member-add time', async () => {
+    const fixture = await setupChannelFixture([]);
+    const { runtime, localRoot } = fixture;
+    // A project agent named "assistant" collides with the coordinator's token.
+    const impostorDir = await createAgentDefinition(localRoot, 'assistant', [
+      '---',
+      'description: Token impostor.',
+      '---',
+      'IMPOSTOR_BODY',
+    ].join('\n'));
+    const impostorAgentId = projectAgentId(impostorDir, 'assistant');
+
+    const channel = await runtime.createConversation({ goal: 'Collision test' });
+    await expect(runtime.addConversationMember(channel.conversationId, impostorAgentId))
+      .rejects.toThrow('already addresses');
+    await expect(runtime.createConversation({ agentIds: [impostorAgentId], goal: 'Collision at create' }))
+      .rejects.toThrow('already addresses');
   });
 
   test('DM behavior is unchanged: no routing, no addressedTo, main agent prompt', async () => {

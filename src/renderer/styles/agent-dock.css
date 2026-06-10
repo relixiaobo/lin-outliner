@@ -234,6 +234,48 @@ button.panel-resize-handle {
   color: var(--text-soft);
 }
 
+/* Member-management entry: icon-only chrome control — color deepens on hover,
+   never a box (B6). */
+.agent-member-add-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--text-faint);
+  transition: color var(--motion-fast);
+}
+
+.agent-member-add-button:hover,
+.agent-member-add-button:focus-visible,
+.agent-member-add-button[aria-expanded="true"] {
+  color: var(--text-strong);
+}
+
+.agent-member-row {
+  align-items: center;
+}
+
+.agent-member-name {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-5);
+}
+
+.agent-member-name > span:first-child {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-dock-actions {
   display: flex;
   flex: 0 0 auto;

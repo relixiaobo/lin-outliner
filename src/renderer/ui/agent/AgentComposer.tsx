@@ -58,6 +58,12 @@ interface AgentComposerProps {
   isStreaming: boolean;
   /** Channel agent members for the `@` typeahead; empty in a DM. */
   members: readonly AgentComposerMemberCandidate[];
+  /**
+   * Channel mode (ratified: no steer in Channels): while a round is running,
+   * submits stay ordinary sends — the runtime queues them as the next round.
+   * Stop stays available; only the steer pathway disappears.
+   */
+  queueSends?: boolean;
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
   onSend: (
     message: string,
@@ -177,6 +183,7 @@ export function AgentComposer({
   index,
   isStreaming,
   members,
+  queueSends = false,
   onModelChange,
   onNodeReferenceOpen,
   onReasoningChange,
@@ -227,7 +234,10 @@ export function AgentComposer({
   // While settings are still loading (settings === null) stay neutral, so a
   // key-holding user's send button never disables during the load window.
   const providerBlocksSend = settings !== null && !activeProvider;
-  const canSubmit = (pendingApproval || pendingUserQuestion ? false : isStreaming
+  // In queue-send (Channel) mode the steer pathway does not exist: a running
+  // round never switches the composer into steer submit/placeholder.
+  const steering = isStreaming && !queueSends;
+  const canSubmit = (pendingApproval || pendingUserQuestion ? false : steering
     ? hasDraft && !hasAttachments
     : !sending && (hasDraft || hasAttachments)) && !providerBlocksSend;
   const modelOptions = getModelChoices(settings, activeProvider);
@@ -282,7 +292,7 @@ export function AgentComposer({
     const outgoingAttachments = sentAttachments.map(toAttachmentPayload);
     const editorSnapshot = editorRef.current?.snapshot() ?? null;
 
-    if (isStreaming) {
+    if (steering) {
       if (sentAttachments.length > 0) {
         setAttachmentError(t.agent.composer.attachmentsCannotQueue);
         return;
@@ -678,14 +688,14 @@ export function AgentComposer({
               onStop={onStop}
               onSubmit={() => void submit()}
               placeholder={
-                isStreaming
+                steering
                   ? steeringNote ? t.agent.composer.appendSteerPlaceholder : t.agent.composer.steerPlaceholder
                   : t.agent.composer.askPlaceholder
               }
               slashCommands={slashCommands}
             />
             <AgentComposerToolbar
-              attachmentDisabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
+              attachmentDisabled={steering || attachments.length >= MAX_ATTACHMENTS}
               fileInputRef={fileInputRef}
               onAttachmentClick={() => void handleAttachmentClick()}
               onFileInputChange={handleFileInputChange}

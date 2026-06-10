@@ -32,7 +32,7 @@ import type {
   AgentMemorySource,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
+import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -2019,21 +2019,21 @@ function agentIdFromEvents(events: readonly AgentEvent[]): string | null {
   return null;
 }
 
-function principalsFromEvent(event: AgentEvent): AgentPrincipal[] {
-  if (event.type === 'conversation.created') return event.members?.slice() ?? [];
-  if (event.actor.type === 'user') return [{ type: 'user', userId: event.actor.userId }];
-  if (event.actor.type === 'agent') return [{ type: 'agent', agentId: event.actor.agentId }];
-  return [];
-}
-
 /**
- * Ordered membership fold for the conversation meta projection. Unlike the old
- * merge-only pass, `member.removed` genuinely drops the principal, so removal
- * survives the incremental projection (mirrors the replay reducer).
+ * Ordered membership fold for the conversation meta projection. ONLY the
+ * membership events (the head's member set, member.added, member.removed)
+ * move the roster: deriving members from ordinary events' actors would re-add
+ * a removed member from its own in-flight run events, permanently diverging
+ * meta.json from the replay reducer (the meta fold has no rebuild path).
+ * Mirrors the replay reducer exactly.
  */
 function foldMembers(current: readonly AgentPrincipal[], events: readonly AgentEvent[]): AgentPrincipal[] {
   let members = current.slice();
   for (const event of events) {
+    if (event.type === 'conversation.created') {
+      members = mergePrincipals(members, event.members?.slice() ?? []);
+      continue;
+    }
     if (event.type === 'member.removed') {
       const key = principalKey(event.member);
       members = members.filter((member) => principalKey(member) !== key);
@@ -2041,17 +2041,15 @@ function foldMembers(current: readonly AgentPrincipal[], events: readonly AgentE
     }
     if (event.type === 'member.added') {
       members = mergePrincipals(members, [event.member]);
-      continue;
     }
-    members = mergePrincipals(members, principalsFromEvent(event));
   }
   return members;
 }
 
+/** Store-side merge: sorted by key for a stable list-index serialization. */
 function mergePrincipals(current: readonly AgentPrincipal[], next: readonly AgentPrincipal[]): AgentPrincipal[] {
-  const byKey = new Map<string, AgentPrincipal>();
-  for (const principal of [...current, ...next]) byKey.set(principalKey(principal), principal);
-  return [...byKey.values()].sort((left, right) => principalKey(left).localeCompare(principalKey(right)));
+  return mergeUniquePrincipals(current, next)
+    .sort((left, right) => principalKey(left).localeCompare(principalKey(right)));
 }
 
 function emptyRunFingerprint(): AgentRunFingerprint {

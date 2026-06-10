@@ -59,6 +59,7 @@ import {
   createEmptyAgentEventReplayState,
   getAgentEventActivePath,
   getAgentEventRuntimeTranscriptPath,
+  mergeUniquePrincipals,
   principalKey,
   samePrincipal,
   type AgentActor,
@@ -88,10 +89,10 @@ import {
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
 import {
-  CHANNEL_RELAY_RUN_BUDGET,
   agentMentionToken,
   channelAgentMembers,
-  firstHandOffTarget,
+  channelMessageOwner,
+  cutChannelPathForRun,
   flattenAgentPathForPov,
   isMultiAgentConversation,
   parseAgentMentionTargets,
@@ -370,6 +371,31 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   toolCallMessageIds: Map<string, string>;
   /** The agent this run executes as (a Channel peer or the main agent). */
   executingAgentId: string;
+  /**
+   * The message that addressed this run (independence cut boundary,
+   * PM-ratified 2026-06-10). Null outside Channel routing (DMs, retries
+   * without a recorded addressing message) — the cut fails open.
+   */
+  addressedByMessageId: string | null;
+}
+
+/**
+ * A Channel user message awaiting routing (the round queue, in-memory). A
+ * message sent while a round is active is NOT persisted at send time: the event
+ * tree is linear along the active path, and appending mid-run would re-point the
+ * leaf and orphan the in-flight reply. The round loop persists each entry when
+ * it routes it (mirroring the DM follow-up model); until then the renderer shows
+ * it from the projection's queue. Edit/regenerate paths enqueue an
+ * already-persisted message (they assert no round is active first).
+ */
+type PendingChannelMessage =
+  | { kind: 'prompt'; prompt: UserMessage; messageText: string }
+  | { kind: 'persisted'; messageId: string; addressedTo: AgentPrincipal[] };
+
+/** One scheduled Channel turn: the agent to run and the message that addressed it. */
+interface ChannelTurnRequest {
+  agentId: string;
+  addressedByMessageId: string;
 }
 
 type RendererProjectionDomainEvent = Extract<AgentDomainEvent, { lane: 'renderer-projection' }>;
@@ -409,6 +435,15 @@ interface AgentConversationState {
   toolResultBudgetState: ToolResultBudgetState;
   /** Display names for member agents (agentId → name), for projections + preambles. */
   memberDisplayNames: Record<string, string>;
+  /**
+   * Channel round state: non-null while a round is draining (turns may be
+   * between runs, so `activeRun` alone cannot gate). Queue-all (no steer in
+   * Channels): user messages arriving mid-round persist immediately and join
+   * `pendingMessages`; `stopRequested` ends the round and discards unstarted
+   * routing.
+   */
+  channelRound: { stopRequested: boolean } | null;
+  pendingChannelMessages: PendingChannelMessage[];
   unsubscribe: (() => void) | null;
 }
 
@@ -547,7 +582,12 @@ export class AgentRuntime {
       },
       startReactiveRetryRun: async (conversationId, conversation) => {
         this.beginDebugQuery(conversation);
-        await this.startRun(conversationId, conversation, conversation.lastRun?.lastSubmittedUserPrompt ?? null);
+        // The retry continues the SAME turn: same executing member, same
+        // addressing boundary — never the coordinator's identity by default.
+        await this.startRun(conversationId, conversation, conversation.lastRun?.lastSubmittedUserPrompt ?? null, null, {
+          executingAgentId: conversation.lastRun?.executingAgentId,
+          addressedByMessageId: conversation.lastRun?.addressedByMessageId ?? null,
+        });
       },
       completeSimpleFn: this.options.completeSimpleFn,
     });
@@ -678,11 +718,15 @@ export class AgentRuntime {
     const eventState = createEmptyAgentEventReplayState();
     const title = normalizeConversationTitle(options.goal ?? '');
     const extraMembers = await this.resolveAgentMemberPrincipals(options.agentIds ?? []);
+    const members = mergeUniquePrincipals(this.defaultConversationMembers(), extraMembers);
+    for (const member of channelAgentMembers(members)) {
+      this.assertNoMentionTokenCollision(members.filter((candidate) => candidate !== member), member.agentId);
+    }
     const inputs: AgentEventInput[] = [{
       type: 'conversation.created',
       actor: systemActor(),
       title,
-      members: mergeMemberPrincipals(this.defaultConversationMembers(), extraMembers),
+      members,
       goal: title,
     }];
     // New-member onboarding floor (ratified): shared substrates only. The optional
@@ -725,6 +769,7 @@ export class AgentRuntime {
     }
     const members = conversation.eventState.conversation?.members ?? [];
     if (!members.some((member) => samePrincipal(member, principal))) {
+      this.assertNoMentionTokenCollision(members, agentId);
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'member.added',
         actor: userActor(),
@@ -736,10 +781,31 @@ export class AgentRuntime {
     return this.conversationResponse(conversationId, conversation);
   }
 
+  /**
+   * `@` tokens are the routing namespace: two members whose agentIds share a
+   * trailing name segment would both match one mention (one `@` → two runs) and
+   * be indistinguishable in the UI. Impossible by construction — reject the add.
+   */
+  private assertNoMentionTokenCollision(members: readonly AgentPrincipal[], agentId: string) {
+    const token = agentMentionToken(agentId).toLowerCase();
+    const collision = channelAgentMembers(members).find(
+      (member) => member.agentId !== agentId && agentMentionToken(member.agentId).toLowerCase() === token,
+    );
+    if (collision) {
+      throw new Error(`Cannot add member: "@${token}" already addresses ${collision.agentId}.`);
+    }
+  }
+
   async removeConversationMember(conversationId: string, agentId: string) {
     if (this.isDefaultDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
-    if (agentId === this.agentIdentity.agentId) throw new Error('The Channel coordinator cannot be removed.');
+    if (agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
     const conversation = await this.ensureConversationWithId(conversationId);
+    // Mid-round removal would yank a member whose run is live (or queued) and
+    // can flip the conversation's POV selection under it — membership changes
+    // wait for the round to settle.
+    if (conversation.channelRound || conversation.agent.state.isStreaming) {
+      throw new Error('Cannot remove a member while a Channel round is active.');
+    }
     const principal: AgentPrincipal = { type: 'agent', agentId };
     const members = conversation.eventState.conversation?.members ?? [];
     if (members.some((member) => samePrincipal(member, principal))) {
@@ -1214,27 +1280,34 @@ export class AgentRuntime {
       const attachments = materialized.attachments;
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
-      if (conversation.agent.state.isStreaming) {
+      const channelMembers = conversation.eventState.conversation?.members ?? [];
+      const multiAgent = isMultiAgentConversation(channelMembers);
+      if (conversation.agent.state.isStreaming && !multiAgent) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
         await this.steerConversation(conversationId, messageText);
         return;
       }
+      const roundActive = multiAgent && (conversation.channelRound !== null || conversation.agent.state.isStreaming);
       const runtimeSettings = await this.refreshRuntimeSettings(conversation);
       const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
         ? parseCompactSlashCommand(messageText)
         : null;
       if (compactCommand) {
+        if (roundActive) throw new Error('Cannot compact while a Channel round is active.');
         await this.compactConversation(conversationId, conversation, compactCommand.instructions);
         return;
       }
       if (attachments.length === 0 && parseDreamSlashCommand(messageText) && this.dreamMemoryExtractionEnabled()) {
+        if (roundActive) throw new Error('Cannot run /dream while a Channel round is active.');
         await this.runManualDreamFromConversation(conversationId);
         return;
       }
-      conversation.skillRuntime.resetRunPermissionRules();
-      this.beginDebugQuery(conversation);
+      if (!roundActive) {
+        conversation.skillRuntime.resetRunPermissionRules();
+        this.beginDebugQuery(conversation);
+      }
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
         conversationId,
         normalizeAgentUserViewContext(userViewContextInput),
@@ -1242,14 +1315,6 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      const members = conversation.eventState.conversation?.members ?? [];
-      // Routing (ratified): in a multi-agent Channel a run is produced iff a
-      // principal is in addressedTo; `@member` routes there, no `@` routes to the
-      // coordinator. DMs and single-agent conversations keep the legacy path.
-      const multiAgent = isMultiAgentConversation(members);
-      const addressedTo = multiAgent
-        ? this.resolveAddressedMembers(messageText, members)
-        : null;
       // In a Channel the persisted user message stays reader-neutral: a memory
       // briefing belongs to ONE reader, so it is injected transiently per run at
       // assembly time instead of being written into the shared log. Skill/agent
@@ -1279,21 +1344,33 @@ export class AgentRuntime {
         skillListingReminder,
         agentListingReminder,
       }, now);
-      await this.appendUserPromptEvent(conversationId, conversation, prompt, {
-        addressedTo: addressedTo ?? undefined,
-      });
-      userViewContextReminder.commit();
-      if (multiAgent && addressedTo) {
-        await this.runChannelTurns(conversationId, conversation, addressedTo);
+      if (multiAgent) {
+        // Queue-all (ratified, no steer in Channels): the message joins the
+        // round queue and is shown immediately from the projection; the round
+        // loop persists it when it routes it, keeping the event path linear
+        // past the in-flight reply. If a round is already draining, its loop
+        // picks this up — this call returns.
+        userViewContextReminder.commit();
+        conversation.pendingChannelMessages.push({ kind: 'prompt', prompt, messageText });
+        this.emitProjection(conversationId, 'channel_message_queued');
+        if (conversation.channelRound) return;
+        await this.runChannelRound(conversationId, conversation);
       } else {
+        await this.appendUserPromptEvent(conversationId, conversation, prompt);
+        userViewContextReminder.commit();
         await this.startRun(conversationId, conversation, prompt);
         await conversation.agent.prompt(prompt);
+        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       }
-      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /** Edit/regenerate/retry/switch act on a settled transcript — a Channel round in flight means it is not settled. */
+  private assertNoActiveChannelRound(conversation: AgentConversationState) {
+    if (conversation.channelRound) throw new Error('Cannot modify the transcript while a Channel round is active.');
   }
 
   async editMessage(conversationId: string, nodeId: string, message: string) {
@@ -1302,24 +1379,37 @@ export class AgentRuntime {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
       if (conversation.agent.state.isStreaming) throw new Error('Cannot edit while the agent is running.');
+      this.assertNoActiveChannelRound(conversation);
       const target = requireEventMessage(conversation.eventState, nodeId);
       if (target.role !== 'user') throw new Error('Only user messages can be edited');
       this.userViewContextReminderTracker.reset(conversationId);
+      const members = conversation.eventState.conversation?.members ?? [];
+      const multiAgent = isMultiAgentConversation(members);
+      // The edited text is a fresh addressing message: re-resolve `@` routing
+      // (the original event's addressedTo must not silently carry over).
+      const addressedTo = multiAgent ? this.resolveAddressedMembers(trimmed, members) : null;
+      const messageId = this.createMessageId('user');
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'user_message.created',
         actor: userActor(),
-        messageId: this.createMessageId('user'),
+        messageId,
         parentMessageId: target.parentMessageId,
         replacesMessageId: target.id,
         content: textPersistedContent(trimmed),
+        addressedTo: addressedTo ?? undefined,
       }]);
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_edited');
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
-      await this.startRun(conversationId, conversation);
-      await conversation.agent.continue();
-      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      if (multiAgent && addressedTo) {
+        conversation.pendingChannelMessages.push({ kind: 'persisted', messageId, addressedTo });
+        await this.runChannelRound(conversationId, conversation);
+      } else {
+        await this.startRun(conversationId, conversation);
+        await conversation.agent.continue();
+        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      }
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
@@ -1330,8 +1420,10 @@ export class AgentRuntime {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
       if (conversation.agent.state.isStreaming) throw new Error('Cannot regenerate while the agent is running.');
+      this.assertNoActiveChannelRound(conversation);
       const targetId = findRegenerateTarget(conversation.eventState, nodeId);
-      const parentId = requireEventMessage(conversation.eventState, targetId).parentMessageId;
+      const target = requireEventMessage(conversation.eventState, targetId);
+      const parentId = target.parentMessageId;
       if (!parentId) throw new Error('Cannot regenerate without a parent message.');
       this.userViewContextReminderTracker.reset(conversationId);
       await this.appendConversationEvents(conversationId, conversation, [{
@@ -1343,9 +1435,7 @@ export class AgentRuntime {
       this.emitProjection(conversationId, 'message_regenerate_started');
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
-      await this.startRun(conversationId, conversation);
-      await continueFromActivePath(conversation.agent);
-      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      await this.rerunSettledTurn(conversationId, conversation, target, parentId);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
@@ -1356,7 +1446,9 @@ export class AgentRuntime {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
       if (conversation.agent.state.isStreaming) throw new Error('Cannot retry while the agent is running.');
-      const parentId = requireEventMessage(conversation.eventState, nodeId).parentMessageId;
+      this.assertNoActiveChannelRound(conversation);
+      const target = requireEventMessage(conversation.eventState, nodeId);
+      const parentId = target.parentMessageId;
       if (!parentId) throw new Error('Cannot retry without a parent message.');
       this.userViewContextReminderTracker.reset(conversationId);
       await this.appendConversationEvents(conversationId, conversation, [{
@@ -1368,19 +1460,49 @@ export class AgentRuntime {
       this.emitProjection(conversationId, 'message_retry_started');
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
-      await this.startRun(conversationId, conversation);
-      await continueFromActivePath(conversation.agent);
-      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      await this.rerunSettledTurn(conversationId, conversation, target, parentId);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
+  /**
+   * Re-run a settled assistant turn (regenerate/retry) AS its original speaker:
+   * the regenerated record's run identity — not the coordinator — picks the
+   * executing member, so a peer's alternate branch keeps the peer's persona,
+   * tools, memory line, and POV. The branch was just reselected to `parentId`,
+   * which is therefore the addressing boundary (the cut is a no-op on a path
+   * that already ends there — recorded for the retry chain's benefit). A
+   * regenerated reply does not re-trigger hand-off routing (noted in the PR;
+   * the alternate branch is a re-statement, not a new round).
+   */
+  private async rerunSettledTurn(
+    conversationId: string,
+    conversation: AgentConversationState,
+    originalRecord: AgentEventMessageRecord,
+    parentId: string,
+  ) {
+    const owner = channelMessageOwner(originalRecord, conversation.eventState.runs, this.coordinatorAgentId());
+    const ownerAgentId = owner.type === 'agent' ? owner.agentId : this.coordinatorAgentId();
+    const members = conversation.eventState.conversation?.members ?? [];
+    if (isMultiAgentConversation(members) || ownerAgentId !== this.coordinatorAgentId()) {
+      await this.runChannelTurn(conversationId, conversation, {
+        agentId: ownerAgentId,
+        addressedByMessageId: parentId,
+      });
+      return;
+    }
+    await this.startRun(conversationId, conversation);
+    await continueFromActivePath(conversation.agent);
+    await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+  }
+
   async switchBranch(conversationId: string, nodeId: string) {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
       if (conversation.agent.state.isStreaming) throw new Error('Cannot switch branches while the agent is running.');
+      this.assertNoActiveChannelRound(conversation);
       const leafMessageId = findLatestEventLeaf(conversation.eventState, nodeId).id;
       this.userViewContextReminderTracker.reset(conversationId);
       await this.appendConversationEvents(conversationId, conversation, [{
@@ -1403,6 +1525,14 @@ export class AgentRuntime {
     }
     const text = message.trim();
     if (!text) return { queued: false };
+    // Channels use the round queue, not the pi follow-up queue: the DM follow-up
+    // builds the MAIN agent's private memory briefing into the prompt, which
+    // must never enter the reader-neutral shared log; routing also has to
+    // re-resolve `@` addressing. sendMessage does both.
+    if (isMultiAgentConversation(conversation.eventState.conversation?.members ?? [])) {
+      void this.sendMessage(conversationId, text, [], userViewContextInput);
+      return { queued: true };
+    }
     this.releaseQueuedFollowUpSkillListing(conversation);
     conversation.agent.clearFollowUpQueue();
     this.userViewContextReminderTracker.reset(conversationId);
@@ -1429,6 +1559,13 @@ export class AgentRuntime {
     }
     const text = message.trim();
     if (!text) return { queued: false };
+    // No steer in Channels (ratified): there is no streamed turn to steer, and
+    // an explicit `@` must produce the addressed member's run, not an injection
+    // into whichever member happens to be running. Route as a normal message.
+    if (isMultiAgentConversation(conversation.eventState.conversation?.members ?? [])) {
+      void this.sendMessage(conversationId, text);
+      return { queued: true };
+    }
     if (!conversation.agent.state.isStreaming) return { queued: false };
     conversation.agent.clearSteeringQueue();
     conversation.agent.steer({
@@ -1460,6 +1597,9 @@ export class AgentRuntime {
     if (!conversation) return;
     void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_stopped')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    // stop ends the whole Channel round (ratified): the aborted run cancels,
+    // and the round loop discards unstarted routing with a thread trace.
+    if (conversation.channelRound) conversation.channelRound.stopRequested = true;
     conversation.agent.abort();
     conversation.skillRuntime.resetRunPermissionRules();
     this.emitProjection(conversationId, 'stop_requested');
@@ -1731,6 +1871,8 @@ export class AgentRuntime {
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       memberDisplayNames: { [this.agentIdentity.agentId]: this.agentIdentity.displayName },
+      channelRound: null,
+      pendingChannelMessages: [],
       unsubscribe: null,
     };
     conversationRef.current = conversation;
@@ -2135,11 +2277,15 @@ export class AgentRuntime {
   private async flushSubagentNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
     if (conversation.subagentNotificationFlushInProgress) return;
     if (conversation.pendingSubagentNotifications.length === 0) return;
+    // A notification-delivery run is the COORDINATOR's turn (its subagents);
+    // never interleave it into an active Channel round between member turns.
+    if (conversation.channelRound) return;
     if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
 
     conversation.subagentNotificationFlushInProgress = true;
     try {
       while (conversation.pendingSubagentNotifications.length > 0) {
+        if (conversation.channelRound) break;
         if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) break;
         const notifications = conversation.pendingSubagentNotifications.splice(0);
         const prompt: UserMessage = {
@@ -3331,6 +3477,9 @@ export class AgentRuntime {
     const projection = buildAgentRenderProjection(conversation.eventState, {
       revision: conversation.revision,
       activeRunId: this.activeRunId(conversation),
+      queuedMessages: conversation.pendingChannelMessages
+        .filter((pending): pending is Extract<PendingChannelMessage, { kind: 'prompt' }> => pending.kind === 'prompt')
+        .map((pending) => pending.messageText),
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
       isStreaming: conversation.agent.state.isStreaming,
@@ -4231,7 +4380,7 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     prompt: UserMessage,
     options: { addressedTo?: AgentPrincipal[] } = {},
-  ) {
+  ): Promise<string> {
     const messageId = this.createMessageId('user');
     const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
       imageSummary: 'Image attachment',
@@ -4269,6 +4418,7 @@ export class AgentRuntime {
     }
 
     await this.appendConversationEvents(conversationId, conversation, inputs);
+    return messageId;
   }
 
   private async appendSystemPromptEvent(conversationId: string, conversation: AgentConversationState, prompt: UserMessage) {
@@ -4340,7 +4490,7 @@ export class AgentRuntime {
     ];
 
     for (const message of preservedMessages) {
-      const clone = await this.buildPreservedMessageEvents(conversationId, message, leafMessageId);
+      const clone = await this.buildPreservedMessageEvents(conversationId, conversation, message, leafMessageId);
       inputs.push(...clone.inputs);
       leafMessageId = clone.messageId;
     }
@@ -4403,18 +4553,26 @@ export class AgentRuntime {
 
   private async buildPreservedMessageEvents(
     conversationId: string,
+    conversation: AgentConversationState,
     message: AgentMessage,
     parentMessageId: string,
   ): Promise<{ messageId: string; inputs: AgentEventInput[] }> {
     if (message.role === 'assistant') {
       const messageId = this.createMessageId('assistant');
       const runId = randomUUID();
+      // The preserved tail belongs to the turn being compacted: stamp the
+      // EXECUTING run's agent (a Channel peer keeps owning its own words), not
+      // the runtime's main-agent actor. The synthetic runId is unregistered, so
+      // ownership resolution falls through to this actor — it must be right.
+      const executingAgentId = (conversation.activeRun ?? conversation.lastRun)?.executingAgentId
+        ?? this.agentIdentity.agentId;
+      const actor: AgentActor = { type: 'agent', agentId: executingAgentId as AgentId };
       return {
         messageId,
         inputs: [
           {
             type: 'assistant_message.started',
-            actor: this.agentActor(),
+            actor,
             runId,
             messageId,
             parentMessageId,
@@ -4425,7 +4583,7 @@ export class AgentRuntime {
           },
           {
             type: 'assistant_message.completed',
-            actor: this.agentActor(),
+            actor,
             runId,
             messageId,
             stopReason: message.stopReason,
@@ -4499,15 +4657,26 @@ export class AgentRuntime {
     };
   }
 
+  /** The Channel coordinator (member role, ratified): the main agent by default. */
+  private coordinatorAgentId(): string {
+    return this.agentIdentity.agentId;
+  }
+
   private async startRun(
     conversationId: string,
     conversation: AgentConversationState,
     prompt: UserMessage | null = null,
     triggerOverride: AgentRunTrigger | null = null,
-    executingAgentId?: string,
+    identity: { executingAgentId?: string; addressedByMessageId?: string | null } = {},
   ) {
+    // The single activeRun slot is what stamps every durable event of the turn;
+    // overwriting a live run would misattribute its remaining events. All
+    // legitimate transitions clear activeRun (agent_end) before the next run.
+    if (conversation.activeRun) {
+      throw new Error('A run is already active in this conversation.');
+    }
     const runId = randomUUID();
-    const agentId = (executingAgentId ?? this.agentIdentity.agentId) as AgentId;
+    const agentId = (identity.executingAgentId ?? this.agentIdentity.agentId) as AgentId;
     const runState: AgentActiveRunState = {
       id: runId,
       assistantMessageId: null,
@@ -4516,6 +4685,7 @@ export class AgentRuntime {
       toolOutputPayloads: new Map(),
       toolCallMessageIds: new Map(),
       executingAgentId: agentId,
+      addressedByMessageId: identity.addressedByMessageId ?? null,
     };
     conversation.activeRun = runState;
     conversation.lastRun = null;
@@ -4540,33 +4710,101 @@ export class AgentRuntime {
   private resolveAddressedMembers(messageText: string, members: readonly AgentPrincipal[]): AgentPrincipal[] {
     const mentioned = parseAgentMentionTargets(messageText, members);
     if (mentioned.length > 0) return mentioned;
-    return [{ type: 'agent', agentId: this.agentIdentity.agentId }];
+    return [{ type: 'agent', agentId: this.coordinatorAgentId() as AgentId }];
   }
 
   /**
-   * Sequential relay over the addressed members (ratified: one member runs at a
-   * time, never concurrently). An agent reply that `@`s another member enqueues
-   * that member's run; CHANNEL_RELAY_RUN_BUDGET caps the whole chain per user
-   * turn, so a circular `@` loop terminates.
+   * The Channel round loop (ratified 2026-06-10): drains the conversation's
+   * pending-message queue, one message = one round. Each round runs every
+   * addressed member sequentially — execution is serial, but SEMANTICS are
+   * independent: every turn's context cuts at the message that addressed it,
+   * so same-round co-addressees never see each other. A completed turn's reply
+   * may `@` members (hand-off): those turns are addressed BY that reply and the
+   * chain is unbounded — `stop` is the circuit breaker. One addressee's failure
+   * leaves its failed-run trace and never skips siblings; only a user stop
+   * (run.cancelled / stopRequested) ends the round, discarding unstarted
+   * routing with a visible trace.
    */
-  private async runChannelTurns(
+  private async runChannelRound(
     conversationId: string,
     conversation: AgentConversationState,
-    initialTargets: readonly AgentPrincipal[],
   ): Promise<void> {
-    const queue = [...initialTargets];
-    let runsUsed = 0;
-    while (queue.length > 0 && runsUsed < CHANNEL_RELAY_RUN_BUDGET) {
-      const target = queue.shift()!;
-      if (target.type !== 'agent') continue;
-      const members = conversation.eventState.conversation?.members ?? [];
-      if (!members.some((member) => samePrincipal(member, target))) continue;
-      runsUsed += 1;
-      const turn = await this.runChannelTurn(conversationId, conversation, target.agentId);
-      if (!turn.completed) break;
-      const next = firstHandOffTarget(turn.text, conversation.eventState.conversation?.members ?? [], target.agentId);
-      if (next && runsUsed < CHANNEL_RELAY_RUN_BUDGET) queue.push(next);
+    if (conversation.channelRound) return;
+    const round = { stopRequested: false };
+    conversation.channelRound = round;
+    let discardedTurns = 0;
+    try {
+      while (conversation.pendingChannelMessages.length > 0 && !round.stopRequested) {
+        const pending = conversation.pendingChannelMessages.shift()!;
+        const { messageId, addressedTo } = await this.persistPendingChannelMessage(conversationId, conversation, pending);
+        const turns: ChannelTurnRequest[] = addressedTo
+          .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
+          .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId }));
+        while (turns.length > 0) {
+          if (round.stopRequested) break;
+          const request = turns.shift()!;
+          const members = conversation.eventState.conversation?.members ?? [];
+          if (!members.some((member) => member.type === 'agent' && member.agentId === request.agentId)) continue;
+          const turn = await this.runChannelTurn(conversationId, conversation, request);
+          if (turn.cancelled) {
+            round.stopRequested = true;
+            break;
+          }
+          if (!turn.completed) continue; // failed run: its error trace is in the log; siblings still run
+          if (!turn.assistantMessageId) continue;
+          // The reply's hand-off addressing was persisted at completion
+          // (assistant_message.completed.addressedTo) — route from the record,
+          // not a re-parse, so the log and the routing can never disagree.
+          const reply = conversation.eventState.messages[turn.assistantMessageId];
+          for (const target of channelAgentMembers(reply?.addressedTo ?? [])) {
+            if (target.agentId === request.agentId) continue;
+            turns.push({ agentId: target.agentId, addressedByMessageId: turn.assistantMessageId });
+          }
+        }
+        discardedTurns += turns.length;
+      }
+      const discardedMessages = round.stopRequested ? conversation.pendingChannelMessages.length : 0;
+      if (round.stopRequested && (discardedTurns > 0 || discardedMessages > 0)) {
+        // Unrouted queued messages still land in the thread (the user typed
+        // them; they must not vanish) — they just never produce runs.
+        const unrouted = conversation.pendingChannelMessages;
+        conversation.pendingChannelMessages = [];
+        for (const pending of unrouted) {
+          await this.persistPendingChannelMessage(conversationId, conversation, pending);
+        }
+        const parts = [
+          discardedTurns > 0 ? `${discardedTurns} unstarted turn(s) were discarded` : null,
+          discardedMessages > 0 ? `${discardedMessages} queued message(s) were not routed; they remain above and can be re-sent` : null,
+        ].filter((part): part is string => part !== null);
+        await this.appendSystemPromptEvent(conversationId, conversation, {
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: systemReminder(`The user stopped this round. ${parts.join('; ')}.`),
+          }],
+          timestamp: Date.now(),
+        });
+      }
+    } finally {
+      conversation.channelRound = null;
     }
+  }
+
+  /**
+   * Persist one round-queue entry at routing time: a `prompt` entry is appended
+   * to the (now settled) active leaf with its addressing resolved against the
+   * current roster; a `persisted` entry (edit path) is already in the log.
+   */
+  private async persistPendingChannelMessage(
+    conversationId: string,
+    conversation: AgentConversationState,
+    pending: PendingChannelMessage,
+  ): Promise<{ messageId: string; addressedTo: AgentPrincipal[] }> {
+    if (pending.kind === 'persisted') return { messageId: pending.messageId, addressedTo: pending.addressedTo };
+    const members = conversation.eventState.conversation?.members ?? [];
+    const addressedTo = this.resolveAddressedMembers(pending.messageText, members);
+    const messageId = await this.appendUserPromptEvent(conversationId, conversation, pending.prompt, { addressedTo });
+    return { messageId, addressedTo };
   }
 
   /**
@@ -4579,10 +4817,11 @@ export class AgentRuntime {
   private async runChannelTurn(
     conversationId: string,
     conversation: AgentConversationState,
-    targetAgentId: string,
-  ): Promise<{ completed: boolean; text: string }> {
+    request: ChannelTurnRequest,
+  ): Promise<{ completed: boolean; cancelled: boolean; text: string; assistantMessageId: string | null }> {
     const agent = conversation.agent;
-    const isMainAgent = targetAgentId === this.agentIdentity.agentId;
+    const targetAgentId = request.agentId;
+    const isMainAgent = targetAgentId === this.coordinatorAgentId();
     const snapshot = {
       systemPrompt: agent.state.systemPrompt,
       model: agent.state.model,
@@ -4597,17 +4836,30 @@ export class AgentRuntime {
         this.applyChannelTurnToolSettings(conversation, targetAgentId, profile.definition);
         await this.getEventStore().writeAgentIdentity(profile.identity);
       }
-      await this.startRun(conversationId, conversation, null, null, targetAgentId);
+      await this.startRun(conversationId, conversation, null, null, {
+        executingAgentId: targetAgentId,
+        addressedByMessageId: request.addressedByMessageId,
+      });
       const runId = conversation.activeRun!.id;
-      // With the run active, this resolves to the member's §8 POV assembly —
-      // the same derivation every later model call of the turn re-runs.
+      // With the run active, this resolves to the member's §8 POV assembly with
+      // the independence cut — the same derivation every later model call re-runs.
       agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       await agent.continue();
+      // Context overflow retries while the member's profile is still applied —
+      // the retry run must execute as the SAME member, never the coordinator.
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       const run = conversation.eventState.runs[runId];
       return {
         completed: run?.status === 'completed',
+        cancelled: run?.status === 'cancelled',
         text: latestAssistantTextForRun(conversation.eventState, runId),
+        assistantMessageId: latestAssistantMessageIdForRun(conversation.eventState, runId),
       };
+    } catch (error) {
+      // A pre-run failure (profile resolution, provider config) must not kill
+      // the round's sibling turns; surface it and let the loop continue.
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      return { completed: false, cancelled: false, text: '', assistantMessageId: null };
     } finally {
       agent.state.systemPrompt = snapshot.systemPrompt;
       agent.state.model = snapshot.model;
@@ -4724,14 +4976,24 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     povAgentId: string,
     memoryReminder: string | null,
+    addressedByMessageId: string | null,
   ): Promise<AgentMessage[]> {
     const eventState = conversation.eventState;
-    const steps = flattenAgentPathForPov(
+    // Independence cut first (context ends at the addressing message, plus the
+    // member's own in-flight records), then the §8 flatten over what remains.
+    const path = cutChannelPathForRun(
       getAgentEventRuntimeTranscriptPath(eventState),
       eventState.runs,
       povAgentId,
+      addressedByMessageId,
+      this.coordinatorAgentId(),
+    );
+    const steps = flattenAgentPathForPov(
+      path,
+      eventState.runs,
+      povAgentId,
       {
-        mainAgentId: this.agentIdentity.agentId,
+        mainAgentId: this.coordinatorAgentId(),
         displayNameByAgentId: conversation.memberDisplayNames,
       },
     );
@@ -4901,6 +5163,16 @@ export class AgentRuntime {
       && !isContextOverflow(message, conversation.agent.state.model.contextWindow)
       ? message.errorMessage
       : null;
+    // Hand-off routing record: a Channel reply's `@member` mentions are its
+    // addressedTo — persisted here so the relay decision lives in the log.
+    const members = conversation.eventState.conversation?.members ?? [];
+    const handOffAddressedTo = isMultiAgentConversation(members)
+      ? parseAgentMentionTargets(
+          assistantVisibleText(message),
+          members,
+          { excludeAgentId: activeRun.executingAgentId },
+        )
+      : [];
     await this.appendConversationEvents(conversationId, conversation, [
       {
         type: 'assistant_message.completed',
@@ -4910,6 +5182,7 @@ export class AgentRuntime {
         stopReason: message.stopReason,
         content: fromPiAssistantContent(message.content),
         usage: message.usage,
+        addressedTo: handOffAddressedTo.length > 0 ? handOffAddressedTo : undefined,
       },
       ...(inlineFailure ? [{
         type: 'assistant_message.failed' as const,
@@ -5051,16 +5324,39 @@ export class AgentRuntime {
       conversation
       && conversation.eventState === eventState
       && activeRun
-      && isMultiAgentConversation(eventState.conversation?.members ?? [])
+      && this.requiresChannelPov(eventState, activeRun.executingAgentId)
     ) {
       const memoryReminder = await this.buildMemoryReminder(activeRun.executingAgentId, conversation);
-      return this.deriveChannelPiMessages(conversationId, conversation, activeRun.executingAgentId, memoryReminder);
+      return this.deriveChannelPiMessages(
+        conversationId,
+        conversation,
+        activeRun.executingAgentId,
+        memoryReminder,
+        activeRun.addressedByMessageId,
+      );
     }
     const messages: AgentMessage[] = [];
     for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
       messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
     }
     return messages;
+  }
+
+  /**
+   * The POV flatten applies whenever the transcript CONTAINS another agent's
+   * records — not merely when the live roster has ≥2 agents. A Channel shrunk
+   * to one member must never feed the remaining agent the raw transcript (other
+   * agents' turns would read as its own); membership history, not the roster,
+   * is the authority.
+   */
+  private requiresChannelPov(eventState: AgentEventReplayState, executingAgentId: string): boolean {
+    if (isMultiAgentConversation(eventState.conversation?.members ?? [])) return true;
+    const coordinatorId = this.coordinatorAgentId();
+    return getAgentEventRuntimeTranscriptPath(eventState).some((record) => {
+      if (record.role === 'user') return false;
+      const owner = channelMessageOwner(record, eventState.runs, coordinatorId);
+      return owner.type === 'agent' && owner.agentId !== executingAgentId;
+    });
   }
 
   private async runtimePiMessageFromRecord(
@@ -6081,13 +6377,32 @@ function buildChannelPeerSystemPrompt(
 
 /** Final visible text of the run's last assistant message (hand-off mention source). */
 function latestAssistantTextForRun(eventState: AgentEventReplayState, runId: string): string {
+  const record = latestAssistantRecordForRun(eventState, runId);
+  return record ? persistedTextContent(record.content) : '';
+}
+
+/** Id of the run's last assistant message — the addressing boundary for its hand-off targets. */
+function latestAssistantMessageIdForRun(eventState: AgentEventReplayState, runId: string): string | null {
+  return latestAssistantRecordForRun(eventState, runId)?.id ?? null;
+}
+
+function latestAssistantRecordForRun(eventState: AgentEventReplayState, runId: string): AgentEventMessageRecord | null {
   const path = getAgentEventActivePath(eventState);
   for (let index = path.length - 1; index >= 0; index -= 1) {
     const record = path[index]!;
     if (record.role !== 'assistant' || record.runId !== runId) continue;
-    return persistedTextContent(record.content);
+    return record;
   }
-  return '';
+  return null;
+}
+
+/** Visible text of a live pi assistant message (the hand-off mention source at completion time). */
+function assistantVisibleText(message: AssistantMessage): string {
+  return message.content
+    .filter((part): part is TextContent => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
 }
 
 function persistedTextContent(content: readonly AgentPersistedContent[]): string {
@@ -6096,15 +6411,6 @@ function persistedTextContent(content: readonly AgentPersistedContent[]): string
     .map((part) => part.text)
     .join('\n')
     .trim();
-}
-
-function mergeMemberPrincipals(
-  base: readonly AgentPrincipal[],
-  extra: readonly AgentPrincipal[],
-): AgentPrincipal[] {
-  const byKey = new Map<string, AgentPrincipal>();
-  for (const principal of [...base, ...extra]) byKey.set(principalKey(principal), principal);
-  return [...byKey.values()];
 }
 
 function systemActor(): AgentActor {

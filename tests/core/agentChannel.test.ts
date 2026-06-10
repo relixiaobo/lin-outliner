@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   agentMentionToken,
   channelMessageOwner,
-  firstHandOffTarget,
+  cutChannelPathForRun,
   flattenAgentPathForPov,
+  handOffTargets,
   isMultiAgentConversation,
   parseAgentMentionTargets,
 } from '../../src/core/agentChannel';
@@ -67,10 +68,13 @@ describe('agent channel mentions', () => {
       .toEqual([PEER_AGENT_ID]);
   });
 
-  test('hand-off target is the first mention that is not the speaker', () => {
-    expect(firstHandOffTarget('@reviewer please handle this', channelMembers, PEER_AGENT_ID)).toBeNull();
-    expect(firstHandOffTarget('@reviewer then @writer', channelMembers, PEER_AGENT_ID)?.agentId).toBe(OTHER_AGENT_ID);
-    expect(firstHandOffTarget('no mentions here', channelMembers, MAIN_AGENT_ID)).toBeNull();
+  test('hand-off targets are every mention that is not the speaker, in order', () => {
+    expect(handOffTargets('@reviewer please handle this', channelMembers, PEER_AGENT_ID)).toEqual([]);
+    expect(handOffTargets('@reviewer then @writer', channelMembers, PEER_AGENT_ID).map((target) => target.agentId))
+      .toEqual([OTHER_AGENT_ID]);
+    expect(handOffTargets('@writer and @reviewer, both of you', channelMembers, MAIN_AGENT_ID).map((target) => target.agentId))
+      .toEqual([OTHER_AGENT_ID, PEER_AGENT_ID]);
+    expect(handOffTargets('no mentions here', channelMembers, MAIN_AGENT_ID)).toEqual([]);
   });
 });
 
@@ -292,5 +296,82 @@ describe('§8 POV flatten', () => {
     expect(steps).toHaveLength(1);
     if (steps[0]!.kind !== 'flattened') throw new Error('Expected a flattened step.');
     expect(steps[0]!.parts[0]!.preamble).toBeNull();
+  });
+});
+
+describe('independence cut', () => {
+  // One round: the user @s reviewer and writer; reviewer answers first, then
+  // writer's run starts — addressed BY the same user message, so reviewer's
+  // reply must not leak into writer's context.
+  function roundState() {
+    return replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Channel', members: channelMembers, goal: 'Channel' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: '@reviewer @writer independent takes please' }],
+        addressedTo: [peerMember, otherMember],
+      },
+      { ...base(3, 'run.started'), runId: 'run-peer', agentId: PEER_AGENT_ID },
+      {
+        ...base(4, 'assistant_message.started', { type: 'agent', agentId: PEER_AGENT_ID }),
+        runId: 'run-peer',
+        messageId: 'assistant-peer',
+        parentMessageId: 'user-1',
+        providerId: 'p',
+        modelId: 'm',
+      },
+      {
+        ...base(5, 'assistant_message.completed', { type: 'agent', agentId: PEER_AGENT_ID }),
+        runId: 'run-peer',
+        messageId: 'assistant-peer',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Reviewer take.' }],
+      },
+      { ...base(6, 'run.completed'), runId: 'run-peer' },
+      { ...base(7, 'run.started'), runId: 'run-writer', agentId: OTHER_AGENT_ID },
+      {
+        ...base(8, 'assistant_message.started', { type: 'agent', agentId: OTHER_AGENT_ID }),
+        runId: 'run-writer',
+        messageId: 'assistant-writer',
+        parentMessageId: 'assistant-peer',
+        providerId: 'p',
+        modelId: 'm',
+      },
+      {
+        ...base(9, 'assistant_message.completed', { type: 'agent', agentId: OTHER_AGENT_ID }),
+        runId: 'run-writer',
+        messageId: 'assistant-writer',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Writer take.' }],
+      },
+      { ...base(10, 'run.completed'), runId: 'run-writer' },
+    ] as AgentEvent[]);
+  }
+
+  test('a co-addressee cuts at the addressing message and keeps only its own later records', () => {
+    const state = roundState();
+    const path = getAgentEventRuntimeTranscriptPath(state);
+    const cut = cutChannelPathForRun(path, state.runs, OTHER_AGENT_ID, 'user-1', MAIN_AGENT_ID);
+    // The sibling's reply (assistant-peer) is invisible; writer's own turn survives.
+    expect(cut.map((record) => record.id)).toEqual(['user-1', 'assistant-writer']);
+  });
+
+  test('a hand-off target addressed by a reply sees that reply and everything before it', () => {
+    const state = roundState();
+    const path = getAgentEventRuntimeTranscriptPath(state);
+    const cut = cutChannelPathForRun(path, state.runs, OTHER_AGENT_ID, 'assistant-peer', MAIN_AGENT_ID);
+    expect(cut.map((record) => record.id)).toEqual(['user-1', 'assistant-peer', 'assistant-writer']);
+  });
+
+  test('no boundary or a vanished boundary fails open to the full path', () => {
+    const state = roundState();
+    const path = getAgentEventRuntimeTranscriptPath(state);
+    expect(cutChannelPathForRun(path, state.runs, PEER_AGENT_ID, null, MAIN_AGENT_ID).map((record) => record.id))
+      .toEqual(path.map((record) => record.id));
+    // Compaction rewrote history mid-round: the boundary id is gone — never truncate.
+    expect(cutChannelPathForRun(path, state.runs, PEER_AGENT_ID, 'compacted-away', MAIN_AGENT_ID).map((record) => record.id))
+      .toEqual(path.map((record) => record.id));
   });
 });

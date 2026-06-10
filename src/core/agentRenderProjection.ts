@@ -200,6 +200,14 @@ export interface AgentRenderProjection {
   conversationTitle: string | null;
   members: AgentRenderMemberView[];
   activeRunId: string | null;
+  /** The active run's executing agent — the Channel typing indicator's subject. */
+  activeRunAgentId: string | null;
+  /**
+   * Channel user messages queued behind the active round (queue-all, no steer).
+   * Not yet in the event log — the round loop persists each when it routes it —
+   * so the thread renders these to keep the just-sent message visible.
+   */
+  queuedMessages: string[];
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
   isStreaming: boolean;
@@ -218,6 +226,7 @@ export interface AgentRenderProjection {
 export interface BuildAgentRenderProjectionOptions {
   revision: number;
   activeRunId?: string | null;
+  queuedMessages?: string[];
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
   isStreaming?: boolean;
@@ -279,6 +288,10 @@ export function buildAgentRenderProjection(
     conversationTitle: state.conversation.title,
     members: state.conversation.members.map((principal) => toRenderMemberView(principal, options)),
     activeRunId: options.activeRunId ?? null,
+    activeRunAgentId: options.activeRunId
+      ? state.runs[options.activeRunId]?.agentId ?? null
+      : null,
+    queuedMessages: options.queuedMessages ?? [],
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     isStreaming: options.isStreaming ?? !!streaming,
