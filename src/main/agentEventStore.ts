@@ -1742,12 +1742,59 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
   async append(filePath: string, events: readonly TEvent[]): Promise<void> {
     if (events.length === 0) return;
     await mkdir(path.dirname(filePath), { recursive: true });
+    await this.repairTornTailBeforeAppend(filePath);
     await appendFile(filePath, serializeJsonl(events), 'utf8');
   }
 
   async appendForKey(key: string, filePath: string, events: readonly TEvent[]): Promise<void> {
     await this.append(filePath, events);
     this.setLatestSeq(key, events.at(-1)!.seq);
+  }
+
+  /**
+   * Every intact log ends with '\n' (serializeJsonl and compaction both write it), so a
+   * missing trailing newline means the previous append was interrupted mid-line. Appending
+   * onto the torn fragment would weld two events into one garbage line — silently dropped
+   * as the tail by a tolerant parser today, then bricking the log as a mid-file bad line
+   * after the NEXT append. Truncate the fragment first; appends are serialized through the
+   * per-key write queue, so the repair cannot race another write. The parse function still
+   * owns the torn-tail policy: if it throws on the torn file, the append fails loudly
+   * instead of writing past corruption.
+   */
+  private async repairTornTailBeforeAppend(filePath: string): Promise<void> {
+    let handle: Awaited<ReturnType<typeof open>>;
+    try {
+      handle = await open(filePath, 'r+');
+    } catch (error) {
+      if (isNotFoundError(error)) return;
+      throw error;
+    }
+    try {
+      const stats = await handle.stat();
+      if (stats.size === 0) return;
+      const lastByte = Buffer.alloc(1);
+      await handle.read(lastByte, 0, 1, stats.size - 1);
+      if (lastByte[0] === 0x0a) return;
+      const buffer = Buffer.alloc(stats.size);
+      await handle.read(buffer, 0, stats.size, 0);
+      const lastNewline = buffer.lastIndexOf(0x0a);
+      const fragment = buffer.subarray(lastNewline + 1).toString('utf8');
+      try {
+        // A tear can land between the JSON text and its newline: the final line is then a
+        // complete, readable event that must not be destroyed — only its newline was lost.
+        JSON.parse(fragment);
+        await handle.write('\n', stats.size, 'utf8');
+        return;
+      } catch {
+        // Genuinely torn mid-line; fall through to the truncating repair.
+      }
+      this.parse(buffer.toString('utf8'), filePath);
+      const keep = lastNewline === -1 ? 0 : lastNewline + 1;
+      console.warn(`Repairing torn trailing ${this.label} line at ${filePath} (truncating ${stats.size - keep} bytes)`);
+      await handle.truncate(keep);
+    } finally {
+      await handle.close();
+    }
   }
 
   async readIfExists(filePath: string): Promise<TEvent[]> {

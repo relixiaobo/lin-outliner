@@ -1136,10 +1136,48 @@ describe('agent event store', () => {
         { id: 'memory-1', status: 'active' },
       ]);
 
-      // A malformed line in the MIDDLE is real corruption and still fails loudly.
+      // The next append repairs the tear in place instead of welding onto the fragment
+      // (which would silently drop this event now and brick the file one append later).
+      await new AgentEventStore(root).addMemoryEntry(principal, {
+        id: 'memory-3',
+        fact: 'Appended after a torn tail.',
+        sources: [{ conversationId: 'conversation-3' }],
+        createdAt: 30,
+      });
+      const repaired = await readFile(eventsPath, 'utf8');
+      for (const line of repaired.trim().split('\n')) JSON.parse(line); // every line intact
+      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
+        { id: 'memory-3', status: 'active' },
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'active' },
+      ]);
+
+      // A tear can also land between the JSON and its newline: the final line is a complete
+      // event and must survive the repair (only the newline is restored, nothing truncated).
+      await writeFile(eventsPath, intact.trimEnd(), 'utf8');
+      await new AgentEventStore(root).addMemoryEntry(principal, {
+        id: 'memory-4',
+        fact: 'Appended after a newline-only tear.',
+        sources: [{ conversationId: 'conversation-4' }],
+        createdAt: 40,
+      });
+      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
+        { id: 'memory-4', status: 'active' },
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'active' },
+      ]);
+
+      // A malformed line in the MIDDLE is real corruption and still fails loudly — for
+      // reads and for the pre-append repair alike.
       const lines = intact.trim().split('\n');
       await writeFile(eventsPath, `${lines[0]}\n{broken\n${lines[1]}\n`, 'utf8');
       await expect(new AgentEventStore(root).listMemoryEntries(principal)).rejects.toThrow(/Invalid agent memory event JSON/);
+      await expect(new AgentEventStore(root).addMemoryEntry(principal, {
+        id: 'memory-5',
+        fact: 'Must not be written past corruption.',
+        sources: [{ conversationId: 'conversation-5' }],
+        createdAt: 50,
+      })).rejects.toThrow(/Invalid agent memory event JSON/);
     });
   });
 
