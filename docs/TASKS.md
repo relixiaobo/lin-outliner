@@ -396,6 +396,32 @@ Standalone agent items (not part of the program):
 
 ### Outliner & UI polish
 
+- **focus-and-selection-polish** (P2, *fast-track, no plan file* — diagnosis is the
+  contract, rules PM-ratified 2026-06-10; ONE renderer-only PR, four small complete
+  behaviors):
+  **(1) Backspace deletes a field node from its name.** The field name is a plain
+  `<input>` (`OutlinerFieldRow.tsx:462,483`) whose `onKeyDown` (`:361-409`) has NO
+  Backspace branch — backspace at offset 0 is a native no-op, so a field row can only
+  be deleted via whole-row selection. Fix: Backspace at offset 0 in the name column
+  routes to the SAME delete command the row-selection path uses (identical semantics +
+  restorability), then focuses the previous visible row at end. Contrast: content rows
+  already have the full intent resolver (`OutlinerItem.tsx:1128`).
+  **(2) Page entry auto-places the cursor in the trailing draft** (PM-ratified rule:
+  enter a node page — today etc. — ready to append; Workflowy-style, zero new state).
+  Applies on root-page navigation; "remember last cursor per page" was considered and
+  deferred.
+  **(3) Agent dock open focuses the composer.** `AgentComposerEditor.tsx:367-368`
+  already exposes an imperative `focus()`; the dock open/click path never calls it
+  (the only `autoFocus` in the panel is the conversation-rename input). Pure wiring.
+  **(4) Cmd+A escalates text → page.** `selection.select_all` exists in the
+  row-selection scope only (`shortcutRegistry.ts:101`, `useWorkspaceKeyboard.ts:358`);
+  with the caret in an editor, ProseMirror/native swallows Cmd+A at "select this row's
+  text" with no escalation. Fix: editor keymap handles `Mod-a` — if the selection
+  already spans the whole row text, blur the editor and trigger the existing
+  select-all-rows path; same two-step in field name/value inputs.
+  Sync `ui-behavior.md` for (1)(2)(4) in the same PR (A6). No collision with #179 or
+  the other boarded fast-tracks (outliner-indent-draft-fixes touches Tab/draft paths;
+  this touches Backspace/select/focus paths — if one lands first the other rebases).
 - **outliner-indent-draft-fixes** (P2, bug ×2, *fast-track, no plan file* — diagnosis
   is the contract, PM-confirmed 2026-06-10; ONE renderer-only PR):
   **(1) Batch indent force-expands the batch members.** `useWorkspaceKeyboard.ts:516,523`
