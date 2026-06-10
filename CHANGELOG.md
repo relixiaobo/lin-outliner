@@ -235,6 +235,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Skill acceptance: one-click user trust closes the ratification loop (PR #175)** — implements the
+  PM-ratified `agent-skill-acceptance` plan (PR A + slimmed PR B; plan archived `done` in the PR). #174
+  left agent-authored skills permanently unratified unless the user hand-edited the file; the Skills tab
+  now shows a "pending acceptance" chip with an always-visible **Accept** button (quiet neutral
+  `.settings-row-button` recipe, shared with provider Configure per B9), a row-menu **Revoke acceptance**,
+  and a row-menu **Undo last agent edit**. One trust record per skill —
+  `{agentHash, acceptedHash, previousVersion}` in `agent-skill-provenance.json`, keyed by resolved file —
+  and `ratified` stays a pure derivation (unratified iff `agentHash === currentHash` and not accepted), so
+  accept / revoke / hand-edit / agent re-patch all fall out with no special cases; an agent re-patch of an
+  accepted skill drops it back to unratified (byte-keyed). **Undo** restores the gateway-captured pre-write
+  content through the same skill-write validator, strictly one-shot, and may only overwrite the agent's own
+  bytes — the action re-reads the file and refuses if a user hand-edit followed the agent write. **Accept
+  binds to the bytes the user saw**: `agent_accept_skill` carries the rendered `expectedHash` and refuses
+  on mismatch (closes the render-to-click TOCTOU, the one path where agent bytes could have been ratified
+  sight-unseen). Trust actions propagate to every live session's skill registry (the Settings panel runs
+  sessionless over the same persisted store — previously a sessionless panel failed open to "all
+  ratified"). `/skillify` output becomes model-invocable, still born unratified. Acceptance is a UX
+  completion plus a positive trust fact, NOT a new security boundary: store loss (and a user rename/move,
+  which orphans the path-keyed record) still fails open to ratified, documented in
+  `docs/spec/agent-skills.md`. Gate ran 2 rounds (protocol + trust surface + UI): r1's 5 should-fix (undo
+  hand-edit destruction, conditional-skill resolution, dead session-propagation branch, spec rename
+  over-claim, accept TOCTOU) all fixed and independently re-verified on the merged tree — typecheck ·
+  `test:core` 799/0 · `test:renderer` 389/0 · agent-settings e2e + design guards 33/33 · light+dark visual
+  verification twice (pre and post CSS dedup).
+  ([#175](https://github.com/relixiaobo/lin-outliner/pull/175))
+
 - **Scheduled command nodes (PR #165)** — a new `command` NodeType whose content is a natural-language brief
   to the agent; arming its schedule field (one field carrying both *when to start* and *how to repeat*, an
   endpoint + optional `RRULE`) makes it run on an anacron-style schedule, with **Run now** for manual fires.

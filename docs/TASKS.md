@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (skill-governance-convergence merged, PR #174) |
+| Claude Code | `lin-outliner-cc/` | — | idle (skill-acceptance merged, PR #175) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (principal-keyed memory merged, PR #173) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -36,11 +36,8 @@ Both 2026-06-09 lanes merged — board is between batches.
   M3 multi-agent spine was gated on is now on `main`.
 - `agent-skills-authoring` convergence (cc) **merged** as PR #174 — see Recently
   completed.
-  - **Next up (cc):** `agent-skill-acceptance` — PR A, the ratification loop's other half
-    (explicit accept/revoke + positive trust record + `skillify` model-invocable +
-    single-step undo). PM-ratified plan + boundary: `docs/plans/agent-skill-acceptance.md`.
-    Preview/confirm stays instruction-layer (already shipped); cc's "PR B" is **slimmed
-    into this PR** as single-step undo (deep history → git; no bespoke snapshot subsystem).
+  - `agent-skill-acceptance` (cc) **merged** as PR #175 — see Recently completed.
+    Plan archived `done` inside the PR itself (PR A + slimmed PR B, single-step undo).
   - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills —
     needs its own plan. Executable-script support-file ratify+sandbox and M2 curation
     dry-run stay deferred.
@@ -52,7 +49,7 @@ Both 2026-06-09 lanes merged — board is between batches.
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
   debt, must precede cross-agent citing) → **Phase 2** Channel membership/routing → peer
   reply → cross-agent memory + isolation gate (the one new primitive) → per-agent POV.
-  `agent-skill-acceptance` (PR A) runs in parallel.
+  `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
 
 ## Backlog
@@ -436,6 +433,23 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **skill acceptance: user trust closes the ratification loop** (cc, PR #175) — `agent-skill-acceptance`
+  (PR A + slimmed PR B), archived `done` inside the PR. One trust record per skill
+  (`{agentHash, acceptedHash, previousVersion}` in `agent-skill-provenance.json`, keyed by resolved
+  file); `ratified` stays a pure derivation (unratified iff `agentHash === currentHash` and not
+  accepted). Skills tab gets a "pending acceptance" chip + Accept (records `acceptedHash`), row-menu
+  Revoke, and single-step **Undo of the last agent edit** (gateway-captured pre-write content,
+  one-shot slot, restored through the same write validator); `/skillify` output becomes
+  model-invocable (still born unratified — wider discovery, not trust). New IPC:
+  `agent_accept_skill` (carries `expectedHash` — accept binds to the bytes the user SAW, refused on
+  mismatch), `agent_revoke_skill_acceptance`, `agent_undo_skill_agent_edit`; trust actions propagate
+  to every live session's registry. Gate ran 2 rounds: r1 found 5 should-fix (undo could destroy a
+  user hand-edit — now double-gated against the live file; conditional-skill actions unresolvable;
+  dead session-propagation branch — now wired; spec over-claimed rename semantics; accept TOCTOU)
+  — all fixed and re-verified on the merged tree (typecheck · `test:core` 799/0 · `test:renderer`
+  389/0 · e2e+guards 33/33 · light+dark visual, twice — pre and post CSS dedup to the shared
+  `.settings-row-button` recipe). Named follow-up unchanged: workspace-trust gate for cloned-repo
+  `project` skills.
 - **principal-keyed memory: the user is an ordinary principal** (cc-2, PR #173) — `agent-memory-model`
   Phase 3, implementing the PM-ratified `agent-data-model` §4 contract; the plan is now complete and
   archived (`done`). `MemoryEntry` re-keyed by `principal` (the subject a fact is *about*) replacing
