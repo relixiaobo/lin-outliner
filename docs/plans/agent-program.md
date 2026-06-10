@@ -306,9 +306,12 @@ reinvent.
     immediately + in parallel; PR-2 between run unification and M3-B.** The
     program (authority docs rewritten → PR-1 person rule / read surfaces →
     PR-2 episodic layer (subsumes D3; memory-owned gist, `sources` →
-    discriminated union, 3-level zoom) → PR-3 forgetting (D1) → PR-4 retrieval
-    (D4)) lives in `docs/TASKS.md` Backlog § memory until the program one-pager
-    (cc-2) lands a plan file. PR-1 + PR-2 are **hard prerequisites for M3-B**.
+    discriminated union, 3-level zoom) → PR-3 forgetting (D1) + PR-5 schema
+    overview → PR-4 retrieval engine (D4, rescoped to deliberate recall);
+    automatic associative retrieval deferred on a data gate) is chartered in
+    **`docs/plans/agent-memory-realignment.md`** (ratified decisions D-1…D-9 +
+    rationale; cc-2 claims with the one-pager). PR-1 + PR-2 are **hard
+    prerequisites for M3-B**.
   - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
     (the one new primitive; depends on Phase 1 + M3-A + the clean-cut + run
     unification — its citing rides the unified evidence scheme — **+ realignment

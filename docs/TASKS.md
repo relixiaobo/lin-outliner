@@ -287,8 +287,11 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   output lacks `principal`; the two Dream prompts' own examples instruct cross-pool
   duplication). Substrate (event-sourcing, principal pools, one-writer, invalidate,
   down-pointers, isolation gate) is theory-correct and **stays**; realign by clean cuts,
-  never a parallel rewrite. **Next step: cc-2 drafts the program one-pager**
-  (reconciling against the agent-program / conversation-model / data-model trio), then:
+  never a parallel rewrite. **Charter: `docs/plans/agent-memory-realignment.md`** —
+  the full ratified-decision record (D-1…D-9 with rationale + the rejected
+  alternative), self-sufficient for the drafting agent. **Next step: cc-2 claims it
+  with the program one-pager** (reconcile vs the trio · usage×zoom table ·
+  associative data-gate threshold · per-PR collision checks). Summary:
   - **Step 0 — authority docs REWRITTEN, not patched** (`agent-memory-foundations` +
     `agent-data-model` canonical table + `agent-architecture` § memory): 源 = ground
     truth below memory · episodic layer = episodes + gist (noted as D3-pending) ·
