@@ -75,6 +75,22 @@ Both 2026-06-09 lanes merged — board is between batches.
   **M3-C** per-agent POV inspector (`agent-pov-projection`).
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
+- **Systematic pre-release architecture sweep (main, 2026-06-10) — done; dispositions
+  PM-ratified.** Four parallel audits (core document model · main-process services +
+  userData layout · renderer state · protocol surface + duplication) with one lens set
+  (format residue / unacknowledged entities / one-concept-two-mechanisms / false
+  authorities / surface hygiene). **Core document format verified clean** (zero findings:
+  all node types/scalar keys canonical, no command bypass of A4, all indexes are explicit
+  rebuilds, single `workspace.loro.json` artifact) and the **protocol surface verified
+  clean** (no dead commands, no naming drift, `session` vocabulary gone outside the
+  in-flight clean-cut). Four ratified dispositions: **(A)** `main-json-store-unification`
+  (new plan, Backlog § Storage & platform hygiene) · **(B)** delete the
+  `MODEL_ID_REPLACEMENTS` silent migration layer — folded into PR #180's scope (comment
+  posted) · **(C)** renderer-state-hygiene fast-track (same section) · **(D)**
+  frontmatter-parser consolidation folded into `agent-run-unification` Design 5.
+  Cosmetic-only findings (IPC name casing, sync `lin:get-language-sync`, launcher
+  placeholder commands, shiki failure cache) recorded as accepted, no action. With the
+  in-flight clean-cut + run-unification, the pre-release structural-debt list is closed.
 
 ## Backlog
 
@@ -470,7 +486,26 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   (localized O(N) cleanups — the residual `new Map(prev.byId)` + `nextRevisions` whole-map
   rebuild; several unlocked by the stable-identity foundation P1 PR-A laid).
 
-## Recently completed
+### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
+
+- **main-json-store-unification** (P2, plan file, **PM-ratified**) — collapse the main
+  process's three hand-rolled atomic-write implementations + two synchronous outliers
+  (`agentSettings.ts:685` / `documentService.ts:841` / `assetService.ts:133` /
+  `appPreferences.ts` / `windowState.ts`) into one shared JSON store primitive
+  (atomic write + per-path lock + optional mode), plus the two adjacent asset-coupling
+  holes (ingest awaits both files; delete invalidates `metaCache`). Zero on-disk format
+  change. **Queues behind PR #180** (same files). See
+  `docs/plans/main-json-store-unification.md`.
+- **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
+  small renderer items in one PR: (1) `useWorkspaceLayout.ts:12,115,127` localStorage
+  key says `:v3` but the persisted `version` int is `2` — align the int to 3, drop
+  nothing (pre-release: old keys are simply ignored, no migration), and fix the
+  `workspace-layout.md` claim in the same change (A6/A8); (2) on a projection delta,
+  cull `removedIds` from `focusedId`/`selectedIds`/`expanded` instead of relying on
+  read-side defensive checks; (3) pin the focus convention in `ui-behavior.md`:
+  outliner-row focus must go through the focusRequest rail (IME composition guard,
+  #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
+  no collision with #179/#180.
 
 - **memory source binding survives compaction** (cc, PR #178) — M3 Phase 1, implementing the
   PM-ratified `agent-memory-source-binding` plan (archived `done` in the PR; invariant pinned in

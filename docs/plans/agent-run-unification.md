@@ -70,6 +70,15 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
    run index; `agentSubagents.ts` machinery folds into the run runtime;
    `resolveSubagentMemoryOwner` semantics unchanged (#164 ratified), renamed.
    `agentSubagentIdentity.ts` / `agentSubagentTranscript.ts` shrink or vanish.
+   While folding, **consolidate the duplicated frontmatter machinery onto
+   `core/agentMarkdown.ts`** (PM-ratified 2026-06-10, from the pre-release
+   architecture sweep): the AGENT.md parser copy (`agentSubagents.ts:1444` vs
+   `agentMarkdown.ts:43` — already drifted in formatting) and the 7 private
+   helper copies (`parsePermissionMode`/`parseBoolean`/`parsePositiveInteger`/
+   `normalizeModelField`/`coerceString`/`isPlainRecord`/`parseStringList`,
+   `agentSubagents.ts:1828-1902`) die with the module; point `agentSkills.ts`'s
+   private copies (`:1323`, `:1681`) at the same exports so the parser exists
+   exactly once.
 6. **Old-format clean-cut:** store-owned detection + wipe (rides the
    precedent landed by `agent-storage-clean-cut`; pre-release no-migration).
 7. **Spec sync (A6):** `agent-architecture.md` (sub-agent bullet → pure
