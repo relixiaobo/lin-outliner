@@ -840,6 +840,34 @@ cross-principal read must never dereference another principal's raw conversation
    the `isolated` memory mode was removed: a pool is one undivided self-model and
    `originWorkspace` is provenance metadata only, never a retrieval fence.)*
 
+## Canonical memory vocabulary (PM-ratified 2026-06-10)
+
+The memory subsystem is described, in every doc and plan from here on, in the
+standard cognitive-science vocabulary. This is a **framing layer over the
+structures above — zero storage change**; code identifiers (`dream`, `recall`,
+`fact`) stay, and this table is the canonical mapping:
+
+| Term | Definition here | Implemented as |
+|---|---|---|
+| **Episodic store** | the immutable autobiographical record ("what happened") | conversation + run ledgers (§2, §3) |
+| **Semantic store** | distilled knowledge ("what I know"), per Principal | `MemoryEntry` pools (§3 per-agent, Extension) |
+| **Procedural store** | reusable competence ("what I can do") | skills (owned by [[agent-skills-authoring]]; named here for completeness) |
+| **Index** | the hippocampal-style pointer layer binding semantic ↔ episodic | `sources[]` + `DistillationNode` summaries (§4) |
+| **Consolidation** | offline replay of the episodic store distilling into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17) |
+| **Retrieval** | three heat tiers: resident working-memory briefing → cued `recall` → evidence grounding | §8 assembly + the single `recall` tool |
+| **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | **target** — `agent-memory-forgetting` (D1); today only invalidate + churn compaction |
+| **Transactive layer** | co-members subscribe to each other's *semantic* stores; raw evidence never crosses principals | membership read (shipped #173 for the user pool) + M3-B (`agent-cross-agent-memory`) |
+
+Standing constraint carried over from the agent-memory-model review: strength,
+confidence, and salience are **never stored fields on `MemoryEntry`** — anything
+of that kind is a rebuildable projection over events (createdAt, access,
+invalidation), keeping the stored shape minimal.
+
+Four delta plans extend this frame (scheduled post-M3-B; D2 is
+fast-track-insertable): `agent-memory-forgetting` (D1) ·
+`agent-memory-encoding-signal` (D2) · `agent-memory-episodic-index` (D3) ·
+`agent-memory-retrieval-upgrade` (D4).
+
 ## Open questions
 
 These are data-model-local; the experience/sequencing OQs live in
@@ -856,7 +884,9 @@ These are data-model-local; the experience/sequencing OQs live in
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
   topic files. Memory is runtime-owned state, not an agent-writable file tree.
 - **Per-turn memory injection budget** — whole index vs top-N by recency/salience; bound
-  it (cc-2.1 caps MEMORY.md at 200 lines / 25KB).
+  it (cc-2.1 caps MEMORY.md at 200 lines / 25KB). **Design direction ratified 2026-06-10:**
+  the Bjork two-strength model (retrieval strength as a rebuildable projection) — see
+  `agent-memory-forgetting` (D1); the budget question closes when D1 ships.
 - **Recursive summary roll-up** (`DistillationNode.source.childSummaryIds`) — deferred
   until single-level segment summaries prove insufficient.
 - **Document context: snapshot+delta vs tail** — the live outline is volatile *and*

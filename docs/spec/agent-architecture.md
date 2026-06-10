@@ -26,9 +26,10 @@ metadata** of these, not separate primitives.
    conversation (the only home). Holds **all** execution detail. The 4 "kinds"
    (turn/background/subagent/scheduled) are **derived** from `trigger` + `parentRunId`
    + foreground-ness; **Task is a view** (= background runs, grouped by `agentId`). ✅
-4. **Memory** — an agent's subjective, distilled self-model. Follows the *agent*, not
-   the conversation. A distillation **ladder** (raw log → index/summary → distilled
-   fact), not three separate nouns. ✅ (per-agent) / ◻ (cross-agent sharing)
+4. **Memory** — a Principal's subjective self-model. Follows the *principal*, not
+   the conversation. Canonically framed (PM-ratified 2026-06-10) in the standard
+   cognitive-science vocabulary — see *The memory system* below. ✅ (per-principal) /
+   ◻ (transactive sharing, M3-B)
 5. **Skill** — a reusable instruction, bound by name from one shared library. ✅
 6. **Agent** — an authorable Principal: persona (`AGENT.md` body → system prompt) +
    model/effort + skill bindings + tool/permission profile + its own memory line. ✅
@@ -77,6 +78,31 @@ user-composite is will(human)+digestion(self-agent-LLM). The implementable bound
 **epistemic curation is autonomous** (so Dream can run), **volitional commitment
 escalates** (== the existing ask-gate). This is an exploratory, **not-yet-ratified**
 direction (target M3); only the `<self>`/`<principal>` render scaffold exists today.
+
+## The memory system (canonical vocabulary, PM-ratified 2026-06-10)
+
+Memory is organized as a textbook system — **three stores, one index, three
+processes, one social layer** — mapped one-to-one onto existing mechanisms
+(zero storage change; the full mapping table is `agent-data-model.md`
+§ *Canonical memory vocabulary*):
+
+- **Stores:** episodic (the conversation/run ledgers — "what happened") ·
+  semantic (`MemoryEntry` pools per Principal — "what I know") · procedural
+  (skills — "what I can do").
+- **Index:** the hippocampal-style pointer layer (`sources[]` + distillation
+  summaries) binding semantic facts to episodic evidence, bidirectionally.
+- **Processes:** consolidation (Dream — offline replay distilling episodic →
+  semantic; evidence-preserving under compaction) · retrieval (three heat
+  tiers: resident briefing → cued `recall` → evidence grounding) · forgetting
+  (two-strength target: storage strength never decays, retrieval strength
+  governs injection — never deletion; D1, planned).
+- **Social layer:** transactive memory — co-members subscribe to each other's
+  *semantic* stores by conversation membership; raw evidence never crosses
+  principals (user pool shipped #173; agent pools = M3-B).
+
+Delta plans on this frame (post-M3-B; D2 fast-track-insertable):
+`agent-memory-forgetting` (D1) · `agent-memory-encoding-signal` (D2) ·
+`agent-memory-episodic-index` (D3) · `agent-memory-retrieval-upgrade` (D4).
 
 ## Multi-agent = rules + views + one new primitive
 
