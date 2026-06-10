@@ -57,12 +57,17 @@ Both 2026-06-09 lanes merged — board is between batches.
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
   debt, must precede cross-agent citing) **merged as PR #178** (cc) — see Recently
   completed; plan archived `done` in the PR →
+  **Phase 1.5** storage clean-cut (`agent-storage-clean-cut`, **PM-ratified 2026-06-10,
+  full scope**: stored `session.*` event types + `sessionId` field → conversation
+  vocabulary, ALL code identifiers renamed, pools unified under
+  `principals/<principalKey>/memory/`, store-owned old-format wipe; **queues behind
+  M3-A + memory-alignment, lands before M3-B/D1** — A7) →
   **Phase 2** three independent complete features, **each with a drafted plan file**:
   **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
-  peer reply, one PR — membership alone would be a scaffold slice; **unblocked, next
-  up**) → **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
-  the one new primitive; depends on Phase 1 + M3-A) → **M3-C** per-agent POV inspector
-  (`agent-pov-projection`).
+  peer reply, one PR — membership alone would be a scaffold slice; **in build, cc**) →
+  **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
+  the one new primitive; depends on Phase 1 + M3-A + the clean-cut) → **M3-C**
+  per-agent POV inspector (`agent-pov-projection`).
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
 

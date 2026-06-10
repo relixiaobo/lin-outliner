@@ -279,19 +279,24 @@ reinvent.
 - **Phase 0 — settle the map.** `docs/spec/agent-architecture.md` (done) + this
   reconciliation + ratify the peer model. ~no code.
 - **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding —
-  ratified plan: `agent-memory-source-binding` (watermark compaction-survival +
-  resolution regression lock; boundary nailed there). Optional cheap clean-cut:
-  internal `sessionId` field → `conversationId`.
+  ratified plan: `agent-memory-source-binding`. **Merged #178.**
+- **Phase 1.5 — storage clean-cut (PM-ratified 2026-06-10, full scope).** The
+  "optional cheap clean-cut" is now a real plan: `agent-storage-clean-cut` —
+  stored event types `session.*` → `conversation.*`, `sessionId` field →
+  `conversationId`, ALL code identifiers renamed (the #151 translation seam
+  dissolves), pools unified under `principals/<principalKey>/memory/`,
+  store-owned old-format wipe. **Lands after M3-A + the memory-alignment PR
+  merge, before M3-B/D1** — the new event family and cross-agent read path
+  build on clean names (A7).
 - **Phase 2 — multi-agent (shape (b): a SET of 3 independent complete features,
   dependency-ordered; each has a drafted plan file — dispatch is a one-liner):**
   - **M3-A — working multi-agent Channel** (ONE PR): membership + routing
     (`addressedTo`, coordinator) + peer-agent reply (`actor` = agent principal) +
     the §8 POV flatten at assembly. Membership-without-reply would be a scaffold
-    slice, so these ship together. Plan: `agent-channel-peers`. Starts after
-    Phase 1 merges (shared files).
+    slice, so these ship together. Plan: `agent-channel-peers`. In build (cc).
   - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
-    (the one new primitive; depends on Phase 1 + M3-A). Plan:
-    `agent-cross-agent-memory`.
+    (the one new primitive; depends on Phase 1 + M3-A + the storage clean-cut).
+    Plan: `agent-cross-agent-memory`.
   - **M3-C — per-agent POV inspector** (derived view over M3-A's assembly
     derivation). Plan: `agent-pov-projection`.
   - Open PM gates carried inside the plans: group default-`addressedTo` (M3-A Q1)
