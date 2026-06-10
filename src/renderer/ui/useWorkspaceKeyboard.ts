@@ -36,6 +36,7 @@ import {
   requestFocusState,
   rowFocusTarget,
 } from './focus/focusModel';
+import { animateOutlinerRowMovementAfterNextCommit } from './outliner/rowMoveAnimation';
 import { collapseExpandedParentIds, parentIdsEmptiedByOutdent, type CommandRunner } from './shared';
 
 async function writeClipboardText(text: string): Promise<boolean> {
@@ -520,6 +521,7 @@ export function useWorkspaceKeyboard({
           applyFocus: false,
           beforeApply: structuralAction
             ? () => {
+              animateOutlinerRowMovementAfterNextCommit();
               setUi((prev) => {
                 const expanded = action === 'batch_indent'
                   ? expandIndentTargets(prev.expanded, operationIds, currentIndex.byId)

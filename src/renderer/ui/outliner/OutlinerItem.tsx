@@ -68,6 +68,7 @@ import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
+import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import { buildOutlinerRows } from './row-model';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
@@ -1263,6 +1264,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       await props.run(() => api.indentNode(props.nodeId), {
         applyFocus: false,
         beforeApply: () => {
+          animateOutlinerRowMovementAfterNextCommit();
           props.setUi((prev) => {
             const expanded = new Set(prev.expanded);
             expanded.add(targetParentId);
@@ -1280,6 +1282,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     await props.run(() => api.outdentNode(props.nodeId), {
       applyFocus: false,
       beforeApply: () => {
+        animateOutlinerRowMovementAfterNextCommit();
         props.setUi((prev) => {
           const next = emptiedParentIds.size > 0
             ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }

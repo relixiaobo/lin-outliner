@@ -30,6 +30,12 @@ async function todayChildren(page: import('@playwright/test').Page) {
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
+async function waitForRowMoveAnimation(page: import('@playwright/test').Page, id: string) {
+  await expect.poll(async () => rowBody(page, id).evaluate((element) => (
+    element.classList.contains('row-move-animating')
+  )), { timeout: 1000 }).toBe(true);
+}
+
 async function createReferenceFixture(page: import('@playwright/test').Page) {
   const result = await page.evaluate(async (ids) => {
     const win = window as Window & {
@@ -263,6 +269,7 @@ test.describe('outliner selection keyboard parity', () => {
 
     await page.keyboard.press('Tab');
 
+    await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(row(page, ids.beta)).toBeVisible();
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
@@ -302,9 +309,13 @@ test.describe('outliner selection keyboard parity', () => {
     await page.keyboard.press('Tab');
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect.poll(async () => rowBody(page, ids.beta).evaluate((element) => (
+      element.classList.contains('row-move-animating')
+    ))).toBe(false);
 
     await page.keyboard.press('Shift+Tab');
 
+    await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();

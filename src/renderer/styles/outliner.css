@@ -848,6 +848,10 @@
   background: transparent;
 }
 
+.row.row-move-animating {
+  will-change: transform;
+}
+
 .row.selected {
   isolation: isolate;
 }

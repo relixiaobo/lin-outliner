@@ -41,6 +41,7 @@ import { AgentIcon, CalendarIcon } from '../icons';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldNameReusePopover } from './FieldNameReusePopover';
+import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
 import { fieldChoiceLabel } from '../../state/outlinerRows';
 import {
@@ -305,6 +306,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       await props.run(() => api.indentNode(props.entryId), {
         applyFocus: false,
         beforeApply: () => {
+          animateOutlinerRowMovementAfterNextCommit();
           props.setUi((prev) => {
             const expanded = new Set(prev.expanded);
             expanded.add(targetParentId);
@@ -322,6 +324,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     await props.run(() => api.outdentNode(props.entryId), {
       applyFocus: false,
       beforeApply: () => {
+        animateOutlinerRowMovementAfterNextCommit();
         props.setUi((prev) => {
           const next = emptiedParentIds.size > 0
             ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
