@@ -47,8 +47,9 @@ Both 2026-06-09 lanes merged — board is between batches.
   subsystem map: `docs/spec/agent-architecture.md`; sequencing reconciled into
   `docs/plans/agent-program.md` § *M3 sequencing & readiness*. Order: **Phase 0** settle
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
-  debt, must precede cross-agent citing; plan drafted: `docs/plans/agent-memory-source-binding.md`,
-  awaiting PM ratification) → **Phase 2** Channel membership/routing → peer
+  debt, must precede cross-agent citing; plan `docs/plans/agent-memory-source-binding.md`
+  **PM-ratified 2026-06-10**, boundary locked to the compaction spine — ready for a dev
+  clone to claim) → **Phase 2** Channel membership/routing → peer
   reply → cross-agent memory + isolation gate (the one new primitive) → per-agent POV.
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 

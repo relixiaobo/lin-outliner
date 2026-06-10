@@ -12,6 +12,12 @@ supersedes: []
 regression harness + the spec sync. Any internal ordering is build-order within
 the single PR, not phased releases.
 
+> **PM-ratified 2026-06-10 — boundary locked to the spine.** Both Open-question
+> scope calls resolved **OUT**: *(f)* reminder-cache staleness and *(g)* checkpoint
+> shape-version hygiene stay in `agent-dream-followups`. Build = watermark
+> compaction-survival fix + resolution regression test + spec sync, nothing more.
+> Ready for a dev clone (cc / cc-2 / codex / anti) to claim with a Draft PR.
+
 ## Goal
 
 Make the agent-memory **evidence binding survive transcript compaction**, so that:
