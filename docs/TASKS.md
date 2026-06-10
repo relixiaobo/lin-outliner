@@ -33,9 +33,16 @@ Both 2026-06-09 lanes merged — board is between batches.
 - `agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
   Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
 - `agent-skills-authoring` convergence (cc) **merged** as PR #174 — see Recently
-  completed. Remaining tail: PR A (NL "save as skill" + preview/confirm + acceptance
-  flow) sits on top of this; workspace-trust gate for cloned-repo `project` skills is a
-  named follow-up.
+  completed.
+  - **Next up (cc):** `agent-skill-acceptance` — PR A, the ratification loop's other
+    half (explicit accept/revoke + positive trust record + `skillify` model-invocable).
+    PM-ratified plan + boundary: `docs/plans/agent-skill-acceptance.md`. Preview/confirm
+    stays instruction-layer (already shipped); snapshot/rollback and workspace-trust are
+    out of scope.
+  - **Under review (boundary):** cc's "PR B" (snapshot storage + rollback UI) — likely
+    scoped down to single-step undo + git rather than a bespoke subsystem; decide before
+    drafting. Workspace-trust gate for cloned-repo `project` skills is a separate named
+    follow-up needing its own plan.
 
 
 ## Backlog

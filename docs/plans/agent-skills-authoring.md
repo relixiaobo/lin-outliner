@@ -399,7 +399,13 @@ deliberately conservative (self-modification §8):
 - [ ] Diff / full-`SKILL.md` preview + confirmation; draft-default for agent-initiated.
 - [x] Provenance metadata in tool details + `skill.created` / `skill.patched` /
       `skill.replaced` events.
-- [ ] Snapshot storage + rollback UI.
+- [ ] **PR A — skill acceptance** (close the ratification loop): explicit accept/revoke
+      + positive trust record + `skillify` model-invocable. Carved into its own focused
+      plan: [[agent-skill-acceptance]] (`docs/plans/agent-skill-acceptance.md`, PM-ratified
+      boundary 2026-06-10). Preview/confirm stays instruction-layer (already shipped).
+- [ ] Snapshot storage + rollback UI (cc's "PR B") — boundary under review: likely a
+      minimal single-step undo reusing the gateway's recorded `previousContent` + git for
+      `project` skills, NOT a bespoke snapshot subsystem. Decide before drafting.
 - [x] Skill registry hot-reload (extend `discoverSkillDirsForPaths`).
 - [x] Allowed-tools no-escalation guard; model-invocable defaults user-only until ratified.
 - [x] Deny executable-script support files in the self-authoring file-tool path.
