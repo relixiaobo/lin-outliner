@@ -302,41 +302,38 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.entryId, props.index.byId);
       if (!targetParentId) return;
-      const expandTargetAndRememberCursor = () => props.setUi((prev) => {
-        const expanded = new Set(prev.expanded);
-        expanded.add(targetParentId);
-        return requestFocusState(
-          { ...prev, expanded },
-          fieldNameTargetAfterStructureChange,
-          cursorAtOffset(cursorOffset),
-        );
+      await props.run(() => api.indentNode(props.entryId), {
+        applyFocus: false,
+        beforeApply: () => {
+          props.setUi((prev) => {
+            const expanded = new Set(prev.expanded);
+            expanded.add(targetParentId);
+            return requestFocusState(
+              { ...prev, expanded },
+              fieldNameTargetAfterStructureChange,
+              cursorAtOffset(cursorOffset),
+            );
+          });
+        },
       });
-      expandTargetAndRememberCursor();
-      const result = await props.run(() => api.indentNode(props.entryId));
-      if (result) {
-        expandTargetAndRememberCursor();
-      }
       return;
     }
     const emptiedParentIds = parentIdsEmptiedByOutdent([props.entryId], props.index.byId, props.rootId);
-    props.setUi((prev) => requestFocusState(
-      prev,
-      fieldNameTargetAfterStructureChange,
-      cursorAtOffset(cursorOffset),
-    ));
-    const result = await props.run(() => api.outdentNode(props.entryId), { applyFocus: false });
-    if (result) {
-      props.setUi((prev) => {
-        const next = emptiedParentIds.size > 0
-          ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
-          : prev;
-        return requestFocusState(
-          next,
-          fieldNameTargetAfterStructureChange,
-          cursorAtOffset(cursorOffset),
-        );
-      });
-    }
+    await props.run(() => api.outdentNode(props.entryId), {
+      applyFocus: false,
+      beforeApply: () => {
+        props.setUi((prev) => {
+          const next = emptiedParentIds.size > 0
+            ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
+            : prev;
+          return requestFocusState(
+            next,
+            fieldNameTargetAfterStructureChange,
+            cursorAtOffset(cursorOffset),
+          );
+        });
+      },
+    });
   };
 
   const focusFieldValueNode = () => {

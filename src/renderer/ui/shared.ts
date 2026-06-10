@@ -14,6 +14,9 @@ import { measureRender } from './outliner/renderProbe';
 
 export interface CommandRunnerOptions {
   applyFocus?: boolean;
+  // Run local renderer state updates in the same synchronous commit as the
+  // projection update, so structural commands do not expose an intermediate DOM.
+  beforeApply?: () => void;
 }
 
 export type CommandRunner = (
@@ -149,11 +152,13 @@ export function useCommandRunner(
       // query path returns a `ProjectionSnapshot` (apply as a full reseed).
       if ('update' in result) {
         measureRender(() => flushSync(() => {
+          options?.beforeApply?.();
           applyProjectionUpdate(result.update);
           setFocus(options?.applyFocus === false ? null : result.focus ?? null);
         }));
       } else {
         measureRender(() => flushSync(() => {
+          options?.beforeApply?.();
           applyProjectionUpdate({ kind: 'full', revision: result.revision, projection: result.projection });
           setFocus(null);
         }));

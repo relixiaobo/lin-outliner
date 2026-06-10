@@ -513,25 +513,28 @@ export function useWorkspaceKeyboard({
         const emptiedParentIds = action === 'batch_outdent'
           ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)
           : new Set<NodeId>();
-        if (action === 'batch_indent') {
-          setUi((prev) => ({
-            ...prev,
-            expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
-          }));
-        }
-        void run(() => batchOperation(operationIds), { applyFocus: false }).then((result) => {
-          if (result && action === 'batch_indent') {
-            setUi((prev) => ({
-              ...prev,
-              expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
-            }));
-          }
-          if (result && action === 'batch_outdent' && emptiedParentIds.size > 0) {
-            setUi((prev) => ({
-              ...prev,
-              expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds),
-            }));
-          }
+        const structuralAction = action === 'batch_indent' || action === 'batch_outdent';
+        void run(() => batchOperation(operationIds), {
+          applyFocus: false,
+          beforeApply: structuralAction
+            ? () => {
+              if (action === 'batch_indent') {
+                setUi((prev) => ({
+                  ...prev,
+                  expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
+                }));
+              }
+              if (action === 'batch_outdent' && emptiedParentIds.size > 0) {
+                setUi((prev) => ({
+                  ...prev,
+                  expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds),
+                }));
+              }
+              requestEditFocus(anchor);
+            }
+            : undefined,
+        }).then((result) => {
+          if (!result) return;
           if (action === 'batch_checkbox') {
             setUi((prev) => selectKeyboardRowsState(prev, {
               selectedId: anchor,
@@ -541,7 +544,6 @@ export function useWorkspaceKeyboard({
             }));
             return;
           }
-          requestEditFocus(anchor);
         });
       }
     };

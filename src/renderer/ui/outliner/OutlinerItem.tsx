@@ -1260,9 +1260,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
       if (!targetParentId) return;
-      const result = await props.run(() => api.indentNode(props.nodeId), { applyFocus: false });
-      if (result) {
-        flushSync(() => {
+      await props.run(() => api.indentNode(props.nodeId), {
+        applyFocus: false,
+        beforeApply: () => {
           props.setUi((prev) => {
             const expanded = new Set(prev.expanded);
             expanded.add(targetParentId);
@@ -1272,19 +1272,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               cursorAtOffset(cursorOffset),
             );
           });
-        });
-      }
+        },
+      });
       return;
     }
     const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
-    props.setUi((prev) => requestFocusState(
-      prev,
-      rowFocusTarget(props.nodeId, null, props.panelId),
-      cursorAtOffset(cursorOffset),
-    ));
-    const result = await props.run(() => api.outdentNode(props.nodeId), { applyFocus: false });
-    if (result) {
-      flushSync(() => {
+    await props.run(() => api.outdentNode(props.nodeId), {
+      applyFocus: false,
+      beforeApply: () => {
         props.setUi((prev) => {
           const next = emptiedParentIds.size > 0
             ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
@@ -1295,8 +1290,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             cursorAtOffset(cursorOffset),
           );
         });
-      });
-    }
+      },
+    });
   };
 
   const moveCurrentNode = async (direction: 'up' | 'down') => {
