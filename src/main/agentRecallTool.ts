@@ -204,7 +204,7 @@ function visibleEvidence(evidence: AgentRecallEvidence): unknown {
 
 function recallInstructions(data: AgentRecallToolData): string | undefined {
   if (data.entries.length === 0) {
-    return 'No semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers the semantic store (distilled facts), not the raw episodic record.';
+    return "No active semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers only the semantic store's active entries (distilled facts), not invalidated entries or the raw episodic record.";
   }
   if (data.evidenceTruncated) {
     return 'Evidence was truncated. Treat returned evidence as supporting excerpts from the episodic record, not a complete transcript.';

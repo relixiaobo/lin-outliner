@@ -224,11 +224,14 @@ describe('agent dream extraction', () => {
     expect(text).toContain('reconsolidation');
 
     // The correction and the tool-surprise are evidence: they appear inside the fence, after the
-    // prompt's instruction body.
+    // prompt's instruction body. Anchor on the tags' own lines — a bare indexOf would match the
+    // prose mention of the fence ("enclosed in the <fence> tags below") ahead of the real tag.
     const fence = fenceOf(text);
     expect(fence).toBeDefined();
-    const fenceOpenAt = text.indexOf(`<${fence}>`);
-    const fenceCloseAt = text.indexOf(`</${fence}>`);
+    const fenceOpenAt = text.indexOf(`\n<${fence}>\n`);
+    const fenceCloseAt = text.indexOf(`\n</${fence}>`);
+    expect(fenceOpenAt).toBeGreaterThan(-1);
+    expect(fenceCloseAt).toBeGreaterThan(fenceOpenAt);
     const correctionAt = text.indexOf('this repo builds with bun, never npm');
     const surpriseAt = text.indexOf('package-lock.json does not exist');
     expect(correctionAt).toBeGreaterThan(fenceOpenAt);

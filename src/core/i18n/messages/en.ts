@@ -939,7 +939,7 @@ commandPalette: {
       dreamProcessedDetail: ({ messages, chars }: { messages: number; chars: number }) =>
         `Processed ${messages} ${messages === 1 ? 'message' : 'messages'} (${chars.toLocaleString()} chars).`,
       dreamChangesDetail: ({ added, updated, forgotten, skipped }: { added: number; updated: number; forgotten: number; skipped: number }) =>
-        `Memory changes: ${added} added, ${updated} updated, ${forgotten} forgotten, ${skipped} skipped.`,
+        `Memory changes: ${added} added, ${updated} updated, ${forgotten} invalidated, ${skipped} skipped.`,
     },
     // Tool-call disclosure: summaries (verb forms), section headers, persisted output.
     toolCall: {

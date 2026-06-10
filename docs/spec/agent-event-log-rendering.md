@@ -871,7 +871,7 @@ returning a hit. It sorts verified hits by relevance first, then conversation
 recency, then message
 recency; recent-user-message lookup stays recency-only. The foreground model sees
 only `recall` over active durable memory entries; raw conversation lookup is
-reserved for runtime-owned evidence expansion, Dream/extraction, and diagnostics.
+reserved for runtime-owned evidence expansion, Dream consolidation, and diagnostics.
 
 ## Streaming Strategy
 

@@ -2101,7 +2101,7 @@ briefing, `recall`, and Dream consolidation always read the whole pool. Runtime
 setting `agent.runtime.memoryIsolation` has two values:
 
 - `global` (default): normal reads and Dream writes.
-- `read-only-global`: reads stay global; runtime-owned Dream extraction skips
+- `read-only-global`: reads stay global; runtime-owned Dream consolidation skips
   writes (pause learning). The foreground tool surface is read-only in every
   mode.
 
@@ -2129,7 +2129,7 @@ memory after it verifies raw evidence. Dream
 is **per-principal — one writer per pool**: the **agent-Dream** reads an agent's
 run log (execution) and writes that agent's pool; the **user-Dream** reads the
 conversations the user is a member of (communication) and writes the user pool.
-The two extraction prompts are subject-aware — the agent prompt writes a
+The two consolidation prompts are subject-aware — the agent prompt writes a
 self-model ("You <fact>"), the user prompt writes a person profile ("The user
 <fact>") and refuses to absorb the agent's own working habits. Dream is not
 fired after every foreground turn. Automatic Dream uses a `date` schedule and
@@ -2210,7 +2210,7 @@ sources read the referenced subagent transcript payload and expand only the
 synthetic transcript message range. Both paths clamp output by `max_chars`. Older
 conversations that have not been distilled into active memory entries are
 intentionally not foreground-recallable. Internal summary search and raw
-conversation/run reads remain available to runtime-owned Dream/extraction and
+conversation/run reads remain available to runtime-owned Dream consolidation and
 diagnostics, not as public model tools.
 
 Tool results use the shared envelope and expose only the slim model-visible

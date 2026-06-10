@@ -433,8 +433,8 @@ export function deriveAgentToolActionDescriptors(input: {
     return [descriptor(toolName, 'agent.memory.recall', {
       accessScope: 'none',
       title: 'agent memory recall',
-      summary: 'Read active durable facts remembered by the local agent.',
-      consequence: 'This reads local agent memory and optional cited local evidence without changing it.',
+      summary: "Read the local agent's active distilled memory entries (cued retrieval).",
+      consequence: 'This reads local agent memory and optional cited episodic evidence without changing it.',
       defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
@@ -447,8 +447,8 @@ export function deriveAgentToolActionDescriptors(input: {
     return [descriptor(toolName, 'agent.memory.dream', {
       accessScope: 'none',
       title: 'agent memory dream',
-      summary: 'Request runtime-owned durable memory extraction for the current agent.',
-      consequence: 'This may update local durable agent memory from recorded conversation evidence; the model cannot provide memory facts directly.',
+      summary: 'Request runtime-owned memory consolidation (Dream) for the current agent.',
+      consequence: 'This may consolidate recorded episodic evidence into local durable agent memory; the model cannot provide memory facts directly.',
       defaultDecision: 'ask',
       reversible: true,
       externalEffect: false,

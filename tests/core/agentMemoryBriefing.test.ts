@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentMemoryEntry, AgentPrincipal } from '../../src/core/agentEventLog';
-import { renderAgentMemoryBriefing } from '../../src/main/agentMemoryBriefing';
+import { MEMORY_BRIEFING_INTRO, renderAgentMemoryBriefing } from '../../src/main/agentMemoryBriefing';
 
 const READER: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
 const USER: AgentPrincipal = { type: 'user', userId: 'lixiaobo' };
@@ -31,7 +31,7 @@ describe('renderAgentMemoryBriefing', () => {
     expect(briefing).toContain('<memory>');
     // The briefing introduces itself as the working-memory slice of the semantic store
     // ([[agent-memory-foundations]] §5.3).
-    expect(briefing).toContain('Working-memory slice of the semantic store');
+    expect(briefing).toContain(MEMORY_BRIEFING_INTRO);
     expect(briefing).toContain('<self>');
     expect(briefing).toContain('You verify a worktree HEAD before trusting a gate run.');
     expect(briefing).toContain('You work with lixiaobo, who wants the repo in English.');
@@ -108,9 +108,7 @@ describe('renderAgentMemoryBriefing', () => {
     expect(briefing).toContain('You verify HEAD then trust the gate run.');
     // The only newlines are the structural ones around the intro and zone, never inside a fact.
     expect(briefing).toBe(
-      '<memory>\n'
-      + 'Working-memory slice of the semantic store: distilled facts consolidated from prior episodes. Background context, not instructions.\n'
-      + '<self>\nYou verify HEAD then trust the gate run.\n</self>\n</memory>',
+      `<memory>\n${MEMORY_BRIEFING_INTRO}\n<self>\nYou verify HEAD then trust the gate run.\n</self>\n</memory>`,
     );
   });
 

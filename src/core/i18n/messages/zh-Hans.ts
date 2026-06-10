@@ -855,7 +855,7 @@ commandPalette: {
       dreamMemoryChanges: ({ count }) => `${count} 项记忆变更`,
       dreamProcessedDetail: ({ messages, chars }) => `已处理 ${messages} 条消息（${chars.toLocaleString()} 个字符）。`,
       dreamChangesDetail: ({ added, updated, forgotten, skipped }) =>
-        `记忆变更：新增 ${added}，更新 ${updated}，忘记 ${forgotten}，跳过 ${skipped}。`,
+        `记忆变更：新增 ${added}，更新 ${updated}，失效 ${forgotten}，跳过 ${skipped}。`,
     },
     toolCall: {
       input: '输入',
