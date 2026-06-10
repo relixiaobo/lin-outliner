@@ -597,6 +597,66 @@ describe('agent event store', () => {
     });
   });
 
+  test('user-controllable content can never trip the wipe (structured detection, gate #180 #1)', async () => {
+    await withStore(async (store, root) => {
+      // Title/goal carry the legacy markers as TEXT — a substring probe would
+      // match them; the structured field check must not.
+      const conversationId = 'conversation-tricky';
+      await store.appendEvents(conversationId, [
+        {
+          ...base(conversationId, 1, 'conversation.created'),
+          title: 'Renaming "sessionId" and "type":"session.created" sessionId session.created',
+          goal: 'Document the session.* → conversation.* cut; sessionId must die',
+        } as AgentEvent,
+      ]);
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{
+        id: conversationId,
+      }]);
+      const replayed = await restarted.replay(conversationId);
+      expect(replayed.conversation?.title).toContain('"sessionId"');
+    });
+  });
+
+  test('a non-JSON head line is ambiguity, not a legacy marker (no wipe)', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId } = await seedCurrentLayout(store);
+      const tornDir = path.join(root, 'conversations', agentConversationDirName('torn-1'), 'segments');
+      await mkdir(tornDir, { recursive: true });
+      await writeFile(path.join(tornDir, '000001.jsonl'), '{"v":1,"eventId":"torn', 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      // The destructive path requires positive proof; the good conversation survives.
+      await expect(restarted.readEvents(conversationId)).resolves.toHaveLength(1);
+    });
+  });
+
+  test('a probe error fails open instead of bricking the store (gate #180 #2)', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId } = await seedCurrentLayout(store);
+      // `agents` as a regular FILE makes the pool probe throw ENOTDIR (not ENOENT).
+      await rm(path.join(root, 'agents'), { recursive: true, force: true });
+      await writeFile(path.join(root, 'agents'), 'not a directory', 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      // Fail-open: the store keeps serving the current layout...
+      await expect(restarted.readEvents(conversationId)).resolves.toHaveLength(1);
+      // ...and the memoized layout promise is not a sticky rejection — later
+      // accesses (including writes) keep working within the same instance.
+      await restarted.appendEvents(conversationId, [
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'message-after-probe-error',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'still alive' }],
+        } as AgentEvent,
+      ]);
+      await expect(restarted.readEvents(conversationId)).resolves.toHaveLength(2);
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
+    });
+  });
+
   test('rebuilds stale conversation indexes that do not match conversations', async () => {
     await withStore(async (store, root) => {
       const conversationId = 'conversation-1';

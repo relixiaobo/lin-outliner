@@ -714,7 +714,12 @@ export class AgentEventStore {
   }
 
   private ensureStorageLayout(): Promise<void> {
-    this.storageLayoutPromise ??= this.cleanLegacyStorageLayout();
+    // Fail-open (gate #180 finding #2): a probe/wipe failure must NOT memoize a
+    // rejected promise — that would brick every store access until restart. Log,
+    // continue on the current layout, and let the next launch re-probe.
+    this.storageLayoutPromise ??= this.cleanLegacyStorageLayout().catch((error) => {
+      console.warn(`Agent storage clean-cut probe failed; continuing on the current layout: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return this.storageLayoutPromise;
   }
 
@@ -756,8 +761,13 @@ export class AgentEventStore {
   }
 
   private async hasLegacyEventVocabulary(): Promise<boolean> {
-    // Every old event carried a `sessionId` field (and logs opened with a
+    // Every old event carried a `sessionId` FIELD (and logs opened with a
     // `session.created` head), so one head line tells the vocabularies apart.
+    // The check is structural (parse, then inspect fields) — NEVER a substring
+    // probe: the head event carries user-controllable title/goal text that may
+    // legitimately contain '"sessionId"' (gate #180 finding #1), and a wipe must
+    // not be content-triggerable. A torn/corrupt/over-long head is ambiguity,
+    // not a legacy marker — the destructive path requires positive proof.
     const conversationsDir = this.paths('__placeholder__').conversationsDir;
     try {
       for (const entry of await readdir(conversationsDir, { withFileTypes: true })) {
@@ -765,7 +775,11 @@ export class AgentEventStore {
         const head = await readFirstLine(
           path.join(conversationsDir, entry.name, 'segments', CONVERSATION_SEGMENT_FILE),
         );
-        if (head && (head.includes('"sessionId"') || head.includes('"type":"session.'))) return true;
+        if (!head) continue;
+        const event = parseJsonRecord(head);
+        if (!event) continue;
+        if (typeof event.sessionId === 'string') return true;
+        if (typeof event.type === 'string' && event.type.startsWith('session.')) return true;
       }
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
@@ -2753,4 +2767,14 @@ function isNotFoundError(error: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** JSON.parse to a plain object, or null on any parse failure / non-object value. */
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
