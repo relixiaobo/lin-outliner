@@ -1201,10 +1201,17 @@ P2 — memory v2 + background-task surfacing
 - [ ] Generalize `pendingSubagentNotifications` → conversation-scoped delivery (reusing the P1 `actor` field) + first-class task-update messages + rate-limiting/folding. (DM delivery; Channel/coordinator delivery is P3.)
 
 P3 — sequential rooms + consolidation + registry
+<!-- SHAPE NOTE (AGENTS.md "complete feature, no phased partial PRs"): the P3 block below
+     (POV · turn-taking · coordinator routing · floor cache · floor-aware delivery) is the
+     **M3 multi-agent spine** — these are interdependent build-order WITHIN one feature, not
+     separate dev claims. #1208 in particular is un-demoable without #1204 (POV). Dispatch the
+     spine as ONE complete multi-agent-Channel feature; do NOT hand out the rows individually.
+     All of it is gated on the agent-data-model §4 principal/membership foundation (cc-2, PR #173). -->
 - [ ] `forAgentId` POV derivation in `deriveRuntimePiMessages` (others' turns → user-role); thread per-member `agentId` into the P1 `actor` field (N-agent authorship).
 - [ ] Sequential turn-taking routing; rooms-are-linear (no per-agent branch pointers).
 - [ ] Channel routing: coordinator Member role flag (default = main agent); explicit `@` bypasses, no-`@` → coordinator, hop-budget-bounded relay; coordinator reassignable per channel.
-- [ ] Promote the main agent through `AgentDefinitionRegistry` (the ~1–2k-LoC refactor).
+- [ ] Promote the main agent through `AgentDefinitionRegistry` (the ~1–2k-LoC refactor). **P3, deferred** (§3: cost overstated ~10×).
 - [ ] Long cache TTL + deterministic POV derivation for floor-switching (§Prompt cache impact).
 - [ ] Floor-aware task delivery in Channels + `needs-input` wake (asyncRewake-style); keep background-run isolation from session singletons.
-- [ ] Offline consolidation pass (gated time + activity + lock).
+- [x] Offline consolidation pass (gated time + activity + lock). Shipped #163: scheduled
+      reflective Dream with per-agent in-flight lock + online/due/min-evidence gates.

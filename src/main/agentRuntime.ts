@@ -145,6 +145,7 @@ import {
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
+import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   AGENT_SUBAGENT_TOOL_NAME,
   AgentSubagentRuntime,
@@ -1445,6 +1446,7 @@ export class AgentRuntime {
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
       sessionId,
       executeSkillShell: async ({ command, skill }) => {
         const activeSettings = await this.getRuntimeSettings();
@@ -2246,6 +2248,21 @@ export class AgentRuntime {
     if (!this.commandSchedulerTimer) return;
     clearInterval(this.commandSchedulerTimer);
     this.commandSchedulerTimer = null;
+  }
+
+  /**
+   * Settle in-flight best-effort writes so a force-exit on quit (see main.ts's
+   * before-quit, which `app.exit`s after this) doesn't truncate them mid-write:
+   * each session's event-log append (the integrity-critical fast local write),
+   * plus the dream-extraction and command-sweep tails. The latter two are
+   * crash-safe — their watermarks only advance on success, so a cut dream/sweep
+   * simply re-fires next launch — so the CALLER SHOULD bound this with a timeout;
+   * a slow in-flight dream (an LLM call) must not block ⌘Q.
+   */
+  async drainPendingWrites(): Promise<void> {
+    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
+    for (const session of this.sessions.values()) pending.push(session.pendingEventAppend);
+    await Promise.allSettled(pending);
   }
 
   // Catch-up hook for app launch (see ready()) and `powerMonitor.resume` (wired
@@ -5477,7 +5494,7 @@ function skillAuditEventType(
 function parseAgentSkillWriteAudit(value: unknown): AgentSkillWriteAudit | null {
   if (!isRecord(value)) return null;
   if (typeof value.skillName !== 'string') return null;
-  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in' && value.source !== 'dynamic') return null;
+  if (value.source !== 'user' && value.source !== 'project' && value.source !== 'built-in') return null;
   if (typeof value.skillRoot !== 'string') return null;
   if (typeof value.relativePath !== 'string') return null;
   if (
@@ -5759,6 +5776,7 @@ function createConfiguredAgent(
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
           ],
+          ...(skillRuntime?.getSkillDirConfig() ?? {}),
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;

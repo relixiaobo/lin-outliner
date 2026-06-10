@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Launcher keeps the dock icon + first ⌘Q quits promptly, at the root (PR #171)** — supersedes PR #170's
+  show/hide toggle and the dock-icon fast-track with the actual root causes, found to be **two independent
+  bugs**. (1) *Dock icon vanished when the launcher was summoned:* the launcher's all-Spaces collection
+  behavior (`setVisibleOnAllWorkspaces`) transforms the app's process type to `UIElementApplication`
+  (accessory), dropping the dock icon + ⌘Tab entry (electron#26350); the native `collectionBehavior` attempt
+  (commit cea2998) did **not** avoid the transform and is reverted (addon byte-identical to `main`). Fixed by
+  adding Electron's purpose-built **`skipTransformProcessType: true`** to `setVisibleOnAllWorkspaces` on
+  show/hide, so it joins all Spaces without the transform. (2) *First ⌘Q needed two presses* (reproduced on a
+  fresh launch with the launcher never summoned — unrelated to all-Spaces): the `before-quit` handler
+  `preventDefault()`s the OS ⌘Q to flush, and the prior re-issued `app.quit()` lingered for seconds before the
+  process actually exited. Now the handler drains in-flight writes then **`app.exit(0)`**s — review-hardened to
+  first `AgentRuntime.drainPendingWrites()` (session event-log appends + the crash-safe Dream/command-sweep
+  tails) under a 2.5s hard timeout so a slow in-flight Dream LLM call can't block the quit, with the global-
+  hotkey unregister inlined into `before-quit` (since `app.exit` skips `will-quit`). Gate: high-effort
+  `/code-review` (3 findings — runtime-write durability, `app.exit` over `process.exit`, the `will-quit` trap —
+  all fixed and verified on the merged tree) + typecheck + `test:core` 774/0; the packaged ⌘Tab / over-
+  fullscreen-float / no-focus-steal / dock-icon checks remain a one-time manual eyeball on the `.dmg`.
+  ([#171](https://github.com/relixiaobo/lin-outliner/pull/171))
+
 - **Tenon shows its dock icon again (fast-track)** — the packaged app ran in macOS "accessory" activation
   policy (window + menu bar present, but no dock icon and no ⌘Tab entry) — a side effect of the always-present
   non-activating launcher NSPanel. The prior `app.dock.show()` re-assert did not restore it (that API only
@@ -69,6 +88,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   (`status: done`) and repointed its references. ([#156](https://github.com/relixiaobo/lin-outliner/pull/156))
 
 ### Changed
+
+- **Skill governance convergence: single-source identity + ratification gate (PR #174)** — one
+  convergence pass over the shipped M1 skill-authoring subsystem, design in
+  `docs/spec/agent-skills.md` + `docs/plans/agent-skills-authoring.md`. **(1) Protocol:**
+  `SkillDefinition.source` collapses `'built-in' | 'user' | 'project' | 'dynamic'` → `AgentSourceKind`
+  (`'built-in' | 'user' | 'project'`), symmetric with agents — `dynamic` was a discovery mode, not a
+  source; nested-discovered dirs now tag `project`. `SkillDefinition` gains `ratified` + `contentHash`.
+  **(2) Closed governance hole:** one `resolveSkillContentTarget` resolver powers the loader, the
+  file-tool write gateway, and the `agent.skill.write` permission classifier, so "what is a skill" can
+  no longer disagree across layers — a skill in an additional configured dir outside the root (e.g.
+  `~/team-skills/`) was loaded as model-invocable yet bypassed skill-write governance entirely; now every
+  recognized skill write is uniformly ask-gated. **(3) Ratification gate replaces write-time policy:** the
+  gateway records each agent-written `SKILL.md` canonical content hash (registry in-memory +
+  `agent-skill-provenance.json` in userData, shared by subagents); a skill whose current hash matches its
+  record is **unratified** — excluded from the model listing and `trigger: 'agent'` invocation refused
+  (`skill_not_ratified`), while slash invocation always works with `allowed-tools` honored (the user's
+  command is per-run consent). A user hand-edit changes the hash and self-ratifies. Deleted: the
+  `RISKY_ALLOWED_TOOL_NAMES` string heuristic and the forced `disable-model-invocation` file rewrite —
+  lin never writes policy into an authored file. Validity/safety checks (size, frontmatter, hidden/exec
+  support files, secret scan) stay at the write boundary as model feedback. Gate: `/code-review` (1
+  finding — a CRLF/BOM hash-domain mismatch that fail-opened the ratification gate when an agent edited a
+  CRLF/BOM-authored skill) fixed in `33ae703` via a canonical `skillContentHash` shared by record + load
+  sides, with an independent re-check confirming the gate now holds; typecheck + `test:core` 780/0 +
+  `test:renderer` 389/0; spec updated in the same change (A6).
+  ([#174](https://github.com/relixiaobo/lin-outliner/pull/174))
 
 - **Distilled-memory `<memory>` briefing + subject-elided Dream writer (PR #172)** — Phase 1+2 of
   [[agent-memory-model]] as one complete PR, **zero protocol change** (`MemoryEntry`, the `recall` tool,

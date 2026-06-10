@@ -2067,14 +2067,16 @@ if (!app.requestSingleInstanceLock()) {
       harden: hardenWebContents,
       onBlurHide: dismissLauncher,
     });
-    // Tenon is a regular foreground app (dock icon + menu bar). Creating the
-    // launcher as a non-activating NSPanel — and, in dev, launching the binary
-    // straight from the terminal (not via LaunchServices) — can leave the app in
-    // macOS "accessory" activation policy (background-only → no dock icon, no ⌘Tab).
-    // `app.dock.show()` does NOT reliably restore it (it only un-does an explicit
-    // `dock.hide()`); `setActivationPolicy('regular')` forces the app back to a
-    // regular foreground app. Does not affect the launcher panel's per-window
-    // non-activating behavior.
+    // Tenon is a regular foreground app (dock icon + menu bar). In dev, launching
+    // the binary straight from the terminal (not via LaunchServices) can leave the
+    // app in macOS "accessory" activation policy (background-only → no dock icon, no
+    // ⌘Tab); `app.dock.show()` does NOT reliably restore it (it only un-does an
+    // explicit `dock.hide()`), so we assert the regular policy here. This is
+    // idempotent for a normally-launched packaged app. (The separate packaged
+    // dock-hiding bug — the launcher's all-Spaces behavior transforming the app to
+    // an accessory process, electron#26350 — is fixed in launcherWindow.ts via the
+    // `skipTransformProcessType` option on setVisibleOnAllWorkspaces.) Does not
+    // affect the launcher panel's per-window non-activating behavior.
     if (process.platform === 'darwin') app.setActivationPolicy('regular');
     const hotkey = registerLauncherHotkey(() => void toggleLauncher());
     launcherHotkeyAccelerator = hotkey.accelerator;
@@ -2095,16 +2097,28 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  // Release the global hotkey(s) on quit so we never leave a dangling binding.
-  app.on('will-quit', () => unregisterLauncherHotkeys());
-
   app.on('before-quit', (event) => {
     if (quitAfterFlush) return;
     event.preventDefault();
     quitAfterFlush = true;
+    // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
+    // here: stop the command scheduler and release the global hotkey(s).
     agentRuntime.stopCommandScheduler();
-    void documentService.flushPendingChanges()
-      .catch((error) => console.error(error))
-      .finally(() => app.quit());
+    unregisterLauncherHotkeys();
+    // Settle in-flight writes, then exit. We force-exit instead of re-issuing
+    // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
+    // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q
+    // reads as "didn't quit, press again". But a bare exit would truncate in-flight
+    // async writes, so we first drain them — the document mutation queue and the
+    // agent runtime's session event-log appends — bounded by a hard timeout so a
+    // slow/hung write (e.g. an in-flight Dream LLM call, which is crash-safe and
+    // re-fires next launch) can't block the quit.
+    void Promise.race([
+      Promise.allSettled([
+        documentService.flushPendingChanges(),
+        agentRuntime.drainPendingWrites(),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]).finally(() => app.exit(0));
   });
 }

@@ -18,20 +18,30 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | `cc/launcher-native-nspanel` (pending) | launcher-native-nspanel (assigned 2026-06-09) |
+| Claude Code | `lin-outliner-cc/` | — | idle (skill-governance-convergence merged, PR #174) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory-model P1+P2 merged, PR #172) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-- **cc → `launcher-native-nspanel`** (P1) — root fix: native NSWindow
-  `collectionBehavior` replacing Electron's dock-hiding `visibleOnFullScreen`; keeps
-  dock icon + ⌘Q + fullscreen float + non-activating. Execution-ready plan
-  `docs/plans/launcher-native-nspanel.md`. Supersedes PR #170's toggle.
+Both 2026-06-09 lanes merged — board is between batches.
 
-`agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
-Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
+- `launcher-native-nspanel` (cc) **merged** as PR #171 — see Recently completed.
+  Remaining: a one-time packaged `.dmg` eyeball (⌘Tab lists Tenon · floats over
+  another app's fullscreen · summon doesn't steal focus · dock icon · light+dark).
+- `agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
+  Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
+- `agent-skills-authoring` convergence (cc) **merged** as PR #174 — see Recently
+  completed.
+  - **Next up (cc):** `agent-skill-acceptance` — PR A, the ratification loop's other half
+    (explicit accept/revoke + positive trust record + `skillify` model-invocable +
+    single-step undo). PM-ratified plan + boundary: `docs/plans/agent-skill-acceptance.md`.
+    Preview/confirm stays instruction-layer (already shipped); cc's "PR B" is **slimmed
+    into this PR** as single-step undo (deep history → git; no bespoke snapshot subsystem).
+  - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills —
+    needs its own plan. Executable-script support-file ratify+sandbox and M2 curation
+    dry-run stay deferred.
 
 
 ## Backlog
@@ -102,10 +112,18 @@ forget), 3 IPC commands, a per-turn bounded `<agent-memory>` reminder (score-ran
 to 8), and a Memory settings UI. Per a PM scope call, the three event-log families (conversation/run/memory)
 were **unified onto one `AppendOnlySeqLog<TEvent>` primitive** (single-sourced serialize/read/tail — the #150
 tail-bug class now lives in one place — + seq/queue/cache + offset reads), and memory got a projected-state
-cache + churn-based compaction + clean-cut coverage. **Next: rest of M1** (canonical DM + Channels ·
-mixed-resolution memory retrieval · ask_user_question · config tool · skill self-authoring — the bulk of
-perceived value). Remaining needs-PM decisions are lower-priority (doc snapshot+delta, group
-default-`addressedTo` (M3), who-configures-whom (M3)). Escalate before behavior-changing code.
+cache + churn-based compaction + clean-cut coverage. **M1 is now substantially LANDED** (#153
+"complete agent M1" + follow-ups): canonical DM + Channels, mixed-resolution memory retrieval/compaction,
+`ask_user_question` v1, `config`/`runtime_status`/doctor tools, skill self-authoring v1 + `/skillify`,
+task panel (#160), notifications/attention M2 (#166), agent authoring (#167), memory render+Dream P1/P2
+(#172) — **all shipped**. What remains is **(a) feature-completion tails** on already-scaffolded tools
+(ask-user-question: clarify action + answer @refs/attachments; skills-authoring: NL save-as-skill +
+diff/preview + snapshot/rollback + sandbox gate), **(b) the M3 multi-agent spine** (rooms/POV/turn-taking/
+coordinator routing — gated on the agent-data-model §4 principal/membership foundation, cc-2's PR #173),
+**(c) memory Phase 3** (user-as-agent + sharing, cc-2, gated on §4), and **(d) PM-deferred self-mod M2**
+(review/approval + config recovery — security-sensitive, escalate before build). Remaining needs-PM
+decisions: doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3). Escalate before
+behavior-changing code.
 
 ### Command surface & capture
 
@@ -225,16 +243,14 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-authoring** (P2, M2, **in-progress — core shipped in #167**) — the user-facing
-  create / edit / duplicate / manage path for agent definitions (`AGENT.md`) landed (Form⇄Raw
-  editor, hot-reload, disable-by-identity, + subagent system-prompt unification). **Remaining
-  follow-ups** (from the #167 review gate): (a) **consolidate the two AGENT.md parsers** —
+- **agent-authoring follow-ups** (P2, *fast-track*) — the plan itself is **done** (core shipped
+  in #167; archived at `docs/plans/archive/agent-authoring.md`). Only four small #167-review-gate
+  cleanups remain as independent fast-track items: (a) **consolidate the two AGENT.md parsers** —
   `core/agentMarkdown.ts` vs the registry loader's own copy in `agentSubagents.ts` (byte-equal
   today, drift risk); (b) agents from `additionalAgentDirectories` show Save/Delete but every
   write rejects on containment → render them **read-only** like built-ins; (c) an `effort` value
   outside the 6 catalog options renders as `off` in the form `<select>`; (d) `TOOL_CATALOG` has
-  no compile-time link to the real tool registry → guard-test against `filterAgentTools`. See
-  `docs/plans/agent-authoring.md`.
+  no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
@@ -397,6 +413,36 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **skill governance convergence: single-source identity + ratification gate** (cc, PR #174) — one
+  convergence pass over the shipped M1 skill-authoring subsystem (design folded into
+  `docs/spec/agent-skills.md`). (1) **Protocol:** `SkillDefinition.source` collapses to `AgentSourceKind`
+  (dropped `'dynamic'`, a discovery mode not a source); `SkillDefinition` gains `ratified` + `contentHash`.
+  (2) **Closed governance hole:** a single `resolveSkillContentTarget` resolver now backs the loader, the
+  file-tool write gateway, and the `agent.skill.write` permission classifier, so a skill in an additional
+  configured dir outside the root can no longer be model-invocable yet bypass write governance — every
+  recognized skill write is uniformly ask-gated. (3) **Ratification gate replaces write-time policy:** the
+  gateway records each agent-written `SKILL.md` canonical content hash (in-memory + `agent-skill-provenance.json`
+  in userData, subagent-shared); an unratified skill is hidden from the model listing and refuses
+  `trigger: 'agent'` invocation (`skill_not_ratified`), while slash invocation always works with `allowed-tools`
+  honored; a user hand-edit self-ratifies. Deleted the `RISKY_ALLOWED_TOOL_NAMES` heuristic + forced
+  `disable-model-invocation` rewrite; validity/safety checks stay at the write boundary. Gate: `/code-review`
+  (protocol + permission surface) surfaced 1 finding — a CRLF/BOM hash-domain mismatch that fail-opened the
+  gate when an agent edited a CRLF/BOM-authored skill; fixed in `33ae703` via a canonical `skillContentHash`
+  shared by the record + load sides, independently re-checked on the merged tree. typecheck + `test:core`
+  780/0 + `test:renderer` 389/0; spec updated in the same change (A6). Tail: PR A (NL save-as-skill +
+  preview/confirm/acceptance) and a workspace-trust gate for cloned-repo `project` skills are named follow-ups.
+- **launcher: root fix for dock icon + first-⌘Q** (cc, PR #171) — investigation found the reported symptoms
+  were **two independent bugs**, superseding PR #170's show/hide toggle and the dock-icon fast-track. (1) The
+  launcher's all-Spaces behavior transformed the app to an accessory process (`UIElementApplication`), dropping
+  the dock icon + ⌘Tab (electron#26350) — fixed with Electron's `skipTransformProcessType: true` on
+  `setVisibleOnAllWorkspaces`; the native `collectionBehavior` attempt (cea2998) didn't avoid the transform and
+  is reverted. (2) First ⌘Q lingered because `before-quit` re-issued `app.quit()` after `preventDefault()` —
+  now drains in-flight writes then `app.exit(0)`. Gate: high-effort `/code-review` surfaced 3 findings
+  (runtime-write durability under force-exit, `app.exit` over `process.exit`, the now-dead `will-quit` trap);
+  cc fixed all three — `AgentRuntime.drainPendingWrites()` settles session event-log appends + the crash-safe
+  Dream/command-sweep tails under a 2.5s timeout, `app.exit(0)`, and the hotkey unregister inlined into
+  `before-quit`. Verified on the merged tree (clean auto-merge with #172's `agentRuntime.ts` changes):
+  typecheck + `test:core` 774/0. Remaining: a one-time packaged `.dmg` eyeball for the manual launcher checks.
 - **agent-memory: `<memory>` briefing render + subject-elided Dream writer** (cc-2, PR #172) — Phase 1+2 of
   [[agent-memory-model]] as one complete PR, zero protocol change. New pure `agentMemoryBriefing.ts` projects
   resident (newest-active, ≤12) entries into a `<memory>` briefing with reader-relative `<self>` /

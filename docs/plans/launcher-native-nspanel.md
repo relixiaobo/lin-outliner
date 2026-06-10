@@ -1,6 +1,6 @@
 ---
 title: Launcher native NSPanel — keep the dock icon while floating over fullscreen
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 executor: cc
@@ -21,8 +21,44 @@ The global launcher must satisfy **all of** the following at once:
 
 Today we get at most three of these because the mechanism we use to achieve (3),
 Electron's `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`, breaks
-(1) and (2). This plan replaces that mechanism with a **native NSWindow
-collectionBehavior** set, which keeps all four.
+(1) and (2).
+
+## Correction (shipped approach — supersedes the Background/Design below)
+
+The first attempt at this plan (the **native NSWindow `collectionBehavior`**
+approach in the Design section below) was built, packaged, and **failed packaged
+verification**. Empirical investigation (reliable local repros via `System Events`
+→ `background only`, packaged menu-click Quit timing, and a temporary `before-quit`
+log) showed the dock-icon and the ⌘Q symptoms are **two independent bugs**, plus a
+third environment issue:
+
+- **Dock icon (the launcher's bug).** The all-Spaces behavior transforms the app's
+  process type to `UIElementApplication` (accessory), hiding the dock icon + ⌘Tab
+  entry (electron#26350). Setting `collectionBehavior` natively did **not** avoid it
+  (the original Design's premise was wrong). **Fix:** keep Electron's
+  `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` but add
+  **`skipTransformProcessType: true`** — Electron's purpose-built flag that joins all
+  Spaces **without** the transform. Verified: with it, `background only` stays
+  `false` through show/hide; without it, it flips to `true` the instant the launcher
+  shows. **No native addon, no new dependency** — strictly simpler than the Design
+  below; the `window_corner` addon is left at corner-radius only.
+- **First ⌘Q needs two presses (NOT the launcher).** Reproduces on a fresh launch
+  with the launcher never summoned, so it is unrelated to all-Spaces. Root cause: the
+  `before-quit` handler `preventDefault()`s the OS ⌘Q to flush, then re-issues
+  `app.quit()` — but Electron's graceful re-quit after a cancelled terminate lingers
+  for **seconds** before the process actually exits, so ⌘Q reads as "didn't quit,
+  press again." **Fix (main.ts):** `process.exit(0)` after the flush instead of
+  `app.quit()`. Verified: first Quit now exits in ~0.8s.
+- **Dock-icon-missing in /Applications (environment, not code).** Multiple
+  `dev.linlab.tenon` bundles (a mounted DMG mounted several times + each clone's
+  `release/` build + /Applications) confused LaunchServices. Fixed by ejecting/
+  unregistering the strays and re-registering /Applications as canonical. Recurs
+  whenever a `.dmg` is left mounted or a stray `release/` build is registered.
+- The `cbcbf71` `setActivationPolicy('regular')` line is kept (dev-from-terminal
+  case), comment corrected.
+
+The Background/Design sections below are **retained as the path not taken** (the
+native-collectionBehavior theory). Read them as history, not as the shipped design.
 
 ## Non-goals
 
@@ -210,13 +246,36 @@ Run both the packaged `.dmg` and `dev:cc`. Light + dark for the launcher UI.
 verification above. Not an agent-permissions/security change, so no
 `/security-review` required.
 
-## Subtasks
+## Subtasks (shipped — see Correction above)
 
-- [ ] Native `setWindowSpaceBehavior` in `window_corner.mm` + `Init` registration.
-- [ ] TS wrapper `setLauncherSpaceBehavior` (reuse the addon loader).
-- [ ] `launcherWindow.ts`: remove both `setVisibleOnAllWorkspaces` calls; wire the
-      native toggle into show/hide; update the creation comment.
-- [ ] Reconcile `cbcbf71` activation-policy line (keep+fix-comment or remove).
-- [ ] `docs/spec/launcher.md` updated (native collectionBehavior rationale).
-- [ ] `bun run build:native` + `bun run typecheck`; package and run the five-point
-      verification (packaged + `dev:cc`, light + dark).
+- [x] `launcherWindow.ts`: `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen:
+      true, skipTransformProcessType: true })` on show; `(false, {
+      skipTransformProcessType: true })` on hide; creation comment updated.
+- [x] **No** native addon change — the `window_corner.mm` / `nativeWindowCorner.ts`
+      space-behavior code from the first attempt was reverted; the addon is corner-
+      radius only again.
+- [x] `main.ts` `before-quit`: `process.exit(0)` after the flush instead of
+      `app.quit()` — fixes the separate "first ⌘Q needs two presses" bug. Verified:
+      first packaged Quit exits in ~0.8s.
+- [x] Reconcile `cbcbf71` activation-policy line — **kept** (dev-from-terminal
+      accessory case; idempotent for a normal packaged launch); comment corrected to
+      point at the `skipTransformProcessType` fix.
+- [x] `docs/spec/launcher.md` updated (process-type-transform root cause +
+      `skipTransformProcessType` rationale).
+- [x] `bun run build:native` + `bun run typecheck` green; `test:core` 766/0.
+- [x] **Local repro + fix verified** via `System Events` → `background only`:
+      plain `setVisibleOnAllWorkspaces({visibleOnFullScreen})` → `background
+      only=true` (accessory); adding `skipTransformProcessType: true` → stays
+      `false`.
+- [ ] **Gate (main + PM):** repackage the `.dmg` and re-run the five-point manual
+      verification (dock icon · ⌘Tab · first ⌘Q quits · floats over fullscreen ·
+      non-activating), light + dark. **This is a repackage** — the installed
+      12:28 `.dmg` is the failed native build.
+
+### Open-question resolutions
+
+1. Float level — kept `setAlwaysOnTop(true, 'pop-up-menu')` + `visibleOnFullScreen`.
+2. Permanent vs toggled — kept the **toggle** (set on show / clear on hide) as
+   belt-and-suspenders; with `skipTransformProcessType` the process never goes
+   accessory, so the quit path is safe regardless.
+3. `cbcbf71` keep-or-remove — **kept** + comment corrected.

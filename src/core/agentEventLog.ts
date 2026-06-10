@@ -923,7 +923,7 @@ export interface SkillAuditEvent extends AgentEventBase {
     | 'skill.rolled_back'
     | 'skill.curation.updated';
   skillId: string;
-  source: AgentSourceKind | 'dynamic';
+  source: AgentSourceKind;
   summary?: string;
   payloadRef?: AgentPayloadRef;
 }

@@ -12,6 +12,7 @@ import type { AgentPayloadRef, AgentSubagentRunRecord } from '../core/agentEvent
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
+import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   createPostCompactMessage,
   createPostCompactRestoredFilesReminder,
@@ -579,6 +580,7 @@ export class AgentSubagentRuntime {
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
       sessionId: subagentSessionId,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
         const data = await childRuntime.invokeSkillSubagent({

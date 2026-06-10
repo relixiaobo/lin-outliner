@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { execFile as execFileCallback } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -35,11 +36,12 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '',
     '1. Identify the reusable workflow, the proposed skill name, and whether this is a new skill or an update.',
     '2. For a new skill, draft a complete SKILL.md under `.agents/skills/<skill-name>/SKILL.md` with YAML frontmatter and concise Markdown instructions.',
-    '3. New agent-authored skills must include `disable-model-invocation: true`; model invocation requires a later explicit promotion.',
-    '4. Do not add broad or mutating `allowed-tools`; use narrow read/search rules only when the skill truly needs them.',
-    '5. For an existing skill, read the current SKILL.md first and prefer a focused file_edit patch over a whole-file rewrite.',
+    '3. Keep `allowed-tools` minimal; use narrow read/search rules only when the skill truly needs them.',
+    '4. For an existing skill, read the current SKILL.md first and prefer a focused file_edit patch over a whole-file rewrite.',
+    '5. Show the user the full SKILL.md (or a focused diff for an update) and confirm before writing.',
     '6. Use file_write or file_edit for the final write. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
     '',
+    'Agent-written skills start unratified: the user can run them immediately as /<skill-name>, but they stay out of the automatic model skill listing until the user accepts them or edits the file by hand.',
     'Do not edit built-in skills. Do not write executable support files in this workflow.',
   ].join('\n'),
   modelInvocable: false,
@@ -79,6 +81,17 @@ export interface SkillLoadOptions {
   sessionId?: string;
   executeSkillShell?: SkillShellExecutor;
   executeForkedSkill?: SkillForkExecutor;
+  provenanceStore?: AgentSkillProvenanceStore;
+}
+
+/**
+ * Persists which SKILL.md content hashes were written through the agent file-tool path,
+ * so ratification survives a restart. The registry always keeps an in-memory record as
+ * well, so within a session the gate holds even without a wired store.
+ */
+export interface AgentSkillProvenanceStore {
+  load(): Promise<Record<string, string>>;
+  record(skillFile: string, contentHash: string): Promise<void>;
 }
 
 export interface BuiltInSkillInput {
@@ -355,6 +368,18 @@ export class AgentSkillRuntime {
     if (listing) this.enqueueSteeringMessage(listing);
   }
 
+  resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
+    return this.registry.resolveSkillTarget(filePath);
+  }
+
+  getSkillDirConfig(): { includeUserSkills: boolean; additionalSkillDirectories: readonly string[] } {
+    return this.registry.getSkillDirConfig();
+  }
+
+  async recordAgentSkillWrite(skillFile: string, contentHash: string): Promise<void> {
+    await this.registry.recordAgentSkillWrite(skillFile, contentHash);
+  }
+
   async getSkill(name: string): Promise<SkillDefinition | null> {
     return this.registry.resolveSkill(name);
   }
@@ -386,6 +411,18 @@ export class AgentSkillRuntime {
         ok: false,
         code: 'model_invocation_disabled',
         message: `Skill ${skill.name} cannot be used with the ${SKILL_TOOL_NAME} tool due to disable-model-invocation.`,
+        skill,
+      };
+    }
+    if (input.trigger === 'agent' && !skill.ratified) {
+      // The ratification gate: an agent-authored skill the user has not accepted must
+      // not be wielded on the model's own initiative. Slash invocation is unaffected —
+      // the user's command is per-run consent — so escalation through self-authored
+      // allowed-tools is structurally impossible on the model path.
+      return {
+        ok: false,
+        code: 'skill_not_ratified',
+        message: `Skill ${skill.name} is agent-authored and not yet accepted. Ask the user to run /${skill.name} themselves, or to accept the skill for automatic use.`,
         skill,
       };
     }
@@ -644,12 +681,46 @@ class SkillRegistry {
   private readonly conditionalSkills = new Map<string, SkillDefinition>();
   private readonly checkedDynamicSkillDirs = new Set<string>();
   private readonly seenSkillFileIds = new Set<string>();
+  // Provenance: SKILL.md content hashes written through the agent file-tool path.
+  // A loaded skill whose current hash matches its record is unratified.
+  private readonly agentWrittenHashes = new Map<string, string>();
+  private readonly provenanceStore?: AgentSkillProvenanceStore;
+  private provenanceLoaded = false;
 
   constructor(options: SkillLoadOptions) {
     this.root = path.resolve(options.localRoot ?? process.cwd());
     this.includeUserSkills = options.includeUserSkills ?? true;
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
     this.additionalSkillDirectories = normalizeAdditionalSkillDirectories(options.additionalSkillDirectories, this.root);
+    this.provenanceStore = options.provenanceStore;
+  }
+
+  async recordAgentSkillWrite(skillFile: string, contentHash: string): Promise<void> {
+    const normalized = path.resolve(skillFile);
+    this.agentWrittenHashes.set(normalized, contentHash);
+    try {
+      await this.provenanceStore?.record(normalized, contentHash);
+    } catch {
+      // The in-memory record still guards this session; a persistence failure must
+      // not fail the skill write itself.
+    }
+  }
+
+  private async ensureProvenanceLoaded(): Promise<void> {
+    if (this.provenanceLoaded) return;
+    this.provenanceLoaded = true;
+    if (!this.provenanceStore) return;
+    try {
+      for (const [skillFile, hash] of Object.entries(await this.provenanceStore.load())) {
+        // In-memory entries are newer than the persisted snapshot; don't overwrite.
+        if (!this.agentWrittenHashes.has(path.resolve(skillFile))) {
+          this.agentWrittenHashes.set(path.resolve(skillFile), hash);
+        }
+      }
+    } catch {
+      // A corrupt provenance store must not break skill loading; the in-memory
+      // record still guards the current session.
+    }
   }
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
@@ -657,6 +728,21 @@ class SkillRegistry {
     if (sameStringList(this.additionalSkillDirectories, normalized)) return;
     this.additionalSkillDirectories = normalized;
     this.reloadAll();
+  }
+
+  getSkillDirConfig(): { includeUserSkills: boolean; additionalSkillDirectories: readonly string[] } {
+    return {
+      includeUserSkills: this.includeUserSkills,
+      additionalSkillDirectories: [...this.additionalSkillDirectories],
+    };
+  }
+
+  resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
+    return resolveSkillContentTarget(filePath, {
+      root: this.root,
+      includeUserSkills: this.includeUserSkills,
+      additionalSkillDirectories: this.additionalSkillDirectories,
+    });
   }
 
   reloadAll(): void {
@@ -669,7 +755,9 @@ class SkillRegistry {
 
   async getModelInvocableSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
-    return [...this.skills.values()].filter((skill) => skill.modelInvocable);
+    // Unratified (agent-authored, not yet accepted) skills are hidden from the model
+    // listing; they stay slash-invocable via getUserInvocableSkills.
+    return [...this.skills.values()].filter((skill) => skill.modelInvocable && skill.ratified);
   }
 
   async getUserInvocableSkills(): Promise<SkillDefinition[]> {
@@ -695,9 +783,10 @@ class SkillRegistry {
   async activateForFilePaths(filePaths: string[]): Promise<boolean> {
     await this.ensureLoaded();
     let changed = false;
-    const dynamicDirs = await this.discoverSkillDirsForPaths(filePaths);
-    for (const dir of dynamicDirs) {
-      const loaded = await loadSkillsFromDir(dir, 'dynamic');
+    const nestedDirs = await this.discoverSkillDirsForPaths(filePaths);
+    for (const dir of nestedDirs) {
+      // Nested .agents/skills dirs are always under the work root → project source.
+      const loaded = await loadSkillsFromDir(dir, 'project');
       for (const skill of loaded) {
         if (await this.addLoadedSkill(skill)) changed = true;
       }
@@ -717,6 +806,7 @@ class SkillRegistry {
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
     this.loaded = true;
+    await this.ensureProvenanceLoaded();
     this.seenSkillFileIds.clear();
     for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
       await this.addLoadedSkill(skill);
@@ -736,9 +826,13 @@ class SkillRegistry {
     const fileId = await skillFileIdentity(skill.skillFile);
     if (this.seenSkillFileIds.has(fileId)) return false;
     this.seenSkillFileIds.add(fileId);
+    const recordedHash = this.agentWrittenHashes.get(path.resolve(skill.skillFile));
     const skillWithIdentity = {
       ...skill,
       identity: normalizePathForPrompt(fileId),
+      // Unratified while the file still holds exactly what the agent wrote; any
+      // user hand-edit changes the hash and self-ratifies the skill.
+      ratified: !(recordedHash !== undefined && recordedHash === skill.contentHash),
     };
     if (skill.paths?.length) {
       this.conditionalSkills.set(skill.name, skillWithIdentity);
@@ -796,6 +890,73 @@ function skillSearchDirs(
   });
 }
 
+/** A `.agents/skills/<name>/...` write target, resolved against the live skill-dir set. */
+export interface AgentSkillContentTarget {
+  skillName: string;
+  skillRoot: string;
+  skillsDir: string;
+  source: SkillDefinition['source'];
+  relativePath: string;
+  isSkillFile: boolean;
+}
+
+/** Config that defines the skill-dir set. Shared by the loader and write governance. */
+export interface SkillDirConfig {
+  root: string;
+  includeUserSkills: boolean;
+  additionalSkillDirectories: readonly string[];
+}
+
+function targetInsideSkillsDir(
+  filePath: string,
+  skillsDirInput: string,
+  source: SkillDefinition['source'],
+): AgentSkillContentTarget | null {
+  const skillsDir = path.resolve(skillsDirInput);
+  if (!isPathInside(filePath, skillsDir)) return null;
+  const parts = path.relative(skillsDir, filePath).split(path.sep).filter(Boolean);
+  if (parts.length < 2) return null;
+  const skillName = parts[0] ?? '';
+  return {
+    skillName,
+    skillRoot: path.join(skillsDir, skillName),
+    skillsDir,
+    source,
+    relativePath: parts.slice(1).join('/'),
+    isSkillFile: parts.length === 2 && parts[1] === SKILL_FILE_NAME,
+  };
+}
+
+/**
+ * The single source of truth for "is this file a skill-content write, and which skill?".
+ * Both the loader (via the registry) and write governance (the file-tool gateway and the
+ * permission layer) resolve through this, so the two can never disagree. Built-in skills
+ * are code-registered and have no writable directory, so a target is never `built-in`.
+ */
+export function resolveSkillContentTarget(
+  filePathInput: string,
+  config: SkillDirConfig,
+): AgentSkillContentTarget | null {
+  const filePath = path.resolve(filePathInput);
+  // 1. The configured skill-dir set the loader enumerates (defaults + additional dirs).
+  for (const { dir, source } of skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories)) {
+    const target = targetInsideSkillsDir(filePath, dir, source);
+    if (target) return target;
+  }
+  // 2. Nested .agents/skills under the work root (project) — matched by path so a
+  //    brand-new nested skill dir is still governed on its first write.
+  const root = path.resolve(config.root);
+  if (!isPathInside(filePath, root)) return null;
+  const parts = filePath.split(path.sep);
+  for (let index = parts.length - 3; index >= 0; index -= 1) {
+    if (parts[index] !== '.agents' || parts[index + 1] !== 'skills') continue;
+    const skillsDir = parts.slice(0, index + 2).join(path.sep) || path.sep;
+    const target = targetInsideSkillsDir(filePath, skillsDir, 'project');
+    if (target) return target;
+  }
+  return null;
+}
+
 async function loadSkillsFromDir(
   skillsDir: string,
   source: SkillDefinition['source'],
@@ -827,9 +988,24 @@ async function loadSkillsFromDir(
       source,
       body: parsed.body,
       frontmatter: parsed.frontmatter,
+      contentHash: skillContentHash(raw),
     }));
   }
   return skills;
+}
+
+/**
+ * The canonical skill content hash, used by BOTH the provenance record (gateway, over
+ * in-memory normalized content) and the loader (over raw disk bytes). Both sides must
+ * hash the same domain or the ratification gate fails open: file tools normalize to
+ * BOM-stripped LF in memory while writeTextFile restores the file's original CRLF/BOM
+ * on disk, so hashing raw disk bytes would never match the recorded hash for a
+ * CRLF/BOM skill an agent edited. Normalizing here is a no-op for LF files.
+ */
+export function skillContentHash(content: string): string {
+  return createHash('sha256')
+    .update(content.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'))
+    .digest('hex');
 }
 
 function createSkillDefinition(input: {
@@ -839,6 +1015,7 @@ function createSkillDefinition(input: {
   source: SkillDefinition['source'];
   body: string;
   frontmatter: Record<string, unknown>;
+  contentHash?: string;
 }): SkillDefinition {
   const description = compactInlineText(
     coerceString(input.frontmatter.description)
@@ -858,6 +1035,10 @@ function createSkillDefinition(input: {
     whenToUse: whenToUse ? compactInlineText(whenToUse) : undefined,
     userInvocable: parseBooleanFrontmatter(input.frontmatter['user-invocable'], true),
     modelInvocable: !parseBooleanFrontmatter(input.frontmatter['disable-model-invocation'], false),
+    // Trust default; the registry flips this to false when the content hash matches a
+    // recorded agent write (addLoadedSkill).
+    ratified: true,
+    contentHash: input.contentHash,
     allowedTools: parseToolListFromFrontmatter(input.frontmatter['allowed-tools']),
     argumentHint: coerceString(input.frontmatter['argument-hint']),
     argumentNames,
