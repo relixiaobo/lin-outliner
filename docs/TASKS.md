@@ -19,7 +19,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | `cc/agent-channel-peers` | M3-A (#179) — **unblocked**, resume on a rebase onto the merged clean-cut |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory academic alignment merged, PR #181) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | next: draft the memory-theory realignment program one-pager (see Backlog § memory) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -70,9 +70,16 @@ Both 2026-06-09 lanes merged — board is between batches.
   **run unification** (`agent-run-unification`, **PM-ratified 2026-06-10**: dissolve
   the subagent entity — child runs become ordinary run ledgers, one evidence scheme,
   one watermark shape, event-sourced compaction; the #164/#178 guards become
-  structural) →
+  structural; now also the coordinate foundation for the memory-realignment episodic
+  layer) →
+  **memory-theory realignment PR-1 + PR-2** (person rule + episodic layer — see
+  Backlog § memory for the PM-ratified program; PR-1 can run in parallel earlier,
+  PR-2 needs run unification) →
   **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
-  the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification) →
+  the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification +
+  **realignment PR-1/PR-2** — PM-ratified 2026-06-10: agents must not cross-read
+  pools until the person rule is reader-independent and `sources` is the
+  discriminated union, so M3-B builds on final shapes instead of re-cutting) →
   **M3-C** per-agent POV inspector (`agent-pov-projection`).
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
@@ -267,11 +274,49 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   § *The memory system*. Zero storage change. Work:
   **`agent-memory-academic-alignment`** (cc-2) **merged as PR #181** — see Recently
   completed; plan archived `done` in-PR (subsumed the former D2
-  `agent-memory-encoding-signal`, archived `superseded`). Remaining post-M3-B deltas: **D1** `agent-memory-forgetting` (Bjork
-  two-strength → briefing ranking; strengths are projections, never stored fields) →
-  **D3** `agent-memory-episodic-index` (episode derived view + principal-gated reverse
-  lookup) → **D4** `agent-memory-retrieval-upgrade` (lexical → hybrid; carries the
-  **embedding-provider PM gate** — close at claim).
+  `agent-memory-encoding-signal`, archived `superseded`).
+
+  **Memory-theory realignment program (PM-ratified 2026-06-10, post-#181)** — realign
+  production/storage/use to the theoretical layering. Triggered by three confirmed
+  mismatches: (1) the canonical table equates the episodic store with the raw ledgers,
+  but raw is ground truth *below* memory — the real episodic layer (episodes as
+  first-class indexed units + reverse lookup) is missing and is D3's true identity;
+  (2) `DistillationNode` is misfiled under Index — it is episodic *gist content*, not a
+  pointer; the index today is `sources[]` only and unidirectional; (3) the person rule
+  bakes today's single reader into storage (base-form vs 3rd-sing divergence; recall
+  output lacks `principal`; the two Dream prompts' own examples instruct cross-pool
+  duplication). Substrate (event-sourcing, principal pools, one-writer, invalidate,
+  down-pointers, isolation gate) is theory-correct and **stays**; realign by clean cuts,
+  never a parallel rewrite. **Next step: cc-2 drafts the program one-pager**
+  (reconciling against the agent-program / conversation-model / data-model trio), then:
+  - **Step 0 — authority docs REWRITTEN, not patched** (`agent-memory-foundations` +
+    `agent-data-model` canonical table + `agent-architecture` § memory): 源 = ground
+    truth below memory · episodic layer = episodes + gist (noted as D3-pending) ·
+    index = pure bidirectional pointers · `principal` redefined as **pool owner /
+    believer (whose self-model)**, not "subject the fact is about".
+  - **PR-1 person rule + read surfaces** (immediate; **hard prerequisite for M3-B**):
+    ONE Dream phrasing rule — third-person-singular, subject-elided facts in ALL pools
+    (subject stays normalized in the pool key; rename-safe); briefing render becomes
+    zone-tagged bullet lists (no subject prepending, no prose conjugation — the
+    conjugation trap came from the prose render, not from elision); recall visible
+    output gains `principal`; cross-pool duplication handled by Dream prompt guidance.
+    Replaces the agent-memory-model §2 prose person rule. No schema change; old-format
+    facts wiped per pre-release policy.
+  - **PR-2 episodic layer** (subsumes + upgrades D3 `agent-memory-episodic-index`;
+    **after run unification** — needs homogeneous `{seq, eventId}`): episode = first-
+    class derived view with **memory-owned gist production** (compaction summaries are
+    working-memory artifacts, a DIFFERENT product — the #178 "Dream reads compaction
+    summaries as evidence" path is a stopgap and is **deleted** here, Dream reads
+    episode gist; the context assembler may later consume episode gist, inverting the
+    dependency); `AgentMemorySource` 9-optional-field grab-bag → **discriminated union**
+    (`{stream, streamId, range} | {episodeId}`, same taste as the #161 anchor union);
+    principal-gated reverse lookup (episodic → citing facts); storage side of the
+    3-level zoom (fact → episode gist → raw span).
+  - **PR-3 forgetting** (was D1 `agent-memory-forgetting`): Bjork two-strength →
+    briefing ranking; strengths are projections, never stored fields.
+  - **PR-4 retrieval** (was D4 `agent-memory-retrieval-upgrade`): lexical → hybrid;
+    read side of the 3-level zoom; carries the **embedding-provider PM gate** — close
+    at claim.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
