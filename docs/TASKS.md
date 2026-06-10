@@ -384,6 +384,33 @@ Standalone agent items (not part of the program):
 
 ### Outliner & UI polish
 
+- **outliner-indent-draft-fixes** (P2, bug ×2, *fast-track, no plan file* — diagnosis
+  is the contract, PM-confirmed 2026-06-10; ONE renderer-only PR):
+  **(1) Batch indent force-expands the batch members.** `useWorkspaceKeyboard.ts:516,523`
+  feeds ALL operation ids to `expandIndentTargets` (`outlinerStructure.ts:17-28`), which
+  adds each id's previous sibling to `expanded` — for consecutive siblings [B,C,D] the
+  targets of C and D are B and C, batch members themselves, so the indented nodes get
+  force-expanded and lose their collapsed state. Core (`core.ts:1212-1234`) moves them
+  all under A (the first node's previous sibling) — only A needs expanding. Fix: skip
+  targets that are themselves in the batch.
+  **(1b) Single indent visibly jumps.** `OutlinerItem.tsx:1229-1233` runs
+  `expandTarget()` BEFORE `await api.indentNode` — a collapsed-with-children target's
+  rows pop in one frame before the projection delta moves the indented row (two-frame
+  layout). Fix direction: apply the expansion in the SAME frame as the projection
+  update (pending-expand consumed by the delta apply), not optimistically; verify the
+  two-frame hypothesis with the `lin:render-probe` flag first.
+  **(2) Draft-row Shift+Tab lands at the parent's end, not in place.**
+  `OutlinerItem.tsx:1205-1213` relocates the draft to the grandparent's TRAILING
+  surface — always the end of that parent's children; correct only when node A happens
+  to be the last child. Real-node outdent is already in-place (`core.ts:1249`,
+  `parentIndex + 1`). Constraint: the trailing-draft model only supports per-parent end
+  position (`visualRows.ts:51` `draftIdFor(parentId)`); preferred fix = extend the
+  trailing focus surface / visualRows draft placement with an `afterId` so a draft can
+  sit "in P, right after A" — keep the pinned "draft stays a draft, no stray empty
+  node" rule (`OutlinerItem.tsx:1182-1189`); do NOT materialize an empty node.
+  Sync the Trailing Input Matrix in `ui-behavior.md` in the same PR (A6). No collision
+  with #179 / agent-pipeline work.
+
 - **ime-composition-focus-steal** (P1, bug, *no plan file yet* — see issue #176) — typing
   pinyin right after Enter tears the word apart (`skill` → `sk ill`): the split
   echo's focusRequest applies `focusEditorDom` + `applyCursorPlacement`
