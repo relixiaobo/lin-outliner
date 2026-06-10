@@ -322,6 +322,17 @@ Standalone agent items (not part of the program):
 
 ### Outliner & UI polish
 
+- **ime-composition-focus-steal** (P1, bug, *no plan file yet* — see issue #176) — typing
+  pinyin right after Enter tears the word apart (`skill` → `sk ill`): the split
+  echo's focusRequest applies `focusEditorDom` + `applyCursorPlacement`
+  (`RichTextEditor.tsx` ~842–854, no composition guard) mid-composition, forcing
+  the IME to commit partial text. **PM-ratified direction (2026-06-10): root
+  cure** — eliminate the race window (composed text lands whole in the intended
+  row; optimistic local split and/or IME-aware pendingInput relay; a
+  defer-to-compositionend guard is at most an interim net, not the fix). Full
+  diagnosis, probe log, and the CDP `Input.imeSetComposition` repro technique
+  (synthetic keystrokes bypass macOS IME; e2e mock can't reproduce) are in
+  issue #176. Next: a dev agent drafts the one-pager for PM ratification.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
