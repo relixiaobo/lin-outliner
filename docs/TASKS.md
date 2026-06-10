@@ -49,10 +49,12 @@ Both 2026-06-09 lanes merged — board is between batches.
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
   debt, must precede cross-agent citing; plan `docs/plans/agent-memory-source-binding.md`
   **PM-ratified 2026-06-10**, boundary locked to the compaction spine — claimed by cc) →
-  **Phase 2** three independent complete features: **M3-A** working multi-agent Channel
-  (membership + routing + peer reply, one PR — membership alone would be a scaffold
-  slice) → **M3-B** cross-agent memory + isolation gate (the one new primitive; depends
-  on Phase 1) → **M3-C** per-agent POV.
+  **Phase 2** three independent complete features, **each with a drafted plan file**:
+  **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
+  peer reply, one PR — membership alone would be a scaffold slice; starts after Phase 1
+  merges) → **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
+  the one new primitive; depends on Phase 1 + M3-A) → **M3-C** per-agent POV inspector
+  (`agent-pov-projection`).
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
 

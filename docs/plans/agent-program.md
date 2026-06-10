@@ -283,18 +283,21 @@ reinvent.
   resolution regression lock; boundary nailed there). Optional cheap clean-cut:
   internal `sessionId` field → `conversationId`.
 - **Phase 2 — multi-agent (shape (b): a SET of 3 independent complete features,
-  dependency-ordered; each needs its own dev-drafted one-pager + PM ratification
-  before build):**
-  - **M3-A — working multi-agent Channel** (ONE PR): membership (open
-    `defaultConversationMembers`, emit `member.*`) + routing (`addressedTo`,
-    coordinator) + peer-agent reply in the shared thread (`actor` = agent
-    principal). Membership-without-reply would be a scaffold slice, so these ship
-    together; the internal split is build order, not separate releases.
+  dependency-ordered; each has a drafted plan file — dispatch is a one-liner):**
+  - **M3-A — working multi-agent Channel** (ONE PR): membership + routing
+    (`addressedTo`, coordinator) + peer-agent reply (`actor` = agent principal) +
+    the §8 POV flatten at assembly. Membership-without-reply would be a scaffold
+    slice, so these ship together. Plan: `agent-channel-peers`. Starts after
+    Phase 1 merges (shared files).
   - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
-    (the one new primitive; the only step that depends on Phase 1).
-  - **M3-C — per-agent POV projection** (derived view; independent enhancement).
-  - Open PM gates ahead of M3-A: group default-`addressedTo` · who-configures-whom ·
-    doc snapshot+delta.
+    (the one new primitive; depends on Phase 1 + M3-A). Plan:
+    `agent-cross-agent-memory`.
+  - **M3-C — per-agent POV inspector** (derived view over M3-A's assembly
+    derivation). Plan: `agent-pov-projection`.
+  - Open PM gates carried inside the plans: group default-`addressedTo` (M3-A Q1)
+    · uniform co-member pool rule (M3-B Q1). `who-configures-whom` stays deferred
+    (main-agent-first default, untouched by M3); `doc snapshot+delta` belongs to
+    the memory-prefix/cache work, not M3.
 - **Parallel (orthogonal, not blocked):** `agent-skill-acceptance` (PR A, cc) — **merged
   #175** (skills-only; zero overlap with the M3 spine, confirmed by diff).
 
