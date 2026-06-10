@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 priority: P1
-owner: cc-2 (proposed; claim with the program one-pager)
+owner: cc-2
 created: 2026-06-10
 updated: 2026-06-10
 ---
@@ -13,11 +13,11 @@ dependency-ordered, each shippable alone — plus one explicitly deferred mode.
 
 This file is the **ratified-decision record and program charter**, written by
 the main agent from the PM design session of 2026-06-10 (post-#181) so the
-drafting agent needs no out-of-band context. **cc-2's one-pager duties remain:**
-reconcile against the `agent-program` / `agent-conversation-model` /
-`agent-data-model` trio, produce the usage-modes × zoom-ladder table, pin the
-associative-mode data-gate threshold, and run per-PR collision checks. Where
-this charter and the trio disagree, surface it — do not silently pick one.
+drafting agent needs no out-of-band context. cc-2's one-pager duties
+(trio reconciliation · usage-modes × zoom-ladder table · associative-mode
+data-gate threshold · per-PR collision checks) are **discharged and
+PM-ratified** — see *Program one-pager* below. Claimed by cc-2 2026-06-10;
+first unit in build: Step 0 + PR-1 (one branch).
 
 ## Goal
 
@@ -164,8 +164,102 @@ claim). Member plans were pointer-reconciled 2026-06-10 (`agent-program`
 Phase 2, D1/D3/D4 frontmatter, `agent-cross-agent-memory` deps,
 `agent-run-unification` note).
 
+## Program one-pager (cc-2, PM-ratified 2026-06-10)
+
+The four one-pager duties, discharged and ratified (PM: ① program yes ·
+② R2 confirmed as restated · ③ gate threshold accepted).
+
+### Reconciliation vs the trio (dispositions)
+
+- **R1** — `agent-data-model` Extension §"The reframe" documents subject-keying
+  ("key by who it is about"; "principal is the elided subject … subject and pool
+  key are one field"). Per D-1 the Step 0 rewrite **includes the Extension
+  wording**, not only the canonical table (D-8: no two-generation narrative).
+- **R2 (PM-confirmed)** — `agent-conversation-model` "Dream evidence = raw;
+  summaries are locators, not evidence" was written against context-management
+  summaries. Restated boundary: **context-management artifacts (compaction /
+  segment summaries) are locators only, never evidence; episode gist is
+  memory's own product (written-to-remember) and the consolidated evidence
+  carrier.** The interpretation-of-interpretation rationale survives — it now
+  binds the artifact's *production motive*, not summaries per se.
+- **R3** — the trailing "post-M3-B deltas D1/D3/D4" sequencing lines in the
+  data-model canonical section and `agent-architecture` § memory are stale
+  (PR-2 precedes M3-B); fixed in the Step 0 rewrite.
+- **R4** — `agent-architecture` multi-agent table calls M3-B "publish/subscribe
+  over distilled pools", contradicting the ratified no-publish-ACL membership
+  rule; fixed with Step 0 (same doc).
+- **R5** — D3's "no new stored types" hard constraint is restated for PR-2 as:
+  **no new authority types**; episodes / gists / schema nodes are derived,
+  rebuildable nodes following the projected-state-cache pattern (rebuild
+  oracle required). The D3 plan file is rewritten at PR-2 claim time (after
+  run-unification moves the anchors), per its own banner.
+- **R6** — `DistillationNode` dual identity pinned: **one node shape, two
+  producers**. Compaction-produced instances are working-memory artifacts
+  (below memory; double as locators); PR-2's memory-owned production is the
+  episodic gist of the canonical model. The Index row keeps pure pointers only.
+
+Code verification of the charter's diagnoses (2026-06-10, this clone):
+`toSentence` subject-prepend without conjugation (`agentMemoryBriefing.ts:110`);
+base-form vs 3rd-singular split across the two Dream framings
+(`agentDreamExtraction.ts:362` vs `:342`); the agent-pool Good example baking a
+user fact into the agent pool (`:365`, the D-9 target); recall visible output
+omitting `principal` (`agentRecallTool.ts:160`); the 9-optional-field
+`visibleSource` soup (`:177`, the D-5 target).
+
+### Usage modes × zoom ladder (the usage contract)
+
+Ladder (D-6): **schema node → fact → episode gist → raw span** — model-visible
+provenance zoom is the lower three; full raw replay stays runtime-internal.
+
+| Usage mode | Human analog | Surface | Ladder access | Ships |
+|---|---|---|---|---|
+| **Chronic activation** | what you "just know" without trying; + metamemory (feeling-of-knowing) | resident `[3]` briefing; no-query `recall` returns the overview | breadth: schema overview; depth: strength-selected facts; never below fact level | PR-3 (strengths) + PR-5 (schema); today = newest-12 |
+| **Deliberate recall + verification** | trying to remember, then checking the source | the `recall` tool (the volitional act) | query → facts; `include_evidence` zooms fact → episode gist → raw span | read surface correct in PR-1 → data in PR-2 → engine in PR-4 |
+| **Automatic association** | what springs to mind unbidden | runtime-injected `[5]` volatile tail (slot reserved by the `[3]`/`[5]` cache contract) | current turn as cue; top-k facts/gists auto-surface | **deferred** (data gate below) |
+
+PM-ratified build order (D-7) unchanged: deliberate recall correct first →
+data built → chronic activation → deliberate engine → association when the
+data supports it.
+
+### Associative-mode data gate (PM-accepted numbers; PM closes at claim)
+
+All three, each measurable from the live ledgers/projections:
+
+1. **Pool density** — the reader's assembled read set (own + co-member pools)
+   ≥ **100 active facts** (top-k=5 then draws from a ≥20× candidate pool, so
+   association is selection, not wholesale injection).
+2. **Usage data** — ≥ **200 retrieval events** accumulated (PR-3
+   instrumentation), of which ≥ **50 are deliberate `recall` hits** (the
+   strength signal must separate from pure recency — the use-strengthens half
+   of the Bjork loop).
+3. **Engine precondition** — PR-4 shipped (association reuses the same hybrid
+   engine; no second retrieval stack).
+
+### Per-PR collision checks (`gh pr list` 2026-06-10: #179 M3-A, #182 outliner)
+
+- **Step 0 + PR-1** (one branch — A6: the bullet render and the docs that
+  describe it land together): `agentDreamExtraction.ts` /
+  `agentMemoryBriefing.ts` / `agentRecallTool.ts` + tests + authority docs.
+  None in #179's scope; render signature unchanged → `agentRuntime.ts`
+  untouched → **zero file overlap with #179** (verified, not assumed). Soft
+  touch-point: #179 exercises the briefing render for foreign pools — whoever
+  lands second rebases test expectations. `principal` in recall visible output
+  needs no `src/core` protocol change (`AgentMemoryEntry.principal` exists).
+  Old-format facts: phrasing-only change → manual dev-userData wipe, **no
+  detector** (#180 invariant: content never trips a wipe).
+- **PR-2** — sources union touches `src/core/agentEventLog.ts` = protocol
+  surface (A4): coordinate at claim, consider interface-first. Strictly after
+  run-unification, before M3-B. D3 plan rewritten then.
+- **PR-3** — `memory.accessed`-class event = protocol surface (A4, flagged in
+  its plan). Shares the briefing path with M3-B; relative order unpinned —
+  second claimant re-checks.
+- **PR-5** — recomposes the same briefing assembly as PR-3: serialize PR-3 →
+  PR-5 or same claimant.
+- **PR-4** — embedding-provider PM gate closes at claim.
+
 ## Open questions
 
-- Associative-mode gate threshold (one-pager proposes; PM closes).
+- ~~Associative-mode gate threshold~~ — **closed 2026-06-10** (one-pager §gate,
+  PM-accepted; PM re-confirms at the deferred mode's claim).
 - Schema-node granularity & count budget (how many topics; min cluster size).
 - PR-3 vs M3-B relative order (unpinned; whoever claims second re-checks).
