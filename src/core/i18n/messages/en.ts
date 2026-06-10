@@ -225,6 +225,13 @@ export const en = {
       installedGroup: 'Installed Capabilities',
       installedAriaLabel: 'Installed capabilities',
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
+      pendingChip: 'Pending acceptance',
+      acceptedChip: 'Accepted',
+      acceptButton: 'Accept',
+      acceptSkill: ({ name }: { name: string }) => `Accept ${name} for automatic use`,
+      revokeAcceptance: 'Revoke acceptance',
+      undoAgentEdit: 'Undo last agent edit',
+      rowActionsAriaLabel: ({ name }: { name: string }) => `${name} actions`,
     },
     agents: {
       sectionAriaLabel: 'Agent Profiles',

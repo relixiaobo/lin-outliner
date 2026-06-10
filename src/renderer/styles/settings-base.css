@@ -119,6 +119,26 @@
   padding: var(--space-hairline) var(--space-3);
 }
 
+/* The one quiet secondary button on an inset row's trailing edge (provider
+   "Configure", skill "Accept"): neutral --fill ladder, deepens on hover (B3/B6).
+   Shared recipe so per-pane variants only add behaviour (reveal-on-hover,
+   disabled state), never re-state the geometry — B9, derive don't hand-duplicate. */
+.settings-row-button {
+  border-radius: var(--radius-sm);
+  background: var(--fill-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  line-height: var(--line-ui-2xs);
+  padding: var(--space-2) var(--space-3);
+  transition: opacity var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
+}
+
+.settings-row-button:hover:not(:disabled) {
+  background: var(--fill-4);
+  color: var(--text-strong);
+}
+
 .agent-settings-section-header {
   display: flex;
   min-height: 20px;

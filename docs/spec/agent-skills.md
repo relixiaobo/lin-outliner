@@ -6,8 +6,10 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 
 Code-registered `built-in` skills load first. They are immutable, ship with the
 app, and cannot be shadowed by mutable local skills with the same name. The
-current built-in skill is `/skillify`, a user-invocable workflow for creating or
-updating local skills through normal file tools.
+current built-in skill is `/skillify`, a user- and model-invocable workflow for
+creating or updating local skills through normal file tools; its `when_to_use`
+gates it to explicit user save/update requests, so a conversational "save this
+as a skill" routes through the curated guidance instead of ad-hoc file writes.
 
 Default mutable skill directories are always enabled:
 
@@ -75,7 +77,7 @@ When the model calls the `skill` tool for a `context: fork` skill:
 6. The parent receives only the final subagent result or error as the `skill` tool result.
 7. The rendered skill body is not injected into the parent context and is not recorded as an invoked parent skill for compact restore.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in slash-only skill; it is user-invocable but not model-invocable, so it does not appear in the automatic model skill listing.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; the skills it writes are still born unratified.
 
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
 
@@ -97,9 +99,26 @@ details, records the written content hash as provenance, and hot-reloads the
 skill registry.
 
 **Ratification** is the policy layer, enforced at listing/invocation time, not
-at write time. The gateway records each agent-written `SKILL.md` content hash
-(in-memory in the registry, persisted to `agent-skill-provenance.json` in
-userData). A skill whose current hash matches its record is **unratified**:
+at write time. Each mutable skill has one **trust record** in
+`agent-skill-provenance.json` (userData; mirrored in-memory in the registry),
+keyed by resolved skill file path:
+
+- `agentHash` — sha256 of the last `SKILL.md` content written through the agent
+  file-tool path (provenance: who produced the current bytes);
+- `acceptedHash` — sha256 of the content the user explicitly accepted for
+  automatic model use (trust: a positive record over exact bytes);
+- `previousVersion` — the one version preceding the last agent edit, for
+  single-step undo.
+
+Ratification is a **pure derivation**, never stored:
+
+```text
+ratified = built-in
+        || currentHash !== agentHash      // a human produced these bytes
+        || currentHash === acceptedHash   // the user accepted these bytes
+```
+
+An unratified skill is:
 
 - excluded from the automatic model skill listing;
 - a model-triggered (`skill` tool) invocation is refused with
@@ -110,9 +129,50 @@ userData). A skill whose current hash matches its record is **unratified**:
 Escalation through self-authored `allowed-tools` is therefore structurally
 impossible on the model path; there is no write-time allowed-tools heuristic and
 lin never force-writes `disable-model-invocation` into an authored file (it
-remains an ordinary user-set frontmatter knob). A user hand-edit changes the
-content hash and self-ratifies the skill; an explicit acceptance flow is later
-work. Record loss (wiped userData) fails open to ratified.
+remains an ordinary user-set frontmatter knob). Both ratifying paths fall out of
+the derivation: a user hand-edit changes the content hash away from `agentHash`,
+and **accepting** the skill records `acceptedHash`. An agent re-patch records a
+fresh `agentHash`, leaves a stale `acceptedHash`, and the skill drops back to
+unratified. Record loss (wiped userData) fails open to ratified — inherent to
+side-record trust; acceptance is a positive trust fact and a UX completion, not
+a new security boundary.
+
+**Acceptance UI.** The Settings → Skills tab marks agent-authored unratified
+rows "pending acceptance" with an **Accept** control; accepted rows show a
+row-menu **Revoke acceptance** action. `agent_accept_skill` records
+`acceptedHash = contentHash`, `agent_revoke_skill_acceptance` clears it; both
+persist, hot-reload the registry, and return the refreshed skill list. Accept
+carries the `expectedHash` the renderer displayed and is refused on mismatch,
+so an agent write landing between render and click can never be accepted
+sight-unseen. A trust action also re-derives trust in every live session's
+registry (the Settings panel runs sessionless; each session holds its own
+in-memory trust map over the same store), so an accepted skill joins running
+conversations' model listings without a restart.
+Acceptance grants nothing beyond the skill's own frontmatter — the permission
+floor still stands above it, and a `disable-model-invocation: true` skill stays
+user-only even when accepted. Trust records are keyed by resolved file path: a
+user rename/move orphans the record, so the skill at its new path has no
+`agentHash` and **fails open to ratified** (the same fail-open property as
+record loss — renaming is a hand action on the file, consistent with hand-edit
+self-ratification). Orphaned records are not garbage-collected (accepted:
+bounded by the number of skills ever agent-written, and a returning file at the
+old path correctly picks its record back up).
+
+**Single-step undo.** The gateway captures the pre-write content at each
+`SKILL.md` agent write and stores it as the trust record's `previousVersion`
+(bounded to one version — deeper history is git's job). The Skills tab exposes
+**Undo last agent edit** (`agent_undo_skill_agent_edit`): the restore is
+validated by the same skill-write validator, written to disk, and the
+provenance facts of the previous version are restored, so ratification
+re-derives with no special case — restoring the user's original ratifies,
+restoring an earlier agent version is unratified again. Undo may only overwrite
+the agent's own bytes: it is offered and executed only while the on-disk
+content still hashes to `agentHash` (the action re-reads the file), so it can
+never destroy a user hand-edit made after the agent write. The slot is consumed
+on undo (strictly one-shot); a create has no previous version and offers no
+undo. The restored bytes are written LF-normalized (the canonical hash domain;
+line endings of a CRLF/BOM-authored skill are not preserved — accepted,
+pre-release).
 
 Successful skill writes also append a skill audit event beside the completed
 tool call: `skill.created` for a new `SKILL.md`, `skill.replaced` for a whole-file
@@ -164,11 +224,11 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
 | `context: fork` and `agent` | Supported through the same-session `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts or hand-edits them. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts them (Settings → Skills) or hand-edits them. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
-| `skillify` | Supported as the built-in slash-only workflow. It uses the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
+| `skillify` | Supported as the built-in user- and model-invocable workflow (`when_to_use`-gated to explicit user save requests). It uses the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background session review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 

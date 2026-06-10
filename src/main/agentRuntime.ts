@@ -1019,17 +1019,56 @@ export class AgentRuntime {
   }
 
   async listAllSkills(conversationId: string) {
+    return (await this.skillRuntimeForConversation(conversationId)).listAllSkills();
+  }
+
+  async acceptSkill(conversationId: string, skillName: string, expectedHash: string) {
+    return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.acceptSkill(skillName, expectedHash));
+  }
+
+  async revokeSkillAcceptance(conversationId: string, skillName: string) {
+    return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.revokeSkillAcceptance(skillName));
+  }
+
+  async undoLastAgentSkillEdit(conversationId: string, skillName: string) {
+    return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.undoLastAgentSkillEdit(skillName));
+  }
+
+  /**
+   * Run a trust action, then propagate it to every live session: the Settings panel
+   * runs sessionless (its own registry over the persisted store), and each session
+   * holds an independent in-memory trust map — without the refresh, an accepted
+   * skill would join a running conversation's model listing only after restart.
+   */
+  private async applySkillTrustAction(
+    conversationId: string,
+    action: (skillRuntime: AgentSkillRuntime) => Promise<void>,
+  ) {
+    const skillRuntime = await this.skillRuntimeForConversation(conversationId);
+    await action(skillRuntime);
+    for (const session of this.sessions.values()) {
+      if (session.skillRuntime !== skillRuntime) {
+        await session.skillRuntime.refreshTrustRecords();
+      }
+    }
+    return skillRuntime.listAllSkills();
+  }
+
+  /**
+   * The live session skill runtime when the conversation has one, else a throwaway
+   * runtime over the same skill dirs AND the same persisted trust store — without
+   * the store a sessionless Skills panel would fail open to "everything ratified".
+   */
+  private async skillRuntimeForConversation(conversationId: string): Promise<AgentSkillRuntime> {
     const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
-    if (session) {
-      return session.skillRuntime.listAllSkills();
-    }
+    if (session) return session.skillRuntime;
     const runtimeSettings = await this.getRuntimeSettings();
-    const tempRuntime = new AgentSkillRuntime({
+    return new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
     });
-    return tempRuntime.listAllSkills();
   }
 
   async renameConversation(conversationId: string, title: string) {

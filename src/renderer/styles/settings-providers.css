@@ -136,30 +136,17 @@
 }
 
 /* "Configure" button on the trailing edge of a single-action row — the macOS Wi-Fi
-   "Connect" / "Details…" idiom: a quiet secondary button, hidden at rest and
-   revealed on row hover / keyboard focus, that configures the provider (same as
-   clicking the row). Its reveal IS the row's hover locator (the row carries no fill
-   of its own): --fill-3 on the plain card, deepening to --fill-4 on its own hover. */
+   "Connect" / "Details…" idiom: the shared .settings-row-button recipe
+   (settings-base.css), hidden at rest and revealed on row hover / keyboard focus
+   because clicking the row does the same thing. Its reveal IS the row's hover
+   locator (the row carries no fill of its own). */
 .settings-provider-configure {
-  border-radius: var(--radius-sm);
-  background: var(--fill-3);
-  color: var(--text-soft);
-  font-size: var(--font-ui-2xs);
-  font-weight: 600;
-  line-height: var(--line-ui-2xs);
-  padding: var(--space-2) var(--space-3);
   opacity: 0;
-  transition: opacity var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
 }
 
 .inset-row:hover .settings-provider-configure,
 .settings-provider-configure:focus-visible {
   opacity: 1;
-}
-
-.settings-provider-configure:hover {
-  background: var(--fill-4);
-  color: var(--text-strong);
 }
 
 /* Holds the Connected / Available InsetGroups (SettingsInsetList). The rows are

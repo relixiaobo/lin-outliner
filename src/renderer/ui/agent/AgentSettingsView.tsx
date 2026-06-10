@@ -141,7 +141,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       ) : (
         <button
           aria-label={t.settings.providers.configureNamed({ name })}
-          className="settings-provider-configure"
+          className="settings-row-button settings-provider-configure"
           onClick={() => handlers.onConfigure(provider.providerId)}
           type="button"
         >
@@ -257,6 +257,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
 
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
+  // Skill trust actions (accept / revoke / undo) round-trip through main and return
+  // the refreshed skill list; one shared busy flag keeps the row controls quiet
+  // while a mutation is in flight.
+  const [skillTrustBusy, setSkillTrustBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -618,6 +622,15 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   function deleteProviderFor(providerId: string) {
     void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
   }
+
+  const runSkillTrustAction = (action: () => Promise<SkillDefinition[]>) => {
+    setSkillTrustBusy(true);
+    setError(null);
+    void action()
+      .then((skills) => setAllSkills(skills))
+      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSkillTrustBusy(false));
+  };
 
   const isSkillDisabled = (skillName: string) => draft.disabledSkills.includes(skillName);
   const toggleSkill = (skillName: string) => {
@@ -1151,6 +1164,25 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                   <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
                     {allSkills.map((skill) => {
                       const disabled = isSkillDisabled(skill.name);
+                      // Trust state is derived in main: unratified = agent-authored
+                      // bytes the user has not yet accepted. Built-in / hand-authored
+                      // rows are always ratified and render unchanged.
+                      const pending = !skill.ratified;
+                      const trustActions: RowMenuAction[] = [];
+                      if (skill.accepted) {
+                        trustActions.push({
+                          label: t.settings.skills.revokeAcceptance,
+                          disabled: skillTrustBusy,
+                          onSelect: () => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name)),
+                        });
+                      }
+                      if (skill.canUndoLastAgentEdit) {
+                        trustActions.push({
+                          label: t.settings.skills.undoAgentEdit,
+                          disabled: skillTrustBusy,
+                          onSelect: () => runSkillTrustAction(() => api.agentUndoSkillAgentEdit(conversationId || 'workspace', skill.name)),
+                        });
+                      }
                       return (
                         <InsetRow
                           disabled={disabled}
@@ -1159,17 +1191,43 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                             <>
                               /{skill.displayName || skill.name}
                               <span className="settings-chip">{skill.source}</span>
+                              {pending ? (
+                                <span className="settings-chip">{t.settings.skills.pendingChip}</span>
+                              ) : skill.accepted ? (
+                                <span className="settings-chip">{t.settings.skills.acceptedChip}</span>
+                              ) : null}
                             </>
                           )}
                           sublabel={skill.description}
                           trailing={(
-                            <SwitchControl
-                              checked={!disabled}
-                              onCheckedChange={() => toggleSkill(skill.name)}
-                              label={t.settings.skills.toggleSkill({ name: skill.name })}
-                            >
-                              <SwitchMark checked={!disabled} />
-                            </SwitchControl>
+                            <>
+                              {pending ? (
+                                <button
+                                  aria-label={t.settings.skills.acceptSkill({ name: skill.name })}
+                                  className="settings-row-button settings-skill-accept"
+                                  disabled={skillTrustBusy}
+                                  onClick={() => runSkillTrustAction(() => api.agentAcceptSkill(conversationId || 'workspace', skill.name, skill.contentHash ?? ''))}
+                                  type="button"
+                                >
+                                  {t.settings.skills.acceptButton}
+                                </button>
+                              ) : null}
+                              {trustActions.length > 0 ? (
+                                <SettingsRowMenu
+                                  actions={trustActions}
+                                  ariaLabel={t.settings.skills.rowActionsAriaLabel({ name: skill.name })}
+                                  onOpenChange={(open) => setOpenRowMenu(open ? `skill:${skill.name}` : null)}
+                                  open={openRowMenu === `skill:${skill.name}`}
+                                />
+                              ) : null}
+                              <SwitchControl
+                                checked={!disabled}
+                                onCheckedChange={() => toggleSkill(skill.name)}
+                                label={t.settings.skills.toggleSkill({ name: skill.name })}
+                              >
+                                <SwitchMark checked={!disabled} />
+                              </SwitchControl>
+                            </>
                           )}
                           wrap
                         />
