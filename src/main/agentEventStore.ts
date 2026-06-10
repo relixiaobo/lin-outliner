@@ -1792,8 +1792,9 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
   }
 
   private async readTail(filePath: string): Promise<AgentEventFileTail> {
+    let line: string | null = null;
     try {
-      const line = await this.readLastNonEmptyLine(filePath);
+      line = await this.readLastNonEmptyLine(filePath);
       if (!line) return { seq: 0, eventId: null };
       const event = JSON.parse(line) as TEvent;
       return {
@@ -1802,6 +1803,14 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
       };
     } catch (error) {
       if (isNotFoundError(error)) return { seq: 0, eventId: null };
+      if (line !== null) {
+        // The last line may be a torn crash artifact of an interrupted append. The log's
+        // parse function owns the torn-tail policy: if it tolerates the tear, the tail is
+        // the last intact event; if it throws, this log treats the file as corrupt.
+        const events = this.parse(await readFile(filePath, 'utf8'), filePath);
+        const last = events.at(-1);
+        return { seq: last?.seq ?? 0, eventId: last?.eventId ?? null };
+      }
       throw new Error(`Invalid ${this.label} tail at ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -2185,6 +2194,13 @@ function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
 function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[] {
   const events: AgentMemoryEvent[] = [];
   const lines = raw.split(/\r?\n/);
+  let lastContentIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]!.trim().length > 0) {
+      lastContentIndex = index;
+      break;
+    }
+  }
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!.trim();
     if (!line) continue;
@@ -2192,6 +2208,13 @@ function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[]
       const event = normalizeMemoryEvent(JSON.parse(line));
       if (event) events.push(event);
     } catch (error) {
+      // A torn FINAL line is a crash artifact of an interrupted append (e.g. quit mid-Dream):
+      // drop it and keep the pool readable — the watermark makes the lost write re-derivable.
+      // A malformed line in the middle is real corruption and still fails loudly.
+      if (index === lastContentIndex) {
+        console.warn(`Dropping torn trailing agent memory event at ${source}:${index + 1}`);
+        break;
+      }
       throw new Error(`Invalid agent memory event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

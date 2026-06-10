@@ -187,4 +187,27 @@ describe('agent dream extraction', () => {
     const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
     expect(text).toContain("the agent's durable self-model");
   });
+
+  test('wraps raw evidence in a randomized fence an adversarial transcript cannot close', () => {
+    const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>) =>
+      request.content[0]?.type === 'text' ? request.content[0].text : '';
+    const first = promptText(buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+    }));
+    const second = promptText(buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+    }));
+    const fenceOf = (text: string) => /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
+    const firstFence = fenceOf(first);
+    const secondFence = fenceOf(second);
+    // The fence tag is per-request and unguessable, so evidence text cannot break out of it.
+    expect(firstFence).toBeDefined();
+    expect(first).toContain(`</${firstFence}>`);
+    expect(firstFence).not.toBe(secondFence);
+    // The model is told the fenced content is untrusted data, not instructions.
+    expect(first).toContain('untrusted DATA');
+    expect(first).not.toContain('<conversation_run>');
+  });
 });

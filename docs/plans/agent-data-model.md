@@ -302,11 +302,11 @@ interface AgentIdentity {               // agents/<id>/identity.json (current-st
   skills: string[];                     // bound skill ids → skills file tree
 }
 
-interface MemoryEntry {                 // projection of agents/<id>/memory/events.jsonl (memory.entry_added/updated/removed)
+interface MemoryEntry {                 // projection of the principal's memory/events.jsonl (memory.entry_added/updated/removed)
   id: string;
-  agentId: string;                      // per-agent. Retrieval default = global pool across workspaces (PM-ratified D2)
+  principal: Principal;                 // WHOSE self-model this fact is (pool key + elided subject) — see §4 extension
   fact: string;                         // distilled, additive
-  originWorkspace?: string;             // where it was learned — drives the opt-in isolation tier (D2)
+  originWorkspace?: string;             // where it was learned — PROVENANCE ONLY, never a retrieval fence (D2 revised)
   sources: Array<{                      // ↓ down-pointer to ground truth (visible guard) — does NOT scope retrieval
     conversationId: string; summaryId?: string; messageRange?: [string, string];
     runId?: string; eventId?: string;   // bind to the producing run/event so it can be invalidated (gemini#5)
@@ -320,11 +320,12 @@ interface MemoryEntry {                 // projection of agents/<id>/memory/even
 //   Instead: a RUNTIME-OWNED memory-append API emits memory.entry_added/updated/removed events → projection.
 //   Append-only (no lost-update), schema-checked, serialized, and prompt-free (a runtime primitive, not a
 //   sandboxed file op). This also honors self-mod's "don't use generic file write for runtime metadata".
-// ── Retrieval isolation (PM-ratified D2) ─────────────────────────────────────────────────
-//   Default GLOBAL (pure relevance). Per-agent opt-in tiers:
-//     'isolated'         — retrieve only where originWorkspace == current workspace
-//     'read-only-global' — read the global pool, but new facts learned here do NOT enter it
-//   `originWorkspace` is recorded always; the tier decides whether it scopes retrieval.
+// ── Retrieval (D2, REVISED 2026-06-10) ────────────────────────────────────────────────────
+//   A pool is ONE UNDIVIDED self-model — like a person, a principal never partitions its own
+//   memory by where it works. The former 'isolated' tier is removed. Two modes remain:
+//     'global'           — normal reads and Dream writes (default)
+//     'read-only-global' — reads stay global; Dream writes pause (stop learning)
+//   `originWorkspace` is always recorded as provenance; nothing ever filters on it.
 ```
 
 ### 4. The distillation ladder & the ownership boundary
@@ -372,7 +373,7 @@ userData/agent/
   agents/<agentId>/
     identity.json                  # per-agent current state: name / model / persona / bound skill ids
     memory/  events.jsonl          # memory.entry_added/updated/removed (runtime-owned append, D1) → projection = MemoryEntry set
-                                   #   retrieval: global by default, opt-in isolation tiers (D2); NOT written via file_write
+                                   #   retrieval: one undivided pool (D2 revised — no workspace tiers); NOT written via file_write
   conversations/<conversationId>/
     meta.json                      # PROJECTION of membership/rename events: members / goal / name (NOT authority)
     cursors.json                   # per-principal read state (UI state, kept out of the objective stream)
@@ -597,9 +598,10 @@ agent.skills[]          ──▶ skills/ file tree
     (`RunMeta.fingerprint`), not archived verbatim.
 12. Memory is written by a **runtime-owned append surface** (event-sourced), never generic
     `file_write` — append-only (no lost-update), schema-checked, prompt-free.
-13. Memory retrieval is **global by default** with per-agent opt-in isolation tiers;
-    `originWorkspace` is on every entry; a `MemoryEntry` whose source branch is
-    discarded/undone is **invalidated**, not silently kept.
+13. Memory is **one undivided pool per principal** — never partitioned by workspace
+    (D2 revised 2026-06-10; `read-only-global` remains as a pause-writes mode);
+    `originWorkspace` is on every entry as provenance only; a `MemoryEntry` whose source
+    branch is discarded/undone is **invalidated**, not silently kept.
 14. **The event-log stream is the sole authority; everything else is a rebuildable
     projection.** `meta.json`, the checkpoint/snapshot, `index.json`, the render
     projection, and the in-memory pending-interaction/widget state are all caches derived
@@ -650,10 +652,19 @@ agent.skills[]          ──▶ skills/ file tree
   model-facing retrieval surface is the single read-only `recall` tool.
   `include_evidence` defaults to false; evidence is nested under memory entries,
   never returned as sibling ranked items; raw logs expand only through
-  `MemoryEntry.sources`; retrieval excludes `status:'invalidated'`, enforces the
-  agent's isolation tier, and respects `max_chars`. Dream/extraction must use
-  summaries/search only as locators and must read raw conversation/run records
-  before writing long-term memory.
+  `MemoryEntry.sources`; retrieval excludes `status:'invalidated'` and respects
+  `max_chars`. Dream/extraction must use summaries/search only as locators and
+  must read raw conversation/run records before writing long-term memory.
+- **PM-ratified (2026-06-10, post-review revision):** memory is **one undivided pool
+  per principal** — the 2026-06-06 `isolated` tier is removed (it had become
+  write-partitioned/read-global, and a principal, like a person, does not partition
+  its own memory by where it works); `originWorkspace` stays as provenance only and
+  `read-only-global` stays as the pause-writes mode. In the same pass, reflective
+  runs became **principal-anchored**: `AgentRunAnchor`'s `{type:'agent'}` variant is
+  replaced by `{type:'principal', principal}` (anchor = the pool the run maintains;
+  executor stays on `RunMeta.agentId`), each principal's reflective-run index lives
+  beside its pool, and the task cache joins run meta with dream completions locally
+  per principal.
 
 ## Protocol-surface coordination (A4 / A7)
 
@@ -672,8 +683,8 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 - `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources`
   down-pointer (incl. `runId`/`eventId` for invalidation).
 - `MemoryEntry` shape: event-sourced (`memory.entry_added/updated/removed`), `originWorkspace`
-  + isolation tier (D2), `status: active|invalidated` (D1/gemini undo-invalidation); written
-  via the runtime memory-append API, **not** `file_write`.
+  as provenance (D2 revised — no retrieval tiers), `status: active|invalidated` (D1/gemini
+  undo-invalidation); written via the runtime memory-append API, **not** `file_write`.
 - `RunMeta.usage` aggregate + per-turn total on the final reply; `RunMeta.fingerprint`
   (`appVersion` + prompt/tool-schema/skill/model hashes) + `retention` state.
 
@@ -749,10 +760,11 @@ assembles its briefing from:
 
 The **user is always a member** of an agent's conversation, so the user's self-model
 is **automatically** shared across all the user's agents — no `publishMemoryTo`, no
-precedence table; visibility reuses `conversation.members` (already first-class). D2's
-isolation tiers still scope each pool's *own* retrieval by `originWorkspace`, unchanged
-and orthogonal. (Agent↔agent reading — A reads co-member B's self-model — is the same
-membership rule and can ship later; the core need is *agent → user*.)
+precedence table; visibility reuses `conversation.members` (already first-class).
+*(Revised 2026-06-10: D2's `isolated` tier was removed — each pool is one undivided
+self-model; `originWorkspace` never scopes retrieval.)* (Agent↔agent reading — A reads
+co-member B's self-model — is the same membership rule and can ship later; the core
+need is *agent → user*.)
 
 ### Security — the read-path gate
 

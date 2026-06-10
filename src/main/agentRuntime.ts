@@ -2580,12 +2580,25 @@ export class AgentRuntime {
   }
 
   /**
-   * A manual /dream consolidates the current conversation into durable memory. Conversation
-   * evidence models the user ([[agent-data-model]] §4), so /dream fires the user pool's Dream —
-   * the complete conversation-consolidation. Agent self-models (run logs) consolidate on
-   * schedule, not on demand.
+   * A manual /dream fires the user pool's Dream: it consolidates the user's member
+   * conversations since the Dream watermark — in practice the current conversation's new
+   * turns — into durable user memory. Conversation evidence models the user
+   * ([[agent-data-model]] §4); agent self-models (run logs) consolidate on schedule, not on
+   * demand. The run is folded into the Dream tail so a quit-time drain awaits an in-flight
+   * manual Dream instead of tearing the pool's trailing JSONL line — folded, not serialized
+   * behind it: concurrent Dreams on the same pool are the `dreamingPools` guard's job (a
+   * second /dream skips immediately rather than queueing).
    */
-  private async fireManualDream(now: Date): Promise<AgentDreamRunResult> {
+  private fireManualDream(now: Date): Promise<AgentDreamRunResult> {
+    const work = this.runManualDream(now);
+    this.dreamMemoryExtractionTail = Promise.all([
+      this.dreamMemoryExtractionTail.catch(() => undefined),
+      work.then(() => undefined, () => undefined),
+    ]).then(() => undefined);
+    return work;
+  }
+
+  private async runManualDream(now: Date): Promise<AgentDreamRunResult> {
     try {
       return await this.fireDreamForPool(this.userPrincipal(), 'manual', now)
         ?? skippedDreamRunResult(this.agentIdentity.agentId, 'manual', now, 'Dream is unavailable for the current memory/provider configuration.');
@@ -2684,9 +2697,15 @@ export class AgentRuntime {
 
   /**
    * Whether the user is a member of this reader's conversation — the gate for sharing the user
-   * pool ([[agent-data-model]] §4 visibility = membership). A null session or one with no
-   * membership info defaults to true (the single-user main-agent case); a sidechain whose members
-   * exclude the user (e.g. an agent-only subagent context) does not receive the user pool.
+   * pool ([[agent-data-model]] §4 visibility = membership).
+   *
+   * Reach, honestly stated: subagent recall/briefing are wired to the PARENT session, and every
+   * user-created conversation has the user as a member, so today this returns true on all live
+   * paths — subagents INHERIT user-pool visibility by design (they act inside the user's
+   * conversation on the user's task; sidechains are not separate conversations with their own
+   * member lists in M0). The membership check is the forward rule for when non-user-member
+   * conversations exist (e.g. agent↔agent channels); missing membership info defaults open
+   * because today a conversation without members cannot be anything but user-created.
    */
   private conversationIncludesUser(session: AgentSessionState | null): boolean {
     const members = session?.eventState.session?.members;
@@ -2819,7 +2838,9 @@ export class AgentRuntime {
       for (const [index, batch] of task.batches.entries()) {
         // Consolidation/dedup reads the WHOLE pool — memory is one undivided self-model per
         // principal; `originWorkspace` is provenance on each entry, never a retrieval fence.
-        const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 50 });
+        // 200 is the store's query clamp max; the prompt's existing-memory list is bounded
+        // separately (DREAM_EXISTING_MEMORY_LIMIT) inside buildDreamMemoryExtractionRequest.
+        const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
         const request = buildDreamMemoryExtractionRequest({
           span: batch.span,
           existingMemories,
@@ -2839,7 +2860,10 @@ export class AgentRuntime {
           throw new Error(response.errorMessage || 'Dream memory extraction failed.');
         }
         const actions = parseDreamMemoryActions(assistantMessageText(response));
-        const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 50 });
+        // Crash-retry dedup window: applyDreamMemoryActions matches new facts against this
+        // list by fact key, so it must see as much of the pool as the store allows (200 =
+        // query clamp max) or a re-run after a crash re-saves entries past the window.
+        const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
         addDreamChanges(changes, actions.length > 0
           ? await this.applyDreamMemoryActions(task, batch, actions, currentMemories)
           : emptyDreamChanges());

@@ -256,8 +256,9 @@ These gate this plan's spine (storage/recall OQs live in [[agent-data-model]]):
    watermark-serialized.*
 2. **Render budget & freshness** — how much of `[3]` to render, and is segment-boundary
    compaction a frequent-enough re-anchor, or is a delta-count threshold also needed? Measure (A9).
-   (Open follow-up: the briefing now lists self-first then the user pool under one resident cap;
-   a fair per-pool budget split is a future refinement — recall reaches anything beyond the cap.)
+   (*Resolved 2026-06-10:* the fair per-pool budget split SHIPPED — briefing and recall
+   round-robin own + user pools under the resident cap (`interleaveMemoryEntries`), so a full
+   self-model can no longer starve the shared zone; recall reaches anything beyond the cap.)
 3. **`<principal>` provenance for the user-principal** — *RESOLVED: third person ("The user …"),
    keeping the human as the authority over identity. Only the reader's own pool is `<self>`.*
 

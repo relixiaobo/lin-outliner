@@ -1110,6 +1110,39 @@ describe('agent event store', () => {
     });
   });
 
+  test('tolerates a torn trailing memory event line but rejects mid-file corruption', async () => {
+    await withStore(async (store, root) => {
+      const agentId = 'built-in:tenon:assistant';
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      await store.addMemoryEntry(principal, {
+        id: 'memory-1',
+        fact: 'Survives a crash-torn tail.',
+        sources: [{ conversationId: 'conversation-1' }],
+        createdAt: 10,
+      });
+      await store.addMemoryEntry(principal, {
+        id: 'memory-2',
+        fact: 'Second intact entry.',
+        sources: [{ conversationId: 'conversation-2' }],
+        createdAt: 20,
+      });
+      const eventsPath = store.agentPaths(agentId).memoryEventsPath;
+      const intact = await readFile(eventsPath, 'utf8');
+
+      // Interrupted append (e.g. quit mid-Dream) leaves a torn FINAL line: drop it, keep reading.
+      await writeFile(eventsPath, `${intact}{"v":1,"eventId":"torn`, 'utf8');
+      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'active' },
+      ]);
+
+      // A malformed line in the MIDDLE is real corruption and still fails loudly.
+      const lines = intact.trim().split('\n');
+      await writeFile(eventsPath, `${lines[0]}\n{broken\n${lines[1]}\n`, 'utf8');
+      await expect(new AgentEventStore(root).listMemoryEntries(principal)).rejects.toThrow(/Invalid agent memory event JSON/);
+    });
+  });
+
   test('rejects empty memory updates and keeps normalized facts within the max length', async () => {
     await withStore(async (store) => {
       const agentId = 'built-in:tenon:assistant';

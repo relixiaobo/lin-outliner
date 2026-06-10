@@ -2102,12 +2102,16 @@ Reads are **cross-principal by conversation membership**: both the resident
 briefing and `recall` surface the reader's own pool plus every co-member
 principal's pool. The user is always a co-member, so the user's self-model is
 shared into every agent (the reader's own pool renders second-person `<self>`; a
-co-member pool renders third-person `<principal name>`). Agent↔agent reading of
-other agents' pools is not enabled yet. A **read-path security gate** bounds raw
-evidence: `recall(include_evidence:true)` dereferences `sources` to raw
-transcript **only** for entries in the reader's own pool; a cross-principal fact
-reaches the reader distilled (fact only), never as another principal's raw
-conversation.
+co-member pool renders third-person `<principal name>`). Subagents **inherit**
+user-pool visibility by design: their recall/briefing are wired to the parent
+session, and a sidechain is not a separate conversation with its own member list
+— it acts inside the user's conversation on the user's task. The membership
+check is the forward rule for future non-user-member conversations (e.g.
+agent↔agent channels). Agent↔agent reading of other agents' pools is not enabled
+yet. A **read-path security gate** bounds raw evidence:
+`recall(include_evidence:true)` dereferences `sources` to raw transcript
+**only** for entries in the reader's own pool; a cross-principal fact reaches
+the reader distilled (fact only), never as another principal's raw conversation.
 
 Explicit fact management is not a foreground model tool. The Settings/Profile UI
 can list, edit, and forget memory through IPC-backed runtime methods, and the

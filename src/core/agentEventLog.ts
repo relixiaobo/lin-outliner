@@ -105,10 +105,11 @@ export type AgentPrincipal =
   | { type: 'agent'; agentId: string };
 
 /**
- * Stable string key for a principal, used both as a Map/Record key and as the
- * on-disk pool directory segment. `user:<userId>` / `agent:<agentId>`. The
- * agent form intentionally matches the existing `agents/<agentId>/` layout so an
- * agent-principal's memory pool stays in its own identity directory.
+ * Stable string key for a principal: `user:<userId>` / `agent:<agentId>`. Used
+ * as a Map/Record key and stored in derived indexes; it is NOT an on-disk path
+ * segment — pool directories are resolved separately (agents keep their
+ * identity directory `agents/<agentId>/`, encoded for the filesystem; user
+ * pools live under `principals/`).
  */
 export function principalKey(principal: AgentPrincipal): string {
   return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
@@ -233,7 +234,12 @@ export function conversationIdOfRun(run: Pick<AgentRunMeta, 'anchor'>): string |
   return run.anchor.type === 'conversation' ? run.anchor.conversationId : null;
 }
 
-/** The agent named by an anchor, when it names one (`AgentPrincipal.agentId` is a plain string). */
+/**
+ * The agent named by an anchor, when it names one. `AgentPrincipal.agentId` is a
+ * plain string by design (principals outlive any one id scheme), so the cast back
+ * to `AgentId` mirrors the store's `asAgentId` — neither validates the template
+ * format; ids are trusted at the write site.
+ */
 export function agentIdOfRunAnchor(anchor: AgentRunAnchor): AgentId | undefined {
   if (anchor.type === 'conversation') return anchor.agentId;
   return anchor.principal.type === 'agent' ? anchor.principal.agentId as AgentId : undefined;
