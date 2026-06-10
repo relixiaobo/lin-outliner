@@ -280,14 +280,15 @@ reinvent.
   reconciliation + ratify the peer model. ~no code.
 - **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding —
   ratified plan: `agent-memory-source-binding`. **Merged #178.**
-- **Phase 1.5 — storage clean-cut (PM-ratified 2026-06-10, full scope).** The
-  "optional cheap clean-cut" is now a real plan: `agent-storage-clean-cut` —
-  stored event types `session.*` → `conversation.*`, `sessionId` field →
-  `conversationId`, ALL code identifiers renamed (the #151 translation seam
-  dissolves), pools unified under `principals/<principalKey>/memory/`,
-  store-owned old-format wipe. **Lands after M3-A + the memory-alignment PR
-  merge, before M3-B/D1** — the new event family and cross-agent read path
-  build on clean names (A7).
+- **Phase 1.5 — storage clean-cut (PM-ratified 2026-06-10, full scope; in build,
+  cc-2).** The "optional cheap clean-cut" is now a real plan:
+  `agent-storage-clean-cut` — stored event types `session.*` → `conversation.*`,
+  `sessionId` field → `conversationId`, ALL code identifiers renamed (the #151
+  translation seam dissolves), pools unified under
+  `principals/<principalKey>/memory/`, store-owned old-format wipe. **Goes
+  FIRST (PM order-flip): M3-A is paused at its claim (#179, +2/-2) and resumes
+  on the clean base; memory-alignment also queues behind** — so all new code
+  is written once, on clean names (A7).
 - **Phase 2 — multi-agent (shape (b): a SET of 3 independent complete features,
   dependency-ordered; each has a drafted plan file — dispatch is a one-liner):**
   - **M3-A — working multi-agent Channel** (ONE PR): membership + routing

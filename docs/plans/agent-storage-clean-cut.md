@@ -80,12 +80,14 @@ rule. The #151 translation seam dissolves.
   AGENTS.md), **NOT** watermark shape (#178 settled), **NOT** item (g)'s test
   work, **NOT** any UI copy.
 
-## Sequencing (hard constraint)
+## Sequencing (hard constraint — REVISED by the PM 2026-06-10)
 
-Lands **after** the two in-flight PRs merge (M3-A `cc/agent-channel-peers`,
-alignment `cc-2/agent-memory-academic-alignment` — both touch these files) and
-**before** M3-B and memory-D1 (so the one new event family and the cross-agent
-read path are built on clean names). Any idle clone can take it.
+This clean-cut goes **first**: cc-2 builds it now; M3-A (`cc/agent-channel-peers`,
+PR #179) is **paused at its claim** (+2/-2, no real code) and resumes on the
+post-clean-cut base — its new code (member.* replay, `addressedTo`, routing)
+is then written once, on clean names (A7). The memory-alignment plan also
+queues behind this (it edits prompts in the same renamed files). M3-B and
+memory-D1 follow as before.
 
 ## Acceptance
 

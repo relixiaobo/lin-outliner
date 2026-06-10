@@ -58,13 +58,14 @@ Both 2026-06-09 lanes merged — board is between batches.
   debt, must precede cross-agent citing) **merged as PR #178** (cc) — see Recently
   completed; plan archived `done` in the PR →
   **Phase 1.5** storage clean-cut (`agent-storage-clean-cut`, **PM-ratified 2026-06-10,
-  full scope**: stored `session.*` event types + `sessionId` field → conversation
-  vocabulary, ALL code identifiers renamed, pools unified under
-  `principals/<principalKey>/memory/`, store-owned old-format wipe; **queues behind
-  M3-A + memory-alignment, lands before M3-B/D1** — A7) →
+  full scope; in build, cc-2**: stored `session.*` event types + `sessionId` field →
+  conversation vocabulary, ALL code identifiers renamed, pools unified under
+  `principals/<principalKey>/memory/`, store-owned old-format wipe; **PM order-flip:
+  goes FIRST — M3-A paused at its claim (#179), memory-alignment queues behind** — A7) →
   **Phase 2** three independent complete features, **each with a drafted plan file**:
   **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
-  peer reply, one PR — membership alone would be a scaffold slice; **in build, cc**) →
+  peer reply, one PR — membership alone would be a scaffold slice; **claimed #179,
+  paused pending the clean-cut, resumes on the clean base**) →
   **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
   the one new primitive; depends on Phase 1 + M3-A + the clean-cut) → **M3-C**
   per-agent POV inspector (`agent-pov-projection`).
@@ -242,8 +243,9 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   definitions bind, PM examples are illustrative only) + the mapping table in
   `agent-data-model.md` § *Canonical memory vocabulary* + `agent-architecture.md`
   § *The memory system*. Zero storage change. Work:
-  **`agent-memory-academic-alignment`** (P2, **runs anytime, parallel-safe with
-  M3-A**) — rewrite Dream prompt (as consolidation/encoding policy incl. the
+  **`agent-memory-academic-alignment`** (P2, **queues behind the storage clean-cut**
+  — it edits prompts living in the files the clean-cut renames; any clone can take
+  it after) — rewrite Dream prompt (as consolidation/encoding policy incl. the
   prediction-error cue), briefing copy, `recall` description, Settings copy/i18n,
   spec wording; subsumed the former D2 (`agent-memory-encoding-signal`, archived
   `superseded`). Then post-M3-B deltas: **D1** `agent-memory-forgetting` (Bjork
