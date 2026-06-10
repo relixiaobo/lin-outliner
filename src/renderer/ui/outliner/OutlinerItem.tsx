@@ -1276,18 +1276,36 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }
       return;
     }
+    const previousParentId = props.parentId;
+    const previousParentChildren = outlinerChildren(
+      props.index.byId.get(previousParentId),
+      props.index.byId,
+    );
+    const collapsePreviousParentIfEmptied = previousParentId !== props.rootId
+      && previousParentChildren.length === 1
+      && previousParentChildren[0] === props.nodeId;
     props.setUi((prev) => requestFocusState(
       prev,
       rowFocusTarget(props.nodeId, null, props.panelId),
       cursorAtOffset(cursorOffset),
     ));
-    const result = await props.run(() => api.outdentNode(props.nodeId));
+    const result = await props.run(() => api.outdentNode(props.nodeId), { applyFocus: false });
     if (result) {
-      props.setUi((prev) => requestFocusState(
-        prev,
-        rowFocusTarget(props.nodeId, null, props.panelId),
-        cursorAtOffset(cursorOffset),
-      ));
+      flushSync(() => {
+        props.setUi((prev) => {
+          const next = collapsePreviousParentIfEmptied
+            ? { ...prev, expanded: new Set(prev.expanded) }
+            : prev;
+          if (collapsePreviousParentIfEmptied) {
+            next.expanded.delete(previousParentId);
+          }
+          return requestFocusState(
+            next,
+            rowFocusTarget(props.nodeId, null, props.panelId),
+            cursorAtOffset(cursorOffset),
+          );
+        });
+      });
     }
   };
 

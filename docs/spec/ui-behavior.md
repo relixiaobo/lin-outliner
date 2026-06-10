@@ -58,7 +58,7 @@ keyboard or pointer change should be checked against this matrix.
 | `Enter` on expanded row with children | Create the first child and focus it. |
 | `Tab` | Indent under previous sibling; pre-expand that sibling and restore cursor offset. |
 | `Tab` on first child | No-op. |
-| `Shift+Tab` | Outdent after parent and restore cursor offset. |
+| `Shift+Tab` | Outdent after parent, collapse the previous parent if it becomes empty, and restore cursor offset. |
 | `Backspace` at start with text | Merge into the previous visible content row when possible, then restore the cursor at the join offset. |
 | `Backspace` on empty leaf row | Trash the row and focus the previous visible row. |
 | `Backspace` on empty row with children | Block deletion so a subtree is not removed by accident. |

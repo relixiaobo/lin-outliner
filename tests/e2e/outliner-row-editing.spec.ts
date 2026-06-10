@@ -445,6 +445,31 @@ test.describe('outliner row editing parity', () => {
     expect(alpha?.children).toEqual([createdId]);
   });
 
+  test('Shift+Tab on an only child removes the emptied parent trailing draft', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
+    const createdId = (await todayChildren(page))[1];
+    expect(createdId).toBeTruthy();
+    await expect(rowEditor(page, createdId)).toBeFocused();
+
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([createdId]);
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([]);
+    await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, createdId, ids.beta, ids.gamma]);
+    await expect(rowEditor(page, createdId)).toBeFocused();
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+    await expect(trailingEditor(page)).toBeVisible();
+  });
+
   test('Arrow navigation at editor boundaries moves focus through visible rows', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
     await page.keyboard.press('ArrowDown');
