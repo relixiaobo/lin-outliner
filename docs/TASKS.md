@@ -318,6 +318,18 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
+- **agent-avatar-v1** (P3, *fast-track, no plan file*, **PM-ratified 2026-06-10; queues
+  behind M3-A #179**) — derived avatars for message-stream speakers: agent-name initial
+  on a circular chip, hue deterministically derived from `agentId`, muted alpha-on-ink
+  tint (identity is CONTENT, not functional state — B3/B4 stay intact; circular per B6;
+  reuse the compact workspace-root-avatar idiom, `design-system.md:496`). Zero storage /
+  protocol change — rides the `actor` field M3-A adds to the render projection (the
+  name-level attribution ships in #179; this is its visual upgrade, kept out of #179's
+  scope). Components: `AgentMessageRow.tsx` / `AgentMessageFrame.tsx`; user principal
+  gets one too. Sync `design-system.md` in the same PR (A6) + light/dark visual gate.
+  A user-authorable `icon` frontmatter field (v2) was considered and deferred — touches
+  the AGENT.md format/parser; revisit after v1 is in use.
+
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
