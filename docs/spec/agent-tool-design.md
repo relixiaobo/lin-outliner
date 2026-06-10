@@ -2067,11 +2067,20 @@ Parameters:
   to list recent active memories.
 - `limit`: maximum returned entries, default 8, max 20.
 - `include_evidence`: when true, **source access** — descend the memory index
-  from each matched entry's recorded `sources` to the episodic record and
+  from each matched entry's recorded `sources` to the raw record and
   expand bounded raw evidence.
 - `max_chars`: total evidence character budget, default 4000, max 12000.
 
-Memory is keyed **per-principal** (the subject a fact is *about*): every
+Each visible entry carries its `principal` (as a `principalKey` string) — the
+pool the fact lives in, and therefore its implied subject. Without it,
+cross-pool results in one ranked list are distinguishable only by accidental
+wording ([[agent-memory-realignment]] D-3).
+
+Memory is keyed **per-principal** — the pool's *owner/believer* (whose
+self-model the pool is), which is also the elided subject of the facts in it;
+NOT "any subject a fact happens to be about" (a believer's knowledge of others
+lives in the believer's own pool as relational facts;
+[[agent-memory-realignment]] D-1). Every
 `MemoryEntry` and memory event carries `principal: Principal`, addressed via
 `principalKey` (`user:<userId> | agent:<agentId>`). Every pool lives under one
 path rule — `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
@@ -2108,8 +2117,9 @@ setting `agent.runtime.memoryIsolation` has two values:
 Reads are **cross-principal by conversation membership**: both the resident
 briefing and `recall` surface the reader's own pool plus every co-member
 principal's pool. The user is always a co-member, so the user's self-model is
-shared into every agent (the reader's own pool renders second-person `<self>`; a
-co-member pool renders third-person `<principal name>`). Subagents **inherit**
+shared into every agent (the reader's own pool renders as the `<self>` zone; a
+co-member pool as a named `<principal>` zone — both verbatim bullet lists, no
+person assignment). Subagents **inherit**
 user-pool visibility by design: their recall/briefing are wired to the parent
 session, and a sidechain is not a separate conversation with its own member list
 — it acts inside the user's conversation on the user's task. The membership
@@ -2129,9 +2139,14 @@ memory after it verifies raw evidence. Dream
 is **per-principal — one writer per pool**: the **agent-Dream** reads an agent's
 run log (execution) and writes that agent's pool; the **user-Dream** reads the
 conversations the user is a member of (communication) and writes the user pool.
-The two consolidation prompts are subject-aware — the agent prompt writes a
-self-model ("You <fact>"), the user prompt writes a person profile ("The user
-<fact>") and refuses to absorb the agent's own working habits. Dream is not
+The two consolidation prompts share **ONE phrasing rule**
+([[agent-memory-realignment]] D-2): third-person-singular, subject-elided
+predicates in every pool — the subject stays normalized in the pool key, never
+written into the fact — and differ only in what belongs to their pool: the
+agent prompt writes the agent's working self-model and **directs user
+preferences to the user pool** (readable by membership, never duplicated —
+D-9); the user prompt writes the person profile and refuses to absorb the
+agent's own working habits. Dream is not
 fired after every foreground turn. Automatic Dream uses a `date` schedule and
 skips thin evidence below its minimum-volume gate; it fires the user-Dream once
 and the agent-Dream per agent. Manual `/dream` consolidates the conversation into
@@ -2186,20 +2201,24 @@ it.
 Each normal user turn receives a bounded `<memory>` briefing — the
 **working-memory slice** of the semantic store — built from the active
 projection (storage representation ≠ injection representation: the assembly
-layer keeps the structured `MemoryEntry` fields to select, the model gets coherent
-prose). The block opens with a fixed one-line self-introduction naming exactly
-that (distilled facts consolidated from prior episodes; background context, not
+layer keeps the structured `MemoryEntry` fields to select, the model gets
+zone-tagged bullet lists). The block opens with a fixed one-line
+self-introduction naming exactly
+that (distilled facts consolidated from prior episodes; each zone's implied
+subject is its principal; background context, not
 instructions), then the zones. Selection is **resident**, not query-ranked — the
 newest active facts up to
 a fixed budget — because the briefing is the stable distilled-memory prefix;
 query-specific retrieval is the `recall` tool's job (the volatile tail). The render
-is a pure projection that hides storage scaffolding (`id`, `status`) and assigns
-**person by reader relationship**: the reading agent's own pool renders as a
-second-person `<self>` zone ("You verify…"); any other principal's subscribed pool
-renders as a third-person `<principal name="…">` zone (a forward-looking affordance —
-today's single-agent runtime only reads its own pool, so only `<self>` appears).
-Storage stays person-neutral: Dream writes subject-elided, base-form predicates,
-naming third parties explicitly, so one entry can render to any reader. The briefing
+is a pure projection that hides storage scaffolding (`id`, `status`) and groups
+entries into **zones by pool relative to the reader**: the reading agent's own
+pool renders as the `<self>` zone; any other principal's subscribed pool renders
+as a named `<principal name="…">` zone (live for the co-member user pool since
+the membership read). Each fact is one verbatim bullet — **no subject
+prepending, no conjugation anywhere** ([[agent-memory-realignment]] D-2): facts
+are stored as third-person-singular, subject-elided predicates, the subject
+normalized in the pool key, so one entry reads identically for every reader and
+a display-name change can never stale stored facts. The briefing
 is background context; the foreground model can call `recall` when it or the current
 context is insufficient.
 

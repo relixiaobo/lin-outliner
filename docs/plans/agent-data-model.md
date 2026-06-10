@@ -354,6 +354,17 @@ raw messages (conversation log, leaves)
   messages and relevant run events. Conversations/channels hold no memory; a
   "channel summary" becomes durable only when a participating agent's memory
   writer records a `MemoryEntry` with raw `sources` provenance.
+- **Two summary kinds — production motive decides what is memory**
+  ([[agent-memory-realignment]] R2/R6, PM-confirmed 2026-06-10). The ladder
+  above is **context management**: compaction/segment summaries are
+  working-memory artifacts written to *continue a task* — locators, never
+  evidence. The episodic layer's **episode gist** (realignment PR-2) is a
+  different product with the same node shape: memory-owned, written to
+  *remember*, and the consolidated evidence carrier. The #178 "Dream reads a
+  compaction summary as evidence" path is a stopgap with exactly the
+  interpretation-of-interpretation flaw and is deleted in PR-2; the dependency
+  may later invert (the context assembler consuming episode gist), never the
+  other way.
 - **Lossy in content, lossless in addressability.** Every summary / `MemoryEntry` keeps
   a `source(s)` down-pointer; raw is retained permanently, so any distilled claim can be
   drilled back to ground truth — the contamination guard the LoCoMo ceiling demands.
@@ -724,17 +735,23 @@ user* with facts *about the agent itself*, and an agent never reads another's po
 "how does agent B know the user?" has no answer, and P1's render must *guess* person
 with an `agentId === me` heuristic because one pool holds two subjects.
 
-### The reframe — a memory is a fact *about a Principal*
+### The reframe — a pool is one Principal's self-model (believer-keyed)
 
-Key a `MemoryEntry` by **who it is about**, not who owns it:
+Key a `MemoryEntry` by the pool's **owner/believer** — whose self-model it is
+([[agent-memory-realignment]] D-1; this section originally said "who the fact
+is about", but the write paths have always been believer-keyed — each Dream
+writes only its owner's pool, and facts about others are written as relational
+facts in the believer's pool. Believer-keying is also the correct ontology: a
+society of self-models, where my knowledge of you is *my belief*, living in my
+pool. The documentation was fixed, not the mechanism):
 
 ```ts
 interface MemoryEntry {
   id: string;
-  principal: Principal;   // WHOSE self-model this fact is — REPLACES `agentId`
-  fact: string;           // subject-elided, person-neutral (renders to any reader)
+  principal: Principal;   // the pool's owner/believer (whose self-model) — REPLACES `agentId`
+  fact: string;           // third-person-singular, subject-elided (D-2; renders to any reader)
   originWorkspace?: string;
-  sources: …;             // provenance (who observed it) stays here — subject ≠ author
+  sources: …;             // provenance (who observed it) stays here — owner ≠ author
   status: 'active' | 'invalidated';
   createdAt: number;
 }
@@ -744,8 +761,10 @@ interface MemoryEntry {
   working self-model; `{type:'user', userId}` pools the person. The **user is just a
   Principal that owns a pool** — no "user-agent" `AgentIdentity` instance with its
   fields nulled.
-- `principal` is the **elided subject** of every fact in the pool, so it is *also*
-  exactly what the render reads — subject and pool key are one field.
+- `principal` is *also* the **elided subject** of the facts in the pool (a
+  self-model's facts are about its owner), which is exactly what the render
+  reads — but owner is the keying concept; a fact mentioning a third party
+  still lives in the believer's pool, named explicitly in the predicate.
 - This is the only genuinely new idea atop [[agent-memory-model]] P1+P2. `Principal`
   is reused verbatim — no new `AgentActor`/union.
 
@@ -772,9 +791,12 @@ clean rule is one writer, one subject, one activity layer each.)
 
 Writes are per-principal; **reads are cross-principal, by membership.** A reader R
 assembles its briefing from:
-- **R's own pool** → `<self>` (second person), and
-- **every co-member principal's pool** in the current conversation → `<principal name>`
-  (third person).
+- **R's own pool** → the `<self>` zone, and
+- **every co-member principal's pool** in the current conversation → a named
+  `<principal name>` zone
+
+— both as verbatim bullet lists under one phrasing rule (third-person-singular,
+subject-elided; no per-reader person assignment — [[agent-memory-realignment]] D-2).
 
 The **user is always a member** of an agent's conversation, so the user's self-model
 is **automatically** shared across all the user's agents — no `publishMemoryTo`, no
@@ -818,7 +840,8 @@ cross-principal read must never dereference another principal's raw conversation
 
 - **Render** keys zones on `entry.principal` vs the reader's principal (was
   `agentId === me`) — the `<self>`/`<principal>` split becomes a stored-field read, and
-  the person-neutral storage rule becomes *principled* (one pool is read by many readers).
+  the subject-elided phrasing rule becomes *principled* (one pool is read by many
+  readers; one third-person-singular form, D-2).
 - **Dream** splits into per-principal (agent-Dream → runs/self; new user-Dream →
   conversations/user) instead of one per-agent Dream writing a mixed pool.
 
@@ -827,9 +850,10 @@ cross-principal read must never dereference another principal's raw conversation
 1. **Agent↔agent reading** — **deferred.** The briefing/recall inject the reader's own pool
    and the co-member *user* pool only; co-member *agent* pools are not read yet. The membership
    rule already supports them (same `samePrincipal` check), so it is purely additive later.
-2. **`<principal>` provenance render** — **third person.** A foreign principal's pool renders
-   as a named third-person zone (`<principal name="The user">` → "The user prefers …"), keeping
-   the human as the identity authority; only the reader's own pool is second-person `<self>`.
+2. **`<principal>` provenance render** — **named zone.** A foreign principal's pool renders
+   as a named `<principal name="…">` zone whose bullets carry the elided subject in the tag,
+   keeping the human as the identity authority; only the reader's own pool renders as `<self>`.
+   *(Updated by realignment PR-1: no prose conjugation or subject prepending in any zone.)*
 3. **User-Dream cadence/anchor** — **scheduled + manual, watermark-serialized,
    principal-anchored.** The user-Dream runs on the daily schedule and on manual `/dream` (which
    consolidates the conversation into the user pool — the complete conversation-consolidation;
@@ -850,33 +874,39 @@ cross-principal read must never dereference another principal's raw conversation
 The memory subsystem is described, in every doc and plan from here on, in the
 standard cognitive-science vocabulary. This is a **framing layer over the
 structures above — zero storage change**; code identifiers (`dream`, `recall`,
-`fact`) stay, and this table is the canonical mapping:
+`fact`) stay, and this table is the canonical mapping. (Rewritten 2026-06-10
+per [[agent-memory-realignment]] D-1/D-4/D-6: the previous revision equated
+the episodic store with the raw ledgers and filed `DistillationNode` under
+Index — both corrected.)
 
 | Term | Definition here | Implemented as |
 |---|---|---|
-| **Episodic store** | the immutable autobiographical record ("what happened") | conversation + run ledgers (§2, §3) |
-| **Semantic store** | distilled knowledge ("what I know"), per Principal | `MemoryEntry` pools (§3 per-agent, Extension) |
+| **Ground truth (below memory)** | the immutable world record of what happened — not itself a memory store; memory is constructed over it | conversation + run ledgers (§2, §3) |
+| **Episodic store** | the constructed autobiographical layer: episodes as first-class indexed units + their memory-owned gist | **target** — realignment PR-2 (upgrades `agent-memory-episodic-index`); today the layer is the acknowledged gap |
+| **Semantic store** | distilled knowledge ("what I know"), per Principal; a pool = one principal's self-model, keyed by owner/believer (D-1) | `MemoryEntry` pools (§3 per-agent, Extension) |
 | **Procedural store** | reusable competence ("what I can do") | skills (owned by [[agent-skills-authoring]]; named here for completeness) |
-| **Index** | the hippocampal-style pointer layer binding semantic ↔ episodic | `sources[]` + `DistillationNode` summaries (§4) |
-| **Consolidation** | offline replay of the episodic store distilling into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17) |
-| **Retrieval** | working memory (the resident briefing) → cued retrieval (`recall`) → source access (evidence expansion) | §8 assembly + the single `recall` tool |
-| **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | **target** — `agent-memory-forgetting` (D1); today only invalidate + churn compaction |
+| **Index** | the hippocampal-style **pure pointer** layer binding semantic ↔ episodic, bidirectionally; points, never copies, never holds content | `sources[]` (forward, today) + episode→facts reverse lookup (PR-2). `DistillationNode` is NOT index — summary text is content, not a pointer (see §4 note on the two summary kinds) |
+| **Consolidation** | offline replay distilling experience into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17). Evidence = the raw record today; post-PR-2 Dream reads episode gist, and the #178 compaction-summary-as-evidence stopgap is deleted |
+| **Retrieval** | three modes: chronic activation (resident briefing) · deliberate cued retrieval (`recall` + source access) · automatic association (deferred) | §8 assembly + the single `recall` tool; the zoom ladder (schema → fact → episode gist → raw span, D-6) is the provenance axis |
+| **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | **target** — realignment PR-3 (`agent-memory-forgetting`); today only invalidate + churn compaction |
+| **Metamemory** | knowing what one knows before digging | **target** — realignment PR-5: the schema/overview layer; no-query `recall` returns the overview |
 | **Transactive layer** | co-members subscribe to each other's *semantic* stores; raw evidence never crosses principals | membership read (shipped #173 for the user pool) + M3-B (`agent-cross-agent-memory`) |
 
-Standing constraint carried over from the agent-memory-model review: strength,
-confidence, and salience are **never stored fields on `MemoryEntry`** — anything
-of that kind is a rebuildable projection over events (createdAt, access,
-invalidation), keeping the stored shape minimal.
+Standing constraint carried over from the agent-memory-model review, extended
+by D-6: strength, confidence, salience, episodes, and schema nodes are **never
+stored fields on `MemoryEntry`** — anything organizational is a rebuildable
+projection/derived node over events, keeping the stored shape minimal.
 
 Definitions and binding authoring rules live in `agent-memory-foundations.md`
 (meta — the academic glossary every memory doc/prompt/tool must follow).
 Work on this frame: `agent-memory-academic-alignment` — **shipped** (PR #181:
-Dream prompt as consolidation/encoding policy with prediction-error weighting,
-briefing as the working-memory slice, `recall` as cued retrieval + source
-access, Settings forgetting copy per §5.4; subsumed the former D2
-encoding-signal) — and three post-M3-B deltas remain —
-`agent-memory-forgetting` (D1) · `agent-memory-episodic-index` (D3) ·
-`agent-memory-retrieval-upgrade` (D4).
+language surfaces; subsumed the former D2 encoding-signal) — then the
+**memory-theory realignment program** (`agent-memory-realignment`, PM-ratified
+2026-06-10): PR-1 person rule + read surfaces (**shipped** — one
+third-person-singular subject-elided phrasing rule for all pools, zone-tagged
+bullet briefing, `recall` output carries `principal`) → PR-2 episodic layer
+(after run-unification, before M3-B) → PR-3 forgetting + PR-5 schema overview
+→ PR-4 retrieval engine; automatic association deferred on a data gate.
 
 ## Open questions
 

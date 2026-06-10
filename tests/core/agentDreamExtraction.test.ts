@@ -131,7 +131,7 @@ describe('agent dream extraction', () => {
     expect(span?.transcript).toContain('I will answer concisely.');
   });
 
-  test('the agent-subject prompt frames facts as the agent self-model (You ...)', () => {
+  test('the agent-subject prompt writes the self-model under the ONE phrasing rule', () => {
     const request = buildDreamMemoryExtractionRequest({
       span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
       existingMemories: [],
@@ -139,13 +139,21 @@ describe('agent dream extraction', () => {
     });
     const text = promptText(request);
     expect(text).toContain("the agent's durable self-model");
-    expect(text).toContain('renders as "You <fact>"');
-    expect(text).toContain('name the third party instead');
-    // The inference example is base-form so it renders "You have noticed that…".
-    expect(text).toContain('an inference reads "have noticed that…"');
+    // ONE phrasing rule for all pools ([[agent-memory-realignment]] D-2): third-person
+    // singular, subject-elided; render is a bullet list under the zone tag, so the prompt
+    // must not promise a prepended subject.
+    expect(text).toContain('THIRD-PERSON SINGULAR');
+    expect(text).toContain('bullets under a <self> zone');
+    expect(text).not.toContain('BASE form');
+    expect(text).not.toContain('renders as "You <fact>"');
+    expect(text).toContain('an inference reads "has noticed that…"');
+    expect(text).not.toContain('have noticed that…');
+    // D-9: cross-pool duplication is prompt guidance — user preferences stay out of this pool.
+    expect(text).toContain('do\n  not duplicate them here');
+    expect(text).toContain('user pool, not this one');
   });
 
-  test('the user-subject prompt frames facts as the user profile (The user ...)', () => {
+  test('the user-subject prompt writes the user pool under the same phrasing rule', () => {
     const request = buildDreamMemoryExtractionRequest({
       span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
       existingMemories: [],
@@ -153,11 +161,11 @@ describe('agent dream extraction', () => {
     });
     const text = promptText(request);
     expect(text).toContain('the person it works with (the user)');
-    expect(text).toContain('renders as "The user <fact>"');
+    expect(text).toContain('THIRD-PERSON SINGULAR');
+    expect(text).toContain("zone tagged with the\n  user's name");
+    expect(text).not.toContain('renders as "The user <fact>"');
     // The user profile must not absorb the agent's own working habits.
     expect(text).toContain("the agent's separate self-model");
-    // Examples must be third-person singular so they render grammatically under "The user …" —
-    // never base-form agent voice ("The user have noticed…"). (Review #8.)
     expect(text).toContain('an inference reads "has noticed that…"');
     expect(text).toContain('a stated preference reads\n  "has said they want…"');
     expect(text).not.toContain('have noticed that…');

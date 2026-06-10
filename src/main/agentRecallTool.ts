@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import type { AgentMemoryEntry, AgentMemorySource } from '../core/agentEventLog';
+import type { AgentMemoryEntry, AgentMemorySource, AgentPrincipal } from '../core/agentEventLog';
+import { principalKey } from '../core/agentEventLog';
 import {
   agentToolResult,
   errorEnvelope,
@@ -16,7 +17,8 @@ const RECALL_TOOL_DESCRIPTION = `Cued retrieval over the Tenon agent's semantic 
 
 This is the only model-visible long-term retrieval surface. It reads active semantic memory
 entries only. It does not search the raw episodic record (conversation history) directly and it
-cannot write, update, or invalidate memory.
+cannot write, update, or invalidate memory. Each entry carries the principal whose pool it lives
+in — that principal is the fact's implied subject.
 
 Use include_evidence only when a fact's provenance matters: it is source access — descending the
 memory index from the matching entry to its recorded episodic sources — and the bounded raw
@@ -92,6 +94,8 @@ export interface AgentRecallToolData {
 
 export interface AgentRecallToolEntry {
   memoryId: string;
+  /** The pool this fact lives in — its owner/believer, and the fact's elided subject (D-3). */
+  principal: AgentPrincipal;
   fact: string;
   status: AgentMemoryEntry['status'];
   createdAt: number;
@@ -161,6 +165,9 @@ function visibleRecallToolData(data: AgentRecallToolData): unknown {
   return {
     entries: data.entries.map((entry) => ({
       memory_id: entry.memoryId,
+      // The fact's pool (= its elided subject): without it, cross-pool results are
+      // distinguishable only by accidental wording ([[agent-memory-realignment]] D-3).
+      principal: principalKey(entry.principal),
       fact: entry.fact,
       status: entry.status,
       created_at: entry.createdAt,
@@ -215,6 +222,7 @@ function recallInstructions(data: AgentRecallToolData): string | undefined {
 function recallToolEntry(item: AgentRecallRuntimeEntry): AgentRecallToolEntry {
   return {
     memoryId: item.entry.id,
+    principal: item.entry.principal,
     fact: item.entry.fact,
     status: item.entry.status,
     createdAt: item.entry.createdAt,

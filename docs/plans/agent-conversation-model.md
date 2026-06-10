@@ -525,15 +525,20 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   controlled extraction path. Three distinct layers stay separate: raw evidence
   search (fine/internal) → segment summaries (coarse, addressable) → durable
   memory entries (agent-owned).
-- **Dream evidence = raw conversation/run record; summaries are locators, not
-  evidence.** Distillation summaries are lossy objective compression. They are
+- **Dream evidence = raw conversation/run record; context-management summaries
+  are locators, not evidence.** Distillation summaries are lossy objective
+  compression, written to *continue a task*. They are
   useful as a map to find likely spans and bound cost, but Dream must read the
   original messages and relevant run events before writing long-term memory.
   **Why:** extracting memory from summaries would train the system on a model's
   interpretation of a model's interpretation, amplifying omissions, softened
   user corrections, and topic bleed. A `MemoryEntry` can cite a summary as an
   index hint, but durable facts need raw `conversationId` / `messageRange` /
-  `runId` / `eventId` provenance.
+  `runId` / `eventId` provenance. *(Restated 2026-06-10,
+  [[agent-memory-realignment]] R2: this rule binds context-management
+  artifacts. The episodic layer's memory-owned episode gist — PR-2, written to
+  remember — is a different product and IS the consolidated evidence carrier;
+  the #178 compaction-summary-as-evidence stopgap is deleted there.)*
 
 ### Skills (capability) — owned by agent-skills-authoring
 

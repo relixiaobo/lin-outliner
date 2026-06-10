@@ -575,7 +575,7 @@ describe('agent runtime past chats integration', () => {
     roots.push(localRoot, dataRoot);
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-direct-style',
-      fact: 'prefer direct, concise engineering answers',
+      fact: 'prefers direct, concise engineering answers',
       sources: [{ conversationId: 'past-conversation' }],
       createdAt: 30,
     });
@@ -624,9 +624,9 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).toContain('"recall"');
     expect(contextText).toContain('<memory>');
     expect(contextText).toContain('<self>');
-    // The briefing renders reader-relative prose and hides storage scaffolding (the id).
+    // The briefing renders zone-tagged bullets and hides storage scaffolding (the id).
     expect(contextText).not.toContain('memory-direct-style');
-    expect(contextText).toContain('You prefer direct, concise engineering answers.');
+    expect(contextText).toContain('- prefers direct, concise engineering answers');
   });
 
   test('shares the user pool into an agent briefing as a third-person principal zone', async () => {
@@ -644,7 +644,7 @@ describe('agent runtime past chats integration', () => {
     });
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-agent-habit',
-      fact: 'verify a worktree HEAD before trusting a gate run',
+      fact: 'verifies a worktree HEAD before trusting a gate run',
       sources: [{ conversationId: 'past-conversation' }],
       createdAt: 31,
     });
@@ -689,12 +689,13 @@ describe('agent runtime past chats integration', () => {
     const contextText = contexts.join('\n');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    // The reader's own pool renders second-person <self>; the co-member user pool renders as a
-    // named third-person <principal> zone. (contextText is JSON, so attribute quotes are escaped.)
+    // The reader's own pool renders as the <self> zone; the co-member user pool renders as a
+    // named <principal> zone — both as verbatim bullet lists, no subject prepending (D-2).
+    // (contextText is JSON, so attribute quotes are escaped.)
     expect(contextText).toContain('<self>');
-    expect(contextText).toContain('You verify a worktree HEAD before trusting a gate run.');
+    expect(contextText).toContain('- verifies a worktree HEAD before trusting a gate run');
     expect(contextText).toContain('<principal name=');
-    expect(contextText).toContain('The user prefers terse code reviews.');
+    expect(contextText).toContain('- prefers terse code reviews');
     expect(contextText).not.toContain('memory-user-pref');
   });
 

@@ -51,11 +51,12 @@ export type DreamMemoryAction =
   | { type: 'forget'; memoryId: string; reason?: string };
 
 /**
- * Which pool a Dream consolidates, and therefore who its facts are *about*. One writer
- * per pool ([[agent-data-model]] §4): the agent-Dream models the agent's working self
- * from its run log; the user-Dream models the person from the conversation. The subject
- * is the elided subject of every fact it writes, so it drives both the framing and the
- * "how to write a fact" guidance.
+ * Which pool a Dream consolidates. One writer per pool ([[agent-data-model]] §4): the
+ * agent-Dream models the agent's working self from its run log; the user-Dream models the
+ * person from the conversation. The pool's principal is the elided subject of every fact
+ * the Dream writes — ONE phrasing rule for all pools ([[agent-memory-realignment]] D-2):
+ * third-person-singular, subject-elided predicates; the subject stays normalized in the
+ * pool key. The kind drives the framing and the what-belongs-in-this-pool guidance only.
  */
 export type AgentDreamSubjectKind = 'agent' | 'user';
 
@@ -339,13 +340,14 @@ function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFramin
         '- Do NOT save the assistant\'s own working habits or conventions — those belong to the agent\'s separate self-model, not the user profile.',
       ].join('\n'),
       howToWrite: [
-        '- Write a subject-elided predicate in THIRD-PERSON SINGULAR present about the user — no',
-        '  leading subject. The implied subject is the user, so it renders as "The user <fact>".',
+        '- Write a subject-elided predicate in THIRD-PERSON SINGULAR present — no leading subject.',
+        '  The implied subject is the user; facts render as bullets under a zone tagged with the',
+        "  user's name, so the subject must never be written into the fact itself.",
         '  Good: "prefers terse code reviews"',
         '  Good: "wants everything in the repo written in English"',
         '  Bad:  "The user prefers terse reviews"  (leading subject)',
-        '  Bad:  "prefer terse reviews"            (base form; renders "The user prefer…")',
-        '  Bad:  "verify a worktree\'s HEAD…"       (that is the agent\'s habit, wrong pool)',
+        '  Bad:  "prefer terse reviews"            (base form; the rule is third-person singular)',
+        '  Bad:  "verifies a worktree\'s HEAD…"     (that is the agent\'s habit, wrong pool)',
         '- Name third parties other than the user explicitly; never bake in a pronoun for the subject.',
       ].join('\n'),
       statedExample: 'has said they want…',
@@ -356,19 +358,23 @@ function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFramin
     role: "You are Tenon's private Dream consolidation pass: the offline process that replays the agent's episodic record (its run log) and distills it into the agent's semantic store — the agent's durable self-model.",
     whatToSave: [
       '- Stable facts, durable decisions, project conventions, or working habits the agent should carry forward.',
-      '- Relationship context the agent needs (e.g. how to work with a named person).',
+      "- Genuinely relational working facts (e.g. how the agent works WITH a named person). The user's",
+      "  own preferences belong to the user pool, which this agent already reads by membership — do",
+      '  not duplicate them here.',
     ].join('\n'),
     howToWrite: [
-      '- Write a person-neutral, subject-elided predicate in BASE form — no leading subject. The',
-      '  implied subject is the agent itself, so it renders as "You <fact>".',
-      '  Good: "verify a worktree\'s HEAD before trusting a gate run"',
-      '  Good: "work with lixiaobo, who wants everything in the repo written in English"',
+      '- Write a subject-elided predicate in THIRD-PERSON SINGULAR present — no leading subject.',
+      '  The implied subject is the agent itself; facts render as bullets under a <self> zone, so',
+      '  the subject must never be written into the fact itself.',
+      '  Good: "verifies a worktree\'s HEAD before trusting a gate run"',
+      '  Good: "escalates directional decisions to lixiaobo before building"',
       '  Bad:  "You verify a worktree\'s HEAD…"   (leading subject)',
-      '  Bad:  "The user prefers terse reviews"  (leading subject; name the third party instead)',
+      '  Bad:  "verify a worktree\'s HEAD…"       (base form; the rule is third-person singular)',
+      '  Bad:  "The user prefers terse reviews"  (a user preference — user pool, not this one)',
       '- Name third parties explicitly (e.g. the user by name); never bake in a pronoun for the subject.',
     ].join('\n'),
-    statedExample: 'work with lixiaobo, who has said he wants…',
-    inferenceExample: 'have noticed that…',
+    statedExample: 'has been told by lixiaobo to…',
+    inferenceExample: 'has noticed that…',
   };
 }
 

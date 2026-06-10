@@ -5,7 +5,7 @@ import { createRecallTool, type AgentRecallToolRuntime } from '../../src/main/ag
 function entry(id: string, fact: string, createdAt = 10): AgentMemoryEntry {
   return {
     id,
-    agentId: 'built-in:tenon:assistant',
+    principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
     fact,
     sources: [{
       conversationId: 'conversation-1',
@@ -40,6 +40,7 @@ describe('agent recall tool', () => {
       data: {
         entries: [{
           memoryId: 'memory-1',
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           fact: 'User prefers concise answers.',
         }],
       },
@@ -49,6 +50,8 @@ describe('agent recall tool', () => {
       data: {
         entries: [{
           memory_id: 'memory-1',
+          // The fact's pool, model-visible so cross-pool results are distinguishable (D-3).
+          principal: 'agent:built-in:tenon:assistant',
           fact: 'User prefers concise answers.',
           status: 'active',
           created_at: 20,
@@ -60,6 +63,31 @@ describe('agent recall tool', () => {
           }],
         }],
         total_entries: 1,
+      },
+    });
+  });
+
+  test('distinguishes cross-pool results by principal, not by wording', async () => {
+    // The #173 membership read returns entries from more than one pool in one result list;
+    // without `principal` they are distinguishable only by accidental verb form (D-3).
+    const runtime: AgentRecallToolRuntime = {
+      recall: async () => ({
+        entries: [
+          { entry: entry('memory-1', 'prefers terse code reviews') },
+          { entry: { ...entry('memory-2', 'prefers terse code reviews'), principal: { type: 'user', userId: 'lixiaobo' } } },
+        ],
+        totalEntries: 2,
+      }),
+    };
+    const tool = createRecallTool(runtime);
+
+    expect(visibleData(await tool.execute('tool-1', { query: 'reviews' }))).toMatchObject({
+      ok: true,
+      data: {
+        entries: [
+          { memory_id: 'memory-1', principal: 'agent:built-in:tenon:assistant' },
+          { memory_id: 'memory-2', principal: 'user:lixiaobo' },
+        ],
       },
     });
   });
