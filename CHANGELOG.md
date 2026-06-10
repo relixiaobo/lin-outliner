@@ -143,6 +143,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Memory language surfaces speak the academic model (PR #181)** — `agent-memory-academic-alignment`
+  shipped (plan archived `done` in-PR; subsumed the former D2 `agent-memory-encoding-signal`). Language
+  surfaces only, zero storage/schema/tool-contract change. The Dream prompt is rewritten as a
+  **consolidation** pass — selection stated as an **encoding policy** (durable, context-free knowledge;
+  novelty/prediction-error weighted: corrections, surprising tool results, failed-then-replaced
+  approaches are the strongest signal) with **reconsolidation** framing for update/invalidate; the
+  anti-injection evidence fence stays verbatim, and the new fence-containment test anchors the tags'
+  own lines so the prompt's prose mention of the fence cannot satisfy it. The `<memory>` briefing opens
+  with a fixed self-introduction as the working-memory slice of the semantic store (exported constant,
+  single source for tests); `recall` is described as **cued retrieval** over the semantic store with
+  `include_evidence` as **source access** into the episodic record (parameter names/shapes unchanged),
+  and its empty-result instruction keeps the active-entries-only qualifier. Forgetting copy follows
+  foundations §5.4 — never "delete": Settings chips read `Inactive/已失效`, the Dream boundary row
+  counts `invalidated/失效`; permission descriptors and the spec set (`agent-tool-design`,
+  `agent-skills`, `agent-data-model`, plus straggler sweep over `agent-pi-mono-implementation`,
+  `agent-progress`, `agent-event-log-rendering`) use the same vocabulary (A6). Gate: medium
+  `/code-review` (7 finder angles + per-finding verifiers), one fix round; typecheck · `test:core`
+  809/0 · renderer 405/0 · agent-settings e2e 20/20 (CI=1) · Settings memory pane light+dark visual.
+  Accepted trade-off noted on the PR: the briefing intro persists in each turn's reminder (~24
+  tokens/turn) as the only memory framing subagents see.
+  ([#181](https://github.com/relixiaobo/lin-outliner/pull/181))
+
 - **Principal-keyed memory: the user is an ordinary principal (PR #173)** — Phase 3 of
   [[agent-memory-model]], implementing the PM-ratified (2026-06-09) `agent-data-model` §4 contract.
   `MemoryEntry` (+ `AgentMemoryEntryView` / `AgentMemoryEventBase`) is re-keyed by **`principal`** — the

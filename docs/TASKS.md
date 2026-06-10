@@ -19,7 +19,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | `cc/agent-channel-peers` | M3-A (#179) — **unblocked**, resume on a rebase onto the merged clean-cut |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (storage clean-cut merged, PR #180) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory academic alignment merged, PR #181) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -60,7 +60,8 @@ Both 2026-06-09 lanes merged — board is between batches.
   **Phase 1.5** storage clean-cut (`agent-storage-clean-cut`) **merged as PR #180** (cc-2)
   — see Recently completed; plan archived `done` in-PR. The gate ran two rounds (round-1
   NO-GO on a content-triggerable wipe + a sticky probe rejection; both hardened in
-  `8fff92e` and re-verified). M3-A and `agent-memory-academic-alignment` are unblocked →
+  `8fff92e` and re-verified). M3-A and `agent-memory-academic-alignment` were unblocked
+  (the latter merged as PR #181 — see Recently completed) →
   **Phase 2** three independent complete features, **each with a drafted plan file**:
   **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
   peer reply, one PR — membership alone would be a scaffold slice; **claimed #179,
@@ -264,12 +265,9 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   definitions bind, PM examples are illustrative only) + the mapping table in
   `agent-data-model.md` § *Canonical memory vocabulary* + `agent-architecture.md`
   § *The memory system*. Zero storage change. Work:
-  **`agent-memory-academic-alignment`** (P2, **queues behind the storage clean-cut**
-  — it edits prompts living in the files the clean-cut renames; any clone can take
-  it after) — rewrite Dream prompt (as consolidation/encoding policy incl. the
-  prediction-error cue), briefing copy, `recall` description, Settings copy/i18n,
-  spec wording; subsumed the former D2 (`agent-memory-encoding-signal`, archived
-  `superseded`). Then post-M3-B deltas: **D1** `agent-memory-forgetting` (Bjork
+  **`agent-memory-academic-alignment`** (cc-2) **merged as PR #181** — see Recently
+  completed; plan archived `done` in-PR (subsumed the former D2
+  `agent-memory-encoding-signal`, archived `superseded`). Remaining post-M3-B deltas: **D1** `agent-memory-forgetting` (Bjork
   two-strength → briefing ranking; strengths are projections, never stored fields) →
   **D3** `agent-memory-episodic-index` (episode derived view + principal-gated reverse
   lookup) → **D4** `agent-memory-retrieval-upgrade` (lexical → hybrid; carries the
@@ -574,6 +572,21 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **memory academic alignment: language surfaces speak the foundations vocabulary** (cc-2,
+  PR #181) — `agent-memory-academic-alignment` shipped (plan archived `done` in-PR; subsumed
+  the former D2 encoding-signal). Language surfaces only — zero storage/schema/tool-contract
+  change: Dream prompt rewritten as a consolidation pass with an explicit encoding policy
+  (novelty/prediction-error weighting) and reconsolidation framing; `<memory>` briefing opens
+  with a fixed working-memory-slice self-introduction; `recall` described as cued retrieval +
+  `include_evidence` as source access (names/shapes unchanged); Settings forgetting copy per
+  foundations §5.4 (`Forgotten/已忘记` → `Inactive/已失效`); spec sync per A6. Gate ran one fix
+  round (fence-test anchored on the tags' own lines so the prompt's prose mention can't satisfy
+  containment; vocabulary completed across the Dream boundary row, permission descriptors, and
+  8 spec stragglers). Verified: typecheck · `test:core` 809/0 · renderer 405/0 · agent-settings
+  e2e 20/20 · Settings memory pane light+dark. Noted trade-off kept: the briefing intro persists
+  per-turn (~24 tokens/turn) — it is the only memory framing subagents see; trim is the cheap
+  follow-up if cost shows up.
 
 - **agent storage clean-cut: session vocabulary dies, pools unify under `principals/`** (cc-2,
   PR #180) — the pre-release format clean-cut (plan archived `done` in-PR): stored `session.*`

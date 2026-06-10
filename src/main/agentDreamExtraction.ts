@@ -252,7 +252,7 @@ export function buildDreamMemoryExtractionRequest(input: DreamMemoryExtractionRe
   const workspace = input.originWorkspace ?? '(none)';
   const evidenceMode = input.span.consolidateOnly
     ? 'There is no new raw evidence. Consolidate existing memory only: update or forget stale/duplicate/conflicting entries, but do not add new memories.'
-    : 'Analyze the raw evidence since the last Dream and propose durable memory changes.';
+    : 'Replay the raw evidence recorded since the last Dream and propose durable changes to the semantic store.';
   const framing = dreamSubjectFraming(input.subject ?? 'agent');
   // Randomized fence: the transcript embeds untrusted text (web tool output, pasted content)
   // verbatim, and an extracted fact lands in a durable pool that is injected into every future
@@ -267,8 +267,11 @@ ${evidenceMode}
 
 Propose at most ${DREAM_MAX_ACTIONS} durable memory changes.
 
-What to save:
+Encoding policy (what deserves a durable trace — context-free knowledge that outlives this episode):
 ${framing.whatToSave}
+- Weight novelty and prediction error: outcomes that diverged from what was assumed, intended,
+  or expected — a correction, a surprising tool result, an approach that failed and what replaced
+  it — are the strongest encoding signal.
 - Do not save transient task steps, temporary status, command output, secrets, credentials, raw logs, or facts already represented as durable outline content.
 - Do not infer beyond the raw evidence. If the evidence is ambiguous, emit no action.
 - If there is no new raw evidence, do not add new memory entries.
@@ -281,11 +284,13 @@ ${framing.howToWrite}
   "${framing.statedExample}"; an inference reads "${framing.inferenceExample}".
 - Keep each fact one self-contained sentence.
 
-How to consolidate (prefer reshaping over piling up):
+How to consolidate (reconsolidation: new evidence that touches an existing entry reshapes it in
+place — never pile up a duplicate):
 - update when new evidence corrects, sharpens, or merges a duplicate of an existing memory.
 - update to conditionalize a contradiction into one conditional fact rather than keeping two
   that disagree.
-- forget (invalidate) a memory that is now stale, wrong, or fully superseded.
+- forget (invalidate) a memory that is now stale, wrong, or fully superseded; invalidation drops
+  it from the working set, it does not rewrite history.
 
 Output schema:
 {
@@ -328,7 +333,7 @@ interface DreamSubjectFraming {
 function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFraming {
   if (subject === 'user') {
     return {
-      role: "You are Tenon's private Dream profile-builder: the assistant's durable model of the person it works with (the user).",
+      role: "You are Tenon's private Dream consolidation pass for the user pool: the offline process that replays the episodic record (the conversations) and distills it into the user's semantic store — the assistant's durable model of the person it works with (the user).",
       whatToSave: [
         "- The user's stable preferences, working style, recurring goals, decisions, and relationship context that should help future turns serve this person.",
         '- Do NOT save the assistant\'s own working habits or conventions — those belong to the agent\'s separate self-model, not the user profile.',
@@ -348,7 +353,7 @@ function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFramin
     };
   }
   return {
-    role: "You are Tenon's private Dream memory extractor: the agent's durable self-model.",
+    role: "You are Tenon's private Dream consolidation pass: the offline process that replays the agent's episodic record (its run log) and distills it into the agent's semantic store — the agent's durable self-model.",
     whatToSave: [
       '- Stable facts, durable decisions, project conventions, or working habits the agent should carry forward.',
       '- Relationship context the agent needs (e.g. how to work with a named person).',

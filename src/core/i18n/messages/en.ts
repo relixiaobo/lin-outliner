@@ -196,7 +196,7 @@ export const en = {
       loading: 'Loading memory…',
       empty: 'No remembered facts yet.',
       activeStatus: 'Active',
-      invalidatedStatus: 'Forgotten',
+      invalidatedStatus: 'Inactive',
       poolAgentLabel: 'Assistant',
       poolUserLabel: 'You',
       createdAt: ({ date }: { date: string }) => `Created ${date}`,
@@ -206,7 +206,7 @@ export const en = {
       saveEdit: 'Save memory',
       cancelEdit: 'Cancel memory edit',
       updatedNotice: 'Memory updated',
-      forgottenNotice: 'Memory forgotten',
+      forgottenNotice: 'Memory marked inactive',
       emptyFactError: 'Memory fact cannot be empty.',
       notFoundError: 'Memory entry no longer exists.',
     },
@@ -939,7 +939,7 @@ commandPalette: {
       dreamProcessedDetail: ({ messages, chars }: { messages: number; chars: number }) =>
         `Processed ${messages} ${messages === 1 ? 'message' : 'messages'} (${chars.toLocaleString()} chars).`,
       dreamChangesDetail: ({ added, updated, forgotten, skipped }: { added: number; updated: number; forgotten: number; skipped: number }) =>
-        `Memory changes: ${added} added, ${updated} updated, ${forgotten} forgotten, ${skipped} skipped.`,
+        `Memory changes: ${added} added, ${updated} updated, ${forgotten} invalidated, ${skipped} skipped.`,
     },
     // Tool-call disclosure: summaries (verb forms), section headers, persisted output.
     toolCall: {

@@ -125,7 +125,7 @@ export function createSelfMaintenanceTools(runtime: AgentSelfMaintenanceRuntime)
     {
       name: 'dream',
       label: 'Dream',
-      description: 'Request a runtime-owned Memory Dream for the current Tenon agent. This trigger cannot specify memory facts; the background extractor decides changes from recorded evidence.',
+      description: 'Request a runtime-owned Memory Dream — offline consolidation of recorded episodic evidence into durable memory — for the current Tenon agent. This trigger cannot specify memory facts; the background consolidation pass decides changes from recorded evidence.',
       parameters: DREAM_PARAMETERS,
       executionMode: 'sequential',
       execute: async () => {

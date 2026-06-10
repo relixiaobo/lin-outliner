@@ -138,7 +138,7 @@ truth.
   - runtime-owned per-principal Dream write-back as a scheduled/manual reflective
     run: the **agent-Dream** consolidates an agent's run log into its pool, the
     **user-Dream** consolidates the user's member-conversations into the user pool,
-    with subject-aware extraction prompts; the automatic path uses the shared
+    with subject-aware consolidation prompts; the automatic path uses the shared
     `date` schedule primitive plus a minimum-volume gate (firing one Dream per
     pool), `/dream` forces the user-Dream over the conversation, raw evidence is
     read since the Dream watermark, and `dream.completed` records the processed
@@ -158,7 +158,7 @@ truth.
   - permission classification for read-only `agent.memory.recall` and
     trigger-only `agent.memory.dream`
   - prompt guidance that foreground memory writes are handled by Settings/Profile
-    UI and runtime-owned extraction, not by a model-visible CRUD tool
+    UI and runtime-owned consolidation (Dream), not by a model-visible CRUD tool
 - [x] Agent M1 self-maintenance and structured input:
   - canonical DM restore plus user-created single-agent Channels
   - `ask_user_question` tool with pending question persistence and renderer
