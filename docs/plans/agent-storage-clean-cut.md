@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 priority: P1
-owner: unassigned
+owner: cc-2
 created: 2026-06-10
 updated: 2026-06-10
 ---
