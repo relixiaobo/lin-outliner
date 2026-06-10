@@ -71,13 +71,6 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
   return 'api-key';
 }
 
-const MODEL_ID_REPLACEMENTS: Record<string, Record<string, string>> = {
-  anthropic: {
-    'claude-3-5-haiku-20241022': 'claude-haiku-4-5',
-    'claude-3-5-haiku-latest': 'claude-haiku-4-5',
-  },
-};
-
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const AGENT_PERMISSION_MODES = ['trusted', 'restricted'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
@@ -121,7 +114,7 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     ?? file.providers.find((provider) => providerHasCredential(provider, secrets))
     ?? null;
   if (!active) return null;
-  const modelId = normalizeModelId(active.providerId, active.modelId);
+  const modelId = active.modelId;
   // Do not bake the key here — this path is sync and cannot await an OAuth
   // refresh. Consumers resolve lazily via getProviderApiKey (the single async
   // resolver) at request time; leaving apiKey undefined routes them there.
@@ -191,7 +184,7 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
   const providerId = normalizeProviderId(providerIdInput);
   const file = await readProviderFile();
   if (file.providers.some((provider) => provider.providerId === providerId)) return;
-  const modelId = normalizeModelId(providerId, firstModelId(providerId));
+  const modelId = firstModelId(providerId);
   file.providers.push({
     providerId,
     modelId,
@@ -323,7 +316,7 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
     activeProviderId: file.activeProviderId,
     agent: normalizeAgentRuntimeSettings(file.agent),
     providers: file.providers.map((provider): AgentProviderConfigView => {
-      const modelId = normalizeModelId(provider.providerId, provider.modelId);
+      const modelId = provider.modelId;
       const cred = secrets.credentials[provider.providerId];
       const hasEnvApiKey = !!getEnvApiKey(provider.providerId);
       const authKind = getProviderAuthKind(provider.providerId);
@@ -432,7 +425,7 @@ function getAvailableProviders(): AgentProviderOption[] {
 
 function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
   const providerId = normalizeProviderId(input.providerId);
-  const modelId = normalizeModelId(providerId, input.modelId.trim());
+  const modelId = input.modelId.trim();
   if (!modelId) throw new Error('modelId is required');
   const reasoningLevel = normalizeReasoningLevel(providerId, modelId, input.reasoningLevel);
   const baseUrl = input.baseUrl?.trim() || undefined;
@@ -523,10 +516,6 @@ function normalizeProviderId(providerIdInput: string) {
   const providerId = providerIdInput.trim();
   if (!providerId) throw new Error('providerId is required');
   return providerId;
-}
-
-function normalizeModelId(providerId: string, modelId: string) {
-  return MODEL_ID_REPLACEMENTS[providerId]?.[modelId] ?? modelId;
 }
 
 function normalizeReasoningLevel(
