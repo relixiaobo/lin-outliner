@@ -12,6 +12,19 @@
 
 const liveCompositions = new Set<symbol>();
 
+/**
+ * Dev-only diagnostic trail for the #176 family — every composition/focus
+ * decision logs through here so a live repro can be read back over CDP
+ * (`console.debug` with the `[ime-trace]` prefix). No-op in prod runs.
+ * `IME_TRACE_ENABLED` gates trace blocks whose argument construction is
+ * itself costly (DOM serialization), not just the log sink.
+ */
+export const IME_TRACE_ENABLED: boolean = Boolean(import.meta.env?.DEV);
+
+export function imeTrace(...args: unknown[]): void {
+  if (IME_TRACE_ENABLED) console.debug('[ime-trace]', performance.now().toFixed(0), ...args);
+}
+
 export function beginComposition(token: symbol): void {
   liveCompositions.add(token);
 }

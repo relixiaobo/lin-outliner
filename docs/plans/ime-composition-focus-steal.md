@@ -5,9 +5,27 @@ status: in-progress
 # IME composition hold + pendingInput handoff (issue #176)
 
 Shape: **ONE complete feature in one PR.** Fixes the P1 bug where an in-flight
-IME composition is force-committed mid-word when a split echo's focusRequest
-steals focus (`skill` → `sk ill`). PM ratified the direction on 2026-06-10
-(issue #176) and approved this concrete design in conversation.
+IME composition is force-committed mid-word (`skill` → `sk ill`). PM ratified
+the direction on 2026-06-10 (issue #176) and approved this concrete design in
+conversation.
+
+Live verification on the real app exposed that the symptom has **two
+independent root causes**, both fixed here:
+
+1. **Focus steal** — a split echo's focusRequest moves focus mid-composition
+   (the originally diagnosed leg). Fixed by the gate + handoff below.
+2. **Empty-row paragraph redraw** — composing into an EMPTY textblock, the
+   block has no #text node to host the IME's marked range; ProseMirror redraws
+   the whole paragraph element on the first non-append composition rewrite
+   (macOS Pinyin re-segmenting "s k" → "sk i" at the third letter) and the OS
+   IME session dies with the removed node — force-commit + torn recompose,
+   no focusRequest involved at all. PM repro: only empty rows tore; rows with
+   existing text never did. Proven by a MutationObserver forensic trace
+   (`childList removed: P` at composition update 3). Fixed by seeding the
+   empty block with the zero-width sentinel anchor at composition start
+   (`compositionAnchorTransaction`, extending the existing inline-ref anchor
+   pattern), so the composition always has a stable #text node that PM patches
+   in place.
 
 ## Goal
 
@@ -42,7 +60,7 @@ transactions skip `onChange`/`onPatch` (`RichTextEditor.tsx` dispatchTransaction
 and only flush at compositionend. So nothing needs to be intercepted, undone, or
 replayed against core; the fix only decides *where that buffered text flushes to*.
 
-Three renderer-local pieces, no core/protocol changes:
+Four renderer-local pieces, no core/protocol changes:
 
 1. **Global composition gate** (`src/renderer/ui/editor/compositionRelay.ts`).
    Module-level set of live compositions, fed by each RichTextEditor
@@ -79,12 +97,40 @@ Three renderer-local pieces, no core/protocol changes:
      sync compositionend handler and the microtask, so a late final transaction
      can't flush to the old node first.
 
+4. **Empty-block composition anchor**
+   (`src/renderer/ui/editor/imeCompositionAnchor.ts`). At composition start
+   (IME keydown-229 / compositionstart / first `insertCompositionText`
+   beforeinput), `compositionAnchorTransaction(state)` seeds a zero-width
+   sentinel into an empty textblock (and the pre-existing inline-ref-adjacent
+   cases, refactored into the same pure helper) and parks the caret after it.
+   The block then always has a #text node for the IME's marked range, PM
+   patches characterData in place across re-segmentations, and the session
+   survives. The codec already strips the sentinel from `RichText` and
+   patches, so nothing leaks to core.
+
+### Verification notes
+
+- The **echo-race leg** is covered by the CDP probe (`scripts/probe-ime-split.ts`):
+  fixed branch 3/3 PASS; `origin/main` baseline reproduces the exact tearing
+  signature (partial compositionend + mid-composition focusout).
+- The **empty-row leg** can NOT be verified over CDP:
+  `Input.imeSetComposition` replaces the whole text node *including* the
+  anchor on every update — real macOS IME only rewrites its marked range.
+  Verified instead on the live app with a real Pinyin IME + the dev-only
+  `[ime-trace]` forensic rail (`compo-tr` logs doc/DOM/compositionNode/
+  blockSwapped per composing transaction): two clean runs, anchor present,
+  characterData-only updates, `blockSwapped:false` throughout, single
+  compositionend carrying the full word. The trace rail stays in the code
+  (dev-gated) for future regressions.
+
 ### Files
 
 - `src/renderer/ui/editor/compositionRelay.ts` (new) — gate +
-  `extractComposedInsertion`.
+  `extractComposedInsertion` + dev-only `imeTrace`.
+- `src/renderer/ui/editor/imeCompositionAnchor.ts` (new) —
+  `compositionAnchorTransaction` (empty-block + inline-ref anchors, pure).
 - `src/renderer/ui/editor/RichTextEditor.tsx` — gate feeding, park, handoff,
-  `onCompositionHandoff` prop.
+  `onCompositionHandoff` prop, anchor dispatch.
 - `src/renderer/ui/focus/focusModel.ts` — `relayCompositionHandoffState`.
 - `src/renderer/ui/outliner/OutlinerItem.tsx`, `src/renderer/ui/NodePanel.tsx`
   — wire the prop.
@@ -94,6 +140,7 @@ Three renderer-local pieces, no core/protocol changes:
   (`Input.imeSetComposition`; synthetic keystrokes bypass the macOS IME and e2e
   mocks lack the real async echo, so acceptance runs against the live app).
 - Tests: `tests/renderer/compositionRelay.test.ts` (new),
+  `tests/renderer/imeCompositionAnchor.test.ts` (new),
   `tests/renderer/focusModel.test.ts` (extend).
 - Spec: `docs/spec/ui-behavior.md` (IME composition vs async echoes).
 

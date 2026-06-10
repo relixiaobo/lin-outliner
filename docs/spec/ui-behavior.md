@@ -283,12 +283,32 @@ insertion, and re-issues the request through `relayCompositionHandoffState` —
 non-empty text rides the pendingInput rail so the word lands whole at the
 target's cursor placement.
 
+The same torn-word symptom has a second, focus-independent cause: composing
+into an EMPTY textblock. The block has no #text node to host the IME's marked
+range, so ProseMirror redraws the whole paragraph element on the first
+non-append composition rewrite (macOS Pinyin re-segments "s k" → "sk i" at the
+third letter) and the OS IME session dies with the removed node — force-commit
+mid-word, then a torn recompose. Mechanism
+(`src/renderer/ui/editor/imeCompositionAnchor.ts`): at composition start the
+editor dispatches `compositionAnchorTransaction`, seeding the empty block (and
+the inline-ref-adjacent caret cases) with the zero-width sentinel and parking
+the caret after it; the composition then always binds to a stable #text node
+that ProseMirror patches in place. The codec strips the sentinel, so it never
+reaches `RichText` or patches.
+
 | Interaction | Expected behavior | Test coverage |
 | --- | --- | --- |
 | Compose IME text immediately after Enter (split/create) | The composition is never interrupted: exactly one `compositionend` carrying the full composed text, focus moves only afterwards, and the composed word lands whole at the start of the new row; the old row is untouched. | `compositionRelay.test.ts`, `focusModel.test.ts`; live-app acceptance via `scripts/probe-ime-split.ts` (the e2e mock has no real async echo; synthetic keystrokes bypass the macOS IME) |
+| Compose IME text into an empty row | The composition survives IME re-segmentation: the paragraph element is never redrawn (characterData-only updates on the anchored #text node), one `compositionend` with the full word. | `imeCompositionAnchor.test.ts`; real-IME verification only — CDP `Input.imeSetComposition` replaces the whole text node including the anchor, unlike a real macOS IME, so the probe cannot cover this leg |
 | Echo focus targeting the composing editor itself (e.g. indent keeps focus in place) | The placement is held until compositionend, then applied after the normal composition flush. | `scripts/probe-ime-split.ts` technique; unit-covered via relay state tests |
 | Cancelled composition while a request is parked | The bare focus request is re-issued at compositionend; no text is relayed. | `compositionRelay.test.ts` |
 | Editor unmounts mid-composition with a parked request | The gate is released and the parked request re-issued without text (the composed text dies with the row). | code-reviewed edge; gate release asserted in `compositionRelay.test.ts` |
+
+Diagnostics: dev builds emit an `[ime-trace]` console.debug rail
+(`compositionRelay.imeTrace`) covering every composition/focus decision plus a
+per-composing-transaction forensic line (doc text, DOM, composition node,
+block-swap flag) in `RichTextEditor.dispatchTransaction` — readable over CDP
+for live repros; fully gated out of prod.
 
 Known gap (accepted): textarea surfaces (description, code block, field name)
 are protected as focus *targets* by the gate but do not register their own
