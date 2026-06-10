@@ -38,25 +38,31 @@ function message(input: {
   };
 }
 
+// Build a replay state from completed runs plus a parent-linked message list;
+// rootMessageIds and childrenByParentId are derived from each message's parentMessageId.
+function replayStateWith(runIds: readonly string[], messages: readonly AgentEventMessageRecord[]) {
+  const state = createEmptyAgentEventReplayState();
+  state.latestEventId = 'event-terminal-new';
+  runIds.forEach((id, index) => {
+    state.runs[id] = { id, status: 'completed', startedAt: 10 + index * 20, updatedAt: 20 + index * 20 };
+  });
+  for (const item of messages) {
+    state.messages[item.id] = item;
+    if (item.parentMessageId === null) state.rootMessageIds.push(item.id);
+    else (state.childrenByParentId[item.parentMessageId] ??= []).push(item.id);
+  }
+  state.latestMessageId = messages.at(-1)?.id ?? null;
+  return state;
+}
+
+const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>): string =>
+  request.content[0]?.type === 'text' ? request.content[0].text : '';
+
+const fenceOf = (text: string) => /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
+
 describe('agent dream extraction', () => {
   test('does not cross a previous run boundary to find user provenance', () => {
-    const state = createEmptyAgentEventReplayState();
-    state.latestEventId = 'event-terminal-new';
-    state.runs = {
-      'run-prev': {
-        id: 'run-prev',
-        status: 'completed',
-        startedAt: 10,
-        updatedAt: 20,
-      },
-      'run-new': {
-        id: 'run-new',
-        status: 'completed',
-        startedAt: 30,
-        updatedAt: 40,
-      },
-    };
-    const messages = [
+    const state = replayStateWith(['run-prev', 'run-new'], [
       message({
         id: 'user-prev',
         role: 'user',
@@ -89,15 +95,7 @@ describe('agent dream extraction', () => {
         text: 'New run response without a fresh user prompt.',
         runId: 'run-new',
       }),
-    ];
-    state.messages = Object.fromEntries(messages.map((item) => [item.id, item]));
-    state.rootMessageIds = ['user-prev'];
-    state.childrenByParentId = {
-      'user-prev': ['assistant-prev'],
-      'assistant-prev': ['tool-prev-result'],
-      'tool-prev-result': ['assistant-new'],
-    };
-    state.latestMessageId = 'assistant-new';
+    ]);
 
     const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
 
@@ -108,17 +106,7 @@ describe('agent dream extraction', () => {
   });
 
   test('includes the directly adjacent user prompt for a normal completed turn', () => {
-    const state = createEmptyAgentEventReplayState();
-    state.latestEventId = 'event-terminal-new';
-    state.runs = {
-      'run-new': {
-        id: 'run-new',
-        status: 'completed',
-        startedAt: 30,
-        updatedAt: 40,
-      },
-    };
-    const messages = [
+    const state = replayStateWith(['run-new'], [
       message({
         id: 'user-new',
         role: 'user',
@@ -134,11 +122,7 @@ describe('agent dream extraction', () => {
         text: 'I will answer concisely.',
         runId: 'run-new',
       }),
-    ];
-    state.messages = Object.fromEntries(messages.map((item) => [item.id, item]));
-    state.rootMessageIds = ['user-new'];
-    state.childrenByParentId = { 'user-new': ['assistant-new'] };
-    state.latestMessageId = 'assistant-new';
+    ]);
 
     const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
 
@@ -153,7 +137,7 @@ describe('agent dream extraction', () => {
       existingMemories: [],
       subject: 'agent',
     });
-    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    const text = promptText(request);
     expect(text).toContain("the agent's durable self-model");
     expect(text).toContain('renders as "You <fact>"');
     expect(text).toContain('name the third party instead');
@@ -167,7 +151,7 @@ describe('agent dream extraction', () => {
       existingMemories: [],
       subject: 'user',
     });
-    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    const text = promptText(request);
     expect(text).toContain('the person it works with (the user)');
     expect(text).toContain('renders as "The user <fact>"');
     // The user profile must not absorb the agent's own working habits.
@@ -184,8 +168,7 @@ describe('agent dream extraction', () => {
       span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
       existingMemories: [],
     });
-    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
-    expect(text).toContain("the agent's durable self-model");
+    expect(promptText(request)).toContain("the agent's durable self-model");
   });
 
   // The former D2 encoding-signal acceptance ([[agent-memory-academic-alignment]]): the prompt
@@ -194,12 +177,7 @@ describe('agent dream extraction', () => {
   // prompt snapshot (no model-in-loop harness); whether the model actually cites those spans is
   // verified manually.
   test('states the encoding policy and carries correction/surprise evidence inside the fence', () => {
-    const state = createEmptyAgentEventReplayState();
-    state.latestEventId = 'event-terminal-new';
-    state.runs = {
-      'run-new': { id: 'run-new', status: 'completed', startedAt: 30, updatedAt: 40 },
-    };
-    const messages = [
+    const state = replayStateWith(['run-new'], [
       message({
         id: 'user-new',
         role: 'user',
@@ -232,20 +210,11 @@ describe('agent dream extraction', () => {
         text: 'Confirmed: bun is the package manager here.',
         runId: 'run-new',
       }),
-    ];
-    state.messages = Object.fromEntries(messages.map((item) => [item.id, item]));
-    state.rootMessageIds = ['user-new'];
-    state.childrenByParentId = {
-      'user-new': ['assistant-1'],
-      'assistant-1': ['tool-result-1'],
-      'tool-result-1': ['assistant-2'],
-    };
-    state.latestMessageId = 'assistant-2';
+    ]);
 
     const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
     expect(span).not.toBeNull();
-    const request = buildDreamMemoryExtractionRequest({ span: span!, existingMemories: [] });
-    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    const text = promptText(buildDreamMemoryExtractionRequest({ span: span!, existingMemories: [] }));
 
     // Consolidation framing + encoding policy with prediction-error weighting.
     expect(text).toContain('consolidation pass');
@@ -256,7 +225,7 @@ describe('agent dream extraction', () => {
 
     // The correction and the tool-surprise are evidence: they appear inside the fence, after the
     // prompt's instruction body.
-    const fence = /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
+    const fence = fenceOf(text);
     expect(fence).toBeDefined();
     const fenceOpenAt = text.indexOf(`<${fence}>`);
     const fenceCloseAt = text.indexOf(`</${fence}>`);
@@ -269,8 +238,6 @@ describe('agent dream extraction', () => {
   });
 
   test('wraps raw evidence in a randomized fence an adversarial transcript cannot close', () => {
-    const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>) =>
-      request.content[0]?.type === 'text' ? request.content[0].text : '';
     const first = promptText(buildDreamMemoryExtractionRequest({
       span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
       existingMemories: [],
@@ -279,7 +246,6 @@ describe('agent dream extraction', () => {
       span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
       existingMemories: [],
     }));
-    const fenceOf = (text: string) => /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
     const firstFence = fenceOf(first);
     const secondFence = fenceOf(second);
     // The fence tag is per-request and unguessable, so evidence text cannot break out of it.

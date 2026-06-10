@@ -2050,11 +2050,9 @@ Example read result data:
 
 ## Agent Memory Recall
 
-Vocabulary in this section follows the canonical academic mapping
-(`agent-data-model.md` § *Canonical memory vocabulary*;
-`agent-memory-foundations.md` for definitions): the **semantic store** is the
-`MemoryEntry` pool, the **episodic record** is the conversation + run ledgers,
-and the **index** is the `sources[]` pointer layer binding the two.
+Vocabulary in this section (**semantic store**, **episodic record**, **index**)
+follows the canonical mapping in `agent-data-model.md` § *Canonical memory
+vocabulary*; definitions live in `agent-memory-foundations.md`.
 
 ### `recall`
 
