@@ -31,6 +31,7 @@ import {
   shortcutDefinitionsForScope,
 } from '../../src/renderer/ui/interactions/shortcutRegistry';
 import {
+  batchIndentNodeIds,
   expandIndentTargets,
   indentTargetParentId,
   previousVisibleRowId,
@@ -536,6 +537,44 @@ describe('row interaction resolvers', () => {
       'already',
       'first',
     ]);
+  });
+
+  test('filters batch indent to runs with an unselected previous sibling', () => {
+    const root = {
+      id: 'root',
+      children: ['first', 'second', 'third', 'fourth'],
+    };
+    const first = {
+      id: 'first',
+      parentId: 'root',
+      children: [],
+    };
+    const second = {
+      id: 'second',
+      parentId: 'root',
+      children: [],
+    };
+    const third = {
+      id: 'third',
+      parentId: 'root',
+      children: [],
+    };
+    const fourth = {
+      id: 'fourth',
+      parentId: 'root',
+      children: [],
+    };
+    const byId = new Map<string, any>([
+      [root.id, root],
+      [first.id, first],
+      [second.id, second],
+      [third.id, third],
+      [fourth.id, fourth],
+    ]);
+
+    expect(batchIndentNodeIds(['first', 'second'], byId)).toEqual([]);
+    expect(batchIndentNodeIds(['second', 'third'], byId)).toEqual(['second', 'third']);
+    expect(batchIndentNodeIds(['first', 'third'], byId)).toEqual(['third']);
   });
 
   test('detects parents that become empty after outdenting selected children', () => {

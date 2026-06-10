@@ -28,6 +28,35 @@ export function expandIndentTargets(
   return next;
 }
 
+export function batchIndentNodeIds(
+  nodeIds: readonly NodeId[],
+  byId: Map<NodeId, NodeProjection>,
+): NodeId[] {
+  const batch = new Set(nodeIds);
+  return nodeIds.filter((nodeId) => selectedRunHasExternalPreviousSibling(nodeId, batch, byId));
+}
+
+function selectedRunHasExternalPreviousSibling(
+  nodeId: NodeId,
+  batch: ReadonlySet<NodeId>,
+  byId: Map<NodeId, NodeProjection>,
+): boolean {
+  let currentId: NodeId | undefined = nodeId;
+  while (currentId) {
+    const node = byId.get(currentId);
+    const parentId = node?.parentId;
+    const parent = parentId ? byId.get(parentId) : undefined;
+    const index: number = parent?.children.indexOf(currentId) ?? -1;
+    if (!parent || index <= 0) return false;
+
+    const previousSiblingId: NodeId | undefined = parent.children[index - 1];
+    if (!previousSiblingId) return false;
+    if (!batch.has(previousSiblingId)) return true;
+    currentId = previousSiblingId;
+  }
+  return false;
+}
+
 export function previousVisibleRowId(
   visibleRows: readonly NodeId[],
   nodeId: NodeId,

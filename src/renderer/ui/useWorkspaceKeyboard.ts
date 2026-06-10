@@ -7,7 +7,7 @@ import type { DocumentIndex, UiState } from '../state/document';
 import { buildSelectableRows } from '../state/selectableRows';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
-import { expandIndentTargets } from './interactions/outlinerStructure';
+import { batchIndentNodeIds, expandIndentTargets } from './interactions/outlinerStructure';
 import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
 import {
   idsAllowedForStructuralBatch,
@@ -508,7 +508,9 @@ export function useWorkspaceKeyboard({
           });
         const operationIds = action === 'batch_checkbox'
           ? targetIdsForRows(operationRowIds, currentIndex.byId)
-          : operationRowIds;
+          : action === 'batch_indent'
+            ? batchIndentNodeIds(operationRowIds, currentIndex.byId)
+            : operationRowIds;
         if (operationIds.length === 0) return;
         const emptiedParentIds = action === 'batch_outdent'
           ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)

@@ -268,6 +268,34 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowEditor(page, ids.beta)).toBeFocused();
   });
 
+  test('Tab on the first selected child run is a no-op', async ({ page }) => {
+    await rowEditor(page, ids.beta).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+
+    await rowEditor(page, ids.gamma).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await row(page, ids.beta).click({ modifiers: ['Meta'] });
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+
+    const beforeCalls = (await commandCalls(page)).length;
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('batch_indent_nodes');
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
   test('Shift+Tab outdents an indented row back to the parent scope', async ({ page }) => {
     // Select beta, indent it under alpha (Tab carries the caret into the row editor),
     // then Shift+Tab outdents it straight back to the parent scope without losing the
