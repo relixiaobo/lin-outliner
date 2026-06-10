@@ -1,36 +1,69 @@
 import { app } from 'electron';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { AgentSkillProvenanceStore } from './agentSkills';
+import type {
+  AgentSkillPreviousVersion,
+  AgentSkillProvenanceRecord,
+  AgentSkillProvenanceStore,
+} from './agentSkills';
 
 const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
 
 /**
- * userData-backed store of agent-written SKILL.md content hashes, keyed by resolved
- * skill file path. The skill registry derives ratification from it: a skill whose
- * current content hash matches its record is unratified (agent-authored, not yet
- * accepted). A user hand-edit changes the hash, so the record naturally expires.
+ * userData-backed trust store for skills, keyed by resolved skill file path. Each
+ * record holds the last agent-written content hash (provenance), the hash the user
+ * explicitly accepted (trust), and at most one previous version for single-step undo.
+ * The skill registry derives ratification from it; see the derivation in
+ * `addLoadedSkill`. Legacy plain-string values (pre-acceptance format) are dropped on
+ * load — pre-release, no migration.
  */
 export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
   return {
-    async load(): Promise<Record<string, string>> {
+    async load(): Promise<Record<string, AgentSkillProvenanceRecord>> {
       const parsed = await readJsonOrDefault<unknown>(provenancePath(), {});
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-      const entries: Record<string, string> = {};
-      for (const [skillFile, hash] of Object.entries(parsed)) {
-        if (typeof hash === 'string') entries[skillFile] = hash;
+      const entries: Record<string, AgentSkillProvenanceRecord> = {};
+      for (const [skillFile, value] of Object.entries(parsed)) {
+        const record = parseProvenanceRecord(value);
+        if (record) entries[skillFile] = record;
       }
       return entries;
     },
-    async record(skillFile: string, contentHash: string): Promise<void> {
+    async save(skillFile: string, record: AgentSkillProvenanceRecord | null): Promise<void> {
       // load→mutate→write is racy across concurrent store instances (subagents share
       // the same userData file and tmp name). Accepted: skill writes are ask-gated and
-      // approved serially, and a lost record only narrows to the in-memory guard for
-      // that session.
+      // approved serially, acceptance is a user-paced settings action, and a lost
+      // record only narrows to the in-memory guard for that session.
       const entries = await this.load();
-      entries[skillFile] = contentHash;
+      if (record === null) {
+        delete entries[skillFile];
+      } else {
+        entries[skillFile] = record;
+      }
       await writeJsonFile(provenancePath(), entries);
     },
+  };
+}
+
+function parseProvenanceRecord(value: unknown): AgentSkillProvenanceRecord | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const record: AgentSkillProvenanceRecord = {};
+  if (typeof raw.agentHash === 'string') record.agentHash = raw.agentHash;
+  if (typeof raw.acceptedHash === 'string') record.acceptedHash = raw.acceptedHash;
+  const previous = parsePreviousVersion(raw.previousVersion);
+  if (previous) record.previousVersion = previous;
+  return record.agentHash || record.acceptedHash || record.previousVersion ? record : null;
+}
+
+function parsePreviousVersion(value: unknown): AgentSkillPreviousVersion | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.hash !== 'string' || typeof raw.content !== 'string') return null;
+  return {
+    hash: raw.hash,
+    content: raw.content,
+    ...(typeof raw.agentHash === 'string' ? { agentHash: raw.agentHash } : {}),
   };
 }
 

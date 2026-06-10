@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-10
@@ -120,10 +120,11 @@ IPC needs a new request/response shape (keep it out of the protocol surface if p
 
 ## Checklist (one PR; internal build order — A7 foundation before consumers)
 
-- [ ] Store value `{ agentHash, acceptedHash }` + the `ratified` derivation in `addLoadedSkill`.
-- [ ] `agent_accept_skill` / `agent_revoke_skill_acceptance` IPC + registry methods + hot-reload.
-- [ ] Skills-tab pending-acceptance indicator + Accept/Revoke control.
-- [ ] Single-step undo: persist one prior version + "Undo last agent edit" Skills-tab action.
-- [ ] `skillify` `modelInvocable: true`.
-- [ ] Spec update (A6); `bun run typecheck` + `test:core` + `test:renderer`; light+dark
-      visual verification of the Skills tab; `/code-review` (trust-adjacent + IPC surface).
+- [x] Store value `{ agentHash, acceptedHash, previousVersion }` + the `ratified` derivation in `addLoadedSkill`.
+- [x] `agent_accept_skill` / `agent_revoke_skill_acceptance` IPC + registry methods + hot-reload.
+- [x] Skills-tab pending-acceptance indicator + Accept/Revoke control.
+- [x] Single-step undo: persist one prior version (in the trust record, cc's call) + "Undo last agent edit" Skills-tab action (`agent_undo_skill_agent_edit`).
+- [x] `skillify` `modelInvocable: true`.
+- [x] Spec update (A6); `bun run typecheck` + `test:core` + `test:renderer` all green.
+- [ ] At the gate (main agent): light+dark visual verification of the Skills tab;
+      `/code-review` (trust-adjacent + IPC surface).

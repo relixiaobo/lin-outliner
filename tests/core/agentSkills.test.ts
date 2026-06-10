@@ -10,6 +10,8 @@ import {
   parseSkillSlashCommand,
   resolveSkillContentTarget,
   skillContentHash,
+  type AgentSkillProvenanceRecord,
+  type AgentSkillProvenanceStore,
 } from '../../src/main/agentSkills';
 
 const execFile = promisify(execFileCallback);
@@ -56,27 +58,44 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
 });
 
 describe('skill ratification provenance', () => {
-  test('ratification survives a restart through the provenance store', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
-    const skillFile = path.join(root, '.agents', 'skills', 'authored', 'SKILL.md');
-    const content = [
+  // A trivial in-memory store standing in for the userData-backed file store.
+  function createMemoryProvenanceStore(): AgentSkillProvenanceStore & { records: Record<string, AgentSkillProvenanceRecord> } {
+    const records: Record<string, AgentSkillProvenanceRecord> = {};
+    return {
+      records,
+      load: async () => JSON.parse(JSON.stringify(records)),
+      save: async (file, record) => {
+        if (record === null) {
+          delete records[file];
+        } else {
+          records[file] = JSON.parse(JSON.stringify(record));
+        }
+      },
+    };
+  }
+
+  function skillMarkdown(body: string): string {
+    return [
       '---',
       'description: Agent-authored skill awaiting acceptance',
       '---',
-      'Follow the authored workflow.',
+      body,
       '',
     ].join('\n');
+  }
+
+  async function writeAuthoredSkill(name: string, body: string): Promise<{ root: string; skillFile: string; content: string }> {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
+    const skillFile = path.join(root, '.agents', 'skills', name, 'SKILL.md');
+    const content = skillMarkdown(body);
     await mkdir(path.dirname(skillFile), { recursive: true });
     await writeFile(skillFile, content, 'utf8');
+    return { root, skillFile, content };
+  }
 
-    // A trivial in-memory store standing in for the userData-backed file store.
-    const records: Record<string, string> = {};
-    const store = {
-      load: async () => ({ ...records }),
-      record: async (file: string, hash: string) => {
-        records[file] = hash;
-      },
-    };
+  test('ratification survives a restart through the provenance store', async () => {
+    const { root, skillFile, content } = await writeAuthoredSkill('authored', 'Follow the authored workflow.');
+    const store = createMemoryProvenanceStore();
 
     const first = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
     await first.recordAgentSkillWrite(skillFile, skillContentHash(content));
@@ -92,6 +111,104 @@ describe('skill ratification provenance', () => {
     // Without the store (record lost), the gate fails open to ratified.
     const third = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     expect((await third.getSkill('authored'))?.ratified).toBe(true);
+  });
+
+  test('accepting a skill ratifies exactly those bytes; an agent re-patch drops it back', async () => {
+    const { root, skillFile, content } = await writeAuthoredSkill('accepted', 'Follow the accepted workflow.');
+    const store = createMemoryProvenanceStore();
+
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
+    await runtime.notifySkillContentWritten([skillFile]);
+    expect((await runtime.getSkill('accepted'))?.ratified).toBe(false);
+
+    await runtime.acceptSkill('accepted');
+    const accepted = await runtime.getSkill('accepted');
+    expect(accepted?.ratified).toBe(true);
+    expect(accepted?.accepted).toBe(true);
+    const invocation = await runtime.invokeSkill({ skill: 'accepted', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+
+    // Acceptance survives a restart through the same store.
+    const restarted = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    expect((await restarted.getSkill('accepted'))?.ratified).toBe(true);
+
+    // An agent re-patch records a fresh agentHash; the stale acceptedHash no longer
+    // matches, so the skill drops back to unratified with no state machine involved.
+    const patched = skillMarkdown('Follow the patched workflow.');
+    await writeFile(skillFile, patched, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(patched), { hash: skillContentHash(content), content });
+    await runtime.notifySkillContentWritten([skillFile]);
+    const afterPatch = await runtime.getSkill('accepted');
+    expect(afterPatch?.ratified).toBe(false);
+    expect(afterPatch?.accepted).toBe(false);
+  });
+
+  test('revoking acceptance returns the skill to unratified', async () => {
+    const { root, skillFile, content } = await writeAuthoredSkill('revoked', 'Follow the revoked workflow.');
+    const store = createMemoryProvenanceStore();
+
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
+    await runtime.notifySkillContentWritten([skillFile]);
+    await runtime.acceptSkill('revoked');
+    expect((await runtime.getSkill('revoked'))?.ratified).toBe(true);
+
+    await runtime.revokeSkillAcceptance('revoked');
+    const revoked = await runtime.getSkill('revoked');
+    expect(revoked?.ratified).toBe(false);
+    expect(revoked?.accepted).toBe(false);
+    const invocation = await runtime.invokeSkill({ skill: 'revoked', trigger: 'agent' });
+    expect(invocation.ok).toBe(false);
+  });
+
+  test('undo restores the user original and self-ratifies; the slot is consumed', async () => {
+    const { root, skillFile, content: original } = await writeAuthoredSkill('undone', 'The user-authored original.');
+    const store = createMemoryProvenanceStore();
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+
+    // An agent edit over user-authored bytes: previous version carries no agentHash.
+    const edited = skillMarkdown('The agent-edited replacement.');
+    await writeFile(skillFile, edited, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(edited), { hash: skillContentHash(original), content: original });
+    await runtime.notifySkillContentWritten([skillFile]);
+    const afterEdit = await runtime.getSkill('undone');
+    expect(afterEdit?.ratified).toBe(false);
+    expect(afterEdit?.canUndoLastAgentEdit).toBe(true);
+
+    await runtime.undoLastAgentSkillEdit('undone');
+    const restored = await runtime.getSkill('undone');
+    expect(restored?.body).toContain('The user-authored original.');
+    // Restored bytes are human-produced -> ratification re-derives to true.
+    expect(restored?.ratified).toBe(true);
+    expect(restored?.canUndoLastAgentEdit).toBe(false);
+    await expect(runtime.undoLastAgentSkillEdit('undone')).rejects.toThrow('no recorded previous version');
+  });
+
+  test('undo back to an earlier agent version re-derives unratified', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
+    const skillFile = path.join(root, '.agents', 'skills', 'agent-born', 'SKILL.md');
+    await mkdir(path.dirname(skillFile), { recursive: true });
+    const store = createMemoryProvenanceStore();
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+
+    // Agent creates v1 (no previous -> no undo), then patches to v2.
+    const v1 = skillMarkdown('Agent version one.');
+    await writeFile(skillFile, v1, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(v1), null);
+    await runtime.notifySkillContentWritten([skillFile]);
+    expect((await runtime.getSkill('agent-born'))?.canUndoLastAgentEdit).toBe(false);
+
+    const v2 = skillMarkdown('Agent version two.');
+    await writeFile(skillFile, v2, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(v2), { hash: skillContentHash(v1), content: v1 });
+    await runtime.notifySkillContentWritten([skillFile]);
+
+    await runtime.undoLastAgentSkillEdit('agent-born');
+    const restored = await runtime.getSkill('agent-born');
+    expect(restored?.body).toContain('Agent version one.');
+    // v1 was itself agent-written, so the restored skill is unratified again.
+    expect(restored?.ratified).toBe(false);
   });
 });
 
@@ -271,20 +388,24 @@ describe('agent skills', () => {
     expect(reminderText).toContain('<turn-context>visible node</turn-context>');
   });
 
-  test('ships skillify as a built-in slash-only authoring workflow', async () => {
+  test('ships skillify as a built-in model-invocable authoring workflow', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-skillify-'));
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
+    // Model-invocable: a conversational "save this as a skill" picks up the curated
+    // skillify guidance instead of ad-hoc file writes. The written skill is still
+    // born unratified, so this widens discovery, not trust.
     const automaticListing = await runtime.buildSkillListingReminderText(200_000);
     const skill = await runtime.getSkill('skillify');
     const prompt = await createSlashSkillPrompt(runtime, '/skillify turn this workflow into a reusable skill', null);
 
-    expect(automaticListing).toBeNull();
+    expect(automaticListing).toContain('- skillify:');
     expect(skill).toMatchObject({
       name: 'skillify',
       source: 'built-in',
-      modelInvocable: false,
+      modelInvocable: true,
       userInvocable: true,
+      ratified: true,
     });
     const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
     expect(text).toContain('Skill authoring workflow');
@@ -551,7 +672,8 @@ describe('agent skills', () => {
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
-    expect(await runtime.buildSkillListingReminderText(200_000)).toBeNull();
+    // Drain the initial listing (built-in skillify) so only activation remains.
+    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('typescript-review');
     await runtime.notifyFileTouched([path.join(root, 'src', 'main.ts')]);
     const [message] = runtime.drainSteeringMessages();
     const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
@@ -581,7 +703,8 @@ describe('agent skills', () => {
 
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
-    expect(await runtime.buildSkillListingReminderText(200_000)).toBeNull();
+    // Drain the initial listing (built-in skillify) so only activation remains.
+    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('src-directory');
     await runtime.notifyFileTouched([path.join(root, 'src')]);
     const [directoryMessage] = runtime.drainSteeringMessages();
     const directoryText = directoryMessage?.content[0]?.type === 'text' ? directoryMessage.content[0].text : '';

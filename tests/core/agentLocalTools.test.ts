@@ -612,6 +612,45 @@ describe('agent local tools', () => {
     });
   });
 
+  test('gateway-captured previous content powers single-step undo of an agent edit', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'undoable-skill', 'SKILL.md');
+      const originalContent = [
+        '---',
+        'description: Hand-authored skill the agent will edit',
+        '---',
+        'Use hand-tuned instructions.',
+        '',
+      ].join('\n');
+      await mkdir(path.dirname(skillFile), { recursive: true });
+      await writeFile(skillFile, originalContent, 'utf8');
+
+      await (fileRead.execute as any)('read-undoable-skill', { file_path: skillFile });
+      const result = await (fileEdit.execute as any)('edit-undoable-skill', {
+        file_path: skillFile,
+        old_string: 'Use hand-tuned instructions.',
+        new_string: 'Use agent-edited instructions.',
+      });
+      expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
+      const edited = await skillRuntime.getSkill('undoable-skill');
+      expect(edited?.ratified).toBe(false);
+      expect(edited?.canUndoLastAgentEdit).toBe(true);
+
+      // Undo restores the user's bytes; ratification re-derives to true and the
+      // one-shot previous-version slot is consumed.
+      await skillRuntime.undoLastAgentSkillEdit('undoable-skill');
+      const restored = await skillRuntime.getSkill('undoable-skill');
+      expect(restored?.body).toContain('hand-tuned instructions');
+      expect(restored?.ratified).toBe(true);
+      expect(restored?.canUndoLastAgentEdit).toBe(false);
+    });
+  });
+
   test('skill validation lets agents repair broken previous frontmatter', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });

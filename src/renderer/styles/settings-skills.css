@@ -8,3 +8,27 @@
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
+
+/* "Accept" on a pending-acceptance skill row — the same quiet secondary recipe as
+   the provider "Configure" button, but always visible: accepting is the row's call
+   to action, not a shortcut for something the row click already does, so it must
+   not hide behind hover. Neutral --fill ladder only (B3/B4). */
+.settings-skill-accept {
+  border-radius: var(--radius-sm);
+  background: var(--fill-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  line-height: var(--line-ui-2xs);
+  padding: var(--space-2) var(--space-3);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.settings-skill-accept:hover:not(:disabled) {
+  background: var(--fill-4);
+  color: var(--text-strong);
+}
+
+.settings-skill-accept:disabled {
+  color: var(--text-tertiary);
+}

@@ -983,17 +983,43 @@ export class AgentRuntime {
   }
 
   async listAllSkills(conversationId: string) {
+    return (await this.skillRuntimeForConversation(conversationId)).listAllSkills();
+  }
+
+  async acceptSkill(conversationId: string, skillName: string) {
+    const skillRuntime = await this.skillRuntimeForConversation(conversationId);
+    await skillRuntime.acceptSkill(skillName);
+    return skillRuntime.listAllSkills();
+  }
+
+  async revokeSkillAcceptance(conversationId: string, skillName: string) {
+    const skillRuntime = await this.skillRuntimeForConversation(conversationId);
+    await skillRuntime.revokeSkillAcceptance(skillName);
+    return skillRuntime.listAllSkills();
+  }
+
+  async undoLastAgentSkillEdit(conversationId: string, skillName: string) {
+    const skillRuntime = await this.skillRuntimeForConversation(conversationId);
+    await skillRuntime.undoLastAgentSkillEdit(skillName);
+    return skillRuntime.listAllSkills();
+  }
+
+  /**
+   * The live session skill runtime when one exists (so trust actions hot-reload the
+   * session the Skills panel is looking at), else a throwaway runtime over the same
+   * skill dirs AND the same persisted trust store — without the store a sessionless
+   * Skills panel would fail open to "everything ratified".
+   */
+  private async skillRuntimeForConversation(conversationId: string): Promise<AgentSkillRuntime> {
     const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
-    if (session) {
-      return session.skillRuntime.listAllSkills();
-    }
+    if (session) return session.skillRuntime;
     const runtimeSettings = await this.getRuntimeSettings();
-    const tempRuntime = new AgentSkillRuntime({
+    return new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
     });
-    return tempRuntime.listAllSkills();
   }
 
   async renameConversation(conversationId: string, title: string) {

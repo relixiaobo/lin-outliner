@@ -192,6 +192,13 @@ export const zhHans: PartialMessages = {
       installedGroup: '已安装的能力',
       installedAriaLabel: '已安装的能力',
       toggleSkill: ({ name }: { name: string }) => `切换 ${name}`,
+      pendingChip: '待接受',
+      acceptedChip: '已接受',
+      acceptButton: '接受',
+      acceptSkill: ({ name }: { name: string }) => `接受 ${name} 用于自动调用`,
+      revokeAcceptance: '撤销接受',
+      undoAgentEdit: '撤销上次智能体编辑',
+      rowActionsAriaLabel: ({ name }: { name: string }) => `${name} 操作`,
     },
     agents: {
       sectionAriaLabel: '智能体配置',

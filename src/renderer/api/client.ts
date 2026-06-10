@@ -369,6 +369,12 @@ export const api = {
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: (conversationId: string) =>
     command<SkillDefinition[]>('agent_list_all_skills', { conversationId }),
+  agentAcceptSkill: (conversationId: string, skillName: string) =>
+    command<SkillDefinition[]>('agent_accept_skill', { conversationId, skillName }),
+  agentRevokeSkillAcceptance: (conversationId: string, skillName: string) =>
+    command<SkillDefinition[]>('agent_revoke_skill_acceptance', { conversationId, skillName }),
+  agentUndoSkillAgentEdit: (conversationId: string, skillName: string) =>
+    command<SkillDefinition[]>('agent_undo_skill_agent_edit', { conversationId, skillName }),
   agentCreateAgentDefinition: (conversationId: string, input: AgentAuthoringInput, storage: AgentStorageLocation) =>
     command<AgentDefinitionView[]>('agent_create_agent_definition', { conversationId, input, storage }),
   agentUpdateAgentDefinition: (conversationId: string, agentId: string, input: AgentAuthoringInput) =>
