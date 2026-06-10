@@ -66,9 +66,13 @@ Both 2026-06-09 lanes merged — board is between batches.
   **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
   peer reply, one PR — membership alone would be a scaffold slice; **claimed #179,
   paused pending the clean-cut, resumes on the clean base**) →
+  **run unification** (`agent-run-unification`, **PM-ratified 2026-06-10**: dissolve
+  the subagent entity — child runs become ordinary run ledgers, one evidence scheme,
+  one watermark shape, event-sourced compaction; the #164/#178 guards become
+  structural) →
   **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
-  the one new primitive; depends on Phase 1 + M3-A + the clean-cut) → **M3-C**
-  per-agent POV inspector (`agent-pov-projection`).
+  the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification) →
+  **M3-C** per-agent POV inspector (`agent-pov-projection`).
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
 

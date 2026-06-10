@@ -56,10 +56,14 @@ log is hard-deleted on startup; the only residue is the internal field name `ses
 
 ## Two kinds of agent-to-agent relationship
 
-- **Sub-agent (delegation, within a run)** — an agent spawns helper runs (fork = inherit
-  the parent transcript/identity; fresh = a typed agent with its own identity + memory
-  line, #164). Child runs carry `parentRunId`; their transcript returns to the parent as
-  a run-log artifact. Not conversation members. ✅
+- **Delegation (a child run — NOT a separate kind of agent)** — an agent spawns helper
+  runs (fork = the same agent continuing in a child run; fresh = an ordinary typed agent
+  with its own identity + memory line, #164). Child runs carry `parentRunId`; not
+  conversation members. ✅ — with one honest caveat: the *code* still implements
+  "subagent" as an entity-grade species (transcript = payload snapshot in parent state,
+  own coordinate codec + watermark shape) rather than the pure Run relationship the
+  model claims. **Dissolution PM-ratified 2026-06-10:** `agent-run-unification` (after
+  M3-A, before M3-B) makes child runs ordinary run ledgers and deletes the species.
 - **Peer agent (a Channel member)** — multiple agent Principals share one conversation
   with the user; routed by `addressedTo` (a run is produced iff a principal is addressed;
   coordinator = the default addressee). ⚠/◻ — `members`/`actor` are real; `addressedTo`,

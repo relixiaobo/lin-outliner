@@ -14,10 +14,11 @@ hard isolation gate ship together — sharing without the gate is the known
 failure mode (unifying "self" and "other" memory unifies the leak), and the
 gate alone has nothing to protect.
 
-**Dependencies:** Phase 1 (`agent-memory-source-binding`, in build) — citing a
-co-member's distilled fact inherits its provenance integrity, so the binding
-must survive compaction first. **M3-A** (`agent-channel-peers`) — agent
-co-members only exist once Channels do.
+**Dependencies:** Phase 1 (`agent-memory-source-binding`, merged #178) — citing
+a co-member's distilled fact inherits its provenance integrity. **M3-A**
+(`agent-channel-peers`) — agent co-members only exist once Channels do.
+**`agent-run-unification`** — citing rides the unified seq/eventId evidence
+scheme (one addressing mode under the isolation gate, not two).
 
 ## Goal
 

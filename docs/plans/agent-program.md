@@ -295,9 +295,16 @@ reinvent.
     (`addressedTo`, coordinator) + peer-agent reply (`actor` = agent principal) +
     the §8 POV flatten at assembly. Membership-without-reply would be a scaffold
     slice, so these ship together. Plan: `agent-channel-peers`. In build (cc).
+  - **Run unification (PM-ratified 2026-06-10) — between M3-A and M3-B.** Dissolve
+    the subagent entity: child runs become ordinary `runs/<runId>/` ledgers
+    (`parentRunId` relationship), one evidence scheme + one watermark shape +
+    event-sourced compaction everywhere; the `Subagent` species leaves the type
+    system. Plan: `agent-run-unification`. The #164/#178 guard family becomes
+    structural.
   - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
-    (the one new primitive; depends on Phase 1 + M3-A + the storage clean-cut).
-    Plan: `agent-cross-agent-memory`.
+    (the one new primitive; depends on Phase 1 + M3-A + the clean-cut + run
+    unification — its citing rides the unified evidence scheme). Plan:
+    `agent-cross-agent-memory`.
   - **M3-C — per-agent POV inspector** (derived view over M3-A's assembly
     derivation). Plan: `agent-pov-projection`.
   - Open PM gates carried inside the plans: group default-`addressedTo` (M3-A Q1)
