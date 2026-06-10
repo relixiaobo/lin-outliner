@@ -154,47 +154,74 @@ async function sendMessageApprovingAgent(
   await sendPromise;
 }
 
+/** Streams whatever `pick` returns for each model call — the content-dispatched base
+ *  that `scriptedStream` layers its ordered queue on top of. Use it directly when the
+ *  call order is not deterministic (e.g. a background fork racing its parent). */
+function respondingStream(
+  pick: (context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage | Promise<AssistantMessage>,
+): StreamFn {
+  return ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+    const stream = createAssistantMessageEventStream();
+    queueMicrotask(async () => {
+      try {
+        const message = normalizeAssistantMessage(await pick(context, options, model), model);
+        if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+          stream.push({ type: 'error', reason: message.stopReason, error: message });
+          stream.end(message);
+          return;
+        }
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
+        stream.end(message);
+      } catch (error) {
+        const message = normalizeAssistantMessage(
+          fauxAssistantMessage([], {
+            stopReason: 'error',
+            errorMessage: error instanceof Error ? error.message : String(error),
+          }),
+          model,
+        );
+        stream.push({ type: 'error', reason: 'error', error: message });
+        stream.end(message);
+      }
+    });
+    return stream;
+  }) as StreamFn;
+}
+
 function scriptedStream(
   responses: Array<AssistantMessage | ((context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage | Promise<AssistantMessage>)>,
   onCall: (model: Model<Api>, context: Context) => void,
 ): { streamFn: StreamFn; pendingCount: () => number } {
   const queue = [...responses];
+  const inner = respondingStream((context, options, model) => {
+    const step = queue.shift();
+    if (!step) return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'No more scripted responses queued.' });
+    return typeof step === 'function' ? step(context, options, model) : step;
+  });
   return {
     pendingCount: () => queue.length,
     streamFn: ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
       onCall(model, context);
-      const stream = createAssistantMessageEventStream();
-      const step = queue.shift();
-      queueMicrotask(async () => {
-        try {
-          const response = step
-            ? typeof step === 'function'
-              ? await step(context, options, model)
-              : step
-            : fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'No more scripted responses queued.' });
-          const message = normalizeAssistantMessage(response, model);
-          if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-            stream.push({ type: 'error', reason: message.stopReason, error: message });
-            stream.end(message);
-            return;
-          }
-          stream.push({ type: 'start', partial: { ...message, content: [] } });
-          stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
-          stream.end(message);
-        } catch (error) {
-          const message = normalizeAssistantMessage(
-            fauxAssistantMessage([], {
-              stopReason: 'error',
-              errorMessage: error instanceof Error ? error.message : String(error),
-            }),
-            model,
-          );
-          stream.push({ type: 'error', reason: 'error', error: message });
-          stream.end(message);
-        }
-      });
-      return stream;
+      return inner(model, context, options);
     }) as StreamFn,
+  };
+}
+
+/** contextWindow 20_000 is load-bearing: small enough that the scripted large tool
+ *  outputs push the estimated context past the auto-compact threshold. */
+function compactTestModel(id: string, name: string): Model<Api> {
+  return {
+    id,
+    name,
+    provider: 'openai',
+    api: 'openai-completions',
+    baseUrl: '',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 20_000,
+    maxTokens: 1_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   };
 }
 
@@ -798,18 +825,7 @@ describe('agent runtime subagents', () => {
       ],
       () => undefined,
     );
-    const compactModel: Model<Api> = {
-      id: 'subagent-compact-test-model',
-      name: 'Subagent Compact Test Model',
-      provider: 'openai',
-      api: 'openai-completions',
-      baseUrl: '',
-      reasoning: false,
-      input: ['text'],
-      contextWindow: 20_000,
-      maxTokens: 1_000,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
+    const compactModel = compactTestModel('subagent-compact-test-model', 'Subagent Compact Test Model');
 
     const { AgentRuntime } = await loadRuntimeModule();
     const sink = createWindowSink();
@@ -968,28 +984,10 @@ describe('agent runtime subagents', () => {
       }
       return fauxAssistantMessage(fauxText('Parent final after fork.'));
     };
-    const streamFn: StreamFn = ((model: Model<Api>, context: Context) => {
-      const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => {
-        const message = normalizeAssistantMessage(pickResponse(context), model);
-        stream.push({ type: 'start', partial: { ...message, content: [] } });
-        stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
-        stream.end(message);
-      });
-      return stream;
-    }) as StreamFn;
-    const compactModel: Model<Api> = {
-      id: 'fork-compact-dream-test-model',
-      name: 'Fork Compact Dream Test Model',
-      provider: 'openai',
-      api: 'openai-completions',
-      baseUrl: '',
-      reasoning: false,
-      input: ['text'],
-      contextWindow: 20_000,
-      maxTokens: 1_000,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
+    // The fork runs in the background, racing the parent for model calls — dispatch by
+    // context content instead of a deterministic scripted order.
+    const streamFn = respondingStream((context) => pickResponse(context));
+    const compactModel = compactTestModel('fork-compact-dream-test-model', 'Fork Compact Dream Test Model');
 
     const { AgentRuntime } = await loadRuntimeModule();
     const sink = createWindowSink();

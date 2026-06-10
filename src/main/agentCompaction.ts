@@ -1,6 +1,6 @@
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import path from 'node:path';
-import { isHiddenAgentContextBlock, SYSTEM_REMINDER_END, systemReminder } from '../core/agentAttachments';
+import { isHiddenAgentContextBlock, SYSTEM_REMINDER_START, systemReminder } from '../core/agentAttachments';
 import type { AgentMessage as Message, AssistantMessage, TextContent, ToolResultMessage, UserMessage } from '../core/agentTypes';
 import type { PostCompactRestoredFile } from './agentLocalTools';
 
@@ -193,6 +193,12 @@ export function formatCompactSummary(summary: string): string {
   return formatted.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// PERSISTED FORMAT SURFACE. These strings are written into durable transcripts and
+// payloads (the post-compact reminder message) and parsed back verbatim by
+// extractCompactSummaryFromReminder below. Changing any wording is a format change:
+// summaries already on disk would silently stop extracting, with no error and no red
+// test (the round-trip tests share these constants). Pre-release policy applies — on a
+// wording change, wipe ~/.lin-outliner-* dev userData rather than ship a dual reader.
 const COMPACT_REMINDER_PREAMBLE = 'This session is being continued from a previous conversation that was compacted. The summary below covers the earlier portion of the conversation.';
 const COMPACT_REMINDER_RECENT_PRESERVED = 'Recent messages after this summary are preserved verbatim in the conversation context.';
 const COMPACT_REMINDER_CONTINUE = 'Continue from where the session left off. Do not ask the user to restate context that is present in this summary.';
@@ -212,19 +218,26 @@ export function compactSummaryReminder(summary: string, recentMessagesPreserved 
  * transcript payload is superseded by compaction, this reminder is the only durable carrier
  * of the pre-compaction content — readers that filter hidden boilerplate must still surface
  * it as evidence.
+ *
+ * The preamble must sit at the very start of the reminder body (where the producer above
+ * always puts it) and the continue-trailer must be present. Anchoring matters: hidden
+ * blocks carry arbitrary content (memory facts, outline text), and an unanchored substring
+ * match would misclassify any block that merely QUOTES the preamble — leaking that block's
+ * hidden context into Dream evidence on every turn.
  */
 export function extractCompactSummaryFromReminder(text: string): string | null {
-  const preambleIndex = text.indexOf(COMPACT_REMINDER_PREAMBLE);
-  if (preambleIndex < 0) return null;
-  let body = text.slice(preambleIndex + COMPACT_REMINDER_PREAMBLE.length);
-  const continueIndex = body.indexOf(COMPACT_REMINDER_CONTINUE);
-  if (continueIndex >= 0) body = body.slice(0, continueIndex);
-  const preservedIndex = body.indexOf(COMPACT_REMINDER_RECENT_PRESERVED);
-  if (preservedIndex >= 0) body = body.slice(0, preservedIndex);
-  const endIndex = body.indexOf(SYSTEM_REMINDER_END);
-  if (endIndex >= 0) body = body.slice(0, endIndex);
-  const summary = body.trim();
-  return summary || null;
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith(SYSTEM_REMINDER_START)) return null;
+  const body = trimmed.slice(SYSTEM_REMINDER_START.length).trimStart();
+  if (!body.startsWith(COMPACT_REMINDER_PREAMBLE)) return null;
+  let summary = body.slice(COMPACT_REMINDER_PREAMBLE.length);
+  const continueIndex = summary.indexOf(COMPACT_REMINDER_CONTINUE);
+  if (continueIndex < 0) return null;
+  summary = summary.slice(0, continueIndex);
+  const preservedIndex = summary.indexOf(COMPACT_REMINDER_RECENT_PRESERVED);
+  if (preservedIndex >= 0) summary = summary.slice(0, preservedIndex);
+  const result = summary.trim();
+  return result || null;
 }
 
 export function createPostCompactMessage(
