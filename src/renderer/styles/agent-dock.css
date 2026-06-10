@@ -210,6 +210,30 @@ button.panel-resize-handle {
   transform: rotate(180deg);
 }
 
+/* Channel member strip: passive metadata beside the title — neutral text only
+   (B3), no fills; the coordinator reads one step stronger. */
+.agent-dock-members {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.agent-dock-member {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+}
+
+.agent-dock-member.is-coordinator {
+  color: var(--text-soft);
+}
+
 .agent-dock-actions {
   display: flex;
   flex: 0 0 auto;
@@ -338,6 +362,16 @@ button.panel-resize-handle {
 
 .agent-conversation-row.is-current .agent-conversation-name {
   font-weight: 500;
+}
+
+/* Channel rows list their agent members (`@a @b`) between name and time meta. */
+.agent-conversation-members {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-conversation-meta {

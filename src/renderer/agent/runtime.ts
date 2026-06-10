@@ -27,13 +27,14 @@ import type {
   AgentRenderActiveDream,
   AgentRenderCompactionEntity,
   AgentRenderDreamEntity,
+  AgentRenderMemberView,
   AgentRenderMessageEntity,
   AgentRenderProjection,
   AgentRenderSubagentEntity,
   AgentRenderTaskEntity,
   AgentRenderTaskStatus,
 } from '../../core/agentRenderProjection';
-import type { AgentPersistedContent } from '../../core/agentEventLog';
+import type { AgentActor, AgentPersistedContent } from '../../core/agentEventLog';
 
 export interface AgentMessageEntry {
   id: string;
@@ -42,6 +43,8 @@ export interface AgentMessageEntry {
   message: AgentConversationMessage;
   branches: AgentMessageBranchState | null;
   streaming: boolean;
+  /** Who produced this message (Channel attribution); null for the streaming placeholder. */
+  actor: AgentActor | null;
 }
 
 export interface AgentCompletedCompactionEntry {
@@ -205,6 +208,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       message,
       branches: row.archived ? null : entity.branches,
       streaming,
+      actor: entity.actor,
     });
   }
 
@@ -262,6 +266,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       message: createActiveAssistantPlaceholder(projection, entries),
       branches: null,
       streaming: true,
+      actor: null,
     });
   }
 
@@ -497,6 +502,8 @@ export interface LinAgentRuntimeView {
   conversationId: string | null;
   conversationTitle: string | null;
   conversationCost: number;
+  /** Conversation members (user + agents); ≥2 agent members = a Channel. */
+  members: AgentRenderMemberView[];
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
@@ -1047,6 +1054,7 @@ export class AgentRuntimeStore {
       conversationId: this.conversationId,
       conversationTitle: this.projection.conversationTitle,
       conversationCost: conversationCost(this.projection),
+      members: this.projection.members,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
       subagentRunIds: this.projection.subagentRunIds,

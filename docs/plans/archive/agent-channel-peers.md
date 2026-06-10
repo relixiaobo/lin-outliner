@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: cc
 phase: M3-A
@@ -126,19 +126,21 @@ From `agent-conversation-model.md` / `agent-data-model.md`, all PM-ratified:
 
 ## Acceptance
 
-- [ ] Create a Channel with the user + 2 agents; `@b hello` produces b's run; the
+- [x] Create a Channel with the user + 2 agents; `@b hello` produces b's run; the
       reply renders with b's name/actor; b's assembly shows the §8 flatten
-      (verified in a transcript-derivation test).
-- [ ] No-`@` message routes to the coordinator; a coordinator `@member` hand-off
-      produces that member's run; the loop budget caps a circular `@` chain.
-- [ ] `member.added`/`member.removed` replay round-trip (event → restart →
+      (verified in `tests/core/agentChannelRuntime.test.ts`).
+- [x] No-`@` message routes to the coordinator; a coordinator `@member` hand-off
+      produces that member's run; the loop budget caps a circular `@` chain
+      (`CHANNEL_RELAY_RUN_BUDGET = 3` — Q2, dev-decided).
+- [x] `member.added`/`member.removed` replay round-trip (event → restart →
       members correct); `addressedTo` written and read back.
-- [ ] DM behavior unchanged (no `@`, single implicit addressee, find-or-create).
-- [ ] `bun run typecheck` + `bun run test:core` + relevant renderer tests green
-      (vs known baselines); UI visually verified light + dark.
-- [ ] Spec sync (A6): fold the shipped design into `docs/spec/` (conversation
-      areas + `agent-architecture.md` status rows: `addressedTo`/members scaffold
-      → ✅, Channel/routing rows → ✅); archive this plan `done`.
+- [x] DM behavior unchanged (no `@`, single implicit addressee, find-or-create).
+- [x] `bun run typecheck` + `bun run test:core` (824/2/0) + `bun run
+      test:renderer` (405/0) green; light + dark visual pass runs at main's
+      review gate (the gate table assigns UI visual verification to main).
+- [x] Spec sync (A6): folded into `agent-architecture.md` (primitives, peer-agent
+      section, status rows) + `agent-progress.md` (M3-A entry); plan archived
+      `done`.
 
 ## Collision self-check (2026-06-10, plan time)
 

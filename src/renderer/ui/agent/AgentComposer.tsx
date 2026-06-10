@@ -45,6 +45,7 @@ import {
   type AgentComposerEditorSnapshot,
   type AgentComposerFileReference,
   type AgentComposerLocalFileCandidate,
+  type AgentComposerMemberCandidate,
   type AgentComposerNodeReference,
 } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -55,6 +56,8 @@ interface AgentComposerProps {
   currentNodeId: NodeId | null;
   index: DocumentIndex;
   isStreaming: boolean;
+  /** Channel agent members for the `@` typeahead; empty in a DM. */
+  members: readonly AgentComposerMemberCandidate[];
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
   onSend: (
     message: string,
@@ -173,6 +176,7 @@ export function AgentComposer({
   currentNodeId,
   index,
   isStreaming,
+  members,
   onModelChange,
   onNodeReferenceOpen,
   onReasoningChange,
@@ -663,6 +667,7 @@ export function AgentComposer({
               currentNodeId={currentNodeId}
               index={index}
               isStreaming={isStreaming}
+              members={members}
               onChange={handleDraftChange}
               onFilesPasted={(files) => void addFilesInline(files)}
               onLocalFilePreview={previewLocalFile}

@@ -24,6 +24,7 @@ import { NodeReferenceMenuIcon } from '../outliner/NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListbox, PopoverListItem } from '../outliner/PopoverList';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
+  AgentIcon,
   CommandIcon,
   DatabaseIcon,
   FileArchiveIcon,
@@ -82,6 +83,13 @@ export interface AgentComposerLocalFileCandidate {
   thumbnailDataUrl?: string;
 }
 
+/** A Channel agent member offered by the `@` typeahead (inserted as plain `@mention` text). */
+export interface AgentComposerMemberCandidate {
+  mention: string;
+  displayName: string;
+  coordinator?: boolean;
+}
+
 export interface AgentComposerDraft {
   empty: boolean;
   fileRefs: AgentComposerFileReference[];
@@ -107,6 +115,8 @@ interface AgentComposerEditorProps {
   currentNodeId: NodeId | null;
   index: DocumentIndex;
   isStreaming: boolean;
+  /** Channel agent members for the `@` typeahead; empty in a DM (no member items). */
+  members: readonly AgentComposerMemberCandidate[];
   onChange: (draft: AgentComposerDraft) => void;
   onFilesPasted: (files: File[]) => void;
   onLocalFilePreview: (file: AgentComposerLocalFileCandidate) => Promise<AgentComposerLocalFileCandidate | null>;
@@ -168,6 +178,12 @@ type MentionMenuItem =
     section: 'Recent' | 'Files';
     key: string;
     file: AgentComposerLocalFileCandidate;
+  }
+  | {
+    kind: 'member';
+    section: 'Members';
+    key: string;
+    member: AgentComposerMemberCandidate;
   };
 
 const agentComposerSchema = new Schema({
@@ -312,6 +328,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
           currentNodeId: props.currentNodeId,
           index: props.index,
           localFileSearch,
+          members: props.members,
           query: trigger.query,
           recentLocalFiles: props.recentLocalFiles,
           labels: referenceCandidateLabels(t),
@@ -320,6 +337,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
         localFileSearch,
         props.currentNodeId,
         props.index,
+        props.members,
         props.recentLocalFiles,
         trigger?.mode,
         trigger?.query,
@@ -682,7 +700,11 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
                   onSelect={async (item) => {
                     const view = viewRef.current;
                     if (!view) return;
-                    if (item.kind === 'node') {
+                    if (item.kind === 'member') {
+                      // Plain text on purpose: routing parses `@mention` from the raw
+                      // message text (parseAgentMentionTargets), no atom node needed.
+                      replaceWithText(view, trigger, `@${item.member.mention} `);
+                    } else if (item.kind === 'node') {
                       replaceWithNodeReference(view, trigger, {
                         nodeId: item.id,
                         title: item.label,
@@ -1126,7 +1148,9 @@ function MentionMenu({
             active={itemIndex === selectedIndex}
             icon={item.kind === 'node'
               ? <NodeReferenceMenuIcon index={index} node={item.node} />
-              : <MentionFileIcon file={item.file} />}
+              : item.kind === 'member'
+                ? <AgentIcon size={ICON_SIZE.menu} />
+                : <MentionFileIcon file={item.file} />}
             iconClassName="popover-item-icon"
             label={item.kind === 'node'
               ? (
@@ -1135,12 +1159,19 @@ function MentionMenu({
                     {item.breadcrumb ? <span className="popover-item-meta">{item.breadcrumb}</span> : null}
                   </>
                 )
-              : (
-                  <>
-                    <MiddleTruncatedFilename name={item.file.name} />
-                    <span className="popover-item-meta">{item.file.parentPath}</span>
-                  </>
-                )}
+              : item.kind === 'member'
+                ? (
+                    <>
+                      <span>{item.member.displayName}</span>
+                      <span className="popover-item-meta">{`@${item.member.mention}`}</span>
+                    </>
+                  )
+                : (
+                    <>
+                      <MiddleTruncatedFilename name={item.file.name} />
+                      <span className="popover-item-meta">{item.file.parentPath}</span>
+                    </>
+                  )}
             {...(item.kind === 'file' ? { 'data-entry-kind': item.file.entryKind } : {})}
             onClick={() => onSelect(item)}
             onMouseEnter={() => setSelectedIndex(itemIndex)}
@@ -1294,6 +1325,7 @@ function mentionMenuItems({
   currentNodeId,
   index,
   localFileSearch,
+  members,
   query,
   recentLocalFiles,
   labels,
@@ -1305,13 +1337,16 @@ function mentionMenuItems({
     results: AgentComposerLocalFileCandidate[];
     status: 'idle' | 'loading' | 'ready' | 'error';
   };
+  members: readonly AgentComposerMemberCandidate[];
   query: string;
   recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
   labels: ReferenceCandidateLabels;
 }): MentionMenuItem[] {
   const trimmedQuery = query.trim();
+  const memberItems = memberMenuItems(members, trimmedQuery);
   if (!trimmedQuery) {
     return [
+      ...memberItems,
       ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES, labels).map((item): MentionMenuItem => ({
         ...item,
         section: 'Recent',
@@ -1322,7 +1357,7 @@ function mentionMenuItems({
         key: `file:${file.id}`,
         file,
       })),
-    ].slice(0, MAX_MENTION_NODES + MAX_MENTION_FILES);
+    ].slice(0, memberItems.length + MAX_MENTION_NODES + MAX_MENTION_FILES);
   }
   const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery, labels)
     .slice(0, MAX_MENTION_NODES)
@@ -1338,7 +1373,24 @@ function mentionMenuItems({
         file,
       }))
     : [];
-  return [...nodeItems, ...fileItems];
+  return [...memberItems, ...nodeItems, ...fileItems];
+}
+
+function memberMenuItems(
+  members: readonly AgentComposerMemberCandidate[],
+  trimmedQuery: string,
+): MentionMenuItem[] {
+  const lowerQuery = trimmedQuery.toLowerCase();
+  return members
+    .filter((member) => !lowerQuery
+      || member.mention.toLowerCase().includes(lowerQuery)
+      || member.displayName.toLowerCase().includes(lowerQuery))
+    .map((member): MentionMenuItem => ({
+      kind: 'member',
+      section: 'Members',
+      key: `member:${member.mention}`,
+      member,
+    }));
 }
 
 function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number, labels: ReferenceCandidateLabels) {

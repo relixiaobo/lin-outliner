@@ -727,6 +727,7 @@ commandPalette: {
       openDebug: '打开智能体调试',
       conversations: '频道',
       noConversations: '暂无频道',
+      channelMembers: '频道成员',
       unreadTasks: ({ count }: { count: number }) => `${count} 条未读任务更新`,
       conversationTitle: '频道名称',
       cancelRename: '取消重命名',

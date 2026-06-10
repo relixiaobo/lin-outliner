@@ -16,6 +16,8 @@ import type {
   AssistantMessage,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
+import { agentMentionToken, channelAgentMembers } from '../../../core/agentChannel';
+import type { AgentRenderMemberView } from '../../../core/agentRenderProjection';
 import type {
   AgentProviderSettingsView,
   AgentReasoningLevel,
@@ -192,6 +194,15 @@ function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
   return isBoundaryEntry(entry) || (entry as AgentMessageEntry).message.role === 'user';
 }
 
+// Channel relay puts back-to-back assistant turns from DIFFERENT agents in the
+// transcript; merging across that seam would attribute one agent's words to
+// another. The streaming placeholder (actor null) merges with anything.
+function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
+  const leftAgentId = left.actor?.type === 'agent' ? left.actor.agentId : null;
+  const rightAgentId = right.actor?.type === 'agent' ? right.actor.agentId : null;
+  return leftAgentId === null || rightAgentId === null || leftAgentId === rightAgentId;
+}
+
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   const lastEntry = entries[entries.length - 1]!;
   return {
@@ -225,6 +236,7 @@ function buildConversationRenderRows(
       while (index < entries.length) {
         const candidate = entries[index]!;
         if (!isAssistantEntry(candidate)) break;
+        if (assistantEntries.length > 0 && !sameAssistantActor(assistantEntries[0]!, candidate)) break;
         assistantEntries.push(candidate);
         index += 1;
       }
@@ -516,6 +528,7 @@ export function AgentChatPanel({
     sendMessage: sendRuntimeMessage,
     conversationId,
     conversationTitle,
+    members,
     steer: steerRuntime,
     subagents,
     subagentsByParentToolCallId,
@@ -557,6 +570,30 @@ export function AgentChatPanel({
     [entries, turnPhase],
   );
   const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
+  // ≥2 agent members = a Channel: member strip on the header, `@` typeahead in the
+  // composer, and actor badges on non-coordinator assistant rows.
+  const agentMembers = useMemo(
+    () => members.filter((member) => member.principal.type === 'agent' && member.mention),
+    [members],
+  );
+  const isChannel = agentMembers.length >= 2;
+  const memberByAgentId = useMemo(() => {
+    const map = new Map<string, AgentRenderMemberView>();
+    for (const member of agentMembers) {
+      if (member.principal.type === 'agent') map.set(member.principal.agentId, member);
+    }
+    return map;
+  }, [agentMembers]);
+  const composerMembers = useMemo(
+    () => (isChannel
+      ? agentMembers.map((member) => ({
+          mention: member.mention,
+          displayName: member.displayName,
+          ...(member.coordinator ? { coordinator: true } : {}),
+        }))
+      : []),
+    [agentMembers, isChannel],
+  );
   const selectedSubagent = selectedSubagentId ? subagents[selectedSubagentId] ?? null : null;
   const virtualLayout = useMemo(
     () => buildVirtualTranscriptLayout(conversationRows, rowHeightsRef.current),
@@ -899,6 +936,14 @@ export function AgentChatPanel({
       return <AgentSubagentBoundary entry={row.entry} onOpenTranscript={setSelectedSubagentId} />;
     }
 
+    // Channel attribution: name the speaking agent on non-coordinator assistant
+    // rows (the coordinator/main agent stays unmarked, like a DM).
+    const actor = row.entry.actor;
+    const actorMember = isChannel && actor?.type === 'agent' ? memberByAgentId.get(actor.agentId) : undefined;
+    const actorLabel = actorMember && !actorMember.coordinator && row.entry.message.role === 'assistant'
+      ? actorMember.displayName
+      : null;
+
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
       ? async () => {
           const text = await buildAssistantTurnCopyText(
@@ -914,6 +959,8 @@ export function AgentChatPanel({
 
     return (
       <AgentMessageRow
+        actorLabel={actorLabel}
+        actorMention={actorMember?.mention}
         busy={isStreaming}
         contentKey={row.contentKey}
         entry={row.entry}
@@ -972,6 +1019,22 @@ export function AgentChatPanel({
             size={ICON_SIZE.menu}
           />
         </ButtonControl>
+        {isChannel ? (
+          <span
+            aria-label={t.agent.chat.channelMembers}
+            className="agent-dock-members"
+            title={agentMembers.map((member) => member.displayName).join(', ')}
+          >
+            {agentMembers.map((member) => (
+              <span
+                className={member.coordinator ? 'agent-dock-member is-coordinator' : 'agent-dock-member'}
+                key={member.mention}
+              >
+                {`@${member.mention}`}
+              </span>
+            ))}
+          </span>
+        ) : null}
         <div className="agent-dock-actions">
           <IconButton
             className="agent-menu-button"
@@ -1076,6 +1139,15 @@ export function AgentChatPanel({
                       onClick={() => void handleSelectConversation(conversation.id)}
                     >
                       <span className="agent-conversation-name">{title}</span>
+                      {(() => {
+                        const listAgentMembers = channelAgentMembers(conversation.members);
+                        if (listAgentMembers.length < 2) return null;
+                        return (
+                          <span className="agent-conversation-members">
+                            {listAgentMembers.map((member) => `@${agentMentionToken(member.agentId)}`).join(' ')}
+                          </span>
+                        );
+                      })()}
                       <span className="agent-conversation-meta">
                         {formatConversationTime(conversation.updatedAt, locale)}
                         {conversation.messageCount > 0 ? ` · ${conversation.messageCount}` : ''}
@@ -1190,6 +1262,7 @@ export function AgentChatPanel({
         currentNodeId={composerCurrentNodeId(userViewContext, index)}
         index={index}
         isStreaming={isStreaming}
+        members={composerMembers}
         onNodeReferenceOpen={onOpenNodeReference}
         onModelChange={(providerId, modelId) => updateProviderConfig(providerId, { modelId })}
         onReasoningChange={(reasoningLevel) => updateActiveProviderConfig({ reasoningLevel })}

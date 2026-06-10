@@ -267,3 +267,14 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+
+/* Channel speaker attribution on a non-coordinator agent's turn: a quiet name
+   line above the reply — neutral text only (B3), no fill, no accent. */
+.agent-message-actor {
+  margin-bottom: calc(var(--space-3) * -1);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  font-weight: 500;
+  line-height: var(--line-ui-xs);
+  user-select: none;
+}

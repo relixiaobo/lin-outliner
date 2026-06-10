@@ -166,6 +166,22 @@ truth.
   - `runtime_status`, `config`, `doctor`, and `dream` tools with
     permission-gated config/Dream writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
+- [x] Agent M3-A multi-agent Channel (membership + routing + peer reply, #179):
+  - `member.added`/`member.removed` events applied on replay and folded into the
+    conversation index; `addressedTo` persisted on user messages
+  - Channel creation with a member set + goal seed; "add agent to DM" spawns a
+    seeded Channel (the canonical DM never converts); coordinator and DM members
+    are immovable
+  - `@`-mention routing scoped to agent members; no `@` routes to the coordinator
+    (PM-ratified); an agent reply containing `@member` hands off sequentially,
+    capped by a per-user-turn relay budget (3 runs)
+  - each peer turn executes as the addressed agent (definition, model/effort,
+    skills, memory line, `actor` stamp) and reads the thread through the
+    transient per-POV flatten (own turns verbatim; other principals coalesced
+    into identity-preambled user-role blocks); the persisted log stays
+    reader-neutral
+  - UI: composer `@` member typeahead, member strip on the Channel header and
+    conversation list, speaker badges on non-coordinator assistant rows
 
 ## Next Milestone
 
