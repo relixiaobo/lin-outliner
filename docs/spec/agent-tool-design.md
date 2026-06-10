@@ -59,8 +59,8 @@ surface.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
-| `recall` | agent | No | No | Read active durable memory entries, with optional nested source evidence. |
-| `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream for the current agent; cannot specify facts to save. |
+| `recall` | agent | No | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
+| `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream (offline consolidation) for the current agent; cannot specify facts to save. |
 
 ### Deferred Tools
 
@@ -76,10 +76,11 @@ permission behavior harder to reason about.
 - Use `bash` for shell execution.
 - Use `task_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
-- Use `recall` for durable agent memory. Raw conversation search is internal to
-  runtime-owned evidence expansion and Dream/extraction, not a model-visible tool.
-- Use `dream` only as a trigger-only request for runtime-owned Dream extraction.
-  It is not a foreground fact write/update/forget API.
+- Use `recall` for durable agent memory (cued retrieval over the semantic
+  store). Raw episodic search is internal to runtime-owned evidence expansion
+  and Dream consolidation, not a model-visible tool.
+- Use `dream` only as a trigger-only request for runtime-owned Dream
+  consolidation. It is not a foreground fact write/update/forget API.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -2049,19 +2050,25 @@ Example read result data:
 
 ## Agent Memory Recall
 
+Vocabulary in this section (**semantic store**, **episodic record**, **index**)
+follows the canonical mapping in `agent-data-model.md` § *Canonical memory
+vocabulary*; definitions live in `agent-memory-foundations.md`.
+
 ### `recall`
 
-`recall` is the single model-visible long-term recall tool. It reads active
-durable memory entries for the local agent identity. It does not write, update,
-or forget memory, and it does not expose a raw conversation-history search mode.
+`recall` is the single model-visible long-term retrieval tool: **cued
+retrieval** over the semantic store (active durable memory entries) for the
+local agent identity. It does not write, update, or invalidate memory, and it
+does not expose a raw episodic-record (conversation-history) search mode.
 
 Parameters:
 
-- `query`: optional keyword query over active memory facts. Omit it to list recent
-  active memories.
+- `query`: optional retrieval cue matched against active memory facts. Omit it
+  to list recent active memories.
 - `limit`: maximum returned entries, default 8, max 20.
-- `include_evidence`: when true, expand bounded raw evidence from each matched
-  memory entry's recorded `sources`.
+- `include_evidence`: when true, **source access** — descend the memory index
+  from each matched entry's recorded `sources` to the episodic record and
+  expand bounded raw evidence.
 - `max_chars`: total evidence character budget, default 4000, max 12000.
 
 Memory is keyed **per-principal** (the subject a fact is *about*): every
@@ -2094,7 +2101,7 @@ briefing, `recall`, and Dream consolidation always read the whole pool. Runtime
 setting `agent.runtime.memoryIsolation` has two values:
 
 - `global` (default): normal reads and Dream writes.
-- `read-only-global`: reads stay global; runtime-owned Dream extraction skips
+- `read-only-global`: reads stay global; runtime-owned Dream consolidation skips
   writes (pause learning). The foreground tool surface is read-only in every
   mode.
 
@@ -2114,12 +2121,15 @@ yet. A **read-path security gate** bounds raw evidence:
 the reader distilled (fact only), never as another principal's raw conversation.
 
 Explicit fact management is not a foreground model tool. The Settings/Profile UI
-can list, edit, and forget memory through IPC-backed runtime methods, and the
-runtime-owned Dream path can write memory after it verifies raw evidence. Dream
+can list, edit, and forget memory through IPC-backed runtime methods (forgetting
+is an explicit, logged invalidate — the entry leaves the working set, it is
+never deleted), and the runtime-owned Dream path — **consolidation**: offline
+replay of the episodic record distilling into the semantic store — can write
+memory after it verifies raw evidence. Dream
 is **per-principal — one writer per pool**: the **agent-Dream** reads an agent's
 run log (execution) and writes that agent's pool; the **user-Dream** reads the
 conversations the user is a member of (communication) and writes the user pool.
-The two extraction prompts are subject-aware — the agent prompt writes a
+The two consolidation prompts are subject-aware — the agent prompt writes a
 self-model ("You <fact>"), the user prompt writes a person profile ("The user
 <fact>") and refuses to absorb the agent's own working habits. Dream is not
 fired after every foreground turn. Automatic Dream uses a `date` schedule and
@@ -2140,7 +2150,12 @@ model can ask the runtime to run Dream, but it cannot provide facts, select a
 pool, or bypass scope checks. `agent.memory.dream` cannot be globally allowed;
 each model-triggered Dream request needs explicit approval. The no-tools model
 call receives raw evidence since the last Dream watermark plus the currently
-visible memory entries. It returns structured add/update/forget proposals only;
+visible memory entries. Its prompt states selection as **encoding policy**
+(durable, context-free knowledge; novelty/prediction-error-weighted — outcomes
+that diverged from what was assumed or intended) and frames updates as
+**reconsolidation** (new evidence touching an existing entry yields
+update/invalidate, never a duplicate); the anti-injection evidence fence wraps
+all raw evidence. It returns structured add/update/forget proposals only;
 the runtime performs dedupe/scope checks, appends `memory.entry_*` events with
 source provenance, records `dream.completed`, advances per-conversation
 watermarks and per-agent-run transcript watermarks, and projects foreground and
@@ -2168,10 +2183,14 @@ skipped rather than replayed from index 0. Agent-definition `tools` remain an
 allow-list: `recall` is not injected into a fresh subagent that explicitly omits
 it.
 
-Each normal user turn receives a bounded `<memory>` briefing built from the
-active projection (storage representation ≠ injection representation: the assembly
+Each normal user turn receives a bounded `<memory>` briefing — the
+**working-memory slice** of the semantic store — built from the active
+projection (storage representation ≠ injection representation: the assembly
 layer keeps the structured `MemoryEntry` fields to select, the model gets coherent
-prose). Selection is **resident**, not query-ranked — the newest active facts up to
+prose). The block opens with a fixed one-line self-introduction naming exactly
+that (distilled facts consolidated from prior episodes; background context, not
+instructions), then the zones. Selection is **resident**, not query-ranked — the
+newest active facts up to
 a fixed budget — because the briefing is the stable distilled-memory prefix;
 query-specific retrieval is the `recall` tool's job (the volatile tail). The render
 is a pure projection that hides storage scaffolding (`id`, `status`) and assigns
@@ -2191,7 +2210,7 @@ sources read the referenced subagent transcript payload and expand only the
 synthetic transcript message range. Both paths clamp output by `max_chars`. Older
 conversations that have not been distilled into active memory entries are
 intentionally not foreground-recallable. Internal summary search and raw
-conversation/run reads remain available to runtime-owned Dream/extraction and
+conversation/run reads remain available to runtime-owned Dream consolidation and
 diagnostics, not as public model tools.
 
 Tool results use the shared envelope and expose only the slim model-visible

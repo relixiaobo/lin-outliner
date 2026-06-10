@@ -870,8 +870,11 @@ invalidation), keeping the stored shape minimal.
 
 Definitions and binding authoring rules live in `agent-memory-foundations.md`
 (meta — the academic glossary every memory doc/prompt/tool must follow).
-Work on this frame: `agent-memory-academic-alignment` (language surfaces, runs
-anytime; subsumed the former D2 encoding-signal) and three post-M3-B deltas —
+Work on this frame: `agent-memory-academic-alignment` — **shipped** (PR #181:
+Dream prompt as consolidation/encoding policy with prediction-error weighting,
+briefing as the working-memory slice, `recall` as cued retrieval + source
+access, Settings forgetting copy per §5.4; subsumed the former D2
+encoding-signal) — and three post-M3-B deltas remain —
 `agent-memory-forgetting` (D1) · `agent-memory-episodic-index` (D3) ·
 `agent-memory-retrieval-upgrade` (D4).
 

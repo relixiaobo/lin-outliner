@@ -262,7 +262,8 @@ The listed-skills state reminder is intentionally tiny. It prevents a restored c
 ## Memory Dream
 
 `/dream` is a built-in runtime command, handled before slash skill resolution. It
-requests the same runtime-owned no-tools Dream extraction path used by the
+requests the same runtime-owned no-tools Dream consolidation path (offline
+replay of recorded episodic evidence, distilled into durable memory) used by the
 schedule. Unlike `/compact`, it does not replace the model-context root. During a
 manual run, the renderer appends an active Dream boundary row; when the run
 finishes, the conversation log records a `dream.finished` marker on a hidden
@@ -272,8 +273,8 @@ row after reload.
 The model can also call the foreground `dream` tool when the user asks to run,
 test, refresh, or consolidate Memory Dream. This tool is trigger-only and
 permission-gated. It cannot supply memory facts, select another agent, or bypass
-the runtime-owned extraction worker; it only requests the current agent's Dream
-path and returns status/counts to the model. Tool-triggered Dreams record the
+the runtime-owned consolidation worker; it only requests the current agent's
+Dream path and returns status/counts to the model. Tool-triggered Dreams record the
 same `dream.finished` marker after the tool turn settles, so the chat stream
 shows the same Dream boundary row as `/dream`.
 

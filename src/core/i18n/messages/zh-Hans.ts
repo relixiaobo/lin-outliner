@@ -165,7 +165,7 @@ export const zhHans: PartialMessages = {
       loading: '正在加载记忆…',
       empty: '还没有已记住的事实。',
       activeStatus: '有效',
-      invalidatedStatus: '已忘记',
+      invalidatedStatus: '已失效',
       poolAgentLabel: '助手',
       poolUserLabel: '你',
       createdAt: ({ date }) => `创建于 ${date}`,
@@ -175,7 +175,7 @@ export const zhHans: PartialMessages = {
       saveEdit: '保存记忆',
       cancelEdit: '取消编辑记忆',
       updatedNotice: '记忆已更新',
-      forgottenNotice: '记忆已忘记',
+      forgottenNotice: '记忆已失效',
       emptyFactError: '记忆事实不能为空。',
       notFoundError: '记忆条目已不存在。',
     },
@@ -855,7 +855,7 @@ commandPalette: {
       dreamMemoryChanges: ({ count }) => `${count} 项记忆变更`,
       dreamProcessedDetail: ({ messages, chars }) => `已处理 ${messages} 条消息（${chars.toLocaleString()} 个字符）。`,
       dreamChangesDetail: ({ added, updated, forgotten, skipped }) =>
-        `记忆变更：新增 ${added}，更新 ${updated}，忘记 ${forgotten}，跳过 ${skipped}。`,
+        `记忆变更：新增 ${added}，更新 ${updated}，失效 ${forgotten}，跳过 ${skipped}。`,
     },
     toolCall: {
       input: '输入',
