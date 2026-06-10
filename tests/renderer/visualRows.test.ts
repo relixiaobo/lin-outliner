@@ -135,6 +135,29 @@ describe('buildVisualRows depth and extras', () => {
     expect(realRow?.key).toBe(draftRow.key);
   });
 
+  test('places a relocated trailing draft after the anchored child subtree', () => {
+    const rows = buildVisualRows('lib', fixture(), {
+      expanded: new Set(['a']),
+      rootTrailingDraft: 'always',
+      draftIdFor: (parentId) => (parentId === 'lib' ? 'draft-after-a' : null),
+      trailingDraftPlacement: { parentId: 'lib', afterId: 'a', panelId: 'panel' },
+    });
+
+    expect(rows.map((row) => (row.kind === 'content' ? row.nodeId : row.kind))).toEqual([
+      'a',
+      'a1',
+      'a2',
+      'draft-after-a',
+      'b',
+    ]);
+    expect(rows.find((row) => row.kind === 'content' && row.draft)).toMatchObject({
+      nodeId: 'draft-after-a',
+      depth: 0,
+      afterId: 'a',
+    });
+    expect(visualRowNodeIds(rows)).toEqual(['a', 'a1', 'a2', 'b']);
+  });
+
   test('emits a toolbar row (owned by the parent) when a nested view has its toolbar visible', () => {
     // toolbarVisible is read from a viewDef child node, not the node itself.
     const byId = byIdOf([

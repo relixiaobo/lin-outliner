@@ -32,7 +32,7 @@ export type OutlinerRowItem =
   // projection yet (eager materialization). `buildOutlinerRows` never emits it;
   // it is appended in the render layer so it stays out of nav/selection/agent
   // context until the user types and it materializes.
-  | { id: NodeId; type: 'content'; draft?: boolean }
+  | { id: NodeId; type: 'content'; draft?: boolean; afterId?: NodeId | null }
   | { id: string; type: 'group'; label: string }
   | { id: string; type: 'hiddenField'; fieldId: NodeId; label: string };
 

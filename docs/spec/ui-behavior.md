@@ -75,7 +75,7 @@ keyboard or pointer change should be checked against this matrix.
 | `Enter` with text | Create content, then create/focus a new empty row in the same parent. |
 | Empty `Enter` | Create/focus an empty child. |
 | `Tab` | Relocate the trailing input under the last child and expand that child. The draft stays a draft — the cursor stays put and no node is created until text is typed. |
-| `Shift+Tab` | Relocate the trailing input one parent level up (no node created until text is typed). |
+| `Shift+Tab` | Relocate the trailing input one parent level up, immediately after the current parent in that scope (no node created until text is typed). |
 | Empty `Backspace` after a `Tab` relocate | The draft now sits under the (empty) sibling it was relocated into, so the "parent has no children" rule below applies: collapse that sibling and focus it. |
 | Empty `Backspace` when parent has no children | Collapse the parent and focus it. |
 | Empty `Backspace` when parent has children | Focus the last visible child. |

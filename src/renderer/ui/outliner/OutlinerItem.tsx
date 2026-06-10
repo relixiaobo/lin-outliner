@@ -68,6 +68,7 @@ import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
+import { buildOutlinerRows } from './row-model';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { CommandRunButton, useCommandRun } from './CommandFieldValue';
@@ -123,6 +124,9 @@ interface OutlinerItemProps {
   // under `nodeId` (kept stable so the editor is never remounted), after which
   // the row is rendered like any other content row.
   draft?: boolean;
+  // Optional visual anchor for a relocated trailing draft. When present, the
+  // draft sits after this sibling and materializes at the same structural index.
+  draftAfterId?: NodeId | null;
   // Empty-state placeholder shown on this trailing draft's editor (definition
   // template / options blocks), so an empty section reads "add here" instead of
   // a lone label over a near-invisible ghost bullet. Ignored once materialized.
@@ -200,6 +204,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
     // trailing editor is findable the way the legacy TrailingInput row was.
     draft: props.draft === true && !realNode,
+    draftAfterId: props.draftAfterId,
   });
   // A not-yet-materialized draft is also "focused" when keyboard navigation
   // targets the parent's trailing surface (the existing trailing-focus signal);
@@ -457,10 +462,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     materializeStartedRef.current = true;
     const seed = draftContentRef.current;
     const fieldValue = props.fieldValue;
+    const createIndex = (() => {
+      if (!props.draftAfterId) return null;
+      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+      const afterIndex = siblings.indexOf(props.draftAfterId);
+      return afterIndex < 0 ? null : afterIndex + 1;
+    })();
     const runCreate = fieldValue
       ? () => fieldValue.materializeValue(props.nodeId, seed.text)
       : () => props.run(
-        () => api.materializeDraftNode(props.parentId, null, seed.text, props.nodeId),
+        () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId),
         { applyFocus: false },
       );
     pendingTextPatchRef.current = pendingTextPatchRef.current
@@ -931,6 +942,32 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // From the empty trailing draft, step focus up to the visually-previous row
   // without creating or deleting anything (the draft has no real node).
   const focusPreviousFromDraft = (placement: CursorPlacement = cursorEnd()) => {
+    if (props.draftAfterId) {
+      const liveUi = props.uiRef.current;
+      const localVisibleRows = flattenVisibleRows(
+        props.parentId,
+        props.index.byId,
+        liveUi.expanded,
+        liveUi.expandedHiddenFields,
+      );
+      const siblingRows = buildOutlinerRows(
+        props.index.byId.get(props.parentId),
+        props.index.byId,
+        { expandedHiddenFields: liveUi.expandedHiddenFields },
+      );
+      const afterIndex = siblingRows.findIndex((row) => row.id === props.draftAfterId);
+      const nextSibling = afterIndex < 0
+        ? undefined
+        : siblingRows.slice(afterIndex + 1).find((row) => row.type === 'content' || row.type === 'field');
+      const nextIndex = nextSibling ? localVisibleRows.indexOf(nextSibling.id) : -1;
+      const previousId = nextIndex > 0
+        ? localVisibleRows[nextIndex - 1]
+        : localVisibleRows[localVisibleRows.length - 1];
+      if (previousId) {
+        requestRowFocus(previousId, placement, props.index.byId.get(previousId)?.parentId ?? null);
+      }
+      return;
+    }
     if (props.parentId === props.rootId) {
       const visible = flattenVisibleRows(
         props.rootId,
@@ -1205,31 +1242,37 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       if (props.parentId === props.rootId) return; // already at the top level
       const grandParentId = props.index.byId.get(props.parentId)?.parentId;
       if (!grandParentId) return;
-      props.setUi((prev) => requestFocusState(
-        prev,
-        focusTarget(grandParentId, grandParentId, props.panelId, 'trailing'),
-        cursorEnd(),
-      ));
+      props.setUi((prev) => ({
+        ...requestFocusState(
+          prev,
+          focusTarget(grandParentId, grandParentId, props.panelId, 'trailing'),
+          cursorEnd(),
+        ),
+        trailingDraftPlacement: {
+          parentId: grandParentId,
+          afterId: props.parentId,
+          panelId: props.panelId,
+        },
+      }));
       return;
     }
     await commitDraft();
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
       if (!targetParentId) return;
-      const expandTarget = () => props.setUi((prev) => {
-        const expanded = new Set(prev.expanded);
-        expanded.add(targetParentId);
-        return { ...prev, expanded };
-      });
-      const focusIndentedRow = () => props.setUi((prev) => requestFocusState(
-        prev,
-        rowFocusTarget(props.nodeId, null, props.panelId),
-        cursorAtOffset(cursorOffset),
-      ));
-      expandTarget();
-      const result = await props.run(() => api.indentNode(props.nodeId));
+      const result = await props.run(() => api.indentNode(props.nodeId), { applyFocus: false });
       if (result) {
-        focusIndentedRow();
+        flushSync(() => {
+          props.setUi((prev) => {
+            const expanded = new Set(prev.expanded);
+            expanded.add(targetParentId);
+            return requestFocusState(
+              { ...prev, expanded },
+              rowFocusTarget(props.nodeId, null, props.panelId),
+              cursorAtOffset(cursorOffset),
+            );
+          });
+        });
       }
       return;
     }
@@ -2091,6 +2134,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
     || prev.ui.selectionSource !== next.ui.selectionSource
     || prev.ui.pendingReferenceConversion !== next.ui.pendingReferenceConversion
     || prev.ui.pendingReferenceTypeAhead !== next.ui.pendingReferenceTypeAhead
+    || prev.ui.trailingDraftPlacement !== next.ui.trailingDraftPlacement
   )) {
     return false;
   }

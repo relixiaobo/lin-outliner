@@ -534,7 +534,6 @@ describe('row interaction resolvers', () => {
     expect([...expandIndentTargets(new Set(['already']), ['second', 'third'], byId)].sort()).toEqual([
       'already',
       'first',
-      'second',
     ]);
   });
 

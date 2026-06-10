@@ -12,6 +12,17 @@ import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
 
+function insertDraftRow(
+  rows: OutlinerRowItem[],
+  draftRow: OutlinerRowItem,
+  afterId: NodeId | null,
+): OutlinerRowItem[] {
+  if (!afterId) return [...rows, draftRow];
+  const index = rows.findIndex((row) => row.id === afterId);
+  if (index < 0) return [...rows, draftRow];
+  return [...rows.slice(0, index + 1), draftRow, ...rows.slice(index + 1)];
+}
+
 interface OutlinerViewProps {
   panelId: string;
   parentId: NodeId;
@@ -69,12 +80,19 @@ export function OutlinerView(props: OutlinerViewProps) {
   // field values use 'auto', which is why the bug surfaced only there.
   const draftFocused = props.ui.focusedId === draftId
     && props.ui.focusedPanelId === props.panelId;
+  const placement = props.ui.trailingDraftPlacement;
+  const placementAfterId = placement
+    && placement.parentId === props.parentId
+    && (placement.panelId === null || placement.panelId === props.panelId)
+    ? placement.afterId
+    : null;
   const showDraft = Boolean(parent) && (
     trailingMode === 'always'
     || (trailingMode === 'auto' && (builtRows.length === 0 || trailingFocused || draftFocused))
   );
+  const draftRow: OutlinerRowItem = { id: draftId, type: 'content', draft: true, afterId: placementAfterId };
   const rows: OutlinerRowItem[] = showDraft
-    ? [...builtRows, { id: draftId, type: 'content', draft: true }]
+    ? insertDraftRow(builtRows, draftRow, placementAfterId)
     : builtRows;
 
   useEffect(() => {
@@ -161,6 +179,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             setDragId={props.setDragId}
             referencePath={props.referencePath ?? [props.rootId]}
             draft={row.draft}
+            draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft ? props.draftPlaceholder : undefined}
             fieldValue={props.fieldValue}
             // An already-selected (not focused) reference value row reuses the

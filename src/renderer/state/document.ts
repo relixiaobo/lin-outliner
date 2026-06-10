@@ -192,6 +192,7 @@ export interface UiState {
   pendingInputChar: PendingInputChar | null;
   pendingReferenceConversion: PendingReferenceConversion | null;
   pendingReferenceTypeAhead: PendingReferenceTypeAhead | null;
+  trailingDraftPlacement: TrailingDraftPlacement | null;
   expanded: Set<NodeId>;
   expandedHiddenFields: Set<string>;
   editingDescriptionId: NodeId | null;
@@ -229,6 +230,12 @@ export interface PendingReferenceTypeAhead {
   targetId: NodeId;
 }
 
+export interface TrailingDraftPlacement {
+  parentId: NodeId;
+  afterId: NodeId | null;
+  panelId: string | null;
+}
+
 export type ToolbarDropdownSection = 'sort' | 'filter' | 'group' | 'display';
 
 export interface ToolbarDropdownRequest {
@@ -252,6 +259,7 @@ export function useUiState() {
     pendingInputChar: null,
     pendingReferenceConversion: null,
     pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,

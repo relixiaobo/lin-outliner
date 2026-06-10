@@ -20,9 +20,10 @@ export function expandIndentTargets(
   byId: Map<NodeId, NodeProjection>,
 ): Set<NodeId> {
   const next = new Set(expanded);
+  const batch = new Set(nodeIds);
   for (const nodeId of nodeIds) {
     const targetParentId = indentTargetParentId(nodeId, byId);
-    if (targetParentId) next.add(targetParentId);
+    if (targetParentId && !batch.has(targetParentId)) next.add(targetParentId);
   }
   return next;
 }

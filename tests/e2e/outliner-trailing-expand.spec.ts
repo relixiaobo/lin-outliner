@@ -297,6 +297,45 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(async () => (await nodeByText(page, 'topagain'))?.parentId).toBe(ids.today);
   });
 
+  test('Shift+Tab from a child trailing draft returns to the parent scope in place', async ({ page }) => {
+    await rowBody(page, ids.alpha).hover();
+    await row(page, ids.alpha).locator('.row-chevron-button').click();
+
+    await expect(trailingEditor(page, ids.alpha)).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(trailingEditor(page)).toBeFocused();
+
+    await page.keyboard.press('ArrowUp');
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+
+    await trailingEditor(page, ids.alpha).click();
+    await page.keyboard.press('Shift+Tab');
+    await expect(trailingEditor(page)).toBeFocused();
+    await page.keyboard.type('After alpha');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const inserted = projection.nodes.find((node) => node.content.text === 'After alpha');
+      const today = projection.nodes.find((node) => node.id === ids.today);
+      const insertedIndex = inserted && today ? today.children.indexOf(inserted.id) : -1;
+      return {
+        parentId: inserted?.parentId,
+        insertedIndex,
+        childCount: today?.children.length ?? 0,
+        before: today?.children[0],
+        after: today?.children[2],
+        last: today?.children[3],
+      };
+    }).toEqual({
+      parentId: ids.today,
+      insertedIndex: 1,
+      childCount: 4,
+      before: ids.alpha,
+      after: ids.beta,
+      last: ids.gamma,
+    });
+  });
+
   test('Enter then Tab creates a child from the real empty sibling', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('Fresh parent');
