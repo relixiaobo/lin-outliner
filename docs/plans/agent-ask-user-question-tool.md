@@ -458,9 +458,17 @@ reference model first, then build the user-question UI on top of it.
   `required`?
 - Should the max question count match cc-2.1 at 4, or should Tenon choose a
   different cap?
-- Should historical user-message editing remain text-only in this phase?
-- Should clarification be represented as a normal steering message, or as a
-  dedicated user-question feedback action?
+- ~~Should historical user-message editing remain text-only in this phase?~~
+  **DECIDED (PM, 2026-06-10): the question/answer interaction is part of the
+  agent's response, not a user message — it is not editable at all.** Historical
+  user-message editing stays untouched by this plan (text-only, out of scope).
+- ~~Should clarification be represented as a normal steering message, or as a
+  dedicated user-question feedback action?~~ **DECIDED (PM, 2026-06-10): a
+  dedicated "discuss" action that CLOSES the pending interaction** — clicking it
+  resolves the tool call with a discuss outcome (auto-sends the user's
+  wish-to-discuss to the agent), the agent gives a short reply asking what to
+  discuss, and the conversation continues in the normal composer. The question
+  does NOT stay open; the agent may re-ask later with a fresh tool call.
 
 ## Checklist
 
@@ -471,9 +479,13 @@ reference model first, then build the user-question UI on top of it.
 - [x] Add renderer pending-interaction state.
 - [x] Add the user-question UI surface.
 - [x] Reuse composer editor styling and interaction primitives for answer fields.
-- [ ] Add a dedicated clarify/discuss action that keeps the question open.
+- [ ] Add the dedicated "discuss" action: closes the pending interaction with a
+      discuss outcome, auto-messages the agent, conversation continues in the
+      normal composer (PM-decided semantics, 2026-06-10).
 - [ ] Wire `@` references and attachment button into answer inputs.
-- [ ] Align or explicitly defer user-message edit composer consistency.
+- [x] User-message edit consistency: explicitly out of scope — the Q&A
+      interaction is agent-response, not an editable user message (PM,
+      2026-06-10).
 - [x] Update `docs/spec/` with the shipped behavior.
 - [x] Run `bun run typecheck` and relevant renderer/runtime tests.
 - [x] Run light/dark visual verification for the pending-question UI.
@@ -512,17 +524,21 @@ when the build is scheduled.
   size cap, TTL pruning). State explicitly that the jail applies to answer
   attachments — `ask_user_question` must not become a read sink that bypasses it.
 
-## Directional decisions outstanding (PM GO before build)
-
-Deferred at the PM's instruction; resolve at build kickoff, not now:
+## Directional decisions — ALL CLOSED (PM, build kickoff 2026-06-10)
 
 - ~~Do unresolved questions persist across app restart?~~ **DECIDED — they persist**
   (durable run-log `user_question.requested` replays to restore the pending request +
-  attachment refs; see §7 and [[agent-data-model]] §3 `RunEvent`). No longer outstanding.
-- Does historical user-message editing stay text-only this phase (keeps
-  `AgentMessageRow.tsx` out of scope), or gain refs/attachments?
-- Is "clarify / discuss" a normal steering message that keeps the question open, or
-  a dedicated `feedback` action on the pending question?
+  attachment refs; see §7 and [[agent-data-model]] §3 `RunEvent`).
+- ~~Historical user-message editing scope?~~ **DECIDED — the Q&A interaction is part
+  of the agent's response, not an editable user message; no editing of it at all.**
+  Historical user-message editing is untouched (keeps `AgentMessageRow.tsx` edit
+  paths out of scope).
+- ~~Clarify model?~~ **DECIDED — a dedicated "discuss" action that CLOSES the
+  interaction:** the tool call resolves with a discuss outcome + the auto-message,
+  the agent replies briefly, and the user continues in the normal composer. Not a
+  keep-open feedback channel; the agent re-asks with a fresh call if needed.
+
+No open PM gates remain — dispatch is a one-liner.
 
 **Execution (complete-per-PR).** v1 (main-agent-only ask + base answer) shipped in
 M1 (#153). For the **full version**: the protocol + tool + event-log contract

@@ -39,8 +39,9 @@ Both 2026-06-09 lanes merged — board is between batches.
   - `agent-skill-acceptance` (cc) **merged** as PR #175 — see Recently completed.
     Plan archived `done` inside the PR itself (PR A + slimmed PR B, single-step undo).
   - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills —
-    needs its own plan. Executable-script support-file ratify+sandbox and M2 curation
-    dry-run stay deferred.
+    **plan drafted + direction PM-ratified 2026-06-10 (reuse per-skill acceptance):**
+    `docs/plans/agent-skill-workspace-trust.md`. Executable-script support-file
+    ratify+sandbox and M2 curation dry-run stay deferred.
 - **Multi-agent (M3) — debt-first sequencing ratified 2026-06-10.** A read-only audit
   verified the storage foundation is clean (three-ledger migration done; §4 principal/
   membership on `main` via #173) and the load-bearing debt is small + contained. New
@@ -234,15 +235,14 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   is `agent-conversation-model`'s.** Directional/security-sensitive — escalate the
   capability boundary to the PM before building. See
   `docs/plans/agent-self-modification.md`.
-- **agent-ask-user-question-tool** (P1, M1, plan drafted, PR #88) — full design
-  for a structured `ask_user_question` agent tool: a runtime pending-interaction
-  model kept separate from approval, snake-case tool + answer contracts, the
-  pending-question UI, composer-state cleanup, `@`-refs/attachments in answers, and
-  event-log + restart semantics. **Plan-track, touches agent protocol/runtime + new
-  UI — escalate directional GO + build phasing to the PM before building** (persist
-  unresolved questions across restart? edit-message scope? clarify contract?). Build
-  on the merged path-first attachment model (#86); see the plan's "Integration notes"
-  + "Directional decisions outstanding". `docs/plans/agent-ask-user-question-tool.md`.
+- **agent-ask-user-question-tool** (P1, M1, **all PM gates closed 2026-06-10 —
+  dispatch-ready**) — v1 shipped in #153; the full version remains: `@`-refs/
+  attachments in answers + the dedicated "discuss" action (closes the interaction,
+  auto-messages the agent, conversation continues in the composer; the Q&A widget
+  is agent-response and never editable). Persistence across restart decided
+  (persists); execution shape declared (interface-first protocol PR, then ONE
+  complete feature PR). Builds on the merged path-first attachment model (#86).
+  `docs/plans/agent-ask-user-question-tool.md`.
 - **agent-import-skill** (P1, M1–M2 consumer, plan ratified, PR #98) — agent data-import capability:
   bundled deterministic adapters (Tana reference, validated against the real
   10,627-node export) for known formats + agent-authored parsers for unknown ones;
