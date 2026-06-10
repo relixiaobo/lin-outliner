@@ -863,9 +863,11 @@ confidence, and salience are **never stored fields on `MemoryEntry`** — anythi
 of that kind is a rebuildable projection over events (createdAt, access,
 invalidation), keeping the stored shape minimal.
 
-Four delta plans extend this frame (scheduled post-M3-B; D2 is
-fast-track-insertable): `agent-memory-forgetting` (D1) ·
-`agent-memory-encoding-signal` (D2) · `agent-memory-episodic-index` (D3) ·
+Definitions and binding authoring rules live in `agent-memory-foundations.md`
+(meta — the academic glossary every memory doc/prompt/tool must follow).
+Work on this frame: `agent-memory-academic-alignment` (language surfaces, runs
+anytime; subsumed the former D2 encoding-signal) and three post-M3-B deltas —
+`agent-memory-forgetting` (D1) · `agent-memory-episodic-index` (D3) ·
 `agent-memory-retrieval-upgrade` (D4).
 
 ## Open questions

@@ -100,8 +100,9 @@ processes, one social layer** — mapped one-to-one onto existing mechanisms
   *semantic* stores by conversation membership; raw evidence never crosses
   principals (user pool shipped #173; agent pools = M3-B).
 
-Delta plans on this frame (post-M3-B; D2 fast-track-insertable):
-`agent-memory-forgetting` (D1) · `agent-memory-encoding-signal` (D2) ·
+Definitions + binding authoring rules: `agent-memory-foundations.md` (meta).
+Work on this frame: `agent-memory-academic-alignment` (language surfaces,
+anytime; subsumed D2) + post-M3-B deltas `agent-memory-forgetting` (D1) ·
 `agent-memory-episodic-index` (D3) · `agent-memory-retrieval-upgrade` (D4).
 
 ## Multi-agent = rules + views + one new primitive

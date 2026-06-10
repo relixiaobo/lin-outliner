@@ -222,18 +222,23 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   foundation. Plan archived at `docs/plans/archive/agent-memory-model.md`. Its residual
   **cross-agent sharing proposal** is now M3-B in the debt-first sequencing above (needs
   the `agent-data-model` §4 extension drafted for PM ratification before code).
-- **memory-system deltas D1–D4 (post-M3-B; canonical frame PM-ratified 2026-06-10)** —
-  the memory subsystem is now canonically framed in cognitive-science vocabulary
-  (episodic/semantic/procedural stores × consolidation/retrieval/forgetting +
-  transactive layer; mapping table in `agent-data-model.md` § *Canonical memory
-  vocabulary* + `agent-architecture.md` § *The memory system*; zero storage change).
-  Four pre-written delta plans, scheduled after M3-B: **D1** `agent-memory-forgetting`
-  (Bjork two-strength → briefing ranking; closes the injection-budget OQ; strengths are
-  projections, never stored fields) → **D2** `agent-memory-encoding-signal`
-  (prediction-error-weighted encoding cue for Dream; small, **fast-track-insertable
-  anytime**) → **D3** `agent-memory-episodic-index` (episode derived view + episode→
-  cognition reverse lookup; principal-gated) → **D4** `agent-memory-retrieval-upgrade`
-  (lexical → hybrid; carries the **embedding-provider PM gate** — close at claim).
+- **memory: academic model (canonical frame PM-ratified 2026-06-10)** — the memory
+  subsystem is canonically framed in the academic vocabulary (episodic/semantic/
+  procedural stores × encoding/consolidation/retrieval/forgetting + transactive layer).
+  **Authority docs:** `agent-memory-foundations.md` (meta — definitions, sources,
+  binding authoring rules for every memory doc/prompt/tool; PM directive: academic
+  definitions bind, PM examples are illustrative only) + the mapping table in
+  `agent-data-model.md` § *Canonical memory vocabulary* + `agent-architecture.md`
+  § *The memory system*. Zero storage change. Work:
+  **`agent-memory-academic-alignment`** (P2, **runs anytime, parallel-safe with
+  M3-A**) — rewrite Dream prompt (as consolidation/encoding policy incl. the
+  prediction-error cue), briefing copy, `recall` description, Settings copy/i18n,
+  spec wording; subsumed the former D2 (`agent-memory-encoding-signal`, archived
+  `superseded`). Then post-M3-B deltas: **D1** `agent-memory-forgetting` (Bjork
+  two-strength → briefing ranking; strengths are projections, never stored fields) →
+  **D3** `agent-memory-episodic-index` (episode derived view + principal-gated reverse
+  lookup) → **D4** `agent-memory-retrieval-upgrade` (lexical → hybrid; carries the
+  **embedding-provider PM gate** — close at claim).
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
