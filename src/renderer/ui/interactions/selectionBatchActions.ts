@@ -67,6 +67,26 @@ export function idsAllowedForStructuralBatch(params: {
   });
 }
 
+export function idsAllowedForStructuralOutdentBatch(params: {
+  ids: readonly NodeId[];
+  panelRootId: NodeId;
+  byId: Map<NodeId, NodeProjection>;
+  rowMap?: ReadonlyMap<NodeId, SelectableRow>;
+}): NodeId[] {
+  return params.ids.filter((id) => {
+    const row = resolveSelectableRow({
+      id,
+      panelRootId: params.panelRootId,
+      byId: params.byId,
+      rowMap: params.rowMap,
+    });
+    if (!row) return false;
+    return row.mutable
+      && row.kind !== 'fieldValue'
+      && row.parentId !== params.panelRootId;
+  });
+}
+
 export function idsAllowedForMoveTo(params: {
   ids: readonly NodeId[];
   panelRootId: NodeId;

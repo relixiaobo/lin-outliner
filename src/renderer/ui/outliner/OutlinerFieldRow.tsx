@@ -321,6 +321,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       return;
     }
     const emptiedParentIds = parentIdsEmptiedByOutdent([props.entryId], props.index.byId, props.rootId);
+    if (props.parentId === props.rootId) return;
     await props.run(() => api.outdentNode(props.entryId), {
       applyFocus: false,
       beforeApply: () => {

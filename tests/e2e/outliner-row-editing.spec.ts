@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
+  commandCalls,
   e2eProjection,
   ids,
   nodeById,
@@ -436,6 +437,18 @@ test.describe('outliner row editing parity', () => {
 
     await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+  });
+
+  test('Shift+Tab while editing a panel-root row is a no-op', async ({ page }) => {
+    await placeCursor(page, ids.beta, 'end');
+
+    const beforeCalls = (await commandCalls(page)).length;
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('outdent_node');
     await expect(rowEditor(page, ids.beta)).toBeFocused();
   });
 

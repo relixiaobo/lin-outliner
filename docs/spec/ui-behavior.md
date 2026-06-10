@@ -58,7 +58,7 @@ keyboard or pointer change should be checked against this matrix.
 | `Enter` on expanded row with children | Create the first child and focus it. |
 | `Tab` | Indent under previous sibling; pre-expand that sibling and restore cursor offset. |
 | `Tab` on first child | No-op. |
-| `Shift+Tab` | Outdent after parent, collapse the previous parent if it becomes empty, and restore cursor offset. |
+| `Shift+Tab` | Outdent after parent, collapse the previous parent if it becomes empty, and restore cursor offset. Rows whose parent is the current panel root are a no-op. |
 | `Backspace` at start with text | Merge into the previous visible content row when possible, then restore the cursor at the join offset. |
 | `Backspace` on empty leaf row | Trash the row and focus the previous visible row. |
 | `Backspace` on empty row with children | Block deletion so a subtree is not removed by accident. |
@@ -178,7 +178,7 @@ implicit previous/next body rows for text editing commands.
 | Printable key on selected row | Append that character and enter edit mode. |
 | `Shift+ArrowUp/Down` | Extend visible row selection. |
 | `Mod+A` | Select every selectable row in the current panel scope, including stored field value rows. |
-| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection mode, selected rows, and selection anchor. Tab applies only to contiguous selected runs whose first row has an unselected previous sibling; a selected run at the start of its parent is a no-op, so later selected rows never become children of earlier selected rows. Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Visible rows that change position during the structural move use a short transform-only movement animation; `prefers-reduced-motion: reduce` disables it. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
+| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection mode, selected rows, and selection anchor. Tab applies only to contiguous selected runs whose first row has an unselected previous sibling; a selected run at the start of its parent is a no-op, so later selected rows never become children of earlier selected rows. Shift+Tab never moves rows above the current panel root; panel-root rows are a no-op. Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Visible rows that change position during the structural move use a short transform-only movement animation; `prefers-reduced-motion: reduce` disables it. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
 | `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference field value still routes through field-value removal. |
 
 ## Paste And Clipboard Conversion Matrix

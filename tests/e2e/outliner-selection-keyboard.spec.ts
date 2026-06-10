@@ -321,6 +321,20 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();
   });
 
+  test('Shift+Tab on selected panel-root rows is a no-op', async ({ page }) => {
+    await multiSelect(page, [ids.beta, ids.gamma]);
+
+    const beforeCalls = (await commandCalls(page)).length;
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.today);
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('batch_outdent_nodes');
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
   test('Shift+Tab on multiple selected children removes the emptied parent trailing draft', async ({ page }) => {
     await rowEditor(page, ids.beta).click();
     await page.keyboard.press('Tab');

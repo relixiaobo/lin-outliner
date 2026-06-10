@@ -1279,6 +1279,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
     const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
+    if (props.parentId === props.rootId) return;
     await props.run(() => api.outdentNode(props.nodeId), {
       applyFocus: false,
       beforeApply: () => {

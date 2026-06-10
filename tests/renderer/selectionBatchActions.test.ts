@@ -8,6 +8,7 @@ import {
   idsAllowedForDuplicate,
   idsAllowedForMoveTo,
   idsAllowedForStructuralBatch,
+  idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   planSelectionDelete,
   selectableRowMap,
@@ -63,6 +64,32 @@ describe('selection batch action policy', () => {
       byId,
       rowMap: rowsById,
     })).toEqual(['body']);
+  });
+
+  test('blocks structural outdent at the panel root boundary', () => {
+    const byId = byIdOf([
+      node('root', { children: ['top', 'entry'] }),
+      node('top', { parentId: 'root', children: ['child'] }),
+      node('child', { parentId: 'top' }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('value', { parentId: 'entry' }),
+    ]);
+    const rowsById = selectableRowMap(buildSelectableRows('root', byId, {
+      expanded: new Set(['top']),
+    }));
+
+    expect(idsAllowedForStructuralBatch({
+      ids: ['top', 'child', 'value'],
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['top', 'child']);
+    expect(idsAllowedForStructuralOutdentBatch({
+      ids: ['top', 'child', 'value'],
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['child']);
   });
 
   test('allows only clone-safe field values for duplicate commands', () => {

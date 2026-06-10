@@ -11,6 +11,7 @@ import { batchIndentNodeIds, expandIndentTargets } from './interactions/outliner
 import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
 import {
   idsAllowedForStructuralBatch,
+  idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   runSelectionDelete,
   runSelectionDuplicate,
@@ -501,12 +502,19 @@ export function useWorkspaceKeyboard({
             byId: currentIndex.byId,
             rowMap: rowsById,
           })
-          : idsAllowedForStructuralBatch({
-            ids: batchIds,
-            panelRootId: selectionRootId,
-            byId: currentIndex.byId,
-            rowMap: rowsById,
-          });
+          : action === 'batch_outdent'
+            ? idsAllowedForStructuralOutdentBatch({
+              ids: batchIds,
+              panelRootId: selectionRootId,
+              byId: currentIndex.byId,
+              rowMap: rowsById,
+            })
+            : idsAllowedForStructuralBatch({
+              ids: batchIds,
+              panelRootId: selectionRootId,
+              byId: currentIndex.byId,
+              rowMap: rowsById,
+            });
         const operationIds = action === 'batch_checkbox'
           ? targetIdsForRows(operationRowIds, currentIndex.byId)
           : action === 'batch_indent'
