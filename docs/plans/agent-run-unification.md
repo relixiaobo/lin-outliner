@@ -79,8 +79,25 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
    `agentSubagents.ts:1828-1902`) die with the module; point `agentSkills.ts`'s
    private copies (`:1323`, `:1681`) at the same exports so the parser exists
    exactly once.
-6. **Old-format clean-cut:** store-owned detection + wipe (rides the
-   precedent landed by `agent-storage-clean-cut`; pre-release no-migration).
+6. **Old-format clean-cut — the `layout.json {v}` version sentinel
+   (PM-ratified 2026-06-10, upgrading the deferred #180 gate finding #4):**
+   this PR is the next format break, and instead of hand-authoring a third
+   detector it lands the structural fix. The store writes a root
+   `layout.json {v: N}` once per format generation; startup reads that one
+   file — `v` current → proceed (no per-conversation probing), `v` stale or
+   file missing → wipe the agent data root (a fresh install wipes an empty
+   dir, harmless) and write the current sentinel. This **deletes the #180
+   detector pile** (`hasLegacyEventVocabulary`, `readFirstLine`, the
+   `LEGACY_SESSIONS_DIR`/`LEGACY_SESSION_INDEX_FILE` constants) and
+   structurally closes its recorded follow-ups: content-triggerability
+   (nothing inspects content), the per-launch O(N-conversations) head scan
+   (one 1-line read), and the user-pool-only false negative (no artifact
+   enumeration to miss). Two #180 gate constraints carry over as invariants:
+   **the destructive path requires positive proof** (an unreadable/corrupt
+   sentinel is ambiguity → fail open to the current layout, log, re-probe
+   next launch — never wipe on error) and **fail open to operation, never to
+   a wipe**. Future format breaks bump the integer instead of authoring
+   another `hasLegacyX`.
 7. **Spec sync (A6):** `agent-architecture.md` (sub-agent bullet → pure
    relationship; status row), `agent-data-model.md` §3/§5 run section + §13.17
    note ("holds structurally"), `agent-subagent-runtime-plan.md` spec doc
@@ -114,7 +131,13 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
       loud. One integration test covers the chain.
 - [ ] Migrated #164/#178 scenario tests green; full `test:core` +
       `test:renderer` vs baselines; `CHECKPOINT_VERSION` bumped.
-- [ ] Old-format data detected + wiped on startup (fixture test).
+- [ ] Sentinel fixture tests: pre-sentinel data (no `layout.json`) → wiped +
+      sentinel written; current `v` → no wipe, no per-conversation probing;
+      stale `v` → wiped; unreadable/corrupt sentinel → fail-open (no wipe,
+      store fully functional, re-probe next launch). The #180 regression
+      intents (content can never trip a wipe; probe errors don't brick the
+      store) migrate onto the sentinel read path.
+- [ ] The #180 detector pile is gone: `rg "hasLegacyEventVocabulary|LEGACY_SESSIONS_DIR|LEGACY_SESSION_INDEX_FILE" src/` → 0.
 - [ ] Spec synced per Design 7; plan archived `done`.
 
 ## Collision self-check (2026-06-10, plan time)
