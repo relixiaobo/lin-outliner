@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (launcher-native-nspanel merged, PR #171) |
+| Claude Code | `lin-outliner-cc/` | — | idle (skill-governance-convergence merged, PR #174) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (memory-model P1+P2 merged, PR #172) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -32,6 +32,10 @@ Both 2026-06-09 lanes merged — board is between batches.
   another app's fullscreen · summon doesn't steal focus · dock icon · light+dark).
 - `agent-memory-model` P1+P2 (cc-2) **merged** as PR #172 — see Recently completed.
   Phase 3 (user-as-agent + sharing) stays gated on the `agent-data-model` §4 ratify.
+- `agent-skills-authoring` convergence (cc) **merged** as PR #174 — see Recently
+  completed. Remaining tail: PR A (NL "save as skill" + preview/confirm + acceptance
+  flow) sits on top of this; workspace-trust gate for cloned-repo `project` skills is a
+  named follow-up.
 
 
 ## Backlog
@@ -403,6 +407,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **skill governance convergence: single-source identity + ratification gate** (cc, PR #174) — one
+  convergence pass over the shipped M1 skill-authoring subsystem (design folded into
+  `docs/spec/agent-skills.md`). (1) **Protocol:** `SkillDefinition.source` collapses to `AgentSourceKind`
+  (dropped `'dynamic'`, a discovery mode not a source); `SkillDefinition` gains `ratified` + `contentHash`.
+  (2) **Closed governance hole:** a single `resolveSkillContentTarget` resolver now backs the loader, the
+  file-tool write gateway, and the `agent.skill.write` permission classifier, so a skill in an additional
+  configured dir outside the root can no longer be model-invocable yet bypass write governance — every
+  recognized skill write is uniformly ask-gated. (3) **Ratification gate replaces write-time policy:** the
+  gateway records each agent-written `SKILL.md` canonical content hash (in-memory + `agent-skill-provenance.json`
+  in userData, subagent-shared); an unratified skill is hidden from the model listing and refuses
+  `trigger: 'agent'` invocation (`skill_not_ratified`), while slash invocation always works with `allowed-tools`
+  honored; a user hand-edit self-ratifies. Deleted the `RISKY_ALLOWED_TOOL_NAMES` heuristic + forced
+  `disable-model-invocation` rewrite; validity/safety checks stay at the write boundary. Gate: `/code-review`
+  (protocol + permission surface) surfaced 1 finding — a CRLF/BOM hash-domain mismatch that fail-opened the
+  gate when an agent edited a CRLF/BOM-authored skill; fixed in `33ae703` via a canonical `skillContentHash`
+  shared by the record + load sides, independently re-checked on the merged tree. typecheck + `test:core`
+  780/0 + `test:renderer` 389/0; spec updated in the same change (A6). Tail: PR A (NL save-as-skill +
+  preview/confirm/acceptance) and a workspace-trust gate for cloned-repo `project` skills are named follow-ups.
 - **launcher: root fix for dock icon + first-⌘Q** (cc, PR #171) — investigation found the reported symptoms
   were **two independent bugs**, superseding PR #170's show/hide toggle and the dock-icon fast-track. (1) The
   launcher's all-Spaces behavior transformed the app to an accessory process (`UIElementApplication`), dropping
