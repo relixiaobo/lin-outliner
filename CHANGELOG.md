@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent memory evidence survives transcript compaction (PR #178)** — closes M3 Phase 1
+  (`agent-memory-source-binding`, plan archived `done`). Both Dream evidence renderers dropped the
+  post-compact reminder along with all hidden boilerplate — but after a subagent fork auto-compacts
+  (transcript payload superseded) or a conversation `/compact`s (active path re-anchored at the
+  post-compact root), that reminder is the only remaining carrier of the pre-compaction content, so
+  the content was silently never distilled while the Dream watermark advanced past it; additionally a
+  fork-prefix boundary recorded against a longer, superseded transcript clamped into a permanent
+  silent skip of the whole run. Dream evidence now surfaces the compaction summary (anchored
+  extraction, the inverse of the reminder producer and co-located with it in `agentCompaction.ts`),
+  reads the fork boundary envelope-first (written atomically with the messages it indexes), and
+  treats a boundary beyond the payload length as "fresh evidence, Dream from 0". The review round
+  hardened the extractor anchoring (a hidden block merely quoting the preamble can no longer leak
+  hidden context into evidence), pinned the reminder strings as persisted-format surface, and deduped
+  the renderer exception + test fixtures. Invariant recorded in `agent-data-model` §13.17. Gate:
+  RED-on-main verification + multi-agent `/code-review`; typecheck; `test:core` 801/0.
+  ([#178](https://github.com/relixiaobo/lin-outliner/pull/178))
 - **Launcher keeps the dock icon + first ⌘Q quits promptly, at the root (PR #171)** — supersedes PR #170's
   show/hide toggle and the dock-icon fast-track with the actual root causes, found to be **two independent
   bugs**. (1) *Dock icon vanished when the launcher was summoned:* the launcher's all-Spaces collection

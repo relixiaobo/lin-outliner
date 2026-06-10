@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (skill-acceptance merged, PR #175) |
+| Claude Code | `lin-outliner-cc/` | — | idle (memory-source-binding merged, PR #178) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (principal-keyed memory merged, PR #173) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -48,12 +48,12 @@ Both 2026-06-09 lanes merged — board is between batches.
   subsystem map: `docs/spec/agent-architecture.md`; sequencing reconciled into
   `docs/plans/agent-program.md` § *M3 sequencing & readiness*. Order: **Phase 0** settle
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
-  debt, must precede cross-agent citing; plan `docs/plans/agent-memory-source-binding.md`
-  **PM-ratified 2026-06-10**, boundary locked to the compaction spine — claimed by cc) →
+  debt, must precede cross-agent citing) **merged as PR #178** (cc) — see Recently
+  completed; plan archived `done` in the PR →
   **Phase 2** three independent complete features, **each with a drafted plan file**:
   **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
-  peer reply, one PR — membership alone would be a scaffold slice; starts after Phase 1
-  merges) → **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
+  peer reply, one PR — membership alone would be a scaffold slice; **unblocked, next
+  up**) → **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
   the one new primitive; depends on Phase 1 + M3-A) → **M3-C** per-agent POV inspector
   (`agent-pov-projection`).
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
@@ -437,6 +437,27 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **memory source binding survives compaction** (cc, PR #178) — M3 Phase 1, implementing the
+  PM-ratified `agent-memory-source-binding` plan (archived `done` in the PR; invariant pinned in
+  `agent-data-model` §13.17). The hole had two layers: (1) both Dream evidence renderers dropped
+  every hidden block including the post-compact reminder — after a fork auto-compaction (payload
+  superseded) or a manual `/compact` (active path re-anchored) that reminder is the only remaining
+  carrier of the pre-compaction content, so the watermark advanced while the summary was silently
+  never distilled; `extractCompactSummaryFromReminder` (anchored inverse of `compactSummaryReminder`,
+  co-located in `agentCompaction.ts`) now surfaces it as evidence via a shared
+  `renderHiddenBlockEvidence` helper. (2) The stale fork-prefix trap: the Dream collect path now
+  reads the fork boundary envelope-first (written atomically with the messages it indexes), and a
+  boundary beyond the payload length means "fresh evidence, Dream from 0", never a permanent silent
+  skip. Gate: RED→GREEN verified against main's src (3 new tests fail on base); multi-agent
+  `/code-review` — the mechanism core held (every stale-boundary-laundering claim refuted: compaction
+  resets the boundary to 0 atomically with the payload swap, and the envelope sha covers the boundary
+  field); the review round closed the unanchored-preamble leak (extractor requires block-start
+  `<system-reminder>` + body-start preamble + continue-trailer; negative cases behavior-verified),
+  marked `COMPACT_REMINDER_*` as persisted-format surface, and deduped renderer + test fixtures.
+  typecheck · `test:core` 801/0. Named follow-ups: structured summary carriers (persisted side reads
+  `compaction.completed`'s summary; runtime side needs an envelope `summary` field, v-bump) to retire
+  the text parser; re-Dream overlap after payload supersession relies on extraction-time dedup
+  (50-entry prompt cap) — degradation risk on large memory pools.
 - **skill acceptance: user trust closes the ratification loop** (cc, PR #175) — `agent-skill-acceptance`
   (PR A + slimmed PR B), archived `done` inside the PR. One trust record per skill
   (`{agentHash, acceptedHash, previousVersion}` in `agent-skill-provenance.json`, keyed by resolved
