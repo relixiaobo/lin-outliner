@@ -11,6 +11,7 @@ import {
   replayAgentEvents,
 } from '../core/agentEventLog';
 import type { AgentMessage, UserMessage } from '../core/agentTypes';
+import { extractCompactSummaryFromReminder } from './agentCompaction';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
 import {
   agentRunMessageId,
@@ -439,7 +440,13 @@ function renderPersistedContent(content: readonly AgentPersistedContent[]): stri
   return content
     .flatMap((part) => {
       if (part.type === 'text') {
-        if (isHiddenAgentContextBlock(part.text)) return [];
+        if (isHiddenAgentContextBlock(part.text)) {
+          // Same exception as renderRuntimeContent below: a compaction re-anchors the
+          // active path at the post-compact root, so the reminder's summary is the only
+          // on-path carrier of the compacted-away content — keep it as evidence.
+          const summary = extractCompactSummaryFromReminder(part.text);
+          return summary ? [`[summary of compacted earlier messages]\n${summary}`] : [];
+        }
         return [part.text.trim()];
       }
       if (part.type === 'thinking') return ['[thinking omitted]'];
@@ -459,7 +466,15 @@ function renderRuntimeContent(content: AgentMessage['content']): string {
     .flatMap((part) => {
       if (!isRecord(part)) return [];
       if (part.type === 'text' && typeof part.text === 'string') {
-        if (isHiddenAgentContextBlock(part.text)) return [];
+        if (isHiddenAgentContextBlock(part.text)) {
+          // Hidden boilerplate stays out of evidence, with one exception: a compaction
+          // reminder. After a runtime transcript compacts, its payload is superseded and
+          // the reminder's summary is the ONLY durable carrier of the pre-compaction
+          // content — dropping it would leave that content un-Dreamed and unreachable
+          // (the evidence-preserving compaction invariant, [[agent-data-model]]).
+          const summary = extractCompactSummaryFromReminder(part.text);
+          return summary ? [`[summary of compacted earlier messages]\n${summary}`] : [];
+        }
         return [part.text.trim()];
       }
       if (part.type === 'thinking') return ['[thinking omitted]'];

@@ -2839,9 +2839,14 @@ export class AgentRuntime {
         const envelope = await this.readSubagentTranscriptEnvelope(conversationId, payload);
         if (!envelope) continue;
         const transcriptMessages = envelope.messages;
+        // Prefer the envelope's own fork boundary: it is written atomically with the
+        // messages it indexes, so it is always in the live payload's coordinates. The
+        // replayed run-record boundary can be stale relative to a payload-superseding
+        // compaction; using it could re-exclude a compacted summary as "fork prefix" and
+        // permanently skip the run's only remaining evidence.
         const evidenceStart = subagentDreamEvidenceStartMessageIndex({
           contextMode: run.contextMode,
-          dreamEvidenceStartMessageIndex: run.dreamEvidenceStartMessageIndex ?? envelope.dreamEvidenceStartMessageIndex,
+          dreamEvidenceStartMessageIndex: envelope.dreamEvidenceStartMessageIndex ?? run.dreamEvidenceStartMessageIndex,
         }, transcriptMessages.length);
         const cursor = watermark.agentRuns?.[run.id];
         const fromMessageCountExclusive = Math.min(

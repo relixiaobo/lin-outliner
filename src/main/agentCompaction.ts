@@ -1,6 +1,6 @@
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import path from 'node:path';
-import { isHiddenAgentContextBlock, systemReminder } from '../core/agentAttachments';
+import { isHiddenAgentContextBlock, SYSTEM_REMINDER_END, systemReminder } from '../core/agentAttachments';
 import type { AgentMessage as Message, AssistantMessage, TextContent, ToolResultMessage, UserMessage } from '../core/agentTypes';
 import type { PostCompactRestoredFile } from './agentLocalTools';
 
@@ -193,13 +193,38 @@ export function formatCompactSummary(summary: string): string {
   return formatted.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+const COMPACT_REMINDER_PREAMBLE = 'This session is being continued from a previous conversation that was compacted. The summary below covers the earlier portion of the conversation.';
+const COMPACT_REMINDER_RECENT_PRESERVED = 'Recent messages after this summary are preserved verbatim in the conversation context.';
+const COMPACT_REMINDER_CONTINUE = 'Continue from where the session left off. Do not ask the user to restate context that is present in this summary.';
+
 export function compactSummaryReminder(summary: string, recentMessagesPreserved = false): string {
   return systemReminder([
-    'This session is being continued from a previous conversation that was compacted. The summary below covers the earlier portion of the conversation.',
+    COMPACT_REMINDER_PREAMBLE,
     formatCompactSummary(summary),
-    recentMessagesPreserved ? 'Recent messages after this summary are preserved verbatim in the conversation context.' : null,
-    'Continue from where the session left off. Do not ask the user to restate context that is present in this summary.',
+    recentMessagesPreserved ? COMPACT_REMINDER_RECENT_PRESERVED : null,
+    COMPACT_REMINDER_CONTINUE,
   ].filter(Boolean).join('\n\n'));
+}
+
+/**
+ * Inverse of {@link compactSummaryReminder}: recover the summary body from a post-compact
+ * hidden reminder block, or null when the text is not a compaction reminder. After a
+ * transcript payload is superseded by compaction, this reminder is the only durable carrier
+ * of the pre-compaction content — readers that filter hidden boilerplate must still surface
+ * it as evidence.
+ */
+export function extractCompactSummaryFromReminder(text: string): string | null {
+  const preambleIndex = text.indexOf(COMPACT_REMINDER_PREAMBLE);
+  if (preambleIndex < 0) return null;
+  let body = text.slice(preambleIndex + COMPACT_REMINDER_PREAMBLE.length);
+  const continueIndex = body.indexOf(COMPACT_REMINDER_CONTINUE);
+  if (continueIndex >= 0) body = body.slice(0, continueIndex);
+  const preservedIndex = body.indexOf(COMPACT_REMINDER_RECENT_PRESERVED);
+  if (preservedIndex >= 0) body = body.slice(0, preservedIndex);
+  const endIndex = body.indexOf(SYSTEM_REMINDER_END);
+  if (endIndex >= 0) body = body.slice(0, endIndex);
+  const summary = body.trim();
+  return summary || null;
 }
 
 export function createPostCompactMessage(

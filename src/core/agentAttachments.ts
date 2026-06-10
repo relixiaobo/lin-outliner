@@ -6,8 +6,8 @@ const ATTACHMENT_START = '[lin attached file: ';
 const ATTACHMENT_END = '[/lin attached file]';
 const USER_ATTACHMENTS_START = '<user-attachments>';
 const USER_ATTACHMENTS_END = '</user-attachments>';
-const SYSTEM_REMINDER_START = '<system-reminder>';
-const SYSTEM_REMINDER_END = '</system-reminder>';
+export const SYSTEM_REMINDER_START = '<system-reminder>';
+export const SYSTEM_REMINDER_END = '</system-reminder>';
 
 export interface ParsedAgentTextAttachment {
   ref: string;
