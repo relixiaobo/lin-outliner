@@ -79,6 +79,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent storage clean-cut: session vocabulary dies, pools unify under `principals/` (PR #180)** —
+  the pre-release format clean-cut (`agent-storage-clean-cut`, PM-ratified full scope; plan archived
+  `done` in-PR). Stored `session.*` event types and the persisted `sessionId` field become
+  `conversation.*` / `conversationId` (the last format-level residue of the M0.5 rename, which had
+  stopped at the public surface); ALL ~1000 code identifiers follow; memory pools unify under
+  `principals/<principalKey>/memory/` (the agent-vs-user path asymmetry is gone); `${AGENT_SESSION_ID}`
+  → `${AGENT_CONVERSATION_ID}`; checkpoint/search-index versions bumped (full replay / rebuild
+  fallback). **No migration** (pre-release policy): the store detects any old-format artifact on first
+  access and wipes the agent data root. The gate ran two rounds: round 1 (NO-GO) found the wipe
+  detector was **content-triggerable** — a substring probe on the conversation head line could match
+  user-controlled title/goal text and `rm -rf` all agent data — plus a sticky memoized rejection that
+  bricked storage for the run on any non-ENOENT probe error; round 2 verified the fixes (`8fff92e`):
+  structural field-level detection (parse the head, require a `sessionId` *key* or a `session.*`
+  `type`; torn/corrupt heads are ambiguity, never proof) and fail-open-to-operation-never-to-wipe
+  (probe errors log + continue, next launch re-probes), each with 1:1 regression tests. Verified
+  independently at the pinned head: typecheck · `test:core` 808/0 · `test:renderer` 405/0. Non-blocking
+  follow-ups recorded on the PR (per-launch probe cost, bounded-line-reader dedup, residue constants,
+  user-pool-only false negative).
+- **Delete the `MODEL_ID_REPLACEMENTS` silent migration layer (main, fast-track)** — from the
+  2026-06-10 pre-release architecture sweep (PM-ratified disposition B): `agentSettings.ts` silently
+  rewrote persisted legacy Haiku model ids to `claude-haiku-4-5` at read time — a back-compat
+  migration layer the pre-release policy forbids. Deleted (`normalizeModelId` and the map); a stale
+  persisted model id now surfaces in settings instead of silently transforming. typecheck ·
+  `test:core` 808/0.
+
 - **Redirect `agent-task-model` → fold post-#167 cleanup into the conversation model (PR #168)** — docs-only.
   A drafted standalone "dissolve subagent into Agent(profile)+Task(run)" plan was reviewed and found to
   reinvent the already-approved, in-progress agent program (`agent-program` M0–M3 / `agent-conversation-model`

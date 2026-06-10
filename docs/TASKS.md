@@ -18,8 +18,8 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (memory-source-binding merged, PR #178) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (IME composition fix merged, PR #177) |
+| Claude Code | `lin-outliner-cc/` | `cc/agent-channel-peers` | M3-A (#179) — **unblocked**, resume on a rebase onto the merged clean-cut |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (storage clean-cut merged, PR #180) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -57,15 +57,15 @@ Both 2026-06-09 lanes merged — board is between batches.
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
   debt, must precede cross-agent citing) **merged as PR #178** (cc) — see Recently
   completed; plan archived `done` in the PR →
-  **Phase 1.5** storage clean-cut (`agent-storage-clean-cut`, **PM-ratified 2026-06-10,
-  full scope; in build, cc-2**: stored `session.*` event types + `sessionId` field →
-  conversation vocabulary, ALL code identifiers renamed, pools unified under
-  `principals/<principalKey>/memory/`, store-owned old-format wipe; **PM order-flip:
-  goes FIRST — M3-A paused at its claim (#179), memory-alignment queues behind** — A7) →
+  **Phase 1.5** storage clean-cut (`agent-storage-clean-cut`) **merged as PR #180** (cc-2)
+  — see Recently completed; plan archived `done` in-PR. The gate ran two rounds (round-1
+  NO-GO on a content-triggerable wipe + a sticky probe rejection; both hardened in
+  `8fff92e` and re-verified). M3-A and `agent-memory-academic-alignment` are unblocked →
   **Phase 2** three independent complete features, **each with a drafted plan file**:
   **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
   peer reply, one PR — membership alone would be a scaffold slice; **claimed #179,
-  paused pending the clean-cut, resumes on the clean base**) →
+  now unblocked — resume on a rebase onto the merged clean-cut; re-verify the plan's
+  `file:line` anchors, #180 moved them**) →
   **run unification** (`agent-run-unification`, **PM-ratified 2026-06-10**: dissolve
   the subagent entity — child runs become ordinary run ledgers, one evidence scheme,
   one watermark shape, event-sourced compaction; the #164/#178 guards become
@@ -85,8 +85,9 @@ Both 2026-06-09 lanes merged — board is between batches.
   clean** (no dead commands, no naming drift, `session` vocabulary gone outside the
   in-flight clean-cut). Four ratified dispositions: **(A)** `main-json-store-unification`
   (new plan, Backlog § Storage & platform hygiene) · **(B)** delete the
-  `MODEL_ID_REPLACEMENTS` silent migration layer — folded into PR #180's scope (comment
-  posted) · **(C)** renderer-state-hygiene fast-track (same section) · **(D)**
+  `MODEL_ID_REPLACEMENTS` silent migration layer — **landed as a main fast-track right
+  after the #180 merge** (the scope-extension comment wasn't picked up in the fix round) ·
+  **(C)** renderer-state-hygiene fast-track (same section) · **(D)**
   frontmatter-parser consolidation folded into `agent-run-unification` Design 5.
   Cosmetic-only findings (IPC name casing, sync `lin:get-language-sync`, launcher
   placeholder commands, shiki failure cache) recorded as accepted, no action. With the
@@ -507,6 +508,29 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
   no collision with #179/#180.
 
+## Recently completed
+
+- **agent storage clean-cut: session vocabulary dies, pools unify under `principals/`** (cc-2,
+  PR #180) — the pre-release format clean-cut (plan archived `done` in-PR): stored `session.*`
+  event types + persisted `sessionId` → conversation vocabulary, ~1000 identifiers swept
+  (`${AGENT_SESSION_ID}`→`${AGENT_CONVERSATION_ID}`, `agentLargeSession.test.ts` renamed), pools
+  unified under `principals/<principalKey>/memory/`, checkpoint 3→4 + search-index 1→2 version
+  bumps (full-replay/rebuild fallback), and a store-owned old-format detect+wipe (no migration).
+  Gate: `/code-review` high, 4 finder angles — round 1 **NO-GO** on two detector defects: a
+  **content-triggerable total wipe** (substring probe on the conversation head line matched
+  user-controlled title/goal text → `rm -rf` of the agent data root) and a **sticky memoized
+  rejection** (any non-ENOENT probe error bricked all agent storage until restart). Round 2
+  (`8fff92e`) verified at the mechanism: structural field-level detection (parse the head;
+  require a `sessionId` *key* or `session.*` `type`; torn/corrupt/over-long heads are ambiguity,
+  never proof — the destructive path needs positive evidence) and fail-open-to-operation-never-
+  to-wipe (probe/wipe errors log + continue on the current layout; next launch re-probes, a
+  partial wipe converges), with 1:1 regression tests. Independent re-verification at the pinned
+  head: typecheck · `test:core` 808/0 (+3 = exactly the regressions) · renderer untouched by the
+  fix commit (405/0 at round 1). Non-blocking follow-ups on the PR: per-launch O(N) head-probe
+  cost, bounded-line-reader dedup, residue constants/dead exports, user-pool-only false negative
+  (+ its test-seed gap); the deeper `layout.json {v}` sentinel alternative was considered and
+  deferred by PM call. Post-merge: `MODEL_ID_REPLACEMENTS` deleted on `main` as the ratified
+  sweep disposition B (fast-track, typecheck + `test:core` green).
 - **memory source binding survives compaction** (cc, PR #178) — M3 Phase 1, implementing the
   PM-ratified `agent-memory-source-binding` plan (archived `done` in the PR; invariant pinned in
   `agent-data-model` §13.17). The hole had two layers: (1) both Dream evidence renderers dropped
