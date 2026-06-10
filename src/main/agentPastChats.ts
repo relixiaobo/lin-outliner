@@ -164,7 +164,7 @@ export interface PastChatsErrorResult {
   nearbyMessageIds?: string[];
 }
 
-interface VisibleSessionCacheEntry {
+interface VisibleConversationCacheEntry {
   latestEventId: string | null;
   messageIds: Set<string>;
   messageById: Map<string, AgentEventMessageRecord>;
@@ -173,11 +173,11 @@ interface VisibleSessionCacheEntry {
 }
 
 interface ConversationIndexedEntry {
-  sessionId: string;
+  conversationId: string;
 }
 
 export class AgentPastChatsService {
-  private readonly visibleSessionCache = new Map<string, VisibleSessionCacheEntry>();
+  private readonly visibleConversationCache = new Map<string, VisibleConversationCacheEntry>();
 
   constructor(private readonly eventStore: AgentEventStore) {}
 
@@ -206,7 +206,7 @@ export class AgentPastChatsService {
 
     const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; match: PastChatTextMatch }> = [];
     for (const entry of candidates) {
-      const visible = await this.visibleSessionMessages(entryConversationId(entry));
+      const visible = await this.visibleConversationMessages(entryConversationId(entry));
       if (!visible.messageIds.has(entry.messageId)) continue;
       const text = searchResultText(entry, visible.messageById.get(entry.messageId));
       const match = scorePastChatText(text, analysis);
@@ -262,7 +262,7 @@ export class AgentPastChatsService {
 
     const items: Array<PastChatsRecentItem & { sortAt: number }> = [];
     for (const entry of candidates) {
-      const visible = await this.visibleSessionMessages(entryConversationId(entry));
+      const visible = await this.visibleConversationMessages(entryConversationId(entry));
       if (!visible.messageIds.has(entry.messageId)) continue;
       if (visible.compactionMessageIds.has(entry.messageId)) continue;
       const message = visible.messageById.get(entry.messageId);
@@ -316,7 +316,7 @@ export class AgentPastChatsService {
       return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for message ${messageId}.`);
     }
 
-    const visible = await this.visibleSessionMessages(entryConversationId(indexEntry));
+    const visible = await this.visibleConversationMessages(entryConversationId(indexEntry));
     const anchorIndex = visible.messages.findIndex((message) => message.id === messageId);
     if (anchorIndex < 0) {
       return pastChatsError(
@@ -362,7 +362,7 @@ export class AgentPastChatsService {
       return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
     }
 
-    const visible = await this.visibleSessionMessages(source.conversationId);
+    const visible = await this.visibleConversationMessages(source.conversationId);
     const [fromMessageId, throughMessageId] = source.messageRange;
     const startIndex = visible.messages.findIndex((message) => message.id === fromMessageId);
     if (startIndex < 0) {
@@ -449,11 +449,11 @@ export class AgentPastChatsService {
   }
 
   private async readSubagentTranscriptEnvelope(
-    sessionId: string,
+    conversationId: string,
     payload: AgentPayloadRef,
   ): Promise<SubagentTranscriptEnvelope | null> {
     try {
-      const raw = await this.eventStore.readPayload(sessionId, payload);
+      const raw = await this.eventStore.readPayload(conversationId, payload);
       return parseSubagentTranscriptEnvelope(raw);
     } catch {
       return null;
@@ -464,9 +464,9 @@ export class AgentPastChatsService {
     return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
   }
 
-  private async visibleSessionMessages(sessionId: string): Promise<VisibleSessionCacheEntry> {
-    const state = await this.eventStore.replay(sessionId);
-    const cached = this.visibleSessionCache.get(sessionId);
+  private async visibleConversationMessages(conversationId: string): Promise<VisibleConversationCacheEntry> {
+    const state = await this.eventStore.replay(conversationId);
+    const cached = this.visibleConversationCache.get(conversationId);
     if (cached && cached.latestEventId === state.latestEventId) return cached;
     const messages = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
     const next = {
@@ -476,7 +476,7 @@ export class AgentPastChatsService {
       messages,
       compactionMessageIds: new Set(Object.keys(state.compactionsByMessageId)),
     };
-    this.visibleSessionCache.set(sessionId, next);
+    this.visibleConversationCache.set(conversationId, next);
     return next;
   }
 }
@@ -762,7 +762,7 @@ function stringSet(values: readonly string[] | undefined): Set<string> | null {
 }
 
 function entryConversationId(entry: ConversationIndexedEntry): string {
-  return entry.sessionId;
+  return entry.conversationId;
 }
 
 function conversationFieldsForEntry(

@@ -6,14 +6,14 @@ import type { AgentActor, AgentEvent, AgentPayloadRef } from '../../src/core/age
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 
-const sessionId = 'large-session-1';
+const conversationId = 'large-conversation-1';
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'pi-mono' };
 const toolActor = (toolCallId: string): AgentActor => ({ type: 'tool', toolName: 'file_read', toolCallId });
 
 async function withStore<T>(fn: (store: AgentEventStore) => Promise<T>): Promise<T> {
-  const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-large-session-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-large-conversation-'));
   try {
     return await fn(new AgentEventStore(root));
   } finally {
@@ -44,7 +44,7 @@ function createEventBuilder() {
     v: 1 as const,
     eventId: `large-event-${++seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_800_000_000_000 + seq,
     actor,
@@ -94,7 +94,7 @@ async function appendTurns(input: {
       const toolCallId = `tool-${turn}`;
       const toolResultId = `tool-result-${turn}`;
       largePayloadNeedle = `large-payload-${turn}-${'x'.repeat(4096)}`;
-      const payload = await input.store.writePayload(sessionId, {
+      const payload = await input.store.writePayload(conversationId, {
         id: `tool-output-${turn}`,
         data: `${largePayloadNeedle}\n${'payload-body\n'.repeat(8000)}`,
         mimeType: 'text/plain',
@@ -130,11 +130,11 @@ function payloadRefContent(payload: AgentPayloadRef, label: string) {
   };
 }
 
-describe('large agent sessions', () => {
-  test('restore, indexes, render projection, and payload refs stay bounded for a large session', async () => {
+describe('large agent conversations', () => {
+  test('restore, indexes, render projection, and payload refs stay bounded for a large conversation', async () => {
     await withStore(async (store) => {
       const buildBase = createEventBuilder();
-      const firstBatch: AgentEvent[] = [{ ...buildBase('session.created'), title: 'Large session' }];
+      const firstBatch: AgentEvent[] = [{ ...buildBase('conversation.created'), title: 'Large conversation' }];
       const firstTurns = await appendTurns({
         buildBase,
         count: 180,
@@ -143,9 +143,9 @@ describe('large agent sessions', () => {
         store,
       });
       firstBatch.push(...firstTurns.events);
-      await store.appendEvents(sessionId, firstBatch);
+      await store.appendEvents(conversationId, firstBatch);
 
-      const checkpoint = await store.writeCheckpoint(sessionId, await store.replay(sessionId));
+      const checkpoint = await store.writeCheckpoint(conversationId, await store.replay(conversationId));
       expect(checkpoint?.seq).toBe(firstBatch.at(-1)?.seq);
 
       const tailTurns = await appendTurns({
@@ -155,9 +155,9 @@ describe('large agent sessions', () => {
         initialLeaf: firstTurns.leaf,
         store,
       });
-      await store.appendEvents(sessionId, tailTurns.events);
+      await store.appendEvents(conversationId, tailTurns.events);
 
-      const restored = await store.replay(sessionId);
+      const restored = await store.replay(conversationId);
       expect(restored.latestSeq).toBe(tailTurns.events.at(-1)?.seq);
       expect(Object.keys(restored.messages).length).toBe(397);
 
@@ -168,16 +168,16 @@ describe('large agent sessions', () => {
       expect(projection.rows.length).toBe(397);
       expect(projection.rows.at(-1)?.messageId).toBe('assistant-194');
 
-      const sessions = await store.listConversationIndexEntries();
-      expect(sessions[0]).toMatchObject({
-        id: sessionId,
+      const conversations = await store.listConversationIndexEntries();
+      expect(conversations[0]).toMatchObject({
+        id: conversationId,
         messageCount: 397,
         latestSeq: restored.latestSeq,
       });
-      expect(await store.listUserMessageIndexEntries(sessionId)).toHaveLength(195);
-      expect((await store.searchMessages('marker 194', { sessionId })).map((entry) => entry.messageId)).toContain('assistant-194');
+      expect(await store.listUserMessageIndexEntries(conversationId)).toHaveLength(195);
+      expect((await store.searchMessages('marker 194', { conversationId })).map((entry) => entry.messageId)).toContain('assistant-194');
 
-      const rawEventLog = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
+      const rawEventLog = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
       expect(rawEventLog).not.toContain(firstTurns.largePayloadNeedle);
       expect(rawEventLog).not.toContain(tailTurns.largePayloadNeedle);
     });

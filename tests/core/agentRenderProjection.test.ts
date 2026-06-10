@@ -3,7 +3,7 @@ import { replayAgentEvents, type AgentActor, type AgentEvent } from '../../src/c
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { systemReminder } from '../../src/core/agentAttachments';
 
-const sessionId = 'session-render';
+const conversationId = 'conversation-render';
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'agent-1' };
@@ -13,7 +13,7 @@ function base(seq: number, type: AgentEvent['type'], actor: AgentActor = systemA
     v: 1 as const,
     eventId: `event-${seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_700_000_000_000 + seq,
     actor,
@@ -23,7 +23,7 @@ function base(seq: number, type: AgentEvent['type'], actor: AgentActor = systemA
 describe('agent render projection', () => {
   test('builds compact rows and streaming state from the active path', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Render test' },
+      { ...base(1, 'conversation.created'), title: 'Render test' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-1',
@@ -69,7 +69,7 @@ describe('agent render projection', () => {
 
   test('keeps branch state on message entities without persisting a tree', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Branches' },
+      { ...base(1, 'conversation.created'), title: 'Branches' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-original',
@@ -96,7 +96,7 @@ describe('agent render projection', () => {
 
   test('projects compaction as a boundary row instead of a user bubble', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Compaction' },
+      { ...base(1, 'conversation.created'), title: 'Compaction' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-before-compact',
@@ -157,7 +157,7 @@ describe('agent render projection', () => {
 
   test('projects Dream markers as boundary rows instead of user bubbles', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Dream' },
+      { ...base(1, 'conversation.created'), title: 'Dream' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-before-dream',
@@ -210,7 +210,7 @@ describe('agent render projection', () => {
 
   test('reconstructs consecutive compact boundaries as one transcript timeline', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Nested compaction' },
+      { ...base(1, 'conversation.created'), title: 'Nested compaction' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'u1',
@@ -321,7 +321,7 @@ describe('agent render projection', () => {
       display: { width: 800, height: 600 },
     };
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Media' },
+      { ...base(1, 'conversation.created'), title: 'Media' },
       { ...base(2, 'payload.created'), payload },
       {
         ...base(3, 'user_message.created', userActor),
@@ -355,7 +355,7 @@ describe('agent render projection', () => {
     };
     const replacement = '<persisted-output>\nPreview\n</persisted-output>';
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Tools' },
+      { ...base(1, 'conversation.created'), title: 'Tools' },
       {
         ...base(2, 'assistant_message.started', agentActor),
         runId: 'run-1',
@@ -390,7 +390,7 @@ describe('agent render projection', () => {
 
   test('surfaces a parentless subagent run (a command fire) as a transcript boundary row', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Command delivery' },
+      { ...base(1, 'conversation.created'), title: 'Command delivery' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-1',
@@ -427,7 +427,7 @@ describe('agent render projection', () => {
 
   test('places a main-agent subagent run right after the turn that spawned it', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Spawning turn' },
+      { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-1',

@@ -7,7 +7,8 @@ import {
   type StreamFn,
 } from '@earendil-works/pi-agent-core';
 import {
-  cleanupSessionResources as cleanupPiSessionResources,
+  // pi-ai's own vocabulary: per-"session" provider resources, keyed by our conversation id.
+  cleanupSessionResources as cleanupPiConversationResources,
   completeSimple,
   createAssistantMessageEventStream,
   getModels,
@@ -344,7 +345,7 @@ interface AgentToolApprovalResolution {
 }
 
 interface AgentPendingUserQuestion {
-  sessionId: string;
+  conversationId: string;
   runId: string;
   toolCallId: string;
   requestId: string;
@@ -368,7 +369,7 @@ type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'closed' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'error' }>, 'conversationId' | 'timestamp'>;
 
-interface AgentSessionState {
+interface AgentConversationState {
   agent: Agent;
   activeRun: AgentActiveRunState | null;
   lastRun: AgentActiveRunState | null;
@@ -441,7 +442,7 @@ type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
 type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
 export class AgentRuntime {
-  private sessions = new Map<string, AgentSessionState>();
+  private conversations = new Map<string, AgentConversationState>();
   private osNotifier?: OsNotifier;
   // The conversation the user is actually VIEWING, reported by the renderer:
   // the displayed conversation when the agent dock is open, else null (the dock
@@ -457,13 +458,13 @@ export class AgentRuntime {
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, {
-    sessionId: string;
+    conversationId: string;
     request: AgentApprovalRequestView;
     alwaysAllowRule?: string;
     resolve: (resolution: AgentToolApprovalResolution) => void;
   }>();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
-  private nextSessionId = 1;
+  private nextConversationId = 1;
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
   /** Pools with a Dream in flight, keyed by `principalKey` — one Dream per pool at a time. */
   private readonly dreamingPools = new Set<string>();
@@ -473,12 +474,12 @@ export class AgentRuntime {
   private readonly firingCommandNodeIds = new Set<string>();
   private readonly commandFailureCounts = new Map<string, number>();
   private readonly commandBackoffUntil = new Map<string, number>();
-  // Command nodes that have a delivery conversation this session, so the sweep
+  // Command nodes that have a delivery conversation this app run, so the sweep
   // can delete the conversation when the node is permanently removed.
   private readonly knownCommandConversationNodeIds = new Set<string>();
   private agentTaskCache: AgentRenderTaskEntity[] = [];
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
-  private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
+  private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
   private readonly agentIdentity: AgentIdentityRecord;
   private readonly domainEvents: AgentDomainEventBus;
 
@@ -492,15 +493,15 @@ export class AgentRuntime {
     this.domainEvents.subscribeLane('renderer-projection', (event) => {
       this.emit(rendererProjectionEventFromDomain(event));
     });
-    this.contextManager = new AgentRuntimeContextManager<AgentSessionState>({
-      refreshRuntimeSettings: (session) => this.refreshRuntimeSettings(session),
-      deriveRuntimePiMessages: (sessionId, eventState) => this.deriveRuntimePiMessages(sessionId, eventState),
-      appendSessionEvents: async (sessionId, session, inputs) => {
-        await this.appendSessionEvents(sessionId, session, inputs);
+    this.contextManager = new AgentRuntimeContextManager<AgentConversationState>({
+      refreshRuntimeSettings: (conversation) => this.refreshRuntimeSettings(conversation),
+      deriveRuntimePiMessages: (conversationId, eventState) => this.deriveRuntimePiMessages(conversationId, eventState),
+      appendConversationEvents: async (conversationId, conversation, inputs) => {
+        await this.appendConversationEvents(conversationId, conversation, inputs);
       },
       appendCompactionRootEvent: (
-        sessionId,
-        session,
+        conversationId,
+        conversation,
         prompt,
         summary,
         source,
@@ -508,8 +509,8 @@ export class AgentRuntime {
         preservedMessages,
       ) => (
         this.appendCompactionRootEvent(
-          sessionId,
-          session,
+          conversationId,
+          conversation,
           prompt,
           summary,
           source,
@@ -517,22 +518,22 @@ export class AgentRuntime {
           preservedMessages,
         )
       ),
-      persistToolOutputPayload: (sessionId, toolCallId, toolName, text) => (
-        this.persistToolOutputPayload(sessionId, toolCallId, toolName, text)
+      persistToolOutputPayload: (conversationId, toolCallId, toolName, text) => (
+        this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
       ),
-      captureDebugPayload: (sessionId, payload, model) => this.captureDebugPayload(sessionId, payload, model),
-      captureDebugResponse: (sessionId, response, model) => this.captureDebugResponse(sessionId, response, model),
-      emitError: (sessionId, message) => this.emitError(sessionId, message),
+      captureDebugPayload: (conversationId, payload, model) => this.captureDebugPayload(conversationId, payload, model),
+      captureDebugResponse: (conversationId, response, model) => this.captureDebugResponse(conversationId, response, model),
+      emitError: (conversationId, message) => this.emitError(conversationId, message),
       getActiveProviderConfig: () => this.getActiveProviderConfig(),
       getProviderApiKey: (providerId) => this.getProviderApiKey(providerId),
       resolveProviderModel: (providerConfig) => this.resolveProviderModel(providerConfig),
-      beginCompaction: (sessionId, session, trigger) => this.beginCompaction(sessionId, session, trigger),
-      finishCompaction: (sessionId, session, compactionId, lastEventType) => {
-        this.finishCompaction(sessionId, session, compactionId, lastEventType);
+      beginCompaction: (conversationId, conversation, trigger) => this.beginCompaction(conversationId, conversation, trigger),
+      finishCompaction: (conversationId, conversation, compactionId, lastEventType) => {
+        this.finishCompaction(conversationId, conversation, compactionId, lastEventType);
       },
-      startReactiveRetryRun: async (sessionId, session) => {
-        this.beginDebugQuery(session);
-        await this.startRun(sessionId, session, session.lastRun?.lastSubmittedUserPrompt ?? null);
+      startReactiveRetryRun: async (conversationId, conversation) => {
+        this.beginDebugQuery(conversation);
+        await this.startRun(conversationId, conversation, conversation.lastRun?.lastSubmittedUserPrompt ?? null);
       },
       completeSimpleFn: this.options.completeSimpleFn,
     });
@@ -569,10 +570,9 @@ export class AgentRuntime {
    * before the racing call when reproducing the gap.
    */
   appendNotificationForTest(conversationId: string, notificationId: string): Promise<void> {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Agent conversation not live: ${conversationId}`);
-    return this.emitTaskNotification(sessionId, session, {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) throw new Error(`Agent conversation not live: ${conversationId}`);
+    return this.emitTaskNotification(conversationId, conversation, {
       notificationId,
       kind: 'task_completed',
       title: 'Test notification',
@@ -584,15 +584,14 @@ export class AgentRuntime {
   }
 
   async restoreConversation(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const eventState = await this.loadEventState(sessionId);
-    if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
-    const session = await this.createSessionWithEventState(eventState);
+    const eventState = await this.loadEventState(conversationId);
+    if (!eventState.conversation) throw new Error(`Agent conversation not found: ${conversationId}`);
+    const conversation = await this.createConversationWithEventState(eventState);
     await this.refreshAgentTaskCache();
     // Restoring loads a conversation's state; it does NOT mark it read, and it does
     // NOT imply the user is viewing it (the dock may be collapsed). Marking read and
     // the viewed-conversation signal are both driven explicitly by the renderer.
-    return this.conversationResponse(sessionId, session);
+    return this.conversationResponse(conversationId, conversation);
   }
 
   /**
@@ -623,67 +622,67 @@ export class AgentRuntime {
    * conversation" true, which the O(1) index fold relies on.
    */
   async markConversationRead(conversationId: string): Promise<void> {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
     // Cheap pre-check to avoid scheduling an append when clearly nothing is unread;
     // the authoritative decision is re-taken inside the serial block below.
-    const pending = session.eventState.attentionByConversationId[conversationId];
+    const pending = conversation.eventState.attentionByConversationId[conversationId];
     if (!pending || pending.unreadCount === 0) return;
-    await this.appendSessionEvents(sessionId, session, (state) => {
+    await this.appendConversationEvents(conversationId, conversation, (state) => {
       const attention = state.attentionByConversationId[conversationId];
       if (!attention || attention.unreadCount === 0) return [];
       const throughSeq = state.latestSeq;
       if (throughSeq <= attention.lastReadThroughSeq) return [];
-      return [{ type: 'notification.read', actor: userActor(), conversationId, throughSeq }];
+      // The base conversationId (stamped at append) is the delivery anchor.
+      return [{ type: 'notification.read', actor: userActor(), throughSeq }];
     });
-    this.emitConversationAttention(sessionId, session);
+    this.emitConversationAttention(conversationId, conversation);
   }
 
   private async restoreOrCreateDefaultDm() {
-    const sessionId = this.defaultDmConversationId();
-    let eventState = await this.loadEventState(sessionId);
-    if (!eventState.session) {
+    const conversationId = this.defaultDmConversationId();
+    let eventState = await this.loadEventState(conversationId);
+    if (!eventState.conversation) {
       eventState = createEmptyAgentEventReplayState();
-      const events = this.buildEvents(eventState, sessionId, [{
-        type: 'session.created',
+      const events = this.buildEvents(eventState, conversationId, [{
+        type: 'conversation.created',
         actor: systemActor(),
         title: this.agentIdentity.displayName,
         members: this.defaultConversationMembers(),
       }]);
-      await this.getEventStore().appendEvents(sessionId, events);
+      await this.getEventStore().appendEvents(conversationId, events);
       for (const event of events) appendAgentEventToReplayState(eventState, event);
-      this.publishPersistedEvents(sessionId, events);
+      this.publishPersistedEvents(conversationId, events);
     }
-    const session = await this.createSessionWithEventState(eventState);
+    const conversation = await this.createConversationWithEventState(eventState);
     await this.refreshAgentTaskCache();
-    return this.conversationResponse(sessionId, session);
+    return this.conversationResponse(conversationId, conversation);
   }
 
   async createConversation() {
-    const sessionId = this.createChannelId();
+    const conversationId = this.createChannelId();
     const eventState = createEmptyAgentEventReplayState();
-    const title = normalizeSessionTitle('');
-    const created = this.buildEvents(eventState, sessionId, [{
-      type: 'session.created',
+    const title = normalizeConversationTitle('');
+    const created = this.buildEvents(eventState, conversationId, [{
+      type: 'conversation.created',
       actor: systemActor(),
       title,
       members: this.defaultConversationMembers(),
       goal: title,
     }]);
-    await this.getEventStore().appendEvents(sessionId, created);
+    await this.getEventStore().appendEvents(conversationId, created);
     for (const event of created) appendAgentEventToReplayState(eventState, event);
-    this.publishPersistedEvents(sessionId, created);
-    const session = await this.createSessionWithEventState(eventState);
+    this.publishPersistedEvents(conversationId, created);
+    const conversation = await this.createConversationWithEventState(eventState);
     await this.refreshAgentTaskCache();
-    return this.conversationResponse(sessionId, session);
+    return this.conversationResponse(conversationId, conversation);
   }
 
   async listConversations() {
     const entries = await this.getEventStore().listConversationIndexEntries();
     const listed = entries.filter((entry) => !!entry.goal);
     // Seed cross-conversation unread badges on launch: the live conversation_attention
-    // event only fires for sessions touched this run, so a conversation that went
+    // event only fires for conversations touched this run, so a conversation that went
     // unread before the app closed would show no badge until it is reopened. Re-emit
     // the persisted unread — but only for conversations that have a list row to carry
     // the badge (goal-less conversations like the default DM are masked when active
@@ -701,7 +700,7 @@ export class AgentRuntime {
     return listed
       .map((entry) => ({
         id: entry.id,
-        title: sanitizeSessionTitle(entry.title),
+        title: sanitizeConversationTitle(entry.title),
         members: entry.members.slice(),
         goal: entry.goal,
         createdAt: entry.createdAt,
@@ -765,9 +764,8 @@ export class AgentRuntime {
   }
 
   async listSlashCommands(conversationId: string): Promise<AgentSlashCommandView[]> {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = await this.ensureSessionWithId(sessionId);
-    const runtimeSettings = await this.refreshRuntimeSettings(session);
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const runtimeSettings = await this.refreshRuntimeSettings(conversation);
     const commands: AgentSlashCommandView[] = [];
 
     if (runtimeSettings.compactEnabled) {
@@ -791,7 +789,7 @@ export class AgentRuntime {
     }
 
     if (runtimeSettings.slashSkillsEnabled) {
-      const skills = await session.skillRuntime.listUserInvocableSkills();
+      const skills = await conversation.skillRuntime.listUserInvocableSkills();
       commands.push(...skills.map((skill): AgentSlashCommandView => ({
         id: `skill:${skill.name}`,
         kind: 'skill',
@@ -813,11 +811,10 @@ export class AgentRuntime {
     approved: boolean,
     scope: AgentApprovalResolutionScope = 'once',
   ) {
-    const sessionId = sessionIdFromConversationId(conversationId);
     const pending = this.pendingApprovals.get(requestId);
-    if (!pending || pending.sessionId !== sessionId) return { resolved: false };
-    const session = this.sessions.get(sessionId);
-    if (!session) return { resolved: false };
+    if (!pending || pending.conversationId !== conversationId) return { resolved: false };
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return { resolved: false };
 
     let resolvedScope = scope;
     let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
@@ -829,7 +826,7 @@ export class AgentRuntime {
         await appendAgentToolPermissionAllowRule(alwaysAllowRule);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.emitError(sessionId, `Failed to persist always-allow rule; approved once instead. ${message}`);
+        this.emitError(conversationId, `Failed to persist always-allow rule; approved once instead. ${message}`);
         resolvedScope = 'once';
         alwaysAllowRule = undefined;
       }
@@ -837,20 +834,20 @@ export class AgentRuntime {
 
     this.pendingApprovals.delete(requestId);
     try {
-      await this.appendSessionEvents(sessionId, session, [{
+      await this.appendConversationEvents(conversationId, conversation, [{
         type: 'approval.resolved',
         actor: userActor(),
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         requestId,
         approved,
       }]);
-      this.emitConversationRuntimeEvent(sessionId, {
+      this.emitConversationRuntimeEvent(conversationId, {
         type: 'approval_resolved',
         requestId,
         approved,
         scope: resolvedScope,
       });
-      this.emitProjection(sessionId, 'approval.resolved');
+      this.emitProjection(conversationId, 'approval.resolved');
     } finally {
       pending.resolve({
         approved,
@@ -863,42 +860,37 @@ export class AgentRuntime {
   }
 
   async debugSnapshot(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = await this.ensureSessionWithId(sessionId);
-    const projection = await this.deriveDebugProjection(sessionId);
-    const snapshot = projection.history.at(-1) ?? this.getRuntimeDebugSnapshot(sessionId, session);
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const projection = await this.deriveDebugProjection(conversationId);
+    const snapshot = projection.history.at(-1) ?? this.getRuntimeDebugSnapshot(conversationId, conversation);
     return snapshot ? cloneDebug(snapshot) : null;
   }
 
   async debugHistory(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    await this.ensureSessionWithId(sessionId);
-    return cloneDebug((await this.deriveDebugProjection(sessionId)).history);
+    await this.ensureConversationWithId(conversationId);
+    return cloneDebug((await this.deriveDebugProjection(conversationId)).history);
   }
 
   async debugTotals(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    await this.ensureSessionWithId(sessionId);
-    return cloneDebug((await this.deriveDebugProjection(sessionId)).totals);
+    await this.ensureConversationWithId(conversationId);
+    return cloneDebug((await this.deriveDebugProjection(conversationId)).totals);
   }
 
   async debugPayload(conversationId: string, payloadId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    const eventState = session?.eventState ?? await this.loadEventState(sessionId);
+    const conversation = this.conversations.get(conversationId);
+    const eventState = conversation?.eventState ?? await this.loadEventState(conversationId);
     const payload = eventState.payloads[payloadId];
     if (!payload || payload.role !== 'debug') return null;
-    const bytes = await this.getEventStore().readPayload(sessionId, payload);
+    const bytes = await this.getEventStore().readPayload(conversationId, payload);
     return bytes.toString('utf8');
   }
 
   async payloadText(conversationId: string, payloadId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    const eventState = session?.eventState ?? await this.loadEventState(sessionId);
+    const conversation = this.conversations.get(conversationId);
+    const eventState = conversation?.eventState ?? await this.loadEventState(conversationId);
     const payload = eventState.payloads[payloadId];
     if (!payload || !isTextPayloadRole(payload.role) || !isTextPayloadMimeType(payload.mimeType)) return null;
-    const bytes = await this.getEventStore().readPayload(sessionId, payload);
+    const bytes = await this.getEventStore().readPayload(conversationId, payload);
     return bytes.toString('utf8');
   }
 
@@ -907,9 +899,8 @@ export class AgentRuntime {
     agentId: string,
     options: { wait?: boolean; timeoutMs?: number } = {},
   ) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = await this.ensureSessionWithId(sessionId);
-    return session.subagentRuntime.status({
+    const conversation = await this.ensureConversationWithId(conversationId);
+    return conversation.subagentRuntime.status({
       agent_id: agentId,
       wait: options.wait === true,
       timeout_ms: options.timeoutMs,
@@ -917,18 +908,16 @@ export class AgentRuntime {
   }
 
   async subagentSend(conversationId: string, agentId: string, message: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = await this.ensureSessionWithId(sessionId);
-    return session.subagentRuntime.send({
+    const conversation = await this.ensureConversationWithId(conversationId);
+    return conversation.subagentRuntime.send({
       agent_id: agentId,
       message,
     });
   }
 
   async subagentStop(conversationId: string, agentId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = await this.ensureSessionWithId(sessionId);
-    return session.subagentRuntime.stop({
+    const conversation = await this.ensureConversationWithId(conversationId);
+    return conversation.subagentRuntime.stop({
       agent_id: agentId,
     });
   }
@@ -939,16 +928,15 @@ export class AgentRuntime {
   }
 
   // The raw (agentId-less) scan, shared by the settings list and the
-  // authoring resolve-by-id path. Reuses a live session's registry when one
+  // authoring resolve-by-id path. Reuses a live conversation's registry when one
   // exists (so its cache invalidation is observed), else a throwaway runtime.
   private async listRawAgentDefinitions(conversationId: string): Promise<AgentDefinition[]> {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      return session.subagentRuntime.listAllAgentDefinitions();
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      return conversation.subagentRuntime.listAllAgentDefinitions();
     }
     const tempRuntime = new AgentSubagentRuntime({
-      sessionId: 'temp-settings-list',
+      conversationId: 'temp-settings-list',
       executingAgentId: this.agentIdentity.agentId,
       memoryOwnerAgentId: this.agentIdentity.agentId,
       localRoot: this.options.localFileRoot,
@@ -958,7 +946,7 @@ export class AgentRuntime {
   }
 
   // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
-  // through main's containment-checked file surface, then every live session's
+  // through main's containment-checked file surface, then every live conversation's
   // registry cache is invalidated so the change is visible (subagent picker +
   // settings list) without an app restart. The fresh view list is returned so
   // the renderer can re-select by agentId.
@@ -998,11 +986,11 @@ export class AgentRuntime {
     return this.reloadAgentDefinitions(conversationId);
   }
 
-  // Invalidate every live session's registry cache, then return the fresh list.
+  // Invalidate every live conversation's registry cache, then return the fresh list.
   // Also exposed as an explicit "reload agents" action.
   async reloadAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
-    for (const session of this.sessions.values()) {
-      session.subagentRuntime.reloadAgentDefinitions();
+    for (const conversation of this.conversations.values()) {
+      conversation.subagentRuntime.reloadAgentDefinitions();
     }
     return this.listAllAgentDefinitions(conversationId);
   }
@@ -1035,8 +1023,8 @@ export class AgentRuntime {
   }
 
   /**
-   * Run a trust action, then propagate it to every live session: the Settings panel
-   * runs sessionless (its own registry over the persisted store), and each session
+   * Run a trust action, then propagate it to every live conversation: the Settings panel
+   * runs conversationless (its own registry over the persisted store), and each conversation
    * holds an independent in-memory trust map — without the refresh, an accepted
    * skill would join a running conversation's model listing only after restart.
    */
@@ -1046,23 +1034,22 @@ export class AgentRuntime {
   ) {
     const skillRuntime = await this.skillRuntimeForConversation(conversationId);
     await action(skillRuntime);
-    for (const session of this.sessions.values()) {
-      if (session.skillRuntime !== skillRuntime) {
-        await session.skillRuntime.refreshTrustRecords();
+    for (const conversation of this.conversations.values()) {
+      if (conversation.skillRuntime !== skillRuntime) {
+        await conversation.skillRuntime.refreshTrustRecords();
       }
     }
     return skillRuntime.listAllSkills();
   }
 
   /**
-   * The live session skill runtime when the conversation has one, else a throwaway
+   * The live conversation skill runtime when the conversation has one, else a throwaway
    * runtime over the same skill dirs AND the same persisted trust store — without
-   * the store a sessionless Skills panel would fail open to "everything ratified".
+   * the store a conversationless Skills panel would fail open to "everything ratified".
    */
   private async skillRuntimeForConversation(conversationId: string): Promise<AgentSkillRuntime> {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (session) return session.skillRuntime;
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) return conversation.skillRuntime;
     const runtimeSettings = await this.getRuntimeSettings();
     return new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
@@ -1072,55 +1059,53 @@ export class AgentRuntime {
   }
 
   async renameConversation(conversationId: string, title: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    if (this.isDefaultDmSessionId(sessionId)) {
+    if (this.isDefaultDmConversationId(conversationId)) {
       throw new Error('The canonical agent DM cannot be renamed.');
     }
-    const normalized = normalizeSessionTitle(title);
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      await this.appendSessionEvents(sessionId, session, [{
-        type: 'session.renamed',
+    const normalized = normalizeConversationTitle(title);
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.appendConversationEvents(conversationId, conversation, [{
+        type: 'conversation.renamed',
         actor: systemActor(),
         title: normalized,
         goal: normalized,
       }]);
-      this.emitProjection(sessionId, 'session_renamed');
-      return eventStateToMeta(session.eventState);
+      this.emitProjection(conversationId, 'conversation_renamed');
+      return eventStateToMeta(conversation.eventState);
     }
-    const eventState = await this.loadEventState(sessionId);
-    if (!eventState.session) return null;
-    const events = this.buildEvents(eventState, sessionId, [{
-      type: 'session.renamed',
+    const eventState = await this.loadEventState(conversationId);
+    if (!eventState.conversation) return null;
+    const events = this.buildEvents(eventState, conversationId, [{
+      type: 'conversation.renamed',
       actor: systemActor(),
       title: normalized,
       goal: normalized,
     }]);
-    await this.getEventStore().appendEvents(sessionId, events);
+    await this.getEventStore().appendEvents(conversationId, events);
     for (const event of events) appendAgentEventToReplayState(eventState, event);
-    this.publishPersistedEvents(sessionId, events);
+    this.publishPersistedEvents(conversationId, events);
     return eventStateToMeta(eventState);
   }
 
   async deleteConversation(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    if (this.isDefaultDmSessionId(sessionId)) {
+    if (this.isDefaultDmConversationId(conversationId)) {
       throw new Error('The canonical agent DM cannot be deleted.');
     }
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      await this.clearPendingUserQuestionsForSession(sessionId, 'conversation_deleted');
-      session.agent.abort();
-      session.unsubscribe?.();
-      clearPendingProjection(session);
-      this.sessions.delete(sessionId);
-      this.debugProjectionCache.delete(sessionId);
-      this.userViewContextReminderTracker.reset(sessionId);
-      this.emitConversationRuntimeEvent(sessionId, { type: 'closed' });
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
+      conversation.agent.abort();
+      conversation.unsubscribe?.();
+      clearPendingProjection(conversation);
+      this.conversations.delete(conversationId);
+      this.debugProjectionCache.delete(conversationId);
+      this.userViewContextReminderTracker.reset(conversationId);
+      this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
     }
-    this.cleanupProviderSessionResources(sessionId);
-    await this.getEventStore().deleteConversation(sessionId);
-    this.userViewContextReminderTracker.reset(sessionId);
+    this.cleanupProviderConversationResources(conversationId);
+    await this.getEventStore().deleteConversation(conversationId);
+    this.userViewContextReminderTracker.reset(conversationId);
   }
 
   async sendMessage(
@@ -1129,42 +1114,41 @@ export class AgentRuntime {
     attachmentInput: unknown = [],
     userViewContextInput: unknown = null,
   ) {
-    const sessionId = sessionIdFromConversationId(conversationId);
     try {
-      const session = await this.ensureSessionWithId(sessionId);
+      const conversation = await this.ensureConversationWithId(conversationId);
       const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
       const attachments = materialized.attachments;
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
-      if (session.agent.state.isStreaming) {
+      if (conversation.agent.state.isStreaming) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
         await this.steerConversation(conversationId, messageText);
         return;
       }
-      const runtimeSettings = await this.refreshRuntimeSettings(session);
+      const runtimeSettings = await this.refreshRuntimeSettings(conversation);
       const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
         ? parseCompactSlashCommand(messageText)
         : null;
       if (compactCommand) {
-        await this.compactSession(sessionId, session, compactCommand.instructions);
+        await this.compactConversation(conversationId, conversation, compactCommand.instructions);
         return;
       }
       if (attachments.length === 0 && parseDreamSlashCommand(messageText) && this.dreamMemoryExtractionEnabled()) {
-        await this.runManualDreamFromConversation(sessionId);
+        await this.runManualDreamFromConversation(conversationId);
         return;
       }
-      session.skillRuntime.resetRunPermissionRules();
-      this.beginDebugQuery(session);
+      conversation.skillRuntime.resetRunPermissionRules();
+      this.beginDebugQuery(conversation);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
-        sessionId,
+        conversationId,
         normalizeAgentUserViewContext(userViewContextInput),
       );
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, session);
+      const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, conversation);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
         memoryReminder,
@@ -1172,14 +1156,14 @@ export class AgentRuntime {
         userViewReminderText,
       ]);
       const slashSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
-        ? await createSlashSkillPrompt(session.skillRuntime, messageText, turnContextReminder)
+        ? await createSlashSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
       const skillListingReminder = slashSkillPrompt
         ? null
-        : await this.buildSkillListingReminder(session);
+        : await this.buildSkillListingReminder(conversation);
       const agentListingReminder = slashSkillPrompt
         ? null
-        : await this.buildAgentListingReminder(session);
+        : await this.buildAgentListingReminder(conversation);
       const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, attachments, {
         memoryReminder,
         outlinerContext,
@@ -1187,28 +1171,27 @@ export class AgentRuntime {
         skillListingReminder,
         agentListingReminder,
       }, now);
-      await this.appendUserPromptEvent(sessionId, session, prompt);
+      await this.appendUserPromptEvent(conversationId, conversation, prompt);
       userViewContextReminder.commit();
-      await this.startRun(sessionId, session, prompt);
-      await session.agent.prompt(prompt);
-      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
-      await this.persistAndEmitIdle(sessionId, session);
+      await this.startRun(conversationId, conversation, prompt);
+      await conversation.agent.prompt(prompt);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async editMessage(conversationId: string, nodeId: string, message: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
     const trimmed = message.trim();
     if (!trimmed) return;
     try {
-      const session = await this.ensureSessionWithId(sessionId);
-      if (session.agent.state.isStreaming) throw new Error('Cannot edit while the agent is running.');
-      const target = requireEventMessage(session.eventState, nodeId);
+      const conversation = await this.ensureConversationWithId(conversationId);
+      if (conversation.agent.state.isStreaming) throw new Error('Cannot edit while the agent is running.');
+      const target = requireEventMessage(conversation.eventState, nodeId);
       if (target.role !== 'user') throw new Error('Only user messages can be edited');
-      this.userViewContextReminderTracker.reset(sessionId);
-      await this.appendSessionEvents(sessionId, session, [{
+      this.userViewContextReminderTracker.reset(conversationId);
+      await this.appendConversationEvents(conversationId, conversation, [{
         type: 'user_message.created',
         actor: userActor(),
         messageId: this.createMessageId('user'),
@@ -1216,236 +1199,226 @@ export class AgentRuntime {
         replacesMessageId: target.id,
         content: textPersistedContent(trimmed),
       }]);
-      session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
-      this.emitProjection(sessionId, 'message_edited');
-      session.skillRuntime.resetRunPermissionRules();
-      this.beginDebugQuery(session);
-      await this.startRun(sessionId, session);
-      await session.agent.continue();
-      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
-      await this.persistAndEmitIdle(sessionId, session);
+      conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+      this.emitProjection(conversationId, 'message_edited');
+      conversation.skillRuntime.resetRunPermissionRules();
+      this.beginDebugQuery(conversation);
+      await this.startRun(conversationId, conversation);
+      await conversation.agent.continue();
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async regenerateMessage(conversationId: string, nodeId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
     try {
-      const session = await this.ensureSessionWithId(sessionId);
-      if (session.agent.state.isStreaming) throw new Error('Cannot regenerate while the agent is running.');
-      const targetId = findRegenerateTarget(session.eventState, nodeId);
-      const parentId = requireEventMessage(session.eventState, targetId).parentMessageId;
+      const conversation = await this.ensureConversationWithId(conversationId);
+      if (conversation.agent.state.isStreaming) throw new Error('Cannot regenerate while the agent is running.');
+      const targetId = findRegenerateTarget(conversation.eventState, nodeId);
+      const parentId = requireEventMessage(conversation.eventState, targetId).parentMessageId;
       if (!parentId) throw new Error('Cannot regenerate without a parent message.');
-      this.userViewContextReminderTracker.reset(sessionId);
-      await this.appendSessionEvents(sessionId, session, [{
+      this.userViewContextReminderTracker.reset(conversationId);
+      await this.appendConversationEvents(conversationId, conversation, [{
         type: 'branch.selected',
         actor: systemActor(),
         leafMessageId: parentId,
       }]);
-      session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
-      this.emitProjection(sessionId, 'message_regenerate_started');
-      session.skillRuntime.resetRunPermissionRules();
-      this.beginDebugQuery(session);
-      await this.startRun(sessionId, session);
-      await continueFromActivePath(session.agent);
-      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
-      await this.persistAndEmitIdle(sessionId, session);
+      conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+      this.emitProjection(conversationId, 'message_regenerate_started');
+      conversation.skillRuntime.resetRunPermissionRules();
+      this.beginDebugQuery(conversation);
+      await this.startRun(conversationId, conversation);
+      await continueFromActivePath(conversation.agent);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async retryMessage(conversationId: string, nodeId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
     try {
-      const session = await this.ensureSessionWithId(sessionId);
-      if (session.agent.state.isStreaming) throw new Error('Cannot retry while the agent is running.');
-      const parentId = requireEventMessage(session.eventState, nodeId).parentMessageId;
+      const conversation = await this.ensureConversationWithId(conversationId);
+      if (conversation.agent.state.isStreaming) throw new Error('Cannot retry while the agent is running.');
+      const parentId = requireEventMessage(conversation.eventState, nodeId).parentMessageId;
       if (!parentId) throw new Error('Cannot retry without a parent message.');
-      this.userViewContextReminderTracker.reset(sessionId);
-      await this.appendSessionEvents(sessionId, session, [{
+      this.userViewContextReminderTracker.reset(conversationId);
+      await this.appendConversationEvents(conversationId, conversation, [{
         type: 'branch.selected',
         actor: systemActor(),
         leafMessageId: parentId,
       }]);
-      session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
-      this.emitProjection(sessionId, 'message_retry_started');
-      session.skillRuntime.resetRunPermissionRules();
-      this.beginDebugQuery(session);
-      await this.startRun(sessionId, session);
-      await continueFromActivePath(session.agent);
-      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
-      await this.persistAndEmitIdle(sessionId, session);
+      conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+      this.emitProjection(conversationId, 'message_retry_started');
+      conversation.skillRuntime.resetRunPermissionRules();
+      this.beginDebugQuery(conversation);
+      await this.startRun(conversationId, conversation);
+      await continueFromActivePath(conversation.agent);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async switchBranch(conversationId: string, nodeId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
     try {
-      const session = await this.ensureSessionWithId(sessionId);
-      if (session.agent.state.isStreaming) throw new Error('Cannot switch branches while the agent is running.');
-      const leafMessageId = findLatestEventLeaf(session.eventState, nodeId).id;
-      this.userViewContextReminderTracker.reset(sessionId);
-      await this.appendSessionEvents(sessionId, session, [{
+      const conversation = await this.ensureConversationWithId(conversationId);
+      if (conversation.agent.state.isStreaming) throw new Error('Cannot switch branches while the agent is running.');
+      const leafMessageId = findLatestEventLeaf(conversation.eventState, nodeId).id;
+      this.userViewContextReminderTracker.reset(conversationId);
+      await this.appendConversationEvents(conversationId, conversation, [{
         type: 'branch.selected',
         actor: systemActor(),
         leafMessageId,
       }]);
-      session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
-      this.emitProjection(sessionId, 'branch_switched');
+      conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+      this.emitProjection(conversationId, 'branch_switched');
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
   async queueFollowUp(conversationId: string, message: string, userViewContextInput: unknown = null) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      this.emitError(sessionId, `Unknown agent conversation: ${sessionId}`);
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) {
+      this.emitError(conversationId, `Unknown agent conversation: ${conversationId}`);
       return { queued: false };
     }
     const text = message.trim();
     if (!text) return { queued: false };
-    this.releaseQueuedFollowUpSkillListing(session);
-    session.agent.clearFollowUpQueue();
-    this.userViewContextReminderTracker.reset(sessionId);
-    await this.refreshRuntimeSettings(session);
-    const skillListingReservation = await this.reserveSkillListingReminder(session);
-    session.queuedFollowUpSkillListingReservation = skillListingReservation;
+    this.releaseQueuedFollowUpSkillListing(conversation);
+    conversation.agent.clearFollowUpQueue();
+    this.userViewContextReminderTracker.reset(conversationId);
+    await this.refreshRuntimeSettings(conversation);
+    const skillListingReservation = await this.reserveSkillListingReminder(conversation);
+    conversation.queuedFollowUpSkillListingReservation = skillListingReservation;
     const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
-    session.agent.followUp(buildUserPromptMessage(text, [], {
-      memoryReminder: await this.buildMemoryReminder(this.agentIdentity.agentId, session),
+    conversation.agent.followUp(buildUserPromptMessage(text, [], {
+      memoryReminder: await this.buildMemoryReminder(this.agentIdentity.agentId, conversation),
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder,
       skillListingReminder: skillListingReservation?.text ?? null,
-      agentListingReminder: await this.buildAgentListingReminder(session),
+      agentListingReminder: await this.buildAgentListingReminder(conversation),
     }));
-    this.emitProjection(sessionId, 'follow_up_queued');
+    this.emitProjection(conversationId, 'follow_up_queued');
     return { queued: true };
   }
 
   steerConversation(conversationId: string, message: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      this.emitError(sessionId, `Unknown agent conversation: ${sessionId}`);
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) {
+      this.emitError(conversationId, `Unknown agent conversation: ${conversationId}`);
       return { queued: false };
     }
     const text = message.trim();
     if (!text) return { queued: false };
-    if (!session.agent.state.isStreaming) return { queued: false };
-    session.agent.clearSteeringQueue();
-    session.agent.steer({
+    if (!conversation.agent.state.isStreaming) return { queued: false };
+    conversation.agent.clearSteeringQueue();
+    conversation.agent.steer({
       role: 'user',
       timestamp: Date.now(),
       content: [{ type: 'text', text }],
     });
-    this.emitProjection(sessionId, 'steer_queued');
+    this.emitProjection(conversationId, 'steer_queued');
     return { queued: true };
   }
 
   clearSteer(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    session.agent.clearSteeringQueue();
-    this.emitProjection(sessionId, 'steer_cleared');
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    conversation.agent.clearSteeringQueue();
+    this.emitProjection(conversationId, 'steer_cleared');
   }
 
   clearFollowUp(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    session.agent.clearFollowUpQueue();
-    this.releaseQueuedFollowUpSkillListing(session);
-    this.emitProjection(sessionId, 'follow_up_cleared');
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    conversation.agent.clearFollowUpQueue();
+    this.releaseQueuedFollowUpSkillListing(conversation);
+    this.emitProjection(conversationId, 'follow_up_cleared');
   }
 
   stopConversation(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    void this.clearPendingUserQuestionsForSession(sessionId, 'conversation_stopped')
-      .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
-    session.agent.abort();
-    session.skillRuntime.resetRunPermissionRules();
-    this.emitProjection(sessionId, 'stop_requested');
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_stopped')
+      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    conversation.agent.abort();
+    conversation.skillRuntime.resetRunPermissionRules();
+    this.emitProjection(conversationId, 'stop_requested');
   }
 
   resetConversation(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    session.agent.reset();
-    this.cleanupProviderSessionResources(sessionId);
-    this.userViewContextReminderTracker.reset(sessionId);
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    conversation.agent.reset();
+    this.cleanupProviderConversationResources(conversationId);
+    this.userViewContextReminderTracker.reset(conversationId);
     void (async () => {
-      await this.clearPendingApprovalsForSession(sessionId, session);
-      await this.clearPendingUserQuestionsForSession(sessionId, 'conversation_reset');
-      const previousSession = session.eventState.session;
-      await this.getEventStore().deleteConversation(sessionId);
-      this.debugProjectionCache.delete(sessionId);
+      await this.clearPendingApprovalsForConversation(conversationId, conversation);
+      await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_reset');
+      const previousConversation = conversation.eventState.conversation;
+      await this.getEventStore().deleteConversation(conversationId);
+      this.debugProjectionCache.delete(conversationId);
       const eventState = createEmptyAgentEventReplayState();
-      const events = this.buildEvents(eventState, sessionId, [{
-        type: 'session.created',
+      const events = this.buildEvents(eventState, conversationId, [{
+        type: 'conversation.created',
         actor: systemActor(),
-        title: previousSession?.title ?? (this.isDefaultDmSessionId(sessionId) ? this.agentIdentity.displayName : 'Untitled'),
-        members: previousSession?.members.slice() ?? this.defaultConversationMembers(),
-        goal: previousSession?.goal,
+        title: previousConversation?.title ?? (this.isDefaultDmConversationId(conversationId) ? this.agentIdentity.displayName : 'Untitled'),
+        members: previousConversation?.members.slice() ?? this.defaultConversationMembers(),
+        goal: previousConversation?.goal,
       }]);
-      await this.getEventStore().appendEvents(sessionId, events);
+      await this.getEventStore().appendEvents(conversationId, events);
       for (const event of events) appendAgentEventToReplayState(eventState, event);
-      this.publishPersistedEvents(sessionId, events);
-      session.eventState = eventState;
-      session.agent.state.messages = [];
-      session.autoCompactConsecutiveFailures = 0;
-      session.activeRun = null;
-      session.lastRun = null;
-      session.pendingSubagentNotifications.length = 0;
-      session.queuedFollowUpSkillListingReservation = null;
-      session.reactiveCompactRequested = false;
-      session.localWorkspace.readFileState.clear();
-      session.toolResultBudgetState = createToolResultBudgetState();
-      await this.refreshRuntimeSettings(session);
-      session.skillRuntime.resetSessionState();
-      this.emitProjection(sessionId, 'session_reset');
-    })().catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
+      this.publishPersistedEvents(conversationId, events);
+      conversation.eventState = eventState;
+      conversation.agent.state.messages = [];
+      conversation.autoCompactConsecutiveFailures = 0;
+      conversation.activeRun = null;
+      conversation.lastRun = null;
+      conversation.pendingSubagentNotifications.length = 0;
+      conversation.queuedFollowUpSkillListingReservation = null;
+      conversation.reactiveCompactRequested = false;
+      conversation.localWorkspace.readFileState.clear();
+      conversation.toolResultBudgetState = createToolResultBudgetState();
+      await this.refreshRuntimeSettings(conversation);
+      conversation.skillRuntime.resetConversationState();
+      this.emitProjection(conversationId, 'conversation_reset');
+    })().catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
   }
 
   closeConversation(conversationId: string) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    void this.clearPendingApprovalsForSession(sessionId, session)
-      .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
-    void this.clearPendingUserQuestionsForSession(sessionId, 'conversation_closed')
-      .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
-    session.agent.abort();
-    session.unsubscribe?.();
-    clearPendingProjection(session);
-    this.sessions.delete(sessionId);
-    this.userViewContextReminderTracker.reset(sessionId);
-    this.cleanupProviderSessionResources(sessionId);
-    this.emitConversationRuntimeEvent(sessionId, { type: 'closed' });
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    void this.clearPendingApprovalsForConversation(conversationId, conversation)
+      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_closed')
+      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    conversation.agent.abort();
+    conversation.unsubscribe?.();
+    clearPendingProjection(conversation);
+    this.conversations.delete(conversationId);
+    this.userViewContextReminderTracker.reset(conversationId);
+    this.cleanupProviderConversationResources(conversationId);
+    this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
   }
 
-  private async clearPendingApprovalsForSession(sessionId: string, session: AgentSessionState) {
+  private async clearPendingApprovalsForConversation(conversationId: string, conversation: AgentConversationState) {
     const resolvedEvents: AgentEventInput[] = [];
     for (const [requestId, pending] of [...this.pendingApprovals]) {
-      if (pending.sessionId !== sessionId) continue;
+      if (pending.conversationId !== conversationId) continue;
       this.pendingApprovals.delete(requestId);
       resolvedEvents.push({
         type: 'approval.resolved',
         actor: systemActor(),
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         requestId,
         approved: false,
       });
-      this.emitConversationRuntimeEvent(sessionId, {
+      this.emitConversationRuntimeEvent(conversationId, {
         type: 'approval_resolved',
         requestId,
         approved: false,
@@ -1453,47 +1426,47 @@ export class AgentRuntime {
       pending.resolve({ approved: false, deniedReason: 'runtime' });
     }
     if (resolvedEvents.length > 0) {
-      await this.appendSessionEvents(sessionId, session, resolvedEvents);
-      this.emitProjection(sessionId, 'approval.resolved');
+      await this.appendConversationEvents(conversationId, conversation, resolvedEvents);
+      this.emitProjection(conversationId, 'approval.resolved');
     }
   }
 
-  private async clearPendingUserQuestionsForSession(sessionId: string, reason: string) {
+  private async clearPendingUserQuestionsForConversation(conversationId: string, reason: string) {
     for (const pending of [...this.pendingUserQuestions.values()]) {
-      if (pending.sessionId === sessionId) await this.cancelUserQuestion(pending.requestId, reason);
+      if (pending.conversationId === conversationId) await this.cancelUserQuestion(pending.requestId, reason);
     }
   }
 
-  private async createSessionWithEventState(eventState: AgentEventReplayState) {
-    if (!eventState.session) throw new Error('Cannot create agent runtime without session.created');
-    const sessionId = eventState.session.id;
-    this.reserveSessionId(sessionId);
-    const existing = this.sessions.get(sessionId);
+  private async createConversationWithEventState(eventState: AgentEventReplayState) {
+    if (!eventState.conversation) throw new Error('Cannot create agent runtime without conversation.created');
+    const conversationId = eventState.conversation.id;
+    this.reserveConversationId(conversationId);
+    const existing = this.conversations.get(conversationId);
     existing?.unsubscribe?.();
     existing?.agent.abort();
     if (existing) clearPendingProjection(existing);
-    if (existing) this.cleanupProviderSessionResources(sessionId);
-    this.userViewContextReminderTracker.reset(sessionId);
+    if (existing) this.cleanupProviderConversationResources(conversationId);
+    this.userViewContextReminderTracker.reset(conversationId);
 
     const providerConfig = await this.getActiveProviderConfig();
     const runtimeSettings = await this.getRuntimeSettings();
-    const activePath = await this.deriveRuntimePiMessages(sessionId, eventState);
+    const activePath = await this.deriveRuntimePiMessages(conversationId, eventState);
     const providerModel = providerConfig ? this.resolveProviderModel(providerConfig) : null;
     await this.getEventStore().writeAgentIdentity(this.currentAgentIdentity(providerModel));
-    const sessionRef: { current: AgentSessionState | null } = { current: null };
+    const conversationRef: { current: AgentConversationState | null } = { current: null };
     const agentRef: { current: Agent | null } = { current: null };
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
-      sessionId,
+      conversationId,
       executeSkillShell: async ({ command, skill }) => {
         const activeSettings = await this.getRuntimeSettings();
         const globalPermissions = await readAgentToolPermissionConfig();
-        const current = sessionRef.current;
+        const current = conversationRef.current;
         return executeAgentSkillShellCommand({
           approvalHandler: current
-            ? (input, signal) => this.requestToolApproval(sessionId, current, input, signal)
+            ? (input, signal) => this.requestToolApproval(conversationId, current, input, signal)
             : undefined,
           command,
           localRoot: this.options.localFileRoot,
@@ -1501,15 +1474,15 @@ export class AgentRuntime {
           allowedTools: skill.allowedTools,
           globalPermissions,
           permissionEventHandler: (input) => {
-            const currentSession = sessionRef.current;
-            return currentSession ? this.appendToolPermissionEvent(sessionId, currentSession, input) : Promise.resolve();
+            const currentConversation = conversationRef.current;
+            return currentConversation ? this.appendToolPermissionEvent(conversationId, currentConversation, input) : Promise.resolve();
           },
           toolCallId: `skill-shell-${randomUUID()}`,
         });
       },
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
-        const current = sessionRef.current;
-        if (!current) throw new Error('Cannot run forked skill before the agent session is ready.');
+        const current = conversationRef.current;
+        if (!current) throw new Error('Cannot run forked skill before the agent conversation is ready.');
         const data = await current.subagentRuntime.invokeSkillSubagent({
           skillName: skill.name,
           description: skill.description,
@@ -1532,7 +1505,7 @@ export class AgentRuntime {
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
     const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, skillRuntime);
     const subagentRuntime = new AgentSubagentRuntime({
-      sessionId,
+      conversationId,
       executingAgentId: this.agentIdentity.agentId,
       memoryOwnerAgentId: this.agentIdentity.agentId,
       localRoot: this.options.localFileRoot,
@@ -1540,36 +1513,36 @@ export class AgentRuntime {
       host: {
         createChildAgent: (input) => {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-          return this.createSubagentAgent(sessionId, sessionRef, providerConfig, input);
+          return this.createSubagentAgent(conversationId, conversationRef, providerConfig, input);
         },
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
         getRuntimeSettings: () => this.getRuntimeSettings(),
         buildMemoryReminder: (agentId) => (
-          this.buildMemoryReminder(agentId, sessionRef.current)
+          this.buildMemoryReminder(agentId, conversationRef.current)
         ),
         persistSubagentRun: (snapshot) => {
-          const current = sessionRef.current;
+          const current = conversationRef.current;
           if (!current) return Promise.resolve();
-          return this.persistSubagentRun(sessionId, current, snapshot);
+          return this.persistSubagentRun(conversationId, current, snapshot);
         },
         notifySubagentRun: (snapshot) => {
-          const current = sessionRef.current;
+          const current = conversationRef.current;
           if (!current) return Promise.resolve();
-          return this.notifySubagentRun(sessionId, current, snapshot);
+          return this.notifySubagentRun(conversationId, current, snapshot);
         },
         persistToolOutputPayload: (toolCallId, toolName, text) => (
-          this.persistToolOutputPayload(sessionId, toolCallId, toolName, text)
+          this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
         ),
-        completeCompactSummary: (compactSessionId, messages, model, customInstructions, signal) => (
-          this.completeCompactSummary(compactSessionId, messages, model, customInstructions, signal)
+        completeCompactSummary: (compactConversationId, messages, model, customInstructions, signal) => (
+          this.completeCompactSummary(compactConversationId, messages, model, customInstructions, signal)
         ),
       },
     });
     subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     subagentRuntime.restoreListedAgentsFromMessages(activePath);
     const agent = providerConfig
-      ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, {
+      ? createConfiguredAgent(conversationId, providerConfig, activePath, this.outlinerToolHost, {
           localFileRoot: this.options.localFileRoot,
           localWorkspace,
           model: providerModel!,
@@ -1578,46 +1551,46 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           subagentRuntime,
-          recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => sessionId, () => sessionRef.current),
-          askUserQuestion: this.createAskUserQuestionRuntime(() => sessionId, () => sessionRef.current),
-          selfMaintenance: this.createSelfMaintenanceRuntime(() => sessionId, () => sessionRef.current),
+          recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversationId, () => conversationRef.current),
+          askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
+          selfMaintenance: this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current),
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
           permissionClassifier: this.options.permissionClassifier,
           permissionEventHandler: (input) => {
-            const current = sessionRef.current;
-            return current ? this.appendToolPermissionEvent(sessionId, current, input) : Promise.resolve();
+            const current = conversationRef.current;
+            return current ? this.appendToolPermissionEvent(conversationId, current, input) : Promise.resolve();
           },
           approvalHandler: (input, signal) => {
-            const current = sessionRef.current;
+            const current = conversationRef.current;
             if (!current) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
-            return this.requestToolApproval(sessionId, current, input, signal);
+            return this.requestToolApproval(conversationId, current, input, signal);
           },
           afterToolResult: (toolCallId, toolName, result, isError) => {
-            const current = sessionRef.current;
+            const current = conversationRef.current;
             if (!current) return undefined;
-            return this.contextManager.afterToolResultForModelContext(sessionId, current, toolCallId, toolName, result, isError);
+            return this.contextManager.afterToolResultForModelContext(conversationId, current, toolCallId, toolName, result, isError);
           },
         }, async (payload, model) => {
           try {
-            await this.captureDebugPayload(sessionId, payload, model);
+            await this.captureDebugPayload(conversationId, payload, model);
           } catch (error) {
-            this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
           return undefined;
         }, async (response, model) => {
           try {
-            await this.captureDebugResponse(sessionId, response, model);
+            await this.captureDebugResponse(conversationId, response, model);
           } catch (error) {
-            this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
         })
-      : createConfigurationErrorAgent(sessionId, 'No enabled agent provider is configured.', activePath);
+      : createConfigurationErrorAgent(conversationId, 'No enabled agent provider is configured.', activePath);
     agentRef.current = agent;
 
-    const debugCounters = await this.loadDebugCounters(sessionId);
-    const session: AgentSessionState = {
+    const debugCounters = await this.loadDebugCounters(conversationId);
+    const conversation: AgentConversationState = {
       agent,
       activeRun: null,
       lastRun: null,
@@ -1645,102 +1618,102 @@ export class AgentRuntime {
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       unsubscribe: null,
     };
-    sessionRef.current = session;
-    await this.markInterruptedSubagentsOnRestore(sessionId, session);
-    session.subagentRuntime.restorePersistedRuns(await this.loadPersistedSubagentRuns(sessionId, session.eventState));
-    agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(sessionId, session, signal);
+    conversationRef.current = conversation;
+    await this.markInterruptedSubagentsOnRestore(conversationId, conversation);
+    conversation.subagentRuntime.restorePersistedRuns(await this.loadPersistedSubagentRuns(conversationId, conversation.eventState));
+    agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, conversation, signal);
 
-    session.unsubscribe = agent.subscribe(async (event) => {
-      await this.handlePiAgentEvent(sessionId, session, event);
+    conversation.unsubscribe = agent.subscribe(async (event) => {
+      await this.handlePiAgentEvent(conversationId, conversation, event);
       if (event.type === 'agent_end') {
-        session.currentDebugQueryIndex = 0;
+        conversation.currentDebugQueryIndex = 0;
       }
-      this.emitProjection(sessionId, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
+      this.emitProjection(conversationId, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
     });
-    this.sessions.set(sessionId, session);
-    this.emitProjection(sessionId, 'session_created');
-    return session;
+    this.conversations.set(conversationId, conversation);
+    this.emitProjection(conversationId, 'conversation_created');
+    return conversation;
   }
 
-  private async ensureSessionWithId(sessionId: string, titleOverride?: string) {
-    const existing = this.sessions.get(sessionId);
+  private async ensureConversationWithId(conversationId: string, titleOverride?: string) {
+    const existing = this.conversations.get(conversationId);
     if (existing) return existing;
-    let eventState = await this.loadEventState(sessionId);
-    if (!eventState.session) {
+    let eventState = await this.loadEventState(conversationId);
+    if (!eventState.conversation) {
       eventState = createEmptyAgentEventReplayState();
-      const isDefaultDm = this.isDefaultDmSessionId(sessionId);
+      const isDefaultDm = this.isDefaultDmConversationId(conversationId);
       const title = isDefaultDm ? this.agentIdentity.displayName : (titleOverride?.trim() || 'Untitled');
-      const events = this.buildEvents(eventState, sessionId, [{
-        type: 'session.created',
+      const events = this.buildEvents(eventState, conversationId, [{
+        type: 'conversation.created',
         actor: systemActor(),
         title,
         members: this.defaultConversationMembers(),
         goal: isDefaultDm ? undefined : title,
       }]);
-      await this.getEventStore().appendEvents(sessionId, events);
+      await this.getEventStore().appendEvents(conversationId, events);
       for (const event of events) appendAgentEventToReplayState(eventState, event);
-      this.publishPersistedEvents(sessionId, events);
+      this.publishPersistedEvents(conversationId, events);
     }
-    await this.createSessionWithEventState(eventState);
-    return this.sessions.get(sessionId)!;
+    await this.createConversationWithEventState(eventState);
+    return this.conversations.get(conversationId)!;
   }
 
-  private beginDebugQuery(session: AgentSessionState) {
-    if (session.currentDebugQueryIndex > 0) return;
-    session.currentDebugQueryIndex = session.nextDebugQueryIndex;
-    session.nextDebugQueryIndex += 1;
+  private beginDebugQuery(conversation: AgentConversationState) {
+    if (conversation.currentDebugQueryIndex > 0) return;
+    conversation.currentDebugQueryIndex = conversation.nextDebugQueryIndex;
+    conversation.nextDebugQueryIndex += 1;
   }
 
-  private async buildSkillListingReminder(session: AgentSessionState): Promise<string | null> {
-    return (await this.reserveSkillListingReminder(session))?.text ?? null;
+  private async buildSkillListingReminder(conversation: AgentConversationState): Promise<string | null> {
+    return (await this.reserveSkillListingReminder(conversation))?.text ?? null;
   }
 
-  private async buildAgentListingReminder(session: AgentSessionState): Promise<string | null> {
-    return session.subagentRuntime.reserveAgentListingReminderText(
-      session.agent.state.model.contextWindow,
+  private async buildAgentListingReminder(conversation: AgentConversationState): Promise<string | null> {
+    return conversation.subagentRuntime.reserveAgentListingReminderText(
+      conversation.agent.state.model.contextWindow,
     );
   }
 
-  private async reserveSkillListingReminder(session: AgentSessionState) {
-    if (!session.runtimeSettings.automaticSkillsEnabled) return null;
-    return session.skillRuntime.reserveSkillListingReminderText(
-      session.agent.state.model.contextWindow,
+  private async reserveSkillListingReminder(conversation: AgentConversationState) {
+    if (!conversation.runtimeSettings.automaticSkillsEnabled) return null;
+    return conversation.skillRuntime.reserveSkillListingReminderText(
+      conversation.agent.state.model.contextWindow,
     );
   }
 
-  private releaseQueuedFollowUpSkillListing(session: AgentSessionState): void {
-    if (!session.queuedFollowUpSkillListingReservation) return;
-    session.skillRuntime.releaseSkillListingReservation(session.queuedFollowUpSkillListingReservation);
-    session.queuedFollowUpSkillListingReservation = null;
+  private releaseQueuedFollowUpSkillListing(conversation: AgentConversationState): void {
+    if (!conversation.queuedFollowUpSkillListingReservation) return;
+    conversation.skillRuntime.releaseSkillListingReservation(conversation.queuedFollowUpSkillListingReservation);
+    conversation.queuedFollowUpSkillListingReservation = null;
   }
 
-  private async refreshRuntimeSettings(session: AgentSessionState): Promise<AgentRuntimeSettings> {
+  private async refreshRuntimeSettings(conversation: AgentConversationState): Promise<AgentRuntimeSettings> {
     const runtimeSettings = await this.getRuntimeSettings();
-    session.runtimeSettings = runtimeSettings;
-    session.skillRuntime.updateAdditionalSkillDirectories(runtimeSettings.additionalSkillDirectories);
-    session.skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    session.subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
-    this.applyRuntimeToolSettings(session);
+    conversation.runtimeSettings = runtimeSettings;
+    conversation.skillRuntime.updateAdditionalSkillDirectories(runtimeSettings.additionalSkillDirectories);
+    conversation.skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
+    conversation.subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
+    this.applyRuntimeToolSettings(conversation);
     return runtimeSettings;
   }
 
-  private applyRuntimeToolSettings(session: AgentSessionState): void {
-    session.subagentRuntime.updateAdditionalAgentDirectories(session.runtimeSettings.additionalAgentDirectories);
-    session.agent.state.tools = createAgentTools(this.outlinerToolHost, {
+  private applyRuntimeToolSettings(conversation: AgentConversationState): void {
+    conversation.subagentRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
+    conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
-      localWorkspace: session.localWorkspace,
-      skillRuntime: session.skillRuntime,
-      skillToolEnabled: session.runtimeSettings.automaticSkillsEnabled,
-      subagentRuntime: session.subagentRuntime,
-      recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => session.eventState.session?.id ?? 'unknown', () => session),
-      askUserQuestion: this.createAskUserQuestionRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
-      selfMaintenance: this.createSelfMaintenanceRuntime(() => session.eventState.session?.id ?? 'unknown', () => session),
+      localWorkspace: conversation.localWorkspace,
+      skillRuntime: conversation.skillRuntime,
+      skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
+      subagentRuntime: conversation.subagentRuntime,
+      recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
     });
   }
 
   private createSubagentAgent(
-    parentSessionId: string,
-    parentSessionRef: { current: AgentSessionState | null },
+    parentConversationId: string,
+    parentConversationRef: { current: AgentConversationState | null },
     providerConfig: AgentProviderRuntimeConfig,
     input: AgentSubagentCreateInput,
   ): Agent {
@@ -1751,7 +1724,7 @@ export class AgentRuntime {
     const thinkingLevel = input.effort
       ? resolveSkillEffortOverride(input.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
-    return createConfiguredAgent(input.sessionId, providerConfig, input.messages, this.outlinerToolHost, {
+    return createConfiguredAgent(input.conversationId, providerConfig, input.messages, this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: input.localWorkspace,
       model,
@@ -1763,16 +1736,16 @@ export class AgentRuntime {
       subagentRuntime: input.subagentRuntime,
       recall: this.createRecallToolRuntime(
         input.memoryOwnerAgentId,
-        () => input.sessionId,
-        () => parentSessionRef.current,
+        () => input.conversationId,
+        () => parentConversationRef.current,
       ),
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
       permissionClassifier: this.options.permissionClassifier,
       permissionEventHandler: (eventInput) => {
-        const parentSession = parentSessionRef.current;
-        return parentSession ? this.appendToolPermissionEvent(parentSessionId, parentSession, eventInput) : Promise.resolve();
+        const parentConversation = parentConversationRef.current;
+        return parentConversation ? this.appendToolPermissionEvent(parentConversationId, parentConversation, eventInput) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
       allowedTools: input.allowedTools,
@@ -1786,21 +1759,21 @@ export class AgentRuntime {
       approvalHandler: input.unattended
         ? undefined
         : (approvalInput, signal) => {
-          const parentSession = parentSessionRef.current;
-          if (!parentSession) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
-          return this.requestToolApproval(parentSessionId, parentSession, approvalInput, signal);
+          const parentConversation = parentConversationRef.current;
+          if (!parentConversation) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
+          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal);
         },
       afterToolResult: input.afterToolResult,
     }, async (payload, modelForPayload) => {
       try {
-        await this.captureDebugPayload(input.sessionId, payload, modelForPayload);
+        await this.captureDebugPayload(input.conversationId, payload, modelForPayload);
       } catch {
         // Subagent sidechain persistence is intentionally isolated from parent UI errors.
       }
       return undefined;
     }, async (response, modelForResponse) => {
       try {
-        await this.captureDebugResponse(input.sessionId, response, modelForResponse);
+        await this.captureDebugResponse(input.conversationId, response, modelForResponse);
       } catch {
         // Subagent sidechain persistence is intentionally isolated from parent UI errors.
       }
@@ -1808,7 +1781,7 @@ export class AgentRuntime {
   }
 
   private async loadPersistedSubagentRuns(
-    sessionId: string,
+    conversationId: string,
     eventState: AgentEventReplayState,
   ): Promise<AgentSubagentRestoredRun[]> {
     const runs: AgentSubagentRestoredRun[] = [];
@@ -1816,7 +1789,7 @@ export class AgentRuntime {
       const payloadId = record.transcriptPayloadId;
       const payload = payloadId ? eventState.payloads[payloadId] : undefined;
       const transcriptMessages = payload
-        ? await this.readSubagentTranscriptPayload(sessionId, payload)
+        ? await this.readSubagentTranscriptPayload(conversationId, payload)
         : [];
       runs.push({ record, transcriptMessages });
     }
@@ -1824,16 +1797,16 @@ export class AgentRuntime {
   }
 
   private async markInterruptedSubagentsOnRestore(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
   ): Promise<void> {
-    const runningRuns = Object.values(session.eventState.subagents ?? {})
+    const runningRuns = Object.values(conversation.eventState.subagents ?? {})
       .filter((run) => run.status === 'running');
     if (runningRuns.length === 0) return;
 
-    const interruptedError = 'Subagent was interrupted before session restore.';
+    const interruptedError = 'Subagent was interrupted before conversation restore.';
     const completedAt = Date.now();
-    await this.appendSessionEvents(sessionId, session, runningRuns.map((run): AgentEventInput => ({
+    await this.appendConversationEvents(conversationId, conversation, runningRuns.map((run): AgentEventInput => ({
       type: 'subagent_run.updated',
       actor: systemActor(),
       subagentRunId: run.id,
@@ -1845,10 +1818,10 @@ export class AgentRuntime {
 
     // "Don't go silent": a background subagent that died while the app was closed
     // must still raise a durable badge (and OS banner) on restore — not vanish.
-    // Durable delivery only here (no live model-injection): the session is being
+    // Durable delivery only here (no live model-injection): the conversation is being
     // restored, not running a turn, and recovery is re-spawn, not resume.
     for (const run of runningRuns) {
-      await this.emitTaskNotification(sessionId, session, {
+      await this.emitTaskNotification(conversationId, conversation, {
         notificationId: `notification-${run.id}-${completedAt}`,
         kind: 'task_failed',
         title: `Subagent "${run.description}" was interrupted.`,
@@ -1862,18 +1835,18 @@ export class AgentRuntime {
   }
 
   private async readSubagentTranscriptPayload(
-    sessionId: string,
+    conversationId: string,
     payload: AgentPayloadRef,
   ): Promise<AgentMessage[]> {
-    return (await this.readSubagentTranscriptEnvelope(sessionId, payload))?.messages ?? [];
+    return (await this.readSubagentTranscriptEnvelope(conversationId, payload))?.messages ?? [];
   }
 
   private async readSubagentTranscriptEnvelope(
-    sessionId: string,
+    conversationId: string,
     payload: AgentPayloadRef,
   ): Promise<SubagentTranscriptEnvelope | null> {
     try {
-      const raw = await this.getEventStore().readPayload(sessionId, payload);
+      const raw = await this.getEventStore().readPayload(conversationId, payload);
       return parseSubagentTranscriptEnvelope(raw);
     } catch {
       return null;
@@ -1881,15 +1854,15 @@ export class AgentRuntime {
   }
 
   private async persistSubagentRun(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     snapshot: AgentSubagentRunSnapshot,
   ): Promise<void> {
     const actor = snapshot.parentToolCallId
       ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
       : systemActor();
-    const exists = Boolean(session.eventState.subagents[snapshot.id]);
-    const existingRun = session.eventState.subagents[snapshot.id];
+    const exists = Boolean(conversation.eventState.subagents[snapshot.id]);
+    const existingRun = conversation.eventState.subagents[snapshot.id];
     const transcriptEnvelope = createSubagentTranscriptEnvelope({
       runId: snapshot.id,
       executingAgentId: snapshot.executingAgentId,
@@ -1901,18 +1874,18 @@ export class AgentRuntime {
     const transcriptData = JSON.stringify(transcriptEnvelope);
     const transcriptSha = createHash('sha256').update(transcriptData).digest('hex');
     const existingPayload = existingRun?.transcriptPayloadId
-      ? session.eventState.payloads[existingRun.transcriptPayloadId]
+      ? conversation.eventState.payloads[existingRun.transcriptPayloadId]
       : undefined;
     const payload = existingPayload?.sha256 === transcriptSha
       ? undefined
-      : await this.getEventStore().writePayload(sessionId, {
+      : await this.getEventStore().writePayload(conversationId, {
           id: `subagent-transcript-${snapshot.id}-${snapshot.transcriptMessages.length}-${transcriptSha.slice(0, 12)}`,
           data: transcriptData,
           mimeType: 'application/json',
           role: 'subagent_transcript',
           summary: `Subagent ${snapshot.subagentType} transcript (${snapshot.transcriptMessages.length} messages)`,
         });
-    await this.appendSessionEvents(sessionId, session, [
+    await this.appendConversationEvents(conversationId, conversation, [
       ...(payload ? [{
         type: 'payload.created' as const,
         actor,
@@ -1950,12 +1923,12 @@ export class AgentRuntime {
             transcriptMessageCount: snapshot.transcriptMessages.length,
           },
     ]);
-    this.emitProjection(sessionId, exists ? 'subagent_run.updated' : 'subagent_run.started', 'coalesce');
+    this.emitProjection(conversationId, exists ? 'subagent_run.updated' : 'subagent_run.started', 'coalesce');
   }
 
   private async notifySubagentRun(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     snapshot: AgentSubagentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
@@ -1965,12 +1938,12 @@ export class AgentRuntime {
     if (snapshot.status !== 'stopped') {
       // Durable per-conversation delivery: emit the attention/OS signal as a
       // notification.created event anchored to the origin conversation. This is the
-      // restart-safe record (the in-memory model-injection below is the live-session
+      // restart-safe record (the in-memory model-injection below is the live-conversation
       // composed-turn layer; it is best-effort and not the durability guarantee).
       // The id keys on the completion instant so a *resumed* detached run that
       // finishes again gets a fresh notification (idempotent across replay, distinct
       // across re-completions — see agentSubagents `send`).
-      await this.emitTaskNotification(sessionId, session, {
+      await this.emitTaskNotification(conversationId, conversation, {
         notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
         kind: subagentNotificationKind(snapshot.status),
         title: subagentNotificationTitle(snapshot),
@@ -1981,20 +1954,20 @@ export class AgentRuntime {
           : systemActor(),
       });
     }
-    session.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
-    void this.flushSubagentNotifications(sessionId, session).catch((error) => {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+    conversation.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
+    void this.flushSubagentNotifications(conversationId, conversation).catch((error) => {
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     });
   }
 
   /**
-   * Append a durable notification.created event anchored to the session's origin
+   * Append a durable notification.created event anchored to the origin
    * conversation, then surface it (projection + opt-in OS notification). Idempotent
    * on notificationId so a re-emitted terminal snapshot does not double-count.
    */
   private async emitTaskNotification(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     input: {
       notificationId: string;
       kind: AgentNotificationKind;
@@ -2004,14 +1977,13 @@ export class AgentRuntime {
       actor?: AgentActor;
     },
   ): Promise<void> {
-    if (session.eventState.notifications[input.notificationId]) return;
-    const conversationId = conversationIdFromSessionId(sessionId);
+    if (conversation.eventState.notifications[input.notificationId]) return;
     const body = input.body ? truncateNotificationBody(input.body) : undefined;
-    await this.appendSessionEvents(sessionId, session, [{
+    // The base conversationId (stamped at append) is the delivery anchor.
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'notification.created',
       actor: input.actor ?? systemActor(),
       notificationId: input.notificationId,
-      conversationId,
       kind: input.kind,
       title: input.title,
       body,
@@ -2020,49 +1992,49 @@ export class AgentRuntime {
     // No emitProjection here: the render projection never reads notifications or
     // attention (the badge rides the dedicated conversation_attention event), so a
     // rebuild would produce byte-identical content. Attention is the only signal.
-    this.emitConversationAttention(sessionId, session);
+    this.emitConversationAttention(conversationId, conversation);
     this.deliverOsNotification({ title: input.title, body, conversationId });
   }
 
-  private async flushSubagentNotifications(sessionId: string, session: AgentSessionState): Promise<void> {
-    if (session.subagentNotificationFlushInProgress) return;
-    if (session.pendingSubagentNotifications.length === 0) return;
-    if (this.activeRunId(session) || session.agent.state.isStreaming) return;
+  private async flushSubagentNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    if (conversation.subagentNotificationFlushInProgress) return;
+    if (conversation.pendingSubagentNotifications.length === 0) return;
+    if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
 
-    session.subagentNotificationFlushInProgress = true;
+    conversation.subagentNotificationFlushInProgress = true;
     try {
-      while (session.pendingSubagentNotifications.length > 0) {
-        if (this.activeRunId(session) || session.agent.state.isStreaming) break;
-        const notifications = session.pendingSubagentNotifications.splice(0);
+      while (conversation.pendingSubagentNotifications.length > 0) {
+        if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) break;
+        const notifications = conversation.pendingSubagentNotifications.splice(0);
         const prompt: UserMessage = {
           role: 'user',
           timestamp: Date.now(),
           content: [{ type: 'text', text: systemReminder(notifications.join('\n\n')) }],
         };
-        session.skillRuntime.resetRunPermissionRules();
-        this.beginDebugQuery(session);
-        await this.appendSystemPromptEvent(sessionId, session, prompt);
-        await this.startRun(sessionId, session, prompt);
-        await session.agent.prompt(prompt);
-        await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
-        await this.persistAndEmitIdle(sessionId, session, { flushSubagentNotifications: false });
+        conversation.skillRuntime.resetRunPermissionRules();
+        this.beginDebugQuery(conversation);
+        await this.appendSystemPromptEvent(conversationId, conversation, prompt);
+        await this.startRun(conversationId, conversation, prompt);
+        await conversation.agent.prompt(prompt);
+        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+        await this.persistAndEmitIdle(conversationId, conversation, { flushSubagentNotifications: false });
       }
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     } finally {
-      session.subagentNotificationFlushInProgress = false;
+      conversation.subagentNotificationFlushInProgress = false;
     }
   }
 
   private async persistToolOutputPayload(
-    sessionId: string,
+    conversationId: string,
     toolCallId: string,
     toolName: string,
     text: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }> {
-    const session = this.sessions.get(sessionId);
-    const runId = session ? this.activeRunId(session) ?? undefined : undefined;
-    const payload = await this.getEventStore().writePayload(sessionId, {
+    const conversation = this.conversations.get(conversationId);
+    const runId = conversation ? this.activeRunId(conversation) ?? undefined : undefined;
+    const payload = await this.getEventStore().writePayload(conversationId, {
       id: `tool-output-${toolCallId}`,
       data: text,
       mimeType: 'text/plain',
@@ -2078,7 +2050,7 @@ export class AgentRuntime {
   }
 
   private async completeCompactSummary(
-    sessionId: string,
+    conversationId: string,
     messages: readonly AgentMessage[],
     modelOverride?: Model<Api>,
     customInstructions?: string,
@@ -2103,11 +2075,12 @@ export class AgentRuntime {
         ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
         apiKey,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
-        sessionId,
+        // pi-ai stream option (provider cache affinity) — the lib's own field name.
+        sessionId: conversationId,
         signal,
         onPayload: async (payload, payloadModel) => {
           try {
-            await this.captureDebugPayload(sessionId, payload, payloadModel);
+            await this.captureDebugPayload(conversationId, payload, payloadModel);
           } catch {
             // Subagent compact debug capture must not break the child run.
           }
@@ -2115,7 +2088,7 @@ export class AgentRuntime {
         },
         onResponse: async (responsePayload, responseModel) => {
           try {
-            await this.captureDebugResponse(sessionId, responsePayload, responseModel);
+            await this.captureDebugResponse(conversationId, responsePayload, responseModel);
           } catch {
             // Subagent compact debug capture must not break the child run.
           }
@@ -2143,38 +2116,38 @@ export class AgentRuntime {
   }
 
   private async captureDebugPayload(
-    sessionId: string,
+    conversationId: string,
     payload: unknown,
     model: Model<any>,
     source: AgentDebugSnapshot['source'] = 'provider_payload',
   ) {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    this.beginDebugQuery(session);
-    const turnIndex = session.nextDebugTurnIndex;
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    this.beginDebugQuery(conversation);
+    const turnIndex = conversation.nextDebugTurnIndex;
     const debugId = `debug-${randomUUID()}`;
     const envelope = createAgentDebugPayloadEnvelope(payload);
     const sourceLabel = source === 'provider_response' ? 'Provider response' : 'Provider payload';
-    const payloadRef = await this.getEventStore().writePayload(sessionId, {
+    const payloadRef = await this.getEventStore().writePayload(conversationId, {
       id: `${debugId}-payload`,
       data: envelope.json,
       mimeType: 'application/json',
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       role: 'debug',
       summary: `${sourceLabel} round ${turnIndex}`,
     });
-    await this.appendSessionEvents(sessionId, session, [{
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'payload.created',
       actor: systemActor(),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       payload: payloadRef,
     }, {
       type: 'debug.snapshot.created',
       actor: systemActor(),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       debugId,
       source,
-      queryIndex: session.currentDebugQueryIndex,
+      queryIndex: conversation.currentDebugQueryIndex,
       turnIndex,
       payloadRef,
       wire: {
@@ -2183,53 +2156,53 @@ export class AgentRuntime {
       },
       model: debugModelMetadata(model),
     }]);
-    session.nextDebugTurnIndex += 1;
-    this.debugProjectionCache.delete(sessionId);
+    conversation.nextDebugTurnIndex += 1;
+    this.debugProjectionCache.delete(conversationId);
   }
 
-  private async captureDebugResponse(sessionId: string, response: ProviderResponse, model: Model<any>) {
-    await this.captureDebugPayload(sessionId, {
+  private async captureDebugResponse(conversationId: string, response: ProviderResponse, model: Model<any>) {
+    await this.captureDebugPayload(conversationId, {
       status: response.status,
       headers: response.headers,
     }, model, 'provider_response');
   }
 
-  private getRuntimeDebugSnapshot(sessionId: string, session: AgentSessionState) {
-    const state = session.agent.state;
+  private getRuntimeDebugSnapshot(conversationId: string, conversation: AgentConversationState) {
+    const state = conversation.agent.state;
     return createRuntimeStateDebugSnapshot({
       messages: state.messages as AgentMessage[],
       model: state.model as Model<any>,
       queryIndex: 0,
-      conversationId: conversationIdFromSessionId(sessionId),
-      conversationTitle: sanitizeSessionTitle(session.eventState.session?.title),
+      conversationId: conversationId,
+      conversationTitle: sanitizeConversationTitle(conversation.eventState.conversation?.title),
       systemPrompt: state.systemPrompt,
       thinkingLevel: state.thinkingLevel,
       tools: state.tools,
     });
   }
 
-  private async deriveDebugProjection(sessionId: string): Promise<{
+  private async deriveDebugProjection(conversationId: string): Promise<{
     history: AgentDebugSnapshot[];
     latestSeq: number;
     totals: AgentDebugTotals;
   }> {
-    const events = await this.getEventStore().readEvents(sessionId);
+    const events = await this.getEventStore().readEvents(conversationId);
     const latestSeq = events.at(-1)?.seq ?? 0;
-    const cached = this.debugProjectionCache.get(sessionId);
+    const cached = this.debugProjectionCache.get(conversationId);
     if (cached?.latestSeq === latestSeq) return cached;
 
     const projection = await deriveAgentDebugProjectionFromEvents({
       events,
-      readPayload: (payload) => this.getEventStore().readPayload(sessionId, payload),
-      conversationId: conversationIdFromSessionId(sessionId),
-      conversationTitle: sanitizeSessionTitle(this.sessions.get(sessionId)?.eventState.session?.title),
+      readPayload: (payload) => this.getEventStore().readPayload(conversationId, payload),
+      conversationId: conversationId,
+      conversationTitle: sanitizeConversationTitle(this.conversations.get(conversationId)?.eventState.conversation?.title),
     });
-    this.debugProjectionCache.set(sessionId, projection);
+    this.debugProjectionCache.set(conversationId, projection);
     return projection;
   }
 
-  private async loadDebugCounters(sessionId: string): Promise<{ nextQueryIndex: number; nextTurnIndex: number }> {
-    const events = await this.getEventStore().readEvents(sessionId);
+  private async loadDebugCounters(conversationId: string): Promise<{ nextQueryIndex: number; nextTurnIndex: number }> {
+    const events = await this.getEventStore().readEvents(conversationId);
     let maxQueryIndex = 0;
     let maxTurnIndex = 0;
     for (const event of events) {
@@ -2244,23 +2217,23 @@ export class AgentRuntime {
   }
 
   private async persistAndEmitIdle(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     options: { flushSubagentNotifications?: boolean } = {},
   ) {
-    await this.flushPendingDreamFinishedEvents(sessionId, session);
-    session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
-    this.emitProjection(sessionId, 'agent_idle');
+    await this.flushPendingDreamFinishedEvents(conversationId, conversation);
+    conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+    this.emitProjection(conversationId, 'agent_idle');
     if (options.flushSubagentNotifications !== false) {
-      await this.flushSubagentNotifications(sessionId, session);
+      await this.flushSubagentNotifications(conversationId, conversation);
     }
   }
 
-  private async flushPendingDreamFinishedEvents(sessionId: string, session: AgentSessionState): Promise<void> {
-    while (session.pendingDreamFinishedMarkers.length > 0) {
-      const result = session.pendingDreamFinishedMarkers.shift();
+  private async flushPendingDreamFinishedEvents(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    while (conversation.pendingDreamFinishedMarkers.length > 0) {
+      const result = conversation.pendingDreamFinishedMarkers.shift();
       if (!result) continue;
-      await this.appendDreamFinishedEvent(sessionId, session, result);
+      await this.appendDreamFinishedEvent(conversationId, conversation, result);
     }
   }
 
@@ -2292,7 +2265,7 @@ export class AgentRuntime {
   /**
    * Settle in-flight best-effort writes so a force-exit on quit (see main.ts's
    * before-quit, which `app.exit`s after this) doesn't truncate them mid-write:
-   * each session's event-log append (the integrity-critical fast local write),
+   * each conversation's event-log append (the integrity-critical fast local write),
    * plus the dream-extraction and command-sweep tails. The latter two are
    * crash-safe — their watermarks only advance on success, so a cut dream/sweep
    * simply re-fires next launch — so the CALLER SHOULD bound this with a timeout;
@@ -2300,7 +2273,7 @@ export class AgentRuntime {
    */
   async drainPendingWrites(): Promise<void> {
     const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
-    for (const session of this.sessions.values()) pending.push(session.pendingEventAppend);
+    for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
     await Promise.allSettled(pending);
   }
 
@@ -2390,7 +2363,7 @@ export class AgentRuntime {
       if (live.has(nodeId)) continue;
       this.knownCommandConversationNodeIds.delete(nodeId);
       void this.deleteConversation(
-        conversationIdFromSessionId(this.commandConversationSessionId(nodeId)),
+        this.commandConversationId(nodeId),
       ).catch(() => undefined);
     }
   }
@@ -2436,7 +2409,7 @@ export class AgentRuntime {
       // collapsing the 30s/1m/5m/15m/1h ladder into a 60s tight-retry loop.
       this.commandBackoffUntil.set(command.nodeId, Date.now() + delay);
       this.emitError(
-        this.commandConversationSessionId(command.nodeId),
+        this.commandConversationId(command.nodeId),
         error instanceof Error ? error.message : String(error),
       );
     } finally {
@@ -2447,7 +2420,7 @@ export class AgentRuntime {
   // One delivery conversation per command node — a stable id derived from the
   // node id so every fire posts into a single thread (find-or-created on each
   // fire; tolerant of the conversation being deleted).
-  private commandConversationSessionId(nodeId: string): string {
+  private commandConversationId(nodeId: string): string {
     return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
   }
 
@@ -2459,43 +2432,43 @@ export class AgentRuntime {
     // command can never reach the watermark advance in `fireCommand`.
     if (!brief) throw new Error('This command has no brief to run.');
     await this.runCommandSubagent(
-      this.commandConversationSessionId(command.nodeId),
+      this.commandConversationId(command.nodeId),
       brief,
       command.commandAgent,
       command.lastSuccessAt,
     );
   }
 
-  // Ensure a command node's delivery conversation EXISTS ON DISK (a `session.created`
+  // Ensure a command node's delivery conversation EXISTS ON DISK (a `conversation.created`
   // titled from the brief) and return its id — without materializing an in-memory
-  // session. The renderer awaits this, then selects the conversation (which loads
-  // the single in-memory session via `restoreConversation`), then runs it. Doing
-  // the persist here instead of `ensureSessionWithId` is deliberate: creating an
-  // in-memory session here AND again on restore would `abort()` + recreate the
-  // session mid-flight, diverging the event seq ("seq N is not after existing M").
+  // conversation. The renderer awaits this, then selects the conversation (which loads
+  // the single in-memory conversation via `restoreConversation`), then runs it. Doing
+  // the persist here instead of `ensureConversationWithId` is deliberate: creating an
+  // in-memory conversation here AND again on restore would `abort()` + recreate the
+  // conversation mid-flight, diverging the event seq ("seq N is not after existing M").
   async ensureCommandConversation(nodeId: string): Promise<{ conversationId: string }> {
     const node = this.outlinerToolHost.getProjection().nodes.find((entry) => entry.id === nodeId);
     if (!node || node.type !== 'command') throw new Error('Not a command node.');
-    const sessionId = this.commandConversationSessionId(nodeId);
+    const conversationId = this.commandConversationId(nodeId);
     this.knownCommandConversationNodeIds.add(nodeId);
     // Already live (a prior run/restore) — nothing to persist; restore will reuse it.
-    if (!this.sessions.has(sessionId)) {
-      const loaded = await this.loadEventState(sessionId);
-      if (!loaded.session) {
+    if (!this.conversations.has(conversationId)) {
+      const loaded = await this.loadEventState(conversationId);
+      if (!loaded.conversation) {
         const title = commandConversationTitle(node.content.text);
         const eventState = createEmptyAgentEventReplayState();
-        const events = this.buildEvents(eventState, sessionId, [{
-          type: 'session.created',
+        const events = this.buildEvents(eventState, conversationId, [{
+          type: 'conversation.created',
           actor: systemActor(),
           title,
           members: this.defaultConversationMembers(),
           goal: title,
         }]);
-        await this.getEventStore().appendEvents(sessionId, events);
-        this.publishPersistedEvents(sessionId, events);
+        await this.getEventStore().appendEvents(conversationId, events);
+        this.publishPersistedEvents(conversationId, events);
       }
     }
-    return { conversationId: conversationIdFromSessionId(sessionId) };
+    return { conversationId: conversationId };
   }
 
   // Run now (attended): the same execution path with a `node` trigger and NO
@@ -2505,14 +2478,14 @@ export class AgentRuntime {
     const projection = this.outlinerToolHost.getProjection();
     const node = projection.nodes.find((entry) => entry.id === nodeId);
     if (!node || node.type !== 'command') throw new Error('Not a command node.');
-    const sessionId = this.commandConversationSessionId(nodeId);
+    const conversationId = this.commandConversationId(nodeId);
     // Coordinate with the scheduled sweep via the same guard set. If a fire (or
     // another Run-now) for this node is already in flight, surface the existing
     // delivery conversation instead of starting a colliding second run — and the
     // sweep, which skips nodes in this set, won't treat the attended run as a
     // schedule failure.
     if (this.firingCommandNodeIds.has(nodeId)) {
-      return { conversationId: conversationIdFromSessionId(sessionId) };
+      return { conversationId: conversationId };
     }
     // Build the same brief a scheduled fire does: title + non-field child outline,
     // with inline references reconstructed (see `commandBriefText`).
@@ -2522,8 +2495,8 @@ export class AgentRuntime {
     this.firingCommandNodeIds.add(nodeId);
     this.knownCommandConversationNodeIds.add(nodeId);
     try {
-      await this.runCommandSubagent(sessionId, brief, node.commandAgent, node.sysLastRunAt ?? null);
-      return { conversationId: conversationIdFromSessionId(sessionId) };
+      await this.runCommandSubagent(conversationId, brief, node.commandAgent, node.sysLastRunAt ?? null);
+      return { conversationId: conversationId };
     } finally {
       this.firingCommandNodeIds.delete(nodeId);
     }
@@ -2539,15 +2512,15 @@ export class AgentRuntime {
   // only when the subagent reaches a terminal state; throws on failure/stop so the
   // caller leaves the watermark unadvanced and arms the failure backoff.
   private async runCommandSubagent(
-    sessionId: string,
+    conversationId: string,
     brief: string,
     agent: string | undefined,
     lastSuccessAt: number | null,
   ): Promise<void> {
-    const session = await this.ensureSessionWithId(sessionId, commandConversationTitle(brief));
-    await this.refreshRuntimeSettings(session);
+    const conversation = await this.ensureConversationWithId(conversationId, commandConversationTitle(brief));
+    await this.refreshRuntimeSettings(conversation);
     const subagentType = agent?.trim() ? agent.trim() : undefined;
-    let data = await session.subagentRuntime.invokeAgent({
+    let data = await conversation.subagentRuntime.invokeAgent({
       subagent_type: subagentType,
       description: commandConversationTitle(brief),
       prompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
@@ -2561,7 +2534,7 @@ export class AgentRuntime {
     // `background: true` launches detached regardless — poll to completion so the
     // watermark only ever advances on a finished run.
     while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
-      data = await session.subagentRuntime.status({
+      data = await conversation.subagentRuntime.status({
         agent_id: data.agent_id,
         wait: true,
         timeout_ms: COMMAND_SUBAGENT_WAIT_MS,
@@ -2578,16 +2551,16 @@ export class AgentRuntime {
       .then(() => this.fireDream('schedule', now));
   }
 
-  private async runManualDreamFromConversation(sessionId: string) {
+  private async runManualDreamFromConversation(conversationId: string) {
     if (!this.dreamMemoryExtractionEnabled()) return;
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    const activeDreamId = this.beginDream(sessionId, session);
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    const activeDreamId = this.beginDream(conversationId, conversation);
     const result = await this.fireManualDream(new Date());
     try {
-      await this.appendDreamFinishedEvent(sessionId, session, result);
+      await this.appendDreamFinishedEvent(conversationId, conversation, result);
     } finally {
-      this.finishDream(sessionId, session, activeDreamId, 'dream.finished');
+      this.finishDream(conversationId, conversation, activeDreamId, 'dream.finished');
     }
   }
 
@@ -2755,7 +2728,7 @@ export class AgentRuntime {
    * Whether the user is a member of this reader's conversation — the gate for sharing the user
    * pool ([[agent-data-model]] §4 visibility = membership).
    *
-   * Reach, honestly stated: subagent recall/briefing are wired to the PARENT session, and every
+   * Reach, honestly stated: subagent recall/briefing are wired to the PARENT conversation, and every
    * user-created conversation has the user as a member, so today this returns true on all live
    * paths — subagents INHERIT user-pool visibility by design (they act inside the user's
    * conversation on the user's task; sidechains are not separate conversations with their own
@@ -2763,8 +2736,8 @@ export class AgentRuntime {
    * conversations exist (e.g. agent↔agent channels); missing membership info defaults open
    * because today a conversation without members cannot be anything but user-created.
    */
-  private conversationIncludesUser(session: AgentSessionState | null): boolean {
-    const members = session?.eventState.session?.members;
+  private conversationIncludesUser(conversation: AgentConversationState | null): boolean {
+    const members = conversation?.eventState.conversation?.members;
     if (!members) return true;
     const user = this.userPrincipal();
     return members.some((member) => samePrincipal(member, user));
@@ -2915,6 +2888,7 @@ export class AgentRuntime {
           ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
           apiKey,
           maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
+          // pi-ai stream option (provider cache affinity) — the lib's own field name.
           sessionId: `${principalKey(task.principal)}:dream:${task.runId}:${index + 1}`,
         });
         if (response.stopReason === 'error' || response.stopReason === 'aborted') {
@@ -3037,8 +3011,8 @@ export class AgentRuntime {
   }
 
   private emitAgentTaskProjection(lastEventType: string) {
-    for (const sessionId of this.sessions.keys()) {
-      this.emitProjection(sessionId, lastEventType, 'coalesce');
+    for (const conversationId of this.conversations.keys()) {
+      this.emitProjection(conversationId, lastEventType, 'coalesce');
     }
   }
 
@@ -3113,16 +3087,16 @@ export class AgentRuntime {
     return changes;
   }
 
-  private reserveSessionId(sessionId: string) {
-    const match = /^lin-agent-(\d+)$/.exec(sessionId);
+  private reserveConversationId(conversationId: string) {
+    const match = /^lin-agent-(\d+)$/.exec(conversationId);
     if (!match) return;
     const numericId = Number(match[1]);
-    if (Number.isInteger(numericId) && numericId >= this.nextSessionId) {
-      this.nextSessionId = numericId + 1;
+    if (Number.isInteger(numericId) && numericId >= this.nextConversationId) {
+      this.nextConversationId = numericId + 1;
     }
   }
 
-  private createSessionId() {
+  private createConversationId() {
     return `lin-agent-${randomUUID()}`;
   }
 
@@ -3137,8 +3111,8 @@ export class AgentRuntime {
     return `lin-agent-channel-${randomUUID()}`;
   }
 
-  private isDefaultDmSessionId(sessionId: string) {
-    return sessionId === this.defaultDmConversationId();
+  private isDefaultDmConversationId(conversationId: string) {
+    return conversationId === this.defaultDmConversationId();
   }
 
   private userPrincipal(): AgentPrincipal {
@@ -3161,13 +3135,13 @@ export class AgentRuntime {
     return { type: 'agent', agentId: this.agentIdentity.agentId };
   }
 
-  private activeRunId(session: AgentSessionState): string | null {
-    return session.activeRun?.id ?? null;
+  private activeRunId(conversation: AgentConversationState): string | null {
+    return conversation.activeRun?.id ?? null;
   }
 
-  private requireActiveRun(session: AgentSessionState): AgentActiveRunState {
-    if (!session.activeRun) throw new Error('Agent run state is not active.');
-    return session.activeRun;
+  private requireActiveRun(conversation: AgentConversationState): AgentActiveRunState {
+    if (!conversation.activeRun) throw new Error('Agent run state is not active.');
+    return conversation.activeRun;
   }
 
   private currentAgentIdentity(model: Model<Api> | null): AgentIdentityRecord {
@@ -3177,12 +3151,12 @@ export class AgentRuntime {
     };
   }
 
-  private runTrigger(session: AgentSessionState): AgentRunTrigger {
-    const messageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
+  private runTrigger(conversation: AgentConversationState): AgentRunTrigger {
+    const messageId = conversation.eventState.selectedLeafMessageId ?? conversation.eventState.latestMessageId;
     return messageId ? { type: 'message', messageId } : { type: 'manual' };
   }
 
-  private runFingerprint(session: AgentSessionState): AgentRunFingerprint {
+  private runFingerprint(conversation: AgentConversationState): AgentRunFingerprint {
     return {
       appVersion: electronAppVersion(),
       promptHash: hashJson({
@@ -3192,31 +3166,31 @@ export class AgentRuntime {
       toolSchemaHash: 'runtime-tools',
       skillBindings: [],
       modelConfig: hashJson({
-        model: session.agent.state.model.id,
-        provider: session.agent.state.model.provider,
-        thinkingLevel: session.agent.state.thinkingLevel,
+        model: conversation.agent.state.model.id,
+        provider: conversation.agent.state.model.provider,
+        thinkingLevel: conversation.agent.state.thinkingLevel,
       }),
     };
   }
 
-  private conversationResponse(sessionId: string, session: AgentSessionState) {
+  private conversationResponse(conversationId: string, conversation: AgentConversationState) {
     return {
-      conversationId: conversationIdFromSessionId(sessionId),
-      renderProjection: this.renderProjection(session),
-      pendingUserQuestion: this.pendingUserQuestionView(sessionId, session),
+      conversationId: conversationId,
+      renderProjection: this.renderProjection(conversation),
+      pendingUserQuestion: this.pendingUserQuestionView(conversationId, conversation),
     };
   }
 
-  private renderProjection(session: AgentSessionState) {
-    const projection = buildAgentRenderProjection(session.eventState, {
-      revision: session.revision,
-      activeRunId: this.activeRunId(session),
-      activeCompaction: session.activeCompaction,
-      activeDream: session.activeDream,
-      isStreaming: session.agent.state.isStreaming,
-      model: clone(session.agent.state.model) as unknown as Record<string, unknown>,
-      thinkingLevel: session.agent.state.thinkingLevel,
-      pendingToolCallIds: Array.from(session.agent.state.pendingToolCalls),
+  private renderProjection(conversation: AgentConversationState) {
+    const projection = buildAgentRenderProjection(conversation.eventState, {
+      revision: conversation.revision,
+      activeRunId: this.activeRunId(conversation),
+      activeCompaction: conversation.activeCompaction,
+      activeDream: conversation.activeDream,
+      isStreaming: conversation.agent.state.isStreaming,
+      model: clone(conversation.agent.state.model) as unknown as Record<string, unknown>,
+      thinkingLevel: conversation.agent.state.thinkingLevel,
+      pendingToolCallIds: Array.from(conversation.agent.state.pendingToolCalls),
       // Run/provider failures render inline as a failed assistant message (see
       // appendAssistantCompleted). The top-level banner is reserved for transient
       // operational errors delivered via the `error` event.
@@ -3225,13 +3199,13 @@ export class AgentRuntime {
     });
     return {
       ...projection,
-      conversationTitle: sanitizeSessionTitle(projection.conversationTitle),
+      conversationTitle: sanitizeConversationTitle(projection.conversationTitle),
     };
   }
 
   private beginCompaction(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     trigger: AgentCompactionTrigger,
   ): string {
     const activeCompaction = {
@@ -3239,91 +3213,91 @@ export class AgentRuntime {
       trigger,
       startedAt: Date.now(),
     };
-    session.activeCompaction = activeCompaction;
-    this.emitProjection(sessionId, 'compaction.started');
+    conversation.activeCompaction = activeCompaction;
+    this.emitProjection(conversationId, 'compaction.started');
     return activeCompaction.id;
   }
 
   private finishCompaction(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     compactionId: string,
     lastEventType: string,
   ) {
-    if (session.activeCompaction?.id === compactionId) {
-      session.activeCompaction = null;
+    if (conversation.activeCompaction?.id === compactionId) {
+      conversation.activeCompaction = null;
     }
-    this.emitProjection(sessionId, lastEventType);
+    this.emitProjection(conversationId, lastEventType);
   }
 
-  private beginDream(sessionId: string, session: AgentSessionState): string {
+  private beginDream(conversationId: string, conversation: AgentConversationState): string {
     const activeDream = {
       id: randomUUID(),
       trigger: 'manual' as const,
       startedAt: Date.now(),
     };
-    session.activeDream = activeDream;
-    this.emitProjection(sessionId, 'dream.started');
+    conversation.activeDream = activeDream;
+    this.emitProjection(conversationId, 'dream.started');
     return activeDream.id;
   }
 
   private finishDream(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     dreamId: string,
     lastEventType: string,
   ) {
-    if (session.activeDream?.id === dreamId) {
-      session.activeDream = null;
+    if (conversation.activeDream?.id === dreamId) {
+      conversation.activeDream = null;
     }
-    this.emitProjection(sessionId, lastEventType);
+    this.emitProjection(conversationId, lastEventType);
   }
 
   private emitProjection(
-    sessionId: string,
+    conversationId: string,
     lastEventType: string | null = null,
     mode: 'immediate' | 'coalesce' = 'immediate',
   ) {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
     if (mode === 'coalesce') {
-      session.pendingProjectionLastEventType = lastEventType;
-      if (session.pendingProjectionTimer) return;
-      session.pendingProjectionTimer = setTimeout(() => {
-        session.pendingProjectionTimer = null;
-        const pendingEventType = session.pendingProjectionLastEventType;
-        session.pendingProjectionLastEventType = null;
-        this.emitProjectionNow(sessionId, pendingEventType);
+      conversation.pendingProjectionLastEventType = lastEventType;
+      if (conversation.pendingProjectionTimer) return;
+      conversation.pendingProjectionTimer = setTimeout(() => {
+        conversation.pendingProjectionTimer = null;
+        const pendingEventType = conversation.pendingProjectionLastEventType;
+        conversation.pendingProjectionLastEventType = null;
+        this.emitProjectionNow(conversationId, pendingEventType);
       }, 16);
       return;
     }
-    clearPendingProjection(session);
-    this.emitProjectionNow(sessionId, lastEventType);
+    clearPendingProjection(conversation);
+    this.emitProjectionNow(conversationId, lastEventType);
   }
 
-  private emitProjectionNow(sessionId: string, lastEventType: string | null = null) {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    session.revision += 1;
-    const renderProjection = this.renderProjection(session);
+  private emitProjectionNow(conversationId: string, lastEventType: string | null = null) {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    conversation.revision += 1;
+    const renderProjection = this.renderProjection(conversation);
     const timestamp = Date.now();
     this.domainEvents.publish({
       lane: 'renderer-projection',
       name: 'RendererProjectionUpdated',
-      sessionId,
+      conversationId,
       lastEventType,
-      revision: session.revision,
+      revision: conversation.revision,
       projection: renderProjection,
       createdAt: timestamp,
     });
   }
 
-  private publishPersistedEvents(sessionId: string, events: readonly AgentEvent[]) {
+  private publishPersistedEvents(conversationId: string, events: readonly AgentEvent[]) {
     for (const event of events) {
       this.domainEvents.publish({
         lane: 'persisted-log',
         name: 'PersistedLogEvent',
-        sessionId,
+        conversationId,
         runId: event.runId,
         event,
         createdAt: event.createdAt,
@@ -3331,8 +3305,8 @@ export class AgentRuntime {
     }
   }
 
-  private emitError(sessionId: string, message: string) {
-    this.emitConversationRuntimeEvent(sessionId, {
+  private emitError(conversationId: string, message: string) {
+    this.emitConversationRuntimeEvent(conversationId, {
       type: 'error',
       error: message,
     });
@@ -3343,9 +3317,8 @@ export class AgentRuntime {
    * list. Threaded independently of the active-conversation projection so badges
    * on other conversations update too.
    */
-  private emitConversationAttention(sessionId: string, session: AgentSessionState) {
-    const conversationId = conversationIdFromSessionId(sessionId);
-    const attention = session.eventState.attentionByConversationId[conversationId];
+  private emitConversationAttention(conversationId: string, conversation: AgentConversationState) {
+    const attention = conversation.eventState.attentionByConversationId[conversationId];
     this.emit({
       type: 'conversation_attention',
       conversationId,
@@ -3372,8 +3345,7 @@ export class AgentRuntime {
     }
   }
 
-  private emitConversationRuntimeEvent(sessionId: string, input: PublicConversationRuntimeEventInput) {
-    const conversationId = conversationIdFromSessionId(sessionId);
+  private emitConversationRuntimeEvent(conversationId: string, input: PublicConversationRuntimeEventInput) {
     const timestamp = Date.now();
     if (input.type === 'closed') {
       this.emit({ type: 'closed', conversationId, timestamp });
@@ -3439,13 +3411,13 @@ export class AgentRuntime {
 
   private createRecallToolRuntime(
     agentId: string,
-    _getSessionId: () => string,
-    getSession: () => AgentSessionState | null,
+    _getConversationId: () => string,
+    getConversation: () => AgentConversationState | null,
   ): AgentRecallToolRuntime {
     const reader: AgentPrincipal = { type: 'agent', agentId };
     return {
       recall: async (options) => {
-        const session = getSession();
+        const conversation = getConversation();
         const limit = clampRecallLimit(options.limit);
         // Cross-principal read by membership ([[agent-data-model]] §4): the reader searches its
         // own pool and — only when the user is a member of its conversation — the shared user
@@ -3454,7 +3426,7 @@ export class AgentRuntime {
         const ownResult = await this.getEventStore().queryMemoryEntries(reader, {
           query: options.query, limit,
         });
-        const userResult = this.conversationIncludesUser(session)
+        const userResult = this.conversationIncludesUser(conversation)
           ? await this.getEventStore().queryMemoryEntries(this.userPrincipal(), { query: options.query, limit })
           : { entries: [], totalEntries: 0 };
         // Fair interleave so a large own pool never fully starves more-relevant user-pool hits.
@@ -3534,28 +3506,28 @@ export class AgentRuntime {
   }
 
   private createAskUserQuestionRuntime(
-    getSessionId: () => string,
-    getSession: () => AgentSessionState | null,
+    getConversationId: () => string,
+    getConversation: () => AgentConversationState | null,
   ): AgentAskUserQuestionRuntime {
     return {
       ask: (toolCallId, request, signal) => {
-        const session = getSession();
-        if (!session) throw new Error('Agent session is not ready.');
-        return this.askUserQuestion(getSessionId(), session, toolCallId, request, signal);
+        const conversation = getConversation();
+        if (!conversation) throw new Error('Agent conversation is not ready.');
+        return this.askUserQuestion(getConversationId(), conversation, toolCallId, request, signal);
       },
     };
   }
 
   private createSelfMaintenanceRuntime(
-    getSessionId: () => string,
-    getSession: () => AgentSessionState | null,
+    getConversationId: () => string,
+    getConversation: () => AgentConversationState | null,
   ): AgentSelfMaintenanceRuntime {
     return {
       runtimeStatus: async () => {
         const providerConfig = await this.getActiveProviderConfig();
         return {
           agentId: this.agentIdentity.agentId,
-          conversationId: conversationIdFromSessionId(getSessionId()),
+          conversationId: getConversationId(),
           provider: providerConfig
             ? {
                 configured: true,
@@ -3573,17 +3545,17 @@ export class AgentRuntime {
         value: readRuntimeSetting(await this.getRuntimeSettings(), setting),
       }),
       writeConfig: async (setting, value) => {
-        const session = getSession();
-        if (!session) throw new Error('Agent session is not ready.');
+        const conversation = getConversation();
+        if (!conversation) throw new Error('Agent conversation is not ready.');
         const before = readRuntimeSetting(await this.getRuntimeSettings(), setting);
         const patch = normalizeRuntimeSettingPatch(setting, value);
         await updateAgentRuntimeSettings(patch);
-        const runtimeSettings = await this.refreshRuntimeSettings(session);
+        const runtimeSettings = await this.refreshRuntimeSettings(conversation);
         const after = readRuntimeSetting(runtimeSettings, setting);
-        await this.appendSessionEvents(getSessionId(), session, [{
+        await this.appendConversationEvents(getConversationId(), conversation, [{
           type: 'config.change',
           actor: this.agentActor(),
-          runId: this.activeRunId(session) ?? undefined,
+          runId: this.activeRunId(conversation) ?? undefined,
           changeId: `config-change-${randomUUID()}`,
           status: 'applied',
           change: {
@@ -3637,27 +3609,27 @@ export class AgentRuntime {
       },
       dream: async () => {
         const result = await this.fireManualDream(new Date());
-        getSession()?.pendingDreamFinishedMarkers.push(result);
+        getConversation()?.pendingDreamFinishedMarkers.push(result);
         return dreamToolDataFromRunResult(result);
       },
     };
   }
 
   private async askUserQuestion(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     toolCallId: string,
     request: AgentUserQuestionRequestView,
     signal?: AbortSignal,
   ): Promise<AskUserQuestionResult> {
-    const runId = this.activeRunId(session);
+    const runId = this.activeRunId(conversation);
     if (!runId) throw new Error('Cannot ask the user a question outside an active run.');
-    if ([...this.pendingUserQuestions.values()].some((pending) => pending.sessionId === sessionId && pending.runId === runId)) {
+    if ([...this.pendingUserQuestions.values()].some((pending) => pending.conversationId === conversationId && pending.runId === runId)) {
       throw new Error('A user question is already pending for this run.');
     }
 
     const requestId = `question-${randomUUID()}`;
-    await this.appendSessionEvents(sessionId, session, [{
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'user_question.requested',
       actor: this.agentActor(),
       runId,
@@ -3668,7 +3640,7 @@ export class AgentRuntime {
 
     return new Promise<AskUserQuestionResult>((resolve, reject) => {
       const pending: AgentPendingUserQuestion = {
-        sessionId,
+        conversationId,
         runId,
         toolCallId,
         requestId,
@@ -3677,15 +3649,15 @@ export class AgentRuntime {
         reject,
       };
       this.pendingUserQuestions.set(requestId, pending);
-      this.emitConversationRuntimeEvent(sessionId, {
+      this.emitConversationRuntimeEvent(conversationId, {
         type: 'user_question_request',
         requestId,
-        question: this.userQuestionView(sessionId, pending),
+        question: this.userQuestionView(conversationId, pending),
       });
-      this.emitProjection(sessionId, 'user_question.requested');
+      this.emitProjection(conversationId, 'user_question.requested');
       const abort = () => {
         void this.cancelUserQuestion(requestId, 'aborted')
-          .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
+          .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
       };
       if (signal?.aborted) {
         abort();
@@ -3700,10 +3672,9 @@ export class AgentRuntime {
     requestId: string,
     resultInput: unknown,
   ) {
-    const sessionId = sessionIdFromConversationId(conversationId);
-    const session = await this.ensureSessionWithId(sessionId);
-    const pending = this.pendingUserQuestions.get(requestId) ?? this.pendingUserQuestionFromReplay(sessionId, session, requestId);
-    if (!pending || pending.sessionId !== sessionId) return { resolved: false };
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const pending = this.pendingUserQuestions.get(requestId) ?? this.pendingUserQuestionFromReplay(conversationId, conversation, requestId);
+    if (!pending || pending.conversationId !== conversationId) return { resolved: false };
     const result = normalizeAskUserQuestionResult(requestId, pending.request, resultInput);
     const validationError = this.validateUserQuestionResult(pending.request, result);
     if (validationError) throw new Error(validationError);
@@ -3714,15 +3685,15 @@ export class AgentRuntime {
       requestId,
       result,
     }];
-    if (!pending.resolve) events.push(this.replayedUserQuestionToolResultInput(session, pending, result));
-    await this.appendSessionEvents(sessionId, session, events);
+    if (!pending.resolve) events.push(this.replayedUserQuestionToolResultInput(conversation, pending, result));
+    await this.appendConversationEvents(conversationId, conversation, events);
     this.pendingUserQuestions.delete(requestId);
-    this.emitConversationRuntimeEvent(sessionId, {
+    this.emitConversationRuntimeEvent(conversationId, {
       type: 'user_question_resolved',
       requestId,
       result,
     });
-    this.emitProjection(sessionId, 'user_question.answered');
+    this.emitProjection(conversationId, 'user_question.answered');
     if (pending.resolve) {
       pending.resolve(result);
     }
@@ -3746,11 +3717,11 @@ export class AgentRuntime {
   }
 
   private replayedUserQuestionToolResultInput(
-    session: AgentSessionState,
+    conversation: AgentConversationState,
     pending: AgentPendingUserQuestion,
     result: AskUserQuestionResult,
   ): AgentEventInput {
-    const parentMessage = getAgentEventActivePath(session.eventState)
+    const parentMessage = getAgentEventActivePath(conversation.eventState)
       .find((message) => message.role === 'assistant'
         && message.content.some((part) => part.type === 'toolCall' && part.id === pending.toolCallId));
     if (!parentMessage) {
@@ -3778,18 +3749,18 @@ export class AgentRuntime {
     const pending = this.pendingUserQuestions.get(requestId);
     if (!pending) return;
     this.pendingUserQuestions.delete(requestId);
-    const session = this.sessions.get(pending.sessionId);
-    if (session) {
-      await this.appendSessionEvents(pending.sessionId, session, [{
+    const conversation = this.conversations.get(pending.conversationId);
+    if (conversation) {
+      await this.appendConversationEvents(pending.conversationId, conversation, [{
         type: 'user_question.cancelled',
         actor: systemActor(),
         runId: pending.runId,
         requestId,
         reason,
       }]);
-      this.emitProjection(pending.sessionId, 'user_question.cancelled');
+      this.emitProjection(pending.conversationId, 'user_question.cancelled');
     }
-    this.emitConversationRuntimeEvent(pending.sessionId, {
+    this.emitConversationRuntimeEvent(pending.conversationId, {
       type: 'user_question_resolved',
       requestId,
     });
@@ -3797,16 +3768,16 @@ export class AgentRuntime {
   }
 
   private pendingUserQuestionView(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
   ): AgentUserQuestionPendingView | null {
-    const live = [...this.pendingUserQuestions.values()].find((pending) => pending.sessionId === sessionId);
-    if (live) return this.userQuestionView(sessionId, live);
-    const replayed = Object.values(session.eventState.userQuestions)
+    const live = [...this.pendingUserQuestions.values()].find((pending) => pending.conversationId === conversationId);
+    if (live) return this.userQuestionView(conversationId, live);
+    const replayed = Object.values(conversation.eventState.userQuestions)
       .filter((question) => question.status === 'pending')
       .sort((left, right) => left.createdAt - right.createdAt)[0];
-    return replayed ? this.userQuestionView(sessionId, {
-      sessionId,
+    return replayed ? this.userQuestionView(conversationId, {
+      conversationId,
       runId: replayed.runId,
       toolCallId: replayed.toolCallId,
       requestId: replayed.requestId,
@@ -3815,14 +3786,14 @@ export class AgentRuntime {
   }
 
   private pendingUserQuestionFromReplay(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     requestId: string,
   ): AgentPendingUserQuestion | null {
-    const record = session.eventState.userQuestions[requestId];
+    const record = conversation.eventState.userQuestions[requestId];
     if (!record || record.status !== 'pending') return null;
     return {
-      sessionId,
+      conversationId,
       runId: record.runId,
       toolCallId: record.toolCallId,
       requestId,
@@ -3831,12 +3802,12 @@ export class AgentRuntime {
   }
 
   private userQuestionView(
-    sessionId: string,
+    conversationId: string,
     pending: AgentPendingUserQuestion,
   ): AgentUserQuestionPendingView {
     return {
       requestId: pending.requestId,
-      conversationId: conversationIdFromSessionId(sessionId),
+      conversationId: conversationId,
       runId: pending.runId,
       toolCallId: pending.toolCallId,
       request: pending.request,
@@ -3860,14 +3831,14 @@ export class AgentRuntime {
 
   private async buildMemoryReminder(
     agentId: string,
-    session: AgentSessionState | null,
+    conversation: AgentConversationState | null,
   ): Promise<string | null> {
     try {
       const reader: AgentPrincipal = { type: 'agent', agentId };
       // Resident selection: the briefing is the distilled-memory prefix ([[agent-memory-model]]
       // §2), so it lists recent active entries rather than query-specific hits — those arrive
       // on demand through the `recall` tool ([5] tail). Keeping selection query-independent
-      // keeps the briefing stable turn-over-turn (cache-friendly); a mid-session Dream write
+      // keeps the briefing stable turn-over-turn (cache-friendly); a mid-conversation Dream write
       // surfaces through recall until the next turn folds it into the briefing.
       //
       // Membership read ([[agent-data-model]] §4): the reader sees its own pool (`<self>`) plus
@@ -3876,7 +3847,7 @@ export class AgentRuntime {
       // own memory by where it works. Agent↔agent co-member pools are deferred (fork 1).
       const [selfEntries, userEntries] = await Promise.all([
         this.getEventStore().listMemoryEntries(reader, { limit: MEMORY_BRIEFING_MAX_ENTRIES }),
-        this.conversationIncludesUser(session)
+        this.conversationIncludesUser(conversation)
           ? this.getEventStore().listMemoryEntries(this.userPrincipal(), { limit: MEMORY_BRIEFING_MAX_ENTRIES })
           : Promise.resolve([]),
       ]);
@@ -3891,8 +3862,8 @@ export class AgentRuntime {
   }
 
   private clearSubagentMemoryReminderCaches(): void {
-    for (const session of this.sessions.values()) {
-      session.subagentRuntime.clearMemoryReminderCache();
+    for (const conversation of this.conversations.values()) {
+      conversation.subagentRuntime.clearMemoryReminderCache();
     }
   }
 
@@ -3909,11 +3880,11 @@ export class AgentRuntime {
     return this.options.runtimeSettingsLoader?.() ?? getAgentRuntimeSettings();
   }
 
-  private cleanupProviderSessionResources(sessionId: string) {
+  private cleanupProviderConversationResources(conversationId: string) {
     try {
-      cleanupPiSessionResources(sessionId);
+      cleanupPiConversationResources(conversationId);
     } catch (error) {
-      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -3925,13 +3896,13 @@ export class AgentRuntime {
     return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
   }
 
-  private async loadEventState(sessionId: string): Promise<AgentEventReplayState> {
-    return this.getEventStore().replay(sessionId);
+  private async loadEventState(conversationId: string): Promise<AgentEventReplayState> {
+    return this.getEventStore().replay(conversationId);
   }
 
   private buildEvents(
     eventState: AgentEventReplayState,
-    sessionId: string,
+    conversationId: string,
     inputs: readonly AgentEventInput[],
   ): AgentEvent[] {
     let seq = eventState.latestSeq;
@@ -3941,16 +3912,16 @@ export class AgentRuntime {
         v: AGENT_EVENT_VERSION,
         eventId: randomUUID(),
         seq: ++seq,
-        sessionId,
+        conversationId,
         createdAt: createdAt ?? Date.now(),
         ...rest,
       } as AgentEvent;
     });
   }
 
-  private async appendSessionEvents(
-    sessionId: string,
-    session: AgentSessionState,
+  private async appendConversationEvents(
+    conversationId: string,
+    conversation: AgentConversationState,
     // Either a fixed list, or a builder evaluated INSIDE the serial queue against the
     // up-to-date eventState — required when an event field is derived from the log
     // tail (e.g. a notification.read cursor), since seqs are assigned at write time
@@ -3962,25 +3933,25 @@ export class AgentRuntime {
   ) {
     let events: AgentEvent[] = [];
     const writeEvents = async () => {
-      const resolved = typeof inputs === 'function' ? inputs(session.eventState) : inputs;
+      const resolved = typeof inputs === 'function' ? inputs(conversation.eventState) : inputs;
       if (resolved.length === 0) {
         events = [];
         return;
       }
-      events = this.buildEvents(session.eventState, sessionId, resolved);
-      await this.getEventStore().appendEvents(sessionId, events);
-      for (const event of events) appendAgentEventToReplayState(session.eventState, event);
-      this.publishPersistedEvents(sessionId, events);
+      events = this.buildEvents(conversation.eventState, conversationId, resolved);
+      await this.getEventStore().appendEvents(conversationId, events);
+      for (const event of events) appendAgentEventToReplayState(conversation.eventState, event);
+      this.publishPersistedEvents(conversationId, events);
     };
-    const operation = session.pendingEventAppend.then(writeEvents, writeEvents);
-    session.pendingEventAppend = operation.then(() => undefined, () => undefined);
+    const operation = conversation.pendingEventAppend.then(writeEvents, writeEvents);
+    conversation.pendingEventAppend = operation.then(() => undefined, () => undefined);
     await operation;
     return events;
   }
 
   private async requestToolApproval(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     input: AgentToolApprovalInput,
     signal?: AbortSignal,
   ): Promise<AgentToolApprovalResolution> {
@@ -3989,7 +3960,7 @@ export class AgentRuntime {
     const requestId = input.requestId;
     const request: AgentApprovalRequestView = {
       requestId,
-      conversationId: conversationIdFromSessionId(sessionId),
+      conversationId: conversationId,
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
       title: input.decision.request.title,
@@ -3998,7 +3969,7 @@ export class AgentRuntime {
       details: input.decision.request.details,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
     };
-    const payload = await this.getEventStore().writePayload(sessionId, {
+    const payload = await this.getEventStore().writePayload(conversationId, {
       id: `approval-${requestId}`,
       data: JSON.stringify({
         request,
@@ -4011,31 +3982,31 @@ export class AgentRuntime {
         args: input.args,
       }, null, 2),
       mimeType: 'application/json',
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       role: 'approval',
       summary: request.title,
     });
 
-    await this.appendSessionEvents(sessionId, session, [{
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'payload.created',
       actor: systemActor(),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       payload,
     }, {
       type: 'approval.requested',
       actor: systemActor(),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       requestId,
       summary: `${request.title} ${request.target}`.trim(),
       payloadRef: payload,
     }]);
 
-    this.emitConversationRuntimeEvent(sessionId, {
+    this.emitConversationRuntimeEvent(conversationId, {
       type: 'approval_request',
       requestId,
       request,
     });
-    this.emitProjection(sessionId, 'approval.requested');
+    this.emitProjection(conversationId, 'approval.requested');
 
     return new Promise<AgentToolApprovalResolution>((resolve) => {
       const onAbort = () => {
@@ -4043,14 +4014,14 @@ export class AgentRuntime {
         if (!pending) return;
         this.pendingApprovals.delete(requestId);
         signal?.removeEventListener('abort', onAbort);
-        void this.appendSessionEvents(sessionId, session, [{
+        void this.appendConversationEvents(conversationId, conversation, [{
           type: 'approval.resolved',
           actor: systemActor(),
-          runId: this.activeRunId(session) ?? undefined,
+          runId: this.activeRunId(conversation) ?? undefined,
           requestId,
           approved: false,
-        }]).catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
-        this.emitConversationRuntimeEvent(sessionId, {
+        }]).catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+        this.emitConversationRuntimeEvent(conversationId, {
           type: 'approval_resolved',
           requestId,
           approved: false,
@@ -4059,7 +4030,7 @@ export class AgentRuntime {
       };
 
       this.pendingApprovals.set(requestId, {
-        sessionId,
+        conversationId,
         request,
         alwaysAllowRule: request.alwaysAllowRule,
         resolve: (resolution) => {
@@ -4072,8 +4043,8 @@ export class AgentRuntime {
   }
 
   private async appendToolPermissionEvent(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     input: AgentToolPermissionLogInput,
   ) {
     const source = input.source ?? permissionEventSourceForDecision(input.decision);
@@ -4081,7 +4052,7 @@ export class AgentRuntime {
     const events: AgentEventInput[] = input.includeChecked === false ? [] : [{
       type: 'tool.permission.checked',
       actor: systemActor(),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       requestId: input.requestId,
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
@@ -4094,7 +4065,7 @@ export class AgentRuntime {
       events.push({
         type: 'tool.permission.resolved',
         actor: systemActor(),
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         requestId: input.requestId,
         toolCallId: input.toolCall.id,
         toolName: input.toolCall.name,
@@ -4104,12 +4075,12 @@ export class AgentRuntime {
         deniedReason: input.resolved.deniedReason,
       });
     }
-    await this.appendSessionEvents(sessionId, session, events);
+    await this.appendConversationEvents(conversationId, conversation, events);
   }
 
-  private async appendUserPromptEvent(sessionId: string, session: AgentSessionState, prompt: UserMessage) {
+  private async appendUserPromptEvent(conversationId: string, conversation: AgentConversationState, prompt: UserMessage) {
     const messageId = this.createMessageId('user');
-    const persisted = await this.persistPiUserContent(sessionId, prompt.content, {
+    const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
       imageSummary: 'Image attachment',
     });
     const inputs: AgentEventInput[] = [
@@ -4123,7 +4094,7 @@ export class AgentRuntime {
         actor: userActor(),
         createdAt: prompt.timestamp,
         messageId,
-        parentMessageId: session.eventState.selectedLeafMessageId,
+        parentMessageId: conversation.eventState.selectedLeafMessageId,
         content: persisted.content,
         attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
       },
@@ -4135,24 +4106,24 @@ export class AgentRuntime {
     ];
 
     const title = deriveTitleFromPersistedContent(persisted.content);
-    if (title && (!session.eventState.session?.title || session.eventState.session.title === 'Untitled')) {
+    if (title && (!conversation.eventState.conversation?.title || conversation.eventState.conversation.title === 'Untitled')) {
       inputs.push({
-        type: 'session.renamed',
+        type: 'conversation.renamed',
         actor: systemActor(),
         title,
       });
     }
 
-    await this.appendSessionEvents(sessionId, session, inputs);
+    await this.appendConversationEvents(conversationId, conversation, inputs);
   }
 
-  private async appendSystemPromptEvent(sessionId: string, session: AgentSessionState, prompt: UserMessage) {
+  private async appendSystemPromptEvent(conversationId: string, conversation: AgentConversationState, prompt: UserMessage) {
     const messageId = this.createMessageId('user');
-    const persisted = await this.persistPiUserContent(sessionId, prompt.content, {
+    const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
       imageSummary: 'System notification attachment',
     });
     const actor = systemActor();
-    await this.appendSessionEvents(sessionId, session, [
+    await this.appendConversationEvents(conversationId, conversation, [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
         actor,
@@ -4163,7 +4134,7 @@ export class AgentRuntime {
         actor,
         createdAt: prompt.timestamp,
         messageId,
-        parentMessageId: session.eventState.selectedLeafMessageId,
+        parentMessageId: conversation.eventState.selectedLeafMessageId,
         content: persisted.content,
         attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
       },
@@ -4176,8 +4147,8 @@ export class AgentRuntime {
   }
 
   private async appendCompactionRootEvent(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     prompt: UserMessage,
     summary: string,
     source: AgentCompactionSourceRange,
@@ -4185,7 +4156,7 @@ export class AgentRuntime {
     preservedMessages: readonly AgentMessage[] = [],
   ) {
     const messageId = this.createMessageId('user');
-    const persisted = await this.persistPiUserContent(sessionId, prompt.content, {
+    const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
       imageSummary: 'Compaction attachment',
     });
     let leafMessageId = messageId;
@@ -4215,7 +4186,7 @@ export class AgentRuntime {
     ];
 
     for (const message of preservedMessages) {
-      const clone = await this.buildPreservedMessageEvents(sessionId, message, leafMessageId);
+      const clone = await this.buildPreservedMessageEvents(conversationId, message, leafMessageId);
       inputs.push(...clone.inputs);
       leafMessageId = clone.messageId;
     }
@@ -4228,12 +4199,12 @@ export class AgentRuntime {
       },
     );
 
-    await this.appendSessionEvents(sessionId, session, inputs);
+    await this.appendConversationEvents(conversationId, conversation, inputs);
   }
 
   private async appendDreamFinishedEvent(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     result: AgentDreamRunResult,
   ) {
     const messageId = this.createMessageId('user');
@@ -4243,7 +4214,7 @@ export class AgentRuntime {
       result.runId ? `Run id: ${result.runId}.` : null,
       result.errorMessage ? `Error: ${result.errorMessage}` : null,
     ].filter(Boolean).join('\n'));
-    await this.appendSessionEvents(sessionId, session, [
+    await this.appendConversationEvents(conversationId, conversation, [
       {
         type: 'dream.finished',
         actor: systemActor(),
@@ -4264,7 +4235,7 @@ export class AgentRuntime {
         actor: systemActor(),
         createdAt: timestamp,
         messageId,
-        parentMessageId: session.eventState.selectedLeafMessageId,
+        parentMessageId: conversation.eventState.selectedLeafMessageId,
         content: [{ type: 'text', text: reminder }],
       },
       {
@@ -4277,7 +4248,7 @@ export class AgentRuntime {
   }
 
   private async buildPreservedMessageEvents(
-    sessionId: string,
+    conversationId: string,
     message: AgentMessage,
     parentMessageId: string,
   ): Promise<{ messageId: string; inputs: AgentEventInput[] }> {
@@ -4314,7 +4285,7 @@ export class AgentRuntime {
 
     if (message.role === 'toolResult') {
       const messageId = this.createMessageId('tool-result');
-      const persisted = await this.persistPiUserContent(sessionId, message.content, {
+      const persisted = await this.persistPiUserContent(conversationId, message.content, {
         imageSummary: `${message.toolName} image output`,
         textPayloadRole: 'tool_output',
         textSummary: `${message.toolName} output`,
@@ -4349,7 +4320,7 @@ export class AgentRuntime {
     }
 
     const messageId = this.createMessageId('user');
-    const persisted = await this.persistPiUserContent(sessionId, message.content, {
+    const persisted = await this.persistPiUserContent(conversationId, message.content, {
       imageSummary: 'Compaction preserved attachment',
     });
     return {
@@ -4375,8 +4346,8 @@ export class AgentRuntime {
   }
 
   private async startRun(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     prompt: UserMessage | null = null,
     triggerOverride: AgentRunTrigger | null = null,
   ) {
@@ -4389,127 +4360,127 @@ export class AgentRuntime {
       toolOutputPayloads: new Map(),
       toolCallMessageIds: new Map(),
     };
-    session.activeRun = runState;
-    session.lastRun = null;
-    await this.appendSessionEvents(sessionId, session, [{
+    conversation.activeRun = runState;
+    conversation.lastRun = null;
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'run.started',
       actor: systemActor(),
       runId,
       agentId: this.agentIdentity.agentId,
-      anchor: { type: 'conversation', agentId: this.agentIdentity.agentId, conversationId: sessionId },
+      anchor: { type: 'conversation', agentId: this.agentIdentity.agentId, conversationId: conversationId },
       kind: 'turn',
-      trigger: triggerOverride ?? this.runTrigger(session),
-      fingerprint: this.runFingerprint(session),
+      trigger: triggerOverride ?? this.runTrigger(conversation),
+      fingerprint: this.runFingerprint(conversation),
       retention: 'hot',
     }]);
   }
 
-  private async compactSession(sessionId: string, session: AgentSessionState, customInstructions?: string) {
+  private async compactConversation(conversationId: string, conversation: AgentConversationState, customInstructions?: string) {
     try {
-      await this.contextManager.compactSession(sessionId, session, {
+      await this.contextManager.compactConversation(conversationId, conversation, {
         trigger: 'manual',
         customInstructions,
         updateAgentState: true,
       });
-      session.skillRuntime.resetRunPermissionRules();
+      conversation.skillRuntime.resetRunPermissionRules();
     } finally {
-      session.currentDebugQueryIndex = 0;
+      conversation.currentDebugQueryIndex = 0;
     }
   }
 
-  private async handlePiAgentEvent(sessionId: string, session: AgentSessionState, event: PiAgentEvent) {
+  private async handlePiAgentEvent(conversationId: string, conversation: AgentConversationState, event: PiAgentEvent) {
     if (event.type === 'message_start' || event.type === 'message_update') {
       if (isAssistantMessage(event.message)) {
-        await this.ensureAssistantStarted(sessionId, session, event.message);
-        await this.appendAssistantDelta(sessionId, session, event.message);
+        await this.ensureAssistantStarted(conversationId, conversation, event.message);
+        await this.appendAssistantDelta(conversationId, conversation, event.message);
       }
       return;
     }
 
     if (event.type === 'message_end') {
       if (isUserMessage(event.message)) {
-        if (!isDuplicateTailUserMessage(session.eventState, event.message)) {
-          await this.appendUserPromptEvent(sessionId, session, event.message);
+        if (!isDuplicateTailUserMessage(conversation.eventState, event.message)) {
+          await this.appendUserPromptEvent(conversationId, conversation, event.message);
         }
-        session.queuedFollowUpSkillListingReservation = null;
+        conversation.queuedFollowUpSkillListingReservation = null;
         return;
       }
       if (isAssistantMessage(event.message)) {
-        await this.ensureAssistantStarted(sessionId, session, event.message);
-        await this.appendToolCallEventsFromAssistant(sessionId, session, event.message);
-        await this.appendAssistantCompleted(sessionId, session, event.message);
+        await this.ensureAssistantStarted(conversationId, conversation, event.message);
+        await this.appendToolCallEventsFromAssistant(conversationId, conversation, event.message);
+        await this.appendAssistantCompleted(conversationId, conversation, event.message);
         return;
       }
       if (isToolResultMessage(event.message)) {
-        await this.appendToolResultMessage(sessionId, session, event.message);
+        await this.appendToolResultMessage(conversationId, conversation, event.message);
       }
       return;
     }
 
     if (event.type === 'tool_execution_start') {
-      await this.appendToolExecutionStart(sessionId, session, event.toolCallId, event.toolName, event.args);
+      await this.appendToolExecutionStart(conversationId, conversation, event.toolCallId, event.toolName, event.args);
       return;
     }
 
     if (event.type === 'tool_execution_end') {
-      await this.appendToolExecutionEnd(sessionId, session, event.toolCallId, event.toolName, event.result, event.isError);
+      await this.appendToolExecutionEnd(conversationId, conversation, event.toolCallId, event.toolName, event.result, event.isError);
       return;
     }
 
-    if (event.type === 'agent_end' && session.activeRun) {
-      const activeRun = session.activeRun;
-      const errorMessage = session.agent.state.errorMessage ?? null;
+    if (event.type === 'agent_end' && conversation.activeRun) {
+      const activeRun = conversation.activeRun;
+      const errorMessage = conversation.agent.state.errorMessage ?? null;
       const terminalAssistant = [...event.messages].reverse().find(isAssistantMessage);
       const cancelled = terminalAssistant?.stopReason === 'aborted';
       const contextOverflow = terminalAssistant
-        ? isContextOverflow(terminalAssistant, session.agent.state.model.contextWindow)
+        ? isContextOverflow(terminalAssistant, conversation.agent.state.model.contextWindow)
         : false;
-      await this.appendSessionEvents(sessionId, session, [{
+      await this.appendConversationEvents(conversationId, conversation, [{
         type: cancelled ? 'run.cancelled' : errorMessage ? 'run.failed' : 'run.completed',
         actor: systemActor(),
         runId: activeRun.id,
         errorMessage: cancelled ? undefined : errorMessage ?? undefined,
-        usage: sumRunUsage(session.eventState, activeRun.id),
+        usage: sumRunUsage(conversation.eventState, activeRun.id),
       }]);
-      session.reactiveCompactRequested = Boolean(!cancelled && contextOverflow);
-      if (!session.reactiveCompactRequested) activeRun.lastSubmittedUserPrompt = null;
-      session.lastRun = activeRun;
-      session.activeRun = null;
-      session.skillRuntime.resetRunPermissionRules();
-      await this.getEventStore().maybeWriteCheckpoint(sessionId, session.eventState, { force: true });
+      conversation.reactiveCompactRequested = Boolean(!cancelled && contextOverflow);
+      if (!conversation.reactiveCompactRequested) activeRun.lastSubmittedUserPrompt = null;
+      conversation.lastRun = activeRun;
+      conversation.activeRun = null;
+      conversation.skillRuntime.resetRunPermissionRules();
+      await this.getEventStore().maybeWriteCheckpoint(conversationId, conversation.eventState, { force: true });
     }
   }
 
-  private async ensureAssistantStarted(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const activeRun = session.activeRun;
+  private async ensureAssistantStarted(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
+    const activeRun = conversation.activeRun;
     if (!activeRun || activeRun.assistantMessageId) return;
     const messageId = this.createMessageId('assistant');
     activeRun.assistantMessageId = messageId;
     activeRun.assistantText = '';
-    await this.appendSessionEvents(sessionId, session, [{
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'assistant_message.started',
       actor: this.agentActor(),
-      runId: this.activeRunId(session) ?? randomUUID(),
+      runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
-      parentMessageId: session.eventState.selectedLeafMessageId,
+      parentMessageId: conversation.eventState.selectedLeafMessageId,
       providerId: message.provider,
       modelId: message.model,
       apiId: message.api,
     }]);
   }
 
-  private async appendAssistantDelta(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const activeRun = session.activeRun;
+  private async appendAssistantDelta(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
+    const activeRun = conversation.activeRun;
     const messageId = activeRun?.assistantMessageId;
     if (!messageId) return;
     const nextText = assistantText(message);
     if (!nextText.startsWith(activeRun.assistantText) || nextText.length <= activeRun.assistantText.length) return;
     const delta = nextText.slice(activeRun.assistantText.length);
     activeRun.assistantText = nextText;
-    await this.appendSessionEvents(sessionId, session, [{
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'assistant_message.delta',
       actor: this.agentActor(),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       messageId,
       delta: { type: 'text_delta', text: delta },
       providerChunkCount: 1,
@@ -4518,8 +4489,8 @@ export class AgentRuntime {
     }]);
   }
 
-  private async appendAssistantCompleted(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const activeRun = session.activeRun;
+  private async appendAssistantCompleted(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
+    const activeRun = conversation.activeRun;
     const messageId = activeRun?.assistantMessageId;
     if (!messageId) return;
     // A provider/run failure surfaces as a terminal assistant message with an
@@ -4529,14 +4500,14 @@ export class AgentRuntime {
     // automatically by reactive compaction, so they are left unmarked.
     const inlineFailure = message.stopReason !== 'aborted'
       && message.errorMessage
-      && !isContextOverflow(message, session.agent.state.model.contextWindow)
+      && !isContextOverflow(message, conversation.agent.state.model.contextWindow)
       ? message.errorMessage
       : null;
-    await this.appendSessionEvents(sessionId, session, [
+    await this.appendConversationEvents(conversationId, conversation, [
       {
         type: 'assistant_message.completed',
         actor: this.agentActor(),
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         messageId,
         stopReason: message.stopReason,
         content: fromPiAssistantContent(message.content),
@@ -4545,7 +4516,7 @@ export class AgentRuntime {
       ...(inlineFailure ? [{
         type: 'assistant_message.failed' as const,
         actor: this.agentActor(),
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         messageId,
         errorMessage: inlineFailure,
       }] : []),
@@ -4554,8 +4525,8 @@ export class AgentRuntime {
     activeRun.assistantText = '';
   }
 
-  private async appendToolResultMessage(sessionId: string, session: AgentSessionState, message: ToolResultMessage) {
-    const activeRun = session.activeRun;
+  private async appendToolResultMessage(conversationId: string, conversation: AgentConversationState, message: ToolResultMessage) {
+    const activeRun = conversation.activeRun;
     if (!activeRun) return;
     const actor = toolActor(message.toolName, message.toolCallId);
     const prePersisted = activeRun.toolOutputPayloads.get(message.toolCallId);
@@ -4565,9 +4536,9 @@ export class AgentRuntime {
           content: [{ type: 'payload_ref', payload: prePersisted.payload, label: prePersisted.label }] satisfies AgentPersistedContent[],
           payloads: [prePersisted.payload],
         }
-      : await this.persistPiUserContent(sessionId, message.content, {
+      : await this.persistPiUserContent(conversationId, message.content, {
           imageSummary: `${message.toolName} image output`,
-          runId: this.activeRunId(session) ?? undefined,
+          runId: this.activeRunId(conversation) ?? undefined,
           textPayloadRole: 'tool_output',
           textSummary: `${message.toolName} output`,
           textPayloadIdPrefix: `tool-output-${message.toolCallId}`,
@@ -4575,7 +4546,7 @@ export class AgentRuntime {
     const outputRef = prePersisted?.payload
       ?? persisted.payloads.find((payload) => payload.role === 'tool_output')
       ?? persisted.payloads[0];
-    await this.appendSessionEvents(sessionId, session, [
+    await this.appendConversationEvents(conversationId, conversation, [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
         actor,
@@ -4584,9 +4555,9 @@ export class AgentRuntime {
       {
         type: 'tool_result.created',
         actor,
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         messageId: this.createMessageId('tool-result'),
-        parentMessageId: session.eventState.selectedLeafMessageId,
+        parentMessageId: conversation.eventState.selectedLeafMessageId,
         toolCallId: message.toolCallId,
         toolName: message.toolName,
         isError: message.isError,
@@ -4597,8 +4568,8 @@ export class AgentRuntime {
     ]);
   }
 
-  private async appendToolCallEventsFromAssistant(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const activeRun = session.activeRun;
+  private async appendToolCallEventsFromAssistant(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
+    const activeRun = conversation.activeRun;
     const assistantMessageId = activeRun?.assistantMessageId;
     if (!assistantMessageId) return;
     const toolCalls = message.content.filter((part): part is ToolCall => part.type === 'toolCall');
@@ -4608,7 +4579,7 @@ export class AgentRuntime {
       inputs.push({
         type: 'tool_call.started',
         actor: this.agentActor(),
-        runId: this.activeRunId(session) ?? undefined,
+        runId: this.activeRunId(conversation) ?? undefined,
         messageId: assistantMessageId,
         toolCallId: toolCall.id,
         name: toolCall.name,
@@ -4616,25 +4587,25 @@ export class AgentRuntime {
         args: toolCall.arguments,
       });
     }
-    if (inputs.length > 0) await this.appendSessionEvents(sessionId, session, inputs);
+    if (inputs.length > 0) await this.appendConversationEvents(conversationId, conversation, inputs);
   }
 
   private async appendToolExecutionStart(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     toolCallId: string,
     toolName: string,
     args: unknown,
   ) {
-    const activeRun = session.activeRun;
+    const activeRun = conversation.activeRun;
     if (!activeRun || activeRun.toolCallMessageIds.has(toolCallId)) return;
-    const messageId = findLatestAssistantMessageId(session.eventState);
+    const messageId = findLatestAssistantMessageId(conversation.eventState);
     if (!messageId) return;
     activeRun.toolCallMessageIds.set(toolCallId, messageId);
-    await this.appendSessionEvents(sessionId, session, [{
+    await this.appendConversationEvents(conversationId, conversation, [{
       type: 'tool_call.started',
       actor: toolActor(toolName, toolCallId),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       messageId,
       toolCallId,
       name: toolName,
@@ -4644,31 +4615,31 @@ export class AgentRuntime {
   }
 
   private async appendToolExecutionEnd(
-    sessionId: string,
-    session: AgentSessionState,
+    conversationId: string,
+    conversation: AgentConversationState,
     toolCallId: string,
     toolName: string,
     result: unknown,
     isError: boolean,
   ) {
-    const activeRun = session.activeRun;
-    const messageId = activeRun?.toolCallMessageIds.get(toolCallId) ?? findLatestAssistantMessageId(session.eventState);
+    const activeRun = conversation.activeRun;
+    const messageId = activeRun?.toolCallMessageIds.get(toolCallId) ?? findLatestAssistantMessageId(conversation.eventState);
     if (!messageId) return;
     const events: AgentEventInput[] = [{
       type: isError ? 'tool_call.failed' : 'tool_call.completed',
       actor: toolActor(toolName, toolCallId),
-      runId: this.activeRunId(session) ?? undefined,
+      runId: this.activeRunId(conversation) ?? undefined,
       messageId,
       toolCallId,
       errorMessage: isError ? summarizeJson(result) : undefined,
     }];
     const skillAuditEvent = isError ? null : skillAuditEventFromToolResult(toolName, toolCallId, result);
     if (skillAuditEvent) events.push(skillAuditEvent);
-    await this.appendSessionEvents(sessionId, session, events);
+    await this.appendConversationEvents(conversationId, conversation, events);
   }
 
   private async deriveRuntimePiMessages(
-    sessionId: string,
+    conversationId: string,
     eventState: AgentEventReplayState,
   ): Promise<AgentMessage[]> {
     const messages: AgentMessage[] = [];
@@ -4676,7 +4647,7 @@ export class AgentRuntime {
       if (message.role === 'user') {
         messages.push({
           role: 'user',
-          content: await this.runtimeUserContent(sessionId, message.content),
+          content: await this.runtimeUserContent(conversationId, message.content),
           timestamp: message.createdAt,
         } satisfies UserMessage);
         continue;
@@ -4699,7 +4670,7 @@ export class AgentRuntime {
         role: 'toolResult',
         toolCallId: message.toolCallId ?? message.id,
         toolName: message.toolName ?? 'unknown',
-        content: await this.runtimeUserContent(sessionId, message.content),
+        content: await this.runtimeUserContent(conversationId, message.content),
         isError: !!message.isError,
         timestamp: message.createdAt,
       } satisfies ToolResultMessage);
@@ -4708,7 +4679,7 @@ export class AgentRuntime {
   }
 
   private async persistPiUserContent(
-    sessionId: string,
+    conversationId: string,
     content: UserMessage['content'] | ToolResultMessage['content'],
     options: {
       imageSummary: string;
@@ -4719,7 +4690,7 @@ export class AgentRuntime {
     },
   ): Promise<{ content: AgentPersistedContent[]; payloads: AgentPayloadRef[] }> {
     if (typeof content === 'string') {
-      const persisted = await this.persistTextContent(sessionId, content, {
+      const persisted = await this.persistTextContent(conversationId, content, {
         ...options,
         textPayloadId: options.textPayloadIdPrefix,
       });
@@ -4739,7 +4710,7 @@ export class AgentRuntime {
             : `${options.textPayloadIdPrefix}-${textPartIndex}`;
         }
         textPartIndex += 1;
-        const saved = await this.persistTextContent(sessionId, part.text, {
+        const saved = await this.persistTextContent(conversationId, part.text, {
           ...options,
           textPayloadId,
         });
@@ -4747,7 +4718,7 @@ export class AgentRuntime {
         if (saved.payload) payloads.push(saved.payload);
         continue;
       }
-      const payload = await this.getEventStore().writePayload(sessionId, {
+      const payload = await this.getEventStore().writePayload(conversationId, {
         data: Buffer.from(stripDataUrlPrefix(part.data), 'base64'),
         mimeType: part.mimeType,
         runId: options.runId,
@@ -4761,7 +4732,7 @@ export class AgentRuntime {
   }
 
   private async persistTextContent(
-    sessionId: string,
+    conversationId: string,
     text: string,
     options: {
       textPayloadRole?: AgentPayloadRef['role'];
@@ -4773,7 +4744,7 @@ export class AgentRuntime {
     if (!options.textPayloadRole || text.length <= MAX_INLINE_TOOL_OUTPUT_CHARS) {
       return { content: { type: 'text', text } };
     }
-    const payload = await this.getEventStore().writePayload(sessionId, {
+    const payload = await this.getEventStore().writePayload(conversationId, {
       id: options.textPayloadId,
       data: text,
       mimeType: 'text/plain',
@@ -4796,7 +4767,7 @@ export class AgentRuntime {
   }
 
   private async runtimeUserContent(
-    sessionId: string,
+    conversationId: string,
     content: AgentPersistedContent[],
   ): Promise<Array<PiTextContent | PiImageContent>> {
     const parts: Array<PiTextContent | PiImageContent> = [];
@@ -4806,11 +4777,11 @@ export class AgentRuntime {
         continue;
       }
       if (part.type === 'image') {
-        parts.push(await this.runtimeImageContent(sessionId, part.imageRef, part.alt));
+        parts.push(await this.runtimeImageContent(conversationId, part.imageRef, part.alt));
         continue;
       }
       if (part.type === 'payload_ref' && part.payload.mimeType.startsWith('image/')) {
-        parts.push(await this.runtimeImageContent(sessionId, part.payload, part.label));
+        parts.push(await this.runtimeImageContent(conversationId, part.payload, part.label));
         continue;
       }
       if (part.type === 'payload_ref' && part.payload.role === 'tool_output') {
@@ -4821,7 +4792,7 @@ export class AgentRuntime {
         continue;
       }
       if (part.type === 'payload_ref') {
-        parts.push(await this.runtimeTextPayloadContent(sessionId, part.payload, part.label));
+        parts.push(await this.runtimeTextPayloadContent(conversationId, part.payload, part.label));
         continue;
       }
       parts.push({ type: 'text', text: persistedContentText(part) });
@@ -4846,12 +4817,12 @@ export class AgentRuntime {
   }
 
   private async runtimeImageContent(
-    sessionId: string,
+    conversationId: string,
     payload: AgentPayloadRef,
     label?: string,
   ): Promise<PiImageContent | PiTextContent> {
     try {
-      const data = await this.getEventStore().readPayload(sessionId, payload);
+      const data = await this.getEventStore().readPayload(conversationId, payload);
       return {
         type: 'image',
         data: data.toString('base64'),
@@ -4866,12 +4837,12 @@ export class AgentRuntime {
   }
 
   private async runtimeTextPayloadContent(
-    sessionId: string,
+    conversationId: string,
     payload: AgentPayloadRef,
     label?: string,
   ): Promise<PiTextContent> {
     try {
-      const data = await this.getEventStore().readPayload(sessionId, payload);
+      const data = await this.getEventStore().readPayload(conversationId, payload);
       return {
         type: 'text',
         text: data.toString('utf8'),
@@ -5365,14 +5336,14 @@ function findLatestAssistantMessageId(eventState: AgentEventReplayState): string
 }
 
 function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationListMeta | null {
-  if (!eventState.session) return null;
+  if (!eventState.conversation) return null;
   return {
-    id: eventState.session.id,
-    title: sanitizeSessionTitle(eventState.session.title),
-    members: eventState.session.members.slice(),
-    goal: eventState.session.goal,
-    createdAt: eventState.session.createdAt,
-    updatedAt: eventState.session.updatedAt,
+    id: eventState.conversation.id,
+    title: sanitizeConversationTitle(eventState.conversation.title),
+    members: eventState.conversation.members.slice(),
+    goal: eventState.conversation.goal,
+    createdAt: eventState.conversation.createdAt,
+    updatedAt: eventState.conversation.updatedAt,
     messageCount: Object.keys(eventState.messages).length,
   };
 }
@@ -5458,17 +5429,17 @@ function deriveTitleFromPersistedContent(content: AgentPersistedContent[]): stri
     .reverse()
     .find((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text' && !part.text.includes('<system-reminder>'))
     ?.text ?? persistedText(content);
-  const normalized = sanitizeSessionTitle(text);
+  const normalized = sanitizeConversationTitle(text);
   return normalized ? normalized.slice(0, 30) : null;
 }
 
-function sanitizeSessionTitle(title: string | null | undefined): string | null {
+function sanitizeConversationTitle(title: string | null | undefined): string | null {
   const normalized = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
   return normalized || null;
 }
 
-function normalizeSessionTitle(title: string): string {
-  return sanitizeSessionTitle(title) ?? 'Untitled';
+function normalizeConversationTitle(title: string): string {
+  return sanitizeConversationTitle(title) ?? 'Untitled';
 }
 
 function summarizeToolResult(message: ToolResultMessage): string {
@@ -5606,11 +5577,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function clearPendingProjection(session: AgentSessionState) {
-  if (!session.pendingProjectionTimer) return;
-  clearTimeout(session.pendingProjectionTimer);
-  session.pendingProjectionTimer = null;
-  session.pendingProjectionLastEventType = null;
+function clearPendingProjection(conversation: AgentConversationState) {
+  if (!conversation.pendingProjectionTimer) return;
+  clearTimeout(conversation.pendingProjectionTimer);
+  conversation.pendingProjectionTimer = null;
+  conversation.pendingProjectionLastEventType = null;
 }
 
 function sumRunUsage(state: AgentEventReplayState, runId: string): Usage | undefined {
@@ -5727,7 +5698,7 @@ function approvalDeniedMessage(reason: PermissionDeniedReason): string {
 }
 
 function createConfiguredAgent(
-  sessionId: string,
+  conversationId: string,
   providerConfig: AgentProviderRuntimeConfig,
   messages: AgentMessage[] = [],
   outlinerToolHost: OutlinerToolHost,
@@ -5770,7 +5741,7 @@ function createConfiguredAgent(
   let activeLoopModel = model;
   let activeThinkingLevel = options.thinkingLevel ?? providerConfig.reasoningLevel;
   const permissionClassifier = options.permissionClassifier ?? createDefaultPermissionClassifier({
-    sessionId,
+    conversationId,
     model: () => activeLoopModel,
     providerConfig,
     providerApiKeyLoader: options.providerApiKeyLoader,
@@ -5996,7 +5967,8 @@ function createConfiguredAgent(
           return update;
         }
       : undefined,
-    sessionId,
+    // pi-agent-core AgentOptions field (provider cache affinity) — the lib's own name.
+    sessionId: conversationId,
   });
   agent.subscribe((event) => {
     if (event.type !== 'agent_start') return;
@@ -6128,7 +6100,7 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function createConfigurationErrorAgent(sessionId: string, message: string, messages: AgentMessage[] = []) {
+function createConfigurationErrorAgent(conversationId: string, message: string, messages: AgentMessage[] = []) {
   return new Agent({
     initialState: {
       systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
@@ -6138,7 +6110,8 @@ function createConfigurationErrorAgent(sessionId: string, message: string, messa
       messages,
     },
     streamFn: createConfigurationErrorStreamFn(message),
-    sessionId,
+    // pi-agent-core AgentOptions field — the lib's own name.
+    sessionId: conversationId,
   });
 }
 
@@ -6428,20 +6401,12 @@ function slashCommandDescription(displayName: string | undefined, description: s
 function rendererProjectionEventFromDomain(event: RendererProjectionDomainEvent): AgentRuntimeEvent {
   return {
     type: 'projection',
-    conversationId: conversationIdFromSessionId(event.sessionId),
+    conversationId: event.conversationId,
     lastEventType: event.lastEventType,
     revision: event.revision,
     renderProjection: event.projection,
     timestamp: event.createdAt,
   };
-}
-
-function conversationIdFromSessionId(sessionId: string): string {
-  return sessionId;
-}
-
-function sessionIdFromConversationId(conversationId: string): string {
-  return conversationId;
 }
 
 // A command's delivery conversation is titled from the first non-empty line of

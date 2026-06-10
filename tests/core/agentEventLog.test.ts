@@ -15,7 +15,7 @@ import {
   type AgentPayloadRef,
 } from '../../src/core/agentEventLog';
 
-const sessionId = 'session-1';
+const conversationId = 'conversation-1';
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'agent-1' };
@@ -25,7 +25,7 @@ function base(seq: number, type: AgentEvent['type'], actor: AgentActor = systemA
     v: 1 as const,
     eventId: `event-${seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_700_000_000_000 + seq,
     actor,
@@ -63,7 +63,7 @@ describe('agent event log', () => {
 
   test('replays a linear conversation and derives pi messages from deltas', () => {
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-1',
@@ -124,7 +124,7 @@ describe('agent event log', () => {
       summary: 'Provider payload round 1',
     };
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'payload.created'),
         payload: debugPayload,
@@ -148,9 +148,9 @@ describe('agent event log', () => {
     expect(getAgentEventActivePath(state)).toEqual([]);
   });
 
-  test('keeps run-scoped interaction and widget events replay-neutral for the flat session projection', () => {
+  test('keeps run-scoped interaction and widget events replay-neutral for the flat conversation projection', () => {
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       { ...base(2, 'run.started'), runId: 'run-1' },
       {
         ...base(3, 'user_question.requested', agentActor),
@@ -205,7 +205,7 @@ describe('agent event log', () => {
 
   test('represents edits as sibling branches selected by events', () => {
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-original',
@@ -276,7 +276,7 @@ describe('agent event log', () => {
 
   test('expands compacted active-path history for visible transcript reads', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Compaction' },
+      { ...base(1, 'conversation.created'), title: 'Compaction' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-before-compact',
@@ -354,7 +354,7 @@ describe('agent event log', () => {
 
   test('uses mixed-resolution runtime history after compaction', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Compaction with tools' },
+      { ...base(1, 'conversation.created'), title: 'Compaction with tools' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'u1',
@@ -460,7 +460,7 @@ describe('agent event log', () => {
       display: { width: 160, height: 120 },
     };
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       { ...base(2, 'payload.created'), payload: source },
       { ...base(3, 'payload.derived'), sourcePayloadId: source.id, payload: thumbnail, derivation: 'thumbnail' },
       {
@@ -483,7 +483,7 @@ describe('agent event log', () => {
 
   test('reconstructs assistant tool calls and tool results for pi-mono', () => {
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-1',
@@ -589,7 +589,7 @@ describe('agent event log', () => {
 
   test('infers run ownership for legacy flat tool results from the parent assistant', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'assistant_message.started', agentActor),
         runId: 'run-legacy',
@@ -641,7 +641,7 @@ describe('agent event log', () => {
       '</persisted-output>',
     ].join('\n');
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'assistant_message.started', agentActor),
         runId: 'run-1',
@@ -691,7 +691,7 @@ describe('agent event log', () => {
       sha256: 'subagent-sha-2',
     };
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       { ...base(2, 'payload.created'), payload: transcriptPayload },
       {
         ...base(3, 'subagent_run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
@@ -753,7 +753,7 @@ describe('agent event log', () => {
     };
     const replacement = '<persisted-output>\nPreview\n</persisted-output>';
     const events: AgentEvent[] = [
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'assistant_message.started', agentActor),
         runId: 'run-1',
@@ -801,78 +801,82 @@ describe('agent event log', () => {
 
   test('rejects non-monotonic event sequences', () => {
     expect(() => replayAgentEvents([
-      { ...base(2, 'session.created'), title: 'Untitled' },
-      { ...base(2, 'session.renamed'), eventId: 'event-3', title: 'Still duplicate seq' },
+      { ...base(2, 'conversation.created'), title: 'Untitled' },
+      { ...base(2, 'conversation.renamed'), eventId: 'event-3', title: 'Still duplicate seq' },
     ])).toThrow(/increasing seq order/);
   });
 });
 
 describe('notification + attention projection', () => {
-  function notificationCreated(seq: number, conversationId: string, overrides: Partial<Record<string, unknown>> = {}) {
+  // The base conversationId IS the delivery anchor: a log only ever carries its
+  // own conversation's notifications (cross-conversation isolation is structural,
+  // enforced by the replay conversation-mismatch guard).
+  function notificationCreated(seq: number, overrides: Partial<Record<string, unknown>> = {}) {
     return {
       ...base(seq, 'notification.created'),
       notificationId: `notif-${seq}`,
-      conversationId,
       kind: 'task_completed' as const,
       title: `Task ${seq} done`,
       ...overrides,
     } as AgentEvent;
   }
 
-  test('folds unread per conversation, anchored to the origin conversation', () => {
+  test('folds unread for the origin conversation', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Untitled' },
-      notificationCreated(2, 'conv-a', { source: { type: 'subagent', subagentRunId: 'subagent-x' } }),
-      notificationCreated(3, 'conv-a'),
-      notificationCreated(4, 'conv-b', { kind: 'needs_input', source: { type: 'run', runId: 'run-y' } }),
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      notificationCreated(2, { source: { type: 'subagent', subagentRunId: 'subagent-x' } }),
+      notificationCreated(3),
+      notificationCreated(4, { kind: 'needs_input', source: { type: 'run', runId: 'run-y' } }),
     ]);
 
-    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(2);
-    expect(state.attentionByConversationId['conv-b']?.unreadCount).toBe(1);
+    expect(state.attentionByConversationId[conversationId]?.unreadCount).toBe(3);
     expect(state.notifications['notif-2']?.source).toEqual({ type: 'subagent', subagentRunId: 'subagent-x' });
     expect(state.notifications['notif-4']?.kind).toBe('needs_input');
     expect(Object.values(state.notifications).every((record) => record.read === false)).toBe(true);
   });
 
-  test('notification.read clears only its conversation through the given seq', () => {
+  test('rejects a notification claiming another conversation (delivery anchor = log identity)', () => {
+    expect(() => replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      { ...notificationCreated(2), conversationId: 'conv-other' } as AgentEvent,
+    ])).toThrow(/conversation mismatch/);
+  });
+
+  test('notification.read clears the conversation through the given seq', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Untitled' },
-      notificationCreated(2, 'conv-a'),
-      notificationCreated(3, 'conv-a'),
-      notificationCreated(4, 'conv-b'),
-      { ...base(5, 'notification.read'), conversationId: 'conv-a', throughSeq: 3 },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      notificationCreated(2),
+      notificationCreated(3),
+      { ...base(4, 'notification.read'), throughSeq: 3 },
     ]);
 
-    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(0);
-    expect(state.attentionByConversationId['conv-a']?.lastReadThroughSeq).toBe(3);
+    expect(state.attentionByConversationId[conversationId]?.unreadCount).toBe(0);
+    expect(state.attentionByConversationId[conversationId]?.lastReadThroughSeq).toBe(3);
     expect(state.notifications['notif-2']?.read).toBe(true);
     expect(state.notifications['notif-3']?.read).toBe(true);
-    // conv-b is untouched by conv-a's read cursor.
-    expect(state.attentionByConversationId['conv-b']?.unreadCount).toBe(1);
-    expect(state.notifications['notif-4']?.read).toBe(false);
   });
 
   test('a notification arriving after a read cursor counts as unread again (restart-safe replay)', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Untitled' },
-      notificationCreated(2, 'conv-a'),
-      { ...base(3, 'notification.read'), conversationId: 'conv-a', throughSeq: 2 },
-      notificationCreated(4, 'conv-a'),
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      notificationCreated(2),
+      { ...base(3, 'notification.read'), throughSeq: 2 },
+      notificationCreated(4),
     ]);
 
-    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(1);
+    expect(state.attentionByConversationId[conversationId]?.unreadCount).toBe(1);
     expect(state.notifications['notif-2']?.read).toBe(true);
     expect(state.notifications['notif-4']?.read).toBe(false);
   });
 
   test('duplicate notification.created is idempotent', () => {
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Untitled' },
-      notificationCreated(2, 'conv-a'),
-      { ...notificationCreated(3, 'conv-a'), notificationId: 'notif-2' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      notificationCreated(2),
+      { ...notificationCreated(3), notificationId: 'notif-2' },
     ]);
 
-    expect(state.attentionByConversationId['conv-a']?.unreadCount).toBe(1);
+    expect(state.attentionByConversationId[conversationId]?.unreadCount).toBe(1);
     expect(Object.keys(state.notifications)).toEqual(['notif-2']);
   });
 
@@ -880,17 +884,17 @@ describe('notification + attention projection', () => {
     // A background delivery and a read must not look like conversation activity:
     // updatedAt stays pinned to the last real content event (the user message).
     const state = replayAgentEvents([
-      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
         ...base(2, 'user_message.created', userActor),
         messageId: 'user-1',
         parentMessageId: null,
         content: [{ type: 'text', text: 'Question' }],
       } as AgentEvent,
-      notificationCreated(5, 'conv-a'),
-      { ...base(6, 'notification.read'), conversationId: 'conv-a', throughSeq: 5 },
+      notificationCreated(5),
+      { ...base(6, 'notification.read'), throughSeq: 5 },
     ]);
 
-    expect(state.session?.updatedAt).toBe(1_700_000_000_000 + 2);
+    expect(state.conversation?.updatedAt).toBe(1_700_000_000_000 + 2);
   });
 });

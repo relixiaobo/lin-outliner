@@ -2,7 +2,7 @@
 
 This document is the design and implementation baseline for Lin's subagent
 runtime. It records both the cc-2.1 source references used for alignment and the
-Lin-specific choices made while implementing the current same-session subagent
+Lin-specific choices made while implementing the current same-conversation subagent
 runtime.
 
 ## Local Source References
@@ -29,13 +29,13 @@ runtime should use `.agents/*` paths and Lin-owned event store semantics.
 ## Decision
 
 Lin does not introduce Team, Swarm, or Delegate as first-class model-facing
-concepts for the same-session subagent runtime.
+concepts for the same-conversation subagent runtime.
 
 The model-facing concept should be the same mature concept used by cc-2.1's core
 subagent path:
 
 ```text
-main agent session
+main agent conversation
   -> Agent tool
       -> subagent run
           -> pi-mono Agent instance
@@ -43,12 +43,12 @@ main agent session
           -> status/progress/result notification
 ```
 
-Subagents are session-scoped execution units. The main agent remains the
+Subagents are conversation-scoped execution units. The main agent remains the
 coordinator. Multiple subagents run in parallel when the model emits multiple
 `Agent` tool calls in the same turn.
 
 Subagent is therefore Lin's isolated cognition and task execution unit. It is not
-a team member, a code-editing sandbox, or a cross-session messaging peer.
+a team member, a code-editing sandbox, or a cross-conversation messaging peer.
 
 ## Reference Implementation Findings
 
@@ -68,11 +68,11 @@ cc-2.1 contains two layers:
 | `src/utils/forkedAgent.ts` | Creates isolated tool-use context, cloned read state, cloned content replacement state, child abort behavior, cache-safe fork helpers. | Reuse the isolation and cache-stability ideas in Lin-owned runtime context types. |
 | `src/tools/AgentTool/loadAgentsDir.ts` | Loads agent definitions from markdown and JSON, including tools, model, effort, permission mode, max turns, skills, background, hooks, MCP, memory, isolation. | Implement `.agents/agents` definitions. Support the core fields now; defer hooks, MCP, memory, and isolation. |
 | `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and subagent runtime state. |
-| `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-session subagent continuation. |
+| `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-conversation subagent continuation. |
 | `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `AgentStatus` only for explicit status/wait checks. |
 | `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `AgentStop` for subagent ids/names. |
 | `src/tools/TeamCreateTool/*` | Creates team config, team task list, leader state, teammate workflow. | Do not copy for initial subagents. |
-| `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `AgentSend` only for same-session subagent continuation. Future global messaging gets separate tools. |
+| `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `AgentSend` only for same-conversation subagent continuation. Future global messaging gets separate tools. |
 
 ### Source-Level Design Anchors
 
@@ -86,7 +86,7 @@ Key anchors:
   Lin's `Agent` tool starts from this shape.
 - `src/tools/AgentTool/AgentTool.tsx:90-101`: `name`, `team_name`, `mode`,
   `isolation`, and `cwd` are added on top of the core schema for teammate,
-  team, and isolation behavior. Lin keeps only `name` as a same-session alias
+  team, and isolation behavior. Lin keeps only `name` as a same-conversation alias
   and omits the rest in the first version.
 - `src/tools/AgentTool/AgentTool.tsx:318-335`: fresh/fork routing is controlled
   by `subagent_type`. When it is set, that agent definition wins. When omitted
@@ -125,7 +125,7 @@ Key anchors:
   create an isolated subagent tool-use context. Lin maps this to pi-mono
   `Agent` state, `transformContext`, and tool profiles.
 - `src/tools/AgentTool/runAgent.ts:732-805`: initial and subsequent subagent
-  messages are recorded into a sidechain transcript. Lin's parent session must
+  messages are recorded into a sidechain transcript. Lin's parent conversation must
   not inline child tool noise.
 - `src/tools/AgentTool/runAgent.ts:816-859`: cleanup tears down agent-specific
   resources, clears cloned state, and kills child-owned background shell tasks.
@@ -234,7 +234,7 @@ files reviewed: `src/agency_swarm/agency/core.py`,
 
 Lin decision: good evidence that generic agent messaging needs explicit scope.
 Lin should not expose general cross-agent messaging in the first version.
-`AgentSend` should be a same-session continuation tool for an existing
+`AgentSend` should be a same-conversation continuation tool for an existing
 background subagent run, not a global routing primitive.
 
 [OpenHands Agent Delegation](https://docs.openhands.dev/sdk/guides/agent-delegation)
@@ -272,7 +272,7 @@ Problem definition: build general multi-agent applications, often with crews,
 teams, roles, workflows, graphs, memory, and application-level orchestration.
 
 Observed approach: these projects solve broader application orchestration
-problems than a single Lin session needs.
+problems than a single Lin conversation needs.
 
 Lin decision: keep them as future research. Do not pull
 crew/team/workflow/memory concepts into the first subagent implementation.
@@ -290,7 +290,7 @@ crew/team/workflow/memory concepts into the first subagent implementation.
 - Parent context should receive only a compact child result plus a durable run
   id. Full child turns, tool calls, progress, and errors belong in sidechain
   transcript/event storage and UI replay.
-- Runtime must include `max-depth`, ancestry/cycle prevention, per-session
+- Runtime must include `max-depth`, ancestry/cycle prevention, per-conversation
   concurrency caps, and stop propagation. These are not optional polish; every
   mature implementation needs them to avoid runaway recursive delegation and
   deadlocked child work.
@@ -301,7 +301,7 @@ crew/team/workflow/memory concepts into the first subagent implementation.
   layer. Do not silently load untrusted local agent definitions from arbitrary
   directories.
 - `AgentSend` is intentionally narrow: continue or message an existing
-  same-session background subagent run. Cross-session and global agent
+  same-conversation background subagent run. Cross-conversation and global agent
   messaging are future product features and should use a separate design.
 - Team/DAG/coordinator/shared-memory systems are valid future workflows, but
   they solve a different problem. Adding them now would blur the boundary
@@ -350,7 +350,7 @@ The markdown body is the subagent system prompt supplement.
 ```ts
 type AgentSubagentRun = {
   id: string;
-  sessionId: string;
+  conversationId: string;
   name?: string;
   subagentType: string;
   description: string;
@@ -444,7 +444,7 @@ Fork requirements:
 
 ### Sidechain Transcript
 
-Every subagent writes a separate transcript. The parent session stores only:
+Every subagent writes a separate transcript. The parent conversation stores only:
 
 - the `Agent` tool call;
 - launch metadata;
@@ -492,9 +492,9 @@ Field behavior:
 - `subagent_type`: agent definition name. If omitted, run a fork subagent.
 - `model`: optional model override. Agent definition model takes precedence rules
   should match Lin's model policy.
-- `run_in_background`: if true, return immediately and notify the parent session
+- `run_in_background`: if true, return immediately and notify the parent conversation
   when done.
-- `name`: optional session-local alias for later `AgentSend`, `AgentStatus`, and
+- `name`: optional conversation-local alias for later `AgentSend`, `AgentStatus`, and
   `AgentStop`.
 
 Not included:
@@ -556,7 +556,7 @@ poll `AgentStatus` for ordinary result retrieval.
 
 ### `AgentStatus`
 
-Reads or waits for same-session subagent state. It is a status/wait tool, not the
+Reads or waits for same-conversation subagent state. It is a status/wait tool, not the
 normal result retrieval path.
 
 Input:
@@ -579,7 +579,7 @@ Behavior:
 
 ### `AgentSend`
 
-Continues a same-session subagent by appending a new user instruction to its
+Continues a same-conversation subagent by appending a new user instruction to its
 sidechain transcript and resuming it in the background.
 
 Input:
@@ -603,11 +603,11 @@ Behavior:
 
 This replaces the subset of cc-2.1 `SendMessage` that resumes background agents.
 It does not support teammate mailboxes, broadcast, structured shutdown messages,
-or cross-session routes.
+or cross-conversation routes.
 
 ### `AgentStop`
 
-Stops a running same-session subagent.
+Stops a running same-conversation subagent.
 
 Input:
 
@@ -624,13 +624,13 @@ Behavior:
 - Aborts the running pi-mono `Agent`.
 - Persists stopped state.
 - Preserves partial result if available.
-- Emits a parent-session notification.
+- Emits a parent-conversation notification.
 
 ## Runtime Architecture
 
 ### `SubagentRuntime`
 
-Owns session-scoped subagent state:
+Owns conversation-scoped subagent state:
 
 - active runs;
 - id/name registry;
@@ -715,7 +715,7 @@ delete:
   `name: ""`. Default mode is Form.
 - **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
   (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
-  authoring write `AgentRuntime` reloads **every live session's** registry, so a
+  authoring write `AgentRuntime` reloads **every live conversation's** registry, so a
   new/edited/deleted agent appears in the subagent picker and settings list
   without an app restart. A run resolves its `AgentDefinition` at spawn, so reload
   only affects future spawns — live runs are unaffected.
@@ -749,7 +749,7 @@ The skill path should:
 - run the rendered content as a sidechain subagent prompt using the skill's
   `agent` field, or the built-in `general` agent when no agent is set;
 - pass `allowed-tools` as child-run preapproval metadata;
-- return only the final result/summary to the parent session.
+- return only the final result/summary to the parent conversation.
 
 This mirrors the cc-2.1 `context: fork` skill path: the skill body is child-only
 execution context, not parent-visible steering content.
@@ -758,10 +758,10 @@ execution context, not parent-visible steering content.
 
 Subagent runtime persists through Lin's event store. This follows cc-2.1's
 sidechain transcript design in `src/tools/AgentTool/runAgent.ts:732-805`, but
-uses Lin-owned parent-session events and payload refs rather than a separate
+uses Lin-owned parent-conversation events and payload refs rather than a separate
 task output file.
 
-Implemented parent-session events:
+Implemented parent-conversation events:
 
 - `subagent_run.started`
 - `subagent_run.updated`
@@ -770,7 +770,7 @@ Implemented payload role:
 
 - `subagent_transcript`
 
-`subagent_run.started` records stable run metadata: id, optional same-session
+`subagent_run.started` records stable run metadata: id, optional same-conversation
 name, description, prompt, subagent type, fresh/fork context mode, execution
 identity, parent agent identity, memory owner identity, memory origin workspace,
 Dream evidence start index, parent tool call id, transcript payload ref, and
@@ -904,7 +904,7 @@ The `Agent` prompt should teach:
 - Do not read or poll background transcripts unless asked; completion
   notifications will arrive.
 - Do not fabricate background results before notifications arrive.
-- Use `AgentSend` only to continue an existing same-session subagent.
+- Use `AgentSend` only to continue an existing same-conversation subagent.
 - Use `AgentStatus` only for status or waiting; read completion output from the
   notification/output reference with `file_read`.
 - Use `AgentStop` to stop a running subagent.
@@ -917,17 +917,17 @@ Do not implement:
 - `TeamCreate`, `TeamDelete`, `team_name`, teammate `name`, or team task lists.
 - teammate mailbox, broadcast, or structured shutdown/approval protocols.
 - `SendMessage` as a mixed routing tool.
-- cross-session or global agent messaging.
+- cross-conversation or global agent messaging.
 - worktree isolation.
 - remote isolation.
 - agent-specific MCP servers.
 - hooks lifecycle.
-- memory/session-memory.
+- memory/conversation-memory.
 - team-level task board.
 - continuous teammate loops.
 
-Future global or cross-session agent messaging should be a separate
-communication plane with separate tools. It must not be mixed into same-session
+Future global or cross-conversation agent messaging should be a separate
+communication plane with separate tools. It must not be mixed into same-conversation
 `AgentSend`.
 
 ## Implementation Status
@@ -978,7 +978,7 @@ Implemented.
 
 ### Background Lifecycle
 
-Implemented for same-session background runs.
+Implemented for same-conversation background runs.
 
 - `run_in_background` returns `async_launched` metadata immediately.
 - `AgentStatus` reads or waits for a selected run.
@@ -992,7 +992,7 @@ Implemented for same-session background runs.
 
 Implemented.
 
-- `AgentSend` continues an existing same-session subagent by id or name.
+- `AgentSend` continues an existing same-conversation subagent by id or name.
 - Continuation reconstructs the sidechain transcript from the persisted payload.
 - Tool-output replacement state is reconstructed from sidechain messages, so
   prior `<persisted-output>` decisions stay stable.
@@ -1059,7 +1059,7 @@ Review against cc-2.1 and OpenClaw leaves these follow-ups:
 - Forked subagents should continue to preserve cache-stable parent context and
   reject recursive fork attempts, including after compaction.
 - Agent-specific MCP servers and remote/worktree isolation remain deferred until
-  Lin has diagnostics and recovery for the smaller same-session model.
+  Lin has diagnostics and recovery for the smaller same-conversation model.
 
 ## Test Matrix
 

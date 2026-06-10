@@ -29,7 +29,7 @@ test.describe('agent panel empty state', () => {
       return calls.find((call) => call.cmd === 'agent_send_message')?.args;
     }).toMatchObject({
       message: 'Summarize current outline.',
-      conversationId: 'mock-agent-session',
+      conversationId: 'mock-agent-conversation',
     });
   });
 

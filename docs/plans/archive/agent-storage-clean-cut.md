@@ -1,7 +1,7 @@
 ---
-status: draft
+status: done
 priority: P1
-owner: unassigned
+owner: cc-2
 created: 2026-06-10
 updated: 2026-06-10
 ---
@@ -91,16 +91,42 @@ memory-D1 follow as before.
 
 ## Acceptance
 
-- [ ] Greps prove the cut: `rg "session\." src/core/agentEventLog.ts` → 0
+- [x] Greps prove the cut: `rg "session\." src/core/agentEventLog.ts` → 0
       event-type matches; `rg -i "sessionid" src/` → 0; `rg "AgentSessionState"
-      src/` → 0; no `agents/<id>/memory` path construction remains.
-- [ ] Old-format dev data is detected and cleanly removed on startup (test with
-      a fixture dir); fresh runs create the new layout.
-- [ ] `bun run typecheck` + `bun run test:core` + `bun run test:renderer` green
-      vs baselines (tests renamed mechanically with the code).
-- [ ] `CHECKPOINT_VERSION` bumped; checkpoint-over-old-shape falls back to full
-      replay (existing structural guards).
-- [ ] Spec synced per Design 6; plan archived `done`.
+      src/` → 0; no `agents/<id>/memory` path construction remains. Documented
+      exclusions (genuine third-party terms, all comment-annotated at the call
+      sites): pi-ai/pi-agent-core `sessionId` stream/agent options and the
+      `cleanupSessionResources` export; Electron's `session` module; OAuth/IME
+      "session" senses; and the legacy-format detector, which names the old
+      artifacts (`sessions/`, `session-index.json`, `"sessionId"`/`session.*`
+      head probe) by necessity.
+- [x] Old-format dev data is detected and cleanly removed on startup — four
+      detector tests (legacy `sessions/` tree, legacy session index, in-identity
+      agent pool, `session.*` head vocabulary) plus a no-false-positive test
+      that also pins the unified `principals/` layout.
+- [x] `bun run typecheck` + `bun run test:core` + `bun run test:renderer` green
+      vs baselines (core 805 pass vs 801 — net new clean-cut tests; renderer 405
+      = baseline; tests renamed mechanically with the code).
+- [x] `CHECKPOINT_VERSION` bumped 3→4 (and `SEARCH_INDEX_VERSION` 1→2 — its
+      entries renamed `sessionId`→`conversationId` on disk);
+      checkpoint-over-old-shape falls back to full replay (existing structural
+      guards + version check).
+- [x] Spec synced per Design 6; plan archived `done`.
+
+## Decided locals (recorded per escalate-don't-guess)
+
+- **Model-visible prompt bytes unchanged.** Tool descriptions ("same-session"),
+  listing/invoked markers, and compaction prompts keep their wording — renaming
+  them is prompt-copy work (the memory-alignment plan's lane), not storage
+  vocabulary. Everything the model *stores or replays* speaks `conversation`.
+- **`NotificationCreated/ReadEvent` lost their redundant `conversationId`
+  redeclaration** — after the base-field rename the delivery anchor IS the base
+  `conversationId` (the only emitter always anchored to the host log, so the two
+  fields were equal by construction; the replay mismatch guard now enforces it).
+- **Skill placeholder renamed** `${AGENT_SESSION_ID}` → `${AGENT_CONVERSATION_ID}`
+  (agent-skills.md updated; no built-in skill used it; pre-release, no alias).
+- **`AgentEventStore.agentPaths()` no longer exposes `memoryEventsPath`** —
+  pools are only addressable via `memoryPaths(principal)`.
 
 ## Collision self-check (2026-06-10, plan time)
 

@@ -122,7 +122,7 @@ describe('command runtime — failed fires', () => {
     runtime.stopCommandScheduler();
   });
 
-  test('ensureCommandConversation persists the delivery conversation without materializing a session', async () => {
+  test('ensureCommandConversation persists the delivery conversation without materializing a conversation', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
     roots.push(dataRoot);
     const calls: HandleCall[] = [];
@@ -136,11 +136,11 @@ describe('command runtime — failed fires', () => {
     const { conversationId } = await runtime.ensureCommandConversation(nodeId);
     expect(conversationId).toBeTruthy();
 
-    // Persist-only: NO in-memory session yet. Restore creates the single session;
+    // Persist-only: NO in-memory conversation yet. Restore creates the single conversation;
     // creating one here too would `abort()` + recreate it mid-run and diverge the
     // event seq ("seq N is not after existing M"). This guards that regression.
-    const sessions = (runtime as unknown as { sessions: Map<string, unknown> }).sessions;
-    expect(sessions.has(conversationId)).toBe(false);
+    const conversations = (runtime as unknown as { conversations: Map<string, unknown> }).conversations;
+    expect(conversations.has(conversationId)).toBe(false);
     runtime.stopCommandScheduler();
   });
 

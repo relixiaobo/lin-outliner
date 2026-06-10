@@ -165,7 +165,7 @@ describe('agent permission ask resolver', () => {
     let capturedContext: Context | undefined;
     let capturedOptions: SimpleStreamOptions & { toolChoice?: unknown } | undefined;
     const classifier = createDefaultPermissionClassifier({
-      sessionId: 'session-1',
+      conversationId: 'conversation-1',
       model: () => model,
       providerConfig: {
         providerId: 'openai',

@@ -89,7 +89,7 @@ test.describe('agent process disclosure', () => {
       content: [{ type: 'text', text: '你好，我在。' }],
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -110,7 +110,7 @@ test.describe('agent process disclosure', () => {
     const before = await indicator.boundingBox();
     expect(before).toBeTruthy();
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -141,7 +141,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_000_300,
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -209,7 +209,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_000_350,
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -316,7 +316,7 @@ test.describe('agent process disclosure', () => {
       }],
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -393,7 +393,7 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -485,8 +485,8 @@ test.describe('agent process disclosure', () => {
       };
     });
 
-    await emitAgentProjection(page, 'mock-agent-session', {
-      conversationTitle: 'Long Agent Session',
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Long Agent Conversation',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
       thinkingLevel: 'medium',
@@ -534,7 +534,7 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },

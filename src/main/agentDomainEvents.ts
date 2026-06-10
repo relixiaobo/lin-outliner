@@ -8,7 +8,7 @@ export type AgentDomainEventLane =
   | 'hook-interceptor';
 
 export type AgentLifecycleDomainEventName =
-  | 'SessionStart'
+  | 'ConversationStart'
   | 'UserPromptSubmit'
   | 'PreToolUse'
   | 'PostToolUse'
@@ -21,7 +21,7 @@ export type AgentDomainEvent =
   | {
       lane: 'persisted-log';
       name: 'PersistedLogEvent';
-      sessionId: string;
+      conversationId: string;
       runId?: string;
       event: AgentEvent;
       createdAt: number;
@@ -29,7 +29,7 @@ export type AgentDomainEvent =
   | {
       lane: 'renderer-projection';
       name: 'RendererProjectionUpdated';
-      sessionId: string;
+      conversationId: string;
       lastEventType: string | null;
       revision: number;
       projection: AgentRenderProjection;
@@ -38,7 +38,7 @@ export type AgentDomainEvent =
   | {
       lane: 'trusted-observer';
       name: AgentLifecycleDomainEventName | 'Notification';
-      sessionId: string;
+      conversationId: string;
       runId?: string;
       payload?: unknown;
       createdAt: number;
@@ -46,7 +46,7 @@ export type AgentDomainEvent =
   | {
       lane: 'hook-interceptor';
       name: AgentLifecycleDomainEventName;
-      sessionId: string;
+      conversationId: string;
       runId?: string;
       payload?: unknown;
       createdAt: number;

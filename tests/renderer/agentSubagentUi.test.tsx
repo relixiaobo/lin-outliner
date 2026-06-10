@@ -33,7 +33,7 @@ describe('agent subagent UI', () => {
           openedSubagentId = subagentId;
         }}
         pendingToolCallIds={new Set()}
-        conversationId="session-1"
+        conversationId="conversation-1"
         subagent={subagentEntity()}
         toolCall={agentToolCall()}
         turnActive={false}
@@ -101,7 +101,7 @@ describe('agent subagent UI', () => {
     const rendered = renderComponent(
       <AgentSubagentDetailsPanel
         onClose={() => undefined}
-        conversationId="session-1"
+        conversationId="conversation-1"
         subagent={subagentEntity()}
       />,
       {
@@ -124,7 +124,7 @@ describe('agent subagent UI', () => {
     const rendered = renderComponent(
       <AgentSubagentDetailsPanel
         onClose={() => undefined}
-        conversationId="session-1"
+        conversationId="conversation-1"
         subagent={{
           ...subagentEntity(),
           completedAt: undefined,
@@ -159,14 +159,14 @@ describe('agent subagent UI', () => {
         args: {
           agentId: 'subagent-1',
           message: 'Continue with layout risks.',
-          conversationId: 'session-1',
+          conversationId: 'conversation-1',
         },
       },
       {
         cmd: 'agent_subagent_stop',
         args: {
           agentId: 'subagent-1',
-          conversationId: 'session-1',
+          conversationId: 'conversation-1',
         },
       },
     ]);
@@ -187,7 +187,7 @@ describe('agent subagent UI', () => {
     };
     const rendered = renderComponent(
       <AgentTaskPanel
-        conversationId="session-1"
+        conversationId="conversation-1"
         onClose={() => undefined}
         onOpenSubagent={(subagentId) => {
           openedSubagentId = subagentId;
@@ -212,7 +212,7 @@ describe('agent subagent UI', () => {
       cmd: 'agent_subagent_stop',
       args: {
         agentId: 'subagent-1',
-        conversationId: 'session-1',
+        conversationId: 'conversation-1',
       },
       }]);
   });
@@ -234,7 +234,7 @@ describe('agent subagent UI', () => {
     };
     const rendered = renderComponent(
       <AgentTaskPanel
-        conversationId="session-1"
+        conversationId="conversation-1"
         onClose={() => undefined}
         onOpenSubagent={(subagentId) => {
           openedSubagentId = subagentId;

@@ -91,7 +91,7 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_send_message')?.args;
     }).toMatchObject({
       message: 'Summarize current outline.',
-      conversationId: 'mock-agent-session',
+      conversationId: 'mock-agent-conversation',
     });
   });
 
@@ -123,11 +123,11 @@ test.describe('agent composer controls', () => {
     await page.emulateMedia({ colorScheme: 'light' });
     await emitAgentEvent(page, {
       type: 'user_question_request',
-      conversationId: 'mock-agent-session',
+      conversationId: 'mock-agent-conversation',
       requestId: 'question-e2e',
       question: {
         requestId: 'question-e2e',
-        conversationId: 'mock-agent-session',
+        conversationId: 'mock-agent-conversation',
         runId: 'run-question-e2e',
         toolCallId: 'tool-question-e2e',
         request: {
@@ -195,7 +195,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-session',
+      conversationId: 'mock-agent-conversation',
       requestId: 'question-e2e',
       result: {
         requestId: 'question-e2e',
@@ -348,7 +348,7 @@ test.describe('agent composer controls', () => {
   test('renders sent attachment mentions inline without raw image placeholders', async ({ page }) => {
     const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1040,7 +1040,7 @@ test.describe('agent composer controls', () => {
       },
     });
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1088,7 +1088,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1211,7 +1211,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
@@ -1227,7 +1227,7 @@ test.describe('agent composer controls', () => {
     await expect(compactStatus).toContainText('Manual');
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -1678,7 +1678,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders node reference conversation titles without node ids', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [],
@@ -1708,7 +1708,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -1745,7 +1745,7 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_steer_conversation')?.args;
     }).toMatchObject({
       message: 'Compare tag layout stability.',
-      conversationId: 'mock-agent-session',
+      conversationId: 'mock-agent-conversation',
     });
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
@@ -1766,7 +1766,7 @@ test.describe('agent composer controls', () => {
       },
     };
 
-    await emitAgentProjection(page, 'mock-agent-session', {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -1859,14 +1859,14 @@ test.describe('agent composer controls', () => {
         args: {
           agentId: 'subagent-1',
           message: 'Continue with layout risks.',
-          conversationId: 'mock-agent-session',
+          conversationId: 'mock-agent-conversation',
         },
       },
       {
         cmd: 'agent_subagent_stop',
         args: {
           agentId: 'subagent-1',
-          conversationId: 'mock-agent-session',
+          conversationId: 'mock-agent-conversation',
         },
       },
     ]);

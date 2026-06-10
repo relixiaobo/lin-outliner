@@ -7,7 +7,7 @@ import { createAgentDebugPayloadEnvelope } from '../../src/main/agentDebug';
 import { deriveAgentDebugProjectionFromEvents } from '../../src/main/agentDebugProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 
-const sessionId = 'debug-session-1';
+const conversationId = 'debug-conversation-1';
 const systemActor: AgentActor = { type: 'system' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'pi-mono' };
 
@@ -40,7 +40,7 @@ function base(seq: number, type: AgentEvent['type'], actor: AgentActor = systemA
     v: 1 as const,
     eventId: `event-${seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_800_000_000_000 + seq,
     actor,
@@ -52,11 +52,11 @@ describe('agent debug projection', () => {
     await withStore(async (store) => {
       const providerPayload = {
         system: 'You are Lin agent.',
-        messages: [{ role: 'user', content: 'Summarize the restored session.' }],
+        messages: [{ role: 'user', content: 'Summarize the restored conversation.' }],
         tools: [{ name: 'node_read', description: 'Read node context', input_schema: { type: 'object' } }],
       };
       const envelope = createAgentDebugPayloadEnvelope(providerPayload);
-      const payloadRef = await store.writePayload(sessionId, {
+      const payloadRef = await store.writePayload(conversationId, {
         id: 'debug-payload-1',
         data: envelope.json,
         mimeType: 'application/json',
@@ -67,7 +67,7 @@ describe('agent debug projection', () => {
         status: 200,
         headers: { 'x-request-id': 'req-1' },
       });
-      const responsePayloadRef = await store.writePayload(sessionId, {
+      const responsePayloadRef = await store.writePayload(conversationId, {
         id: 'debug-response-1',
         data: responseEnvelope.json,
         mimeType: 'application/json',
@@ -75,8 +75,8 @@ describe('agent debug projection', () => {
         summary: 'Provider response round 2',
       });
 
-      await store.appendEvents(sessionId, [
-        { ...base(1, 'session.created'), title: 'Restored debug session' },
+      await store.appendEvents(conversationId, [
+        { ...base(1, 'conversation.created'), title: 'Restored debug conversation' },
         { ...base(2, 'run.started'), runId: 'run-1' },
         { ...base(3, 'payload.created'), payload: payloadRef },
         {
@@ -122,19 +122,19 @@ describe('agent debug projection', () => {
         { ...base(9, 'run.completed'), runId: 'run-1' },
       ]);
 
-      const restoredStore = new AgentEventStore(store.paths(sessionId).rootDir);
+      const restoredStore = new AgentEventStore(store.paths(conversationId).rootDir);
       const projection = await deriveAgentDebugProjectionFromEvents({
-        events: await restoredStore.readEvents(sessionId),
-        readPayload: (payload) => restoredStore.readPayload(sessionId, payload),
-        conversationId: sessionId,
+        events: await restoredStore.readEvents(conversationId),
+        readPayload: (payload) => restoredStore.readPayload(conversationId, payload),
+        conversationId: conversationId,
       });
 
       expect(projection.history).toHaveLength(2);
       expect(projection.history[0]?.id).toBe('debug-1');
-      expect(projection.history[0]?.conversationTitle).toBe('Restored debug session');
+      expect(projection.history[0]?.conversationTitle).toBe('Restored debug conversation');
       expect(projection.history[0]?.status).toBe('completed');
       expect(projection.history[0]?.wire.json).toBeUndefined();
-      expect(projection.history[0]?.messages[0]?.summary).toContain('Summarize the restored session');
+      expect(projection.history[0]?.messages[0]?.summary).toContain('Summarize the restored conversation');
       expect(projection.history[0]?.responseParts).toEqual([{ kind: 'text', body: 'Restored debug response.' }]);
       expect(projection.history[1]?.source).toBe('provider_response');
       expect(projection.history[1]?.status).toBe('completed');

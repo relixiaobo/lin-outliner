@@ -20,12 +20,12 @@ async function withStore<T>(fn: (store: AgentEventStore, service: AgentPastChats
   }
 }
 
-function base(sessionId: string, seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
+function base(conversationId: string, seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
   return {
     v: 1 as const,
-    eventId: `${sessionId}-event-${seq}`,
+    eventId: `${conversationId}-event-${seq}`,
     seq,
-    sessionId,
+    conversationId,
     type,
     createdAt: 1_800_000_000_000 + seq,
     actor,
@@ -35,17 +35,17 @@ function base(sessionId: string, seq: number, type: AgentEvent['type'], actor: A
 describe('agent past chats', () => {
   test('search returns only visible active-branch messages', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-branches';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Branch discussion' },
+      const conversationId = 'conversation-branches';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Branch discussion' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'user-original',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Use OAuth for login' }],
         },
         {
-          ...base(sessionId, 3, 'assistant_message.started', agentActor),
+          ...base(conversationId, 3, 'assistant_message.started', agentActor),
           runId: 'run-original',
           messageId: 'assistant-original',
           parentMessageId: 'user-original',
@@ -53,20 +53,20 @@ describe('agent past chats', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 4, 'assistant_message.completed', agentActor),
+          ...base(conversationId, 4, 'assistant_message.completed', agentActor),
           messageId: 'assistant-original',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'OAuth is acceptable here.' }],
         },
         {
-          ...base(sessionId, 5, 'user_message.created', userActor),
+          ...base(conversationId, 5, 'user_message.created', userActor),
           messageId: 'user-edited',
           parentMessageId: null,
           replacesMessageId: 'user-original',
           content: [{ type: 'text', text: 'Use API keys for login' }],
         },
         {
-          ...base(sessionId, 6, 'assistant_message.started', agentActor),
+          ...base(conversationId, 6, 'assistant_message.started', agentActor),
           runId: 'run-edited',
           messageId: 'assistant-edited',
           parentMessageId: 'user-edited',
@@ -74,7 +74,7 @@ describe('agent past chats', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 7, 'assistant_message.completed', agentActor),
+          ...base(conversationId, 7, 'assistant_message.completed', agentActor),
           messageId: 'assistant-edited',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'API keys are the active decision.' }],
@@ -93,27 +93,27 @@ describe('agent past chats', () => {
     });
   });
 
-  test('search excludes the current session unless explicitly included', async () => {
+  test('search excludes the current conversation unless explicitly included', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-current';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Current' },
+      const conversationId = 'conversation-current';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Current' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'user-current',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Remember the graphite palette' }],
         },
       ]);
 
-      const hidden = await service.search({ query: 'graphite' }, { currentConversationId: sessionId });
+      const hidden = await service.search({ query: 'graphite' }, { currentConversationId: conversationId });
       expect(hidden.mode).toBe('search');
       if (hidden.mode !== 'search') throw new Error('Expected search result');
       expect(hidden.hits).toEqual([]);
 
       const shown = await service.search(
         { query: 'graphite', includeCurrentConversation: true },
-        { currentConversationId: sessionId },
+        { currentConversationId: conversationId },
       );
       expect(shown.mode).toBe('search');
       if (shown.mode !== 'search') throw new Error('Expected search result');
@@ -123,21 +123,21 @@ describe('agent past chats', () => {
 
   test('search sorts by relevance before recency', async () => {
     await withStore(async (store, service) => {
-      const olderSessionId = 'session-relevance-old';
-      const newerSessionId = 'session-relevance-new';
-      await store.appendEvents(olderSessionId, [
-        { ...base(olderSessionId, 1, 'session.created'), title: 'Older exact' },
+      const olderConversationId = 'conversation-relevance-old';
+      const newerConversationId = 'conversation-relevance-new';
+      await store.appendEvents(olderConversationId, [
+        { ...base(olderConversationId, 1, 'conversation.created'), title: 'Older exact' },
         {
-          ...base(olderSessionId, 2, 'user_message.created', userActor),
+          ...base(olderConversationId, 2, 'user_message.created', userActor),
           messageId: 'older-phrase',
           parentMessageId: null,
           content: [{ type: 'text', text: 'sqlite checkpoint strategy' }],
         },
       ]);
-      await store.appendEvents(newerSessionId, [
-        { ...base(newerSessionId, 10, 'session.created'), title: 'Newer loose' },
+      await store.appendEvents(newerConversationId, [
+        { ...base(newerConversationId, 10, 'conversation.created'), title: 'Newer loose' },
         {
-          ...base(newerSessionId, 11, 'user_message.created', userActor),
+          ...base(newerConversationId, 11, 'user_message.created', userActor),
           messageId: 'newer-loose',
           parentMessageId: null,
           content: [{ type: 'text', text: 'checkpoint details for sqlite migration' }],
@@ -153,11 +153,11 @@ describe('agent past chats', () => {
 
   test('search matches spaced CJK terms across visible message text', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-cjk-spaced';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'CJK spaced terms' },
+      const conversationId = 'conversation-cjk-spaced';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'CJK spaced terms' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'user-cjk-spaced',
           parentMessageId: null,
           content: [{ type: 'text', text: '成都项目 今天 天气归档' }],
@@ -171,19 +171,19 @@ describe('agent past chats', () => {
     });
   });
 
-  test('read can recover compacted current-session history when opted in', async () => {
+  test('read can recover compacted current-conversation history when opted in', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-compact';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Compacted' },
+      const conversationId = 'conversation-compact';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Compacted' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'user-before-compact',
           parentMessageId: null,
           content: [{ type: 'text', text: 'We chose cobalt blue for focus rings' }],
         },
         {
-          ...base(sessionId, 3, 'assistant_message.started', agentActor),
+          ...base(conversationId, 3, 'assistant_message.started', agentActor),
           runId: 'run-before',
           messageId: 'assistant-before-compact',
           parentMessageId: 'user-before-compact',
@@ -191,32 +191,32 @@ describe('agent past chats', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 4, 'assistant_message.completed', agentActor),
+          ...base(conversationId, 4, 'assistant_message.completed', agentActor),
           messageId: 'assistant-before-compact',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'Cobalt blue is the focus-ring choice.' }],
         },
         {
-          ...base(sessionId, 5, 'compaction.completed'),
+          ...base(conversationId, 5, 'compaction.completed'),
           messageId: 'compact-root',
           summary: 'Focus ring choice was preserved.',
           source: { fromMessageId: 'user-before-compact', throughMessageId: 'assistant-before-compact' },
           trigger: 'manual',
         },
         {
-          ...base(sessionId, 6, 'user_message.created', systemActor),
+          ...base(conversationId, 6, 'user_message.created', systemActor),
           messageId: 'compact-root',
           parentMessageId: null,
           content: [{ type: 'text', text: 'Conversation compacted.' }],
         },
       ]);
 
-      const blocked = await service.read({ messageId: 'user-before-compact' }, { currentConversationId: sessionId });
+      const blocked = await service.read({ messageId: 'user-before-compact' }, { currentConversationId: conversationId });
       expect(blocked).toMatchObject({ mode: 'error', code: 'CONVERSATION_IS_CURRENT' });
 
       const read = await service.read(
         { messageId: 'user-before-compact', includeCurrentConversation: true },
-        { currentConversationId: sessionId },
+        { currentConversationId: conversationId },
       );
       expect(read.mode).toBe('read');
       if (read.mode !== 'read') throw new Error('Expected read result');
@@ -227,11 +227,11 @@ describe('agent past chats', () => {
 
   test('read uses persisted tool result summaries instead of raw payload-sized content', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-tool';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Tool output' },
+      const conversationId = 'conversation-tool';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Tool output' },
         {
-          ...base(sessionId, 2, 'assistant_message.started', agentActor),
+          ...base(conversationId, 2, 'assistant_message.started', agentActor),
           runId: 'run-tool',
           messageId: 'assistant-tool',
           parentMessageId: null,
@@ -239,13 +239,13 @@ describe('agent past chats', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 3, 'assistant_message.completed', agentActor),
+          ...base(conversationId, 3, 'assistant_message.completed', agentActor),
           messageId: 'assistant-tool',
           stopReason: 'toolUse',
           content: [{ type: 'toolCall', id: 'tool-1', name: 'bash', arguments: {} }],
         },
         {
-          ...base(sessionId, 4, 'tool_result.created', { type: 'tool', toolName: 'bash', toolCallId: 'tool-1' }),
+          ...base(conversationId, 4, 'tool_result.created', { type: 'tool', toolName: 'bash', toolCallId: 'tool-1' }),
           messageId: 'tool-result-1',
           parentMessageId: 'assistant-tool',
           toolCallId: 'tool-1',
@@ -268,17 +268,17 @@ describe('agent past chats', () => {
 
   test('reads bounded evidence from memory source ranges', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-memory-evidence';
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Memory evidence' },
+      const conversationId = 'conversation-memory-evidence';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Memory evidence' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'user-evidence',
           parentMessageId: null,
           content: [{ type: 'text', text: 'The durable preference is terse direct answers.' }],
         },
         {
-          ...base(sessionId, 3, 'assistant_message.started', agentActor),
+          ...base(conversationId, 3, 'assistant_message.started', agentActor),
           runId: 'run-evidence',
           messageId: 'assistant-evidence',
           parentMessageId: 'user-evidence',
@@ -286,7 +286,7 @@ describe('agent past chats', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 4, 'assistant_message.completed', agentActor),
+          ...base(conversationId, 4, 'assistant_message.completed', agentActor),
           messageId: 'assistant-evidence',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'I will keep answers terse and direct.' }],
@@ -294,16 +294,16 @@ describe('agent past chats', () => {
       ]);
 
       const source: AgentMemorySource = {
-        conversationId: sessionId,
+        conversationId: conversationId,
         messageRange: ['user-evidence', 'assistant-evidence'],
         runId: 'run-evidence',
-        eventId: `${sessionId}-event-4`,
+        eventId: `${conversationId}-event-4`,
       };
       const evidence = await service.readMemorySourceEvidence({ source, maxChars: 120 });
 
       expect(evidence.mode).toBe('evidence');
       if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
-      expect(evidence.conversation).toMatchObject({ id: sessionId, title: 'Memory evidence' });
+      expect(evidence.conversation).toMatchObject({ id: conversationId, title: 'Memory evidence' });
       expect(evidence.source).toEqual(source);
       expect(evidence.messages.map((message) => message.messageId)).toEqual(['user-evidence', 'assistant-evidence']);
       expect(evidence.messages.map((message) => message.text).join('\n')).toContain('terse direct answers');
@@ -312,13 +312,13 @@ describe('agent past chats', () => {
 
   test('recent returns visible user message anchors with system reminders stripped', async () => {
     await withStore(async (store, service) => {
-      const sessionId = 'session-recent';
-      const currentConversationId = 'session-current-recent';
+      const conversationId = 'conversation-recent';
+      const currentConversationId = 'conversation-current-recent';
       const longUserText = `Please continue the agent-past-chats API plan. ${'detail '.repeat(80)}`.trim();
-      await store.appendEvents(sessionId, [
-        { ...base(sessionId, 1, 'session.created'), title: 'Recent history' },
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Recent history' },
         {
-          ...base(sessionId, 2, 'user_message.created', userActor),
+          ...base(conversationId, 2, 'user_message.created', userActor),
           messageId: 'user-recent',
           parentMessageId: null,
           content: [
@@ -327,7 +327,7 @@ describe('agent past chats', () => {
           ],
         },
         {
-          ...base(sessionId, 3, 'assistant_message.started', agentActor),
+          ...base(conversationId, 3, 'assistant_message.started', agentActor),
           runId: 'run-recent',
           messageId: 'assistant-recent',
           parentMessageId: 'user-recent',
@@ -335,19 +335,19 @@ describe('agent past chats', () => {
           modelId: 'test',
         },
         {
-          ...base(sessionId, 4, 'assistant_message.completed', agentActor),
+          ...base(conversationId, 4, 'assistant_message.completed', agentActor),
           messageId: 'assistant-recent',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'Continuing the plan.' }],
         },
       ]);
       await store.appendEvents(currentConversationId, [
-        { ...base(currentConversationId, 1, 'session.created'), title: 'Current' },
+        { ...base(currentConversationId, 1, 'conversation.created'), title: 'Current' },
         {
           ...base(currentConversationId, 2, 'user_message.created', userActor),
           messageId: 'user-current-recent',
           parentMessageId: null,
-          content: [{ type: 'text', text: 'Do not show this current-session message' }],
+          content: [{ type: 'text', text: 'Do not show this current-conversation message' }],
         },
       ]);
 

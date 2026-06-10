@@ -150,7 +150,7 @@ test.describe('agent settings window', () => {
 
     await expect(settings.getByRole('list', { name: 'Remembered facts' })).toBeVisible();
     await expect(settings.getByText('Prefer concise, direct implementation notes')).toBeVisible();
-    await expect(settings.getByText('Use the old session vocabulary')).toBeVisible();
+    await expect(settings.getByText('Use the old conversation vocabulary')).toBeVisible();
     await expect(settings.getByText('Active')).toBeVisible();
     await expect(settings.getByText('Forgotten')).toBeVisible();
 

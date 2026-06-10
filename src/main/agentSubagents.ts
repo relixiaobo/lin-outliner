@@ -139,7 +139,7 @@ const AGENT_STOP_PARAMETERS = {
 export type AgentSubagentToolData = AgentSubagentActionResult;
 
 export interface AgentSubagentCreateInput {
-  sessionId: string;
+  conversationId: string;
   messages: AgentMessage[];
   systemPrompt: string;
   executingAgentId: string;
@@ -184,7 +184,7 @@ export interface AgentSubagentRuntimeHost {
     text: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }>;
   completeCompactSummary(
-    sessionId: string,
+    conversationId: string,
     messages: readonly AgentMessage[],
     model: Model<Api>,
     customInstructions?: string,
@@ -193,7 +193,7 @@ export interface AgentSubagentRuntimeHost {
 }
 
 export interface AgentSubagentRuntimeOptions {
-  sessionId: string;
+  conversationId: string;
   executingAgentId: string;
   memoryOwnerAgentId?: string;
   localRoot?: string;
@@ -303,7 +303,7 @@ export interface AgentSubagentSkillRunInput {
 
 export class AgentSubagentRuntime {
   private readonly registry: AgentDefinitionRegistry;
-  private readonly sessionId: string;
+  private readonly conversationId: string;
   private readonly localRoot: string;
   private additionalAgentDirectories: string[];
   private readonly depth: number;
@@ -319,7 +319,7 @@ export class AgentSubagentRuntime {
   private disabledAgents: string[] = [];
 
   constructor(options: AgentSubagentRuntimeOptions) {
-    this.sessionId = options.sessionId;
+    this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
     this.additionalAgentDirectories = normalizeConfiguredDirectories(options.additionalAgentDirectories, this.localRoot);
     this.depth = options.depth ?? 0;
@@ -566,7 +566,7 @@ export class AgentSubagentRuntime {
     if (name && this.names.has(name)) throw new Error(`Agent name is already in use in this session: ${name}`);
 
     const runId = `subagent-${randomUUID()}`;
-    const subagentSessionId = `${this.hostSessionPrefix()}-${runId}`;
+    const subagentConversationId = `${this.hostConversationPrefix()}-${runId}`;
     const parentAgentId = this.executingAgentId;
     const executingAgentId = contextMode === 'fork'
       ? this.executingAgentId
@@ -581,7 +581,7 @@ export class AgentSubagentRuntime {
       localRoot: this.localRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
-      sessionId: subagentSessionId,
+      conversationId: subagentConversationId,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
         const data = await childRuntime.invokeSkillSubagent({
           skillName: skill.name,
@@ -607,7 +607,7 @@ export class AgentSubagentRuntime {
     let childAgent: Agent | null = null;
     let run: AgentRunRecord | null = null;
     childRuntime = new AgentSubagentRuntime({
-      sessionId: subagentSessionId,
+      conversationId: subagentConversationId,
       executingAgentId,
       memoryOwnerAgentId,
       localRoot: this.localRoot,
@@ -626,8 +626,8 @@ export class AgentSubagentRuntime {
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.host.persistToolOutputPayload(toolCallId, toolName, text)
         ),
-        completeCompactSummary: (sessionId, messages, model, customInstructions, signal) => (
-          this.host.completeCompactSummary(sessionId, messages, model, customInstructions, signal)
+        completeCompactSummary: (conversationId, messages, model, customInstructions, signal) => (
+          this.host.completeCompactSummary(conversationId, messages, model, customInstructions, signal)
         ),
       },
     });
@@ -643,7 +643,7 @@ export class AgentSubagentRuntime {
       ? this.host.getParentSystemPrompt()
       : buildFreshAgentSystemPrompt(definition);
     childAgent = this.host.createChildAgent({
-      sessionId: subagentSessionId,
+      conversationId: subagentConversationId,
       messages: [],
       systemPrompt,
       executingAgentId,
@@ -951,7 +951,7 @@ export class AgentSubagentRuntime {
     try {
       run.skillRuntime?.restoreInvokedSkillsFromMessages(messages);
       const summary = await this.host.completeCompactSummary(
-        `${this.sessionId}-${run.id}-${trigger}-compact`,
+        `${this.conversationId}-${run.id}-${trigger}-compact`,
         messages,
         model,
         run.contextMode === 'fork'
@@ -1001,7 +1001,7 @@ export class AgentSubagentRuntime {
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
       additionalSkillDirectories: (await this.host.getRuntimeSettings()).additionalSkillDirectories,
-      sessionId: `${this.hostSessionPrefix()}-${run.id}`,
+      conversationId: `${this.hostConversationPrefix()}-${run.id}`,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
         const data = await childRuntime.invokeSkillSubagent({
           skillName: skill.name,
@@ -1024,7 +1024,7 @@ export class AgentSubagentRuntime {
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
     let childAgent: Agent | null = null;
     childRuntime = new AgentSubagentRuntime({
-      sessionId: `${this.hostSessionPrefix()}-${run.id}`,
+      conversationId: `${this.hostConversationPrefix()}-${run.id}`,
       executingAgentId: run.executingAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
       localRoot: this.localRoot,
@@ -1043,8 +1043,8 @@ export class AgentSubagentRuntime {
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.host.persistToolOutputPayload(toolCallId, toolName, text)
         ),
-        completeCompactSummary: (sessionId, messages, model, customInstructions, signal) => (
-          this.host.completeCompactSummary(sessionId, messages, model, customInstructions, signal)
+        completeCompactSummary: (conversationId, messages, model, customInstructions, signal) => (
+          this.host.completeCompactSummary(conversationId, messages, model, customInstructions, signal)
         ),
       },
     });
@@ -1052,7 +1052,7 @@ export class AgentSubagentRuntime {
       ? this.host.getParentSystemPrompt()
       : buildFreshAgentSystemPrompt(definition);
     childAgent = this.host.createChildAgent({
-      sessionId: `${this.hostSessionPrefix()}-${run.id}`,
+      conversationId: `${this.hostConversationPrefix()}-${run.id}`,
       messages: run.messages.map(cloneAgentMessage),
       systemPrompt,
       executingAgentId: run.executingAgentId,
@@ -1157,8 +1157,8 @@ export class AgentSubagentRuntime {
     }
   }
 
-  private hostSessionPrefix(): string {
-    return this.sessionId;
+  private hostConversationPrefix(): string {
+    return this.conversationId;
   }
 }
 

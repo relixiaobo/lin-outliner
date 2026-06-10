@@ -96,7 +96,7 @@ export type AgentPersistedContent =
   | { type: 'payload_ref'; payload: AgentPayloadRef; label?: string };
 
 // M0 target data-model contracts. These describe the planned conversation/run/memory
-// logs while the current flat session event log remains the runtime format below.
+// logs while the current flat conversation event log remains the runtime format below.
 export type AgentSourceKind = 'built-in' | 'user' | 'project';
 export type AgentId = `${AgentSourceKind}:${string}:${string}`;
 
@@ -107,9 +107,9 @@ export type AgentPrincipal =
 /**
  * Stable string key for a principal: `user:<userId>` / `agent:<agentId>`. Used
  * as a Map/Record key and stored in derived indexes; it is NOT an on-disk path
- * segment — pool directories are resolved separately (agents keep their
- * identity directory `agents/<agentId>/`, encoded for the filesystem; user
- * pools live under `principals/`).
+ * segment — every principal's pool directory lives under `principals/` with a
+ * filesystem-encoded name (`agent-<agentId>` / `user-<userId>`), resolved by
+ * the store's `memoryPaths`.
  */
 export function principalKey(principal: AgentPrincipal): string {
   return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
@@ -523,9 +523,9 @@ export type AgentSubagentRunStatus = 'running' | 'completed' | 'failed' | 'stopp
 export type AgentCompactionTrigger = 'manual' | 'auto' | 'reactive';
 
 export type AgentEventType =
-  | 'session.created'
-  | 'session.renamed'
-  | 'session.settings_changed'
+  | 'conversation.created'
+  | 'conversation.renamed'
+  | 'conversation.settings_changed'
   | 'debug.snapshot.created'
   | 'branch.selected'
   | 'user_message.created'
@@ -581,7 +581,7 @@ export interface AgentEventBase {
   v: typeof AGENT_EVENT_VERSION;
   eventId: string;
   seq: number;
-  sessionId: string;
+  conversationId: string;
   type: AgentEventType;
   createdAt: number;
   actor: AgentActor;
@@ -592,21 +592,21 @@ export interface AgentEventBase {
   causedByEventId?: string;
 }
 
-export interface SessionCreatedEvent extends AgentEventBase {
-  type: 'session.created';
+export interface ConversationCreatedEvent extends AgentEventBase {
+  type: 'conversation.created';
   title: string | null;
   members?: AgentPrincipal[];
   goal?: string;
 }
 
-export interface SessionRenamedEvent extends AgentEventBase {
-  type: 'session.renamed';
+export interface ConversationRenamedEvent extends AgentEventBase {
+  type: 'conversation.renamed';
   title: string | null;
   goal?: string;
 }
 
-export interface SessionSettingsChangedEvent extends AgentEventBase {
-  type: 'session.settings_changed';
+export interface ConversationSettingsChangedEvent extends AgentEventBase {
+  type: 'conversation.settings_changed';
   settings: Record<string, unknown>;
 }
 
@@ -857,15 +857,14 @@ export type AgentTaskSource =
   | { type: 'run'; runId: string }
   | { type: 'subagent'; subagentRunId: string };
 
+/**
+ * Delivered to its origin conversation: the base `conversationId` IS the
+ * delivery anchor (a background run always anchors to a delivery conversation —
+ * there are no conversation-less notifications).
+ */
 export interface NotificationCreatedEvent extends AgentEventBase {
   type: 'notification.created';
   notificationId: string;
-  /**
-   * Origin conversation the notification is delivered to. Mandatory — there are
-   * no conversation-less notifications (a background run always anchors to a
-   * delivery conversation).
-   */
-  conversationId: string;
   kind: AgentNotificationKind;
   title: string;
   body?: string;
@@ -874,14 +873,14 @@ export interface NotificationCreatedEvent extends AgentEventBase {
 }
 
 /**
- * Durable attention-clear. Marks every `notification.created` in `conversationId`
- * with `seq <= throughSeq` as read. A conversation's unread count is the number of
- * its notifications with `seq > lastReadThroughSeq` — folded per conversation,
- * restart-safe, cleared when the user opens the conversation.
+ * Durable attention-clear. Marks every `notification.created` in the base
+ * `conversationId` with `seq <= throughSeq` as read. A conversation's unread
+ * count is the number of its notifications with `seq > lastReadThroughSeq` —
+ * folded per conversation, restart-safe, cleared when the user opens the
+ * conversation.
  */
 export interface NotificationReadEvent extends AgentEventBase {
   type: 'notification.read';
-  conversationId: string;
   throughSeq: number;
 }
 
@@ -1027,9 +1026,9 @@ export interface MetricRecordedEvent extends AgentEventBase {
 }
 
 export type AgentEvent =
-  | SessionCreatedEvent
-  | SessionRenamedEvent
-  | SessionSettingsChangedEvent
+  | ConversationCreatedEvent
+  | ConversationRenamedEvent
+  | ConversationSettingsChangedEvent
   | DebugSnapshotCreatedEvent
   | BranchSelectedEvent
   | UserMessageCreatedEvent
@@ -1073,7 +1072,7 @@ export type AgentEvent =
   | CheckpointCreatedEvent
   | MetricRecordedEvent;
 
-export interface AgentSessionRecord {
+export interface AgentConversationRecord {
   id: string;
   title: string | null;
   members: AgentPrincipal[];
@@ -1202,7 +1201,7 @@ export interface AgentConversationAttention {
 }
 
 export interface AgentEventReplayState {
-  session: AgentSessionRecord | null;
+  conversation: AgentConversationRecord | null;
   latestSeq: number;
   latestEventId: string | null;
   messages: Record<string, AgentEventMessageRecord>;
@@ -1239,7 +1238,7 @@ export interface AgentEventVisibleTranscriptEntry {
 
 export function createEmptyAgentEventReplayState(): AgentEventReplayState {
   return {
-    session: null,
+    conversation: null,
     latestSeq: 0,
     latestEventId: null,
     messages: {},
@@ -1265,7 +1264,7 @@ export function replayAgentEvents(events: readonly AgentEvent[]): AgentEventRepl
   for (const event of events) {
     assertValidNextEvent(state, seenEventIds, event);
     applyAgentEvent(state, event);
-    touchSessionUpdatedAt(state, event);
+    touchConversationUpdatedAt(state, event);
     seenEventIds.add(event.eventId);
     state.latestSeq = event.seq;
     state.latestEventId = event.eventId;
@@ -1276,7 +1275,7 @@ export function replayAgentEvents(events: readonly AgentEvent[]): AgentEventRepl
 export function appendAgentEventToReplayState(state: AgentEventReplayState, event: AgentEvent): AgentEventReplayState {
   assertValidNextEvent(state, new Set(), event);
   applyAgentEvent(state, event);
-  touchSessionUpdatedAt(state, event);
+  touchConversationUpdatedAt(state, event);
   state.latestSeq = event.seq;
   state.latestEventId = event.eventId;
   return state;
@@ -1416,16 +1415,16 @@ function assertValidNextEvent(
   if (event.seq <= state.latestSeq) {
     throw new Error(`Agent events must be appended in increasing seq order: ${event.seq}`);
   }
-  if (state.session && event.sessionId !== state.session.id) {
-    throw new Error(`Agent event session mismatch: ${event.sessionId}`);
+  if (state.conversation && event.conversationId !== state.conversation.id) {
+    throw new Error(`Agent event conversation mismatch: ${event.conversationId}`);
   }
 }
 
 function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
   switch (event.type) {
-    case 'session.created':
-      state.session = {
-        id: event.sessionId,
+    case 'conversation.created':
+      state.conversation = {
+        id: event.conversationId,
         title: event.title,
         members: event.members?.slice() ?? [],
         goal: event.goal,
@@ -1434,16 +1433,16 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         settings: {},
       };
       return;
-    case 'session.renamed':
-      requireSession(state, event);
-      state.session!.title = event.title;
-      state.session!.goal = event.goal ?? state.session!.goal;
-      state.session!.updatedAt = event.createdAt;
+    case 'conversation.renamed':
+      requireConversation(state, event);
+      state.conversation!.title = event.title;
+      state.conversation!.goal = event.goal ?? state.conversation!.goal;
+      state.conversation!.updatedAt = event.createdAt;
       return;
-    case 'session.settings_changed':
-      requireSession(state, event);
-      state.session!.settings = { ...state.session!.settings, ...event.settings };
-      state.session!.updatedAt = event.createdAt;
+    case 'conversation.settings_changed':
+      requireConversation(state, event);
+      state.conversation!.settings = { ...state.conversation!.settings, ...event.settings };
+      state.conversation!.updatedAt = event.createdAt;
       return;
     case 'debug.snapshot.created':
       return;
@@ -1751,13 +1750,13 @@ function ensureConversationAttention(
   return attention;
 }
 
-function touchSessionUpdatedAt(state: AgentEventReplayState, event: AgentEvent) {
-  if (!state.session) return;
+function touchConversationUpdatedAt(state: AgentEventReplayState, event: AgentEvent) {
+  if (!state.conversation) return;
   // Off-floor attention bookkeeping is not conversation activity: a background
   // notification arriving (or being read) must not reorder the conversation list
   // or change its displayed timestamp. Only genuine content/state events touch it.
   if (event.type === 'notification.created' || event.type === 'notification.read') return;
-  state.session.updatedAt = Math.max(state.session.updatedAt, event.createdAt);
+  state.conversation.updatedAt = Math.max(state.conversation.updatedAt, event.createdAt);
 }
 
 function addMessage(state: AgentEventReplayState, message: AgentEventMessageRecord) {
@@ -1824,9 +1823,9 @@ function pathToMessage(
   return path.reverse();
 }
 
-function requireSession(state: AgentEventReplayState, event: AgentEvent) {
-  if (!state.session) {
-    throw new Error(`Agent event requires session.created first: ${event.type}`);
+function requireConversation(state: AgentEventReplayState, event: AgentEvent) {
+  if (!state.conversation) {
+    throw new Error(`Agent event requires conversation.created first: ${event.type}`);
   }
 }
 
