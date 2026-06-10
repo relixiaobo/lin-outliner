@@ -1193,7 +1193,7 @@ export class AgentEventStore {
     const renamed = [...events].reverse().find((event) => event.type === 'conversation.renamed');
     const latest = events.at(-1);
     if (!created && !renamed && !latest) return;
-    const members = mergePrincipals(existing?.members ?? [], events.flatMap(principalsFromEvent));
+    const members = foldMembers(existing?.members ?? [], events);
     const meta: AgentConversationMetaProjection = {
       v: 1,
       id: conversationId,
@@ -1478,6 +1478,13 @@ function updateConversationIndexEntry(
   if (event.type === 'conversation.renamed') {
     next.title = event.title;
     next.goal = event.goal ?? next.goal;
+  }
+  if (event.type === 'member.added') {
+    next.members = mergePrincipals(next.members, [event.member]);
+  }
+  if (event.type === 'member.removed') {
+    const key = principalKey(event.member);
+    next.members = next.members.filter((member) => principalKey(member) !== key);
   }
   if (
     event.type === 'user_message.created'
@@ -2017,6 +2024,28 @@ function principalsFromEvent(event: AgentEvent): AgentPrincipal[] {
   if (event.actor.type === 'user') return [{ type: 'user', userId: event.actor.userId }];
   if (event.actor.type === 'agent') return [{ type: 'agent', agentId: event.actor.agentId }];
   return [];
+}
+
+/**
+ * Ordered membership fold for the conversation meta projection. Unlike the old
+ * merge-only pass, `member.removed` genuinely drops the principal, so removal
+ * survives the incremental projection (mirrors the replay reducer).
+ */
+function foldMembers(current: readonly AgentPrincipal[], events: readonly AgentEvent[]): AgentPrincipal[] {
+  let members = current.slice();
+  for (const event of events) {
+    if (event.type === 'member.removed') {
+      const key = principalKey(event.member);
+      members = members.filter((member) => principalKey(member) !== key);
+      continue;
+    }
+    if (event.type === 'member.added') {
+      members = mergePrincipals(members, [event.member]);
+      continue;
+    }
+    members = mergePrincipals(members, principalsFromEvent(event));
+  }
+  return members;
 }
 
 function mergePrincipals(current: readonly AgentPrincipal[], next: readonly AgentPrincipal[]): AgentPrincipal[] {

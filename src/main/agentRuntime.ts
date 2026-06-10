@@ -62,6 +62,7 @@ import {
   principalKey,
   samePrincipal,
   type AgentActor,
+  type AgentId,
   type AgentCompactionSourceRange,
   type AgentCompactionTrigger,
   type AgentDreamCompletedChanges,
@@ -86,6 +87,15 @@ import {
   type AgentUserQuestionAnswer,
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
+import {
+  CHANNEL_RELAY_RUN_BUDGET,
+  agentMentionToken,
+  channelAgentMembers,
+  firstHandOffTarget,
+  flattenAgentPathForPov,
+  isMultiAgentConversation,
+  parseAgentMentionTargets,
+} from '../core/agentChannel';
 import {
   nodeReferenceMarkersToText,
   rewriteFileReferenceMarkerPaths,
@@ -358,6 +368,8 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   assistantMessageId: string | null;
   assistantText: string;
   toolCallMessageIds: Map<string, string>;
+  /** The agent this run executes as (a Channel peer or the main agent). */
+  executingAgentId: string;
 }
 
 type RendererProjectionDomainEvent = Extract<AgentDomainEvent, { lane: 'renderer-projection' }>;
@@ -395,6 +407,8 @@ interface AgentConversationState {
   subagentRuntime: AgentSubagentRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
   toolResultBudgetState: ToolResultBudgetState;
+  /** Display names for member agents (agentId → name), for projections + preambles. */
+  memberDisplayNames: Record<string, string>;
   unsubscribe: (() => void) | null;
 }
 
@@ -659,23 +673,103 @@ export class AgentRuntime {
     return this.conversationResponse(conversationId, conversation);
   }
 
-  async createConversation() {
+  async createConversation(options: { agentIds?: string[]; goal?: string; seedText?: string } = {}) {
     const conversationId = this.createChannelId();
     const eventState = createEmptyAgentEventReplayState();
-    const title = normalizeConversationTitle('');
-    const created = this.buildEvents(eventState, conversationId, [{
+    const title = normalizeConversationTitle(options.goal ?? '');
+    const extraMembers = await this.resolveAgentMemberPrincipals(options.agentIds ?? []);
+    const inputs: AgentEventInput[] = [{
       type: 'conversation.created',
       actor: systemActor(),
       title,
-      members: this.defaultConversationMembers(),
+      members: mergeMemberPrincipals(this.defaultConversationMembers(), extraMembers),
       goal: title,
-    }]);
+    }];
+    // New-member onboarding floor (ratified): shared substrates only. The optional
+    // seed is the Channel's opening context for every member — never a DM transcript.
+    const seedText = options.seedText?.trim();
+    if (seedText) {
+      inputs.push({
+        type: 'user_message.created',
+        actor: systemActor(),
+        messageId: this.createMessageId('user'),
+        parentMessageId: null,
+        content: [{ type: 'text', text: systemReminder(seedText) }],
+      });
+    }
+    const created = this.buildEvents(eventState, conversationId, inputs);
     await this.getEventStore().appendEvents(conversationId, created);
     for (const event of created) appendAgentEventToReplayState(eventState, event);
     this.publishPersistedEvents(conversationId, created);
     const conversation = await this.createConversationWithEventState(eventState);
     await this.refreshAgentTaskCache();
     return this.conversationResponse(conversationId, conversation);
+  }
+
+  /**
+   * Add an agent member. On a Channel this is a real `member.added` event; on the
+   * canonical DM it never converts in place (ratified) — it spawns a new seeded
+   * Channel (goal + existing members + the new agent) and returns THAT conversation.
+   */
+  async addConversationMember(conversationId: string, agentId: string) {
+    const principal = await this.requireAgentMemberPrincipal(agentId);
+    const conversation = await this.ensureConversationWithId(conversationId);
+    if (this.isDefaultDmConversationId(conversationId)) {
+      const dmTitle = conversation.eventState.conversation?.title;
+      const goal = dmTitle && dmTitle !== this.agentIdentity.displayName ? dmTitle : undefined;
+      return this.createConversation({
+        agentIds: [agentId],
+        goal,
+        seedText: `This Channel was spawned from the user's DM with @${agentMentionToken(this.agentIdentity.agentId)}. Members collaborate here; the DM transcript is private and is not shared.`,
+      });
+    }
+    const members = conversation.eventState.conversation?.members ?? [];
+    if (!members.some((member) => samePrincipal(member, principal))) {
+      await this.appendConversationEvents(conversationId, conversation, [{
+        type: 'member.added',
+        actor: userActor(),
+        member: principal,
+      }]);
+      await this.refreshMemberDisplayNames(conversation);
+      this.emitProjection(conversationId, 'member.added');
+    }
+    return this.conversationResponse(conversationId, conversation);
+  }
+
+  async removeConversationMember(conversationId: string, agentId: string) {
+    if (this.isDefaultDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
+    if (agentId === this.agentIdentity.agentId) throw new Error('The Channel coordinator cannot be removed.');
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const principal: AgentPrincipal = { type: 'agent', agentId };
+    const members = conversation.eventState.conversation?.members ?? [];
+    if (members.some((member) => samePrincipal(member, principal))) {
+      await this.appendConversationEvents(conversationId, conversation, [{
+        type: 'member.removed',
+        actor: userActor(),
+        member: principal,
+      }]);
+      this.emitProjection(conversationId, 'member.removed');
+    }
+    return this.conversationResponse(conversationId, conversation);
+  }
+
+  /** Resolve agent ids to member principals, validating each against the registry. */
+  private async resolveAgentMemberPrincipals(agentIds: readonly string[]): Promise<AgentPrincipal[]> {
+    const principals: AgentPrincipal[] = [];
+    for (const agentId of agentIds) {
+      principals.push(await this.requireAgentMemberPrincipal(agentId));
+    }
+    return principals;
+  }
+
+  private async requireAgentMemberPrincipal(agentId: string): Promise<AgentPrincipal> {
+    if (agentId === this.agentIdentity.agentId) {
+      return { type: 'agent', agentId };
+    }
+    const definitions = await this.listRawAgentDefinitions('member-resolve');
+    const match = definitions.find((definition) => agentDefinitionAgentId(definition) === agentId);
+    if (!match) throw new Error(`Agent not found for Channel membership: ${agentId}`);
+    return { type: 'agent', agentId };
   }
 
   async listConversations() {
@@ -1148,7 +1242,21 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      const memoryReminder = await this.buildMemoryReminder(this.agentIdentity.agentId, conversation);
+      const members = conversation.eventState.conversation?.members ?? [];
+      // Routing (ratified): in a multi-agent Channel a run is produced iff a
+      // principal is in addressedTo; `@member` routes there, no `@` routes to the
+      // coordinator. DMs and single-agent conversations keep the legacy path.
+      const multiAgent = isMultiAgentConversation(members);
+      const addressedTo = multiAgent
+        ? this.resolveAddressedMembers(messageText, members)
+        : null;
+      // In a Channel the persisted user message stays reader-neutral: a memory
+      // briefing belongs to ONE reader, so it is injected transiently per run at
+      // assembly time instead of being written into the shared log. Skill/agent
+      // listings are likewise main-agent-POV and stay out of the shared message.
+      const memoryReminder = multiAgent
+        ? null
+        : await this.buildMemoryReminder(this.agentIdentity.agentId, conversation);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
         memoryReminder,
@@ -1158,10 +1266,10 @@ export class AgentRuntime {
       const slashSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
         ? await createSlashSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
-      const skillListingReminder = slashSkillPrompt
+      const skillListingReminder = slashSkillPrompt || multiAgent
         ? null
         : await this.buildSkillListingReminder(conversation);
-      const agentListingReminder = slashSkillPrompt
+      const agentListingReminder = slashSkillPrompt || multiAgent
         ? null
         : await this.buildAgentListingReminder(conversation);
       const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, attachments, {
@@ -1171,10 +1279,16 @@ export class AgentRuntime {
         skillListingReminder,
         agentListingReminder,
       }, now);
-      await this.appendUserPromptEvent(conversationId, conversation, prompt);
+      await this.appendUserPromptEvent(conversationId, conversation, prompt, {
+        addressedTo: addressedTo ?? undefined,
+      });
       userViewContextReminder.commit();
-      await this.startRun(conversationId, conversation, prompt);
-      await conversation.agent.prompt(prompt);
+      if (multiAgent && addressedTo) {
+        await this.runChannelTurns(conversationId, conversation, addressedTo);
+      } else {
+        await this.startRun(conversationId, conversation, prompt);
+        await conversation.agent.prompt(prompt);
+      }
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
@@ -1616,9 +1730,11 @@ export class AgentRuntime {
       subagentRuntime,
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
+      memberDisplayNames: { [this.agentIdentity.agentId]: this.agentIdentity.displayName },
       unsubscribe: null,
     };
     conversationRef.current = conversation;
+    await this.refreshMemberDisplayNames(conversation);
     await this.markInterruptedSubagentsOnRestore(conversationId, conversation);
     conversation.subagentRuntime.restorePersistedRuns(await this.loadPersistedSubagentRuns(conversationId, conversation.eventState));
     agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, conversation, signal);
@@ -1685,6 +1801,26 @@ export class AgentRuntime {
     if (!conversation.queuedFollowUpSkillListingReservation) return;
     conversation.skillRuntime.releaseSkillListingReservation(conversation.queuedFollowUpSkillListingReservation);
     conversation.queuedFollowUpSkillListingReservation = null;
+  }
+
+  /**
+   * Refresh the agentId → display-name cache for the conversation's agent members.
+   * Registry misses degrade to the mention token; never fail the caller.
+   */
+  private async refreshMemberDisplayNames(conversation: AgentConversationState): Promise<void> {
+    const names: Record<string, string> = { [this.agentIdentity.agentId]: this.agentIdentity.displayName };
+    const agentMembers = channelAgentMembers(conversation.eventState.conversation?.members ?? []);
+    if (agentMembers.some((member) => member.agentId !== this.agentIdentity.agentId)) {
+      try {
+        const definitions = await conversation.subagentRuntime.listAllAgentDefinitions();
+        for (const definition of definitions) {
+          names[agentDefinitionAgentId(definition)] = definition.displayName ?? definition.name;
+        }
+      } catch {
+        // Registry unavailable: projections fall back to mention tokens.
+      }
+    }
+    conversation.memberDisplayNames = names;
   }
 
   private async refreshRuntimeSettings(conversation: AgentConversationState): Promise<AgentRuntimeSettings> {
@@ -3135,6 +3271,11 @@ export class AgentRuntime {
     return { type: 'agent', agentId: this.agentIdentity.agentId };
   }
 
+  /** Actor for the in-flight run's emissions: the executing member, not always the main agent. */
+  private runActor(conversation: AgentConversationState): AgentActor {
+    return { type: 'agent', agentId: conversation.activeRun?.executingAgentId ?? this.agentIdentity.agentId };
+  }
+
   private activeRunId(conversation: AgentConversationState): string | null {
     return conversation.activeRun?.id ?? null;
   }
@@ -3156,12 +3297,17 @@ export class AgentRuntime {
     return messageId ? { type: 'message', messageId } : { type: 'manual' };
   }
 
-  private runFingerprint(conversation: AgentConversationState): AgentRunFingerprint {
+  private runFingerprint(conversation: AgentConversationState, executingAgentId?: string): AgentRunFingerprint {
+    const agentId = executingAgentId ?? this.agentIdentity.agentId;
     return {
       appVersion: electronAppVersion(),
       promptHash: hashJson({
-        agentId: this.agentIdentity.agentId,
-        systemPrompt: this.agentIdentity.systemPrompt,
+        agentId,
+        // The conversation agent is already configured for the executing member
+        // when the run starts, so its live system prompt is the turn's real prompt.
+        systemPrompt: agentId === this.agentIdentity.agentId
+          ? this.agentIdentity.systemPrompt
+          : conversation.agent.state.systemPrompt,
       }),
       toolSchemaHash: 'runtime-tools',
       skillBindings: [],
@@ -3196,6 +3342,8 @@ export class AgentRuntime {
       // operational errors delivered via the `error` event.
       errorMessage: null,
       agentTasks: this.agentTaskCache,
+      memberDisplayNames: conversation.memberDisplayNames,
+      coordinatorAgentId: this.agentIdentity.agentId,
     });
     return {
       ...projection,
@@ -4078,7 +4226,12 @@ export class AgentRuntime {
     await this.appendConversationEvents(conversationId, conversation, events);
   }
 
-  private async appendUserPromptEvent(conversationId: string, conversation: AgentConversationState, prompt: UserMessage) {
+  private async appendUserPromptEvent(
+    conversationId: string,
+    conversation: AgentConversationState,
+    prompt: UserMessage,
+    options: { addressedTo?: AgentPrincipal[] } = {},
+  ) {
     const messageId = this.createMessageId('user');
     const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
       imageSummary: 'Image attachment',
@@ -4097,6 +4250,7 @@ export class AgentRuntime {
         parentMessageId: conversation.eventState.selectedLeafMessageId,
         content: persisted.content,
         attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
+        addressedTo: options.addressedTo,
       },
       {
         type: 'branch.selected',
@@ -4350,8 +4504,10 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     prompt: UserMessage | null = null,
     triggerOverride: AgentRunTrigger | null = null,
+    executingAgentId?: string,
   ) {
     const runId = randomUUID();
+    const agentId = (executingAgentId ?? this.agentIdentity.agentId) as AgentId;
     const runState: AgentActiveRunState = {
       id: runId,
       assistantMessageId: null,
@@ -4359,6 +4515,7 @@ export class AgentRuntime {
       lastSubmittedUserPrompt: prompt,
       toolOutputPayloads: new Map(),
       toolCallMessageIds: new Map(),
+      executingAgentId: agentId,
     };
     conversation.activeRun = runState;
     conversation.lastRun = null;
@@ -4366,13 +4523,258 @@ export class AgentRuntime {
       type: 'run.started',
       actor: systemActor(),
       runId,
-      agentId: this.agentIdentity.agentId,
-      anchor: { type: 'conversation', agentId: this.agentIdentity.agentId, conversationId: conversationId },
+      agentId,
+      anchor: { type: 'conversation', agentId, conversationId },
       kind: 'turn',
       trigger: triggerOverride ?? this.runTrigger(conversation),
-      fingerprint: this.runFingerprint(conversation),
+      fingerprint: this.runFingerprint(conversation, agentId),
       retention: 'hot',
     }]);
+  }
+
+  /**
+   * Routing for a Channel user turn: explicit `@member` mentions (scoped to the
+   * roster) bypass the coordinator entirely; no mention → the coordinator (the
+   * main agent by default — PM gate Q1, ratified 2026-06-10).
+   */
+  private resolveAddressedMembers(messageText: string, members: readonly AgentPrincipal[]): AgentPrincipal[] {
+    const mentioned = parseAgentMentionTargets(messageText, members);
+    if (mentioned.length > 0) return mentioned;
+    return [{ type: 'agent', agentId: this.agentIdentity.agentId }];
+  }
+
+  /**
+   * Sequential relay over the addressed members (ratified: one member runs at a
+   * time, never concurrently). An agent reply that `@`s another member enqueues
+   * that member's run; CHANNEL_RELAY_RUN_BUDGET caps the whole chain per user
+   * turn, so a circular `@` loop terminates.
+   */
+  private async runChannelTurns(
+    conversationId: string,
+    conversation: AgentConversationState,
+    initialTargets: readonly AgentPrincipal[],
+  ): Promise<void> {
+    const queue = [...initialTargets];
+    let runsUsed = 0;
+    while (queue.length > 0 && runsUsed < CHANNEL_RELAY_RUN_BUDGET) {
+      const target = queue.shift()!;
+      if (target.type !== 'agent') continue;
+      const members = conversation.eventState.conversation?.members ?? [];
+      if (!members.some((member) => samePrincipal(member, target))) continue;
+      runsUsed += 1;
+      const turn = await this.runChannelTurn(conversationId, conversation, target.agentId);
+      if (!turn.completed) break;
+      const next = firstHandOffTarget(turn.text, conversation.eventState.conversation?.members ?? [], target.agentId);
+      if (next && runsUsed < CHANNEL_RELAY_RUN_BUDGET) queue.push(next);
+    }
+  }
+
+  /**
+   * One member's turn in a Channel, executed AS that member on the conversation's
+   * agent loop: its system prompt, model/effort, tool surface, memory line, and
+   * its §8 POV of the shared thread. The conversation agent is reconfigured for
+   * the turn and always restored — the event pipeline (approvals, permissions,
+   * steering, projections) is shared and untouched.
+   */
+  private async runChannelTurn(
+    conversationId: string,
+    conversation: AgentConversationState,
+    targetAgentId: string,
+  ): Promise<{ completed: boolean; text: string }> {
+    const agent = conversation.agent;
+    const isMainAgent = targetAgentId === this.agentIdentity.agentId;
+    const snapshot = {
+      systemPrompt: agent.state.systemPrompt,
+      model: agent.state.model,
+      thinkingLevel: agent.state.thinkingLevel,
+    };
+    try {
+      if (!isMainAgent) {
+        const profile = await this.resolveChannelPeerProfile(conversation, targetAgentId);
+        agent.state.systemPrompt = profile.systemPrompt;
+        agent.state.model = profile.model as never;
+        agent.state.thinkingLevel = profile.thinkingLevel as never;
+        this.applyChannelTurnToolSettings(conversation, targetAgentId, profile.definition);
+        await this.getEventStore().writeAgentIdentity(profile.identity);
+      }
+      const memoryReminder = await this.buildMemoryReminder(targetAgentId, conversation);
+      agent.state.messages = await this.deriveChannelPiMessages(
+        conversationId,
+        conversation,
+        targetAgentId,
+        memoryReminder,
+      ) as never;
+      await this.startRun(conversationId, conversation, null, null, targetAgentId);
+      const runId = conversation.activeRun!.id;
+      await agent.continue();
+      const run = conversation.eventState.runs[runId];
+      return {
+        completed: run?.status === 'completed',
+        text: latestAssistantTextForRun(conversation.eventState, runId),
+      };
+    } finally {
+      agent.state.systemPrompt = snapshot.systemPrompt;
+      agent.state.model = snapshot.model;
+      agent.state.thinkingLevel = snapshot.thinkingLevel;
+      if (!isMainAgent) this.applyRuntimeToolSettings(conversation);
+      try {
+        agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+      } catch {
+        // Restore is best-effort; the next turn re-derives from the event log anyway.
+      }
+    }
+  }
+
+  /**
+   * A Channel member's runtime profile, resolved from its agent definition
+   * (capability binds to the agent, never the conversation): identity record,
+   * model/effort overrides, and a member-voiced system prompt with its profile
+   * skills inlined.
+   */
+  private async resolveChannelPeerProfile(
+    conversation: AgentConversationState,
+    agentId: string,
+  ): Promise<{
+    identity: AgentIdentityRecord;
+    model: Model<Api>;
+    thinkingLevel: AgentReasoningLevel;
+    systemPrompt: string;
+    definition: AgentDefinition;
+  }> {
+    const definitions = await conversation.subagentRuntime.listAllAgentDefinitions();
+    const definition = definitions.find((candidate) => agentDefinitionAgentId(candidate) === agentId);
+    if (!definition) throw new Error(`Channel member agent not found: ${agentId}`);
+    const providerConfig = await this.getActiveProviderConfig();
+    if (!providerConfig) throw new Error('No enabled agent provider is configured.');
+    const inheritedModel = this.resolveProviderModel(providerConfig);
+    const model = definition.model
+      ? resolveSkillModelOverride(definition.model, providerConfig, inheritedModel)
+      : inheritedModel;
+    const thinkingLevel = definition.effort
+      ? resolveSkillEffortOverride(definition.effort, model, providerConfig.reasoningLevel)
+      : providerConfig.reasoningLevel;
+    const skillSections = await this.channelPeerSkillSections(conversation, definition);
+    const systemPrompt = buildChannelPeerSystemPrompt(definition, agentMentionToken(agentId), skillSections);
+    const identity: AgentIdentityRecord = {
+      agentId: agentId as AgentId,
+      displayName: definition.displayName ?? definition.name,
+      model: model.id,
+      effort: String(thinkingLevel),
+      systemPrompt,
+      skills: definition.skills ?? [],
+    };
+    return { identity, model, thinkingLevel, systemPrompt, definition };
+  }
+
+  /**
+   * Profile skills travel with the member ([[agent-conversation-model]]): inline
+   * their bodies into the member's system prompt. Static read — no invocation
+   * side effects on the shared conversation skill runtime.
+   */
+  private async channelPeerSkillSections(
+    conversation: AgentConversationState,
+    definition: AgentDefinition,
+  ): Promise<string[]> {
+    const names = definition.skills ?? [];
+    if (names.length === 0) return [];
+    try {
+      const skills = await conversation.skillRuntime.listAllSkills();
+      const sections: string[] = [];
+      let budget = CHANNEL_PEER_SKILL_PROMPT_BUDGET;
+      for (const name of names) {
+        const skill = skills.find((candidate) => candidate.name === name);
+        if (!skill || !skill.body.trim()) continue;
+        const body = skill.body.trim().slice(0, Math.max(0, budget));
+        if (!body) break;
+        budget -= body.length;
+        sections.push(`## Skill: ${skill.name}\n${body}`);
+      }
+      return sections;
+    } catch {
+      return [];
+    }
+  }
+
+  /** Per-turn tool surface for a peer member: its tool allow/deny lists, its own recall pool. */
+  private applyChannelTurnToolSettings(
+    conversation: AgentConversationState,
+    agentId: string,
+    definition: AgentDefinition,
+  ): void {
+    conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
+      localFileRoot: this.options.localFileRoot,
+      localWorkspace: conversation.localWorkspace,
+      skillRuntime: conversation.skillRuntime,
+      skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
+      subagentRuntime: conversation.subagentRuntime,
+      recall: this.createRecallToolRuntime(agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      // Self-maintenance configures THIS runtime — main-agent-first stays the
+      // standing default (M3-A non-goal: no who-configures-whom), so peers don't get it.
+      allowedTools: definition.tools,
+      disallowedTools: definition.disallowedTools,
+    });
+  }
+
+  /**
+   * §8 POV assembly for a Channel member's run: the member's own turns verbatim
+   * (toolCall/toolResult pairing intact); the user and other members coalesced
+   * into user-role blocks with one identity preamble per source turn; the
+   * member's memory briefing appended transiently (the persisted log stays
+   * reader-neutral).
+   */
+  private async deriveChannelPiMessages(
+    conversationId: string,
+    conversation: AgentConversationState,
+    povAgentId: string,
+    memoryReminder: string | null,
+  ): Promise<AgentMessage[]> {
+    const eventState = conversation.eventState;
+    const steps = flattenAgentPathForPov(
+      getAgentEventRuntimeTranscriptPath(eventState),
+      eventState.runs,
+      povAgentId,
+      {
+        mainAgentId: this.agentIdentity.agentId,
+        displayNameByAgentId: conversation.memberDisplayNames,
+      },
+    );
+    const messages: AgentMessage[] = [];
+    for (const step of steps) {
+      if (step.kind === 'verbatim') {
+        messages.push(await this.runtimePiMessageFromRecord(conversationId, step.record));
+        continue;
+      }
+      const content: (TextContent | ImageContent)[] = [];
+      for (const part of step.parts) {
+        if (part.preamble) content.push({ type: 'text', text: systemReminder(part.preamble) });
+        if (part.record.role === 'user') {
+          content.push(...await this.runtimeUserContent(conversationId, part.record.content));
+        } else {
+          const text = persistedTextContent(part.record.content);
+          if (text) content.push({ type: 'text', text });
+        }
+      }
+      messages.push({
+        role: 'user',
+        content: content.length > 0 ? content : [{ type: 'text', text: '' }],
+        timestamp: step.parts.at(-1)!.record.createdAt,
+      } satisfies UserMessage);
+    }
+    if (memoryReminder) {
+      const reminderText = systemReminder(memoryReminder);
+      const last = messages.at(-1);
+      if (last?.role === 'user' && Array.isArray(last.content)) {
+        last.content = [...last.content, { type: 'text', text: reminderText }];
+      } else {
+        messages.push({
+          role: 'user',
+          content: [{ type: 'text', text: reminderText }],
+          timestamp: Date.now(),
+        } satisfies UserMessage);
+      }
+    }
+    return messages;
   }
 
   private async compactConversation(conversationId: string, conversation: AgentConversationState, customInstructions?: string) {
@@ -4459,7 +4861,7 @@ export class AgentRuntime {
     activeRun.assistantText = '';
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'assistant_message.started',
-      actor: this.agentActor(),
+      actor: this.runActor(conversation),
       runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
       parentMessageId: conversation.eventState.selectedLeafMessageId,
@@ -4479,7 +4881,7 @@ export class AgentRuntime {
     activeRun.assistantText = nextText;
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'assistant_message.delta',
-      actor: this.agentActor(),
+      actor: this.runActor(conversation),
       runId: this.activeRunId(conversation) ?? undefined,
       messageId,
       delta: { type: 'text_delta', text: delta },
@@ -4506,7 +4908,7 @@ export class AgentRuntime {
     await this.appendConversationEvents(conversationId, conversation, [
       {
         type: 'assistant_message.completed',
-        actor: this.agentActor(),
+        actor: this.runActor(conversation),
         runId: this.activeRunId(conversation) ?? undefined,
         messageId,
         stopReason: message.stopReason,
@@ -4515,7 +4917,7 @@ export class AgentRuntime {
       },
       ...(inlineFailure ? [{
         type: 'assistant_message.failed' as const,
-        actor: this.agentActor(),
+        actor: this.runActor(conversation),
         runId: this.activeRunId(conversation) ?? undefined,
         messageId,
         errorMessage: inlineFailure,
@@ -4578,7 +4980,7 @@ export class AgentRuntime {
       activeRun.toolCallMessageIds.set(toolCall.id, assistantMessageId);
       inputs.push({
         type: 'tool_call.started',
-        actor: this.agentActor(),
+        actor: this.runActor(conversation),
         runId: this.activeRunId(conversation) ?? undefined,
         messageId: assistantMessageId,
         toolCallId: toolCall.id,
@@ -4644,38 +5046,43 @@ export class AgentRuntime {
   ): Promise<AgentMessage[]> {
     const messages: AgentMessage[] = [];
     for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
-      if (message.role === 'user') {
-        messages.push({
-          role: 'user',
-          content: await this.runtimeUserContent(conversationId, message.content),
-          timestamp: message.createdAt,
-        } satisfies UserMessage);
-        continue;
-      }
-      if (message.role === 'assistant') {
-        messages.push({
-          role: 'assistant',
-          content: this.runtimeAssistantContent(message.content),
-          api: message.apiId ?? 'unknown',
-          provider: message.providerId ?? 'unknown',
-          model: message.modelId ?? 'unknown',
-          usage: message.usage ?? EMPTY_USAGE,
-          stopReason: message.stopReason ?? (message.status === 'failed' ? 'error' : 'stop'),
-          errorMessage: message.errorMessage,
-          timestamp: message.createdAt,
-        } satisfies AssistantMessage);
-        continue;
-      }
-      messages.push({
-        role: 'toolResult',
-        toolCallId: message.toolCallId ?? message.id,
-        toolName: message.toolName ?? 'unknown',
-        content: await this.runtimeUserContent(conversationId, message.content),
-        isError: !!message.isError,
-        timestamp: message.createdAt,
-      } satisfies ToolResultMessage);
+      messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
     }
     return messages;
+  }
+
+  private async runtimePiMessageFromRecord(
+    conversationId: string,
+    message: AgentEventMessageRecord,
+  ): Promise<AgentMessage> {
+    if (message.role === 'user') {
+      return {
+        role: 'user',
+        content: await this.runtimeUserContent(conversationId, message.content),
+        timestamp: message.createdAt,
+      } satisfies UserMessage;
+    }
+    if (message.role === 'assistant') {
+      return {
+        role: 'assistant',
+        content: this.runtimeAssistantContent(message.content),
+        api: message.apiId ?? 'unknown',
+        provider: message.providerId ?? 'unknown',
+        model: message.modelId ?? 'unknown',
+        usage: message.usage ?? EMPTY_USAGE,
+        stopReason: message.stopReason ?? (message.status === 'failed' ? 'error' : 'stop'),
+        errorMessage: message.errorMessage,
+        timestamp: message.createdAt,
+      } satisfies AssistantMessage;
+    }
+    return {
+      role: 'toolResult',
+      toolCallId: message.toolCallId ?? message.id,
+      toolName: message.toolName ?? 'unknown',
+      content: await this.runtimeUserContent(conversationId, message.content),
+      isError: !!message.isError,
+      timestamp: message.createdAt,
+    } satisfies ToolResultMessage;
   }
 
   private async persistPiUserContent(
@@ -5624,6 +6031,64 @@ function electronAppVersion(): string {
 
 function hashJson(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+/** Cap on inlined profile-skill bodies in a Channel peer's system prompt. */
+const CHANNEL_PEER_SKILL_PROMPT_BUDGET = 24_000;
+
+/**
+ * A Channel member speaks in the shared thread as itself — this is NOT the
+ * subagent prompt (a peer is a conversation participant, not a headless worker
+ * reporting to a parent).
+ */
+function buildChannelPeerSystemPrompt(
+  definition: AgentDefinition,
+  mention: string,
+  skillSections: readonly string[],
+): string {
+  const displayName = definition.displayName ?? definition.name;
+  return [
+    [
+      `You are "${displayName}" (@${mention}), an agent member of a shared multi-agent conversation (a Channel) with the user and other members.`,
+      `Agent description: ${definition.description}`,
+      '',
+      '# Channel rules',
+      '- Speak as yourself. Your reply is posted to the shared thread under your name.',
+      '- Other members\' turns appear as quoted context with an identity preamble; never imitate another member or speak on their behalf.',
+      '- To hand off to another agent member, mention them as @<name> in your reply — only when they are clearly better suited. Hand-off is a sequential, budgeted relay; do not create mention loops.',
+      '- Stay within your description and instructions; defer outside work to better-suited members.',
+    ].join('\n'),
+    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
+    skillSections.length > 0 ? `# Profile skills\n${skillSections.join('\n\n')}` : null,
+  ].filter(Boolean).join('\n\n');
+}
+
+/** Final visible text of the run's last assistant message (hand-off mention source). */
+function latestAssistantTextForRun(eventState: AgentEventReplayState, runId: string): string {
+  const path = getAgentEventActivePath(eventState);
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const record = path[index]!;
+    if (record.role !== 'assistant' || record.runId !== runId) continue;
+    return persistedTextContent(record.content);
+  }
+  return '';
+}
+
+function persistedTextContent(content: readonly AgentPersistedContent[]): string {
+  return content
+    .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
+}
+
+function mergeMemberPrincipals(
+  base: readonly AgentPrincipal[],
+  extra: readonly AgentPrincipal[],
+): AgentPrincipal[] {
+  const byKey = new Map<string, AgentPrincipal>();
+  for (const principal of [...base, ...extra]) byKey.set(principalKey(principal), principal);
+  return [...byKey.values()];
 }
 
 function systemActor(): AgentActor {

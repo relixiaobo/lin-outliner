@@ -100,6 +100,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationId: '',
   revision: 0,
   conversationTitle: null,
+  members: [],
   activeRunId: null,
   activeCompaction: null,
   activeDream: null,

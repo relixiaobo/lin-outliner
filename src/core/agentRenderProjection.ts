@@ -2,6 +2,7 @@ import {
   getAgentEventActivePath,
   getAgentEventMessageBranches,
   getAgentEventVisibleTranscript,
+  type AgentActor,
   type AgentCompactionRecord,
   type AgentCompactionTrigger,
   type AgentDreamRecord,
@@ -12,6 +13,7 @@ import {
   type AgentDreamCompletedChanges,
   type AgentSubagentRunRecord,
 } from './agentEventLog';
+import { agentMentionToken } from './agentChannel';
 
 export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'subagent';
 
@@ -62,6 +64,8 @@ export interface AgentRenderMessageEntity {
   createdAt: number;
   updatedAt: number;
   branches: AgentRenderBranchState | null;
+  actor: AgentActor;
+  addressedTo?: AgentPrincipal[];
   apiId?: string;
   providerId?: string;
   modelId?: string;
@@ -71,6 +75,16 @@ export interface AgentRenderMessageEntity {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+}
+
+/** A conversation member as the renderer needs it: principal + mention + label. */
+export interface AgentRenderMemberView {
+  principal: AgentPrincipal;
+  /** `@` token for agent members (composer typeahead + badge); empty for the user. */
+  mention: string;
+  displayName: string;
+  /** True for the Channel coordinator (default `addressedTo` when no one is `@`-ed). */
+  coordinator?: boolean;
 }
 
 export interface AgentStreamingRenderState {
@@ -184,6 +198,7 @@ export interface AgentRenderProjection {
   conversationId: string;
   revision: number;
   conversationTitle: string | null;
+  members: AgentRenderMemberView[];
   activeRunId: string | null;
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
@@ -211,6 +226,10 @@ export interface BuildAgentRenderProjectionOptions {
   pendingToolCallIds?: string[];
   errorMessage?: string | null;
   agentTasks?: readonly AgentRenderTaskEntity[];
+  /** Display names for agent members (agentId → name); mention token is the fallback. */
+  memberDisplayNames?: Record<string, string>;
+  /** The Channel coordinator (default = the main agent); flags its member view. */
+  coordinatorAgentId?: string;
 }
 
 export function buildAgentRenderProjection(
@@ -258,6 +277,7 @@ export function buildAgentRenderProjection(
     conversationId: state.conversation.id,
     revision: options.revision,
     conversationTitle: state.conversation.title,
+    members: state.conversation.members.map((principal) => toRenderMemberView(principal, options)),
     activeRunId: options.activeRunId ?? null,
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
@@ -439,6 +459,22 @@ function appendDreamRow(
   entities.dreams[dream.id] = toRenderDreamEntity(dream);
 }
 
+function toRenderMemberView(
+  principal: AgentPrincipal,
+  options: BuildAgentRenderProjectionOptions,
+): AgentRenderMemberView {
+  if (principal.type === 'user') {
+    return { principal, mention: '', displayName: 'You' };
+  }
+  const mention = agentMentionToken(principal.agentId);
+  return {
+    principal,
+    mention,
+    displayName: options.memberDisplayNames?.[principal.agentId] ?? mention,
+    coordinator: principal.agentId === options.coordinatorAgentId || undefined,
+  };
+}
+
 function toRenderMessageEntity(
   state: AgentEventReplayState,
   message: AgentEventMessageRecord,
@@ -452,6 +488,8 @@ function toRenderMessageEntity(
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
     branches: getAgentEventMessageBranches(state, message.id),
+    actor: message.actor,
+    addressedTo: message.addressedTo?.slice(),
     apiId: message.apiId,
     providerId: message.providerId,
     modelId: message.modelId,
