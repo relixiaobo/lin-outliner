@@ -26,6 +26,7 @@ import {
   requestFocusState,
   selectFocusState,
 } from '../focus/focusModel';
+import { isCompositionLive } from '../editor/compositionRelay';
 import {
   insertTextIntoControlValue,
   setTextControlCursor,
@@ -156,6 +157,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     if (isCommandSystemField) return;
     const request = props.ui.focusRequest;
     if (!request || !focusTargetMatches(request.target, fieldNameFocusTarget)) return;
+    // A live IME composition parks the request (issue #176); the composing
+    // editor relays it at compositionend.
+    if (isCompositionLive()) return;
     window.requestAnimationFrame(() => {
       const target = nameInputRef.current;
       if (!target) return;
@@ -176,6 +180,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       !focusTargetMatches(request.target, fieldNameFocusTarget)
       && !focusTargetMatches(request.target, rowFocusTargetForEntry)
     ) return;
+    // A live IME composition parks the request (issue #176); the composing
+    // editor relays it at compositionend.
+    if (isCompositionLive()) return;
     window.requestAnimationFrame(() => {
       commandValueRef.current?.focus();
       props.setUi((prev) => clearFocusRequestState(prev, request));

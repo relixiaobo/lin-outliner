@@ -52,6 +52,7 @@ import {
   cursorOffset as cursorAtOffset,
   focusTarget,
   focusTargetMatches,
+  relayCompositionHandoffState,
   requestFocusState,
   rowFocusTarget,
   selectFocusState,
@@ -1657,6 +1658,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             }}
             onPendingInputConsumed={(input) => {
               props.setUi((prev) => clearPendingInputState(prev, input));
+            }}
+            onCompositionHandoff={(text) => {
+              props.setUi((prev) => relayCompositionHandoffState(prev, text));
             }}
           />
           )}

@@ -35,6 +35,7 @@ import {
   cursorOffset as cursorAtOffset,
   cursorStart,
   focusTarget,
+  relayCompositionHandoffState,
   requestFocusState,
   rowFocusTarget,
   selectFocusState,
@@ -673,6 +674,9 @@ export function NodePanel(props: NodePanelProps) {
                 }}
                 onPendingInputConsumed={(input) => {
                   props.setUi((prev) => clearPendingInputState(prev, input));
+                }}
+                onCompositionHandoff={(text) => {
+                  props.setUi((prev) => relayCompositionHandoffState(prev, text));
                 }}
               />
               {titleTrigger && (

@@ -261,3 +261,37 @@ in that sibling uniqueness rule.
 | Trash a target node | Keep references restorable; the reference still points at the trashed target until restore or permanent delete. | `core.test.ts` |
 | Reference to a reference | Normalize to the effective target. Nested reference nodes should not point to reference nodes. | `core.test.ts` |
 | Agent/tool `replace_with_reference_to` | Replace or retarget a block reference through core commands, subject to the same duplicate and cycle constraints. | `agentNodeTools.test.ts` |
+
+## IME Composition Vs Async Echoes
+
+A core command echo (split/create, indent/outdent, undo) applies its
+`focusRequest` asynchronously, ~60-80 ms after the keystroke that issued it. A
+composition started inside that window must never be aborted by the echo
+(issue #176): moving focus or selection mid-composition makes Blink
+force-commit the partial text (`skill` torn into `sk` + `ill`).
+
+Mechanism (`src/renderer/ui/editor/compositionRelay.ts`): every
+`RichTextEditor` registers its live composition in a module-level gate; every
+`focusRequest` applier (the editor itself, plus `OutlinerFieldRow`,
+`CodeBlockRow`, `NodeDescription`, `BlockNodeRow`) parks the request unconsumed
+while `isCompositionLive()`. At compositionend the composing editor decides the
+parked request's fate — only a request that ARRIVED during the composition is
+relayed: aimed at itself, it flushes then applies the held placement; aimed at
+another editor, it reverts its local doc to the echoed content (composition
+transactions never flushed, so that is core's truth), extracts the composed
+insertion, and re-issues the request through `relayCompositionHandoffState` —
+non-empty text rides the pendingInput rail so the word lands whole at the
+target's cursor placement.
+
+| Interaction | Expected behavior | Test coverage |
+| --- | --- | --- |
+| Compose IME text immediately after Enter (split/create) | The composition is never interrupted: exactly one `compositionend` carrying the full composed text, focus moves only afterwards, and the composed word lands whole at the start of the new row; the old row is untouched. | `compositionRelay.test.ts`, `focusModel.test.ts`; live-app acceptance via `scripts/probe-ime-split.ts` (the e2e mock has no real async echo; synthetic keystrokes bypass the macOS IME) |
+| Echo focus targeting the composing editor itself (e.g. indent keeps focus in place) | The placement is held until compositionend, then applied after the normal composition flush. | `scripts/probe-ime-split.ts` technique; unit-covered via relay state tests |
+| Cancelled composition while a request is parked | The bare focus request is re-issued at compositionend; no text is relayed. | `compositionRelay.test.ts` |
+| Editor unmounts mid-composition with a parked request | The gate is released and the parked request re-issued without text (the composed text dies with the row). | code-reviewed edge; gate release asserted in `compositionRelay.test.ts` |
+
+Known gap (accepted): textarea surfaces (description, code block, field name)
+are protected as focus *targets* by the gate but do not register their own
+compositions; an echo landing while composing inside a textarea can still
+force-commit there. Plain (non-IME) characters typed inside the echo window are
+a separate, milder stranding class — tracked outside this section.

@@ -78,6 +78,21 @@ export function requestPendingInputState(
   };
 }
 
+/**
+ * Re-issue a focusRequest that was parked while an IME composition was live
+ * (issue #176), carrying the text composed during the hold. Non-empty text
+ * rides the pendingInput rail (focus the target, place the cursor, insert the
+ * text); a cancelled composition re-issues the bare focus request. Both mint a
+ * fresh request object so consumer effects re-fire.
+ */
+export function relayCompositionHandoffState(state: UiState, text: string): UiState {
+  const request = state.focusRequest;
+  if (!request) return state;
+  return text.length > 0
+    ? requestPendingInputState(state, request.target, text, request.placement)
+    : requestFocusState(state, request.target, request.placement);
+}
+
 export function clearFocusState(state: UiState): UiState {
   return {
     ...state,
