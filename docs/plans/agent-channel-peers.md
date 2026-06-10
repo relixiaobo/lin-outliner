@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 priority: P1
-owner: unassigned
+owner: cc
 phase: M3-A
 created: 2026-06-10
 updated: 2026-06-10
