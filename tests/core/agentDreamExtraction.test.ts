@@ -188,6 +188,86 @@ describe('agent dream extraction', () => {
     expect(text).toContain("the agent's durable self-model");
   });
 
+  // The former D2 encoding-signal acceptance ([[agent-memory-academic-alignment]]): the prompt
+  // states the encoding policy with prediction-error weighting, and a span carrying a clear
+  // user-correction plus a tool-surprise reaches the model inside the evidence fence. This is a
+  // prompt snapshot (no model-in-loop harness); whether the model actually cites those spans is
+  // verified manually.
+  test('states the encoding policy and carries correction/surprise evidence inside the fence', () => {
+    const state = createEmptyAgentEventReplayState();
+    state.latestEventId = 'event-terminal-new';
+    state.runs = {
+      'run-new': { id: 'run-new', status: 'completed', startedAt: 30, updatedAt: 40 },
+    };
+    const messages = [
+      message({
+        id: 'user-new',
+        role: 'user',
+        actor: userActor,
+        parentMessageId: null,
+        text: 'No — that assumption was wrong: this repo builds with bun, never npm.',
+      }),
+      message({
+        id: 'assistant-1',
+        role: 'assistant',
+        actor: agentActor,
+        parentMessageId: 'user-new',
+        text: 'Checking the lockfile.',
+        runId: 'run-new',
+      }),
+      message({
+        id: 'tool-result-1',
+        role: 'toolResult',
+        actor: toolActor,
+        parentMessageId: 'assistant-1',
+        text: 'ENOENT: package-lock.json does not exist; found bun.lock instead.',
+        runId: 'run-new',
+        toolName: 'node_read',
+      }),
+      message({
+        id: 'assistant-2',
+        role: 'assistant',
+        actor: agentActor,
+        parentMessageId: 'tool-result-1',
+        text: 'Confirmed: bun is the package manager here.',
+        runId: 'run-new',
+      }),
+    ];
+    state.messages = Object.fromEntries(messages.map((item) => [item.id, item]));
+    state.rootMessageIds = ['user-new'];
+    state.childrenByParentId = {
+      'user-new': ['assistant-1'],
+      'assistant-1': ['tool-result-1'],
+      'tool-result-1': ['assistant-2'],
+    };
+    state.latestMessageId = 'assistant-2';
+
+    const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
+    expect(span).not.toBeNull();
+    const request = buildDreamMemoryExtractionRequest({ span: span!, existingMemories: [] });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+
+    // Consolidation framing + encoding policy with prediction-error weighting.
+    expect(text).toContain('consolidation pass');
+    expect(text).toContain('Encoding policy');
+    expect(text).toContain('prediction error');
+    expect(text).toContain('diverged from what was assumed');
+    expect(text).toContain('reconsolidation');
+
+    // The correction and the tool-surprise are evidence: they appear inside the fence, after the
+    // prompt's instruction body.
+    const fence = /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
+    expect(fence).toBeDefined();
+    const fenceOpenAt = text.indexOf(`<${fence}>`);
+    const fenceCloseAt = text.indexOf(`</${fence}>`);
+    const correctionAt = text.indexOf('this repo builds with bun, never npm');
+    const surpriseAt = text.indexOf('package-lock.json does not exist');
+    expect(correctionAt).toBeGreaterThan(fenceOpenAt);
+    expect(correctionAt).toBeLessThan(fenceCloseAt);
+    expect(surpriseAt).toBeGreaterThan(fenceOpenAt);
+    expect(surpriseAt).toBeLessThan(fenceCloseAt);
+  });
+
   test('wraps raw evidence in a randomized fence an adversarial transcript cannot close', () => {
     const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>) =>
       request.content[0]?.type === 'text' ? request.content[0].text : '';

@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: cc-2
 created: 2026-06-10
 updated: 2026-06-10
+pr: 181
 ---
 
 # Memory: align docs, prompts, and tools with the academic model
@@ -57,16 +58,21 @@ encoding-policy improvement (prediction-error weighting) folded in:
 
 ## Acceptance
 
-- [ ] All five surfaces use the foundations vocabulary; a doc-side grep guard
-      (or review checklist in the PR) confirms none of the banned invented
-      terms appear in memory prompts/copy.
-- [ ] D2's encoding test lands here: a fixture span with a clear
-      user-correction and a tool-surprise → extraction proposes facts citing
-      those spans (model-in-loop if the harness supports it; else prompt
-      snapshot + manual note).
-- [ ] Dream guard/extraction tests + `bun run test:core` green vs baselines;
-      i18n coverage stays complete; Settings visual check light + dark.
-- [ ] Spec synced; this plan archived `done`;
+- [x] All five surfaces use the foundations vocabulary; grep guard run at ship
+      time (`heat tier` / `proves relevant` / `spacing effect` → no hits in
+      `src/` or non-archive docs).
+- [x] D2's encoding test landed: prompt-snapshot test
+      (`tests/core/agentDreamExtraction.test.ts` "states the encoding policy
+      and carries correction/surprise evidence inside the fence") — fixture
+      span with a user-correction + tool-surprise; encoding-policy wording
+      asserted; evidence asserted inside the fence. No model-in-loop harness,
+      so model citation behavior is a manual-verification note in PR #181.
+- [x] Dream guard/extraction tests + `bun run test:core` (809 pass) +
+      `bun run test:renderer` (405 pass) green; i18n en/zh-Hans both updated;
+      Settings copy verified via the agent-settings e2e spec (20 pass) —
+      light/dark visual pass left to the merge gate as usual.
+- [x] Spec synced (`agent-tool-design.md`, `agent-skills.md`,
+      `agent-data-model.md` delta list); this plan archived `done`;
       `agent-memory-encoding-signal` already archived `superseded`.
 
 ## Collision self-check (2026-06-10, plan time)

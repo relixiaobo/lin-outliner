@@ -117,7 +117,7 @@ describe('agent recall tool', () => {
         entries: [],
         total_entries: 0,
       },
-      instructions: 'No durable memories matched. Do not infer that no prior conversation exists; recall only covers active durable memory entries.',
+      instructions: 'No semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers the semantic store (distilled facts), not the raw episodic record.',
     });
   });
 });

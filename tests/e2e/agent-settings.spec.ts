@@ -151,8 +151,10 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Remembered facts' })).toBeVisible();
     await expect(settings.getByText('Prefer concise, direct implementation notes')).toBeVisible();
     await expect(settings.getByText('Use the old conversation vocabulary')).toBeVisible();
-    await expect(settings.getByText('Active')).toBeVisible();
-    await expect(settings.getByText('Forgotten')).toBeVisible();
+    // Exact: "Inactive" contains "active" as a case-insensitive substring, so a loose
+    // getByText('Active') would match both status chips.
+    await expect(settings.getByText('Active', { exact: true })).toBeVisible();
+    await expect(settings.getByText('Inactive', { exact: true })).toBeVisible();
 
     await settings.getByRole('button', { name: 'Edit memory' }).click();
     const editor = settings.getByLabel('Memory fact');
@@ -175,8 +177,8 @@ test.describe('agent settings window', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_forget_memory')?.args;
     }).toMatchObject({ memoryId: 'memory-active' });
-    await expect(settings.getByText('Memory forgotten')).toBeVisible();
-    await expect(settings.locator('.settings-chip', { hasText: 'Forgotten' })).toHaveCount(2);
+    await expect(settings.getByText('Memory marked inactive')).toBeVisible();
+    await expect(settings.locator('.settings-chip', { hasText: 'Inactive' })).toHaveCount(2);
     await expect(settings.getByRole('button', { name: 'Edit memory' })).toHaveCount(0);
     await expect(settings.getByRole('button', { name: 'Forget memory' })).toHaveCount(0);
   });

@@ -12,13 +12,15 @@ const MAX_RECALL_LIMIT = 20;
 const DEFAULT_RECALL_MAX_CHARS = 4_000;
 const MAX_RECALL_MAX_CHARS = 12_000;
 
-const RECALL_TOOL_DESCRIPTION = `Recall durable remembered facts for the Tenon agent.
+const RECALL_TOOL_DESCRIPTION = `Cued retrieval over the Tenon agent's semantic store — the durable facts distilled from past episodes.
 
-This is the only model-visible long-term recall surface. It reads active memory entries only.
-It does not search raw conversation history directly and it cannot write, update, or forget memory.
+This is the only model-visible long-term retrieval surface. It reads active semantic memory
+entries only. It does not search the raw episodic record (conversation history) directly and it
+cannot write, update, or invalidate memory.
 
-Use include_evidence only when the memory entry's provenance matters; evidence is nested under
-the matching memory entry and is expanded only from that entry's recorded sources.`;
+Use include_evidence only when a fact's provenance matters: it is source access — descending the
+memory index from the matching entry to its recorded episodic sources — and the bounded raw
+evidence is nested under that entry.`;
 
 const RECALL_TOOL_PARAMETERS = {
   type: 'object',
@@ -28,7 +30,7 @@ const RECALL_TOOL_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 500,
-      description: 'Optional keyword query for durable memory entries. Omit to list recent active memories.',
+      description: 'Optional retrieval cue matched against semantic memory facts. Omit to list recent active entries.',
     },
     limit: {
       type: 'integer',
@@ -38,7 +40,7 @@ const RECALL_TOOL_PARAMETERS = {
     },
     include_evidence: {
       type: 'boolean',
-      description: 'When true, expand bounded raw evidence from each memory entry source. Default false.',
+      description: "When true, descend the memory index to each entry's recorded episodic sources and expand bounded raw evidence. Default false.",
     },
     max_chars: {
       type: 'integer',
@@ -202,10 +204,10 @@ function visibleEvidence(evidence: AgentRecallEvidence): unknown {
 
 function recallInstructions(data: AgentRecallToolData): string | undefined {
   if (data.entries.length === 0) {
-    return 'No durable memories matched. Do not infer that no prior conversation exists; recall only covers active durable memory entries.';
+    return 'No semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers the semantic store (distilled facts), not the raw episodic record.';
   }
   if (data.evidenceTruncated) {
-    return 'Evidence was truncated. Treat returned evidence as supporting excerpts, not a complete transcript.';
+    return 'Evidence was truncated. Treat returned evidence as supporting excerpts from the episodic record, not a complete transcript.';
   }
   return undefined;
 }
