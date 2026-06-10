@@ -3,7 +3,7 @@ status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-06
-updated: 2026-06-07
+updated: 2026-06-10
 ---
 
 # Agent Data Model — Persistence & Context Contract
@@ -622,6 +622,19 @@ agent.skills[]          ──▶ skills/ file tree
     for every `MemoryEntry` whose `source.runId`/`source.eventId` falls in the orphaned
     range. Invalidation is event-sourced (auditable, reversible), excluded from injection,
     and never a silent in-place delete (cf. invariant 13 / gemini#5).
+17. **Compaction is evidence-preserving (memory invariant).** For every run, across any
+    sequence of auto/manual compactions, (already-Dreamed content) ∪ (still-pending
+    content) covers **100%** of the run's semantic content — no message content is ever
+    both un-Dreamed **and** unreachable. Concretely: after a compaction supersedes a
+    runtime transcript payload (or re-anchors a conversation's active path at the
+    post-compact root), the compaction summary is the surviving carrier of the compacted
+    content and MUST reach Dream extraction as evidence; and a fork-prefix exclusion is
+    valid only in the coordinates of the payload it was computed against — applied to a
+    successor payload it is stale, and the successor is fresh evidence from index 0,
+    never a silent skip. Resolution stays payload-pinned: a `sources[]` entry pinned
+    before a compaction resolves to its original evidence text or fails loud
+    (`SOURCE_NOT_FOUND` / `NOT_ON_ACTIVE_BRANCH`), never silently to different content.
+    (Shipped by [[agent-memory-source-binding]], PR #178.)
 
 ### M0 reality vs next build
 

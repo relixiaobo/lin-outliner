@@ -1,6 +1,6 @@
 ---
-status: draft
-owner: unassigned
+status: done
+owner: cc
 priority: P1
 phase: M3-Phase-1
 supersedes: []
@@ -12,11 +12,23 @@ supersedes: []
 regression harness + the spec sync. Any internal ordering is build-order within
 the single PR, not phased releases.
 
+> **Shipped 2026-06-10 (PR #178, cc).** Building the RED repro surfaced that the
+> audited hole had **two layers**, both closed in the PR: (1) the Dream evidence
+> renderers filtered every hidden system-reminder block — including the
+> post-compact reminder, the only surviving carrier of compacted content — so a
+> compacted run was "covered" by the watermark while its summary silently never
+> reached extraction; (2) the positional trap named below (a stale fork-prefix
+> boundary clamping a superseded shorter payload into a permanent skip). Fix:
+> `extractCompactSummaryFromReminder` surfaces compaction summaries as evidence
+> in both renderers; the fork boundary is read envelope-first (the payload's own
+> coordinates) and a boundary beyond the payload length means "fresh evidence,
+> Dream from 0". The invariant (Design 2) is pinned as `agent-data-model` §13.17;
+> the `agent-architecture.md` status row is ✅. No `sources[]` schema change.
+
 > **PM-ratified 2026-06-10 — boundary locked to the spine.** Both Open-question
 > scope calls resolved **OUT**: *(f)* reminder-cache staleness and *(g)* checkpoint
 > shape-version hygiene stay in `agent-dream-followups`. Build = watermark
 > compaction-survival fix + resolution regression test + spec sync, nothing more.
-> Ready for a dev clone (cc / cc-2 / codex / anti) to claim with a Draft PR.
 
 ## Goal
 
