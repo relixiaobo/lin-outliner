@@ -1814,7 +1814,7 @@ export class AgentRuntime {
       try {
         const definitions = await conversation.subagentRuntime.listAllAgentDefinitions();
         for (const definition of definitions) {
-          names[agentDefinitionAgentId(definition)] = definition.displayName ?? definition.name;
+          names[agentDefinitionAgentId(definition)] = agentDefinitionDisplayName(definition);
         }
       } catch {
         // Registry unavailable: projections fall back to mention tokens.
@@ -4597,15 +4597,11 @@ export class AgentRuntime {
         this.applyChannelTurnToolSettings(conversation, targetAgentId, profile.definition);
         await this.getEventStore().writeAgentIdentity(profile.identity);
       }
-      const memoryReminder = await this.buildMemoryReminder(targetAgentId, conversation);
-      agent.state.messages = await this.deriveChannelPiMessages(
-        conversationId,
-        conversation,
-        targetAgentId,
-        memoryReminder,
-      ) as never;
       await this.startRun(conversationId, conversation, null, null, targetAgentId);
       const runId = conversation.activeRun!.id;
+      // With the run active, this resolves to the member's §8 POV assembly —
+      // the same derivation every later model call of the turn re-runs.
+      agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       await agent.continue();
       const run = conversation.eventState.runs[runId];
       return {
@@ -4657,7 +4653,7 @@ export class AgentRuntime {
     const systemPrompt = buildChannelPeerSystemPrompt(definition, agentMentionToken(agentId), skillSections);
     const identity: AgentIdentityRecord = {
       agentId: agentId as AgentId,
-      displayName: definition.displayName ?? definition.name,
+      displayName: agentDefinitionDisplayName(definition),
       model: model.id,
       effort: String(thinkingLevel),
       systemPrompt,
@@ -5044,6 +5040,22 @@ export class AgentRuntime {
     conversationId: string,
     eventState: AgentEventReplayState,
   ): Promise<AgentMessage[]> {
+    // Every model call re-derives its context through here (the agent's
+    // transformContext → prepareModelContext), so this is THE seam where a
+    // multi-agent Channel turn gets its §8 POV assembly: the in-flight run's
+    // executing member is the POV. Outside a run (restore, Dream, DMs) the
+    // linear derivation stands.
+    const conversation = this.conversations.get(conversationId);
+    const activeRun = conversation?.activeRun;
+    if (
+      conversation
+      && conversation.eventState === eventState
+      && activeRun
+      && isMultiAgentConversation(eventState.conversation?.members ?? [])
+    ) {
+      const memoryReminder = await this.buildMemoryReminder(activeRun.executingAgentId, conversation);
+      return this.deriveChannelPiMessages(conversationId, conversation, activeRun.executingAgentId, memoryReminder);
+    }
     const messages: AgentMessage[] = [];
     for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
       messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
@@ -6041,12 +6053,16 @@ const CHANNEL_PEER_SKILL_PROMPT_BUDGET = 24_000;
  * subagent prompt (a peer is a conversation participant, not a headless worker
  * reporting to a parent).
  */
+function agentDefinitionDisplayName(definition: AgentDefinition): string {
+  return definition.displayName?.trim() || definition.name;
+}
+
 function buildChannelPeerSystemPrompt(
   definition: AgentDefinition,
   mention: string,
   skillSections: readonly string[],
 ): string {
-  const displayName = definition.displayName ?? definition.name;
+  const displayName = agentDefinitionDisplayName(definition);
   return [
     [
       `You are "${displayName}" (@${mention}), an agent member of a shared multi-agent conversation (a Channel) with the user and other members.`,
