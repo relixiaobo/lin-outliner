@@ -30,7 +30,10 @@ explicit "accept" path, the convergence UX is a half-product.
 - **No runtime preview/diff pipeline.** Preview-before-write stays instruction-layer in
   `skillify` (already shipped in #174: "show the full SKILL.md or a focused diff and
   confirm before writing"). Do not build a diff UI.
-- **No snapshot store / rollback UI** — that is the separate "PR B" decision.
+- **No bespoke multi-version snapshot subsystem or rollback-history UI** (PM call
+  2026-06-10, cc's "PR B" slimmed): deep history is git's job for `project` skills, and a
+  parallel version store in userData duplicates VCS poorly. A **single-step undo of the
+  last agent edit IS in scope** (Design §6) — that is the whole of "rollback" here.
 - **No workspace-trust gate** for cloned-repo `project` skills — separate plan.
 - **No M2 curation.**
 - **No change to the gate semantics** from #174 (listing exclusion + `trigger: 'agent'`
@@ -80,6 +83,14 @@ explicit "accept" path, the convergence UX is a half-product.
    ad-hoc file writes. Its `whenToUse` already gates it to user-requested saves; the
    written skill is still born unratified, so this widens discovery, not trust.
 
+6. **Single-step undo (slimmed "PR B").** Reuse the previous content the gateway already
+   captures at each skill write (`previousContent` / `previousHash` in `AgentSkillWriteAudit`):
+   persist the *one* prior version (storage mechanism cc's call — extend the provenance
+   value, or a sidecar — bounded to one version), and expose an "Undo last agent edit"
+   action on the skill's Skills-tab row that restores it. Deeper history is git's job; we
+   do not keep a version stack or a history UI. The restore writes through the existing
+   skill-write path so validation + hot-reload + the `ratified` derivation all still hold.
+
 ## Touched files
 
 `src/main/agentSkillProvenanceStore.ts` (value shape), `src/main/agentSkills.ts`
@@ -102,12 +113,17 @@ IPC needs a new request/response shape (keep it out of the protocol surface if p
 
 - `skillify` → model-invocable: **recommend yes** (it is the NL path; gated by `whenToUse`).
 - Revoke in v1: **recommend yes** (trivial; clearing `acceptedHash` — avoids a half-product).
+- Undo's effect on ratification: restoring an earlier version restores its hash, so
+  ratification re-derives from that hash (an earlier *agent* version → unratified again; the
+  user's original → ratified). Confirm this is the intended semantics; keep `ratified` a
+  pure derivation, don't special-case undo.
 
 ## Checklist (one PR; internal build order — A7 foundation before consumers)
 
 - [ ] Store value `{ agentHash, acceptedHash }` + the `ratified` derivation in `addLoadedSkill`.
 - [ ] `agent_accept_skill` / `agent_revoke_skill_acceptance` IPC + registry methods + hot-reload.
 - [ ] Skills-tab pending-acceptance indicator + Accept/Revoke control.
+- [ ] Single-step undo: persist one prior version + "Undo last agent edit" Skills-tab action.
 - [ ] `skillify` `modelInvocable: true`.
 - [ ] Spec update (A6); `bun run typecheck` + `test:core` + `test:renderer`; light+dark
       visual verification of the Skills tab; `/code-review` (trust-adjacent + IPC surface).
