@@ -520,19 +520,22 @@ export function useWorkspaceKeyboard({
           applyFocus: false,
           beforeApply: structuralAction
             ? () => {
-              if (action === 'batch_indent') {
-                setUi((prev) => ({
-                  ...prev,
-                  expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
-                }));
-              }
-              if (action === 'batch_outdent' && emptiedParentIds.size > 0) {
-                setUi((prev) => ({
-                  ...prev,
-                  expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds),
-                }));
-              }
-              requestEditFocus(anchor);
+              setUi((prev) => {
+                const expanded = action === 'batch_indent'
+                  ? expandIndentTargets(prev.expanded, operationIds, currentIndex.byId)
+                  : action === 'batch_outdent' && emptiedParentIds.size > 0
+                    ? collapseExpandedParentIds(prev.expanded, emptiedParentIds)
+                    : prev.expanded;
+                return selectKeyboardRowsState(
+                  { ...prev, expanded },
+                  {
+                    selectedId: anchor,
+                    selectedIds: new Set(batchIds),
+                    selectionAnchorId: anchor,
+                    selectionRootId,
+                  },
+                );
+              });
             }
             : undefined,
         }).then((result) => {
