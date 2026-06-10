@@ -141,11 +141,22 @@ a new security boundary.
 rows "pending acceptance" with an **Accept** control; accepted rows show a
 row-menu **Revoke acceptance** action. `agent_accept_skill` records
 `acceptedHash = contentHash`, `agent_revoke_skill_acceptance` clears it; both
-persist, hot-reload the registry, and return the refreshed skill list.
+persist, hot-reload the registry, and return the refreshed skill list. Accept
+carries the `expectedHash` the renderer displayed and is refused on mismatch,
+so an agent write landing between render and click can never be accepted
+sight-unseen. A trust action also re-derives trust in every live session's
+registry (the Settings panel runs sessionless; each session holds its own
+in-memory trust map over the same store), so an accepted skill joins running
+conversations' model listings without a restart.
 Acceptance grants nothing beyond the skill's own frontmatter — the permission
 floor still stands above it, and a `disable-model-invocation: true` skill stays
-user-only even when accepted. Acceptance is keyed by resolved file path, so a
-rename/move re-requires accept (same property as provenance).
+user-only even when accepted. Trust records are keyed by resolved file path: a
+user rename/move orphans the record, so the skill at its new path has no
+`agentHash` and **fails open to ratified** (the same fail-open property as
+record loss — renaming is a hand action on the file, consistent with hand-edit
+self-ratification). Orphaned records are not garbage-collected (accepted:
+bounded by the number of skills ever agent-written, and a returning file at the
+old path correctly picks its record back up).
 
 **Single-step undo.** The gateway captures the pre-write content at each
 `SKILL.md` agent write and stores it as the trust record's `previousVersion`
@@ -154,8 +165,14 @@ rename/move re-requires accept (same property as provenance).
 validated by the same skill-write validator, written to disk, and the
 provenance facts of the previous version are restored, so ratification
 re-derives with no special case — restoring the user's original ratifies,
-restoring an earlier agent version is unratified again. The slot is consumed on
-undo (strictly one-shot); a create has no previous version and offers no undo.
+restoring an earlier agent version is unratified again. Undo may only overwrite
+the agent's own bytes: it is offered and executed only while the on-disk
+content still hashes to `agentHash` (the action re-reads the file), so it can
+never destroy a user hand-edit made after the agent write. The slot is consumed
+on undo (strictly one-shot); a create has no previous version and offers no
+undo. The restored bytes are written LF-normalized (the canonical hash domain;
+line endings of a CRLF/BOM-authored skill are not preserved — accepted,
+pre-release).
 
 Successful skill writes also append a skill audit event beside the completed
 tool call: `skill.created` for a new `SKILL.md`, `skill.replaced` for a whole-file

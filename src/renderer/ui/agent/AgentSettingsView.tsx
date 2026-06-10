@@ -141,7 +141,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       ) : (
         <button
           aria-label={t.settings.providers.configureNamed({ name })}
-          className="settings-provider-configure"
+          className="settings-row-button settings-provider-configure"
           onClick={() => handlers.onConfigure(provider.providerId)}
           type="button"
         >
@@ -1203,9 +1203,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                               {pending ? (
                                 <button
                                   aria-label={t.settings.skills.acceptSkill({ name: skill.name })}
-                                  className="settings-skill-accept"
+                                  className="settings-row-button settings-skill-accept"
                                   disabled={skillTrustBusy}
-                                  onClick={() => runSkillTrustAction(() => api.agentAcceptSkill(conversationId || 'workspace', skill.name))}
+                                  onClick={() => runSkillTrustAction(() => api.agentAcceptSkill(conversationId || 'workspace', skill.name, skill.contentHash ?? ''))}
                                   type="button"
                                 >
                                   {t.settings.skills.acceptButton}

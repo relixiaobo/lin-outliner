@@ -122,7 +122,10 @@ describe('skill ratification provenance', () => {
     await runtime.notifySkillContentWritten([skillFile]);
     expect((await runtime.getSkill('accepted'))?.ratified).toBe(false);
 
-    await runtime.acceptSkill('accepted');
+    // Accept carries the hash of the bytes the user saw; a mismatch is refused
+    // (TOCTOU guard), the matching hash records acceptance.
+    await expect(runtime.acceptSkill('accepted', 'not-the-displayed-hash')).rejects.toThrow('changed since it was displayed');
+    await runtime.acceptSkill('accepted', skillContentHash(content));
     const accepted = await runtime.getSkill('accepted');
     expect(accepted?.ratified).toBe(true);
     expect(accepted?.accepted).toBe(true);
@@ -151,7 +154,7 @@ describe('skill ratification provenance', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
     await runtime.notifySkillContentWritten([skillFile]);
-    await runtime.acceptSkill('revoked');
+    await runtime.acceptSkill('revoked', skillContentHash(content));
     expect((await runtime.getSkill('revoked'))?.ratified).toBe(true);
 
     await runtime.revokeSkillAcceptance('revoked');
@@ -183,6 +186,128 @@ describe('skill ratification provenance', () => {
     expect(restored?.ratified).toBe(true);
     expect(restored?.canUndoLastAgentEdit).toBe(false);
     await expect(runtime.undoLastAgentSkillEdit('undone')).rejects.toThrow('no recorded previous version');
+  });
+
+  test('undo is refused once a user hand-edit follows the agent write', async () => {
+    const { root, skillFile, content: original } = await writeAuthoredSkill('guard-undo', 'The user-authored original.');
+    const store = createMemoryProvenanceStore();
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+
+    const edited = skillMarkdown('The agent-edited replacement.');
+    await writeFile(skillFile, edited, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(edited), { hash: skillContentHash(original), content: original });
+    await runtime.notifySkillContentWritten([skillFile]);
+    expect((await runtime.getSkill('guard-undo'))?.canUndoLastAgentEdit).toBe(true);
+
+    // The user hand-edits over the agent's bytes: the previous-version record
+    // lingers, but undo must neither be offered nor executable — restoring would
+    // silently destroy the user's edit with no way back.
+    const handEdited = skillMarkdown('The user hand-tuned the agent edit.');
+    await writeFile(skillFile, handEdited, 'utf8');
+    await runtime.notifySkillContentWritten([skillFile]);
+    const afterHandEdit = await runtime.getSkill('guard-undo');
+    expect(afterHandEdit?.ratified).toBe(true);
+    expect(afterHandEdit?.canUndoLastAgentEdit).toBe(false);
+    await expect(runtime.undoLastAgentSkillEdit('guard-undo')).rejects.toThrow('edited after the last agent write');
+    expect((await runtime.getSkill('guard-undo'))?.body).toContain('hand-tuned');
+
+    // A later agent write re-arms undo with the user's bytes as the new previous
+    // version, so undo then restores the user's content, never skips over it.
+    const repatched = skillMarkdown('The agent re-patched after the user.');
+    await writeFile(skillFile, repatched, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(repatched), { hash: skillContentHash(handEdited), content: handEdited });
+    await runtime.notifySkillContentWritten([skillFile]);
+    expect((await runtime.getSkill('guard-undo'))?.canUndoLastAgentEdit).toBe(true);
+    await runtime.undoLastAgentSkillEdit('guard-undo');
+    const restored = await runtime.getSkill('guard-undo');
+    expect(restored?.body).toContain('hand-tuned');
+    expect(restored?.ratified).toBe(true);
+  });
+
+  test('the undo slot holds only the version preceding the LAST agent write', async () => {
+    const { root, skillFile, content: v1 } = await writeAuthoredSkill('slot', 'Version one.');
+    const store = createMemoryProvenanceStore();
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+
+    const v2 = skillMarkdown('Version two.');
+    await writeFile(skillFile, v2, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(v2), { hash: skillContentHash(v1), content: v1 });
+    const v3 = skillMarkdown('Version three.');
+    await writeFile(skillFile, v3, 'utf8');
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(v3), { hash: skillContentHash(v2), content: v2 });
+    await runtime.notifySkillContentWritten([skillFile]);
+
+    await runtime.undoLastAgentSkillEdit('slot');
+    const restored = await runtime.getSkill('slot');
+    expect(restored?.body).toContain('Version two.');
+    expect(restored?.body).not.toContain('Version one.');
+    // One slot, consumed: no chained undo back to v1.
+    expect(restored?.canUndoLastAgentEdit).toBe(false);
+  });
+
+  test('a hand-edit after acceptance stays ratified but is no longer marked accepted', async () => {
+    const { root, skillFile, content } = await writeAuthoredSkill('hand-after-accept', 'Agent draft.');
+    const store = createMemoryProvenanceStore();
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
+    await runtime.notifySkillContentWritten([skillFile]);
+    await runtime.acceptSkill('hand-after-accept', skillContentHash(content));
+
+    const handEdited = skillMarkdown('User tuned the accepted draft.');
+    await writeFile(skillFile, handEdited, 'utf8');
+    await runtime.notifySkillContentWritten([skillFile]);
+    const skill = await runtime.getSkill('hand-after-accept');
+    // Hand-edited bytes are human-produced: ratified via the hash change, while the
+    // stale acceptedHash no longer matches (the chip drops back to plain ratified).
+    expect(skill?.ratified).toBe(true);
+    expect(skill?.accepted).toBe(false);
+  });
+
+  test('trust actions resolve paths:-conditional skills the panel lists', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
+    const skillFile = path.join(root, '.agents', 'skills', 'conditional', 'SKILL.md');
+    const content = [
+      '---',
+      'description: Conditional agent-authored skill',
+      'paths:',
+      '  - src/**/*.ts',
+      '---',
+      'Conditional workflow.',
+      '',
+    ].join('\n');
+    await mkdir(path.dirname(skillFile), { recursive: true });
+    await writeFile(skillFile, content, 'utf8');
+    const store = createMemoryProvenanceStore();
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
+    await runtime.notifySkillContentWritten([skillFile]);
+
+    // Inactive conditional skills appear in the Skills panel (listAllSkills) with
+    // trust derivation, so Accept must resolve them even though invocation does not.
+    const listed = (await runtime.listAllSkills()).find((skill) => skill.name === 'conditional');
+    expect(listed?.ratified).toBe(false);
+    await runtime.acceptSkill('conditional', skillContentHash(content));
+    const accepted = (await runtime.listAllSkills()).find((skill) => skill.name === 'conditional');
+    expect(accepted?.ratified).toBe(true);
+    expect(accepted?.accepted).toBe(true);
+  });
+
+  test('refreshTrustRecords propagates a trust change made through another runtime', async () => {
+    const { root, skillFile, content } = await writeAuthoredSkill('shared', 'Shared workflow.');
+    const store = createMemoryProvenanceStore();
+    const settingsRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    const sessionRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+
+    await settingsRuntime.recordAgentSkillWrite(skillFile, skillContentHash(content));
+    await settingsRuntime.notifySkillContentWritten([skillFile]);
+    expect((await sessionRuntime.getSkill('shared'))?.ratified).toBe(false);
+
+    // The sessionless Settings runtime accepts; the live session's own registry only
+    // sees it after a trust refresh (its in-memory snapshot is otherwise stale).
+    await settingsRuntime.acceptSkill('shared', skillContentHash(content));
+    expect((await sessionRuntime.getSkill('shared'))?.ratified).toBe(false);
+    await sessionRuntime.refreshTrustRecords();
+    expect((await sessionRuntime.getSkill('shared'))?.ratified).toBe(true);
   });
 
   test('undo back to an earlier agent version re-derives unratified', async () => {

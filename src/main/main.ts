@@ -1964,7 +1964,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
     case 'agent_list_all_skills':
       return agentRuntime.listAllSkills(conversationId());
     case 'agent_accept_skill':
-      return agentRuntime.acceptSkill(conversationId(), String(args.skillName));
+      return agentRuntime.acceptSkill(conversationId(), String(args.skillName), String(args.expectedHash ?? ''));
     case 'agent_revoke_skill_acceptance':
       return agentRuntime.revokeSkillAcceptance(conversationId(), String(args.skillName));
     case 'agent_undo_skill_agent_edit':

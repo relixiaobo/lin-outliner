@@ -413,8 +413,8 @@ export class AgentSkillRuntime {
     await this.registry.recordAgentSkillWrite(skillFile, contentHash, previous);
   }
 
-  async acceptSkill(name: string): Promise<void> {
-    await this.registry.acceptSkill(name);
+  async acceptSkill(name: string, expectedHash: string): Promise<void> {
+    await this.registry.acceptSkill(name, expectedHash);
   }
 
   async revokeSkillAcceptance(name: string): Promise<void> {
@@ -423,6 +423,17 @@ export class AgentSkillRuntime {
 
   async undoLastAgentSkillEdit(name: string): Promise<void> {
     await this.registry.undoLastAgentEdit(name);
+  }
+
+  /**
+   * Re-derive trust from the persisted store after a trust change made through a
+   * different runtime (the Settings panel runs sessionless). A freshly ratified
+   * skill is steered into the session's model listing like any skill write.
+   */
+  async refreshTrustRecords(): Promise<void> {
+    this.registry.refreshTrustRecords();
+    const listing = await this.buildSkillListingMessage();
+    if (listing) this.enqueueSteeringMessage(listing);
   }
 
   async getSkill(name: string): Promise<SkillDefinition | null> {
@@ -768,8 +779,14 @@ class SkillRegistry {
     }
   }
 
-  async acceptSkill(name: string): Promise<void> {
+  async acceptSkill(name: string, expectedHash: string): Promise<void> {
     const skill = await this.resolveMutableSkill(name);
+    // Closes the accept TOCTOU: the user accepts the bytes they SAW, not whatever is
+    // loaded at execution time. An agent write landing between render and click
+    // changes the hash and the accept is refused instead of ratifying sight-unseen.
+    if (expectedHash !== skill.contentHash) {
+      throw new Error(`Skill ${skill.name} changed since it was displayed. Review the skill again before accepting.`);
+    }
     const normalized = path.resolve(skill.skillFile);
     const record: AgentSkillProvenanceRecord = {
       ...(this.provenance.get(normalized) ?? {}),
@@ -810,6 +827,15 @@ class SkillRegistry {
     if (!previous) {
       throw new Error(`Skill ${skill.name} has no recorded previous version to restore.`);
     }
+    // Undo may only overwrite the agent's own bytes. After a user hand-edit the
+    // previous-version record lingers, but restoring over it would silently destroy
+    // user content with no way back — so the gate re-reads the file and requires the
+    // on-disk content to still be exactly the last agent write (fresher than the
+    // loaded snapshot, which also closes the render-to-click race).
+    const currentRaw = await readFile(skill.skillFile, 'utf8');
+    if (existing.agentHash === undefined || existing.agentHash !== skillContentHash(currentRaw)) {
+      throw new Error(`Skill ${skill.name} was edited after the last agent write; undo would overwrite those edits.`);
+    }
     const target = this.resolveSkillTarget(skill.skillFile);
     if (!target?.isSkillFile) {
       throw new Error(`Skill file for ${skill.name} no longer resolves to a governed skill path.`);
@@ -818,7 +844,7 @@ class SkillRegistry {
       validateAgentSkillContentWrite({
         target,
         content: previous.content,
-        previousContent: skill.body,
+        previousContent: currentRaw,
         operation: 'file_write',
       });
     } catch (error) {
@@ -849,12 +875,36 @@ class SkillRegistry {
   }
 
   private async resolveMutableSkill(name: string): Promise<SkillDefinition> {
-    const skill = await this.resolveSkill(name);
+    // Unlike invocation, trust actions must also reach paths:-conditional skills
+    // that have not been activated yet — the Skills panel lists them (listAllSkills)
+    // with full trust derivation, so their Accept/Revoke/Undo must resolve too.
+    await this.ensureLoaded();
+    const normalized = normalizeSkillName(name);
+    const skill = normalized
+      ? this.skills.get(normalized)
+        ?? this.conditionalSkills.get(normalized)
+        ?? [...this.skills.values(), ...this.conditionalSkills.values()]
+          .find((candidate) => candidate.displayName === normalized)
+        ?? null
+      : null;
     if (!skill) throw new Error(`Unknown skill: ${name}`);
     if (skill.source === 'built-in' || !skill.contentHash) {
       throw new Error(`Skill ${skill.name} is built-in and has no trust record to manage.`);
     }
     return skill;
+  }
+
+  /**
+   * Re-derive trust for this registry from the persisted store: drop the in-memory
+   * trust map and reload. Used to propagate a trust change made through ANOTHER
+   * registry instance over the same store (each live session holds its own). The
+   * in-memory-newer-wins merge is intentionally bypassed — after an explicit trust
+   * action the store IS the newest state.
+   */
+  refreshTrustRecords(): void {
+    this.provenance.clear();
+    this.provenanceLoaded = false;
+    this.reloadAll();
   }
 
   private async ensureProvenanceLoaded(): Promise<void> {
@@ -988,7 +1038,13 @@ class SkillRegistry {
       // records a fresh agentHash and drops an accepted skill back to unratified.
       ratified: !(record?.agentHash !== undefined && record.agentHash === skill.contentHash) || accepted,
       accepted,
-      canUndoLastAgentEdit: record?.previousVersion !== undefined,
+      // Undo is offered only while the file still holds exactly the agent's bytes:
+      // the previous-version record lingers after a user hand-edit, but restoring
+      // over user content would silently destroy it (the action enforces the same
+      // gate against the live file).
+      canUndoLastAgentEdit: record?.previousVersion !== undefined
+        && record.agentHash !== undefined
+        && record.agentHash === skill.contentHash,
     };
     if (skill.paths?.length) {
       this.conditionalSkills.set(skill.name, skillWithIdentity);

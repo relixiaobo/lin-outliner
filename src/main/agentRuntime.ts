@@ -986,29 +986,42 @@ export class AgentRuntime {
     return (await this.skillRuntimeForConversation(conversationId)).listAllSkills();
   }
 
-  async acceptSkill(conversationId: string, skillName: string) {
-    const skillRuntime = await this.skillRuntimeForConversation(conversationId);
-    await skillRuntime.acceptSkill(skillName);
-    return skillRuntime.listAllSkills();
+  async acceptSkill(conversationId: string, skillName: string, expectedHash: string) {
+    return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.acceptSkill(skillName, expectedHash));
   }
 
   async revokeSkillAcceptance(conversationId: string, skillName: string) {
-    const skillRuntime = await this.skillRuntimeForConversation(conversationId);
-    await skillRuntime.revokeSkillAcceptance(skillName);
-    return skillRuntime.listAllSkills();
+    return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.revokeSkillAcceptance(skillName));
   }
 
   async undoLastAgentSkillEdit(conversationId: string, skillName: string) {
+    return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.undoLastAgentSkillEdit(skillName));
+  }
+
+  /**
+   * Run a trust action, then propagate it to every live session: the Settings panel
+   * runs sessionless (its own registry over the persisted store), and each session
+   * holds an independent in-memory trust map — without the refresh, an accepted
+   * skill would join a running conversation's model listing only after restart.
+   */
+  private async applySkillTrustAction(
+    conversationId: string,
+    action: (skillRuntime: AgentSkillRuntime) => Promise<void>,
+  ) {
     const skillRuntime = await this.skillRuntimeForConversation(conversationId);
-    await skillRuntime.undoLastAgentSkillEdit(skillName);
+    await action(skillRuntime);
+    for (const session of this.sessions.values()) {
+      if (session.skillRuntime !== skillRuntime) {
+        await session.skillRuntime.refreshTrustRecords();
+      }
+    }
     return skillRuntime.listAllSkills();
   }
 
   /**
-   * The live session skill runtime when one exists (so trust actions hot-reload the
-   * session the Skills panel is looking at), else a throwaway runtime over the same
-   * skill dirs AND the same persisted trust store — without the store a sessionless
-   * Skills panel would fail open to "everything ratified".
+   * The live session skill runtime when the conversation has one, else a throwaway
+   * runtime over the same skill dirs AND the same persisted trust store — without
+   * the store a sessionless Skills panel would fail open to "everything ratified".
    */
   private async skillRuntimeForConversation(conversationId: string): Promise<AgentSkillRuntime> {
     const sessionId = sessionIdFromConversationId(conversationId);
