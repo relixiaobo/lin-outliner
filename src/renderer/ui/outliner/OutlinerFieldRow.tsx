@@ -35,7 +35,7 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
 import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { outlinerChildren } from '../shared';
+import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { AgentIcon, CalendarIcon } from '../icons';
 import { fieldTypeLabel } from './fieldTypePresentation';
@@ -318,18 +318,24 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       }
       return;
     }
+    const emptiedParentIds = parentIdsEmptiedByOutdent([props.entryId], props.index.byId, props.rootId);
     props.setUi((prev) => requestFocusState(
       prev,
       fieldNameTargetAfterStructureChange,
       cursorAtOffset(cursorOffset),
     ));
-    const result = await props.run(() => api.outdentNode(props.entryId));
+    const result = await props.run(() => api.outdentNode(props.entryId), { applyFocus: false });
     if (result) {
-      props.setUi((prev) => requestFocusState(
-        prev,
-        fieldNameTargetAfterStructureChange,
-        cursorAtOffset(cursorOffset),
-      ));
+      props.setUi((prev) => {
+        const next = emptiedParentIds.size > 0
+          ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
+          : prev;
+        return requestFocusState(
+          next,
+          fieldNameTargetAfterStructureChange,
+          cursorAtOffset(cursorOffset),
+        );
+      });
     }
   };
 

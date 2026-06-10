@@ -36,7 +36,7 @@ import {
   requestFocusState,
   rowFocusTarget,
 } from './focus/focusModel';
-import type { CommandRunner } from './shared';
+import { collapseExpandedParentIds, parentIdsEmptiedByOutdent, type CommandRunner } from './shared';
 
 async function writeClipboardText(text: string): Promise<boolean> {
   if (!text) return true;
@@ -510,17 +510,26 @@ export function useWorkspaceKeyboard({
           ? targetIdsForRows(operationRowIds, currentIndex.byId)
           : operationRowIds;
         if (operationIds.length === 0) return;
+        const emptiedParentIds = action === 'batch_outdent'
+          ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)
+          : new Set<NodeId>();
         if (action === 'batch_indent') {
           setUi((prev) => ({
             ...prev,
             expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
           }));
         }
-        void run(() => batchOperation(operationIds)).then((result) => {
+        void run(() => batchOperation(operationIds), { applyFocus: false }).then((result) => {
           if (result && action === 'batch_indent') {
             setUi((prev) => ({
               ...prev,
               expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
+            }));
+          }
+          if (result && action === 'batch_outdent' && emptiedParentIds.size > 0) {
+            setUi((prev) => ({
+              ...prev,
+              expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds),
             }));
           }
           if (action === 'batch_checkbox') {

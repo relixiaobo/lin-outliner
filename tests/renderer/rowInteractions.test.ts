@@ -6,6 +6,7 @@ import {
   resolveEditorTriggerText,
   resolveTriggerForceCreateIntent,
 } from '../../src/renderer/ui/interactions/rowInteractions';
+import { parentIdsEmptiedByOutdent } from '../../src/renderer/ui/shared';
 import { resolveRowPointerSelectAction } from '../../src/renderer/ui/interactions/rowPointerSelection';
 import { clampMenuIndex, nextMenuIndex } from '../../src/renderer/ui/interactions/menuNavigation';
 import { resolveFieldOptions, resolveSelectedOptionId } from '../../src/renderer/ui/interactions/fieldOptions';
@@ -535,6 +536,44 @@ describe('row interaction resolvers', () => {
       'already',
       'first',
     ]);
+  });
+
+  test('detects parents that become empty after outdenting selected children', () => {
+    const root = {
+      id: 'root',
+      children: ['parent', 'outside'],
+    };
+    const parent = {
+      id: 'parent',
+      parentId: 'root',
+      children: ['first', 'second'],
+    };
+    const first = {
+      id: 'first',
+      parentId: 'parent',
+      children: [],
+    };
+    const second = {
+      id: 'second',
+      parentId: 'parent',
+      children: [],
+    };
+    const outside = {
+      id: 'outside',
+      parentId: 'root',
+      children: [],
+    };
+    const byId = new Map<string, any>([
+      [root.id, root],
+      [parent.id, parent],
+      [first.id, first],
+      [second.id, second],
+      [outside.id, outside],
+    ]);
+
+    expect([...parentIdsEmptiedByOutdent(['first'], byId)]).toEqual([]);
+    expect([...parentIdsEmptiedByOutdent(['first', 'second'], byId)]).toEqual(['parent']);
+    expect([...parentIdsEmptiedByOutdent(['first', 'second'], byId, 'parent')]).toEqual([]);
   });
 
   test('uses visible row order when merging with backspace at row start', () => {

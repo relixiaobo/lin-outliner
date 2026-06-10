@@ -13,6 +13,7 @@ import {
   row,
   rowBody,
   rowEditor,
+  trailingEditor,
 } from './outlinerMock';
 
 async function emitCurrentProjection(page: import('@playwright/test').Page) {
@@ -22,6 +23,11 @@ async function emitCurrentProjection(page: import('@playwright/test').Page) {
     projection: await e2eProjection(page),
     timestamp: Date.now(),
   });
+}
+
+async function todayChildren(page: import('@playwright/test').Page) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
 async function createReferenceFixture(page: import('@playwright/test').Page) {
@@ -281,6 +287,33 @@ test.describe('outliner selection keyboard parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
+  });
+
+  test('Shift+Tab on multiple selected children removes the emptied parent trailing draft', async ({ page }) => {
+    await rowEditor(page, ids.beta).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+
+    await rowEditor(page, ids.gamma).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await row(page, ids.beta).click({ modifiers: ['Meta'] });
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([]);
+    await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, ids.beta, ids.gamma]);
+    await expect(row(page, ids.beta)).toBeVisible();
+    await expect(row(page, ids.gamma)).toBeVisible();
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
   });
 
   test('Cmd+Enter cycles checkbox state for all selected target rows', async ({ page }) => {

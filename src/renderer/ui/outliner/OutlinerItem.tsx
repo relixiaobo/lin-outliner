@@ -43,7 +43,7 @@ import {
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { outlinerChildren, textOf } from '../shared';
+import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -1276,14 +1276,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }
       return;
     }
-    const previousParentId = props.parentId;
-    const previousParentChildren = outlinerChildren(
-      props.index.byId.get(previousParentId),
-      props.index.byId,
-    );
-    const collapsePreviousParentIfEmptied = previousParentId !== props.rootId
-      && previousParentChildren.length === 1
-      && previousParentChildren[0] === props.nodeId;
+    const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
     props.setUi((prev) => requestFocusState(
       prev,
       rowFocusTarget(props.nodeId, null, props.panelId),
@@ -1293,12 +1286,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (result) {
       flushSync(() => {
         props.setUi((prev) => {
-          const next = collapsePreviousParentIfEmptied
-            ? { ...prev, expanded: new Set(prev.expanded) }
+          const next = emptiedParentIds.size > 0
+            ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
             : prev;
-          if (collapsePreviousParentIfEmptied) {
-            next.expanded.delete(previousParentId);
-          }
           return requestFocusState(
             next,
             rowFocusTarget(props.nodeId, null, props.panelId),

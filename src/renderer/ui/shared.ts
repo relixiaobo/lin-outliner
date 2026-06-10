@@ -89,6 +89,42 @@ export function outlinerChildren(
   });
 }
 
+export function parentIdsEmptiedByOutdent(
+  nodeIds: readonly NodeId[],
+  byId: Map<NodeId, NodeProjection>,
+  rootId?: NodeId | null,
+): Set<NodeId> {
+  const movedIds = new Set(nodeIds);
+  const candidateParentIds = new Set<NodeId>();
+  for (const nodeId of nodeIds) {
+    const parentId = byId.get(nodeId)?.parentId;
+    if (!parentId || parentId === rootId) continue;
+    const parent = byId.get(parentId);
+    if (!parent?.parentId) continue;
+    candidateParentIds.add(parentId);
+  }
+
+  const emptiedParentIds = new Set<NodeId>();
+  for (const parentId of candidateParentIds) {
+    const children = outlinerChildren(byId.get(parentId), byId);
+    if (children.length > 0 && children.every((childId) => movedIds.has(childId))) {
+      emptiedParentIds.add(parentId);
+    }
+  }
+  return emptiedParentIds;
+}
+
+export function collapseExpandedParentIds(
+  expanded: ReadonlySet<NodeId>,
+  parentIds: ReadonlySet<NodeId>,
+): Set<NodeId> {
+  const next = new Set(expanded);
+  for (const parentId of parentIds) {
+    next.delete(parentId);
+  }
+  return next;
+}
+
 export function fieldEntries(
   node: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,

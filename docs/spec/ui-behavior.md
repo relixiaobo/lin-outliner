@@ -178,7 +178,7 @@ implicit previous/next body rows for text editing commands.
 | Printable key on selected row | Append that character and enter edit mode. |
 | `Shift+ArrowUp/Down` | Extend visible row selection. |
 | `Mod+A` | Select every selectable row in the current panel scope, including stored field value rows. |
-| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection anchor. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
+| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection anchor; Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
 | `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference field value still routes through field-value removal. |
 
 ## Paste And Clipboard Conversion Matrix
