@@ -261,9 +261,12 @@ this status table).
   `defaultConversationMembers` is hardcoded `[user, mainAgent]`); routing/coordinator;
   peer-agent reply in the shared thread; **cross-agent memory sharing + a cross-principal
   isolation gate** (the *one* genuinely new primitive); per-agent POV projection.
-- ⚠ **the one load-bearing code debt:** #164 memory-source binding is positional
-  (message-index + watermark), which breaks under compaction — cross-agent citing would
-  inherit it. **Must harden (content/event addressing) before the sharing step.**
+- ⚠ **the one load-bearing code debt:** #164 memory-source binding under compaction.
+  Narrowed by the follow-up audit: `sources[]` are already ID-pinned + fail-loud (robust);
+  the residual hole is the **positional Dream watermark** — a fork run that auto-compacts
+  can be skipped forever, dropping its summary as evidence. Cross-agent citing would
+  inherit it. **Must harden before the sharing step** — plan (PM-ratified 2026-06-10):
+  `agent-memory-source-binding`.
 
 **Finding:** M3 = **rules + views + ONE new primitive** (cross-agent memory sharing),
 all riding the existing 7 primitives — it does *not* re-inflate the concept count.
@@ -275,17 +278,23 @@ reinvent.
 
 - **Phase 0 — settle the map.** `docs/spec/agent-architecture.md` (done) + this
   reconciliation + ratify the peer model. ~no code.
-- **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding
-  (content/event addressing, watermark stable under compaction). Optional cheap
-  clean-cut: internal `sessionId` field → `conversationId`.
-- **Phase 2 — multi-agent (a SET of independent complete features, dependency-ordered):**
-  - 2.1 Channel membership: open `defaultConversationMembers`, emit `member.*`, connect
-    `addressedTo`, add routing/coordinator.
-  - 2.2 Peer-agent reply in the shared thread (`actor` = agent principal). *(2.1+2.2
-    together = "multi-agent conversations work".)*
-  - 2.3 Cross-agent memory sharing + the cross-principal isolation hard gate (the new
-    primitive; depends on Phase 1).
-  - 2.4 Per-agent POV projection (derived view).
+- **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding —
+  ratified plan: `agent-memory-source-binding` (watermark compaction-survival +
+  resolution regression lock; boundary nailed there). Optional cheap clean-cut:
+  internal `sessionId` field → `conversationId`.
+- **Phase 2 — multi-agent (shape (b): a SET of 3 independent complete features,
+  dependency-ordered; each needs its own dev-drafted one-pager + PM ratification
+  before build):**
+  - **M3-A — working multi-agent Channel** (ONE PR): membership (open
+    `defaultConversationMembers`, emit `member.*`) + routing (`addressedTo`,
+    coordinator) + peer-agent reply in the shared thread (`actor` = agent
+    principal). Membership-without-reply would be a scaffold slice, so these ship
+    together; the internal split is build order, not separate releases.
+  - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
+    (the one new primitive; the only step that depends on Phase 1).
+  - **M3-C — per-agent POV projection** (derived view; independent enhancement).
+  - Open PM gates ahead of M3-A: group default-`addressedTo` · who-configures-whom ·
+    doc snapshot+delta.
 - **Parallel (orthogonal, not blocked):** `agent-skill-acceptance` (PR A, cc) — **merged
   #175** (skills-only; zero overlap with the M3 spine, confirmed by diff).
 

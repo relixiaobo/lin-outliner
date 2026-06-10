@@ -48,9 +48,11 @@ Both 2026-06-09 lanes merged — board is between batches.
   `docs/plans/agent-program.md` § *M3 sequencing & readiness*. Order: **Phase 0** settle
   the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
   debt, must precede cross-agent citing; plan `docs/plans/agent-memory-source-binding.md`
-  **PM-ratified 2026-06-10**, boundary locked to the compaction spine — ready for a dev
-  clone to claim) → **Phase 2** Channel membership/routing → peer
-  reply → cross-agent memory + isolation gate (the one new primitive) → per-agent POV.
+  **PM-ratified 2026-06-10**, boundary locked to the compaction spine — claimed by cc) →
+  **Phase 2** three independent complete features: **M3-A** working multi-agent Channel
+  (membership + routing + peer reply, one PR — membership alone would be a scaffold
+  slice) → **M3-B** cross-agent memory + isolation gate (the one new primitive; depends
+  on Phase 1) → **M3-C** per-agent POV.
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
 
@@ -145,13 +147,12 @@ The cmd+k / launcher convergence and the capture pipeline behind it. The
 resolver track (`launcher-capture-resolvers`) superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **launcher-native-nspanel** (P1, owner cc) — root fix for the launcher's missing dock icon and the
-  ⌘Q/fullscreen-float tradeoff. Both bugs share one root: Electron's
-  `setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true})` hides the macOS dock icon (electron#26350) and
-  swallowed the first ⌘Q. Replace that path with a **native NSWindow `collectionBehavior`** set (via the
-  existing window-corner addon) → keeps dock icon + ⌘Tab + first-⌘Q-quit + over-fullscreen float +
-  non-activating, all at once. Supersedes PR #170's toggle + reconciles `cbcbf71`. **Execution-ready plan:**
-  `docs/plans/launcher-native-nspanel.md`. One complete PR; gate: `/code-review` + 5-point packaged verify.
+- **launcher-native-nspanel** (P1, **DONE — merged #171**) — root fix for the launcher's
+  missing dock icon + first-⌘Q + fullscreen-float. Shipped approach =
+  `skipTransformProcessType` (the plan's original native-`collectionBehavior` theory was
+  superseded mid-flight; the as-built is recorded in the plan's *Correction* section).
+  Spec synced in-PR (`docs/spec/launcher.md`); plan archived at
+  `docs/plans/archive/launcher-native-nspanel.md`.
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
   build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
   command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
@@ -211,14 +212,13 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   memory** (each fresh typed subagent owns its called-agent memory line; forks share the parent's),
   a model-visible **`dream` trigger tool** (trigger-only, no model-written facts), and a **Dream
   chat-feedback** boundary. Polish tracked in `agent-dream-followups` (P3) below.
-- **agent-memory-model** (P1, M2, **draft — executor cc-2, render+Dream is one complete PR**) — the **subjective** memory layer *atop*
-  `agent-data-model` (which it defers all stored shapes / tools / cache to): the **render**
-  projection (storage→injection — XML-zoned prose briefing, person rule, confidence-as-phrasing)
-  replacing the flat `<agent-memory>` dump; **Dream** consolidation semantics
-  (`add`/`update`/`invalidate` on the existing memory events); and the **user-as-an-ordinary-agent**
-  + cross-agent sharing *proposal* (a ratifiable extension to `agent-data-model`, not a
-  re-decision). Rebased onto the data model after an xhigh review found the first draft
-  re-invented it. See `docs/plans/agent-memory-model.md`.
+- **agent-memory-model** (P1, M2, **DONE — render+Dream shipped #172, principal-keyed
+  memory + per-principal Dream #173**) — the **subjective** memory layer atop
+  `agent-data-model`: the render projection (XML-zoned prose briefing) replacing the flat
+  `<agent-memory>` dump, Dream consolidation semantics, and the §4 principal/membership
+  foundation. Plan archived at `docs/plans/archive/agent-memory-model.md`. Its residual
+  **cross-agent sharing proposal** is now M3-B in the debt-first sequencing above (needs
+  the `agent-data-model` §4 extension drafted for PM ratification before code).
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,

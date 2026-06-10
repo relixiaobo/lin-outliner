@@ -1,11 +1,11 @@
 ---
 title: Launcher native NSPanel — keep the dock icon while floating over fullscreen
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 executor: cc
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-10
 ---
 
 # Launcher native NSPanel (root fix: dock icon + ⌘Q + fullscreen float)

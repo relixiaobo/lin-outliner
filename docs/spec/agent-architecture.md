@@ -107,8 +107,9 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Memory source binding under compaction (#164) | ⚠ debt | `sources[]` are already ID-pinned + fail-loud (robust); the residual gap is the **positional Dream watermark** — a fork run that auto-compacts can be skipped forever, dropping its summary as evidence. Must harden before cross-agent citing (plan: `agent-memory-source-binding`). |
 
 Forward sequencing for the gaps above lives in `agent-program.md` § *M3 sequencing &
-readiness* (debt-first: settle the map → fix #164 → build Channel/routing → peer reply →
-cross-agent memory + isolation gate → per-agent POV).
+readiness* (debt-first: settle the map → fix #164 → then three independent complete
+features: **M3-A** working multi-agent Channel (membership + routing + peer reply, one
+PR) → **M3-B** cross-agent memory + isolation gate → **M3-C** per-agent POV).
 
 ## Known tensions / honest caveats
 
