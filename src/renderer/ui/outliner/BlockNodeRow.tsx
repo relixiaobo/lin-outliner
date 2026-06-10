@@ -8,6 +8,7 @@ import type { NodeProjection } from '../../api/types';
 import type { FocusRequest, FocusTarget } from '../../state/document';
 import { assetUrl } from '../../../core/assets';
 import { focusTargetMatches } from '../focus/focusModel';
+import { isCompositionLive } from '../editor/compositionRelay';
 import { ImageRow } from './ImageRow';
 
 /**
@@ -105,6 +106,9 @@ export function BlockNodeRow(props: BlockNodeRowProps) {
     const target = props.focusTarget;
     if (!el || !request || !target) return;
     if (!focusTargetMatches(request.target, target)) return;
+    // A live IME composition parks the request (issue #176); the composing
+    // editor relays it at compositionend.
+    if (isCompositionLive()) return;
     el.focus({ preventScroll: true });
     props.onFocusRequestConsumed?.(request);
   }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);

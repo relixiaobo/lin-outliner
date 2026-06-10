@@ -40,6 +40,15 @@ import {
 } from './nodeLineView';
 import { resolveNodeLineTrigger } from './nodeLineTrigger';
 import { focusTargetMatches } from '../focus/focusModel';
+import { compositionAnchorTransaction } from './imeCompositionAnchor';
+import {
+  beginComposition,
+  endComposition,
+  extractComposedInsertion,
+  IME_TRACE_ENABLED,
+  imeTrace,
+  isCompositionLive,
+} from './compositionRelay';
 
 export interface EditorSplitPayload {
   before: RichText;
@@ -117,6 +126,15 @@ interface RichTextEditorProps {
   onFocusRequestConsumed?: (request: FocusRequest) => void;
   onPendingInputConsumed?: (input: PendingInputChar) => void;
   /**
+   * Fired at compositionend when a focusRequest targeting ANOTHER editor
+   * arrived mid-composition and was parked by the composition gate (issue
+   * #176). `text` is what the composition inserted — already reverted locally
+   * and never flushed to core. The host re-issues the parked request via
+   * `relayCompositionHandoffState`, landing the text at the focus target
+   * through the pendingInput rail.
+   */
+  onCompositionHandoff?: (text: string) => void;
+  /**
    * A non-editable element rendered as an inline widget at the very end of the
    * last paragraph's text, so trailing chrome (the row's tag chips) flows right
    * after the last word and wraps WITH the text instead of dropping to its own
@@ -150,41 +168,9 @@ function selectedInlineReferencePosition(view: EditorView): number | null {
   return selection.node.type.name === 'inlineReference' ? selection.from : null;
 }
 
-function hasInlineReferenceType(node: PMNode | null | undefined): boolean {
-  return node?.type.name === 'inlineReference';
-}
-
-function hasTextCompositionAnchor(node: PMNode | null | undefined): boolean {
-  return Boolean(node?.isText);
-}
-
 function ensureImeCompositionAnchor(view: EditorView) {
-  const { selection } = view.state;
-  if (selection instanceof NodeSelection && selection.node.type.name === 'inlineReference') {
-    const position = selection.from + selection.node.nodeSize;
-    let tr = view.state.tr.insertText(INLINE_REF_TEXT_SENTINEL, position, position);
-    tr = tr.setSelection(TextSelection.create(tr.doc, position + INLINE_REF_TEXT_SENTINEL.length));
-    view.dispatch(tr);
-    return true;
-  }
-
-  if (!selection.empty) return false;
-
-  const position = selection.from;
-  const resolved = view.state.doc.resolve(position);
-  if (hasInlineReferenceType(resolved.nodeBefore) && !hasTextCompositionAnchor(resolved.nodeAfter)) {
-    let tr = view.state.tr.insertText(INLINE_REF_TEXT_SENTINEL, position, position);
-    tr = tr.setSelection(TextSelection.create(tr.doc, position + INLINE_REF_TEXT_SENTINEL.length));
-    view.dispatch(tr);
-    return true;
-  }
-  if (hasInlineReferenceType(resolved.nodeAfter) && !hasTextCompositionAnchor(resolved.nodeBefore)) {
-    let tr = view.state.tr.insertText(INLINE_REF_TEXT_SENTINEL, position, position);
-    tr = tr.setSelection(TextSelection.create(tr.doc, position + INLINE_REF_TEXT_SENTINEL.length));
-    view.dispatch(tr);
-    return true;
-  }
-  return false;
+  const tr = compositionAnchorTransaction(view.state);
+  if (tr) view.dispatch(tr);
 }
 
 function activeMarksForSelection(view: EditorView): Set<ToolbarMark> {
@@ -242,6 +228,15 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const codeFenceFiredRef = useRef(false);
   const composingRef = useRef(false);
   const compositionDocChangedRef = useRef(false);
+  // Cross-editor composition gate state (issue #176): this editor's gate token,
+  // the focusRequest snapshot at composition start (a request that PREDATES the
+  // composition is someone else's business — only one that arrived mid-
+  // composition gets relayed), and the buffering flag that bridges the sync
+  // compositionend handler and its flush microtask so a late final composition
+  // transaction can't flush to this node first.
+  const compositionToken = useMemo(() => Symbol('ime-composition'), []);
+  const compositionStartFocusRequestRef = useRef<FocusRequest | null>(null);
+  const pendingHandoffRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(() => isEmptyRichText(props.content));
   const [toolbar, setToolbar] = useState({
     visible: false,
@@ -334,6 +329,54 @@ export function RichTextEditor(props: RichTextEditorProps) {
     propsRef.current.onPendingInputConsumed?.(input);
   };
 
+  // Transition into composing: snapshot the focusRequest (so only requests
+  // arriving DURING the composition are relayed) and raise the global gate.
+  const markComposing = () => {
+    if (!composingRef.current) {
+      compositionStartFocusRequestRef.current = propsRef.current.focusRequest ?? null;
+      beginComposition(compositionToken);
+      imeTrace('composing:begin', propsRef.current.nodeId, 'requestAtStart:', Boolean(propsRef.current.focusRequest));
+    }
+    composingRef.current = true;
+  };
+
+  const applyFocusRequest = (view: EditorView, request: FocusRequest) => {
+    focusEditorDom(view);
+    applyCursorPlacement(view, request.placement);
+    updateToolbar(view);
+    if (!composingRef.current && !view.composing) updateTrigger(view);
+    propsRef.current.onFocusRequestConsumed?.(request);
+  };
+
+  // Mirror of the external-content sync effect's apply branch, callable from
+  // the composition handoff (which preempts that parked sync).
+  const applyExternalContent = (view: EditorView) => {
+    const content = propsRef.current.content;
+    const nextDoc = richTextToDoc(content, pmSchema, propsRef.current.resolveInlineReferenceColor);
+    const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
+    view.updateState(nextState);
+    setIsEmpty(isEmptyDoc(nextState.doc));
+    lastExternalContentRef.current = content;
+    fieldTriggerFiredRef.current = false;
+    codeFenceFiredRef.current = false;
+  };
+
+  // A focusRequest targeting another editor landed mid-composition and was
+  // parked by the gate. The composed text was never flushed (composition
+  // transactions buffer), so resetting to the echoed external content IS
+  // core's truth for this node — no compensating patch. The text re-enters
+  // through the focus target's pendingInput insertion.
+  const handoffCompositionToFocusTarget = (view: EditorView) => {
+    const composed = extractComposedInsertion(
+      lastExternalContentRef.current.text,
+      docToRichText(view.state.doc).text,
+    ).replaceAll(INLINE_REF_TEXT_SENTINEL, '').replaceAll(TRANSIENT_TEXT_SENTINEL, '');
+    imeTrace('handoff', propsRef.current.nodeId, 'text:', JSON.stringify(composed), '->', propsRef.current.focusRequest?.target.nodeId);
+    applyExternalContent(view);
+    compositionDocChangedRef.current = false;
+    propsRef.current.onCompositionHandoff?.(composed);
+  };
+
   const toggleToolbarMark = (mark: ToolbarMark) => {
     const view = viewRef.current;
     if (!view || propsRef.current.readOnly) return;
@@ -369,9 +412,25 @@ export function RichTextEditor(props: RichTextEditorProps) {
         ]);
       },
       dispatchTransaction(transaction) {
+        // Dev-only forensic trail for the #176 family — its argument
+        // construction (DOM serialization per composing transaction) is not
+        // free, so the whole block is gated, not just the sink.
+        const traceComposing = IME_TRACE_ENABLED && (composingRef.current || view.composing);
+        const blockBefore = traceComposing ? view.dom.firstElementChild : null;
         const nextState = view.state.apply(transaction);
         view.updateState(nextState);
-        const composing = composingRef.current || view.composing;
+        if (traceComposing) {
+          const viewInternals = view as unknown as {
+            input?: { compositionNode?: Node | null };
+          };
+          const compositionNode = viewInternals.input?.compositionNode ?? null;
+          imeTrace('compo-tr', propsRef.current.nodeId,
+            'doc:', JSON.stringify(nextState.doc.textContent.slice(0, 30)),
+            'dom:', JSON.stringify(view.dom.innerHTML.slice(0, 120)),
+            'compNode:', compositionNode ? JSON.stringify((compositionNode.nodeValue ?? '').slice(0, 30)) : 'null',
+            'blockSwapped:', blockBefore !== null && view.dom.firstElementChild !== blockBefore);
+        }
+        const composing = composingRef.current || view.composing || pendingHandoffRef.current;
         if (transaction.selectionSet || transaction.docChanged) {
           updateToolbar(view);
           if (!composing) updateTrigger(view);
@@ -410,7 +469,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
       handleDOMEvents: {
         keydown(_viewInstance, event) {
           if (isImeComposingEvent(event as KeyboardEvent)) {
-            composingRef.current = true;
+            markComposing();
             clearMatchingPendingInput();
           }
           return false;
@@ -566,7 +625,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return false;
         },
         blur() {
+          if (composingRef.current || compositionDocChangedRef.current) {
+            imeTrace('blur-during-composition', propsRef.current.nodeId,
+              'buffered:', compositionDocChangedRef.current,
+              'request:', propsRef.current.focusRequest?.target.nodeId ?? null);
+          }
           composingRef.current = false;
+          endComposition(compositionToken);
           flushCompositionChanges(view);
           propsRef.current.onCommit(docToRichText(view.state.doc));
           propsRef.current.onTriggerChange(null);
@@ -574,16 +639,44 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return false;
         },
         compositionstart(viewInstance) {
-          composingRef.current = true;
+          markComposing();
           compositionDocChangedRef.current = false;
           clearMatchingPendingInput();
           ensureImeCompositionAnchor(viewInstance);
           return false;
         },
-        compositionend(viewInstance) {
+        compositionend(viewInstance, event) {
+          // A focusRequest that arrived DURING this composition was parked by
+          // the gate (issue #176); decide its fate in the flush microtask,
+          // after ProseMirror has settled the final composition transaction.
+          const parkedRequest = propsRef.current.focusRequest ?? null;
+          const requestArrivedMidComposition = parkedRequest !== null
+            && parkedRequest !== compositionStartFocusRequestRef.current;
+          imeTrace('compositionend', propsRef.current.nodeId,
+            'data:', JSON.stringify((event as CompositionEvent).data ?? ''),
+            'parked:', requestArrivedMidComposition ? parkedRequest?.target.nodeId : null);
+          if (requestArrivedMidComposition) pendingHandoffRef.current = true;
           composingRef.current = false;
           queueMicrotask(() => {
+            pendingHandoffRef.current = false;
+            endComposition(compositionToken);
             if (viewInstance.isDestroyed) return;
+            const target = propsRef.current.focusTarget;
+            if (requestArrivedMidComposition
+              && propsRef.current.focusRequest === parkedRequest
+              && parkedRequest) {
+              if (target && focusTargetMatches(parkedRequest.target, target)) {
+                // Parked request aimed at this editor: flush the composition
+                // normally, then apply the held placement.
+                flushCompositionChanges(viewInstance);
+                updateTrigger(viewInstance);
+                handleContentUpdateAction(docToRichText(viewInstance.state.doc));
+                applyFocusRequest(viewInstance, parkedRequest);
+                return;
+              }
+              handoffCompositionToFocusTarget(viewInstance);
+              return;
+            }
             flushCompositionChanges(viewInstance);
             updateTrigger(viewInstance);
             handleContentUpdateAction(docToRichText(viewInstance.state.doc));
@@ -779,9 +872,25 @@ export function RichTextEditor(props: RichTextEditorProps) {
     });
 
     viewRef.current = view;
+    imeTrace('editor:mount', propsRef.current.nodeId);
 
     return () => {
+      imeTrace('editor:unmount', propsRef.current.nodeId,
+        'composing:', composingRef.current || pendingHandoffRef.current,
+        'buffered:', compositionDocChangedRef.current);
       propsRef.current.onTriggerChange(null);
+      // A view dying mid-composition must release the gate, and re-issue a
+      // request parked behind it (the composed text dies with the view).
+      const wasComposing = composingRef.current || pendingHandoffRef.current;
+      composingRef.current = false;
+      pendingHandoffRef.current = false;
+      endComposition(compositionToken);
+      if (wasComposing) {
+        const request = propsRef.current.focusRequest;
+        if (request && request !== compositionStartFocusRequestRef.current) {
+          propsRef.current.onCompositionHandoff?.('');
+        }
+      }
       view.destroy();
       viewRef.current = null;
     };
@@ -794,6 +903,11 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const contentRevisionChanged = contentRevision !== lastContentRevisionRef.current;
     lastContentRevisionRef.current = contentRevision;
     if (view.hasFocus() && (composingRef.current || view.composing)) return;
+    if (composingRef.current || view.composing) {
+      // The dangerous fallthrough: composing but not DOM-focused — the replace
+      // below force-commits a live IME session.
+      imeTrace('external-replace-while-composing-unfocused', propsRef.current.nodeId);
+    }
     const currentContent = docToRichText(view.state.doc);
     if (view.hasFocus() && richTextEquals(props.content, currentContent)) {
       lastExternalContentRef.current = props.content;
@@ -845,12 +959,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const target = propsRef.current.focusTarget;
     if (!view || view.isDestroyed || !request || !target) return;
     if (!focusTargetMatches(request.target, target)) return;
-
-    focusEditorDom(view);
-    applyCursorPlacement(view, request.placement);
-    updateToolbar(view);
-    if (!composingRef.current && !view.composing) updateTrigger(view);
-    propsRef.current.onFocusRequestConsumed?.(request);
+    // A live IME composition — in ANY editor, hence the module-level gate —
+    // parks the request unconsumed: applying focus/selection now would force-
+    // commit the composition mid-word (issue #176). The composing editor
+    // relays the request, with any text composed during the hold, at
+    // compositionend.
+    if (isCompositionLive()) {
+      imeTrace('focusRequest:park', props.nodeId);
+      return;
+    }
+    imeTrace('focusRequest:apply', props.nodeId);
+    applyFocusRequest(view, request);
   }, [props.focusRequest]);
 
   useEffect(() => {
@@ -861,6 +980,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (!focusTargetMatches(input.target, target)) return;
     if (propsRef.current.readOnly || composingRef.current || view.composing) return;
 
+    imeTrace('pendingInput:apply', props.nodeId, 'text:', JSON.stringify(input.char));
     focusEditorDom(view);
     const insertFrom = view.state.selection.from;
     let tr = view.state.tr.insertText(input.char);

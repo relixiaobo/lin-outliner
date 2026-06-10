@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
+import { isCompositionLive } from '../editor/compositionRelay';
 import {
   insertTextIntoControlValue,
   setTextControlCursor,
@@ -70,6 +71,9 @@ export function NodeDescription({
 
   useEffect(() => {
     if (!focusTarget || !focusRequest || !focusTargetMatches(focusRequest.target, focusTarget)) return;
+    // A live IME composition parks the request (issue #176); the composing
+    // editor relays it at compositionend.
+    if (isCompositionLive()) return;
     onEditingChange(true);
     window.requestAnimationFrame(() => {
       const input = inputRef.current;

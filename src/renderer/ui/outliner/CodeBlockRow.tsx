@@ -15,6 +15,7 @@ import type {
   PendingInputChar,
 } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
+import { isCompositionLive } from '../editor/compositionRelay';
 import { CheckIcon, ChevronDownIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
@@ -134,6 +135,9 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     const target = props.focusTarget;
     if (!textarea || !request || !target) return;
     if (!focusTargetMatches(request.target, target)) return;
+    // A live IME composition parks the request (issue #176); the composing
+    // editor relays it at compositionend.
+    if (isCompositionLive()) return;
     textarea.focus({ preventScroll: true });
     const selection = caretForPlacement(request.placement, textarea.value.length);
     if (Array.isArray(selection)) textarea.setSelectionRange(selection[0], selection[1]);
