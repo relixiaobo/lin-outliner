@@ -800,12 +800,20 @@ cross-principal read must never dereference another principal's raw conversation
 2. **`<principal>` provenance render** — **third person.** A foreign principal's pool renders
    as a named third-person zone (`<principal name="The user">` → "The user prefers …"), keeping
    the human as the identity authority; only the reader's own pool is second-person `<self>`.
-3. **User-Dream cadence/anchor** — **scheduled + manual, watermark-serialized.** The user-Dream
-   runs on the daily schedule and on manual `/dream` (which consolidates the conversation into
-   the user pool — the complete conversation-consolidation; agent self-models consolidate on
-   schedule). It is executed by the main agent (run-meta stays agent-anchored) and is the single
+3. **User-Dream cadence/anchor** — **scheduled + manual, watermark-serialized,
+   principal-anchored.** The user-Dream runs on the daily schedule and on manual `/dream` (which
+   consolidates the conversation into the user pool — the complete conversation-consolidation;
+   agent self-models consolidate on schedule). It is executed by the main agent and is the single
    writer of the user pool; concurrent passes are safe because the store serializes by
    `principalKey` and the per-conversation watermark skips already-consolidated evidence.
+   *(Revised post-review, PM-ratified 2026-06-10: the original "run-meta stays agent-anchored"
+   compromise conflated executor with subject and forced a cross-pool join. A reflective run is
+   now anchored to the principal whose pool it maintains — `AgentRunAnchor` gained a
+   `{ type: 'principal', principal }` variant replacing `{ type: 'agent' }` — with the executing
+   agent recorded separately on `AgentRunMeta.agentId`. Each principal's reflective-run index
+   lives beside its pool, so run history and dream state join locally. In the same review pass
+   the `isolated` memory mode was removed: a pool is one undivided self-model and
+   `originWorkspace` is provenance metadata only, never a retrieval fence.)*
 
 ## Open questions
 

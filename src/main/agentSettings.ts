@@ -81,7 +81,7 @@ const MODEL_ID_REPLACEMENTS: Record<string, Record<string, string>> = {
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const AGENT_PERMISSION_MODES = ['trusted', 'restricted'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
-const AGENT_MEMORY_ISOLATIONS = ['global', 'isolated', 'read-only-global'] as const;
+const AGENT_MEMORY_ISOLATIONS = ['global', 'read-only-global'] as const;
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   permissionMode: 'trusted',
   automaticSkillsEnabled: true,

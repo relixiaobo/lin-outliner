@@ -30,7 +30,7 @@ The earlier draft re-invented half the data model. This is the corrected split:
 | `MemoryEntry` shape `{id, agentId, fact, originWorkspace?, sources[], status, createdAt}` | **data-model §3** (authoritative) | consumes as-is; **adds no `kind`/`confidence`/`salience` fields** (see §1) |
 | `Principal = {user}\|{agent}` | **data-model §3** | reuses it for §3's proposal (the earlier `AgentActor` was wrong — that union also admits `tool`/`system`) |
 | Write surface — runtime-owned append (`memory.entry_added/updated/removed`), event-sourced, not `file_write` (D1) | **data-model §3 / inv. 12, 16** | `Dream` is a *client* of this surface (§2) |
-| Retrieval — global pool by default + opt-in `isolated`/`read-only-global` tiers; `originWorkspace` always recorded (D2) | **data-model §3 / inv. 13** | the cross-agent sharing proposal (§3) must reconcile *with* this axis, not add a parallel one |
+| Retrieval — global pool + opt-in `read-only-global` (pause writes); `originWorkspace` always recorded as provenance (D2 — *revised 2026-06-10: the `isolated` tier was removed; a pool is one undivided self-model, never workspace-partitioned*) | **data-model §3 / inv. 13** | the cross-agent sharing proposal (§3) must reconcile *with* this axis, not add a parallel one |
 | Model-facing read = the **single** `recall(query, include_evidence?, max_chars?)` tool; evidence nested under entries via `sources`; no second tool / `past_chats` | **data-model §4 / OQ (DECIDED 2026-06-07)**; ships as `src/main/agentRecallTool.ts` | reuses it; **drops the proposed `memory_search`/`memory_recall` pair** |
 | Cache layout — volatility-ordered, append-only prefix, single volatile tail: `[3]` distilled-memory prefix + `[5]` query-specific recall in tail; compact at segment boundaries | **data-model §8 / inv. 7** | the render (§2) *produces* `[3]`; freshness rides `[5]` — no new cache machinery (see §2 "Cache") |
 
@@ -207,7 +207,8 @@ writes, no N-writer contention. (Replaces P2's single per-agent Dream that wrote
 cross-principal. A reader injects its own pool (`<self>`) + every co-member principal's pool
 (`<principal>`). The user is always a member → the user's self-model is automatically shared
 across all the user's agents. Reuses `conversation.members`; **no `publish`/`subscribe` ACL, no
-precedence table.** D2's isolation tiers still scope each pool's own retrieval, orthogonally.
+precedence table.** *(Revised 2026-06-10: D2's `isolated` tier was removed — a pool is one
+undivided self-model; `originWorkspace` is provenance only, never a retrieval fence.)*
 
 **Security — the read path.** `recall` expands an entry's `sources` to raw evidence; a naive
 cross-principal read would dereference **another principal's raw transcript**. Rule:

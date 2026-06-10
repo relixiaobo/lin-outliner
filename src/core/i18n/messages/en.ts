@@ -1051,6 +1051,8 @@ commandPalette: {
       kindSubagent: 'Subagent',
       kindDream: 'Dream',
       dreamTitle: 'Memory Dream',
+      dreamPoolUser: 'About you',
+      dreamPoolAgent: 'Assistant self-model',
       triggerManual: 'Manual',
       triggerSchedule: 'Scheduled',
       openTask: 'Open task',

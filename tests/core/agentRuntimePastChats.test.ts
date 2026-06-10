@@ -698,11 +698,13 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).not.toContain('memory-user-pref');
   });
 
-  test('isolated memory mode injects only current-workspace memories', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-isolated-data-'));
+  test('the briefing injects one undivided pool regardless of origin workspace', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-pool-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-pool-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
+    // Memory is one self-model per principal — like a person, it is never partitioned by where
+    // it was learned. `originWorkspace` is provenance metadata only.
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-current-workspace',
       fact: 'use slate focus rings in the current workspace',
@@ -746,7 +748,6 @@ describe('agent runtime past chats integration', () => {
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,
-          memoryIsolation: 'isolated',
           additionalSkillDirectories: [],
           additionalAgentDirectories: [],
         }),
@@ -760,15 +761,16 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(contextText).not.toContain('memory-current-workspace');
     expect(contextText).toContain('use slate focus rings in the current workspace');
+    expect(contextText).toContain('use amber focus rings in the other workspace');
+    // Storage scaffolding (ids) stays hidden.
+    expect(contextText).not.toContain('memory-current-workspace');
     expect(contextText).not.toContain('memory-other-workspace');
-    expect(contextText).not.toContain('use amber focus rings in the other workspace');
   });
 
-  test('recall tool respects isolated workspace and invalidated memory', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-isolated-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-isolated-data-'));
+  test('recall reads the whole pool across workspaces and excludes invalidated memory', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-pool-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-recall-pool-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
@@ -811,7 +813,7 @@ describe('agent runtime past chats integration', () => {
         ], { stopReason: 'toolUse' }),
         (context) => {
           contexts.push(textFromContext(context));
-          return fauxAssistantMessage(fauxText('Only the current workspace memory applies.'));
+          return fauxAssistantMessage(fauxText('Every active memory applies.'));
         },
       ],
       (_model, context) => {
@@ -839,7 +841,6 @@ describe('agent runtime past chats integration', () => {
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,
-          memoryIsolation: 'isolated',
           additionalSkillDirectories: [],
           additionalAgentDirectories: [],
         }),
@@ -848,7 +849,7 @@ describe('agent runtime past chats integration', () => {
     );
 
     const created = await runtime.createConversation();
-    await runtime.sendMessage(created.conversationId, 'Recall focus-ring memories for this workspace.');
+    await runtime.sendMessage(created.conversationId, 'Recall focus-ring memories.');
 
     const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
     const activePath = getAgentEventActivePath(replay);
@@ -864,20 +865,17 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(toolResults.map((message) => message.toolName)).toEqual(['recall']);
-    expect(recallResult.data?.total_entries).toBe(1);
-    expect(recallResult.data?.entries?.map((entry) => ({
-      memory_id: entry.memory_id,
-      fact: entry.fact,
-    }))).toEqual([{
-      memory_id: 'memory-current-recall',
-      fact: 'Current workspace recall fact mentions teal focus rings.',
-    }]);
-    expect(postRecallContext).toContain('memory-current-recall');
+    // The pool is one undivided self-model: every ACTIVE fact is reachable regardless of the
+    // workspace it was learned in; only the invalidated entry is excluded.
+    expect(recallResult.data?.total_entries).toBe(3);
+    expect(recallResult.data?.entries?.map((entry) => entry.memory_id).sort()).toEqual([
+      'memory-current-recall',
+      'memory-other-recall',
+      'memory-unscoped-recall',
+    ]);
     expect(postRecallContext).toContain('Current workspace recall fact mentions teal focus rings.');
-    expect(postRecallContext).not.toContain('memory-other-recall');
-    expect(postRecallContext).not.toContain('Other workspace recall fact mentions amber focus rings.');
-    expect(postRecallContext).not.toContain('memory-unscoped-recall');
-    expect(postRecallContext).not.toContain('Unscoped recall fact mentions violet focus rings.');
+    expect(postRecallContext).toContain('Other workspace recall fact mentions amber focus rings.');
+    expect(postRecallContext).toContain('Unscoped recall fact mentions violet focus rings.');
     expect(postRecallContext).not.toContain('memory-invalidated-recall');
     expect(postRecallContext).not.toContain('Invalidated recall fact mentions orange focus rings.');
   });
@@ -1100,7 +1098,7 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.lastCompleted?.trigger).toBe('manual');
   });
 
-  test('scheduled dream fires for enough new evidence and records an agent-anchored run', async () => {
+  test('scheduled dream fires for enough new evidence and records a principal-anchored run', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-auto-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-auto-data-'));
     roots.push(localRoot, dataRoot);
@@ -1155,8 +1153,9 @@ describe('agent runtime past chats integration', () => {
     await flushProjectionCoalescing();
 
     const store = new AgentEventStore(dataRoot);
-    // Scheduled dream consolidates conversation evidence into the user pool (the user-Dream),
-    // executed by the main agent so its run-meta stays agent-anchored.
+    // Scheduled dream consolidates conversation evidence into the user pool (the user-Dream).
+    // Its run is ANCHORED to the user principal — the pool it maintains — while the executing
+    // agent is recorded separately; run history and dream state are keyed by the same principal.
     const entries = await store.listMemoryEntries(USER_PRINCIPAL);
     const dreamState = await store.readDreamState(USER_PRINCIPAL);
     const runId = dreamState.lastCompleted?.runId;
@@ -1170,13 +1169,17 @@ describe('agent runtime past chats integration', () => {
     expect(dreamCalls).toBe(1);
     expect(entries.map((entry) => entry.fact)).toEqual(['User has a durable collaboration preference for concise evidence.']);
     expect(dreamState.lastCompleted?.trigger).toBe('schedule');
-    expect(runMeta?.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
+    expect(runMeta?.anchor).toEqual({ type: 'principal', principal: USER_PRINCIPAL });
+    expect(runMeta?.agentId).toBe('built-in:tenon:assistant');
     expect(runMeta?.kind).toBe('reflective');
+    const userRuns = await store.listPrincipalRunMetaProjections(USER_PRINCIPAL);
+    expect(userRuns.map((run) => run.id)).toContain(runId);
     expect(dreamTask).toMatchObject({
       id: `dream:${runId}`,
       kind: 'dream',
       status: 'completed',
       trigger: 'schedule',
+      principal: USER_PRINCIPAL,
       runId,
       processed: {
         totalMessageCount: 2,
@@ -1261,9 +1264,9 @@ describe('agent runtime past chats integration', () => {
     expect(secondRequest).not.toContain('Stable concise memory is preferred.');
   });
 
-  test('manual /dream only updates memory visible to the current isolation tier', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-isolated-data-'));
+  test('manual /dream consolidates over the whole pool regardless of origin workspace', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-pool-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-pool-data-'));
     roots.push(localRoot, dataRoot);
     const store = new AgentEventStore(dataRoot);
     await store.addMemoryEntry(USER_PRINCIPAL, {
@@ -1306,7 +1309,6 @@ describe('agent runtime past chats integration', () => {
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,
-          memoryIsolation: 'isolated',
           additionalSkillDirectories: [],
           additionalAgentDirectories: [],
         }),
@@ -1322,7 +1324,7 @@ describe('agent runtime past chats integration', () => {
               {
                 type: 'forget',
                 memory_id: 'memory-other-style',
-                reason: 'not visible in this isolated workspace',
+                reason: 'superseded preference',
               },
             ],
           })),
@@ -1347,8 +1349,9 @@ describe('agent runtime past chats integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(current?.fact).toBe('Current workspace prefers short answers.');
     expect(current?.sources.some((source) => source.conversationId === created.conversationId)).toBe(true);
-    expect(other?.status).toBe('active');
-    expect(other?.fact).toBe('Other workspace prefers terse answers.');
+    // The pool is one undivided self-model: consolidation can reshape every entry, including
+    // facts learned in another workspace — `originWorkspace` is provenance, not a write fence.
+    expect(other?.status).toBe('invalidated');
   });
 
   test('manual /dream treats same-key updates as no-ops but records completion', async () => {

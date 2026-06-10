@@ -398,8 +398,7 @@ interface AgentSessionState {
 
 interface AgentDreamMemoryExtractionTask {
   runId: string;
-  agentId: string;
-  /** The memory pool this Dream consolidates (the subject it models). */
+  /** The memory pool this Dream consolidates (the subject it models, and the run anchor). */
   principal: AgentPrincipal;
   trigger: AgentDreamTrigger;
   startedAt: number;
@@ -411,14 +410,14 @@ interface AgentDreamMemoryExtractionTask {
 
 interface AgentDreamMemoryExtractionBatch {
   span: DreamMemoryExtractionSpan;
+  /** Provenance only — the workspace the evidence came from; never a retrieval fence. */
   originWorkspace?: string;
-  originWorkspaceFilter?: string;
 }
 
 interface AgentDreamMemoryScope {
   readOnly: boolean;
+  /** Provenance tag for new entries — where this runtime works; never a retrieval fence. */
   originWorkspace?: string;
-  originWorkspaceFilter?: string;
 }
 
 interface AgentDreamRunResult {
@@ -465,7 +464,8 @@ export class AgentRuntime {
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextSessionId = 1;
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
-  private readonly dreamingAgentIds = new Set<string>();
+  /** Pools with a Dream in flight, keyed by `principalKey` — one Dream per pool at a time. */
+  private readonly dreamingPools = new Set<string>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSweepTail: Promise<void> = Promise.resolve();
@@ -1504,8 +1504,8 @@ export class AgentRuntime {
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
         getRuntimeSettings: () => this.getRuntimeSettings(),
-        buildMemoryReminder: (agentId, originWorkspace) => (
-          this.buildMemoryReminder(agentId, sessionRef.current, originWorkspace)
+        buildMemoryReminder: (agentId) => (
+          this.buildMemoryReminder(agentId, sessionRef.current)
         ),
         persistSubagentRun: (snapshot) => {
           const current = sessionRef.current;
@@ -1724,7 +1724,6 @@ export class AgentRuntime {
         input.memoryOwnerAgentId,
         () => input.sessionId,
         () => parentSessionRef.current,
-        input.memoryOriginWorkspace,
       ),
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
@@ -2536,76 +2535,59 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * One scheduled pass = one Dream per pool ([[agent-data-model]] §4: one writer, one subject,
+   * one activity layer each). Pools are independent: one pool throwing (e.g. a provider error)
+   * must not abort the rest of the pass. `runDreamMemoryExtractionTask` already records its own
+   * failures; the guard here only covers task-creation throws.
+   */
   private async fireDream(trigger: AgentDreamTrigger, now: Date): Promise<void> {
-    // The user-Dream (conversations → user pool) runs once per pass; the agent-Dream
-    // (runs → agent pool) runs per agent ([[agent-data-model]] §4). Each pool's Dream is
-    // isolated: one pool throwing (e.g. a provider error consolidating the user pool) must not
-    // abort the rest of the pass, or a single bad pool would silently starve every other pool's
-    // consolidation (review #4). `runDreamMemoryExtractionTask` already records `dream.completed`
-    // with a failed status on its own errors; this guard only covers task-creation throws.
-    await this.fireDreamPoolSafely(() => this.fireUserDream(trigger, now), 'user');
-    const agentIds = trigger === 'schedule'
-      ? await this.listDreamAgentIds()
-      : [this.agentIdentity.agentId];
-    for (const agentId of agentIds) {
-      await this.fireDreamPoolSafely(() => this.fireDreamForAgent(agentId, trigger, now), `agent ${agentId}`);
+    for (const principal of await this.listDreamPrincipals()) {
+      try {
+        await this.fireDreamForPool(principal, trigger, now);
+      } catch (error) {
+        console.warn(`Dream pass failed for ${principalKey(principal)}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 
-  /** Run one pool's Dream, swallowing+logging a throw so it cannot abort the rest of the pass. */
-  private async fireDreamPoolSafely(
-    run: () => Promise<AgentDreamRunResult | null>,
-    label: string,
-  ): Promise<void> {
-    try {
-      await run();
-    } catch (error) {
-      console.warn(`Dream pass failed for ${label}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  /** Every pool with a Dream: the user pool plus each known agent's pool. */
+  private async listDreamPrincipals(): Promise<AgentPrincipal[]> {
+    const agentIds = await this.listDreamAgentIds();
+    return [this.userPrincipal(), ...agentIds.map((agentId): AgentPrincipal => ({ type: 'agent', agentId }))];
   }
 
-  private async fireDreamForAgent(agentId: string, trigger: AgentDreamTrigger, now: Date): Promise<AgentDreamRunResult | null> {
-    if (this.dreamingAgentIds.has(agentId)) {
+  /** Run one pool's Dream, serialized per pool by `principalKey`. */
+  private async fireDreamForPool(
+    principal: AgentPrincipal,
+    trigger: AgentDreamTrigger,
+    now: Date,
+  ): Promise<AgentDreamRunResult | null> {
+    const guardKey = principalKey(principal);
+    if (this.dreamingPools.has(guardKey)) {
       return trigger === 'manual'
-        ? skippedDreamRunResult(agentId, trigger, now, 'Dream is already running for this agent.')
+        ? skippedDreamRunResult(this.agentIdentity.agentId, trigger, now, 'Dream is already running for this pool.')
         : null;
     }
-    this.dreamingAgentIds.add(agentId);
+    this.dreamingPools.add(guardKey);
     try {
-      const task = await this.createDreamMemoryExtractionTask(agentId, trigger, now);
+      const task = await this.createDreamMemoryExtractionTask(principal, trigger, now);
       if (!task) return null;
       return await this.runDreamMemoryExtractionTask(task);
     } finally {
-      this.dreamingAgentIds.delete(agentId);
-    }
-  }
-
-  private async fireUserDream(trigger: AgentDreamTrigger, now: Date): Promise<AgentDreamRunResult | null> {
-    const guardKey = principalKey(this.userPrincipal());
-    if (this.dreamingAgentIds.has(guardKey)) {
-      return trigger === 'manual'
-        ? skippedDreamRunResult(this.agentIdentity.agentId, trigger, now, 'The user Dream is already running.')
-        : null;
-    }
-    this.dreamingAgentIds.add(guardKey);
-    try {
-      const task = await this.createUserDreamMemoryExtractionTask(trigger, now);
-      if (!task) return null;
-      return await this.runDreamMemoryExtractionTask(task);
-    } finally {
-      this.dreamingAgentIds.delete(guardKey);
+      this.dreamingPools.delete(guardKey);
     }
   }
 
   /**
    * A manual /dream consolidates the current conversation into durable memory. Conversation
-   * evidence models the user ([[agent-data-model]] §4), so /dream writes the user pool — the
-   * complete conversation-consolidation. Agent self-models (run logs) consolidate on schedule,
-   * not on demand. Concurrency is handled by fireUserDream's own per-pool guard.
+   * evidence models the user ([[agent-data-model]] §4), so /dream fires the user pool's Dream —
+   * the complete conversation-consolidation. Agent self-models (run logs) consolidate on
+   * schedule, not on demand.
    */
   private async fireManualDream(now: Date): Promise<AgentDreamRunResult> {
     try {
-      return await this.fireUserDream('manual', now)
+      return await this.fireDreamForPool(this.userPrincipal(), 'manual', now)
         ?? skippedDreamRunResult(this.agentIdentity.agentId, 'manual', now, 'Dream is unavailable for the current memory/provider configuration.');
     } catch (error) {
       return {
@@ -2619,8 +2601,17 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * Build one pool's Dream task. A principal's Dream reads that principal's own activity layer
+   * ([[agent-data-model]] §4: one writer, one subject, one activity layer each): an agent-Dream
+   * models the agent's working self from its run log (execution); the user-Dream models the
+   * person from the conversations they are a member of (communication, both sides). Everything
+   * else — schedule gate, volume gate, batching, watermark — is the same machinery for every
+   * pool. Concurrent passes are safe: the store serializes by principalKey and the watermark
+   * skips already-consolidated evidence.
+   */
   private async createDreamMemoryExtractionTask(
-    agentId: string,
+    principal: AgentPrincipal,
     trigger: AgentDreamTrigger,
     now: Date,
   ): Promise<AgentDreamMemoryExtractionTask | null> {
@@ -2629,21 +2620,25 @@ export class AgentRuntime {
     if (memoryScope.readOnly) return null;
     if (!await this.getActiveProviderConfig()) return null;
 
-    const principal: AgentPrincipal = { type: 'agent', agentId };
     const dreamState = await this.getEventStore().readDreamState(principal);
     const scheduleDecision = shouldFireDateSchedule(DEFAULT_DREAM_SCHEDULE, now, dreamState.lastSuccessAt);
     if (trigger === 'schedule' && !scheduleDecision.shouldFire) return null;
 
     const runId = `dream-run-${randomUUID()}`;
-    // The agent-Dream models the agent's working self from its run log (execution).
-    // Conversation evidence (communication) is the user-Dream's input, not the agent's
-    // ([[agent-data-model]] §4: one writer, one subject, one activity layer each).
-    const conversationIds = await this.getEventStore().listConversationIds();
-    const agentRunInputs = await this.collectDreamAgentRunInputs(agentId, dreamState.watermark, conversationIds);
-    const evidenceSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, {
-      conversations: [],
-      agentRuns: agentRunInputs,
-    });
+    const evidence = principal.type === 'agent'
+      ? {
+          conversations: [],
+          agentRuns: await this.collectDreamAgentRunInputs(
+            principal.agentId,
+            dreamState.watermark,
+            await this.getEventStore().listConversationIds(),
+          ),
+        }
+      : {
+          conversations: await this.collectDreamConversationInputs(dreamState),
+          agentRuns: [],
+        };
+    const evidenceSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, evidence);
     const newVolume = evidenceSpan?.totalCharCount ?? 0;
     if (trigger === 'schedule' && newVolume < DREAM_MIN_VOLUME_CHARS) return null;
 
@@ -2652,20 +2647,12 @@ export class AgentRuntime {
       : null);
     if (!span) return null;
     const batches = evidenceSpan
-      ? this.buildDreamMemoryExtractionBatches(runId, memoryScope, {
-          conversations: [],
-          agentRuns: agentRunInputs,
-        })
-      : [{
-          span,
-          originWorkspace: memoryScope.originWorkspace,
-          originWorkspaceFilter: memoryScope.originWorkspaceFilter,
-        }];
+      ? this.buildDreamMemoryExtractionBatches(runId, memoryScope, evidence)
+      : [{ span, originWorkspace: memoryScope.originWorkspace }];
     if (batches.length === 0) return null;
 
     return {
       runId,
-      agentId,
       principal,
       trigger,
       startedAt: Date.now(),
@@ -2676,69 +2663,14 @@ export class AgentRuntime {
     };
   }
 
-  /**
-   * The user-Dream models the person from the conversations they are a member of
-   * (communication, both sides) and writes only the user pool ([[agent-data-model]] §4).
-   * It is the single writer of the user pool; the main agent is its executor, so the
-   * task's `agentId` (run-meta anchor) is the main agent while `principal` is the user.
-   * Concurrent passes are safe: the store serializes by principalKey and the watermark
-   * skips already-consolidated evidence.
-   */
-  private async createUserDreamMemoryExtractionTask(
-    trigger: AgentDreamTrigger,
-    now: Date,
-  ): Promise<AgentDreamMemoryExtractionTask | null> {
-    if (!this.dreamMemoryExtractionEnabled()) return null;
-    const memoryScope = await this.dreamMemoryScope();
-    if (memoryScope.readOnly) return null;
-    if (!await this.getActiveProviderConfig()) return null;
-
-    const principal = this.userPrincipal();
-    const dreamState = await this.getEventStore().readDreamState(principal);
-    const scheduleDecision = shouldFireDateSchedule(DEFAULT_DREAM_SCHEDULE, now, dreamState.lastSuccessAt);
-    if (trigger === 'schedule' && !scheduleDecision.shouldFire) return null;
-
-    const runId = `dream-run-${randomUUID()}`;
+  /** Conversation evidence for the user-Dream: new events in the user's member conversations. */
+  private async collectDreamConversationInputs(dreamState: AgentDreamState) {
     const conversationIds = await this.userMemberConversationIds();
-    const conversationInputs = await Promise.all(conversationIds.map(async (conversationId) => ({
+    return Promise.all(conversationIds.map(async (conversationId) => ({
       conversationId,
       events: await this.getEventStore().readEvents(conversationId),
       fromSeqExclusive: dreamState.watermark.conversations[conversationId]?.seq ?? 0,
     })));
-    const evidenceSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, {
-      conversations: conversationInputs,
-      agentRuns: [],
-    });
-    const newVolume = evidenceSpan?.totalCharCount ?? 0;
-    if (trigger === 'schedule' && newVolume < DREAM_MIN_VOLUME_CHARS) return null;
-
-    const span = evidenceSpan ?? (trigger === 'manual'
-      ? buildConsolidateOnlyDreamMemoryExtractionSpan(runId)
-      : null);
-    if (!span) return null;
-    const batches = evidenceSpan
-      ? this.buildDreamMemoryExtractionBatches(runId, memoryScope, {
-          conversations: conversationInputs,
-          agentRuns: [],
-        })
-      : [{
-          span,
-          originWorkspace: memoryScope.originWorkspace,
-          originWorkspaceFilter: memoryScope.originWorkspaceFilter,
-        }];
-    if (batches.length === 0) return null;
-
-    return {
-      runId,
-      agentId: this.agentIdentity.agentId,
-      principal,
-      trigger,
-      startedAt: Date.now(),
-      dueAt: scheduleDecision.dueAt?.getTime(),
-      span,
-      batches,
-      watermark: dreamWatermarkFromSpan(dreamState.watermark, span.sourceRanges),
-    };
   }
 
   /** Conversation ids the user principal is a member of (the user-Dream's evidence set). */
@@ -2784,10 +2716,11 @@ export class AgentRuntime {
       batches.push({
         span: conversationSpan,
         originWorkspace: memoryScope.originWorkspace,
-        originWorkspaceFilter: memoryScope.originWorkspaceFilter,
       });
     }
 
+    // Agent-run evidence still groups by the workspace each run happened in, so a new fact's
+    // provenance tag names where it was learned — grouping is for tagging, not partitioning.
     for (const group of groupDreamAgentRunInputsByOriginWorkspace(inputs.agentRuns)) {
       const span = buildDreamMemoryExtractionSpanFromEvidence(runId, {
         conversations: [],
@@ -2797,7 +2730,6 @@ export class AgentRuntime {
       batches.push({
         span,
         originWorkspace: group.originWorkspace ?? memoryScope.originWorkspace,
-        originWorkspaceFilter: group.originWorkspace ?? memoryScope.originWorkspaceFilter,
       });
     }
     return batches;
@@ -2869,7 +2801,7 @@ export class AgentRuntime {
       const providerConfig = await this.getActiveProviderConfig();
       if (!providerConfig) {
         return {
-          agentId: task.agentId,
+          agentId: this.agentIdentity.agentId,
           runId: task.runId,
           trigger: task.trigger,
           status: 'skipped',
@@ -2885,10 +2817,9 @@ export class AgentRuntime {
       const runtimeSettings = await this.getRuntimeSettings();
       const changes = emptyDreamChanges();
       for (const [index, batch] of task.batches.entries()) {
-        const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, {
-          limit: 50,
-          originWorkspace: batch.originWorkspaceFilter,
-        });
+        // Consolidation/dedup reads the WHOLE pool — memory is one undivided self-model per
+        // principal; `originWorkspace` is provenance on each entry, never a retrieval fence.
+        const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 50 });
         const request = buildDreamMemoryExtractionRequest({
           span: batch.span,
           existingMemories,
@@ -2902,16 +2833,13 @@ export class AgentRuntime {
           ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
           apiKey,
           maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
-          sessionId: `${task.agentId}:dream:${task.runId}:${index + 1}`,
+          sessionId: `${principalKey(task.principal)}:dream:${task.runId}:${index + 1}`,
         });
         if (response.stopReason === 'error' || response.stopReason === 'aborted') {
           throw new Error(response.errorMessage || 'Dream memory extraction failed.');
         }
         const actions = parseDreamMemoryActions(assistantMessageText(response));
-        const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, {
-          limit: 50,
-          originWorkspace: batch.originWorkspaceFilter,
-        });
+        const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 50 });
         addDreamChanges(changes, actions.length > 0
           ? await this.applyDreamMemoryActions(task, batch, actions, currentMemories)
           : emptyDreamChanges());
@@ -2933,7 +2861,7 @@ export class AgentRuntime {
       await this.writeDreamRunMeta(task, 'completed', model);
       this.clearSubagentMemoryReminderCaches();
       return {
-        agentId: task.agentId,
+        agentId: this.agentIdentity.agentId,
         runId: task.runId,
         trigger: task.trigger,
         status: 'completed',
@@ -2949,7 +2877,7 @@ export class AgentRuntime {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`Dream memory extraction skipped: ${message}`);
       return {
-        agentId: task.agentId,
+        agentId: this.agentIdentity.agentId,
         runId: task.runId,
         trigger: task.trigger,
         status: 'failed',
@@ -2966,12 +2894,14 @@ export class AgentRuntime {
     model: Model<Api>,
   ): Promise<void> {
     const timestamp = status === 'running' ? task.startedAt : Date.now();
-    const agentId = task.agentId as AgentRunMetaProjection['agentId'];
     await this.getEventStore().writeRunMeta({
       v: 1,
       id: task.runId,
-      agentId,
-      anchor: { type: 'agent', agentId },
+      // Executor vs subject: the runtime's main agent executes every Dream (`agentId`), but the
+      // run is ANCHORED to the principal whose pool it maintains — run history lives beside that
+      // principal's pool, keyed like its dream state ([[agent-data-model]] §4).
+      agentId: this.agentIdentity.agentId as AgentRunMetaProjection['agentId'],
+      anchor: { type: 'principal', principal: task.principal },
       kind: 'reflective',
       status,
       trigger: task.trigger === 'schedule'
@@ -2979,10 +2909,12 @@ export class AgentRuntime {
         : { type: 'manual' },
       fingerprint: {
         appVersion: electronAppVersion(),
+        // The Dream's prompt is the subject-framed extraction request — not the executing
+        // agent's system prompt, which never reaches a Dream completion call.
         promptHash: hashJson({
-          agentId: task.agentId,
           dream: 'memory',
-          systemPrompt: this.agentIdentity.systemPrompt,
+          principal: principalKey(task.principal),
+          subject: task.principal.type,
         }),
         toolSchemaHash: 'no-tools',
         skillBindings: [],
@@ -3002,29 +2934,21 @@ export class AgentRuntime {
 
   private async refreshAgentTaskCache(): Promise<void> {
     const store = this.getEventStore();
-    const agentIds = await this.listDreamAgentIds();
-    // A Dream's completion record lives in the pool it wrote (agent pools and the user pool),
-    // but its run-meta is anchored to the executing agent. Index completions by runId across all
-    // pools so a user-Dream run (anchored to the main agent) is enriched from the user pool.
-    const dreamStates = await Promise.all([
-      ...agentIds.map((agentId) => store.readDreamState({ type: 'agent', agentId })),
-      store.readDreamState(this.userPrincipal()),
-    ]);
-    const lastCompletedByRunId = new Map<string, NonNullable<AgentDreamState['lastCompleted']>>();
-    for (const state of dreamStates) {
-      if (state.lastCompleted) lastCompletedByRunId.set(state.lastCompleted.runId, state.lastCompleted);
-    }
-    const runGroups = await Promise.all(agentIds.map((agentId) => (
-      store.listAgentRunMetaProjections(agentId as AgentRunMetaProjection['agentId'], { limit: 50 })
-    )));
-    this.agentTaskCache = runGroups
-      .flatMap((runs): AgentRenderTaskEntity[] => (
-        runs.flatMap((run): AgentRenderTaskEntity[] => {
-          const task = dreamTaskFromRunMeta(run, lastCompletedByRunId.get(run.id) ?? null);
-          return task ? [task] : [];
-        })
-      ))
-      .sort(compareRenderTasks);
+    // A pool's reflective-run history and its dream state are keyed by the same principal, so
+    // each pool's tasks join locally — no cross-pool indexing.
+    const principals = await this.listDreamPrincipals();
+    const taskGroups = await Promise.all(principals.map(async (principal): Promise<AgentRenderTaskEntity[]> => {
+      const [runs, dreamState] = await Promise.all([
+        store.listPrincipalRunMetaProjections(principal, { limit: 50 }),
+        store.readDreamState(principal),
+      ]);
+      return runs.flatMap((run): AgentRenderTaskEntity[] => {
+        const completed = dreamState.lastCompleted?.runId === run.id ? dreamState.lastCompleted : null;
+        const task = dreamTaskFromRunMeta(run, completed);
+        return task ? [task] : [];
+      });
+    }));
+    this.agentTaskCache = taskGroups.flat().sort(compareRenderTasks);
   }
 
   private emitAgentTaskProjection(lastEventType: string) {
@@ -3432,20 +3356,18 @@ export class AgentRuntime {
     agentId: string,
     _getSessionId: () => string,
     getSession: () => AgentSessionState | null,
-    originWorkspace?: string,
   ): AgentRecallToolRuntime {
     const reader: AgentPrincipal = { type: 'agent', agentId };
     return {
       recall: async (options) => {
         const session = getSession();
-        const filter = this.memoryOriginWorkspaceFilter(session, originWorkspace);
         const limit = clampRecallLimit(options.limit);
         // Cross-principal read by membership ([[agent-data-model]] §4): the reader searches its
         // own pool and — only when the user is a member of its conversation — the shared user
-        // pool. The user pool is workspace-independent (it is the user's model, not a per-workspace
-        // fact), so it is exempt from the reader's `isolated`-mode workspace filter.
+        // pool. Each pool is one undivided self-model; `originWorkspace` is provenance on the
+        // entries, never a retrieval fence.
         const ownResult = await this.getEventStore().queryMemoryEntries(reader, {
-          query: options.query, limit, originWorkspace: filter,
+          query: options.query, limit,
         });
         const userResult = this.conversationIncludesUser(session)
           ? await this.getEventStore().queryMemoryEntries(this.userPrincipal(), { query: options.query, limit })
@@ -3842,12 +3764,9 @@ export class AgentRuntime {
 
   private async dreamMemoryScope(): Promise<AgentDreamMemoryScope> {
     const runtimeSettings = await this.getRuntimeSettings();
-    const isolation = runtimeSettings.memoryIsolation ?? 'global';
-    if (isolation === 'read-only-global') return { readOnly: true };
-    if (isolation === 'isolated') {
-      const originWorkspace = this.memoryOriginWorkspace() ?? '__no_workspace__';
-      return { readOnly: false, originWorkspace, originWorkspaceFilter: originWorkspace };
-    }
+    // 'read-only-global' pauses Dream writes (stop learning); otherwise memory is one undivided
+    // pool per principal — `originWorkspace` only tags new entries with provenance.
+    if ((runtimeSettings.memoryIsolation ?? 'global') === 'read-only-global') return { readOnly: true };
     return {
       readOnly: false,
       originWorkspace: this.memoryOriginWorkspace() ?? undefined,
@@ -3857,11 +3776,9 @@ export class AgentRuntime {
   private async buildMemoryReminder(
     agentId: string,
     session: AgentSessionState | null,
-    originWorkspace?: string,
   ): Promise<string | null> {
     try {
       const reader: AgentPrincipal = { type: 'agent', agentId };
-      const originWorkspaceFilter = this.memoryOriginWorkspaceFilter(session, originWorkspace);
       // Resident selection: the briefing is the distilled-memory prefix ([[agent-memory-model]]
       // §2), so it lists recent active entries rather than query-specific hits — those arrive
       // on demand through the `recall` tool ([5] tail). Keeping selection query-independent
@@ -3870,14 +3787,10 @@ export class AgentRuntime {
       //
       // Membership read ([[agent-data-model]] §4): the reader sees its own pool (`<self>`) plus
       // the co-member user pool (`<principal>`) when the user is a member of its conversation.
-      // The user pool is workspace-independent (the user's model, not per-workspace facts), so it
-      // is exempt from the reader's `isolated`-mode workspace filter. Agent↔agent co-member pools
-      // are deferred (fork 1).
+      // Each pool is one undivided self-model — like a person, a principal never partitions its
+      // own memory by where it works. Agent↔agent co-member pools are deferred (fork 1).
       const [selfEntries, userEntries] = await Promise.all([
-        this.getEventStore().listMemoryEntries(reader, {
-          limit: MEMORY_BRIEFING_MAX_ENTRIES,
-          originWorkspace: originWorkspaceFilter,
-        }),
+        this.getEventStore().listMemoryEntries(reader, { limit: MEMORY_BRIEFING_MAX_ENTRIES }),
         this.conversationIncludesUser(session)
           ? this.getEventStore().listMemoryEntries(this.userPrincipal(), { limit: MEMORY_BRIEFING_MAX_ENTRIES })
           : Promise.resolve([]),
@@ -3898,20 +3811,7 @@ export class AgentRuntime {
     }
   }
 
-  private memoryIsolation(session: AgentSessionState): AgentRuntimeSettings['memoryIsolation'] {
-    return session.runtimeSettings.memoryIsolation ?? 'global';
-  }
-
-  private memoryOriginWorkspaceFilter(session: AgentSessionState | null, originWorkspace?: string): string | undefined {
-    if (!session || this.memoryIsolation(session) !== 'isolated') return undefined;
-    return originWorkspace ?? this.memoryOriginWorkspaceForSession(session);
-  }
-
-  private memoryOriginWorkspaceForSession(session: AgentSessionState): string | undefined {
-    if (this.memoryIsolation(session) === 'global') return this.memoryOriginWorkspace() ?? undefined;
-    return this.memoryOriginWorkspace() ?? '__no_workspace__';
-  }
-
+  /** Provenance tag for new memory entries — where this runtime works; never a retrieval fence. */
   private memoryOriginWorkspace(): string | undefined {
     return memoryWorkspaceIdForRoot(this.options.localFileRoot);
   }
@@ -6223,7 +6123,7 @@ function dreamTaskFromRunMeta(
   run: AgentRunMetaProjection,
   completed: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
 ): AgentRenderDreamTaskEntity | null {
-  if (run.anchor.type !== 'agent' || run.kind !== 'reflective') return null;
+  if (run.anchor.type !== 'principal' || run.kind !== 'reflective') return null;
   const trigger = dreamTaskTrigger(run);
   if (!trigger) return null;
   const status = renderTaskStatusFromRunStatus(run.status);
@@ -6232,6 +6132,7 @@ function dreamTaskFromRunMeta(
     kind: 'dream',
     status,
     trigger,
+    principal: run.anchor.principal,
     startedAt: run.createdAt,
     updatedAt: run.updatedAt,
     completedAt: status === 'running' ? undefined : run.updatedAt,

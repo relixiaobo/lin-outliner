@@ -782,7 +782,7 @@ describe('agent event store', () => {
     });
   });
 
-  test('leaves agent-anchored runs out of a conversation run index rebuild', async () => {
+  test('leaves principal-anchored runs out of a conversation run index rebuild', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-agent-anchor';
       const runId = 'run-agent-anchor';
@@ -795,7 +795,7 @@ describe('agent event store', () => {
         v: 1,
         id: runId,
         agentId: 'built-in:tenon:assistant',
-        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
         kind: 'scheduled',
         status: 'completed',
         trigger: { type: 'system' },
@@ -821,7 +821,7 @@ describe('agent event store', () => {
     });
   });
 
-  test('leaves live-appended agent-anchored runs out of the conversation run index', async () => {
+  test('leaves live-appended principal-anchored runs out of the conversation run index', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-live-agent-anchor';
       const runId = 'run-live-agent-anchor';
@@ -831,7 +831,7 @@ describe('agent event store', () => {
           ...base(sessionId, 2, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
-          anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
           kind: 'scheduled',
           trigger: { type: 'system' },
           fingerprint: {
@@ -848,9 +848,9 @@ describe('agent event store', () => {
       const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
       expect(runRaw).toContain('run.started');
       const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
-        anchor: { type: string; agentId: string };
+        anchor: { type: string };
       };
-      expect(runMeta.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
+      expect(runMeta.anchor).toEqual({ type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } });
 
       const index = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
@@ -1178,13 +1178,13 @@ describe('agent event store', () => {
     });
   });
 
-  test('persists agent-anchored reflective run meta for Dream runs', async () => {
+  test('persists principal-anchored reflective run meta for Dream runs', async () => {
     await withStore(async (store) => {
-      await store.writeRunMeta({
+      const writeDreamMeta = (id: string, principal: AgentPrincipal) => store.writeRunMeta({
         v: 1,
-        id: 'dream-run-1',
+        id,
         agentId: 'built-in:tenon:assistant',
-        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        anchor: { type: 'principal', principal },
         kind: 'reflective',
         status: 'completed',
         trigger: { type: 'schedule', schedule: '2026-01-01T03:00 RRULE:FREQ=DAILY', dueAt: 1_800_000_000_000 },
@@ -1200,15 +1200,26 @@ describe('agent event store', () => {
         updatedAt: 120,
         latestSeq: 0,
       });
+      const agent: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+      const user: AgentPrincipal = { type: 'user', userId: 'local-user' };
+      await writeDreamMeta('dream-run-1', agent);
+      await writeDreamMeta('dream-run-user', user);
 
       await expect(store.readRunMetaProjection('dream-run-1')).resolves.toMatchObject({
         id: 'dream-run-1',
-        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        anchor: { type: 'principal', principal: agent },
         kind: 'reflective',
         trigger: { type: 'schedule' },
       });
-      await expect(store.listAgentRunMetaProjections('built-in:tenon:assistant')).resolves.toMatchObject([{
+      // Each principal's run index lists only the runs maintaining ITS pool — the executor
+      // (agentId) does not leak the user-Dream into the agent's run history.
+      await expect(store.listPrincipalRunMetaProjections(agent)).resolves.toMatchObject([{
         id: 'dream-run-1',
+        kind: 'reflective',
+        status: 'completed',
+      }]);
+      await expect(store.listPrincipalRunMetaProjections(user)).resolves.toMatchObject([{
+        id: 'dream-run-user',
         kind: 'reflective',
         status: 'completed',
       }]);

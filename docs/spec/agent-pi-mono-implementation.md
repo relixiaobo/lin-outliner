@@ -642,10 +642,11 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   cannot pass facts to save, choose a different agent, or write memory directly.
   Dream reads raw conversation/run events since its per-conversation watermark,
   appends scoped `memory.entry_*` events with provenance, records
-  `dream.completed` in the agent memory log, and writes an agent-anchored
-  reflective run meta entry. Manual `/dream` and foreground `dream` tool
-  triggers also write a conversation-side `dream.finished` marker so the chat
-  stream shows running/completed feedback.
+  `dream.completed` in the pool's memory log, and writes a principal-anchored
+  reflective run meta entry (anchored to the pool the Dream maintains; the
+  executing agent is recorded separately). Manual `/dream` and foreground
+  `dream` tool triggers also write a conversation-side `dream.finished` marker
+  so the chat stream shows running/completed feedback.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

@@ -174,7 +174,7 @@ export interface AgentSubagentRuntimeHost {
   getParentMessages(): AgentMessage[];
   getParentSystemPrompt(): string;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
-  buildMemoryReminder(agentId: string, originWorkspace?: string): Promise<string | null>;
+  buildMemoryReminder(agentId: string): Promise<string | null>;
   persistSubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
   notifySubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
   persistToolOutputPayload(
@@ -618,7 +618,7 @@ export class AgentSubagentRuntime {
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
-        buildMemoryReminder: (agentId, originWorkspace) => this.host.buildMemoryReminder(agentId, originWorkspace),
+        buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
         persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
         notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -904,11 +904,11 @@ export class AgentSubagentRuntime {
   }
 
   private async runMemoryReminder(run: AgentRunRecord): Promise<string | null> {
-    // The briefing is resident (query-independent), so the cache key is just owner + workspace —
+    // The briefing is resident (query-independent), so the cache key is just the memory owner —
     // it stays warm across a long subagent run instead of thrashing on per-turn query text.
-    const key = JSON.stringify([run.memoryOwnerAgentId, run.memoryOriginWorkspace ?? null]);
+    const key = run.memoryOwnerAgentId;
     if (run.memoryReminderCache?.key === key) return run.memoryReminderCache.text;
-    const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId, run.memoryOriginWorkspace);
+    const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId);
     run.memoryReminderCache = { key, text };
     return text;
   }
@@ -1035,7 +1035,7 @@ export class AgentSubagentRuntime {
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
-        buildMemoryReminder: (agentId, originWorkspace) => this.host.buildMemoryReminder(agentId, originWorkspace),
+        buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
         persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
         notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (

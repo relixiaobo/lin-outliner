@@ -763,7 +763,13 @@ export interface AgentMemoryEntryView {
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';
-export type AgentMemoryIsolation = 'global' | 'isolated' | 'read-only-global';
+/**
+ * Memory is one undivided pool per principal — like a person, a principal never partitions its
+ * own memory by where it works ('isolated' was removed; `originWorkspace` is provenance metadata
+ * only, never a retrieval fence). 'read-only-global' pauses Dream writes (stop learning) while
+ * reads stay global.
+ */
+export type AgentMemoryIsolation = 'global' | 'read-only-global';
 
 export interface AgentRuntimeSettings {
   permissionMode: AgentPermissionMode;

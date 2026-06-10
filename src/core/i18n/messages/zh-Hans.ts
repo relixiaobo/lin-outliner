@@ -962,6 +962,8 @@ commandPalette: {
       kindSubagent: '子智能体',
       kindDream: 'Dream',
       dreamTitle: '记忆 Dream',
+      dreamPoolUser: '关于你',
+      dreamPoolAgent: '助手自我模型',
       triggerManual: '手动',
       triggerSchedule: '计划',
       openTask: '打开任务',

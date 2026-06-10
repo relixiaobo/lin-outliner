@@ -44,6 +44,9 @@ function taskTitle(task: AgentTaskEntry, labels: Messages['agent']['task']): str
 function taskMetaParts(task: AgentTaskEntry, labels: Messages['agent']['task'], locale: string): string[] {
   if (task.kind === 'dream') {
     return [
+      // Whose pool this Dream maintains (run anchor subject): the user profile or an agent
+      // self-model — one pass runs several Dreams, so the panel labels them apart.
+      task.principal.type === 'user' ? labels.dreamPoolUser : labels.dreamPoolAgent,
       task.trigger === 'schedule' ? labels.triggerSchedule : labels.triggerManual,
       task.processed ? labels.messages({ count: task.processed.totalMessageCount }) : null,
       task.changes ? labels.memoryChanges({ count: task.changes.added + task.changes.updated + task.changes.forgotten }) : null,

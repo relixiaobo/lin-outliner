@@ -224,6 +224,7 @@ describe('agent subagent UI', () => {
       kind: 'dream',
       status: 'completed',
       trigger: 'manual',
+      principal: { type: 'user', userId: 'local-user' },
       startedAt: 100,
       updatedAt: 150,
       completedAt: 150,
@@ -248,7 +249,8 @@ describe('agent subagent UI', () => {
     expect(rendered.container.textContent).toContain('3 messages');
     expect(rendered.container.textContent).toContain('1 memory change');
     const meta = rendered.container.querySelector('.agent-task-meta');
-    expect(meta?.textContent).toContain('Manual · 3 messages · 1 memory change');
+    // The leading part labels whose pool this Dream maintains (the run anchor principal).
+    expect(meta?.textContent).toContain('About you · Manual · 3 messages · 1 memory change');
     expect(meta?.childElementCount).toBe(0);
     expect(rendered.container.querySelector('[aria-label="Open task"]')).toBeNull();
     expect(openedSubagentId).toBeNull();

@@ -2085,16 +2085,18 @@ created it. Conversation sources carry `conversationId` plus optional
 `subagentRunId`/`runId`, synthetic transcript `messageRange`, optional
 `parentToolCallId`, and the transcript payload id as `eventId`. Evidence reads
 for agent-run sources are payload-bound: if `eventId` is present, the runtime
-reads that exact transcript payload instead of the run's current payload. Runtime
-setting `agent.runtime.memoryIsolation` controls recall visibility:
+reads that exact transcript payload instead of the run's current payload.
 
-- `global` (default): recall can read the reader's full active memory pool.
-- `isolated`: recall reads only entries whose `originWorkspace` matches the
-  current workspace.
-- `read-only-global`: recall reads the global active memory pool. The foreground
-  tool surface is read-only in every mode. Runtime-owned Dream extraction also
-  skips writes in this mode, so facts learned in the workspace do not enter the
-  global memory pool.
+A pool is **one undivided self-model** — like a person, a principal never
+partitions its own memory by where it works. `originWorkspace` on an entry is
+provenance metadata (where the fact was learned), never a retrieval fence: the
+briefing, `recall`, and Dream consolidation always read the whole pool. Runtime
+setting `agent.runtime.memoryIsolation` has two values:
+
+- `global` (default): normal reads and Dream writes.
+- `read-only-global`: reads stay global; runtime-owned Dream extraction skips
+  writes (pause learning). The foreground tool surface is read-only in every
+  mode.
 
 Reads are **cross-principal by conversation membership**: both the resident
 briefing and `recall` surface the reader's own pool plus every co-member
@@ -2121,9 +2123,13 @@ skips thin evidence below its minimum-volume gate; it fires the user-Dream once
 and the agent-Dream per agent. Manual `/dream` consolidates the conversation into
 the user pool (the complete conversation-consolidation; agent self-models
 consolidate on schedule) and bypasses the thin-evidence gate, running a
-consolidate-only pass when there is no new evidence. The user-Dream is executed
-by the main agent (its run-meta stays agent-anchored) and is the single writer of
-the user pool — concurrent passes are safe because the store serializes by
+consolidate-only pass when there is no new evidence. A Dream run is **anchored to
+the principal whose pool it maintains** (`anchor: { type: 'principal', principal }`),
+while the executing agent (the runtime's main agent, for every Dream) is recorded
+separately on `AgentRunMeta.agentId` — executor and subject are different
+questions and different fields. Each principal's reflective-run index lives
+beside its pool, so run history and dream state join locally by the same
+principal key; concurrent passes are safe because the store serializes by
 `principalKey` and the per-conversation watermark skips already-consolidated
 evidence. The foreground `dream` tool is permission-gated and trigger-only: the
 model can ask the runtime to run Dream, but it cannot provide facts, select a
@@ -2134,7 +2140,8 @@ visible memory entries. It returns structured add/update/forget proposals only;
 the runtime performs dedupe/scope checks, appends `memory.entry_*` events with
 source provenance, records `dream.completed`, advances per-conversation
 watermarks and per-agent-run transcript watermarks, and projects foreground and
-owner-anchored Dream runs as read-only task-panel rows. Manual `/dream` and
+principal-anchored Dream runs as read-only task-panel rows (labelled with the
+pool they maintain — the user profile or an agent self-model). Manual `/dream` and
 foreground `dream` tool triggers also write a conversation-side `dream.finished`
 marker so the chat stream shows running/completed feedback.
 Per-agent-run watermarks bind `messageCount` to a transcript `payloadId`; if the
@@ -2153,10 +2160,9 @@ subagent transcript. A fork subagent keeps the parent agent as both execution
 identity and memory owner; its sidechain transcript can become Dream evidence for
 the parent, but Dream uses the persisted fork evidence boundary instead of
 scanning marker text. Legacy fork transcripts without a persisted boundary are
-skipped rather than replayed from index 0. In isolated memory mode, fresh
-subagent reminders, recall, and Dream writes use the called agent definition's
-origin workspace. Agent-definition `tools` remain an allow-list: `recall` is not
-injected into a fresh subagent that explicitly omits it.
+skipped rather than replayed from index 0. Agent-definition `tools` remain an
+allow-list: `recall` is not injected into a fresh subagent that explicitly omits
+it.
 
 Each normal user turn receives a bounded `<memory>` briefing built from the
 active projection (storage representation ≠ injection representation: the assembly

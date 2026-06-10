@@ -32,7 +32,7 @@ import type {
   AgentMemorySource,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { appendAgentEventToReplayState, conversationIdOfRun, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
+import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -190,9 +190,13 @@ interface AgentConversationRunIndex {
   latestSeqByRunId: Record<string, number>;
 }
 
-interface AgentRunIndex {
+/**
+ * Derived index of the reflective runs anchored to one principal (the runs maintaining that
+ * principal's pool). Lives in the principal's pool directory; rebuilt from `runs/` on miss.
+ */
+interface AgentPrincipalRunIndex {
   v: 1;
-  agentId: string;
+  principalKey: string;
   runIds: string[];
   updatedAtByRunId: Record<string, number>;
 }
@@ -274,13 +278,12 @@ export class AgentEventStore {
     };
   }
 
-  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string; runIndexPath: string } {
+  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string } {
     const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
     return {
       agentDir,
       identityPath: path.join(agentDir, AGENT_IDENTITY_FILE),
       memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
-      runIndexPath: path.join(agentDir, AGENT_RUN_INDEX_FILE),
     };
   }
 
@@ -290,11 +293,17 @@ export class AgentEventStore {
    * gets a dedicated `principals/user-<userId>/memory/` pool. The pool is the
    * subject's self-model — see [[agent-data-model]] §4.
    */
-  memoryPaths(principal: AgentPrincipal): { poolDir: string; memoryEventsPath: string } {
+  memoryPaths(principal: AgentPrincipal): { poolDir: string; memoryEventsPath: string; runIndexPath: string } {
     const poolDir = principal.type === 'agent'
       ? this.agentPaths(principal.agentId).agentDir
       : path.join(this.rootDir, 'principals', `user-${encodeAgentDirName(principal.userId)}`);
-    return { poolDir, memoryEventsPath: path.join(poolDir, 'memory', RUN_EVENT_LOG_FILE) };
+    return {
+      poolDir,
+      memoryEventsPath: path.join(poolDir, 'memory', RUN_EVENT_LOG_FILE),
+      // The derived index of reflective runs maintaining this pool — lives beside the pool, so
+      // run history and dream state are keyed by the same principal (no cross-pool join).
+      runIndexPath: path.join(poolDir, AGENT_RUN_INDEX_FILE),
+    };
   }
 
   async appendEvents(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
@@ -515,17 +524,18 @@ export class AgentEventStore {
     return this.readRunMeta(runId);
   }
 
-  async listAgentRunMetaProjections(
-    agentId: string,
+  /** Reflective runs anchored to one principal (the runs maintaining that principal's pool). */
+  async listPrincipalRunMetaProjections(
+    principal: AgentPrincipal,
     options: { limit?: number } = {},
   ): Promise<AgentRunMetaProjection[]> {
     await this.ensureStorageLayout();
-    const index = await this.ensureAgentRunIndex(agentId);
+    const index = await this.ensurePrincipalRunIndex(principal);
     const limit = Math.max(0, Math.min(100, Math.trunc(options.limit ?? 50)));
     const metas: AgentRunMetaProjection[] = [];
     for (const runId of index.runIds) {
       const meta = await this.readRunMeta(runId);
-      if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+      if (!meta || meta.anchor.type !== 'principal' || !samePrincipal(meta.anchor.principal, principal)) continue;
       metas.push(meta);
     }
     return metas
@@ -677,20 +687,21 @@ export class AgentEventStore {
 
   async listMemoryEntries(
     principal: AgentPrincipal,
-    options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
+    options: { includeInvalidated?: boolean; limit?: number; query?: string } = {},
   ): Promise<AgentMemoryEntry[]> {
     return (await this.queryMemoryEntries(principal, options)).entries;
   }
 
+  // A pool is one undivided self-model: no workspace filter here by design — `originWorkspace`
+  // on an entry is provenance metadata, never a retrieval fence.
   async queryMemoryEntries(
     principal: AgentPrincipal,
-    options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
+    options: { includeInvalidated?: boolean; limit?: number; query?: string } = {},
   ): Promise<{ entries: AgentMemoryEntry[]; totalEntries: number }> {
     await this.ensureStorageLayout();
     const projection = await this.getMemoryProjection(principal);
     const entries = rankMemoryEntries([...projection.entries.values()]
-      .filter((entry) => options.includeInvalidated || entry.status === 'active')
-      .filter((entry) => !options.originWorkspace || entry.originWorkspace === options.originWorkspace),
+      .filter((entry) => options.includeInvalidated || entry.status === 'active'),
       options.query);
     return {
       entries: entries.slice(0, clampMemoryLimit(options.limit)),
@@ -917,10 +928,10 @@ export class AgentEventStore {
     return this.rebuildConversationRunIndex(sessionId);
   }
 
-  private async ensureAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
-    const index = await this.readAgentRunIndex(agentId);
+  private async ensurePrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex> {
+    const index = await this.readPrincipalRunIndex(principal);
     if (index) return index;
-    return this.rebuildAgentRunIndex(agentId);
+    return this.rebuildPrincipalRunIndex(principal);
   }
 
   private async conversationDirExists(sessionId: string): Promise<boolean> {
@@ -963,7 +974,7 @@ export class AgentEventStore {
     return index;
   }
 
-  private async rebuildAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
+  private async rebuildPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex> {
     const updatedAtByRunId: Record<string, number> = {};
     const paths = this.paths('__placeholder__');
     try {
@@ -973,7 +984,7 @@ export class AgentEventStore {
         const runDir = path.join(paths.runsDir, entry.name);
         try {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
-          if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+          if (!meta || meta.anchor.type !== 'principal' || !samePrincipal(meta.anchor.principal, principal)) continue;
           updatedAtByRunId[meta.id] = Math.max(updatedAtByRunId[meta.id] ?? 0, meta.updatedAt);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
@@ -987,10 +998,10 @@ export class AgentEventStore {
     const runIds = Object.keys(updatedAtByRunId).sort((left, right) => (
       updatedAtByRunId[right]! - updatedAtByRunId[left]! || left.localeCompare(right)
     ));
-    const index: AgentRunIndex = { v: 1, agentId, runIds, updatedAtByRunId };
-    const agentPaths = this.agentPaths(agentId);
-    await mkdir(agentPaths.agentDir, { recursive: true });
-    await atomicWriteFile(agentPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    const index: AgentPrincipalRunIndex = { v: 1, principalKey: principalKey(principal), runIds, updatedAtByRunId };
+    const poolPaths = this.memoryPaths(principal);
+    await mkdir(poolPaths.poolDir, { recursive: true });
+    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
     return index;
   }
 
@@ -1062,10 +1073,10 @@ export class AgentEventStore {
     }
   }
 
-  private async readAgentRunIndex(agentId: string): Promise<AgentRunIndex | null> {
+  private async readPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex | null> {
     try {
-      const raw = await readFile(this.agentPaths(agentId).runIndexPath, 'utf8');
-      return normalizeAgentRunIndex(JSON.parse(raw), agentId);
+      const raw = await readFile(this.memoryPaths(principal).runIndexPath, 'utf8');
+      return normalizePrincipalRunIndex(JSON.parse(raw), principalKey(principal));
     } catch (error) {
       if (isNotFoundError(error)) return null;
       if (error instanceof SyntaxError) return null;
@@ -1078,8 +1089,8 @@ export class AgentEventStore {
     if (conversationId) {
       await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq);
     }
-    if (meta.anchor.type === 'agent') {
-      await this.updateAgentRunIndex(meta.anchor.agentId, meta.id, meta.updatedAt);
+    if (meta.anchor.type === 'principal') {
+      await this.updatePrincipalRunIndex(meta.anchor.principal, meta.id, meta.updatedAt);
     }
   }
 
@@ -1099,13 +1110,13 @@ export class AgentEventStore {
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
   }
 
-  private async updateAgentRunIndex(agentId: string, runId: string, updatedAt: number) {
-    const paths = this.agentPaths(agentId);
-    const existing = await this.ensureAgentRunIndex(agentId);
+  private async updatePrincipalRunIndex(principal: AgentPrincipal, runId: string, updatedAt: number) {
+    const poolPaths = this.memoryPaths(principal);
+    const existing = await this.ensurePrincipalRunIndex(principal);
     const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-    const index: AgentRunIndex = {
+    const index: AgentPrincipalRunIndex = {
       v: 1,
-      agentId,
+      principalKey: principalKey(principal),
       runIds,
       updatedAtByRunId: {
         ...existing.updatedAtByRunId,
@@ -1115,8 +1126,8 @@ export class AgentEventStore {
     index.runIds.sort((left, right) => (
       index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
     ));
-    await mkdir(paths.agentDir, { recursive: true });
-    await atomicWriteFile(paths.runIndexPath, `${JSON.stringify(index)}\n`);
+    await mkdir(poolPaths.poolDir, { recursive: true });
+    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
   }
 
   private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
@@ -1125,7 +1136,7 @@ export class AgentEventStore {
     if (!latest) return null;
     const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
-    const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? started.anchor?.agentId : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
+    const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? (started.anchor ? agentIdOfRunAnchor(started.anchor) : undefined) : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
     const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, sessionId);
     const meta: AgentRunMetaProjection = {
       v: 1,
@@ -1937,8 +1948,8 @@ function normalizeConversationRunIndex(value: unknown): AgentConversationRunInde
   };
 }
 
-function normalizeAgentRunIndex(value: unknown, agentId: string): AgentRunIndex | null {
-  if (!isRecord(value) || value.v !== 1 || value.agentId !== agentId || !Array.isArray(value.runIds)) return null;
+function normalizePrincipalRunIndex(value: unknown, expectedPrincipalKey: string): AgentPrincipalRunIndex | null {
+  if (!isRecord(value) || value.v !== 1 || value.principalKey !== expectedPrincipalKey || !Array.isArray(value.runIds)) return null;
   const updatedAtByRunId = isRecord(value.updatedAtByRunId)
     ? Object.fromEntries(Object.entries(value.updatedAtByRunId).filter((entry): entry is [string, number] => (
         typeof entry[1] === 'number' && Number.isFinite(entry[1])
@@ -1950,7 +1961,7 @@ function normalizeAgentRunIndex(value: unknown, agentId: string): AgentRunIndex 
     ));
   return {
     v: 1,
-    agentId,
+    principalKey: expectedPrincipalKey,
     runIds,
     updatedAtByRunId,
   };
@@ -1993,10 +2004,12 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
 
 function normalizeRunAnchor(value: unknown, fallbackAgentId?: string): AgentRunAnchor | null {
   if (!isRecord(value)) return null;
+  if (value.type === 'principal' && isAgentPrincipal(value.principal)) {
+    return { type: 'principal', principal: value.principal };
+  }
   if (typeof value.agentId === 'string' && fallbackAgentId && value.agentId !== fallbackAgentId) return null;
   const agentId = asAgentId(typeof value.agentId === 'string' ? value.agentId : fallbackAgentId);
   if (!agentId) return null;
-  if (value.type === 'agent') return { type: 'agent', agentId };
   if (value.type === 'conversation' && typeof value.conversationId === 'string') {
     return conversationRunAnchor(agentId, value.conversationId);
   }
