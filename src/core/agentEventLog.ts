@@ -104,6 +104,21 @@ export type AgentPrincipal =
   | { type: 'user'; userId: string }
   | { type: 'agent'; agentId: string };
 
+/**
+ * Stable string key for a principal: `user:<userId>` / `agent:<agentId>`. Used
+ * as a Map/Record key and stored in derived indexes; it is NOT an on-disk path
+ * segment — pool directories are resolved separately (agents keep their
+ * identity directory `agents/<agentId>/`, encoded for the filesystem; user
+ * pools live under `principals/`).
+ */
+export function principalKey(principal: AgentPrincipal): string {
+  return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
+}
+
+export function samePrincipal(left: AgentPrincipal, right: AgentPrincipal): boolean {
+  return principalKey(left) === principalKey(right);
+}
+
 export type AgentConversationActor = AgentPrincipal | { type: 'system' };
 
 export interface AgentConversationMeta {
@@ -189,12 +204,20 @@ export interface AgentRunFingerprint {
   modelConfig: string;
 }
 
+/**
+ * Where a run's record belongs. A conversation anchor places the run in a conversation's
+ * timeline. A principal anchor marks a reflective run as maintaining that principal's pool
+ * (its self-model) — the SUBJECT of the maintenance, not the executor. `AgentRunMeta.agentId`
+ * stays the executor; the two are different questions and different fields ([[agent-data-model]]
+ * §4: the user-Dream is executed by the main agent but maintains the user principal's pool).
+ */
 export type AgentRunAnchor =
   | { type: 'conversation'; agentId: AgentId; conversationId: string }
-  | { type: 'agent'; agentId: AgentId };
+  | { type: 'principal'; principal: AgentPrincipal };
 
 export interface AgentRunMeta {
   id: string;
+  /** The executing agent (whose runtime/model ran this) — NOT the anchor subject. */
   agentId: AgentId;
   anchor: AgentRunAnchor;
   parentRunId?: string;
@@ -209,6 +232,17 @@ export interface AgentRunMeta {
 
 export function conversationIdOfRun(run: Pick<AgentRunMeta, 'anchor'>): string | null {
   return run.anchor.type === 'conversation' ? run.anchor.conversationId : null;
+}
+
+/**
+ * The agent named by an anchor, when it names one. `AgentPrincipal.agentId` is a
+ * plain string by design (principals outlive any one id scheme), so the cast back
+ * to `AgentId` mirrors the store's `asAgentId` — neither validates the template
+ * format; ids are trusted at the write site.
+ */
+export function agentIdOfRunAnchor(anchor: AgentRunAnchor): AgentId | undefined {
+  if (anchor.type === 'conversation') return anchor.agentId;
+  return anchor.principal.type === 'agent' ? anchor.principal.agentId as AgentId : undefined;
 }
 
 export type AgentRunLogEventType =
@@ -383,7 +417,8 @@ export interface AgentMemorySource {
 
 export interface AgentMemoryEntry {
   id: string;
-  agentId: string;
+  /** The subject this fact is about — the pool it belongs to. */
+  principal: AgentPrincipal;
   fact: string;
   originWorkspace?: string;
   sources: AgentMemorySource[];
@@ -437,7 +472,8 @@ export interface AgentMemoryEventBase {
   v: typeof AGENT_EVENT_VERSION;
   eventId: string;
   seq: number;
-  agentId: string;
+  /** Identifies the pool this event belongs to (the subject's self-model). */
+  principal: AgentPrincipal;
   type: AgentMemoryEventType;
   createdAt: number;
 }
@@ -1512,7 +1548,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'run.started':
       state.runs[event.runId] = {
         id: event.runId,
-        agentId: event.agentId ?? event.anchor?.agentId,
+        agentId: event.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,

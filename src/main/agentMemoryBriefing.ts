@@ -1,4 +1,5 @@
-import type { AgentMemoryEntry } from '../core/agentEventLog';
+import type { AgentMemoryEntry, AgentPrincipal } from '../core/agentEventLog';
+import { principalKey, samePrincipal } from '../core/agentEventLog';
 import { escapeXml } from './agentReminderXml';
 
 // The injection projection for distilled memory ([[agent-memory-model]] §2). Storage and
@@ -11,13 +12,12 @@ import { escapeXml } from './agentReminderXml';
 // Person is reader-relative ([[agent-memory-model]] §2 "Person"). Storage stays
 // person-neutral: Dream writes subject-elided, base-form predicates ("verify a worktree's
 // HEAD before trusting a gate run"), naming third parties explicitly. Render assigns person
-// by reader relationship by prepending the reader-relative subject:
-//   - the reading agent's own pool (`entry.agentId === readerAgentId`)  -> `<self>`, second
+// by which pool each entry belongs to (`entry.principal`) relative to the reader:
+//   - the reader's own pool (`samePrincipal(entry.principal, reader)`)  -> `<self>`, second
 //     person ("You verify …");
-//   - any other principal's subscribed pool                             -> `<principal name>`,
-//     third person (a Phase-3 affordance — today's single-agent runtime only ever reads its
-//     own pool, so only `<self>` appears; the `<principal>` path lights up once §4
-//     user-as-agent sharing ships).
+//   - any co-member principal's pool                                    -> `<principal name>`,
+//     third person ("The user prefers …"). Visibility is decided upstream by conversation
+//     membership ([[agent-data-model]] §4); render just projects whatever pools it is given.
 //
 // The subject-elided contract is enforced at the Dream layer (the single enforcement point),
 // not here: render faithfully prepends the subject and must never delete leading words, which
@@ -27,10 +27,10 @@ import { escapeXml } from './agentReminderXml';
 export const MEMORY_BRIEFING_MAX_ENTRIES = 12;
 
 export interface MemoryBriefingOptions {
-  /** The agent whose context the briefing is injected into; its own pool renders as `<self>`. */
-  readerAgentId: string;
-  /** Human-facing name for a non-reader principal pool (Phase 3); defaults to the agentId. */
-  principalNameFor?: (agentId: string) => string;
+  /** The principal whose context the briefing is injected into; its own pool renders as `<self>`. */
+  reader: AgentPrincipal;
+  /** Human-facing name for a non-reader principal pool; defaults to a principal-derived label. */
+  principalNameFor?: (principal: AgentPrincipal) => string;
   /** Cap on rendered entries (resident `[3]` budget); defaults to MEMORY_BRIEFING_MAX_ENTRIES. */
   maxEntries?: number;
 }
@@ -50,24 +50,26 @@ export function renderAgentMemoryBriefing(
   if (active.length === 0) return null;
 
   const selfFacts: string[] = [];
-  // Preserve first-seen order of principal pools for a stable render.
-  const principalPools = new Map<string, string[]>();
+  // Preserve first-seen order of principal pools for a stable render; key by principalKey so a
+  // pool's entries group together regardless of object identity.
+  const principalPools = new Map<string, { principal: AgentPrincipal; facts: string[] }>();
 
   for (const entry of active) {
-    if (entry.agentId === options.readerAgentId) {
+    if (samePrincipal(entry.principal, options.reader)) {
       selfFacts.push(entry.fact);
       continue;
     }
-    const bucket = principalPools.get(entry.agentId);
-    if (bucket) bucket.push(entry.fact);
-    else principalPools.set(entry.agentId, [entry.fact]);
+    const key = principalKey(entry.principal);
+    const bucket = principalPools.get(key);
+    if (bucket) bucket.facts.push(entry.fact);
+    else principalPools.set(key, { principal: entry.principal, facts: [entry.fact] });
   }
 
   const zones: string[] = [];
   // Principal zones first, then self — matches the §2 example ordering (what you know about
   // others, then about yourself).
-  for (const [agentId, facts] of principalPools) {
-    const name = options.principalNameFor?.(agentId) ?? agentId;
+  for (const { principal, facts } of principalPools.values()) {
+    const name = options.principalNameFor?.(principal) ?? defaultPrincipalName(principal);
     const zone = renderZone('principal', facts, name);
     if (zone) zones.push(zone);
   }
@@ -76,6 +78,10 @@ export function renderAgentMemoryBriefing(
 
   if (zones.length === 0) return null;
   return ['<memory>', ...zones, '</memory>'].join('\n');
+}
+
+function defaultPrincipalName(principal: AgentPrincipal): string {
+  return principal.type === 'user' ? 'The user' : principal.agentId;
 }
 
 function renderZone(kind: 'self' | 'principal', facts: readonly string[], name: string | null): string | null {

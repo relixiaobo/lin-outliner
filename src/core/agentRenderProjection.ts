@@ -8,6 +8,7 @@ import {
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentPersistedContent,
+  type AgentPrincipal,
   type AgentDreamCompletedChanges,
   type AgentSubagentRunRecord,
 } from './agentEventLog';
@@ -155,6 +156,8 @@ export interface AgentRenderDreamTaskEntity {
   kind: 'dream';
   status: AgentRenderTaskStatus;
   trigger: 'manual' | 'schedule';
+  /** The pool this Dream maintains (run anchor subject), so the panel can label whose Dream. */
+  principal: AgentPrincipal;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;

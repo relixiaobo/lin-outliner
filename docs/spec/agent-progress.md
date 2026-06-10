@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-06-07
+Last updated: 2026-06-10
 
 ## Current Direction
 
@@ -119,23 +119,36 @@ truth.
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation:
-  - per-agent `agents/<agentId>/memory/events.jsonl` event log using the shared
-    append-only seq-log primitive with conversation/run logs
-  - single model-visible `recall` tool over active durable memory entries, with
-    optional nested evidence expansion through `MemoryEntry.sources`
+  - per-principal memory pools keyed by `MemoryEntry.principal` (`principalKey =
+    user:<userId> | agent:<agentId>`): an agent pool is its identity directory
+    `agents/<agentId>/memory/events.jsonl`, the user pool is
+    `principals/user-<userId>/memory/events.jsonl`, both on the shared append-only
+    seq-log primitive with conversation/run logs
+  - single model-visible `recall` tool over active durable memory entries, reading
+    the reader's own pool + co-member user pool, with optional nested evidence
+    expansion through `MemoryEntry.sources` gated to the reader's own pool
   - bounded `<memory>` turn briefing injection: resident newest-active selection
-    rendered into reader-relative `<self>` / `<principal>` zones (person-neutral
-    storage, reader-relative render; storage scaffolding hidden)
-  - runtime `memoryIsolation` modes: global, isolated, and read-only-global
+    over the reader's own pool + co-member user pool, rendered into reader-relative
+    `<self>` / `<principal>` zones (person-neutral storage, reader-relative render;
+    storage scaffolding hidden)
+  - runtime `memoryIsolation` modes: global and read-only-global (pause Dream
+    writes); a pool is one undivided self-model — `originWorkspace` is provenance
+    metadata, never a retrieval fence
   - Settings Memory pane for list/edit/forget
-  - runtime-owned Dream write-back as a scheduled/manual reflective run: the
-    automatic path uses the shared `date` schedule primitive plus a minimum-volume
-    gate, `/dream` forces the same no-tools path, raw evidence is read since the
-    Dream watermark, `dream.completed` records the processed range, and run meta
-    is agent-anchored instead of conversation-anchored; Dream run meta is indexed
-    per agent and projected into the task panel; manual `/dream` projects a
-    chat-stream Dream boundary, and the foreground `dream` tool can request the
-    same runtime-owned path without supplying memory facts
+  - runtime-owned per-principal Dream write-back as a scheduled/manual reflective
+    run: the **agent-Dream** consolidates an agent's run log into its pool, the
+    **user-Dream** consolidates the user's member-conversations into the user pool,
+    with subject-aware extraction prompts; the automatic path uses the shared
+    `date` schedule primitive plus a minimum-volume gate (firing one Dream per
+    pool), `/dream` forces the user-Dream over the conversation, raw evidence is
+    read since the Dream watermark, and `dream.completed` records the processed
+    range; a Dream run is **principal-anchored** — anchored to the pool it
+    maintains, with the executing main agent recorded separately — so each
+    principal's reflective-run index lives beside its pool and the task panel
+    joins run meta with completions locally per principal (rows are labelled with
+    the pool they maintain); manual `/dream` projects a chat-stream Dream
+    boundary, and the foreground `dream` tool can request the same runtime-owned
+    path without supplying memory facts
   - fresh typed subagents use their own agent identity for the `<memory>` briefing,
     `recall`, and sidechain-transcript Dream evidence; fork subagents inherit the
     parent agent's memory owner and use a persisted Dream evidence boundary;

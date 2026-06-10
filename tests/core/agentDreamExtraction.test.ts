@@ -4,7 +4,11 @@ import {
   type AgentActor,
   type AgentEventMessageRecord,
 } from '../../src/core/agentEventLog';
-import { buildDreamMemoryExtractionSpan } from '../../src/main/agentDreamExtraction';
+import {
+  buildConsolidateOnlyDreamMemoryExtractionSpan,
+  buildDreamMemoryExtractionRequest,
+  buildDreamMemoryExtractionSpan,
+} from '../../src/main/agentDreamExtraction';
 
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
@@ -141,5 +145,69 @@ describe('agent dream extraction', () => {
     expect(span?.sources[0]?.messageRange).toEqual(['user-new', 'assistant-new']);
     expect(span?.transcript).toContain('Remember that concise answers are preferred.');
     expect(span?.transcript).toContain('I will answer concisely.');
+  });
+
+  test('the agent-subject prompt frames facts as the agent self-model (You ...)', () => {
+    const request = buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+      subject: 'agent',
+    });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    expect(text).toContain("the agent's durable self-model");
+    expect(text).toContain('renders as "You <fact>"');
+    expect(text).toContain('name the third party instead');
+    // The inference example is base-form so it renders "You have noticed that…".
+    expect(text).toContain('an inference reads "have noticed that…"');
+  });
+
+  test('the user-subject prompt frames facts as the user profile (The user ...)', () => {
+    const request = buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+      subject: 'user',
+    });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    expect(text).toContain('the person it works with (the user)');
+    expect(text).toContain('renders as "The user <fact>"');
+    // The user profile must not absorb the agent's own working habits.
+    expect(text).toContain("the agent's separate self-model");
+    // Examples must be third-person singular so they render grammatically under "The user …" —
+    // never base-form agent voice ("The user have noticed…"). (Review #8.)
+    expect(text).toContain('an inference reads "has noticed that…"');
+    expect(text).toContain('a stated preference reads\n  "has said they want…"');
+    expect(text).not.toContain('have noticed that…');
+  });
+
+  test('defaults to the agent subject when none is given', () => {
+    const request = buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+    });
+    const text = request.content[0]?.type === 'text' ? request.content[0].text : '';
+    expect(text).toContain("the agent's durable self-model");
+  });
+
+  test('wraps raw evidence in a randomized fence an adversarial transcript cannot close', () => {
+    const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>) =>
+      request.content[0]?.type === 'text' ? request.content[0].text : '';
+    const first = promptText(buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+    }));
+    const second = promptText(buildDreamMemoryExtractionRequest({
+      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
+      existingMemories: [],
+    }));
+    const fenceOf = (text: string) => /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
+    const firstFence = fenceOf(first);
+    const secondFence = fenceOf(second);
+    // The fence tag is per-request and unguessable, so evidence text cannot break out of it.
+    expect(firstFence).toBeDefined();
+    expect(first).toContain(`</${firstFence}>`);
+    expect(firstFence).not.toBe(secondFence);
+    // The model is told the fenced content is untrusted data, not instructions.
+    expect(first).toContain('untrusted DATA');
+    expect(first).not.toContain('<conversation_run>');
   });
 });

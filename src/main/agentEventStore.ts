@@ -32,7 +32,7 @@ import type {
   AgentMemorySource,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { appendAgentEventToReplayState, conversationIdOfRun, replayAgentEvents } from '../core/agentEventLog';
+import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -190,9 +190,13 @@ interface AgentConversationRunIndex {
   latestSeqByRunId: Record<string, number>;
 }
 
-interface AgentRunIndex {
+/**
+ * Derived index of the reflective runs anchored to one principal (the runs maintaining that
+ * principal's pool). Lives in the principal's pool directory; rebuilt from `runs/` on miss.
+ */
+interface AgentPrincipalRunIndex {
   v: 1;
-  agentId: string;
+  principalKey: string;
   runIds: string[];
   updatedAtByRunId: Record<string, number>;
 }
@@ -235,7 +239,7 @@ export class AgentEventStore {
   private readonly agentEventLog = new AppendOnlySeqLog<AgentEvent>('agent event', parseEventsJsonl);
   private readonly memoryEventLog = new AppendOnlySeqLog<AgentMemoryEvent>('agent memory event', parseMemoryEventsJsonl);
   private indexQueue = Promise.resolve();
-  private readonly memoryProjectionByAgentId = new Map<string, AgentMemoryProjectionCache>();
+  private readonly memoryProjectionByPrincipal = new Map<string, AgentMemoryProjectionCache>();
   private storageLayoutPromise: Promise<void> | null = null;
 
   constructor(private readonly rootDir: string) {}
@@ -274,13 +278,31 @@ export class AgentEventStore {
     };
   }
 
-  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string; runIndexPath: string } {
+  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string } {
     const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
     return {
       agentDir,
       identityPath: path.join(agentDir, AGENT_IDENTITY_FILE),
       memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
-      runIndexPath: path.join(agentDir, AGENT_RUN_INDEX_FILE),
+    };
+  }
+
+  /**
+   * On-disk location of a principal's memory pool. An agent-principal reuses its
+   * existing identity directory (`agents/<agentId>/memory/`); a user-principal
+   * gets a dedicated `principals/user-<userId>/memory/` pool. The pool is the
+   * subject's self-model — see [[agent-data-model]] §4.
+   */
+  memoryPaths(principal: AgentPrincipal): { poolDir: string; memoryEventsPath: string; runIndexPath: string } {
+    const poolDir = principal.type === 'agent'
+      ? this.agentPaths(principal.agentId).agentDir
+      : path.join(this.rootDir, 'principals', `user-${encodeAgentDirName(principal.userId)}`);
+    return {
+      poolDir,
+      memoryEventsPath: path.join(poolDir, 'memory', RUN_EVENT_LOG_FILE),
+      // The derived index of reflective runs maintaining this pool — lives beside the pool, so
+      // run history and dream state are keyed by the same principal (no cross-pool join).
+      runIndexPath: path.join(poolDir, AGENT_RUN_INDEX_FILE),
     };
   }
 
@@ -502,17 +524,18 @@ export class AgentEventStore {
     return this.readRunMeta(runId);
   }
 
-  async listAgentRunMetaProjections(
-    agentId: string,
+  /** Reflective runs anchored to one principal (the runs maintaining that principal's pool). */
+  async listPrincipalRunMetaProjections(
+    principal: AgentPrincipal,
     options: { limit?: number } = {},
   ): Promise<AgentRunMetaProjection[]> {
     await this.ensureStorageLayout();
-    const index = await this.ensureAgentRunIndex(agentId);
+    const index = await this.ensurePrincipalRunIndex(principal);
     const limit = Math.max(0, Math.min(100, Math.trunc(options.limit ?? 50)));
     const metas: AgentRunMetaProjection[] = [];
     for (const runId of index.runIds) {
       const meta = await this.readRunMeta(runId);
-      if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+      if (!meta || meta.anchor.type !== 'principal' || !samePrincipal(meta.anchor.principal, principal)) continue;
       metas.push(meta);
     }
     return metas
@@ -532,13 +555,14 @@ export class AgentEventStore {
     }
   }
 
-  async addMemoryEntry(agentId: string, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
+  async addMemoryEntry(principal: AgentPrincipal, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
       const createdAt = input.createdAt ?? Date.now();
       const entry = normalizeMemoryEntry({
         id: input.id ?? `memory-${randomUUID()}`,
-        agentId,
+        principal,
         fact: input.fact,
         originWorkspace: input.originWorkspace,
         sources: input.sources,
@@ -546,80 +570,83 @@ export class AgentEventStore {
         createdAt,
       });
       if (!entry) throw new Error('Invalid agent memory entry.');
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'memory.entry_added',
         createdAt,
         entry,
       });
-      const projection = await this.getMemoryProjection(agentId);
-      await this.appendMemoryEvents(agentId, [event]);
+      const projection = await this.getMemoryProjection(principal);
+      await this.appendMemoryEvents(principal, [event]);
       projection.entries.set(entry.id, entry);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return entry;
     });
   }
 
   async updateMemoryEntry(
-    agentId: string,
+    principal: AgentPrincipal,
     entryId: string,
     patch: AgentMemoryEntryPatch,
   ): Promise<AgentMemoryEntry | null> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
       if ('fact' in patch && !normalizeMemoryFact(patch.fact)) {
         throw new Error('Memory fact cannot be empty.');
       }
-      const projection = await this.getMemoryProjection(agentId);
+      const projection = await this.getMemoryProjection(principal);
       const current = projection.entries.get(entryId);
       if (!current) return null;
       const normalizedPatch = normalizeMemoryEntryPatch(patch);
       if (Object.keys(normalizedPatch).length === 0) return current;
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'memory.entry_updated',
         createdAt: Date.now(),
         entryId,
         patch: normalizedPatch,
       });
-      await this.appendMemoryEvents(agentId, [event]);
+      await this.appendMemoryEvents(principal, [event]);
       const next = normalizeMemoryEntry({ ...current, ...normalizedPatch }) ?? current;
       projection.entries.set(next.id, next);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return next;
     });
   }
 
-  async removeMemoryEntry(agentId: string, entryId: string, reason?: string): Promise<AgentMemoryEntry | null> {
+  async removeMemoryEntry(principal: AgentPrincipal, entryId: string, reason?: string): Promise<AgentMemoryEntry | null> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
-      const projection = await this.getMemoryProjection(agentId);
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
+      const projection = await this.getMemoryProjection(principal);
       const current = projection.entries.get(entryId);
       if (!current) return null;
       if (current.status === 'invalidated') return current;
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'memory.entry_removed',
         createdAt: Date.now(),
         entryId,
         reason,
       });
-      await this.appendMemoryEvents(agentId, [event]);
+      await this.appendMemoryEvents(principal, [event]);
       const next: AgentMemoryEntry = { ...current, status: 'invalidated' };
       projection.entries.set(next.id, next);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return next;
     });
   }
 
-  async appendDreamCompleted(agentId: string, input: AgentDreamCompletedInput): Promise<Extract<AgentMemoryEvent, { type: 'dream.completed' }>> {
+  async appendDreamCompleted(principal: AgentPrincipal, input: AgentDreamCompletedInput): Promise<Extract<AgentMemoryEvent, { type: 'dream.completed' }>> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.enqueue(agentId, async () => {
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
       const completedAt = input.completedAt ?? Date.now();
-      const event = await this.nextMemoryEvent(agentId, {
+      const event = await this.nextMemoryEvent(principal, {
         type: 'dream.completed',
         createdAt: completedAt,
         dreamId: input.dreamId ?? `dream-${randomUUID()}`,
@@ -637,43 +664,44 @@ export class AgentEventStore {
         },
         changes: normalizeDreamChanges(input.changes),
       }) as Extract<AgentMemoryEvent, { type: 'dream.completed' }>;
-      const projection = await this.getMemoryProjection(agentId);
-      await this.appendMemoryEvents(agentId, [event]);
+      const projection = await this.getMemoryProjection(principal);
+      await this.appendMemoryEvents(principal, [event]);
       projection.dream = dreamStateFromCompleted(event);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(agentId, projection);
+      await this.maybeCompactMemoryLog(principal, projection);
       return event;
     });
   }
 
-  async readDreamState(agentId: string): Promise<AgentDreamState> {
+  async readDreamState(principal: AgentPrincipal): Promise<AgentDreamState> {
     await this.ensureStorageLayout();
-    return cloneDreamState((await this.getMemoryProjection(agentId)).dream);
+    return cloneDreamState((await this.getMemoryProjection(principal)).dream);
   }
 
-  async getMemoryEntry(agentId: string, entryId: string): Promise<AgentMemoryEntry | null> {
+  async getMemoryEntry(principal: AgentPrincipal, entryId: string): Promise<AgentMemoryEntry | null> {
     await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(agentId);
+    const projection = await this.getMemoryProjection(principal);
     return projection.entries.get(entryId) ?? null;
   }
 
   async listMemoryEntries(
-    agentId: string,
-    options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
+    principal: AgentPrincipal,
+    options: { includeInvalidated?: boolean; limit?: number; query?: string } = {},
   ): Promise<AgentMemoryEntry[]> {
-    return (await this.queryMemoryEntries(agentId, options)).entries;
+    return (await this.queryMemoryEntries(principal, options)).entries;
   }
 
+  // A pool is one undivided self-model: no workspace filter here by design — `originWorkspace`
+  // on an entry is provenance metadata, never a retrieval fence.
   async queryMemoryEntries(
-    agentId: string,
-    options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
+    principal: AgentPrincipal,
+    options: { includeInvalidated?: boolean; limit?: number; query?: string } = {},
   ): Promise<{ entries: AgentMemoryEntry[]; totalEntries: number }> {
     await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(agentId);
+    const projection = await this.getMemoryProjection(principal);
     const entries = rankMemoryEntries([...projection.entries.values()]
-      .filter((entry) => options.includeInvalidated || entry.status === 'active')
-      .filter((entry) => !options.originWorkspace || entry.originWorkspace === options.originWorkspace),
+      .filter((entry) => options.includeInvalidated || entry.status === 'active'),
       options.query);
     return {
       entries: entries.slice(0, clampMemoryLimit(options.limit)),
@@ -681,9 +709,9 @@ export class AgentEventStore {
     };
   }
 
-  async readMemoryEvents(agentId: string): Promise<AgentMemoryEvent[]> {
+  async readMemoryEvents(principal: AgentPrincipal): Promise<AgentMemoryEvent[]> {
     await this.ensureStorageLayout();
-    return this.memoryEventLog.readIfExists(this.agentPaths(agentId).memoryEventsPath);
+    return this.memoryEventLog.readIfExists(this.memoryPaths(principal).memoryEventsPath);
   }
 
   private ensureStorageLayout(): Promise<void> {
@@ -712,13 +740,20 @@ export class AgentEventStore {
   }
 
   private async cleanAgentMemoryLogs(): Promise<void> {
+    // Wipe every memory pool: each agent's `agents/<id>/memory/` AND the user pools under
+    // `principals/user-*/` (review #10 — the user pool is a first-class principal pool, not a
+    // legacy artifact, so the legacy-layout wipe must drop it alongside the agent pools or stale
+    // user facts survive a clean cut). `principals/` holds nothing but per-user pools, so it is
+    // removed wholesale.
     const agentsDir = this.paths('__placeholder__').agentsDir;
+    const principalsDir = path.join(this.rootDir, 'principals');
     try {
+      await rm(principalsDir, { recursive: true, force: true });
       const entries = await readdir(agentsDir, { withFileTypes: true });
       await Promise.all(entries
         .filter((entry) => entry.isDirectory())
         .map((entry) => rm(path.join(agentsDir, entry.name, 'memory'), { recursive: true, force: true })));
-      this.memoryProjectionByAgentId.clear();
+      this.memoryProjectionByPrincipal.clear();
       this.memoryEventLog.clear();
     } catch (error) {
       if (isNotFoundError(error)) return;
@@ -769,33 +804,35 @@ export class AgentEventStore {
   }
 
   private async nextMemoryEvent(
-    agentId: string,
-    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>,
+    principal: AgentPrincipal,
+    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'principal'>,
   ): Promise<AgentMemoryEvent> {
-    const seq = await this.memoryEventLog.latestSeq(agentId, () => [this.agentPaths(agentId).memoryEventsPath]) + 1;
+    const key = principalKey(principal);
+    const seq = await this.memoryEventLog.latestSeq(key, () => [this.memoryPaths(principal).memoryEventsPath]) + 1;
     return {
       v: 1,
       eventId: `memory-event-${randomUUID()}`,
       seq,
-      agentId,
+      principal,
       ...input,
     } as AgentMemoryEvent;
   }
 
-  private async appendMemoryEvents(agentId: string, events: readonly AgentMemoryEvent[]): Promise<void> {
+  private async appendMemoryEvents(principal: AgentPrincipal, events: readonly AgentMemoryEvent[]): Promise<void> {
     if (events.length === 0) return;
-    await this.memoryEventLog.appendForKey(agentId, this.agentPaths(agentId).memoryEventsPath, events);
+    await this.memoryEventLog.appendForKey(principalKey(principal), this.memoryPaths(principal).memoryEventsPath, events);
   }
 
-  private async getMemoryProjection(agentId: string): Promise<AgentMemoryProjectionCache> {
-    const latestSeq = await this.memoryEventLog.latestSeq(agentId, () => [this.agentPaths(agentId).memoryEventsPath]);
-    const cached = this.memoryProjectionByAgentId.get(agentId);
+  private async getMemoryProjection(principal: AgentPrincipal): Promise<AgentMemoryProjectionCache> {
+    const key = principalKey(principal);
+    const latestSeq = await this.memoryEventLog.latestSeq(key, () => [this.memoryPaths(principal).memoryEventsPath]);
+    const cached = this.memoryProjectionByPrincipal.get(key);
     if (cached && cached.latestSeq === latestSeq) return cached;
 
-    const events = await this.readMemoryEvents(agentId);
+    const events = await this.readMemoryEvents(principal);
     const projected = projectMemoryEvents(events);
     const projection: AgentMemoryProjectionCache = {
       latestSeq,
@@ -803,23 +840,23 @@ export class AgentEventStore {
       entries: projected.entries,
       dream: projected.dream,
     };
-    this.memoryProjectionByAgentId.set(agentId, projection);
+    this.memoryProjectionByPrincipal.set(key, projection);
     return projection;
   }
 
-  private async maybeCompactMemoryLog(agentId: string, projection: AgentMemoryProjectionCache): Promise<void> {
+  private async maybeCompactMemoryLog(principal: AgentPrincipal, projection: AgentMemoryProjectionCache): Promise<void> {
     if (projection.eventCount < MEMORY_COMPACTION_MIN_EVENTS) return;
     const projectedEntryCount = Math.max(1, projection.entries.size);
     if (projection.eventCount < projectedEntryCount * MEMORY_COMPACTION_CHURN_FACTOR) return;
 
-    const events = compactMemoryProjection(agentId, projection.entries, projection.dream.lastCompleted);
-    const filePath = this.agentPaths(agentId).memoryEventsPath;
+    const events = compactMemoryProjection(principal, projection.entries, projection.dream.lastCompleted);
+    const filePath = this.memoryPaths(principal).memoryEventsPath;
     await mkdir(path.dirname(filePath), { recursive: true });
     await atomicWriteFile(filePath, serializeJsonl(events));
     const latestSeq = events.at(-1)?.seq ?? 0;
     projection.latestSeq = latestSeq;
     projection.eventCount = events.length;
-    this.memoryEventLog.setLatestSeq(agentId, latestSeq);
+    this.memoryEventLog.setLatestSeq(principalKey(principal), latestSeq);
   }
 
   private async readEventFileTail(sessionId: string): Promise<AgentEventFileTail> {
@@ -891,10 +928,10 @@ export class AgentEventStore {
     return this.rebuildConversationRunIndex(sessionId);
   }
 
-  private async ensureAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
-    const index = await this.readAgentRunIndex(agentId);
+  private async ensurePrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex> {
+    const index = await this.readPrincipalRunIndex(principal);
     if (index) return index;
-    return this.rebuildAgentRunIndex(agentId);
+    return this.rebuildPrincipalRunIndex(principal);
   }
 
   private async conversationDirExists(sessionId: string): Promise<boolean> {
@@ -937,7 +974,7 @@ export class AgentEventStore {
     return index;
   }
 
-  private async rebuildAgentRunIndex(agentId: string): Promise<AgentRunIndex> {
+  private async rebuildPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex> {
     const updatedAtByRunId: Record<string, number> = {};
     const paths = this.paths('__placeholder__');
     try {
@@ -947,7 +984,7 @@ export class AgentEventStore {
         const runDir = path.join(paths.runsDir, entry.name);
         try {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
-          if (!meta || meta.anchor.type !== 'agent' || meta.anchor.agentId !== agentId) continue;
+          if (!meta || meta.anchor.type !== 'principal' || !samePrincipal(meta.anchor.principal, principal)) continue;
           updatedAtByRunId[meta.id] = Math.max(updatedAtByRunId[meta.id] ?? 0, meta.updatedAt);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
@@ -961,10 +998,10 @@ export class AgentEventStore {
     const runIds = Object.keys(updatedAtByRunId).sort((left, right) => (
       updatedAtByRunId[right]! - updatedAtByRunId[left]! || left.localeCompare(right)
     ));
-    const index: AgentRunIndex = { v: 1, agentId, runIds, updatedAtByRunId };
-    const agentPaths = this.agentPaths(agentId);
-    await mkdir(agentPaths.agentDir, { recursive: true });
-    await atomicWriteFile(agentPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    const index: AgentPrincipalRunIndex = { v: 1, principalKey: principalKey(principal), runIds, updatedAtByRunId };
+    const poolPaths = this.memoryPaths(principal);
+    await mkdir(poolPaths.poolDir, { recursive: true });
+    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
     return index;
   }
 
@@ -1036,10 +1073,10 @@ export class AgentEventStore {
     }
   }
 
-  private async readAgentRunIndex(agentId: string): Promise<AgentRunIndex | null> {
+  private async readPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex | null> {
     try {
-      const raw = await readFile(this.agentPaths(agentId).runIndexPath, 'utf8');
-      return normalizeAgentRunIndex(JSON.parse(raw), agentId);
+      const raw = await readFile(this.memoryPaths(principal).runIndexPath, 'utf8');
+      return normalizePrincipalRunIndex(JSON.parse(raw), principalKey(principal));
     } catch (error) {
       if (isNotFoundError(error)) return null;
       if (error instanceof SyntaxError) return null;
@@ -1052,8 +1089,8 @@ export class AgentEventStore {
     if (conversationId) {
       await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq);
     }
-    if (meta.anchor.type === 'agent') {
-      await this.updateAgentRunIndex(meta.anchor.agentId, meta.id, meta.updatedAt);
+    if (meta.anchor.type === 'principal') {
+      await this.updatePrincipalRunIndex(meta.anchor.principal, meta.id, meta.updatedAt);
     }
   }
 
@@ -1073,13 +1110,13 @@ export class AgentEventStore {
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
   }
 
-  private async updateAgentRunIndex(agentId: string, runId: string, updatedAt: number) {
-    const paths = this.agentPaths(agentId);
-    const existing = await this.ensureAgentRunIndex(agentId);
+  private async updatePrincipalRunIndex(principal: AgentPrincipal, runId: string, updatedAt: number) {
+    const poolPaths = this.memoryPaths(principal);
+    const existing = await this.ensurePrincipalRunIndex(principal);
     const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-    const index: AgentRunIndex = {
+    const index: AgentPrincipalRunIndex = {
       v: 1,
-      agentId,
+      principalKey: principalKey(principal),
       runIds,
       updatedAtByRunId: {
         ...existing.updatedAtByRunId,
@@ -1089,8 +1126,8 @@ export class AgentEventStore {
     index.runIds.sort((left, right) => (
       index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
     ));
-    await mkdir(paths.agentDir, { recursive: true });
-    await atomicWriteFile(paths.runIndexPath, `${JSON.stringify(index)}\n`);
+    await mkdir(poolPaths.poolDir, { recursive: true });
+    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
   }
 
   private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
@@ -1099,7 +1136,7 @@ export class AgentEventStore {
     if (!latest) return null;
     const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
-    const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? started.anchor?.agentId : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
+    const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? (started.anchor ? agentIdOfRunAnchor(started.anchor) : undefined) : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
     const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, sessionId);
     const meta: AgentRunMetaProjection = {
       v: 1,
@@ -1705,12 +1742,59 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
   async append(filePath: string, events: readonly TEvent[]): Promise<void> {
     if (events.length === 0) return;
     await mkdir(path.dirname(filePath), { recursive: true });
+    await this.repairTornTailBeforeAppend(filePath);
     await appendFile(filePath, serializeJsonl(events), 'utf8');
   }
 
   async appendForKey(key: string, filePath: string, events: readonly TEvent[]): Promise<void> {
     await this.append(filePath, events);
     this.setLatestSeq(key, events.at(-1)!.seq);
+  }
+
+  /**
+   * Every intact log ends with '\n' (serializeJsonl and compaction both write it), so a
+   * missing trailing newline means the previous append was interrupted mid-line. Appending
+   * onto the torn fragment would weld two events into one garbage line — silently dropped
+   * as the tail by a tolerant parser today, then bricking the log as a mid-file bad line
+   * after the NEXT append. Truncate the fragment first; appends are serialized through the
+   * per-key write queue, so the repair cannot race another write. The parse function still
+   * owns the torn-tail policy: if it throws on the torn file, the append fails loudly
+   * instead of writing past corruption.
+   */
+  private async repairTornTailBeforeAppend(filePath: string): Promise<void> {
+    let handle: Awaited<ReturnType<typeof open>>;
+    try {
+      handle = await open(filePath, 'r+');
+    } catch (error) {
+      if (isNotFoundError(error)) return;
+      throw error;
+    }
+    try {
+      const stats = await handle.stat();
+      if (stats.size === 0) return;
+      const lastByte = Buffer.alloc(1);
+      await handle.read(lastByte, 0, 1, stats.size - 1);
+      if (lastByte[0] === 0x0a) return;
+      const buffer = Buffer.alloc(stats.size);
+      await handle.read(buffer, 0, stats.size, 0);
+      const lastNewline = buffer.lastIndexOf(0x0a);
+      const fragment = buffer.subarray(lastNewline + 1).toString('utf8');
+      try {
+        // A tear can land between the JSON text and its newline: the final line is then a
+        // complete, readable event that must not be destroyed — only its newline was lost.
+        JSON.parse(fragment);
+        await handle.write('\n', stats.size, 'utf8');
+        return;
+      } catch {
+        // Genuinely torn mid-line; fall through to the truncating repair.
+      }
+      this.parse(buffer.toString('utf8'), filePath);
+      const keep = lastNewline === -1 ? 0 : lastNewline + 1;
+      console.warn(`Repairing torn trailing ${this.label} line at ${filePath} (truncating ${stats.size - keep} bytes)`);
+      await handle.truncate(keep);
+    } finally {
+      await handle.close();
+    }
   }
 
   async readIfExists(filePath: string): Promise<TEvent[]> {
@@ -1755,8 +1839,9 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
   }
 
   private async readTail(filePath: string): Promise<AgentEventFileTail> {
+    let line: string | null = null;
     try {
-      const line = await this.readLastNonEmptyLine(filePath);
+      line = await this.readLastNonEmptyLine(filePath);
       if (!line) return { seq: 0, eventId: null };
       const event = JSON.parse(line) as TEvent;
       return {
@@ -1765,6 +1850,14 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
       };
     } catch (error) {
       if (isNotFoundError(error)) return { seq: 0, eventId: null };
+      if (line !== null) {
+        // The last line may be a torn crash artifact of an interrupted append. The log's
+        // parse function owns the torn-tail policy: if it tolerates the tear, the tail is
+        // the last intact event; if it throws, this log treats the file as corrupt.
+        const events = this.parse(await readFile(filePath, 'utf8'), filePath);
+        const last = events.at(-1);
+        return { seq: last?.seq ?? 0, eventId: last?.eventId ?? null };
+      }
       throw new Error(`Invalid ${this.label} tail at ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -1887,10 +1980,6 @@ function mergePrincipals(current: readonly AgentPrincipal[], next: readonly Agen
   return [...byKey.values()].sort((left, right) => principalKey(left).localeCompare(principalKey(right)));
 }
 
-function principalKey(principal: AgentPrincipal): string {
-  return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
-}
-
 function emptyRunFingerprint(): AgentRunFingerprint {
   return {
     appVersion: 'unknown',
@@ -1915,8 +2004,8 @@ function normalizeConversationRunIndex(value: unknown): AgentConversationRunInde
   };
 }
 
-function normalizeAgentRunIndex(value: unknown, agentId: string): AgentRunIndex | null {
-  if (!isRecord(value) || value.v !== 1 || value.agentId !== agentId || !Array.isArray(value.runIds)) return null;
+function normalizePrincipalRunIndex(value: unknown, expectedPrincipalKey: string): AgentPrincipalRunIndex | null {
+  if (!isRecord(value) || value.v !== 1 || value.principalKey !== expectedPrincipalKey || !Array.isArray(value.runIds)) return null;
   const updatedAtByRunId = isRecord(value.updatedAtByRunId)
     ? Object.fromEntries(Object.entries(value.updatedAtByRunId).filter((entry): entry is [string, number] => (
         typeof entry[1] === 'number' && Number.isFinite(entry[1])
@@ -1928,7 +2017,7 @@ function normalizeAgentRunIndex(value: unknown, agentId: string): AgentRunIndex 
     ));
   return {
     v: 1,
-    agentId,
+    principalKey: expectedPrincipalKey,
     runIds,
     updatedAtByRunId,
   };
@@ -1971,10 +2060,12 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
 
 function normalizeRunAnchor(value: unknown, fallbackAgentId?: string): AgentRunAnchor | null {
   if (!isRecord(value)) return null;
+  if (value.type === 'principal' && isAgentPrincipal(value.principal)) {
+    return { type: 'principal', principal: value.principal };
+  }
   if (typeof value.agentId === 'string' && fallbackAgentId && value.agentId !== fallbackAgentId) return null;
   const agentId = asAgentId(typeof value.agentId === 'string' ? value.agentId : fallbackAgentId);
   if (!agentId) return null;
-  if (value.type === 'agent') return { type: 'agent', agentId };
   if (value.type === 'conversation' && typeof value.conversationId === 'string') {
     return conversationRunAnchor(agentId, value.conversationId);
   }
@@ -2027,6 +2118,13 @@ function isAgentPrincipal(value: unknown): value is AgentPrincipal {
   if (value.type === 'user') return typeof value.userId === 'string';
   if (value.type === 'agent') return typeof value.agentId === 'string';
   return false;
+}
+
+function normalizePrincipal(value: unknown): AgentPrincipal | null {
+  if (!isRecord(value)) return null;
+  if (value.type === 'user' && typeof value.userId === 'string') return { type: 'user', userId: value.userId };
+  if (value.type === 'agent' && typeof value.agentId === 'string') return { type: 'agent', agentId: value.agentId };
+  return null;
 }
 
 function isAgentRunKind(value: unknown): value is AgentRunKind {
@@ -2143,6 +2241,13 @@ function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
 function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[] {
   const events: AgentMemoryEvent[] = [];
   const lines = raw.split(/\r?\n/);
+  let lastContentIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]!.trim().length > 0) {
+      lastContentIndex = index;
+      break;
+    }
+  }
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!.trim();
     if (!line) continue;
@@ -2150,6 +2255,13 @@ function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[]
       const event = normalizeMemoryEvent(JSON.parse(line));
       if (event) events.push(event);
     } catch (error) {
+      // A torn FINAL line is a crash artifact of an interrupted append (e.g. quit mid-Dream):
+      // drop it and keep the pool readable — the watermark makes the lost write re-derivable.
+      // A malformed line in the middle is real corruption and still fails loudly.
+      if (index === lastContentIndex) {
+        console.warn(`Dropping torn trailing agent memory event at ${source}:${index + 1}`);
+        break;
+      }
       throw new Error(`Invalid agent memory event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -2191,7 +2303,7 @@ function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
 }
 
 function compactMemoryProjection(
-  agentId: string,
+  principal: AgentPrincipal,
   entries: ReadonlyMap<string, AgentMemoryEntry>,
   lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
 ): AgentMemoryEvent[] {
@@ -2203,7 +2315,7 @@ function compactMemoryProjection(
       type: 'memory.entry_added',
       eventId: `memory-compact-${randomUUID()}`,
       seq: index + 1,
-      agentId,
+      principal,
       createdAt,
       entry,
     }));
@@ -2220,20 +2332,21 @@ function compactMemoryProjection(
 
 function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
   if (!isRecord(value) || value.v !== 1) return null;
-  if (typeof value.eventId !== 'string' || typeof value.agentId !== 'string') return null;
+  const principal = normalizePrincipal(value.principal);
+  if (typeof value.eventId !== 'string' || !principal) return null;
   const seq = numberOrNull(value.seq);
   const createdAt = numberOrNull(value.createdAt);
   if (seq === null || createdAt === null) return null;
 
   if (value.type === 'memory.entry_added') {
     const entry = normalizeMemoryEntry(value.entry);
-    if (!entry || entry.agentId !== value.agentId) return null;
+    if (!entry || !samePrincipal(entry.principal, principal)) return null;
     return {
       v: 1,
       type: 'memory.entry_added',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       entry,
     };
@@ -2246,7 +2359,7 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       type: 'memory.entry_updated',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       entryId: value.entryId,
       patch: normalizeMemoryEntryPatch(isRecord(value.patch) ? value.patch : {}),
@@ -2260,7 +2373,7 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       type: 'memory.entry_removed',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       entryId: value.entryId,
       reason: typeof value.reason === 'string' ? value.reason : undefined,
@@ -2281,7 +2394,7 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       type: 'dream.completed',
       eventId: value.eventId,
       seq,
-      agentId: value.agentId,
+      principal,
       createdAt,
       dreamId: value.dreamId,
       runId: value.runId,
@@ -2299,13 +2412,14 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
 
 function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
   if (!isRecord(value)) return null;
-  if (typeof value.id !== 'string' || typeof value.agentId !== 'string') return null;
+  const principal = normalizePrincipal(value.principal);
+  if (typeof value.id !== 'string' || !principal) return null;
   const fact = normalizeMemoryFact(value.fact);
   const createdAt = numberOrNull(value.createdAt);
   if (!fact || createdAt === null) return null;
   return {
     id: value.id,
-    agentId: value.agentId,
+    principal,
     fact,
     originWorkspace: normalizeOptionalString(value.originWorkspace),
     sources: Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [],

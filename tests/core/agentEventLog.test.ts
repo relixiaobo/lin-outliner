@@ -43,7 +43,7 @@ describe('agent event log', () => {
     const meta = {
       id: 'run-dream',
       agentId: 'built-in:tenon:assistant',
-      anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+      anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
       kind: 'scheduled',
       status: 'running',
       trigger: { type: 'system' },

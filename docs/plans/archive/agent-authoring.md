@@ -64,7 +64,7 @@ restart:
   tool conventions / safety) + a headless directive instead of a bespoke minimal
   prompt, and built-in `general` collapses to a zero-persona default. This is the
   ONLY invocation-semantics change; spawning routing, the fresh-vs-fork seam,
-  memory ownership, and isolation tiers remain untouched. Design folded into
+  and memory ownership remain untouched. Design folded into
   `docs/spec/agent-subagent-runtime-plan.md` (Fresh Subagent → System prompt).
 - **No built-in mutation.** `general` and `fork` (`agentSubagents.ts:1293-1321`)
   stay immutable; editing one means duplicating to a user agent.

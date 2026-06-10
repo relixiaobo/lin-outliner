@@ -19,10 +19,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import type { AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentPastChatsService } from '../../src/main/agentPastChats';
 import { subagentDreamEvidenceStartMessageIndex } from '../../src/main/agentSubagentTranscript';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+
+const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -244,12 +247,12 @@ describe('agent runtime subagents', () => {
       'RESEARCHER_AGENT_BODY: always include this marker in the system prompt.',
     ].join('\n'));
     const researcherAgentId = projectAgentId(researcherDir, 'researcher');
-    await new AgentEventStore(dataRoot).addMemoryEntry(researcherAgentId, {
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(researcherAgentId), {
       id: 'memory-researcher-own',
       fact: 'Researcher agent prefers teal source notes.',
       sources: [{ conversationId: 'seed-researcher' }],
     });
-    await new AgentEventStore(dataRoot).addMemoryEntry('built-in:tenon:assistant', {
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-parent-only',
       fact: 'Parent agent prefers amber planning notes.',
       sources: [{ conversationId: 'seed-parent' }],
@@ -391,10 +394,10 @@ describe('agent runtime subagents', () => {
     await flushProjectionCoalescing();
 
     const store = new AgentEventStore(dataRoot);
-    const researcherEntries = await store.listMemoryEntries(researcherAgentId);
-    const parentEntries = await store.listMemoryEntries('built-in:tenon:assistant');
+    const researcherEntries = await store.listMemoryEntries(agentPrincipal(researcherAgentId));
+    const parentEntries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
     const source = researcherEntries[0]?.sources[0];
-    const dreamState = await store.readDreamState(researcherAgentId);
+    const dreamState = await store.readDreamState(agentPrincipal(researcherAgentId));
     const runId = source?.subagentRunId ?? source?.runId;
     const evidence = source
       ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
@@ -456,7 +459,7 @@ describe('agent runtime subagents', () => {
       ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
       : null;
     await runtime.runScheduledDreamsForTest(new Date(Date.now() + 48 * 60 * 60 * 1000));
-    const dreamStateAfterPayloadReplacement = await new AgentEventStore(dataRoot).readDreamState(researcherAgentId);
+    const dreamStateAfterPayloadReplacement = await new AgentEventStore(dataRoot).readDreamState(agentPrincipal(researcherAgentId));
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -637,7 +640,7 @@ describe('agent runtime subagents', () => {
     await seedSubagentRun('subagent-other-workspace', 'tool-other-workspace', otherWorkspace, otherEvidence, 10);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
 
-    const entries = await store.listMemoryEntries(ownerAgentId);
+    const entries = await store.listMemoryEntries(agentPrincipal(ownerAgentId));
     const entriesByFact = new Map(entries.map((entry) => [entry.fact, entry]));
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);

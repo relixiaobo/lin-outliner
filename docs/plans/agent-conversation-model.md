@@ -490,14 +490,14 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
 - **Provenance tags:** `conversationId` / `runId` / `eventId` / `originWorkspace` —
   recorded for the addressable `sources` down-pointer, the visible-memory guard, and
   invalidation.
-- **Retrieval: global by default, with opt-in isolation (PM-ratified 2026-06-06).** The
-  default is one global pool, pure relevance (PM-ratified 2026-06-05). But because a
-  confidential fact from project A could be relevance-retrieved into project B's prompt and
-  sent to the external model — an NDA hazard raised in the gemini review — each agent gets
-  opt-in **isolation tiers** over that default: `isolated` (retrieve only where
-  `originWorkspace` == current) and `read-only-global` (read the global pool, but facts
-  learned here don't enter it). `originWorkspace` is always recorded; the tier decides
-  whether it scopes retrieval. Inspect / edit / forget remains the backstop.
+- **Retrieval: one undivided pool (PM-ratified 2026-06-06; REVISED 2026-06-10).** The
+  default is one global pool, pure relevance (PM-ratified 2026-06-05). The 2026-06-06
+  gemini-review NDA concern added an opt-in `isolated` tier (retrieve only where
+  `originWorkspace` == current), but it was **removed 2026-06-10**: a principal, like a
+  person, does not partition its own memory by where it works, and the tier had become
+  write-partitioned/read-global in practice. `read-only-global` (read the pool, pause new
+  writes) remains; `originWorkspace` is always recorded as provenance only.
+  Inspect / edit / forget remains the backstop.
 - **Undo / branch invalidation (gemini review).** Memory is additive and cross-branch, so a
   fact learned on a branch later discarded or undone ("I finished feature X") would
   otherwise linger and contradict reality. Each `MemoryEntry` binds to its source
@@ -518,9 +518,8 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   child field nested under the matching memory entry. Evidence is never returned
   as a sibling item in the ranked result list, and raw logs can only be expanded
   through a memory entry's provenance. `recall` filters out `status:'invalidated'`
-  entries, enforces the agent's isolation tier (`global` / `isolated` /
-  `read-only-global`), and respects a host-bounded `max_chars` cap for the full
-  result. **Accepted consequence:** older conversations that never produced a
+  entries and respects a host-bounded `max_chars` cap for the full result (no
+  workspace filtering — the pool is undivided, D2 revised 2026-06-10). **Accepted consequence:** older conversations that never produced a
   `MemoryEntry` are not recallable by the foreground model by design; they remain
   available only to internal evidence search, debug/review UI, and Dream's
   controlled extraction path. Three distinct layers stay separate: raw evidence
@@ -1081,10 +1080,11 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
   workspace/root hash, so two projects' same-named agents don't collide). **Refinement
   (2026-06-06, from the gemini review):** because pure global retrieval can pull a
   confidential project-A fact into a project-B prompt sent to the external model (an NDA
-  hazard), each agent gets **opt-in isolation tiers** (`isolated` / `read-only-global`) over
-  the global default, with `originWorkspace` recorded on every entry. Inspect / edit /
-  forget stays the backstop. Provenance (`sources`) records but does not by itself scope
-  retrieval — the tier does.
+  hazard), each agent got **opt-in isolation tiers** (`isolated` / `read-only-global`) over
+  the global default, with `originWorkspace` recorded on every entry. **Revised 2026-06-10:
+  the `isolated` tier was removed** — a pool is one undivided self-model, never
+  workspace-partitioned; `read-only-global` (pause writes) remains and `originWorkspace`
+  is provenance only. Inspect / edit / forget stays the backstop.
 - **Memory internal format — DECIDED.** Structured event-sourced store, not
   markdown topic files. Memory is runtime-owned durable state, not an
   agent-writable file tree.
@@ -1163,7 +1163,7 @@ P1 — conversations + memory foundation
 - [x] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
 - [x] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). The later model-facing recall surface is a single `recall` tool; summary search and raw expansion stay internal implementation details.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
-- [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, audited — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
+- [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, audited — *not* `file_write`); retrieval over **one undivided pool** (`isolated` tier removed 2026-06-10; `read-only-global` = pause writes), `originWorkspace` recorded as provenance; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
 - [x] Inline memory write instructions in the agent prompt shipped during the
   M1 foundation, but are no longer the target write architecture and should be
   removed cleanly before further memory consumers.

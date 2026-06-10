@@ -165,11 +165,12 @@ describe('agent self-maintenance tools', () => {
     expect(normalizeRuntimeSettingPatch('agent.runtime.providerTimeoutMs', null)).toEqual({
       providerTimeoutMs: null,
     });
-    expect(normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'isolated')).toEqual({
-      memoryIsolation: 'isolated',
+    expect(normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'read-only-global')).toEqual({
+      memoryIsolation: 'read-only-global',
     });
-    expect(() => normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'private')).toThrow(
-      'agent.runtime.memoryIsolation must be "global", "isolated", or "read-only-global".',
+    // 'isolated' was removed: memory is one undivided pool per principal.
+    expect(() => normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'isolated')).toThrow(
+      'agent.runtime.memoryIsolation must be "global" or "read-only-global".',
     );
     expect(() => normalizeRuntimeSettingPatch('agent.runtime.providerCacheRetention', 'forever')).toThrow(
       'agent.runtime.providerCacheRetention must be "none", "short", or "long".',

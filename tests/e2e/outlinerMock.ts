@@ -536,10 +536,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         messageCount: 1,
       },
     ];
+    // Memory entries are principal-keyed (the pool they belong to); the Settings pane
+    // groups/labels by `principal`, so one agent-pool fact and one user-pool fact.
     const agentMemoryEntries = [
       {
         id: 'memory-active',
-        agentId: 'built-in:tenon:assistant',
+        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
         fact: 'Prefer concise, direct implementation notes in agent review work.',
         originWorkspace: '/mock/local-root',
         sources: [{
@@ -552,7 +554,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       {
         id: 'memory-forgotten',
-        agentId: 'built-in:tenon:assistant',
+        principal: { type: 'user', userId: 'local-user' },
         fact: 'Use the old session vocabulary in public UI.',
         originWorkspace: '/mock/local-root',
         sources: [{

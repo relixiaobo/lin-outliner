@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent, AgentPrincipal } from '../../src/core/agentEventLog';
 import {
   AgentEventStore,
   agentCheckpointFileName,
@@ -478,12 +478,20 @@ describe('agent event store', () => {
     await withStore(async (store, root) => {
       const sessionId = 'session-1';
       const agentId = 'built-in:tenon:assistant';
+      const principal: AgentPrincipal = { type: 'agent', agentId };
       await store.appendEvents(sessionId, [
         { ...base(sessionId, 1, 'session.created'), title: 'Current layout' },
       ]);
-      await store.addMemoryEntry(agentId, {
+      await store.addMemoryEntry(principal, {
         id: 'memory-legacy',
         fact: 'Legacy memory should not cross the clean cut.',
+        sources: [{ conversationId: sessionId }],
+      });
+      // The user pool is a first-class principal pool; the clean cut must wipe it too (review #10).
+      const userPrincipal: AgentPrincipal = { type: 'user', userId: 'local-user' };
+      await store.addMemoryEntry(userPrincipal, {
+        id: 'memory-legacy-user',
+        fact: 'Legacy user fact should not cross the clean cut either.',
         sources: [{ conversationId: sessionId }],
       });
 
@@ -508,7 +516,8 @@ describe('agent event store', () => {
       }]);
       await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
       await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
-      await expect(restarted.readMemoryEvents(agentId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(principal)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
     });
   });
 
@@ -773,7 +782,7 @@ describe('agent event store', () => {
     });
   });
 
-  test('leaves agent-anchored runs out of a conversation run index rebuild', async () => {
+  test('leaves principal-anchored runs out of a conversation run index rebuild', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-agent-anchor';
       const runId = 'run-agent-anchor';
@@ -786,7 +795,7 @@ describe('agent event store', () => {
         v: 1,
         id: runId,
         agentId: 'built-in:tenon:assistant',
-        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
         kind: 'scheduled',
         status: 'completed',
         trigger: { type: 'system' },
@@ -812,7 +821,7 @@ describe('agent event store', () => {
     });
   });
 
-  test('leaves live-appended agent-anchored runs out of the conversation run index', async () => {
+  test('leaves live-appended principal-anchored runs out of the conversation run index', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-live-agent-anchor';
       const runId = 'run-live-agent-anchor';
@@ -822,7 +831,7 @@ describe('agent event store', () => {
           ...base(sessionId, 2, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
-          anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
           kind: 'scheduled',
           trigger: { type: 'system' },
           fingerprint: {
@@ -839,9 +848,9 @@ describe('agent event store', () => {
       const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
       expect(runRaw).toContain('run.started');
       const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
-        anchor: { type: string; agentId: string };
+        anchor: { type: string };
       };
-      expect(runMeta.anchor).toEqual({ type: 'agent', agentId: 'built-in:tenon:assistant' });
+      expect(runMeta.anchor).toEqual({ type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } });
 
       const index = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
@@ -1056,14 +1065,15 @@ describe('agent event store', () => {
   test('projects agent memory from per-agent JSONL events', async () => {
     await withStore(async (store, root) => {
       const agentId = 'built-in:tenon:assistant';
-      const first = await store.addMemoryEntry(agentId, {
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      const first = await store.addMemoryEntry(principal, {
         id: 'memory-1',
         fact: '  User prefers concise engineering answers.  ',
         originWorkspace: 'workspace:abc',
         sources: [{ conversationId: 'conversation-1', runId: 'run-1', messageRange: ['user-1', 'user-1'] }],
         createdAt: 10,
       });
-      const second = await store.addMemoryEntry(agentId, {
+      const second = await store.addMemoryEntry(principal, {
         id: 'memory-2',
         fact: 'Project codename is Tenon.',
         sources: [{ conversationId: 'conversation-2' }],
@@ -1074,36 +1084,108 @@ describe('agent event store', () => {
       expect(second.fact).toBe('Project codename is Tenon.');
       await expect(readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8')).resolves.toContain('memory.entry_added');
 
-      const updated = await store.updateMemoryEntry(agentId, 'memory-1', {
+      const updated = await store.updateMemoryEntry(principal, 'memory-1', {
         fact: 'User prefers direct, concise engineering answers.',
       });
       expect(updated?.fact).toBe('User prefers direct, concise engineering answers.');
 
-      const removed = await store.removeMemoryEntry(agentId, 'memory-1', 'test');
+      const removed = await store.removeMemoryEntry(principal, 'memory-1', 'test');
       expect(removed?.status).toBe('invalidated');
-      await store.removeMemoryEntry(agentId, 'memory-1', 'test-again');
+      await store.removeMemoryEntry(principal, 'memory-1', 'test-again');
 
-      expect(await store.listMemoryEntries(agentId)).toMatchObject([
+      expect(await store.listMemoryEntries(principal)).toMatchObject([
         { id: 'memory-2', status: 'active' },
       ]);
-      expect(await store.listMemoryEntries(agentId, { includeInvalidated: true, query: 'direct concise' })).toMatchObject([
+      expect(await store.listMemoryEntries(principal, { includeInvalidated: true, query: 'direct concise' })).toMatchObject([
         { id: 'memory-1', status: 'invalidated' },
       ]);
 
       const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n')).toHaveLength(4);
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listMemoryEntries(agentId, { includeInvalidated: true })).toMatchObject([
+      expect(await restarted.listMemoryEntries(principal, { includeInvalidated: true })).toMatchObject([
         { id: 'memory-2', status: 'active' },
         { id: 'memory-1', status: 'invalidated' },
       ]);
     });
   });
 
+  test('tolerates a torn trailing memory event line but rejects mid-file corruption', async () => {
+    await withStore(async (store, root) => {
+      const agentId = 'built-in:tenon:assistant';
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      await store.addMemoryEntry(principal, {
+        id: 'memory-1',
+        fact: 'Survives a crash-torn tail.',
+        sources: [{ conversationId: 'conversation-1' }],
+        createdAt: 10,
+      });
+      await store.addMemoryEntry(principal, {
+        id: 'memory-2',
+        fact: 'Second intact entry.',
+        sources: [{ conversationId: 'conversation-2' }],
+        createdAt: 20,
+      });
+      const eventsPath = store.agentPaths(agentId).memoryEventsPath;
+      const intact = await readFile(eventsPath, 'utf8');
+
+      // Interrupted append (e.g. quit mid-Dream) leaves a torn FINAL line: drop it, keep reading.
+      await writeFile(eventsPath, `${intact}{"v":1,"eventId":"torn`, 'utf8');
+      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'active' },
+      ]);
+
+      // The next append repairs the tear in place instead of welding onto the fragment
+      // (which would silently drop this event now and brick the file one append later).
+      await new AgentEventStore(root).addMemoryEntry(principal, {
+        id: 'memory-3',
+        fact: 'Appended after a torn tail.',
+        sources: [{ conversationId: 'conversation-3' }],
+        createdAt: 30,
+      });
+      const repaired = await readFile(eventsPath, 'utf8');
+      for (const line of repaired.trim().split('\n')) JSON.parse(line); // every line intact
+      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
+        { id: 'memory-3', status: 'active' },
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'active' },
+      ]);
+
+      // A tear can also land between the JSON and its newline: the final line is a complete
+      // event and must survive the repair (only the newline is restored, nothing truncated).
+      await writeFile(eventsPath, intact.trimEnd(), 'utf8');
+      await new AgentEventStore(root).addMemoryEntry(principal, {
+        id: 'memory-4',
+        fact: 'Appended after a newline-only tear.',
+        sources: [{ conversationId: 'conversation-4' }],
+        createdAt: 40,
+      });
+      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
+        { id: 'memory-4', status: 'active' },
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'active' },
+      ]);
+
+      // A malformed line in the MIDDLE is real corruption and still fails loudly — for
+      // reads and for the pre-append repair alike.
+      const lines = intact.trim().split('\n');
+      await writeFile(eventsPath, `${lines[0]}\n{broken\n${lines[1]}\n`, 'utf8');
+      await expect(new AgentEventStore(root).listMemoryEntries(principal)).rejects.toThrow(/Invalid agent memory event JSON/);
+      await expect(new AgentEventStore(root).addMemoryEntry(principal, {
+        id: 'memory-5',
+        fact: 'Must not be written past corruption.',
+        sources: [{ conversationId: 'conversation-5' }],
+        createdAt: 50,
+      })).rejects.toThrow(/Invalid agent memory event JSON/);
+    });
+  });
+
   test('rejects empty memory updates and keeps normalized facts within the max length', async () => {
     await withStore(async (store) => {
       const agentId = 'built-in:tenon:assistant';
-      const entry = await store.addMemoryEntry(agentId, {
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      const entry = await store.addMemoryEntry(principal, {
         id: 'memory-long',
         fact: 'x'.repeat(2_100),
         sources: [{ conversationId: 'conversation-1' }],
@@ -1111,14 +1193,15 @@ describe('agent event store', () => {
 
       expect(entry.fact).toHaveLength(2_000);
       expect(entry.fact.endsWith('...')).toBe(true);
-      await expect(store.updateMemoryEntry(agentId, 'memory-long', { fact: '   ' })).rejects.toThrow(/cannot be empty/);
+      await expect(store.updateMemoryEntry(principal, 'memory-long', { fact: '   ' })).rejects.toThrow(/cannot be empty/);
     });
   });
 
   test('compacts high-churn memory logs to the current projection', async () => {
     await withStore(async (store) => {
       const agentId = 'built-in:tenon:assistant';
-      await store.appendDreamCompleted(agentId, {
+      const principal: AgentPrincipal = { type: 'agent', agentId };
+      await store.appendDreamCompleted(principal, {
         runId: 'dream-run-before-churn',
         trigger: 'schedule',
         startedAt: 40,
@@ -1144,35 +1227,35 @@ describe('agent event store', () => {
         },
         changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
       });
-      await store.addMemoryEntry(agentId, {
+      await store.addMemoryEntry(principal, {
         id: 'memory-churn',
         fact: 'Version 0.',
         sources: [{ conversationId: 'conversation-1' }],
       });
 
       for (let index = 1; index <= 70; index += 1) {
-        await store.updateMemoryEntry(agentId, 'memory-churn', { fact: `Version ${index}.` });
+        await store.updateMemoryEntry(principal, 'memory-churn', { fact: `Version ${index}.` });
       }
 
       const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n').length).toBeLessThan(20);
-      expect(await store.listMemoryEntries(agentId)).toMatchObject([
+      expect(await store.listMemoryEntries(principal)).toMatchObject([
         { id: 'memory-churn', fact: 'Version 70.' },
       ]);
-      expect((await store.readDreamState(agentId)).watermark.conversations['conversation-1']).toEqual({
+      expect((await store.readDreamState(principal)).watermark.conversations['conversation-1']).toEqual({
         seq: 12,
         eventId: 'event-12',
       });
     });
   });
 
-  test('persists agent-anchored reflective run meta for Dream runs', async () => {
+  test('persists principal-anchored reflective run meta for Dream runs', async () => {
     await withStore(async (store) => {
-      await store.writeRunMeta({
+      const writeDreamMeta = (id: string, principal: AgentPrincipal) => store.writeRunMeta({
         v: 1,
-        id: 'dream-run-1',
+        id,
         agentId: 'built-in:tenon:assistant',
-        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        anchor: { type: 'principal', principal },
         kind: 'reflective',
         status: 'completed',
         trigger: { type: 'schedule', schedule: '2026-01-01T03:00 RRULE:FREQ=DAILY', dueAt: 1_800_000_000_000 },
@@ -1188,15 +1271,26 @@ describe('agent event store', () => {
         updatedAt: 120,
         latestSeq: 0,
       });
+      const agent: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+      const user: AgentPrincipal = { type: 'user', userId: 'local-user' };
+      await writeDreamMeta('dream-run-1', agent);
+      await writeDreamMeta('dream-run-user', user);
 
       await expect(store.readRunMetaProjection('dream-run-1')).resolves.toMatchObject({
         id: 'dream-run-1',
-        anchor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        anchor: { type: 'principal', principal: agent },
         kind: 'reflective',
         trigger: { type: 'schedule' },
       });
-      await expect(store.listAgentRunMetaProjections('built-in:tenon:assistant')).resolves.toMatchObject([{
+      // Each principal's run index lists only the runs maintaining ITS pool — the executor
+      // (agentId) does not leak the user-Dream into the agent's run history.
+      await expect(store.listPrincipalRunMetaProjections(agent)).resolves.toMatchObject([{
         id: 'dream-run-1',
+        kind: 'reflective',
+        status: 'completed',
+      }]);
+      await expect(store.listPrincipalRunMetaProjections(user)).resolves.toMatchObject([{
+        id: 'dream-run-user',
         kind: 'reflective',
         status: 'completed',
       }]);
