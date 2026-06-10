@@ -27,6 +27,7 @@ For outliner interaction work:
 
 For agent work:
 
+0. `agent-architecture.md` ← read first: the map
 1. `agent-event-log-rendering.md`
 2. `agent-pi-mono-implementation.md`
 3. `agent-skills.md`
@@ -47,6 +48,7 @@ For agent work:
 | `outliner-parity-matrix.md` | Behavioral parity with nodex: pointer, keyboard, selection, trigger semantics, and the tests that pin them. | Checking exact nodex-style selection/editing parity. |
 | `search-query-grammar.md` | Search node query expression and operator semantics. | Changing query operators, search node persistence, or live refresh. |
 | `date-field-values.md` | Date field value model, parsing, and display rules. | Changing date fields. |
+| `agent-architecture.md` | The one-page map of the agent subsystem: the 7 primitives (Principal, Conversation, Run, Memory, Skill, Agent, Permission gate), the three ledgers, sub-agent vs peer relationships, the user+self-agent concept direction, and the verified built/scaffolded/planned status. | Onboarding to the agent subsystem, or deciding which deeper doc/plan to read. |
 | `agent-event-log-rendering.md` | Canonical event-sourced agent data, debug, persistence, and render projection architecture. | Changing agent state, event store, debug, persistence, replay, or render projection. |
 | `agent-pi-mono-implementation.md` | pi-mono runtime boundary and Electron integration. | Changing provider loop, runtime execution, approvals, keys, streaming, or pi-mono adapter behavior. |
 | `agent-skills.md` | Skill discovery, loading, slash invocation, compaction restore, and skill permission modes / tool preapproval. | Changing agent skills, `/compact`, `/dream`, skill permission modes, or skill settings. |

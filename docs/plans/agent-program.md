@@ -242,6 +242,52 @@ redesign them. Open consequence for M3: a built-in subagent owner id is workspac
 memory line spans workspaces — `isolated`-tier scoping for such shared owners is settled for the
 single-host case (#164) but is a known design surface when multi-host/registry lands.
 
+## M3 sequencing & readiness (verified 2026-06-10 read-only audit; debt-first)
+
+A read-only code audit (storage / membership / multi-agent readiness) settled what M3
+actually builds on and re-sequenced it **debt-first** (PM-ratified 2026-06-10). The map
+of the whole subsystem now lives in `docs/spec/agent-architecture.md` (the 7 primitives +
+this status table).
+
+**Audit outcome — the foundation is clean; load-bearing debt is small and contained.**
+- ✅ **built:** three-ledger storage + write-time split (legacy flat `sessions/` deleted
+  on startup); `Principal` + per-message `actor`; `members[]` populated **and already used
+  for memory Dream scope**; run→conversation anchor + per-conversation run index; typed
+  sub-agent identity + per-agent memory line (#164).
+- ⚠ **scaffolded (connect, don't remove):** `addressedTo`, `member.added/removed`, the
+  foreign-`<principal>` render hook — types exist, never written/read; they are the M3
+  work itself, not separate debt.
+- ◻ **missing (the M3 build):** create a >1-agent conversation (Channel —
+  `defaultConversationMembers` is hardcoded `[user, mainAgent]`); routing/coordinator;
+  peer-agent reply in the shared thread; **cross-agent memory sharing + a cross-principal
+  isolation gate** (the *one* genuinely new primitive); per-agent POV projection.
+- ⚠ **the one load-bearing code debt:** #164 memory-source binding is positional
+  (message-index + watermark), which breaks under compaction — cross-agent citing would
+  inherit it. **Must harden (content/event addressing) before the sharing step.**
+
+**Finding:** M3 = **rules + views + ONE new primitive** (cross-agent memory sharing),
+all riding the existing 7 primitives — it does *not* re-inflate the concept count.
+**Ratified:** build the **peer model** the data-model already designed (`members` +
+`addressedTo` + "a run iff a principal is addressed"); connect the scaffolding, don't
+reinvent.
+
+**Debt-first order (each phase pays its load-bearing debt before the next builds on it — A7 at roadmap level):**
+
+- **Phase 0 — settle the map.** `docs/spec/agent-architecture.md` (done) + this
+  reconciliation + ratify the peer model. ~no code.
+- **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding
+  (content/event addressing, watermark stable under compaction). Optional cheap
+  clean-cut: internal `sessionId` field → `conversationId`.
+- **Phase 2 — multi-agent (a SET of independent complete features, dependency-ordered):**
+  - 2.1 Channel membership: open `defaultConversationMembers`, emit `member.*`, connect
+    `addressedTo`, add routing/coordinator.
+  - 2.2 Peer-agent reply in the shared thread (`actor` = agent principal). *(2.1+2.2
+    together = "multi-agent conversations work".)*
+  - 2.3 Cross-agent memory sharing + the cross-principal isolation hard gate (the new
+    primitive; depends on Phase 1).
+  - 2.4 Per-agent POV projection (derived view).
+- **Parallel (orthogonal, not blocked):** `agent-skill-acceptance` (PR A, cc).
+
 ## How this reorg changes the member plans
 
 - **[[agent-conversation-model]]** — slimmed: its §Skills moves to

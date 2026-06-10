@@ -44,6 +44,15 @@ Both 2026-06-09 lanes merged — board is between batches.
   - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills —
     needs its own plan. Executable-script support-file ratify+sandbox and M2 curation
     dry-run stay deferred.
+- **Multi-agent (M3) — debt-first sequencing ratified 2026-06-10.** A read-only audit
+  verified the storage foundation is clean (three-ledger migration done; §4 principal/
+  membership on `main` via #173) and the load-bearing debt is small + contained. New
+  subsystem map: `docs/spec/agent-architecture.md`; sequencing reconciled into
+  `docs/plans/agent-program.md` § *M3 sequencing & readiness*. Order: **Phase 0** settle
+  the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
+  debt, must precede cross-agent citing) → **Phase 2** Channel membership/routing → peer
+  reply → cross-agent memory + isolation gate (the one new primitive) → per-agent POV.
+  `agent-skill-acceptance` (PR A) runs in parallel.
 
 
 ## Backlog

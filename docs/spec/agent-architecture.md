@@ -1,0 +1,122 @@
+# Agent Architecture — the map
+
+The one-page map of the agent subsystem: the small set of primitives everything
+else is a view/rule/metadata of, what's actually built today, and where multi-agent
+plugs in. Detailed designs live in the member plans (`docs/plans/agent-program.md`
+is the sequencing authority; `agent-data-model.md` owns the stored shapes;
+`agent-skills.md` owns skills). This file is the index you read first.
+
+> Status convention below: **✅ built** · **⚠ scaffolded (type exists, not exercised)** ·
+> **◻ planned (M3)**. Verified by a read-only code audit on 2026-06-10.
+
+## The 7 primitives
+
+Everything in the subsystem reduces to seven concepts. The rest — Task, run `kind`,
+DM/Channel, coordinator, fingerprint, distillation nodes — are **views, rules, or
+metadata** of these, not separate primitives.
+
+1. **Principal** — `{type:'user',userId} | {type:'agent',agentId}`. The unit of
+   "who": a conversation member, a message `actor`, an addressee. One type unifies
+   member = actor = addressee. ✅
+2. **Conversation** — the shared, objective record of a thread. Holds `members:
+   Principal[]`. **DM/Channel is a derived view** of the member set (canonical
+   `{user, oneAgent}` = DM; multi-member = Channel), never a stored `kind`. ✅ (DM) /
+   ◻ (Channel routing)
+3. **Run** — one unit of agent execution (one reply or task). Anchored to a
+   conversation (the only home). Holds **all** execution detail. The 4 "kinds"
+   (turn/background/subagent/scheduled) are **derived** from `trigger` + `parentRunId`
+   + foreground-ness; **Task is a view** (= background runs, grouped by `agentId`). ✅
+4. **Memory** — an agent's subjective, distilled self-model. Follows the *agent*, not
+   the conversation. A distillation **ladder** (raw log → index/summary → distilled
+   fact), not three separate nouns. ✅ (per-agent) / ◻ (cross-agent sharing)
+5. **Skill** — a reusable instruction, bound by name from one shared library. ✅
+6. **Agent** — an authorable Principal: persona (`AGENT.md` body → system prompt) +
+   model/effort + skill bindings + tool/permission profile + its own memory line. ✅
+7. **Permission gate** — ask / allow / deny, over a hard A3 floor (catastrophic
+   hard-blocks + a "can-never-be-globally-allowed" set). ✅
+
+## The three ledgers (one engine, three instances)
+
+A conversation owns the **record**; an agent owns the **memory**; a run owns the
+**execution**. One shared `AppendOnlySeqLog` primitive backs all three; they differ
+only in id scheme, writer, retention, and vocabulary.
+
+| Ledger | Keyed by | Holds | Volume |
+|---|---|---|---|
+| **Conversation** | `conversationId` | communication: user message + final assistant reply + membership | ~2 events/turn |
+| **Run** | `runId` (anchored to a conversation) | all execution: assistant deltas, `tool_call ↔ tool_result`, thinking, permission, ask/widget | 10–50+/turn, self-cleans |
+| **Memory** | `agentId` (or user principal) | memory-mutation + dream events | sub-linear |
+
+Write-time split routes run-execution events to the run log and only communication
+to the conversation log (`agentEventStore.ts` `appendSplitEvents` / `isRunLogEvent`),
+which is what keeps the conversation log at ~2 events/turn. The legacy flat `sessions/`
+log is hard-deleted on startup; the only residue is the internal field name `sessionId`
+(cosmetic — paths/methods are `conversation*`).
+
+## Two kinds of agent-to-agent relationship
+
+- **Sub-agent (delegation, within a run)** — an agent spawns helper runs (fork = inherit
+  the parent transcript/identity; fresh = a typed agent with its own identity + memory
+  line, #164). Child runs carry `parentRunId`; their transcript returns to the parent as
+  a run-log artifact. Not conversation members. ✅
+- **Peer agent (a Channel member)** — multiple agent Principals share one conversation
+  with the user; routed by `addressedTo` (a run is produced iff a principal is addressed;
+  coordinator = the default addressee). ⚠/◻ — `members`/`actor` are real; `addressedTo`,
+  `member.added/removed`, and >1-agent conversations are scaffolded/missing (see below).
+
+## User ↔ Agent (concept direction, not yet built)
+
+The relationship is layered: at the conversation layer user and agent are symmetric
+Principals (✅); at the control layer the user is **authority** and the agent is
+**delegate** (✅ — the permission gate); at the memory/identity layer the design
+direction is **`(user + self-agent) = one complete agent`** — the self-agent silently
+does the background dirty work (Dream-distilling, compaction, indexing, maintaining the
+user's self-model) while **decisions stay with the user**. The real symmetry is
+"**will + digestion**", not "agent": a normal agent is will(LLM)+digestion(LLM); the
+user-composite is will(human)+digestion(self-agent-LLM). The implementable boundary:
+**epistemic curation is autonomous** (so Dream can run), **volitional commitment
+escalates** (== the existing ask-gate). This is an exploratory, **not-yet-ratified**
+direction (target M3); only the `<self>`/`<principal>` render scaffold exists today.
+
+## Multi-agent = rules + views + one new primitive
+
+Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives it is:
+
+| Capability | Lands on | As |
+|---|---|---|
+| Channel (>1 agent member) | Conversation | more `members` — same container |
+| Routing (who replies) | — | one rule: a run iff a principal is in `addressedTo` |
+| Coordinator | Agent | the default-addressed agent (not a new type) |
+| Per-agent POV | Conversation | a derived projection (not stored) |
+| **Cross-agent memory sharing** | Memory | **★ the one genuinely new primitive**: publish/subscribe over distilled pools + a hard cross-principal isolation gate (distilled-only, never raw evidence) |
+
+## Verified status & known scaffolding (2026-06-10 audit)
+
+| Area | Status | Note |
+|---|---|---|
+| Three-ledger storage + write-time split | ✅ built | migration complete; legacy flat log deleted on startup |
+| `Principal` + per-message `actor` | ✅ built | user actor = `local-user` (single-user) |
+| `members[]` populated + used for memory scope | ✅ built | every conversation = `[user, mainAgent]` |
+| Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
+| Typed sub-agent identity + per-agent memory line (#164) | ✅ built | the groundwork multi-agent builds on |
+| `addressedTo`, `member.added/removed`, `<principal>` render hook | ⚠ scaffolded | types exist, never written/read — **connect, don't remove** |
+| Create a >1-agent conversation (Channel) | ◻ missing | `defaultConversationMembers` is always `[user, mainAgent]` |
+| Routing / coordinator / peer-agent reply | ◻ missing | single main agent always replies |
+| Cross-agent memory sharing + isolation gate | ◻ missing | the one new primitive (M3) |
+| Per-agent POV projection | ◻ missing | transcript views are global today |
+| Memory source binding under compaction (#164) | ⚠ debt | positional indexing + watermark fragility; must harden before cross-agent citing |
+
+Forward sequencing for the gaps above lives in `agent-program.md` § *M3 sequencing &
+readiness* (debt-first: settle the map → fix #164 → build Channel/routing → peer reply →
+cross-agent memory + isolation gate → per-agent POV).
+
+## Known tensions / honest caveats
+
+- **Elegance was partly on paper; the storage foundation is now verified clean** — but
+  the multi-agent membership/routing/sharing layer is scaffold/missing, so the
+  Principal symmetry is real yet largely unexercised until M3.
+- **"user = agent" oversells**; the honest model is `(user + self-agent) = one agent`,
+  symmetric only in the memory/identity layer.
+- **The cross-principal isolation gate is load-bearing** — unifying "self" and "other"
+  memory under one mechanism also unifies the failure mode; it must be a hard
+  architectural boundary, not a recall-path convention, before sharing ships.
