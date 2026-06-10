@@ -21,14 +21,16 @@ model): every memory entry has
 - **storage strength** — how established the fact is; never decays; the only way
   out is the existing explicit `invalidate`;
 - **retrieval strength** — how accessible it is *now*; decays with time and
-  disuse, **rises when the entry is recalled or injected and proves relevant**.
+  disuse; **active retrieval (a `recall` hit) strengthens it strongly; mere
+  re-exposure (briefing injection) weakly** — the retrieval-practice (testing)
+  effect's asymmetry, taken from the literature as-is.
 
 Retrieval strength (composed with lexical relevance) governs the resident
 briefing's ranking and budget — replacing the current "score-ranked relevant ∪
 latest, dedupe to N" heuristic with one that lets stale entries *fall out of the
 working set without being deleted*. Forgetting = falling off the briefing,
 never erasure; `recall` can always reach low-strength entries (and doing so
-restrengthens them — the spacing effect for free).
+restrengthens them — the retrieval-practice effect).
 
 ## Hard constraints (settled — do not re-open)
 
@@ -48,9 +50,10 @@ restrengthens them — the spacing effect for free).
 1. **Access events** appended when an entry is injected into a briefing or
    returned by `recall` (batched per turn).
 2. **Strength projection** in the memory projected-state cache: retrieval
-   strength = decay(time since last access) × boost(access count, recency);
-   storage strength = monotone in (age, access count). Exact curve = reversible
-   local (note in the PR; spaced-repetition literature is the guide).
+   strength = decay(time since last access) × boost(access recency/count,
+   weighted by kind — retrieval > re-exposure); storage strength = monotone in
+   (age, access count). Exact curve = reversible local (note in the PR; the
+   spaced-repetition literature is the guide).
 3. **Briefing selection** (`buildMemoryReminder` path) ranks by
    retrieval-strength-weighted relevance under the existing entry cap; the cap
    itself can stay.

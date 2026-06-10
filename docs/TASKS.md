@@ -230,7 +230,7 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   Four pre-written delta plans, scheduled after M3-B: **D1** `agent-memory-forgetting`
   (Bjork two-strength → briefing ranking; closes the injection-budget OQ; strengths are
   projections, never stored fields) → **D2** `agent-memory-encoding-signal`
-  (expectation-failure as a first-class Dream cue; small, **fast-track-insertable
+  (prediction-error-weighted encoding cue for Dream; small, **fast-track-insertable
   anytime**) → **D3** `agent-memory-episodic-index` (episode derived view + episode→
   cognition reverse lookup; principal-gated) → **D4** `agent-memory-retrieval-upgrade`
   (lexical → hybrid; carries the **embedding-provider PM gate** — close at claim).

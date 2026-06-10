@@ -854,7 +854,7 @@ structures above — zero storage change**; code identifiers (`dream`, `recall`,
 | **Procedural store** | reusable competence ("what I can do") | skills (owned by [[agent-skills-authoring]]; named here for completeness) |
 | **Index** | the hippocampal-style pointer layer binding semantic ↔ episodic | `sources[]` + `DistillationNode` summaries (§4) |
 | **Consolidation** | offline replay of the episodic store distilling into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17) |
-| **Retrieval** | three heat tiers: resident working-memory briefing → cued `recall` → evidence grounding | §8 assembly + the single `recall` tool |
+| **Retrieval** | working memory (the resident briefing) → cued retrieval (`recall`) → source access (evidence expansion) | §8 assembly + the single `recall` tool |
 | **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | **target** — `agent-memory-forgetting` (D1); today only invalidate + churn compaction |
 | **Transactive layer** | co-members subscribe to each other's *semantic* stores; raw evidence never crosses principals | membership read (shipped #173 for the user pool) + M3-B (`agent-cross-agent-memory`) |
 

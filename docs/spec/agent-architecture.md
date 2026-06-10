@@ -92,8 +92,8 @@ processes, one social layer** — mapped one-to-one onto existing mechanisms
 - **Index:** the hippocampal-style pointer layer (`sources[]` + distillation
   summaries) binding semantic facts to episodic evidence, bidirectionally.
 - **Processes:** consolidation (Dream — offline replay distilling episodic →
-  semantic; evidence-preserving under compaction) · retrieval (three heat
-  tiers: resident briefing → cued `recall` → evidence grounding) · forgetting
+  semantic; evidence-preserving under compaction) · retrieval (working-memory
+  briefing → cued retrieval via `recall` → source access) · forgetting
   (two-strength target: storage strength never decays, retrieval strength
   governs injection — never deletion; D1, planned).
 - **Social layer:** transactive memory — co-members subscribe to each other's
