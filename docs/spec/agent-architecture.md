@@ -104,7 +104,7 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Routing / coordinator / peer-agent reply | ◻ missing | single main agent always replies |
 | Cross-agent memory sharing + isolation gate | ◻ missing | the one new primitive (M3) |
 | Per-agent POV projection | ◻ missing | transcript views are global today |
-| Memory source binding under compaction (#164) | ⚠ debt | positional indexing + watermark fragility; must harden before cross-agent citing |
+| Memory source binding under compaction (#164) | ⚠ debt | `sources[]` are already ID-pinned + fail-loud (robust); the residual gap is the **positional Dream watermark** — a fork run that auto-compacts can be skipped forever, dropping its summary as evidence. Must harden before cross-agent citing (plan: `agent-memory-source-binding`). |
 
 Forward sequencing for the gaps above lives in `agent-program.md` § *M3 sequencing &
 readiness* (debt-first: settle the map → fix #164 → build Channel/routing → peer reply →
