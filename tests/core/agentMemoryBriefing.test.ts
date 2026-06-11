@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentMemoryEntry, AgentPrincipal } from '../../src/core/agentEventLog';
+import type { AgentMemoryOverview } from '../../src/core/agentMemoryActivation';
 import { MEMORY_BRIEFING_INTRO, renderAgentMemoryBriefing } from '../../src/main/agentMemoryBriefing';
 
 const READER: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
@@ -11,9 +12,30 @@ function entry(input: Partial<AgentMemoryEntry> & { id: string; fact: string }):
     principal: input.principal ?? READER,
     fact: input.fact,
     originWorkspace: input.originWorkspace,
-    sources: input.sources ?? [{ conversationId: 'c1' }],
+    sources: input.sources ?? [{
+      stream: 'conversation',
+      streamId: 'c1',
+      range: { fromSeqExclusive: 0, throughSeq: 1, throughEventId: 'c1-event-1' },
+    }],
     status: input.status ?? 'active',
     createdAt: input.createdAt ?? 1,
+  };
+}
+
+function overview(): AgentMemoryOverview {
+  return {
+    generatedAt: 100,
+    totalEntries: 2,
+    schema: [
+      {
+        id: 'memory-schema:reviews',
+        label: 'reviews',
+        memoryIds: ['m1', 'm2'],
+        entryCount: 2,
+        storageStrength: 2,
+        retrievalStrength: 1.5,
+      },
+    ],
   };
 }
 
@@ -129,6 +151,19 @@ describe('renderAgentMemoryBriefing', () => {
       '- verifies HEAD before a gate run',
       '- keeps PRs single-purpose',
     ]);
+  });
+
+  test('renders a schema overview without exposing memory ids', () => {
+    const briefing = renderAgentMemoryBriefing(
+      [entry({ id: 'm1', fact: 'prefers terse code reviews' })],
+      { reader: READER, overview: overview() },
+    );
+
+    expect(briefing).toContain('<overview>');
+    expect(briefing).toContain('- reviews: 2 facts');
+    expect(briefing).not.toContain('memory-schema:reviews');
+    expect(briefing).not.toContain('m2');
+    expect(briefing).toContain('<self>');
   });
 
   test('skips invalidated entries and dedupes by id', () => {

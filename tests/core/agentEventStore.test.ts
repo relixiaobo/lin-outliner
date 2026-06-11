@@ -1370,6 +1370,60 @@ describe('agent event store', () => {
     });
   });
 
+  test('projects memory access strength and schema overview from batched events', async () => {
+    await withStore(async (store, root) => {
+      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+      const now = 1_800_000_000_000;
+      const old = await store.addMemoryEntry(principal, {
+        id: 'memory-old-review',
+        fact: 'prefers terse code reviews',
+        sources: [conversationSource('conversation-old')],
+        createdAt: now - 90 * 24 * 60 * 60 * 1000,
+      });
+      const fresh = await store.addMemoryEntry(principal, {
+        id: 'memory-fresh-rings',
+        fact: 'uses amber focus rings',
+        sources: [conversationSource('conversation-fresh')],
+        createdAt: now - 24 * 60 * 60 * 1000,
+      });
+
+      expect((await store.activateMemoryEntries(principal, { now })).entries.map((item) => item.entry.id)).toEqual([
+        fresh.id,
+        old.id,
+      ]);
+
+      const access = await store.recordMemoryAccess(principal, {
+        via: 'recall',
+        entryIds: [old.id, old.id, 'missing'],
+        createdAt: now,
+      });
+      expect(access?.accesses).toEqual([{ entryId: old.id, count: 1 }]);
+      const activated = await store.activateMemoryEntries(principal, { now });
+      expect(activated.entries.map((item) => item.entry.id)).toEqual([
+        old.id,
+        fresh.id,
+      ]);
+      expect(activated.entries[0]?.strength.recallCount).toBe(1);
+      expect(activated.overview.schema.map((node) => node.label)).toContain('reviews');
+
+      const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
+      const events = raw.trim().split('\n').map((line) => JSON.parse(line) as { type: string; accesses?: unknown[] });
+      expect(events.filter((event) => event.type === 'memory.accessed')).toHaveLength(1);
+      expect(events.find((event) => event.type === 'memory.accessed')?.accesses).toHaveLength(1);
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.memoryStrength(principal, old.id, now)).toMatchObject({
+        entryId: old.id,
+        recallCount: 1,
+      });
+
+      await store.removeMemoryEntry(principal, old.id, 'test');
+      expect((await store.activateMemoryEntries(principal, { now })).entries.map((item) => item.entry.id)).toEqual([
+        fresh.id,
+      ]);
+    });
+  });
+
   test('tolerates a torn trailing memory event line but rejects mid-file corruption', async () => {
     await withStore(async (store, root) => {
       const agentId = 'built-in:tenon:assistant';
@@ -1458,7 +1512,7 @@ describe('agent event store', () => {
   });
 
   test('compacts high-churn memory logs to the current projection', async () => {
-    await withStore(async (store) => {
+    await withStore(async (store, root) => {
       const agentId = 'built-in:tenon:assistant';
       const principal: AgentPrincipal = { type: 'agent', agentId };
       await store.appendDreamCompleted(principal, {
@@ -1492,6 +1546,21 @@ describe('agent event store', () => {
         fact: 'Version 0.',
         sources: [conversationSource('conversation-1')],
       });
+      await store.addMemoryEntry(principal, {
+        id: 'memory-other-access',
+        fact: 'Other access timestamp.',
+        sources: [conversationSource('conversation-2')],
+      });
+      await store.recordMemoryAccess(principal, {
+        via: 'briefing',
+        entryIds: ['memory-churn', 'memory-churn'],
+        createdAt: 100,
+      });
+      await store.recordMemoryAccess(principal, {
+        via: 'briefing',
+        entryIds: ['memory-other-access'],
+        createdAt: 50,
+      });
 
       for (let index = 1; index <= 70; index += 1) {
         await store.updateMemoryEntry(principal, 'memory-churn', { fact: `Version ${index}.` });
@@ -1499,9 +1568,25 @@ describe('agent event store', () => {
 
       const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
       expect(raw.trim().split('\n').length).toBeLessThan(20);
-      expect(await store.listMemoryEntries(principal)).toMatchObject([
-        { id: 'memory-churn', fact: 'Version 70.' },
-      ]);
+      const compactedEntries = await store.listMemoryEntries(principal);
+      expect(compactedEntries).toHaveLength(2);
+      expect(compactedEntries.find((entry) => entry.id === 'memory-churn')).toMatchObject({
+        id: 'memory-churn',
+        fact: 'Version 70.',
+      });
+      expect(compactedEntries.find((entry) => entry.id === 'memory-other-access')).toMatchObject({
+        id: 'memory-other-access',
+        fact: 'Other access timestamp.',
+      });
+      expect(raw).toContain('memory.accessed');
+      expect(await new AgentEventStore(root).memoryStrength(principal, 'memory-churn', 100)).toMatchObject({
+        briefingCount: 1,
+        lastAccessedAt: 100,
+      });
+      expect(await new AgentEventStore(root).memoryStrength(principal, 'memory-other-access', 100)).toMatchObject({
+        briefingCount: 1,
+        lastAccessedAt: 50,
+      });
       expect((await store.readDreamState(principal)).watermark.conversations['conversation-1']).toEqual({
         seq: 12,
         eventId: 'event-12',

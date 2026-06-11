@@ -1,10 +1,10 @@
 ---
-status: draft
+status: done
 priority: P2
-owner: unassigned
+owner: codex
 phase: memory-realignment PR-3 (after PR-2 / episodic layer)
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 ---
 
 # Memory D1: forgetting — the two-strength model
@@ -60,6 +60,24 @@ restrengthens them — the retrieval-practice effect).
 4. **Spec sync:** flip the data-model "Forgetting" row from target → built;
    close the injection-budget open question; archive this plan `done`.
 
+## As built
+
+- Added `memory.accessed` events with `{via: 'briefing' | 'recall', accesses:
+  [{entryId, count, accessedAt?}]}`. Live writes batch all entries touched by a
+  briefing or recall result into one event per principal; compaction can fold
+  accumulated counts into the same event shape while preserving each entry's
+  last-access time.
+- Added a rebuildable access-strength projection over `MemoryEntry.createdAt`
+  and `memory.accessed`: storage strength is monotone in age + weighted access
+  count; retrieval strength decays by time since encoding/access; recall hits
+  strengthen substantially more than briefing re-exposure.
+- Resident briefing now uses activation-ranked facts plus the PR-5 schema
+  overview. Query recall still requires lexical hits, but retrieval strength
+  participates in ranking; returned hits append recall access after the result
+  is built.
+- No-query `recall` is PR-5's overview surface and intentionally does not mark
+  every active fact as recalled.
+
 ## Non-goals
 
 - NOT embedding/hybrid retrieval (D4); NOT changing what gets *written*
@@ -70,19 +88,20 @@ restrengthens them — the retrieval-practice effect).
 
 ## Acceptance
 
-- [ ] Projection unit tests: decay over simulated time; restrengthen on access;
+- [x] Projection unit tests: decay over simulated time; restrengthen on access;
       invalidated entries excluded regardless of strength.
-- [ ] Briefing test: a stale-but-active entry falls out of the briefing as
+- [x] Briefing test: a stale-but-active entry falls out of the briefing as
       fresher entries accumulate, and returns after a `recall` hit.
-- [ ] Rebuild oracle: strength projection rebuilt from the event log equals the
+- [x] Rebuild oracle: strength projection rebuilt from the event log equals the
       cached projection (the standing projection invariant).
-- [ ] No per-entry write amplification (events batched per turn — assert in test).
-- [ ] `bun run typecheck` + `bun run test:core` green vs baselines; spec synced.
+- [x] No per-entry write amplification (events batched per turn — assert in test).
+- [x] `bun run typecheck` + `bun run test:core` green vs baselines; spec synced.
 
 ## Collision self-check (plan time 2026-06-10)
 
 Touches the memory ledger event union (protocol surface — coordinate per A4),
 the memory projected-state cache, and the briefing path. Resequenced 2026-06-10
 (PM-ratified): now **realignment PR-3**, after PR-2 (episodic layer); relative
-order vs M3-B is unpinned, but M3-B touches the same briefing path — re-verify
-anchors + `gh pr list` at claim time.
+order vs M3-B is unpinned, but M3-B touches the same briefing path. Claim-time
+check 2026-06-11: `gh pr list` returned no open claims; PR-5 is implemented in
+the same branch because it recomposes the same briefing assembly.

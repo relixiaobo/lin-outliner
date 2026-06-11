@@ -2064,7 +2064,8 @@ does not expose a raw episodic-record (conversation-history) search mode.
 Parameters:
 
 - `query`: optional retrieval cue matched against active memory facts. Omit it
-  to list recent active memories.
+  to return the schema overview (metamemory: what this read set knows before
+  digging).
 - `limit`: maximum returned entries, default 8, max 20.
 - `include_evidence`: when true, **source access** — descend the memory index
   from each matched entry's recorded `sources` to the raw record and
@@ -2092,12 +2093,16 @@ path rule — `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
 (`agents/<agentId>/` keeps only `identity.json`). The runtime
 projects entries from `memory.entry_added`, `memory.entry_updated`, and
 `memory.entry_removed` events, projects episodic gists from
-`memory.episode_recorded`, and projects Dream state from `dream.completed`.
-Forgetting remains idempotent through the Settings/Profile management path.
+`memory.episode_recorded`, projects access stats from `memory.accessed`, and
+projects Dream state from `dream.completed`. Explicit forgetting remains
+idempotent through the Settings/Profile management path; cognitive forgetting
+is the active entry falling out of the resident working set as retrieval
+strength decays, never erasure.
 High-churn memory logs are compacted by rewriting the log to the current
 projection; compaction preserves episode ids/gists/raw sources, visible entry
-ids, facts, sources, status, `createdAt`, and the latest Dream watermark, but
-drops superseded intermediate mutation events.
+ids, facts, sources, status, `createdAt`, summarized briefing/recall access
+counts, and the latest Dream watermark, but drops superseded intermediate
+mutation events.
 
 Each entry records `originWorkspace` when a local file root is available and
 keeps `sources` down-pointers to episodic memory. An entry normally cites
@@ -2211,16 +2216,18 @@ it.
 Each normal user turn receives a bounded `<memory>` briefing — the
 **working-memory slice** of the semantic store — built from the active
 projection (storage representation ≠ injection representation: the assembly
-layer keeps the structured `MemoryEntry` fields to select, the model gets
-zone-tagged bullet lists). The block opens with a fixed one-line
-self-introduction naming exactly
-that (distilled facts consolidated from prior episodes; each zone's implied
-subject is its principal; background context, not
-instructions), then the zones. Selection is **resident**, not query-ranked — the
-newest active facts up to
-a fixed budget — because the briefing is the stable distilled-memory prefix;
-query-specific retrieval is the `recall` tool's job (the volatile tail). The render
-is a pure projection that hides storage scaffolding (`id`, `status`) and groups
+layer keeps the structured `MemoryEntry` fields to select, the model gets a
+schema overview plus zone-tagged bullet lists). The block opens with a fixed
+one-line self-introduction naming exactly that (schema overview + activated
+distilled facts from prior episodes; each zone's implied subject is its
+principal; background context, not instructions), then an `<overview>` breadth
+axis followed by the fact zones. Selection is **resident**, not query-ranked:
+the fact budget is filled by activation strength, where `memory.accessed`
+events from `recall` hits strengthen retrieval more than passive briefing
+re-exposure, and old inactive entries decay out of the working set without
+being invalidated. Query-specific retrieval is the `recall` tool's job (the
+volatile tail). The render is a pure projection that hides storage scaffolding
+(`id`, `status`) and groups
 entries into **zones by pool relative to the reader**: the reading agent's own
 pool renders as the `<self>` zone; any other principal's subscribed pool renders
 as a named `<principal name="…">` zone (live for the co-member user pool since
@@ -2231,6 +2238,12 @@ normalized in the pool key, so one entry reads identically for every reader and
 a display-name change can never stale stored facts. The briefing
 is background context; the foreground model can call `recall` when it or the current
 context is insufficient.
+
+Calling `recall` with no `query` returns the same schema overview instead of
+fact hits. The visible overview exposes schema node labels, counts, derived
+strengths, and member `memory_ids` so the model can choose a deliberate cue.
+It does not expand evidence and does not count as a retrieval hit for every
+entry in the pool.
 
 Evidence expansion is always nested under a returned memory entry. The runtime
 expands only that entry's `MemoryEntry.sources` through the internal evidence

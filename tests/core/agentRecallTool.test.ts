@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentMemoryEntry, AgentMemorySource } from '../../src/core/agentEventLog';
+import type { AgentMemoryOverview } from '../../src/core/agentMemoryActivation';
 import { createRecallTool, type AgentRecallToolRuntime } from '../../src/main/agentRecallTool';
 
 function entry(id: string, fact: string, createdAt = 10): AgentMemoryEntry {
@@ -28,6 +29,21 @@ function visibleData(result: Awaited<ReturnType<ReturnType<typeof createRecallTo
 }
 
 const READER = { type: 'agent', agentId: 'built-in:tenon:assistant' } as const;
+
+function overview(): AgentMemoryOverview {
+  return {
+    generatedAt: 100,
+    totalEntries: 2,
+    schema: [{
+      id: 'memory-schema:reviews',
+      label: 'reviews',
+      memoryIds: ['memory-1', 'memory-2'],
+      entryCount: 2,
+      storageStrength: 2.3,
+      retrievalStrength: 1.4,
+    }],
+  };
+}
 
 describe('agent recall tool', () => {
   test('returns slim active durable memory entries', async () => {
@@ -106,6 +122,52 @@ describe('agent recall tool', () => {
     // No internal principal keys reach the model.
     expect(JSON.stringify(visible)).not.toContain('agent:built-in');
     expect(JSON.stringify(visible)).not.toContain('user:lixiaobo');
+  });
+
+  test('returns a schema overview when query is omitted', async () => {
+    const runtime: AgentRecallToolRuntime = {
+      reader: READER,
+      recall: async () => ({
+        entries: [],
+        totalEntries: 2,
+        overview: overview(),
+      }),
+    };
+    const tool = createRecallTool(runtime);
+
+    const result = await tool.execute('tool-1', {});
+
+    expect(result.details).toMatchObject({
+      ok: true,
+      data: {
+        entries: [],
+        totalEntries: 2,
+        overview: {
+          totalEntries: 2,
+          schema: [{ id: 'memory-schema:reviews', label: 'reviews' }],
+        },
+      },
+    });
+    expect(visibleData(result)).toEqual({
+      ok: true,
+      data: {
+        entries: [],
+        total_entries: 2,
+        overview: {
+          total_entries: 2,
+          generated_at: 100,
+          schema: [{
+            schema_id: 'memory-schema:reviews',
+            label: 'reviews',
+            entry_count: 2,
+            memory_ids: ['memory-1', 'memory-2'],
+            storage_strength: 2.3,
+            retrieval_strength: 1.4,
+          }],
+        },
+      },
+      instructions: 'No query was provided, so this is the schema overview of active semantic memory. Use the labels as metamemory cues; call recall again with a specific query to retrieve facts.',
+    });
   });
 
   test('nests evidence under the matching memory entry', async () => {

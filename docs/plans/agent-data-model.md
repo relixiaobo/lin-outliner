@@ -909,7 +909,9 @@ The memory subsystem is described, in every doc and plan from here on, in the
 standard cognitive-science vocabulary. This table is the canonical mapping for
 the storage structures above; code identifiers (`dream`, `recall`, `fact`) stay.
 (Rewritten 2026-06-10 per [[agent-memory-realignment]] D-1/D-4/D-6; updated by
-realignment PR-2 when episodes and the memory source union became concrete.)
+realignment PR-2 when episodes and the memory source union became concrete, and
+by PR-3/PR-5 when two-strength activation and the schema overview became
+concrete.)
 
 | Term | Definition here | Implemented as |
 |---|---|---|
@@ -919,9 +921,9 @@ realignment PR-2 when episodes and the memory source union became concrete.)
 | **Procedural store** | reusable competence ("what I can do") | skills (owned by [[agent-skills-authoring]]; named here for completeness) |
 | **Index** | the hippocampal-style **pure pointer** layer binding semantic ↔ episodic, bidirectionally; points, never copies, never holds content | `MemoryEntry.sources[]` fact→episode pointers + episode→facts reverse lookup. `DistillationNode` is NOT index — summary text is content, not a pointer (see §4 note on the two summary kinds) |
 | **Consolidation** | offline replay distilling experience into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17). Dream records episode gist and stores facts that cite it; the #178 compaction-summary-as-evidence stopgap is replaced by fact → episode gist → raw span provenance |
-| **Retrieval** | three modes: chronic activation (resident briefing) · deliberate cued retrieval (`recall` + source access) · automatic association (deferred) | §8 assembly + the single `recall` tool; the zoom ladder (schema → fact → episode gist → raw span, D-6) is the provenance axis |
-| **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | **target** — realignment PR-3 (`agent-memory-forgetting`); today only invalidate + churn compaction |
-| **Metamemory** | knowing what one knows before digging | **target** — realignment PR-5: the schema/overview layer; no-query `recall` returns the overview |
+| **Retrieval** | three modes: chronic activation (resident briefing) · deliberate cued retrieval (`recall` + source access) · automatic association (deferred) | §8 assembly + the single `recall` tool; chronic activation renders a schema overview + strength-selected facts; the zoom ladder (schema → fact → episode gist → raw span, D-6) is the provenance axis |
+| **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | `memory.accessed` events (`via: briefing | recall`) projected into storage/retrieval strengths; recall hits strengthen more than briefing exposure; invalidated entries are excluded regardless of strength |
+| **Metamemory** | knowing what one knows before digging | derived schema/overview nodes over active memory entries; no-query `recall` returns the overview |
 | **Transactive layer** | co-members subscribe to each other's *semantic* stores; raw evidence never crosses principals | membership read (shipped #173 for the user pool) + M3-B (`agent-cross-agent-memory`) |
 
 Standing constraint carried over from the agent-memory-model review, extended
@@ -938,7 +940,8 @@ language surfaces; subsumed the former D2 encoding-signal) — then the
 third-person-singular subject-elided phrasing rule for all pools, zone-tagged
 bullet briefing, `recall` output carries `principal`) → PR-2 episodic layer
 (after run-unification, before M3-B) → PR-3 forgetting + PR-5 schema overview
-→ PR-4 retrieval engine; automatic association deferred on a data gate.
+(this change) → PR-4 retrieval engine; automatic association deferred on a data
+gate.
 
 ## Open questions
 
@@ -955,10 +958,10 @@ These are data-model-local; the experience/sequencing OQs live in
 
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
   topic files. Memory is runtime-owned state, not an agent-writable file tree.
-- **Per-turn memory injection budget** — whole index vs top-N by recency/salience; bound
-  it (cc-2.1 caps MEMORY.md at 200 lines / 25KB). **Design direction ratified 2026-06-10:**
-  the Bjork two-strength model (retrieval strength as a rebuildable projection) — see
-  `agent-memory-forgetting` (D1); the budget question closes when D1 ships.
+- **Per-turn memory injection budget — RESOLVED (realignment PR-3/PR-5).** The
+  resident briefing renders a schema overview plus the fixed fact budget filled
+  by rebuildable retrieval strength; explicit `invalidate` is still the only
+  way out of the pool.
 - **Recursive summary roll-up** (`DistillationNode.source.childSummaryIds`) — deferred
   until single-level segment summaries prove insufficient.
 - **Document context: snapshot+delta vs tail** — the live outline is volatile *and*

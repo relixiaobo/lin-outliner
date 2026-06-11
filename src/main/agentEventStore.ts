@@ -32,9 +32,21 @@ import type {
   AgentMemoryStreamSource,
   AgentMemoryEvent,
   AgentMemorySource,
+  AgentMemoryAccessVia,
   AgentRunTrigger,
 } from '../core/agentEventLog';
 import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
+import {
+  buildMemoryOverview,
+  cloneMemoryAccessStats,
+  computeMemoryStrength,
+  emptyMemoryAccessStats,
+  rankMemoryEntriesByActivation,
+  type AgentMemoryAccessStats,
+  type AgentMemoryOverview,
+  type AgentMemoryRankedEntry,
+  type AgentMemoryStrength,
+} from '../core/agentMemoryActivation';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -60,6 +72,9 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v4 = memory realignment PR-3/PR-5: memory.accessed events feed rebuildable
+// access-strength projections and derived schema overview nodes for chronic
+// activation. No legacy reader; pre-release clean-cut wipes old agent data.
 // v3 = memory realignment PR-2: memory sources are a discriminated union
 // (`{stream, streamId, range}` or `{episodeId}`) and memory-owned episode gist
 // nodes live in the principal memory log. No legacy source reader; pre-release
@@ -69,7 +84,7 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // conversation stream keeps only the slim child_run.started/updated markers.
 // The pre-unification entity-grade events and transcript-snapshot payloads
 // are gone.
-export const STORAGE_LAYOUT_VERSION = 3;
+export const STORAGE_LAYOUT_VERSION = 4;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
@@ -151,6 +166,18 @@ export interface AgentMemoryEntryPatch {
   originWorkspace?: string;
   sources?: AgentMemorySource[];
   status?: AgentMemoryEntry['status'];
+}
+
+export interface AgentMemoryAccessInput {
+  via: AgentMemoryAccessVia;
+  entryIds: readonly string[];
+  createdAt?: number;
+}
+
+export interface AgentMemoryActivationResult {
+  entries: AgentMemoryRankedEntry[];
+  overview: AgentMemoryOverview;
+  totalEntries: number;
 }
 
 export interface AgentDreamCompletedInput {
@@ -245,6 +272,7 @@ interface AgentMemoryProjectionCache {
   entries: Map<string, AgentMemoryEntry>;
   episodes: Map<string, AgentMemoryEpisode>;
   memoryIdsByEpisodeId: Map<string, Set<string>>;
+  accessStatsByEntryId: Map<string, AgentMemoryAccessStats>;
   dream: AgentDreamState;
 }
 
@@ -865,11 +893,73 @@ export class AgentEventStore {
     const projection = await this.getMemoryProjection(principal);
     const entries = rankMemoryEntries([...projection.entries.values()]
       .filter((entry) => options.includeInvalidated || entry.status === 'active'),
-      options.query);
+      options.query,
+      projection.accessStatsByEntryId);
     return {
       entries: entries.slice(0, clampMemoryLimit(options.limit)),
       totalEntries: entries.length,
     };
+  }
+
+  async activateMemoryEntries(
+    principal: AgentPrincipal,
+    options: { limit?: number; now?: number } = {},
+  ): Promise<AgentMemoryActivationResult> {
+    await this.ensureStorageLayout();
+    const now = options.now ?? Date.now();
+    const projection = await this.getMemoryProjection(principal);
+    const ranked = rankMemoryEntriesByActivation(
+      [...projection.entries.values()].filter((entry) => entry.status === 'active'),
+      projection.accessStatsByEntryId,
+      now,
+    );
+    return {
+      entries: ranked.slice(0, clampMemoryLimit(options.limit)),
+      overview: buildMemoryOverview(ranked, { generatedAt: now }),
+      totalEntries: ranked.length,
+    };
+  }
+
+  async memoryStrength(principal: AgentPrincipal, entryId: string, now = Date.now()): Promise<AgentMemoryStrength | null> {
+    await this.ensureStorageLayout();
+    const projection = await this.getMemoryProjection(principal);
+    const entry = projection.entries.get(entryId);
+    if (!entry) return null;
+    return computeMemoryStrength(entry, projection.accessStatsByEntryId.get(entryId), now);
+  }
+
+  async recordMemoryAccess(
+    principal: AgentPrincipal,
+    input: AgentMemoryAccessInput,
+  ): Promise<Extract<AgentMemoryEvent, { type: 'memory.accessed' }> | null> {
+    await this.ensureStorageLayout();
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
+      const projection = await this.getMemoryProjection(principal);
+      const seen = new Set<string>();
+      const accesses = input.entryIds
+        .filter((entryId) => {
+          if (seen.has(entryId)) return false;
+          seen.add(entryId);
+          const entry = projection.entries.get(entryId);
+          return !!entry && entry.status === 'active';
+        })
+        .map((entryId) => ({ entryId, count: 1 }));
+      if (accesses.length === 0) return null;
+      const createdAt = input.createdAt ?? Date.now();
+      const event = await this.nextMemoryEvent(principal, {
+        type: 'memory.accessed',
+        createdAt,
+        via: input.via,
+        accesses,
+      }) as Extract<AgentMemoryEvent, { type: 'memory.accessed' }>;
+      await this.appendMemoryEvents(principal, [event]);
+      applyMemoryAccessEvent(projection.accessStatsByEntryId, event);
+      projection.latestSeq = event.seq;
+      projection.eventCount += 1;
+      await this.maybeCompactMemoryLog(principal, projection);
+      return event;
+    });
   }
 
   async readMemoryEvents(principal: AgentPrincipal): Promise<AgentMemoryEvent[]> {
@@ -1002,6 +1092,7 @@ export class AgentEventStore {
       | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'principal'>
       | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'principal'>
       | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.accessed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
       | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'principal'>,
   ): Promise<AgentMemoryEvent> {
     const key = principalKey(principal);
@@ -1034,6 +1125,7 @@ export class AgentEventStore {
       entries: projected.entries,
       episodes: projected.episodes,
       memoryIdsByEpisodeId: projected.memoryIdsByEpisodeId,
+      accessStatsByEntryId: projected.accessStatsByEntryId,
       dream: projected.dream,
     };
     this.memoryProjectionByPrincipal.set(key, projection);
@@ -1045,7 +1137,13 @@ export class AgentEventStore {
     const projectedEntryCount = Math.max(1, projection.entries.size);
     if (projection.eventCount < projectedEntryCount * MEMORY_COMPACTION_CHURN_FACTOR) return;
 
-    const events = compactMemoryProjection(principal, projection.episodes, projection.entries, projection.dream.lastCompleted);
+    const events = compactMemoryProjection(
+      principal,
+      projection.episodes,
+      projection.entries,
+      projection.accessStatsByEntryId,
+      projection.dream.lastCompleted,
+    );
     const filePath = this.memoryPaths(principal).memoryEventsPath;
     await mkdir(path.dirname(filePath), { recursive: true });
     await atomicWriteFile(filePath, serializeJsonl(events));
@@ -2359,10 +2457,12 @@ function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
   entries: Map<string, AgentMemoryEntry>;
   episodes: Map<string, AgentMemoryEpisode>;
   memoryIdsByEpisodeId: Map<string, Set<string>>;
+  accessStatsByEntryId: Map<string, AgentMemoryAccessStats>;
   dream: AgentDreamState;
 } {
   const entries = new Map<string, AgentMemoryEntry>();
   const episodes = new Map<string, AgentMemoryEpisode>();
+  const accessStatsByEntryId = new Map<string, AgentMemoryAccessStats>();
   let lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null = null;
   for (const event of [...events].sort(compareMemoryEventsForReplay)) {
     if (event.type === 'memory.episode_recorded') {
@@ -2382,6 +2482,11 @@ function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
       continue;
     }
 
+    if (event.type === 'memory.accessed') {
+      applyMemoryAccessEvent(accessStatsByEntryId, event);
+      continue;
+    }
+
     const current = entries.get(event.entryId);
     if (!current) continue;
     if (event.type === 'memory.entry_updated') {
@@ -2397,6 +2502,7 @@ function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
     entries,
     episodes,
     memoryIdsByEpisodeId,
+    accessStatsByEntryId,
     dream: lastCompletedDream ? dreamStateFromCompleted(lastCompletedDream) : emptyDreamState(),
   };
 }
@@ -2405,6 +2511,7 @@ function compactMemoryProjection(
   principal: AgentPrincipal,
   episodes: ReadonlyMap<string, AgentMemoryEpisode>,
   entries: ReadonlyMap<string, AgentMemoryEntry>,
+  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
   lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
 ): AgentMemoryEvent[] {
   const createdAt = Date.now();
@@ -2430,7 +2537,14 @@ function compactMemoryProjection(
       createdAt,
       entry,
     }));
-  const events = [...episodeEvents, ...entryEvents];
+  const activeEntryIds = new Set(entries.keys());
+  const accessEvents = compactMemoryAccessEvents(
+    principal,
+    accessStatsByEntryId,
+    activeEntryIds,
+    episodeEvents.length + entryEvents.length,
+  );
+  const events = [...episodeEvents, ...entryEvents, ...accessEvents];
   if (lastCompletedDream) {
     events.push({
       ...lastCompletedDream,
@@ -2450,6 +2564,60 @@ function buildMemoryEpisodeReverseIndex(
     indexMemoryEntryEpisodeSources(index, entry);
   }
   return index;
+}
+
+function compactMemoryAccessEvents(
+  principal: AgentPrincipal,
+  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
+  activeEntryIds: ReadonlySet<string>,
+  seqOffset: number,
+): AgentMemoryEvent[] {
+  const events: AgentMemoryEvent[] = [];
+  for (const via of ['briefing', 'recall'] as const) {
+    const accesses = [...accessStatsByEntryId.entries()]
+      .map(([entryId, stats]) => ({
+        entryId,
+        count: via === 'briefing' ? stats.briefingCount : stats.recallCount,
+        createdAt: via === 'briefing' ? stats.lastBriefingAt : stats.lastRecallAt,
+      }))
+      .filter((access) => activeEntryIds.has(access.entryId) && access.count > 0 && access.createdAt !== null)
+      .sort((left, right) => left.entryId.localeCompare(right.entryId));
+    if (accesses.length === 0) continue;
+    events.push({
+      v: 1,
+      type: 'memory.accessed',
+      eventId: `access-compact-${randomUUID()}`,
+      seq: seqOffset + events.length + 1,
+      principal,
+      createdAt: Math.max(...accesses.map((access) => access.createdAt ?? 0)),
+      via,
+      accesses: accesses.map(({ entryId, count, createdAt }) => ({
+        entryId,
+        count,
+        accessedAt: createdAt ?? undefined,
+      })),
+    });
+  }
+  return events;
+}
+
+function applyMemoryAccessEvent(
+  accessStatsByEntryId: Map<string, AgentMemoryAccessStats>,
+  event: Extract<AgentMemoryEvent, { type: 'memory.accessed' }>,
+): void {
+  for (const access of event.accesses) {
+    const count = Math.max(1, Math.trunc(access.count));
+    const accessedAt = access.accessedAt ?? event.createdAt;
+    const current = cloneMemoryAccessStats(accessStatsByEntryId.get(access.entryId) ?? emptyMemoryAccessStats());
+    if (event.via === 'recall') {
+      current.recallCount += count;
+      current.lastRecallAt = Math.max(current.lastRecallAt ?? 0, accessedAt);
+    } else {
+      current.briefingCount += count;
+      current.lastBriefingAt = Math.max(current.lastBriefingAt ?? 0, accessedAt);
+    }
+    accessStatsByEntryId.set(access.entryId, current);
+  }
 }
 
 function setMemoryProjectionEntry(
@@ -2542,6 +2710,22 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       createdAt,
       entryId: value.entryId,
       reason: typeof value.reason === 'string' ? value.reason : undefined,
+    };
+  }
+
+  if (value.type === 'memory.accessed') {
+    const via = value.via === 'briefing' || value.via === 'recall' ? value.via : null;
+    const accesses = normalizeMemoryAccesses(value.accesses);
+    if (!via || accesses.length === 0) return null;
+    return {
+      v: 1,
+      type: 'memory.accessed',
+      eventId: value.eventId,
+      seq,
+      principal,
+      createdAt,
+      via,
+      accesses,
     };
   }
 
@@ -2741,6 +2925,26 @@ function normalizeMemoryEntryPatch(value: unknown): AgentMemoryEntryPatch {
   return patch;
 }
 
+function normalizeMemoryAccesses(value: unknown): Extract<AgentMemoryEvent, { type: 'memory.accessed' }>['accesses'] {
+  if (!Array.isArray(value)) return [];
+  const accesses: Extract<AgentMemoryEvent, { type: 'memory.accessed' }>['accesses'] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (!isRecord(raw) || typeof raw.entryId !== 'string' || raw.entryId.length === 0) continue;
+    if (seen.has(raw.entryId)) continue;
+    const count = nonNegativeInteger(raw.count);
+    if (count <= 0) continue;
+    const accessedAt = numberOrNull(raw.accessedAt);
+    seen.add(raw.entryId);
+    accesses.push({
+      entryId: raw.entryId,
+      count,
+      ...(accessedAt === null ? {} : { accessedAt }),
+    });
+  }
+  return accesses;
+}
+
 function normalizeMemorySource(value: unknown): AgentMemorySource | null {
   if (!isRecord(value)) return null;
   if (typeof value.episodeId === 'string' && value.episodeId.length > 0) {
@@ -2806,7 +3010,11 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
-function rankMemoryEntries(entries: readonly AgentMemoryEntry[], query: string | undefined): AgentMemoryEntry[] {
+function rankMemoryEntries(
+  entries: readonly AgentMemoryEntry[],
+  query: string | undefined,
+  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
+): AgentMemoryEntry[] {
   const fallbackSort = (left: AgentMemoryEntry, right: AgentMemoryEntry) => (
     right.createdAt - left.createdAt || right.id.localeCompare(left.id)
   );
@@ -2815,9 +3023,22 @@ function rankMemoryEntries(entries: readonly AgentMemoryEntry[], query: string |
   const terms = normalizeSearchTerms(query);
   if (analysis.normalized.length === 0 || terms.length === 0) return [...entries].sort(fallbackSort);
   return entries
-    .map((entry) => ({ entry, score: memoryEntrySearchScore(entry, analysis.normalized, terms) }))
+    .map((entry) => {
+      const lexicalScore = memoryEntrySearchScore(entry, analysis.normalized, terms);
+      const strength = computeMemoryStrength(entry, accessStatsByEntryId.get(entry.id));
+      return {
+        entry,
+        lexicalScore,
+        strength,
+        score: lexicalScore * (1 + Math.min(4, strength.retrievalStrength) * 0.12),
+      };
+    })
     .filter((ranked) => ranked.score > 0)
-    .sort((left, right) => right.score - left.score || fallbackSort(left.entry, right.entry))
+    .sort((left, right) => (
+      right.score - left.score
+      || right.strength.storageStrength - left.strength.storageStrength
+      || fallbackSort(left.entry, right.entry)
+    ))
     .map((ranked) => ranked.entry);
 }
 

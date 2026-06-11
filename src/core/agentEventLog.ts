@@ -464,6 +464,19 @@ export interface AgentMemoryEntry {
   createdAt: number;
 }
 
+export type AgentMemoryAccessVia = 'briefing' | 'recall';
+
+export interface AgentMemoryAccessedEntry {
+  entryId: string;
+  /**
+   * Live access events use count=1; compaction can fold older access events into
+   * the same shape without inventing stored strength fields on MemoryEntry.
+   */
+  count: number;
+  /** Defaults to the event createdAt; compaction sets the per-entry last access time. */
+  accessedAt?: number;
+}
+
 export type AgentDreamTrigger = 'schedule' | 'manual';
 
 /**
@@ -522,6 +535,7 @@ export type AgentMemoryEventType =
   | 'memory.entry_added'
   | 'memory.entry_updated'
   | 'memory.entry_removed'
+  | 'memory.accessed'
   | 'dream.completed';
 
 export type AgentMemoryEvent =
@@ -533,6 +547,11 @@ export type AgentMemoryEvent =
       patch: Partial<Pick<AgentMemoryEntry, 'fact' | 'sources' | 'status' | 'originWorkspace'>>;
     })
   | (AgentMemoryEventBase & { type: 'memory.entry_removed'; entryId: string; reason?: string })
+  | (AgentMemoryEventBase & {
+      type: 'memory.accessed';
+      via: AgentMemoryAccessVia;
+      accesses: AgentMemoryAccessedEntry[];
+    })
   | (AgentMemoryEventBase & {
       type: 'dream.completed';
       dreamId: string;

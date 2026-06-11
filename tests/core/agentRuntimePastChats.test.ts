@@ -1682,7 +1682,7 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(['memory.entry_added', 'dream.completed']);
+    expect(events.map((event) => event.type)).toEqual(['memory.entry_added', 'memory.accessed', 'dream.completed']);
     expect(entry?.sources).toEqual([conversationSource('old-conversation')]);
     expect(events.some((event) => event.type === 'memory.episode_recorded')).toBe(false);
   });
