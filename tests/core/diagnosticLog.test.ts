@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { diagnosticSourceLabel, type DiagnosticExportArtifact } from '../../src/core/errorObservability';
 import { DiagnosticLogStore } from '../../src/main/diagnosticLog';
-import type { DiagnosticExportArtifact } from '../../src/core/errorObservability';
 
 const roots: string[] = [];
 
@@ -54,6 +54,7 @@ describe('DiagnosticLogStore', () => {
         conversationId: 'conv-1',
         statusCode: 400,
         providerId: 'anthropic',
+        source: '/Users/example/Tenon/src/preload/index.ts?cache=private',
         prompt: 'do not store this',
         apiKey: 'secret',
       } as never,
@@ -65,11 +66,19 @@ describe('DiagnosticLogStore', () => {
       conversationId: 'conv-1',
       statusCode: 400,
       providerId: 'anthropic',
+      source: 'index.ts',
       errorName: 'TypeError',
       stackHash: expect.any(String),
     });
     expect(JSON.stringify(record)).not.toContain('do not store this');
     expect(JSON.stringify(record)).not.toContain('secret');
+    expect(JSON.stringify(record)).not.toContain('/Users/example');
+  });
+
+  test('normalizes diagnostic source labels without storing local paths', () => {
+    expect(diagnosticSourceLabel('file:///Users/example/Tenon/out/renderer/index.html')).toBe('file://local');
+    expect(diagnosticSourceLabel('http://127.0.0.1:5174/src/preload/index.ts?t=secret')).toBe('http://127.0.0.1:5174');
+    expect(diagnosticSourceLabel('/Users/example/Tenon/src/preload/index.ts?cache=private')).toBe('index.ts');
   });
 
   test('keeps the aggregate log bounded and exports environment metadata', async () => {

@@ -3824,7 +3824,7 @@ export class AgentRuntime {
 
   private emitError(conversationId: string, message: string, report?: Partial<ErrorReport>) {
     this.reportError({
-      domain: report?.domain ?? 'provider',
+      domain: report?.domain ?? 'runtime',
       severity: report?.severity ?? 'error',
       ...(report?.code ? { code: report.code } : {}),
       message,

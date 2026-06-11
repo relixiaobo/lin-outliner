@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  diagnosticSourceLabel,
   type DiagnosticEnvironment,
   type DiagnosticExportArtifact,
   type DiagnosticLogRecord,
@@ -187,10 +188,22 @@ function sanitizeContext(input: Record<string, unknown>): ErrorReportContext | u
   const output: ErrorReportContext = {};
   for (const [key, value] of Object.entries(input)) {
     if (!ALLOWED_CONTEXT_KEYS.has(key)) continue;
-    const normalized = sanitizeContextValue(value);
+    const normalized = key === 'source' ? sanitizeSourceContextValue(value) : sanitizeContextValue(value);
     if (normalized !== undefined) output[key] = normalized;
   }
   return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function sanitizeSourceContextValue(value: unknown): ErrorReportContextValue | undefined {
+  const normalized = sanitizeContextValue(value);
+  if (typeof normalized === 'string') return diagnosticSourceLabel(normalized);
+  if (!Array.isArray(normalized) || !normalized.every((item): item is string => typeof item === 'string')) {
+    return undefined;
+  }
+  const labels = normalized
+    .map((item) => diagnosticSourceLabel(item))
+    .filter((item): item is string => Boolean(item));
+  return labels.length > 0 ? labels : undefined;
 }
 
 function sanitizeContextValue(value: unknown): ErrorReportContextValue | undefined {

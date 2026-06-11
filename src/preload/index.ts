@@ -23,6 +23,7 @@ import {
 import type { ExternalContext } from '../core/launcher/context';
 import type { CaptureIntent } from '../core/launcher/sources';
 import {
+  diagnosticSourceLabel,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
@@ -174,13 +175,14 @@ function rendererErrorMessage(value: unknown, fallback: string): string {
 }
 
 window.addEventListener('error', (event) => {
+  const source = event.filename ? diagnosticSourceLabel(event.filename) : undefined;
   reportRendererError({
     domain: 'render',
     severity: 'fatal',
     code: 'window-error',
     message: event.message || rendererErrorMessage(event.error, 'Renderer error'),
     context: {
-      ...(event.filename ? { source: event.filename } : {}),
+      ...(source ? { source } : {}),
       ...(typeof event.lineno === 'number' ? { line: event.lineno } : {}),
       ...(typeof event.colno === 'number' ? { column: event.colno } : {}),
     },

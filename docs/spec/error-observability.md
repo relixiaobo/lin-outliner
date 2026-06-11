@@ -14,18 +14,20 @@ reportError({ domain, severity, code?, message, context?, error? })
 ```
 
 `domain` identifies the subsystem (`dream`, `command`, `agent-tool`, `provider`,
-`persistence`, `render`, `uncaught`, or a later string). `severity` is `warn`,
-`error`, or `fatal`. `context` is small structured metadata only: ids, counts,
-status codes, operation names, timestamps, and other allow-listed scalar fields.
-Conversation/document content, prompts, credentials, free-form text, and raw
-payloads are not valid diagnostic context.
+`persistence`, `render`, `runtime`, `uncaught`, or a later string). `severity` is
+`warn`, `error`, or `fatal`. `context` is small structured metadata only: ids,
+counts, status codes, operation names, timestamps, and other allow-listed scalar
+fields. Conversation/document content, prompts, credentials, free-form text, and
+raw payloads are not valid diagnostic context.
 
 Foreground agent errors still emit the existing conversation `type: 'error'`
 event so the user sees the failure in place. The same `emitError` path also
-reports a diagnostic record. Background paths that previously only warned in the
-terminal, including Dream extraction, scheduled command failures, child-run ledger
-append failures, memory reminder failures, and agent storage sentinel/probe
-failures, report through the same diagnostic path.
+reports a diagnostic record. Unclassified foreground failures use the `runtime`
+domain; callers pass a narrower domain such as `command`, `provider`, or
+`persistence` when the failing boundary is known. Background paths that previously
+only warned in the terminal, including Dream extraction, scheduled command
+failures, child-run ledger append failures, memory reminder failures, and agent
+storage sentinel/probe failures, report through the same diagnostic path.
 
 ## Safety Nets
 
@@ -73,6 +75,8 @@ The write boundary normalizes and scrubs every report before it is persisted:
 
 - `message` and context strings are length-capped.
 - `context` keeps only an allow-list of structured keys.
+- `source` context is reduced to a non-identifying label: `file://local` for
+  local app files, URL origin for `http(s)`, or a path basename.
 - raw stack traces are not stored; stack text contributes only a `stackHash`.
 - the fingerprint is computed from domain, severity, code, normalized message,
   error name, and stack hash so floods collapse into one `count`ed record.

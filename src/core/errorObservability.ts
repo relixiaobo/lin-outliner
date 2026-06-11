@@ -11,6 +11,7 @@ export type ErrorDomain =
   | 'persistence'
   | 'provider'
   | 'render'
+  | 'runtime'
   | 'uncaught'
   | string;
 
@@ -78,4 +79,24 @@ export interface DiagnosticsActionResult {
   path?: string;
   canceled?: boolean;
   error?: string;
+}
+
+export function diagnosticSourceLabel(input: string): string | undefined {
+  const value = input.trim();
+  if (!value) return undefined;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'file:') return 'file://local';
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin;
+    return url.protocol.replace(/:$/, '') || undefined;
+  } catch {
+    // Fall through to a path-like label.
+  }
+
+  const pathPart = value.split(/[?#]/, 1)[0]?.trim() ?? value;
+  const segments = pathPart.split(/[\\/]/).filter(Boolean);
+  const leaf = segments.at(-1);
+  const label = leaf && leaf.length < pathPart.length ? leaf : pathPart;
+  return label.replace(/\s+/g, ' ').slice(0, 120).trim() || undefined;
 }
