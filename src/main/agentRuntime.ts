@@ -2914,7 +2914,15 @@ export class AgentRuntime {
    * failures; the guard here only covers task-creation throws.
    */
   private async fireDream(trigger: AgentDreamTrigger, now: Date): Promise<void> {
-    for (const principal of await this.listDreamPrincipals()) {
+    const principals = await this.listDreamPrincipals();
+    // Drop failure-backoff entries for pools that are no longer dream principals (e.g. a deleted
+    // agent), so the in-memory map stays bounded to live pools. A live pool with an armed window
+    // is always in this set (it ran a Dream to arm it), so its backoff is never pruned here.
+    const liveKeys = new Set(principals.map(principalKey));
+    for (const key of this.dreamFailureBackoff.keys()) {
+      if (!liveKeys.has(key)) this.dreamFailureBackoff.delete(key);
+    }
+    for (const principal of principals) {
       try {
         await this.fireDreamForPool(principal, trigger, now);
       } catch (error) {
