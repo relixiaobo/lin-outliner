@@ -3355,20 +3355,27 @@ export class AgentRuntime {
           throw new Error(response.errorMessage || 'Dream memory extraction failed.');
         }
         const parsed = parseDreamMemoryExtractionResponse(assistantMessageText(response));
-        const episode = batch.span.sources.length > 0
-          ? await this.getEventStore().recordMemoryEpisode(task.principal, {
-              gist: parsed.episodeGist ?? fallbackEpisodeGist(batch.span),
-              originWorkspace: batch.originWorkspace,
-              sources: batch.span.sources,
-            })
-          : null;
-        const sources = episode ? [{ episodeId: episode.id }] : [];
+        let episodeSources: AgentMemorySource[] | null = null;
+        const sourcesForCommittedChange = async (): Promise<AgentMemorySource[]> => {
+          if (episodeSources) return episodeSources;
+          if (batch.span.sources.length === 0) {
+            episodeSources = [];
+            return episodeSources;
+          }
+          const episode = await this.getEventStore().recordMemoryEpisode(task.principal, {
+            gist: parsed.episodeGist ?? fallbackEpisodeGist(batch.span),
+            originWorkspace: batch.originWorkspace,
+            sources: batch.span.sources,
+          });
+          episodeSources = [{ episodeId: episode.id }];
+          return episodeSources;
+        };
         // Crash-retry dedup window: applyDreamMemoryActions matches new facts against this
         // list by fact key, so it must see as much of the pool as the store allows (200 =
         // query clamp max) or a re-run after a crash re-saves entries past the window.
         const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
         addDreamChanges(changes, parsed.actions.length > 0
-          ? await this.applyDreamMemoryActions(task, batch, parsed.actions, currentMemories, sources)
+          ? await this.applyDreamMemoryActions(task, batch, parsed.actions, currentMemories, sourcesForCommittedChange)
           : emptyDreamChanges());
       }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
@@ -3489,19 +3496,20 @@ export class AgentRuntime {
     batch: AgentDreamMemoryExtractionBatch,
     actions: readonly DreamMemoryAction[],
     initialEntries: readonly AgentMemoryEntry[],
-    sources: readonly AgentMemorySource[],
+    sourcesForCommittedChange: () => Promise<readonly AgentMemorySource[]>,
   ): Promise<AgentDreamCompletedChanges> {
     const changes = emptyDreamChanges();
     const entriesById = new Map(initialEntries.map((entry) => [entry.id, entry]));
     const activeFactKeys = new Set(initialEntries.map((entry) => memoryFactKey(entry.fact)));
     for (const action of actions) {
       if (action.type === 'add') {
-        if (sources.length === 0) {
+        const key = memoryFactKey(action.fact);
+        if (activeFactKeys.has(key)) {
           changes.skipped += 1;
           continue;
         }
-        const key = memoryFactKey(action.fact);
-        if (activeFactKeys.has(key)) {
+        const sources = await sourcesForCommittedChange();
+        if (sources.length === 0) {
           changes.skipped += 1;
           continue;
         }
@@ -3536,6 +3544,11 @@ export class AgentRuntime {
         continue;
       }
       if (activeFactKeys.has(nextFactKey)) {
+        changes.skipped += 1;
+        continue;
+      }
+      const sources = batch.span.consolidateOnly ? [] : await sourcesForCommittedChange();
+      if (!batch.span.consolidateOnly && sources.length === 0) {
         changes.skipped += 1;
         continue;
       }
