@@ -1260,6 +1260,87 @@ describe('agent runtime past chats integration', () => {
     expect(await failedUserRuns()).toHaveLength(1);
   });
 
+  test('a manual /dream ignores the backoff window and its success records a completed run', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-manual-backoff-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-manual-backoff-data-'));
+    roots.push(localRoot, dataRoot);
+    let dreamCalls = 0;
+    // The scheduled attempt fails (arming the backoff); the manual run that follows succeeds.
+    let failDream = true;
+    const longPreference = `Please remember this durable collaboration preference: ${'concise evidence '.repeat(90)}`;
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText(`I will remember the collaboration preference. ${'grounded reply '.repeat(90)}`))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => {
+          dreamCalls += 1;
+          if (failDream) throw new Error('provider down');
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({
+              actions: [{ type: 'add', fact: 'prefers concise evidence' }],
+            })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, longPreference);
+
+    // Scheduled tick: the Dream fires, the provider throws, the user pool arms its backoff window.
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    const callsAfterScheduledFail = dreamCalls;
+    expect(callsAfterScheduledFail).toBeGreaterThan(0);
+    expect((await new AgentEventStore(dataRoot).readDreamState(USER_PRINCIPAL)).lastSuccessAt).toBeNull();
+
+    // A scheduled tick inside the window is blocked — the backoff is genuinely armed.
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:30'));
+    expect(dreamCalls).toBe(callsAfterScheduledFail);
+
+    // A manual /dream, still inside that window, ignores the backoff and fires anyway (the user
+    // asked for it now); this one succeeds, so its outcome flows through the completed branch.
+    failDream = false;
+    await runtime.sendMessage(created.conversationId, '/dream');
+    await runtime.drainDreamMemoryExtractionForTest();
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    // Manual ran despite the open backoff window.
+    expect(dreamCalls).toBeGreaterThan(callsAfterScheduledFail);
+    const stateAfterManual = await new AgentEventStore(dataRoot).readDreamState(USER_PRINCIPAL);
+    expect(stateAfterManual.lastCompleted?.trigger).toBe('manual');
+    expect(stateAfterManual.lastSuccessAt).not.toBeNull();
+    expect((await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL)).map((entry) => entry.fact))
+      .toEqual(['prefers concise evidence']);
+  });
+
   test('manual /dream with no new evidence consolidates memory without replaying old raw evidence', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-data-'));
