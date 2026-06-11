@@ -616,7 +616,7 @@ function validateSkillContentWriteOrThrow(input: {
 }
 
 function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
-  return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now; it joins the automatic model skill listing once the user accepts it (Settings -> Skills) or edits it by hand.`;
+  return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now; it joins the automatic model skill listing once the user accepts it (Settings -> Skills).`;
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {

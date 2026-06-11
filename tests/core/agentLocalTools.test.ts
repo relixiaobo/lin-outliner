@@ -598,7 +598,8 @@ describe('agent local tools', () => {
       const slashInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'slash' });
       expect(slashInvocation.ok).toBe(true);
 
-      // A user hand-edit changes the content hash and self-ratifies the skill.
+      // A project hand-edit changes the content hash but still needs exact-byte
+      // acceptance before automatic model use.
       await writeFile(skillFile, [
         '---',
         'description: Guarded skill for local authoring',
@@ -607,7 +608,9 @@ describe('agent local tools', () => {
         '',
       ].join('\n'), 'utf8');
       await skillRuntime.notifySkillContentWritten([skillFile]);
-      expect((await skillRuntime.getSkill('guarded-skill'))?.ratified).toBe(true);
+      const handEdited = await skillRuntime.getSkill('guarded-skill');
+      expect(handEdited?.ratified).toBe(false);
+      await skillRuntime.acceptSkill('guarded-skill', handEdited?.contentHash ?? '');
       expect((await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' })).ok).toBe(true);
     });
   });
@@ -641,12 +644,13 @@ describe('agent local tools', () => {
       expect(edited?.ratified).toBe(false);
       expect(edited?.canUndoLastAgentEdit).toBe(true);
 
-      // Undo restores the user's bytes; ratification re-derives to true and the
-      // one-shot previous-version slot is consumed.
+      // Undo restores the user's bytes, but project skills still need exact-byte
+      // acceptance before automatic model use. The one-shot previous-version slot
+      // is consumed.
       await skillRuntime.undoLastAgentSkillEdit('undoable-skill');
       const restored = await skillRuntime.getSkill('undoable-skill');
       expect(restored?.body).toContain('hand-tuned instructions');
-      expect(restored?.ratified).toBe(true);
+      expect(restored?.ratified).toBe(false);
       expect(restored?.canUndoLastAgentEdit).toBe(false);
     });
   });
@@ -709,6 +713,9 @@ describe('agent local tools', () => {
       ].join('\r\n')}`;
       await mkdir(path.dirname(skillFile), { recursive: true });
       await writeFile(skillFile, initialContent, 'utf8');
+      const initialSkill = await skillRuntime.getSkill('crlf-skill');
+      expect(initialSkill?.ratified).toBe(false);
+      await skillRuntime.acceptSkill('crlf-skill', initialSkill?.contentHash ?? '');
       expect((await skillRuntime.getSkill('crlf-skill'))?.ratified).toBe(true);
 
       // An agent patch must drop the skill to unratified even though writeTextFile

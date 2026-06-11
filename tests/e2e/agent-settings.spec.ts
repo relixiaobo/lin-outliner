@@ -92,6 +92,31 @@ test.describe('agent settings window', () => {
     }).not.toBe('rgba(0, 0, 0, 0)');
   });
 
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`shows workspace skill pending acceptance without overlap in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      const settings = await openSettings(page);
+      await settings.getByRole('button', { name: 'Skills', exact: true }).click();
+
+      const row = settings.locator('.inset-row', { hasText: '/workspace-review' });
+      await expect(row).toBeVisible();
+      await expect(row.locator('.settings-chip', { hasText: 'project' })).toBeVisible();
+      const workspaceChip = row.locator('.settings-chip', { hasText: 'Workspace - not accepted' });
+      await expect(workspaceChip).toBeVisible();
+      const acceptButton = row.getByRole('button', { name: 'Accept workspace-review for automatic use' });
+      await expect(acceptButton).toBeVisible();
+
+      const rowBox = await row.boundingBox();
+      const chipBox = await workspaceChip.boundingBox();
+      const buttonBox = await acceptButton.boundingBox();
+      expect(rowBox).not.toBeNull();
+      expect(chipBox).not.toBeNull();
+      expect(buttonBox).not.toBeNull();
+      expect(chipBox!.x + chipBox!.width).toBeLessThan(buttonBox!.x);
+      expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+    });
+  }
+
   test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Permissions/ }).click();

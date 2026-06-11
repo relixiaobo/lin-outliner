@@ -1206,7 +1206,8 @@ export class AgentRuntime {
   /**
    * The live conversation skill runtime when the conversation has one, else a throwaway
    * runtime over the same skill dirs AND the same persisted trust store — without
-   * the store a conversationless Skills panel would fail open to "everything ratified".
+   * the store a conversationless Skills panel would lose user-source agent-write
+   * provenance and project-source acceptances.
    */
   private async skillRuntimeForConversation(conversationId: string): Promise<AgentSkillRuntime> {
     const conversation = this.conversations.get(conversationId);

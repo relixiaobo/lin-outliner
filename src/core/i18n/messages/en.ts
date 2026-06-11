@@ -226,6 +226,7 @@ export const en = {
       installedAriaLabel: 'Installed capabilities',
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
       pendingChip: 'Pending acceptance',
+      pendingWorkspaceChip: 'Workspace - not accepted',
       acceptedChip: 'Accepted',
       acceptButton: 'Accept',
       acceptSkill: ({ name }: { name: string }) => `Accept ${name} for automatic use`,

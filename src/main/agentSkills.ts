@@ -45,7 +45,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '5. Show the user the full SKILL.md (or a focused diff for an update) and confirm before writing.',
     '6. Use file_write or file_edit for the final write. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
     '',
-    'Agent-written skills start unratified: the user can run them immediately as /<skill-name>, but they stay out of the automatic model skill listing until the user accepts them (Settings -> Skills) or edits the file by hand.',
+    'Agent-written skills and workspace skills start unratified: the user can run them immediately as /<skill-name>, but they stay out of the automatic model skill listing until the user accepts them (Settings -> Skills).',
     'Do not edit built-in skills. Do not write executable support files in this workflow.',
   ].join('\n'),
 }];
@@ -471,14 +471,14 @@ export class AgentSkillRuntime {
       };
     }
     if (input.trigger === 'agent' && !skill.ratified) {
-      // The ratification gate: an agent-authored skill the user has not accepted must
-      // not be wielded on the model's own initiative. Slash invocation is unaffected —
-      // the user's command is per-run consent — so escalation through self-authored
-      // allowed-tools is structurally impossible on the model path.
+      // The ratification gate: unaccepted agent-authored or workspace-borne skills
+      // must not be wielded on the model's own initiative. Slash invocation is
+      // unaffected — the user's command is per-run consent — so escalation through
+      // self-authored allowed-tools is structurally impossible on the model path.
       return {
         ok: false,
         code: 'skill_not_ratified',
-        message: `Skill ${skill.name} is agent-authored and not yet accepted. Ask the user to run /${skill.name} themselves, or to accept the skill for automatic use.`,
+        message: `Skill ${skill.name} is not yet accepted for automatic use. Ask the user to run /${skill.name} themselves, or to accept the skill in Settings -> Skills.`,
         skill,
       };
     }
@@ -956,8 +956,8 @@ class SkillRegistry {
 
   async getModelInvocableSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
-    // Unratified (agent-authored, not yet accepted) skills are hidden from the model
-    // listing; they stay slash-invocable via getUserInvocableSkills.
+    // Unratified skills are hidden from the model listing; they stay slash-invocable
+    // via getUserInvocableSkills.
     return [...this.skills.values()].filter((skill) => skill.modelInvocable && skill.ratified);
   }
 
@@ -1028,16 +1028,12 @@ class SkillRegistry {
     if (this.seenSkillFileIds.has(fileId)) return false;
     this.seenSkillFileIds.add(fileId);
     const record = this.provenance.get(path.resolve(skill.skillFile));
-    const accepted = record?.acceptedHash !== undefined && record.acceptedHash === skill.contentHash;
+    const trust = deriveSkillTrust(skill, record);
     const skillWithIdentity = {
       ...skill,
       identity: normalizePathForPrompt(fileId),
-      // Pure derivation, no state machine: unratified iff the file still holds
-      // exactly what the agent wrote AND the user has not accepted those bytes.
-      // A user hand-edit changes the hash and self-ratifies; an agent re-patch
-      // records a fresh agentHash and drops an accepted skill back to unratified.
-      ratified: !(record?.agentHash !== undefined && record.agentHash === skill.contentHash) || accepted,
-      accepted,
+      ratified: trust.ratified,
+      accepted: trust.accepted,
       // Undo is offered only while the file still holds exactly the agent's bytes:
       // the previous-version record lingers after a user hand-edit, but restoring
       // over user content would silently destroy it (the action enforces the same
@@ -1076,6 +1072,24 @@ class SkillRegistry {
     }
     return discovered.sort((a, b) => b.split(path.sep).length - a.split(path.sep).length);
   }
+}
+
+function deriveSkillTrust(
+  skill: SkillDefinition,
+  record: AgentSkillProvenanceRecord | undefined,
+): { ratified: boolean; accepted: boolean } {
+  const accepted = record?.acceptedHash !== undefined && record.acceptedHash === skill.contentHash;
+  if (skill.source === 'built-in') return { ratified: true, accepted: false };
+  if (accepted) return { ratified: true, accepted: true };
+
+  // Pure derivation, no state machine:
+  // - project skills are unratified until the user accepts the exact bytes;
+  // - user-source skills keep the #175 agent-write rule, where a current agentHash
+  //   gates the model path but hand-edited/user-authored bytes self-ratify.
+  if (skill.source === 'project') return { ratified: false, accepted: false };
+
+  const agentAuthoredCurrent = record?.agentHash !== undefined && record.agentHash === skill.contentHash;
+  return { ratified: !agentAuthoredCurrent, accepted: false };
 }
 
 function skillSearchDirs(

@@ -114,9 +114,18 @@ Ratification is a **pure derivation**, never stored:
 
 ```text
 ratified = built-in
-        || currentHash !== agentHash      // a human produced these bytes
-        || currentHash === acceptedHash   // the user accepted these bytes
+        || currentHash === acceptedHash
+        || (source === user && currentHash !== agentHash)
 ```
+
+`project` skills are workspace-borne content and therefore require explicit
+exact-byte acceptance before automatic model use, even when the bytes were
+hand-edited by the user. A cloned repository with `.agents/skills/.../SKILL.md`
+therefore loads the skill for Settings and slash invocation, but the model never
+sees it until the user accepts the current content hash. `user` source skills
+keep the earlier personal-library rule: bytes that do not match the last
+agent-written hash self-ratify, while current agent-written bytes need
+acceptance.
 
 An unratified skill is:
 
@@ -129,17 +138,19 @@ An unratified skill is:
 Escalation through self-authored `allowed-tools` is therefore structurally
 impossible on the model path; there is no write-time allowed-tools heuristic and
 lin never force-writes `disable-model-invocation` into an authored file (it
-remains an ordinary user-set frontmatter knob). Both ratifying paths fall out of
-the derivation: a user hand-edit changes the content hash away from `agentHash`,
-and **accepting** the skill records `acceptedHash`. An agent re-patch records a
-fresh `agentHash`, leaves a stale `acceptedHash`, and the skill drops back to
-unratified. Record loss (wiped userData) fails open to ratified — inherent to
-side-record trust; acceptance is a positive trust fact and a UX completion, not
-a new security boundary.
+remains an ordinary user-set frontmatter knob). Ratifying paths fall out of the
+derivation: **accepting** any mutable skill records `acceptedHash`; for
+`user`-source skills only, a hand-edit changes the content hash away from
+`agentHash` and self-ratifies. An agent re-patch records a fresh `agentHash`,
+leaves a stale `acceptedHash`, and the skill drops back to unratified. Record
+loss (wiped userData) fails open for `user` source skills but fails closed for
+`project` skills, which have no trust fact without `acceptedHash`. Acceptance is
+a positive trust fact and a UX completion, not a new security boundary.
 
-**Acceptance UI.** The Settings → Skills tab marks agent-authored unratified
-rows "pending acceptance" with an **Accept** control; accepted rows show a
-row-menu **Revoke acceptance** action. `agent_accept_skill` records
+**Acceptance UI.** The Settings → Skills tab marks unratified rows "pending
+acceptance" with an **Accept** control; unaccepted `project` rows use a
+workspace-specific chip so cloned-repo skills are discoverable. Accepted rows
+show a row-menu **Revoke acceptance** action. `agent_accept_skill` records
 `acceptedHash = contentHash`, `agent_revoke_skill_acceptance` clears it; both
 persist, hot-reload the registry, and return the refreshed skill list. Accept
 carries the `expectedHash` the renderer displayed and is refused on mismatch,
@@ -151,12 +162,12 @@ conversations' model listings without a restart.
 Acceptance grants nothing beyond the skill's own frontmatter — the permission
 floor still stands above it, and a `disable-model-invocation: true` skill stays
 user-only even when accepted. Trust records are keyed by resolved file path: a
-user rename/move orphans the record, so the skill at its new path has no
-`agentHash` and **fails open to ratified** (the same fail-open property as
-record loss — renaming is a hand action on the file, consistent with hand-edit
-self-ratification). Orphaned records are not garbage-collected (accepted:
-bounded by the number of skills ever agent-written, and a returning file at the
-old path correctly picks its record back up).
+user rename/move orphans the record, so the skill at its new path is re-derived
+from source. `user` source skills with no record are ratified; `project` source
+skills with no record are unratified until accepted again. This intentionally
+makes trust per clone/path for workspace-borne skills. Orphaned records are not
+garbage-collected (accepted: bounded by the number of skills ever agent-written,
+and a returning file at the old path correctly picks its record back up).
 
 **Single-step undo.** The gateway captures the pre-write content at each
 `SKILL.md` agent write and stores it as the trust record's `previousVersion`
@@ -164,8 +175,9 @@ old path correctly picks its record back up).
 **Undo last agent edit** (`agent_undo_skill_agent_edit`): the restore is
 validated by the same skill-write validator, written to disk, and the
 provenance facts of the previous version are restored, so ratification
-re-derives with no special case — restoring the user's original ratifies,
-restoring an earlier agent version is unratified again. Undo may only overwrite
+re-derives with no special case — restoring an accepted project version or a
+user-source original ratifies, while restoring an unaccepted project version or
+an earlier agent version is unratified again. Undo may only overwrite
 the agent's own bytes: it is offered and executed only while the on-disk
 content still hashes to `agentHash` (the action re-reads the file), so it can
 never destroy a user hand-edit made after the agent write. The slot is consumed
@@ -215,7 +227,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | --- | --- |
 | Directory skills | Supported as `<skill-name>/SKILL.md`. Single-file legacy command skills are intentionally not supported. |
 | Built-in skills | Supported as immutable code-registered skills loaded before mutable skill directories. Mutable local skills cannot shadow a built-in skill with the same name. |
-| Automatic listing | Supported. New model-invocable **ratified** skills are listed once per conversation and persisted across compact restore; unratified agent-authored skills stay out of the model listing. |
+| Automatic listing | Supported. New model-invocable **ratified** skills are listed once per conversation and persisted across compact restore; unratified agent-authored and workspace-borne skills stay out of the model listing. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, permissions, model, and effort handling. |
 | Embedded shell | Supported for `bash` only, at invocation time, after argument and placeholder substitution. |
 | Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. |
@@ -224,7 +236,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
 | `context: fork` and `agent` | Supported through the same-conversation `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts them (Settings → Skills) or hand-edits them. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts them (Settings → Skills). User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |

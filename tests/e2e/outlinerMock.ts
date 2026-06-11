@@ -351,6 +351,25 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       permissions: { allow: [] as string[], ask: [] as string[], deny: [] as string[] },
       diagnostics: [] as Array<{ ruleValue: string; decision: 'allow' | 'ask' | 'deny'; code: string; message: string }>,
     };
+    const agentSkills = [{
+      name: 'workspace-review',
+      source: 'project',
+      rootDir: '/mock/workspace/.agents/skills/workspace-review',
+      skillFile: '/mock/workspace/.agents/skills/workspace-review/SKILL.md',
+      description: 'Review workspace conventions before automatic use.',
+      hasUserSpecifiedDescription: true,
+      userInvocable: true,
+      modelInvocable: true,
+      ratified: false,
+      accepted: false,
+      canUndoLastAgentEdit: false,
+      contentHash: 'hash-workspace-review-v1',
+      allowedTools: [],
+      argumentNames: [],
+      context: 'inline',
+      contentLength: 64,
+      body: 'Review workspace conventions before automatic use.',
+    }];
     const agentDefinitions = [
       {
         agentId: 'built-in:tenon:general',
@@ -1552,6 +1571,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_get_tool_permission_settings') {
           return clone(agentToolPermissions) as T;
+        }
+        if (cmd === 'agent_list_all_skills') {
+          return clone(agentSkills) as T;
+        }
+        if (cmd === 'agent_accept_skill') {
+          const skillName = String(args.skillName ?? '');
+          const expectedHash = String(args.expectedHash ?? '');
+          const skill = agentSkills.find((item) => item.name === skillName);
+          if (skill && skill.contentHash === expectedHash) {
+            skill.ratified = true;
+            skill.accepted = true;
+          }
+          return clone(agentSkills) as T;
+        }
+        if (cmd === 'agent_revoke_skill_acceptance') {
+          const skillName = String(args.skillName ?? '');
+          const skill = agentSkills.find((item) => item.name === skillName);
+          if (skill) {
+            skill.ratified = false;
+            skill.accepted = false;
+          }
+          return clone(agentSkills) as T;
         }
         if (cmd === 'agent_list_all_definitions') {
           return clone(agentDefinitions) as T;

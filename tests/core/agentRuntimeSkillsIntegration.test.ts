@@ -82,6 +82,19 @@ async function createSkill(root: string, name: string, body: string) {
   return skillDir;
 }
 
+async function acceptRuntimeSkill(
+  runtime: {
+    listAllSkills(conversationId: string): Promise<Array<{ name: string; contentHash?: string }>>;
+    acceptSkill(conversationId: string, skillName: string, expectedHash: string): Promise<unknown>;
+  },
+  conversationId: string,
+  skillName: string,
+) {
+  const skill = (await runtime.listAllSkills(conversationId)).find((candidate) => candidate.name === skillName);
+  if (!skill?.contentHash) throw new Error(`Missing test skill hash for ${skillName}`);
+  await runtime.acceptSkill(conversationId, skillName, skill.contentHash);
+}
+
 function textFromContent(content: unknown): string {
   if (!Array.isArray(content)) return '';
   return content
@@ -392,6 +405,7 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.createConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'auto-skill');
     await runtime.sendMessage(created.conversationId, 'Please do the automatic skill integration check.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -629,6 +643,7 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.createConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'fork-skill');
     await runtime.sendMessage(created.conversationId, 'Use the fork skill.');
 
     expect(script.pendingCount()).toBe(0);
@@ -688,6 +703,7 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.createConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'unknown-agent-skill');
     await runtime.sendMessage(created.conversationId, 'Use the unknown agent fork skill.');
 
     expect(script.pendingCount()).toBe(0);
@@ -749,6 +765,7 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.createConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'shell-skill');
     await runtime.sendMessage(created.conversationId, 'Please load the shell skill.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -809,6 +826,7 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.createConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'shell-approval-skill');
     const sendPromise = runtime.sendMessage(created.conversationId, 'Please load the shell approval skill.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
