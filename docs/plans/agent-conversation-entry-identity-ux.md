@@ -20,6 +20,9 @@ Make agent conversations feel like a simple messaging product:
 - the product makes **DM vs Channel** obvious before anything is created;
 - each reply clearly shows **which agent** answered and which configured model
   profile it used;
+- Channel activity is visible in a fixed place instead of injected into the
+  message stream;
+- message details such as timestamp and token usage are available on demand;
 - models are configured on agent profiles ahead of time, not casually changed
   from inside a DM message flow.
 
@@ -42,6 +45,12 @@ agent identity feel less stable than the product model intends.
 5. **Model choice belongs to the profile.** The message surface can display the
    model, but it should not encourage per-chat ad hoc model swapping for DMs or
    Channels.
+6. **Activity is presence, not a message.** "X is replying" is transient
+   channel state. It should not occupy a transcript row or move the conversation
+   while the user is reading.
+7. **Metadata is available, not loud.** Message time, model, and token usage are
+   inspectable from the message, but they should not clutter the main reading
+   flow.
 
 ## Recommended Product Experience
 
@@ -112,6 +121,52 @@ still an agent reply, not an anonymous assistant bubble.
 This proposal should subsume or extend the existing `agent-avatar-v1` backlog
 item: avatar-only identity is useful, but the user need is broader than a chip.
 It is avatar + name + model + stable profile context.
+
+### Channel Activity Area
+
+Move Channel "is replying" state out of the transcript and into a fixed activity
+area near the composer/header boundary:
+
+- show one compact item per active or pending agent: avatar, display name, and a
+  short state such as `thinking`, `using tools`, `waiting`, or `replying`;
+- allow multiple agent items at once, because a multi-`@` turn addresses several
+  agents even if their completions do not land at the same time;
+- keep the area stable in height, with overflow collapsed behind a small count
+  or popover when many members are active;
+- clicking an active item opens that run's working-state/details panel;
+- remove the item when that agent's final message lands or fails.
+
+The best product behavior is **completion-time delivery**: when a Channel round
+addresses A and B, each agent should publish its final message when it finishes,
+not when its mention order says it should. That means a later-mentioned but
+faster agent can appear before a slower earlier-mentioned agent. The transcript
+then reflects actual delivery time, while the activity area explains who is
+still working.
+
+Implementation caveat: M3-A deliberately kept execution sequential even though
+the semantics are parallel-ready. A fixed activity area can ship first as a UI
+improvement over today's sequential runtime by showing the running agent plus
+queued/pending addressed agents. True simultaneous typing and completion-time
+delivery require runtime work: parallel Channel turns, per-run active state,
+completion-order append, stop semantics across multiple active runs, and tests
+that preserve the independence cut.
+
+### Message More Menu
+
+Every message row should have a compact more/action affordance. The primary row
+stays readable; the menu holds details:
+
+- message timestamp, with absolute time and a short relative display where
+  useful;
+- speaker identity and `@mention`;
+- provider/model used for assistant messages;
+- token usage when available: input, output, total, and any cached/reasoning
+  fields the provider reports;
+- copy message, retry/regenerate where applicable, and debug/open-run actions
+  should remain grouped with the same row.
+
+Token usage is not a transcript concept. It belongs in the details popover/menu
+or a small inspector, not inline next to every message by default.
 
 ### Model Configuration
 
@@ -200,11 +255,59 @@ The safe sequence is:
    for DMs/Channels;
 4. only then remove or de-emphasize the editable chat-surface model menu.
 
+### Feature D: Channel Activity Area
+
+Complete feature: Channel replying state renders in a fixed activity area, not
+as a transcript row.
+
+Likely touched files:
+
+- `src/core/agentRenderProjection.ts`
+- `src/renderer/ui/agent/AgentChatPanel.tsx`
+- `src/renderer/ui/agent/AgentChildRunDetailsPanel.tsx`
+- `src/renderer/styles/agent-message.css`
+- `src/renderer/styles/agent-dock.css`
+- Channel renderer/e2e tests
+
+Recommended first implementation:
+
+1. derive active/pending Channel activity from current projection state;
+2. render the fixed activity area above the composer or under the Channel header;
+3. keep click-through to the existing run working-state panel;
+4. leave true parallel execution out of this first UI PR unless PM explicitly
+   approves the runtime expansion.
+
+True simultaneous typing and completion-time delivery are a follow-on runtime
+feature, not a renderer-only cleanup. They likely touch:
+
+- `src/main/agentRuntime.ts`
+- `src/core/agentEventLog.ts`
+- `src/core/agentRenderProjection.ts`
+- `tests/core/agentChannelRuntime.test.ts`
+
+### Feature E: Message Metadata More Menu
+
+Complete feature: each message row exposes details without cluttering the
+transcript.
+
+Likely touched files:
+
+- `src/core/agentRenderProjection.ts`
+- `src/renderer/ui/agent/AgentMessageRow.tsx`
+- `src/renderer/ui/agent/AgentMessageFrame.tsx`
+- `src/renderer/styles/agent-message.css`
+- renderer tests for message action/menu behavior
+
+Prefer deriving timestamp, model id, provider id, and usage from existing
+message/run records. If a field is missing from the render projection, add a
+derived field there rather than changing stored events.
+
 ## Non-goals
 
 - No cross-agent memory sharing; that is M3-B.
 - No per-agent POV inspector; that is M3-C.
-- No concurrent Channel execution.
+- No concurrent Channel execution in the first UI-only activity-area PR. True
+  simultaneous Channel turns are a separate runtime/product decision.
 - No DM transcript forwarding into a Channel. The seed note remains explicit and
   shared; private DM history stays private.
 - No v1 custom avatar/icon field in `AGENT.md`. Use deterministic derived
@@ -224,6 +327,10 @@ The safe sequence is:
    Recommended: do not remove the editable control until the built-in assistant
    has a clear profile-owned model setting. First make profile ownership visible;
    then demote the composer control.
+4. **Should Channel execution move from sequential to parallel now?**
+   Recommended: target the UX, but stage the implementation. First move activity
+   state out of the transcript and make pending/running agents visible. Then
+   approve a runtime PR for true parallel turns and completion-time delivery.
 
 ## Acceptance
 
@@ -234,6 +341,12 @@ The safe sequence is:
   unchanged.
 - DM and Channel message rows show agent avatar, display name/mention, and model
   metadata.
+- Channel replying state appears in a fixed activity area, not as an in-thread
+  transcript row.
+- The activity area can represent multiple active/pending agents and opens the
+  corresponding working-state panel.
+- Message rows expose a more menu with timestamp, speaker/model metadata, and
+  token usage when available.
 - Channel rows preserve historical attribution after member removal.
 - The composer does not present model selection as the central DM interaction.
 - Light and dark visual checks pass for the starter, conversation list, headers,
