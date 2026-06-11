@@ -18,9 +18,10 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | `cc/agent-channel-peers` | M3-A (#179) — **unblocked**, resume on a rebase onto the merged clean-cut |
+| Claude Code | `lin-outliner-cc/` | — | idle (M3-A multi-agent Channel merged, PR #179) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | next: draft the memory-theory realignment program one-pager (see Backlog § memory) |
-| Codex | `lin-outliner-codex/` | — | idle |
+| Codex | `lin-outliner-codex/` | — | idle (outliner indent/draft fixes merged, PR #182) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (registered 2026-06-11) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -63,10 +64,12 @@ Both 2026-06-09 lanes merged — board is between batches.
   `8fff92e` and re-verified). M3-A and `agent-memory-academic-alignment` were unblocked
   (the latter merged as PR #181 — see Recently completed) →
   **Phase 2** three independent complete features, **each with a drafted plan file**:
-  **M3-A** working multi-agent Channel (`agent-channel-peers`; membership + routing +
-  peer reply, one PR — membership alone would be a scaffold slice; **claimed #179,
-  now unblocked — resume on a rebase onto the merged clean-cut; re-verify the plan's
-  `file:line` anchors, #180 moved them**) →
+  **M3-A** working multi-agent Channel (`agent-channel-peers`) **merged as PR #179**
+  (cc) — see Recently completed; plan archived `done` in-PR. The gate ran FOUR rounds
+  (10 findings → IM group-chat semantics PM-re-ratified mid-PR → 4 required → 1
+  scoping defect; visual light+dark passed in round 3). Unblocks
+  `agent-run-unification` (dispatch-ready) and `agent-avatar-v1` (the `actor`
+  render-projection field is on `main`) →
   **run unification** (`agent-run-unification`, **PM-ratified 2026-06-10**: dissolve
   the subagent entity — child runs become ordinary run ledgers, one evidence scheme,
   one watermark shape, event-sourced compaction; the #164/#178 guards become
@@ -392,8 +395,8 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
-- **agent-avatar-v1** (P3, *fast-track, no plan file*, **PM-ratified 2026-06-10; queues
-  behind M3-A #179**) — derived avatars for message-stream speakers: agent-name initial
+- **agent-avatar-v1** (P3, *fast-track, no plan file*, **PM-ratified 2026-06-10;
+  UNBLOCKED — M3-A #179 merged**) — derived avatars for message-stream speakers: agent-name initial
   on a circular chip, hue deterministically derived from `agentId`, muted alpha-on-ink
   tint (identity is CONTENT, not functional state — B3/B4 stay intact; circular per B6;
   reuse the compact workspace-root-avatar idiom, `design-system.md:496`). Zero storage /
@@ -623,6 +626,30 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **M3-A: working multi-agent Channel — membership + routing + peer reply** (cc, PR #179) —
+  the first user-reachable multi-agent milestone, ONE complete feature (plan archived `done`
+  in-PR). Membership is event-sourced (`member.added/removed` apply + replay + index fold,
+  membership-events-only); a Channel is created via the header "+" member menu (adding an
+  agent to a DM spawns a seeded Channel — the DM itself is never mutated); routing is the
+  one ratified rule (explicit user @s all run; no @ → coordinator; an agent reply's @member
+  hands off, routed from the PERSISTED final-segment `assistant_message.completed.addressedTo`
+  — log and routing always agree); peer turns run under the member's own identity/POV via
+  the §8 flatten + independence cut (`cutChannelPathForRun`, fail-open). **IM group-chat
+  semantics PM-re-ratified mid-PR**, superseding the relay budget: queue-all during an
+  active round (persisted at routing time; quit-flush persists leftovers unrouted), Channel
+  replies land whole with a typing indicator (DM streaming/steer unchanged), unbounded
+  hand-off with user stop as the only circuit breaker (stop-trace event). Gate ran FOUR
+  rounds: r1 ten findings (e2e-suite crash via mock `members` gap; activeRun clobber race;
+  preserved-message re-attribution; steer swallowing @s; coordinator-defaulting entry
+  points; foldMembers fold/replay divergence; queueFollowUp briefing leak; mid-run removal
+  POV flip; live-roster badges; mention-token collision) → r2 four required on the new
+  semantics (non-round-run send gate; queue durability incl. quit-flush + strand-proofing;
+  compact-retry runId; run-slot recovery) → r3 one scoping defect (`recoverFromRunError`
+  runId match) + visual light+dark PASS (member strip/menu, actor badge, queued bubble,
+  typing indicator — all-neutral fills, B3/B4/B6) → r4 GO. Final verification: typecheck ·
+  test:core 837/0 · test:renderer 405/0 · e2e 294/294. Deferred follow-ups recorded on the
+  PR: queued-bubble fidelity, add-member mid-round asymmetry, `handOffTargets` test-only
+  surface, `startRun` positional params. DM path regression-verified seam-by-seam.
 - **outliner indent & trailing-draft placement fixes** (codex, PR #182) — the boarded
   fast-track shipped after two gate rounds: (1) batch Tab no longer force-expands batch
   members, and the skip-batch-members run semantics moved INTO core

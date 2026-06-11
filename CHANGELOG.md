@@ -325,6 +325,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Multi-agent Channels: membership, @-routing, and peer replies (PR #179, M3-A)** — a conversation
+  can now hold multiple agent members and run them as an IM group chat. Membership is event-sourced
+  (`member.added`/`member.removed`; the conversation-index/meta folds consume membership events only)
+  and user-reachable via the header "+" member menu; adding an agent to a DM spawns a seeded Channel
+  (the canonical DM is never mutated). Routing is one rule: an explicit user `@member` runs every
+  addressed member; no `@` runs the coordinator (the default addressee); an agent reply's `@member`
+  hands off — routed from the persisted final-segment `assistant_message.completed.addressedTo`, so
+  the durable log and actual routing always agree. Peer turns execute under the member's own
+  identity, system prompt, tools, and memory pool, reading a per-member POV flatten with an
+  independence cut (context = the log up to the @-ing message + the run's own records; same-round
+  co-addressees mutually invisible). **IM delivery semantics (PM-ratified mid-PR, superseding the
+  relay budget):** user messages during an active round queue (persisted at routing time; a quit
+  flushes leftovers into the log unrouted so nothing typed vanishes); Channel replies land whole
+  behind a typing indicator (DM streaming + steer unchanged); hand-off chains are unbounded with
+  user stop as the only circuit breaker (stop writes a thread trace). Renderer: member strip +
+  typeahead, third-person actor badges that survive membership changes, queued bubbles, typing
+  indicator. The gate ran four rounds (10 findings → 4 required on the re-ratified semantics → 1
+  recovery-scoping defect → GO) with the DM path regression-verified seam-by-seam and visual
+  light+dark verification; final suites typecheck · `test:core` 837/0 · `test:renderer` 405/0 ·
+  e2e 294/294. Deferred follow-ups recorded on the PR (queued-bubble fidelity, add-member
+  mid-round guard asymmetry).
+
 - **Skill acceptance: one-click user trust closes the ratification loop (PR #175)** — implements the
   PM-ratified `agent-skill-acceptance` plan (PR A + slimmed PR B; plan archived `done` in the PR). #174
   left agent-authored skills permanently unratified unless the user hand-edited the file; the Skills tab
