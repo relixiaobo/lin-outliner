@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: cc-2
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 ---
 
 # Memory-theory realignment program
@@ -18,7 +18,8 @@ drafting agent needs no out-of-band context. cc-2's one-pager duties
 data-gate threshold · per-PR collision checks) are **discharged and
 PM-ratified** — see *Program one-pager* below. Claimed by cc-2 2026-06-10;
 **Step 0 + PR-1 shipped (#183)**. Next runnable unit: PR-2, queued behind
-run-unification.
+run-unification. PR-2 is implemented in the Codex branch
+`codex/agent-memory-realignment-pr-2`; next runnable unit after merge: PR-3.
 
 ## Goal
 
@@ -95,10 +96,11 @@ episode = derived view with **memory-owned gist production**. Compaction
 summaries are a DIFFERENT artifact (working-memory/context management, written
 to continue a task) from episode gist (autobiographical, written to remember);
 the #178 "Dream reads compaction summaries as evidence" path is a **stopgap and
-is deleted in PR-2** — Dream reads episode gist; the context assembler may
-later consume episode gist (dependency inverted, never the other way).
+is replaced in PR-2** — Dream writes episode gist from raw stream evidence and
+semantic facts cite that gist; the context assembler may later consume episode
+gist (dependency inverted, never the other way).
 `DistillationNode` is reclassified as episodic gist content — it is NOT index
-(the index is pure pointers; today only `sources[]`, forward-only).
+(the index is pure pointers: fact→episode down, episode→facts back).
 
 **D-5 · `AgentMemorySource` 9-optional-field grab-bag → discriminated union**
 `{stream: 'conversation' | 'run', streamId, range} | {episodeId}` — after
@@ -140,7 +142,7 @@ facts".
 |---|---|---|
 | **Step 0** | Rewrite `agent-memory-foundations` + `agent-data-model` canonical table + `agent-architecture` § memory per D-1/D-4/D-6 | **shipped #183** (with PR-1) |
 | **PR-1** | Person rule (D-2) + recall read surface (D-3, reader-relative `subject`) + Dream prompt guidance (D-9). No schema change; old-format facts handled by manual dev-userData wipe | **shipped #183** |
-| **PR-2** | Episodic layer (D-4) + sources union (D-5) + provenance-zoom storage side. Subsumes `agent-memory-episodic-index` | run-unification |
+| **PR-2** | Episodic layer (D-4) + sources union (D-5) + provenance-zoom storage side. Subsumes archived `agent-memory-episodic-index` | run-unification |
 | **PR-3** | Two-strength forgetting (`agent-memory-forgetting`) + retrieval-event append on recall hits (D-7) | PR-2 |
 | **PR-5** | Schema/overview layer (D-6) + briefing recomposition + no-query `recall` returns overview | PR-2 (machinery), pairs with PR-3 |
 | **PR-4** | Hybrid retrieval engine for deliberate `recall` (`agent-memory-retrieval-upgrade`, rescoped) + zoom read side; embedding-provider PM gate at claim | PR-2 |

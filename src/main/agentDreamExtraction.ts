@@ -6,7 +6,9 @@ import {
   type AgentEventReplayState,
   type AgentMemoryEntry,
   type AgentMemorySource,
+  type AgentMemoryStreamSource,
   type AgentPersistedContent,
+  getAgentEventVisibleTranscript,
   getAgentEventRuntimeTranscriptPath,
   replayAgentEvents,
 } from '../core/agentEventLog';
@@ -22,7 +24,8 @@ const DREAM_MAX_ACTIONS = 5;
 type DreamMemoryActionType = 'add' | 'update' | 'forget';
 
 export interface DreamMemoryExtractionSourceRange {
-  source: AgentMemorySource;
+  source: AgentMemoryStreamSource;
+  conversationId?: string;
   fromSeqExclusive: number;
   throughSeq: number;
   throughEventId: string | null;
@@ -33,7 +36,7 @@ export interface DreamMemoryExtractionSourceRange {
 export interface DreamMemoryExtractionSpan {
   id: string;
   runId: string;
-  sources: AgentMemorySource[];
+  sources: AgentMemoryStreamSource[];
   sourceRanges: DreamMemoryExtractionSourceRange[];
   transcript: string;
   totalMessageCount: number;
@@ -45,6 +48,11 @@ export type DreamMemoryAction =
   | { type: 'add'; fact: string }
   | { type: 'update'; memoryId: string; fact: string }
   | { type: 'forget'; memoryId: string; reason?: string };
+
+export interface DreamMemoryExtractionResponse {
+  episodeGist?: string;
+  actions: DreamMemoryAction[];
+}
 
 /**
  * Which pool a Dream consolidates. One writer per pool ([[agent-data-model]] §4): the
@@ -103,12 +111,15 @@ export function buildDreamMemoryExtractionSpan(
   if (!from || !through) return null;
   const transcript = renderDreamTranscript(slice);
   if (!transcript.trim()) return null;
-  const source: AgentMemorySource = {
-    conversationId,
-    messageRange: [from.id, through.id],
-    runId,
+  const source: AgentMemoryStreamSource = {
+    stream: 'conversation',
+    streamId: conversationId,
+    range: {
+      fromSeqExclusive: 0,
+      throughSeq: state.latestSeq,
+      throughEventId: state.latestEventId,
+    },
   };
-  if (state.latestEventId) source.eventId = state.latestEventId;
   return {
     id: `run:${runId}`,
     runId,
@@ -149,14 +160,16 @@ export function buildDreamMemoryExtractionSpanFromEvidence(
   const renderedSections: string[] = [];
 
   for (const input of inputs.conversations) {
-    const range = evidenceRangeFromEvents(input.events, input.fromSeqExclusive, (from, through, throughEvent) => ({
-      conversationId: input.conversationId,
-      messageRange: [from.id, through.id],
-      eventId: throughEvent.eventId,
+    const range = evidenceRangeFromEvents(input.events, input.fromSeqExclusive, (evidence) => ({
+      stream: 'conversation',
+      streamId: input.conversationId,
+      range: {
+        fromSeqExclusive: input.fromSeqExclusive,
+        throughSeq: evidence.throughSeq,
+        throughEventId: evidence.throughEventId,
+      },
     }));
     if (!range) continue;
-    const runIds = uniqueStrings(range.messages.map((message) => message.runId).filter((value): value is string => !!value));
-    if (runIds.length === 1) range.range.source.runId = runIds[0];
     ranges.push(range.range);
     renderedSections.push(`## Conversation ${input.conversationId}\n${range.transcript}`);
   }
@@ -164,14 +177,17 @@ export function buildDreamMemoryExtractionSpanFromEvidence(
   // A delegated run's ledger digests EXACTLY like a conversation stream — the
   // unification's point: one evidence scheme, one watermark shape, one replay.
   for (const input of inputs.runs) {
-    const range = evidenceRangeFromEvents(input.events, input.fromSeqExclusive, (from, through, throughEvent) => ({
-      conversationId: input.conversationId,
-      kind: 'run',
-      runId: input.runId,
-      messageRange: [from.id, through.id],
-      eventId: throughEvent.eventId,
+    const range = evidenceRangeFromEvents(input.events, input.fromSeqExclusive, (evidence) => ({
+      stream: 'run',
+      streamId: input.runId,
+      range: {
+        fromSeqExclusive: input.fromSeqExclusive,
+        throughSeq: evidence.throughSeq,
+        throughEventId: evidence.throughEventId,
+      },
     }));
     if (!range) continue;
+    range.range.conversationId = input.conversationId;
     ranges.push(range.range);
     renderedSections.push(`## Agent Run ${input.runId} (${input.agentId}) in Conversation ${input.conversationId}\n${range.transcript}`);
   }
@@ -266,12 +282,17 @@ place — never pile up a duplicate):
 
 Output schema:
 {
+  "episode_gist": "A concise autobiographical gist of what this evidence episode was about and why it matters.",
   "actions": [
     { "type": "add", "fact": "..." },
     { "type": "update", "memory_id": "memory-id", "fact": "..." },
     { "type": "forget", "memory_id": "memory-id", "reason": "..." }
   ]
 }
+
+Write episode_gist before actions. The actions should be supported by the episode gist; use
+the raw evidence only to produce and verify that gist. If there is no new raw evidence,
+set episode_gist to "" and do not add new memories.
 
 Current origin workspace: ${workspace}
 
@@ -350,16 +371,22 @@ function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFramin
   };
 }
 
-export function parseDreamMemoryActions(responseText: string): DreamMemoryAction[] {
+export function parseDreamMemoryExtractionResponse(responseText: string): DreamMemoryExtractionResponse {
   const parsed = parseJsonObject(responseText);
-  if (!parsed || !Array.isArray(parsed.actions)) return [];
+  if (!parsed) return { actions: [] };
+  const episodeGist = normalizeString(parsed.episode_gist) ?? normalizeString(parsed.episodeGist) ?? undefined;
+  if (!Array.isArray(parsed.actions)) return { episodeGist, actions: [] };
   const actions: DreamMemoryAction[] = [];
   for (const raw of parsed.actions) {
     if (actions.length >= DREAM_MAX_ACTIONS) break;
     const action = normalizeDreamMemoryAction(raw);
     if (action) actions.push(action);
   }
-  return actions;
+  return { episodeGist, actions };
+}
+
+export function parseDreamMemoryActions(responseText: string): DreamMemoryAction[] {
+  return parseDreamMemoryExtractionResponse(responseText).actions;
 }
 
 export function mergeMemorySources(
@@ -390,18 +417,45 @@ export function memoryFactKey(fact: string): string {
 function evidenceRangeFromEvents(
   events: readonly AgentEvent[],
   fromSeqExclusive: number,
-  makeSource: (
-    from: AgentEventMessageRecord,
-    through: AgentEventMessageRecord,
-    throughEvent: AgentEvent,
-  ) => AgentMemorySource,
+  makeSource: (evidence: AgentMemoryStreamEvidence) => AgentMemoryStreamSource,
 ): { range: DreamMemoryExtractionSourceRange; messages: AgentEventMessageRecord[]; transcript: string } | null {
+  const evidence = extractMemoryStreamEvidence(events, { fromSeqExclusive });
+  if (!evidence) return null;
+  return {
+    messages: evidence.messages,
+    transcript: evidence.transcript,
+    range: {
+      source: makeSource(evidence),
+      fromSeqExclusive,
+      throughSeq: evidence.throughSeq,
+      throughEventId: evidence.throughEventId,
+      messageCount: evidence.messages.length,
+      charCount: evidence.transcript.length,
+    },
+  };
+}
+
+export interface AgentMemoryStreamEvidence {
+  messages: AgentEventMessageRecord[];
+  transcript: string;
+  throughSeq: number;
+  throughEventId: string | null;
+}
+
+export function extractMemoryStreamEvidence(
+  events: readonly AgentEvent[],
+  range: { fromSeqExclusive: number; throughSeq?: number },
+): AgentMemoryStreamEvidence | null {
   const sortedEvents = [...events].sort((left, right) => left.seq - right.seq);
-  const evidenceEvents = sortedEvents.filter((event) => event.seq > fromSeqExclusive && isDreamEvidenceEvent(event));
+  const evidenceEvents = sortedEvents.filter((event) => (
+    event.seq > range.fromSeqExclusive
+    && (range.throughSeq === undefined || event.seq <= range.throughSeq)
+    && isDreamEvidenceEvent(event)
+  ));
   if (evidenceEvents.length === 0) return null;
 
   const state = replayAgentEvents(sortedEvents);
-  const activePath = getAgentEventRuntimeTranscriptPath(state);
+  const visiblePath = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
   // A `tool_result.replaced` is a lossy slimming artifact of an EXISTING
   // message, never new content: it must not pull a message created at-or-before
   // the frontier back into the window. On a fork-child ledger that frontier is
@@ -425,11 +479,14 @@ function evidenceRangeFromEvents(
     evidenceEvents
       .filter((event) => (
         event.type !== 'tool_result.replaced'
-        || (createdSeqByMessageId.get(event.messageId) ?? 0) > fromSeqExclusive
+        || (createdSeqByMessageId.get(event.messageId) ?? 0) > range.fromSeqExclusive
       ))
       .flatMap(messageIdsFromEvidenceEvent),
   );
-  const messages = activePath.filter((message) => evidenceMessageIds.has(message.id));
+  const messagesFromVisiblePath = visiblePath.filter((message) => evidenceMessageIds.has(message.id));
+  const messages = messagesFromVisiblePath.length > 0
+    ? messagesFromVisiblePath
+    : getAgentEventRuntimeTranscriptPath(state).filter((message) => evidenceMessageIds.has(message.id));
   if (messages.length === 0) return null;
 
   const transcript = renderDreamTranscript(messages);
@@ -440,19 +497,15 @@ function evidenceRangeFromEvents(
   // non-evidence `run.completed`, and a last-evidence cursor would sit forever
   // below the tail — the already-digested skip would never fire and every
   // Dream pass would re-read every historical run ledger.
-  const throughEvent = evidenceEvents.at(-1)!;
-  const scanTail = sortedEvents.at(-1)!;
+  const throughSeq = range.throughSeq;
+  const scanTail = throughSeq === undefined
+    ? sortedEvents.at(-1)!
+    : sortedEvents.filter((event) => event.seq <= throughSeq).at(-1) ?? evidenceEvents.at(-1)!;
   return {
     messages,
     transcript,
-    range: {
-      source: makeSource(messages[0]!, messages.at(-1)!, throughEvent),
-      fromSeqExclusive,
-      throughSeq: scanTail.seq,
-      throughEventId: scanTail.eventId,
-      messageCount: messages.length,
-      charCount: transcript.length,
-    },
+    throughSeq: scanTail.seq,
+    throughEventId: scanTail.eventId,
   };
 }
 

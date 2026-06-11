@@ -737,14 +737,17 @@ export interface AgentConversationListMeta {
   messageCount: number;
 }
 
-export interface AgentMemorySourceView {
-  conversationId: string;
-  kind?: 'conversation' | 'run';
-  summaryId?: string;
-  messageRange?: [string, string];
-  runId?: string;
-  eventId?: string;
-}
+export type AgentMemorySourceView =
+  | {
+      stream: 'conversation' | 'run';
+      streamId: string;
+      range: {
+        fromSeqExclusive: number;
+        throughSeq: number;
+        throughEventId: string | null;
+      };
+    }
+  | { episodeId: string };
 
 export interface AgentMemoryEntryView {
   id: string;

@@ -412,23 +412,36 @@ export interface AgentIdentityRecord {
   skills: string[];
 }
 
+export interface AgentMemorySourceRange {
+  fromSeqExclusive: number;
+  throughSeq: number;
+  throughEventId: string | null;
+}
+
 /**
- * Provenance down-pointer from a memory entry into the raw record. Two shapes
- * share one evidence addressing scheme (stable message ids + `eventId`, never
- * positional coordinates):
- * - conversation span: `kind` absent or `'conversation'`; `runId` optionally
- *   names the turn run the span belongs to.
- * - run span (a delegated run's own ledger): `kind: 'run'` + `runId`; the
- *   `messageRange` ids live in that run's ledger.
- * (The full discriminated-union reshape is memory-realignment PR-2 / D-5.)
+ * Provenance down-pointer from the episodic layer into the raw record. A stream
+ * source names one conversation or run ledger plus a stable seq/event range in
+ * that stream's own coordinate space ([[agent-memory-realignment]] D-5).
  */
-export interface AgentMemorySource {
-  conversationId: string;
-  kind?: 'conversation' | 'run';
-  summaryId?: string;
-  messageRange?: [string, string];
-  runId?: string;
-  eventId?: string;
+export interface AgentMemoryStreamSource {
+  stream: 'conversation' | 'run';
+  streamId: string;
+  range: AgentMemorySourceRange;
+}
+
+export interface AgentMemoryEpisodeSource {
+  episodeId: string;
+}
+
+export type AgentMemorySource = AgentMemoryStreamSource | AgentMemoryEpisodeSource;
+
+export interface AgentMemoryEpisode {
+  id: string;
+  principal: AgentPrincipal;
+  gist: string;
+  originWorkspace?: string;
+  sources: AgentMemoryStreamSource[];
+  createdAt: number;
 }
 
 export interface AgentMemoryEntry {
@@ -501,12 +514,14 @@ export interface AgentMemoryEventBase {
 }
 
 export type AgentMemoryEventType =
+  | 'memory.episode_recorded'
   | 'memory.entry_added'
   | 'memory.entry_updated'
   | 'memory.entry_removed'
   | 'dream.completed';
 
 export type AgentMemoryEvent =
+  | (AgentMemoryEventBase & { type: 'memory.episode_recorded'; episode: AgentMemoryEpisode })
   | (AgentMemoryEventBase & { type: 'memory.entry_added'; entry: AgentMemoryEntry })
   | (AgentMemoryEventBase & {
       type: 'memory.entry_updated';

@@ -294,10 +294,13 @@ describe('agent past chats', () => {
       ]);
 
       const source: AgentMemorySource = {
-        conversationId: conversationId,
-        messageRange: ['user-evidence', 'assistant-evidence'],
-        runId: 'run-evidence',
-        eventId: `${conversationId}-event-4`,
+        stream: 'conversation',
+        streamId: conversationId,
+        range: {
+          fromSeqExclusive: 1,
+          throughSeq: 4,
+          throughEventId: `${conversationId}-event-4`,
+        },
       };
       const evidence = await service.readMemorySourceEvidence({ source, maxChars: 120 });
 

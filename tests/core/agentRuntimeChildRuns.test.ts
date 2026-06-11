@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import type { AgentPrincipal } from '../../src/core/agentEventLog';
+import type { AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentPastChatsService } from '../../src/main/agentPastChats';
 import { createPostCompactMessage } from '../../src/main/agentCompaction';
@@ -27,6 +27,16 @@ import type { AgentEvent } from '../../src/core/agentEventLog';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
+
+const conversationSource = (conversationId: string): AgentMemoryStreamSource => ({
+  stream: 'conversation',
+  streamId: conversationId,
+  range: {
+    fromSeqExclusive: 0,
+    throughSeq: 1,
+    throughEventId: `${conversationId}-event-1`,
+  },
+});
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -272,12 +282,12 @@ describe('agent runtime childRuns', () => {
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(researcherAgentId), {
       id: 'memory-researcher-own',
       fact: 'prefers teal source notes',
-      sources: [{ conversationId: 'seed-researcher' }],
+      sources: [conversationSource('seed-researcher')],
     });
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-parent-only',
       fact: 'prefers amber planning notes',
-      sources: [{ conversationId: 'seed-parent' }],
+      sources: [conversationSource('seed-parent')],
     });
 
     const contexts: string[] = [];
@@ -419,10 +429,14 @@ describe('agent runtime childRuns', () => {
     const researcherEntries = await store.listMemoryEntries(agentPrincipal(researcherAgentId));
     const parentEntries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
     const source = researcherEntries[0]?.sources[0];
+    const episode = source && 'episodeId' in source
+      ? await store.getMemoryEpisode(agentPrincipal(researcherAgentId), source.episodeId)
+      : null;
+    const rawSource = episode?.sources[0];
     const dreamState = await store.readDreamState(agentPrincipal(researcherAgentId));
-    const runId = source?.runId;
+    const runId = rawSource?.stream === 'run' ? rawSource.streamId : undefined;
     const evidence = source
-      ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
+      ? await new AgentPastChatsService(store).readMemorySourceEvidence({ principal: agentPrincipal(researcherAgentId), source, maxChars: 2_000 })
       : null;
     const projection = latestProjection(sink.events);
     const dreamTask = projection?.taskIds
@@ -449,16 +463,16 @@ describe('agent runtime childRuns', () => {
       changes: { added: 1 },
     });
     expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.totalMessageCount : 0).toBeGreaterThan(0);
-    // The run source is the unified shape: the run's OWN ledger coordinates.
-    expect(source).toMatchObject({
-      kind: 'run',
-      conversationId: conversation.conversationId,
+    // The fact points to an episode; the episode points to the run's own ledger coordinates.
+    expect(source && 'episodeId' in source ? source.episodeId : '').toMatch(/^episode-/);
+    expect(rawSource).toMatchObject({
+      stream: 'run',
     });
     expect(runId).toMatch(/^child-/);
     // The cursor records the SCANNED TAIL (here the terminal run.completed),
     // not the last evidence event — that split is what lets the next pass skip
     // an already-digested terminal run without re-reading its ledger. The
-    // provenance side (source.eventId) still points at the last evidence event.
+    // Episode raw provenance and the Dream watermark share the scanned-tail coordinate.
     const ledgerEvents = await store.readRunStreamEvents(runId!);
     const ledgerTail = ledgerEvents.at(-1)!;
     expect(ledgerTail.type).toBe('run.completed');
@@ -466,7 +480,7 @@ describe('agent runtime childRuns', () => {
       .toBe(ledgerTail.eventId);
     expect(dreamState.watermark.runs?.[runId!]?.seq).toBe(ledgerTail.seq);
     expect(dreamState.watermark.runs?.[runId!]?.eventId).toBe(ledgerTail.eventId);
-    expect(source?.eventId).not.toBe(ledgerTail.eventId);
+    expect(rawSource?.range.throughEventId).toBe(ledgerTail.eventId);
     expect(evidence?.mode).toBe('evidence');
     expect(evidence?.mode === 'evidence' ? evidence.messages.some((message) => (
       message.text.includes('Researcher durable note: use teal source notes')
@@ -996,7 +1010,7 @@ describe('agent runtime childRuns', () => {
             // conversation transcript does not — distinct summaries let the Dream
             // assertions tell the two compactions apart.
             const summary = request.includes('Print fork output block')
-              ? 'Fork compact summary: teal pipeline verified.'
+              ? `Fork compact summary: teal pipeline verified. ${'fork compact summary detail '.repeat(60)}`
               : `Parent compact summary: conversation evidence preserved. ${'parent summary detail '.repeat(60)}`;
             return normalizeAssistantMessage(
               fauxAssistantMessage(`<analysis>compact</analysis><summary>${summary}</summary>`),
@@ -1006,7 +1020,10 @@ describe('agent runtime childRuns', () => {
           dreamRequests.push(request);
           return normalizeAssistantMessage(
             fauxAssistantMessage(JSON.stringify({
-              actions: request.includes('## Agent Run')
+              episode_gist: request.includes('Fork compact summary: teal pipeline verified.')
+                ? 'Fork compact summary: teal pipeline verified.'
+                : 'No durable memory extracted.',
+              actions: request.includes('Fork compact summary: teal pipeline verified.')
                 ? [{ type: 'add', fact: 'The teal pipeline is verified end to end.' }]
                 : [],
             })),
@@ -1045,10 +1062,9 @@ describe('agent runtime childRuns', () => {
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
 
     const run = Object.values((await store.replay(conversation.conversationId)).childRuns ?? {})[0]!;
-    const agentRunRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
     // The fork's pre-compaction work survives only inside the compacted summary; the
     // summary must therefore reach extraction (it is the still-pending content).
-    expect(agentRunRequests.some((request) => request.includes('Fork compact summary: teal pipeline verified.'))).toBe(true);
+    expect(dreamRequests.some((request) => request.includes('Fork compact summary: teal pipeline verified.'))).toBe(true);
     // The manual /compact re-anchored the parent conversation's active path at the
     // post-compact root, so the pre-compaction conversation content survives only inside
     // the manual compaction summary — that summary must reach the user-pool Dream.
@@ -1061,13 +1077,22 @@ describe('agent runtime childRuns', () => {
     const dreamState = await store.readDreamState(agentPrincipal('built-in:tenon:assistant'));
     expect(dreamState.watermark.runs?.[run.id]?.seq).toBeGreaterThan(0);
 
-    // The distilled fact's source binding resolves back to the summary evidence.
+    // The distilled fact points at its memory episode first. The episode gist is
+    // the semantic evidence Dream extracted from the compacted run; raw spans remain
+    // available underneath it for audit.
     const entries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
     const entry = entries.find((candidate) => candidate.fact === 'The teal pipeline is verified end to end.');
     expect(entry).toBeDefined();
-    const evidence = await new AgentPastChatsService(store).readMemorySourceEvidence({ source: entry!.sources[0]!, maxChars: 4_000 });
+    const evidence = await new AgentPastChatsService(store).readMemorySourceEvidence({
+      principal: agentPrincipal('built-in:tenon:assistant'),
+      source: entry!.sources[0]!,
+      maxChars: 4_000,
+    });
+    if (evidence.mode !== 'evidence') {
+      throw new Error(JSON.stringify(evidence));
+    }
     expect(evidence.mode).toBe('evidence');
-    expect(evidence.mode === 'evidence' ? evidence.messages.map((message) => message.text).join('\n') : '')
+    expect(evidence.mode === 'evidence' ? evidence.episode?.gist : '')
       .toContain('Fork compact summary: teal pipeline verified.');
   });
 
@@ -1266,19 +1291,33 @@ describe('agent runtime childRuns', () => {
     const entry = entries.find((candidate) => candidate.fact === 'The deployment pipeline is verified.');
     expect(entry).toBeDefined();
     const source = entry!.sources[0]!;
-    expect(source).toMatchObject({ kind: 'run', runId });
+    expect('episodeId' in source ? source.episodeId : '').toMatch(/^episode-/);
     const pastChats = new AgentPastChatsService(store);
-    const evidence = await pastChats.readMemorySourceEvidence({ source, maxChars: 4_000 });
+    const evidence = await pastChats.readMemorySourceEvidence({
+      principal: agentPrincipal(ownerAgentId),
+      source,
+      maxChars: 4_000,
+    });
     expect(evidence.mode).toBe('evidence');
+    const rawSource = evidence.mode === 'evidence' ? evidence.messages[0]?.rawSource : undefined;
+    expect(rawSource).toMatchObject({ stream: 'run', streamId: runId });
     const evidenceText = evidence.mode === 'evidence' ? evidence.messages.map((message) => message.text).join('\n') : '';
     expect(evidenceText).toContain('Fork child conclusion');
     expect(evidenceText).not.toContain('Compacted fork summary');
+    if (!rawSource) throw new Error('Expected raw run source');
     const tampered = await pastChats.readMemorySourceEvidence({
-      source: { ...source, messageRange: [`${runId}-missing-1`, `${runId}-missing-2`] },
+      source: {
+        ...rawSource,
+        range: {
+          fromSeqExclusive: 10_000,
+          throughSeq: 10_001,
+          throughEventId: 'missing-event',
+        },
+      },
       maxChars: 4_000,
     });
     expect(tampered.mode).toBe('error');
-    expect(tampered.mode === 'error' ? tampered.code : null).toBe('NOT_ON_ACTIVE_BRANCH');
+    expect(tampered.mode === 'error' ? tampered.code : null).toBe('SOURCE_NOT_FOUND');
   });
 
   test('slimming an inherited fork-prefix tool result never leaks parent context into Dream evidence', async () => {

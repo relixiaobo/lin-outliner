@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import type { AgentMemoryEntry, AgentMemorySource, AgentPrincipal } from '../core/agentEventLog';
+import type { AgentMemoryEntry, AgentMemorySource, AgentMemoryStreamSource, AgentPrincipal } from '../core/agentEventLog';
 import { samePrincipal } from '../core/agentEventLog';
 import { defaultPrincipalName } from './agentMemoryBriefing';
 import {
@@ -77,8 +77,21 @@ export interface AgentRecallRuntimeEntry {
   evidenceTruncated?: boolean;
 }
 
-export interface AgentRecallEvidence {
+export type AgentRecallEvidence = AgentRecallEpisodeEvidence | AgentRecallRawEvidence;
+
+export interface AgentRecallEpisodeEvidence {
+  kind: 'episode_gist';
   source: AgentMemorySource;
+  episodeId: string;
+  gist: string;
+  createdAt: number;
+  rawSources: AgentMemoryStreamSource[];
+}
+
+export interface AgentRecallRawEvidence {
+  kind: 'raw_span';
+  source: AgentMemorySource;
+  rawSource: AgentMemoryStreamSource;
   conversationId: string;
   messageId: string;
   role: string;
@@ -189,19 +202,35 @@ function visibleRecallToolData(data: AgentRecallToolData, reader: AgentPrincipal
 }
 
 function visibleSource(source: AgentMemorySource): unknown {
+  if ('episodeId' in source) {
+    return { episode_id: source.episodeId };
+  }
   return {
-    conversation_id: source.conversationId,
-    ...(source.kind ? { kind: source.kind } : {}),
-    ...(source.summaryId ? { summary_id: source.summaryId } : {}),
-    ...(source.messageRange ? { message_range: source.messageRange } : {}),
-    ...(source.runId ? { run_id: source.runId } : {}),
-    ...(source.eventId ? { event_id: source.eventId } : {}),
+    stream: source.stream,
+    stream_id: source.streamId,
+    range: {
+      from_seq_exclusive: source.range.fromSeqExclusive,
+      through_seq: source.range.throughSeq,
+      through_event_id: source.range.throughEventId,
+    },
   };
 }
 
 function visibleEvidence(evidence: AgentRecallEvidence): unknown {
+  if (evidence.kind === 'episode_gist') {
+    return {
+      kind: 'episode_gist',
+      source: visibleSource(evidence.source),
+      episode_id: evidence.episodeId,
+      gist: evidence.gist,
+      created_at: evidence.createdAt,
+      raw_sources: evidence.rawSources.map(visibleSource),
+    };
+  }
   return {
+    kind: 'raw_span',
     source: visibleSource(evidence.source),
+    raw_source: visibleSource(evidence.rawSource),
     conversation_id: evidence.conversationId,
     message_id: evidence.messageId,
     role: evidence.role,

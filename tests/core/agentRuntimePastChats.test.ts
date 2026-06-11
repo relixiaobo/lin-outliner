@@ -22,6 +22,7 @@ import {
   getAgentEventActivePath,
   type AgentActor,
   type AgentEvent,
+  type AgentMemorySource,
   type AgentPersistedContent,
   type AgentPrincipal,
 } from '../../src/core/agentEventLog';
@@ -32,6 +33,22 @@ import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
 // Mirrors LOCAL_USER_ID in agentRuntime — the single-user principal that owns the user pool.
 const USER_PRINCIPAL: AgentPrincipal = { type: 'user', userId: 'local-user' };
+
+function conversationSource(
+  conversationId: string,
+  options: { fromSeqExclusive?: number; throughSeq?: number; throughEventId?: string } = {},
+): AgentMemorySource {
+  const throughSeq = options.throughSeq ?? 1;
+  return {
+    stream: 'conversation',
+    streamId: conversationId,
+    range: {
+      fromSeqExclusive: options.fromSeqExclusive ?? 0,
+      throughSeq,
+      throughEventId: options.throughEventId ?? `${conversationId}-event-${throughSeq}`,
+    },
+  };
+}
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -383,12 +400,11 @@ describe('agent runtime past chats integration', () => {
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-focus-ring',
       fact: 'uses cobalt blue for focus rings',
-      sources: [{
-        conversationId: 'past-conversation-focus',
-        messageRange: ['past-user-focus', 'past-assistant-focus'],
-        runId: 'past-run-focus',
-        eventId: 'past-conversation-focus-event-4',
-      }],
+      sources: [conversationSource('past-conversation-focus', {
+        fromSeqExclusive: 1,
+        throughSeq: 4,
+        throughEventId: 'past-conversation-focus-event-4',
+      })],
       createdAt: 30,
     });
 
@@ -494,22 +510,21 @@ describe('agent runtime past chats integration', () => {
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-focus-ring',
       fact: 'uses cobalt blue for focus rings',
-      sources: [{
-        conversationId: 'past-conversation-focus',
-        messageRange: ['past-user-focus', 'past-assistant-focus'],
-        runId: 'past-run-focus',
-        eventId: 'past-conversation-focus-event-4',
-      }],
+      sources: [conversationSource('past-conversation-focus', {
+        fromSeqExclusive: 1,
+        throughSeq: 4,
+        throughEventId: 'past-conversation-focus-event-4',
+      })],
       createdAt: 30,
     });
     await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-review-style',
       fact: 'prefers terse code reviews',
-      sources: [{
-        conversationId: userEvidenceConversation,
-        messageRange: ['past-user-reviews', 'past-user-reviews'],
-        eventId: 'past-conversation-reviews-event-2',
-      }],
+      sources: [conversationSource(userEvidenceConversation, {
+        fromSeqExclusive: 1,
+        throughSeq: 2,
+        throughEventId: 'past-conversation-reviews-event-2',
+      })],
       createdAt: 31,
     });
 
@@ -576,7 +591,7 @@ describe('agent runtime past chats integration', () => {
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-direct-style',
       fact: 'prefers direct, concise engineering answers',
-      sources: [{ conversationId: 'past-conversation' }],
+      sources: [conversationSource('past-conversation')],
       createdAt: 30,
     });
 
@@ -639,13 +654,13 @@ describe('agent runtime past chats integration', () => {
     await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-user-pref',
       fact: 'prefers terse code reviews',
-      sources: [{ conversationId: 'past-conversation' }],
+      sources: [conversationSource('past-conversation')],
       createdAt: 30,
     });
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-agent-habit',
       fact: 'verifies a worktree HEAD before trusting a gate run',
-      sources: [{ conversationId: 'past-conversation' }],
+      sources: [conversationSource('past-conversation')],
       createdAt: 31,
     });
 
@@ -710,14 +725,14 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-current-workspace',
       fact: 'use slate focus rings in the current workspace',
       originWorkspace: memoryOriginWorkspace(localRoot),
-      sources: [{ conversationId: 'current-workspace-conversation' }],
+      sources: [conversationSource('current-workspace-conversation')],
       createdAt: 30,
     });
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-other-workspace',
       fact: 'use amber focus rings in the other workspace',
       originWorkspace: 'workspace:other',
-      sources: [{ conversationId: 'other-workspace-conversation' }],
+      sources: [conversationSource('other-workspace-conversation')],
       createdAt: 31,
     });
 
@@ -778,27 +793,27 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-current-recall',
       fact: 'Current workspace recall fact mentions teal focus rings.',
       originWorkspace: memoryOriginWorkspace(localRoot),
-      sources: [{ conversationId: 'current-recall-conversation' }],
+      sources: [conversationSource('current-recall-conversation')],
       createdAt: 30,
     });
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-other-recall',
       fact: 'Other workspace recall fact mentions amber focus rings.',
       originWorkspace: 'workspace:other',
-      sources: [{ conversationId: 'other-recall-conversation' }],
+      sources: [conversationSource('other-recall-conversation')],
       createdAt: 31,
     });
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-unscoped-recall',
       fact: 'Unscoped recall fact mentions violet focus rings.',
-      sources: [{ conversationId: 'unscoped-recall-conversation' }],
+      sources: [conversationSource('unscoped-recall-conversation')],
       createdAt: 32,
     });
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-invalidated-recall',
       fact: 'Invalidated recall fact mentions orange focus rings.',
       originWorkspace: memoryOriginWorkspace(localRoot),
-      sources: [{ conversationId: 'invalidated-recall-conversation' }],
+      sources: [conversationSource('invalidated-recall-conversation')],
       createdAt: 33,
     });
     await store.removeMemoryEntry(agentPrincipal('built-in:tenon:assistant'), 'memory-invalidated-recall', 'test');
@@ -938,14 +953,21 @@ describe('agent runtime past chats integration', () => {
 
     const entries = await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL);
     const source = entries[0]?.sources[0];
+    const episode = source && 'episodeId' in source
+      ? await new AgentEventStore(dataRoot).getMemoryEpisode(USER_PRINCIPAL, source.episodeId)
+      : null;
+    const rawSource = episode?.sources[0];
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(entries.map((entry) => entry.fact)).toEqual(['prefers concise engineering answers']);
     expect(entries[0]?.originWorkspace).toBe(memoryOriginWorkspace(localRoot));
-    expect(source?.conversationId).toBe(created.conversationId);
-    expect(typeof source?.eventId).toBe('string');
-    expect(source?.messageRange?.length).toBe(2);
+    expect(source && 'episodeId' in source ? source.episodeId : '').toMatch(/^episode-/);
+    expect(rawSource).toMatchObject({
+      stream: 'conversation',
+      streamId: created.conversationId,
+    });
+    expect(typeof rawSource?.range.throughEventId).toBe('string');
     expect(dreamRequests.join('\n')).toContain('Please keep engineering answers concise from now on.');
     expect(dreamRequests.join('\n')).toContain('I will keep future engineering answers concise.');
     expect(dreamRequests.join('\n')).toContain('"tools":[]');
@@ -1349,7 +1371,7 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-stable',
       fact: 'prefers stable concise memory',
       originWorkspace: memoryOriginWorkspace(localRoot),
-      sources: [{ conversationId: 'old-conversation' }],
+      sources: [conversationSource('old-conversation')],
       createdAt: 30,
     });
     const dreamRequests: string[] = [];
@@ -1425,14 +1447,14 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-current-style',
       fact: 'Current workspace prefers verbose answers.',
       originWorkspace: memoryOriginWorkspace(localRoot),
-      sources: [{ conversationId: 'old-current-conversation' }],
+      sources: [conversationSource('old-current-conversation')],
       createdAt: 30,
     });
     await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-other-style',
       fact: 'Other workspace prefers terse answers.',
       originWorkspace: 'workspace:other',
-      sources: [{ conversationId: 'old-other-conversation' }],
+      sources: [conversationSource('old-other-conversation')],
       createdAt: 31,
     });
     const script = scriptedStream(
@@ -1500,7 +1522,13 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(current?.fact).toBe('Current workspace prefers short answers.');
-    expect(current?.sources.some((source) => source.conversationId === created.conversationId)).toBe(true);
+    const episodeSource = current?.sources.find((source) => 'episodeId' in source);
+    const episode = episodeSource && 'episodeId' in episodeSource
+      ? await new AgentEventStore(dataRoot).getMemoryEpisode(USER_PRINCIPAL, episodeSource.episodeId)
+      : null;
+    expect(episode?.sources.some((source) => (
+      source.stream === 'conversation' && source.streamId === created.conversationId
+    ))).toBe(true);
     // The pool is one undivided self-model: consolidation can reshape every entry, including
     // facts learned in another workspace — `originWorkspace` is provenance, not a write fence.
     expect(other?.status).toBe('invalidated');
@@ -1515,7 +1543,7 @@ describe('agent runtime past chats integration', () => {
       id: 'memory-style',
       fact: 'prefers concise engineering answers',
       originWorkspace: memoryOriginWorkspace(localRoot),
-      sources: [{ conversationId: 'old-conversation' }],
+      sources: [conversationSource('old-conversation')],
       createdAt: 30,
     });
     const script = scriptedStream(
@@ -1572,8 +1600,8 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(['memory.entry_added', 'dream.completed']);
-    expect(entry?.sources).toEqual([{ conversationId: 'old-conversation' }]);
+    expect(events.map((event) => event.type)).toEqual(['memory.entry_added', 'memory.episode_recorded', 'dream.completed']);
+    expect(entry?.sources).toEqual([conversationSource('old-conversation')]);
   });
 
   test('manual /dream is disabled for read-only-global memory isolation', async () => {
@@ -1647,13 +1675,13 @@ describe('agent runtime past chats integration', () => {
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-agent-managed',
       fact: 'verify a worktree HEAD before trusting a gate run',
-      sources: [{ conversationId: 'past-conversation' }],
+      sources: [conversationSource('past-conversation')],
       createdAt: 40,
     });
     await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-user-managed',
       fact: 'prefers terse code reviews',
-      sources: [{ conversationId: 'past-conversation' }],
+      sources: [conversationSource('past-conversation')],
       createdAt: 41,
     });
 
