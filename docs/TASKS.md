@@ -27,7 +27,24 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 ## In progress
 
-Both 2026-06-09 lanes merged — board is between batches.
+**2026-06-11 batch dispatched (PM + main)** — six lanes, staggered ready-marking
+(≤2 plan-track awaiting review at once; merge order owned by main). Plan-track
+lanes start with a one-pager per the flow; fast-track lanes go straight to build.
+
+| Lane | Agent | Work | Track |
+|---|---|---|---|
+| 1 | codex | **M3-B** cross-agent memory (`agent-cross-agent-memory`; prereqs PR-1 #183 + PR-2 #195 on `main`). One-pager requirement: all new runtime code is set-of-runs-aware — no new single-run-slot assumptions (A7; `agent-channel-parallel-runtime` is coming). Holds the `agentRuntime.ts` slot. | plan-track |
+| 2 | cc-2 | **UX B+E** — speaker identity + time separators/Details (`agent-conversation-entry-identity-ux`); on merge, continue to **D** (activity area + reply anchors). | plan-track |
+| 3 | cc | **UX C** — composer model chip → display+navigate (small; fixes the global-provider trap). | plan-track (small) |
+| 4 | anti | **file-attachments** (P1, top of queue, self-contained). Touches `core/types.ts` → shared-interface-first: land the protocol slice as its own PR before the feature. | plan-track |
+| 5 | codex-2 | **agent-authoring follow-ups** (a–d: parser consolidation · read-only external agents · effort select · TOOL_CATALOG guard). | fast-track |
+| 6 | codex-3 | **renderer-state-hygiene** (PM-ratified three items). | fast-track |
+
+Deferred from this batch: **realignment PR-4** (retrieval upgrade) collides with
+M3-B in the memory-retrieval area — slots in after M3-B merges. Later relay
+(after D + M3-B): UX **Feature A** (roster + arbitrary-agent DMs) →
+**agent-channel-parallel-runtime**; only one `agentRuntime.ts`-touching PR in
+flight at any time (M3-B → A → parallel runtime). M3-C follows D.
 
 - `ime-composition-focus-steal` (cc-2) **merged** as PR #177 — fixes #176 (`skill` →
   `sk ill` IME tearing), both root causes: the echo focusRequest steal (global
