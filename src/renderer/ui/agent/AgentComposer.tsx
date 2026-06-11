@@ -64,6 +64,7 @@ interface AgentComposerProps {
    * Stop stays available; only the steer pathway disappears.
    */
   queueSends?: boolean;
+  focusToken?: number;
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
   onSend: (
     message: string,
@@ -180,6 +181,7 @@ const EMPTY_DRAFT: AgentComposerDraft = {
 
 export function AgentComposer({
   currentNodeId,
+  focusToken = 0,
   index,
   isStreaming,
   members,
@@ -215,6 +217,7 @@ export function AgentComposer({
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const draftRef = useRef<AgentComposerDraft>(EMPTY_DRAFT);
   const dragDepthRef = useRef(0);
+  const handledFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const hasDraft = !draft.empty;
@@ -228,6 +231,14 @@ export function AgentComposer({
     const timer = window.setTimeout(() => setAttachmentError(null), ATTACHMENT_ERROR_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [attachmentError]);
+
+  useEffect(() => {
+    if (focusToken <= 0 || handledFocusTokenRef.current >= focusToken) return;
+    handledFocusTokenRef.current = focusToken;
+    if (pendingApproval || pendingUserQuestion) return;
+    const frame = window.requestAnimationFrame(() => editorRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusToken, pendingApproval, pendingUserQuestion]);
   const hasAttachments = attachments.length > 0;
   const activeProvider = settings ? resolveUsableActiveProvider(settings) ?? null : null;
   // No usable provider once settings have LOADED → block send and explain why.

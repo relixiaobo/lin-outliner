@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   commandCalls,
   e2eProjection,
+  emitDocumentEvent,
   ids,
   nodeById,
   openMockedApp,
@@ -14,6 +15,34 @@ import {
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
+async function emitCurrentProjection(page: Page) {
+  await emitDocumentEvent(page, {
+    type: 'projection_changed',
+    origin: 'test',
+    projection: await e2eProjection(page),
+    timestamp: Date.now(),
+  });
+}
+
+async function createOnlyEmptyContentRowFixture(page: Page) {
+  await page.evaluate(async (ids) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    await win.lin?.invoke('apply_node_text_patch', {
+      nodeId: ids.alpha,
+      patch: {
+        ops: [{
+          type: 'replace_all',
+          content: { text: '', marks: [], inlineRefs: [] },
+        }],
+      },
+    });
+    await win.lin?.invoke('batch_trash_nodes', { nodeIds: [ids.beta, ids.gamma] });
+  }, ids);
+  await emitCurrentProjection(page);
 }
 
 async function placeCursor(page: Page, nodeId: string, placement: 'start' | 'end') {
@@ -416,6 +445,18 @@ test.describe('outliner row editing parity', () => {
 
     await expect(row(page, createdId)).toHaveCount(0);
     await expect(rowEditor(page, ids.alpha)).toBeFocused();
+  });
+
+  test('Backspace at the only empty row keeps focus on the trailing draft', async ({ page }) => {
+    await createOnlyEmptyContentRowFixture(page);
+
+    await expect(trailingEditor(page)).toBeVisible();
+    await placeCursor(page, ids.alpha, 'start');
+    await page.keyboard.press('Backspace');
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.parentId).toBe(ids.trash);
+    await expect(row(page, ids.alpha)).toHaveCount(0);
+    await expect(trailingEditor(page)).toBeFocused();
   });
 
   test('Tab and Shift+Tab while editing move the current row without losing focus', async ({ page }) => {

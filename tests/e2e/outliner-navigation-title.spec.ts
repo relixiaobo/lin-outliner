@@ -6,10 +6,24 @@ import {
   openMockedApp,
   row,
   rowEditor,
+  trailingEditor,
 } from './outlinerMock';
 
 function expectClose(actual: number, expected: number) {
   expect(Math.abs(actual - expected)).toBeLessThanOrEqual(0.5);
+}
+
+async function focusedEditorTextOffset(page: import('@playwright/test').Page, nodeId: string) {
+  return rowEditor(page, nodeId).evaluate((editor) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.anchorNode || !editor.contains(selection.anchorNode)) {
+      return null;
+    }
+    const range = selection.getRangeAt(0).cloneRange();
+    range.selectNodeContents(editor);
+    range.setEnd(selection.anchorNode, selection.anchorOffset);
+    return range.toString().length;
+  });
 }
 
 test.describe('outliner navigation and page title parity', () => {
@@ -21,6 +35,25 @@ test.describe('outliner navigation and page title parity', () => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
 
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    await expect(trailingEditor(page, ids.alpha)).toBeFocused();
+  });
+
+  test('page navigation focuses the first visible body row at the start', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+
+    await page.getByRole('button', { name: 'Previous page' }).first().click();
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+    await expect.poll(() => focusedEditorTextOffset(page, ids.alpha)).toBe(0);
+  });
+
+  test('search page navigation does not focus result rows', async ({ page }) => {
+    await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Recents' }).click();
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Recents');
+    await expect(page.locator('.outline-panel-surface.active-panel .row-editor .ProseMirror-focused')).toHaveCount(0);
   });
 
   test('panel breadcrumb back returns to the previous page without undoing document edits', async ({ page }) => {
@@ -53,6 +86,7 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
     await expect(back).toBeDisabled();
 
+    await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
     await page.keyboard.press('Alt+ArrowRight');
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await expect(back).toBeEnabled();
@@ -77,6 +111,7 @@ test.describe('outliner navigation and page title parity', () => {
     await page.keyboard.press('Alt+ArrowLeft');
     await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
 
+    await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
     await page.keyboard.press('Alt+ArrowRight');
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await expect.poll(async () => page.evaluate(() => (
@@ -84,6 +119,24 @@ test.describe('outliner navigation and page title parity', () => {
         __LIN_E2E__?: { calls: Array<{ cmd: string }> };
       }).__LIN_E2E__?.calls.filter((call) => call.cmd === 'undo' || call.cmd === 'redo').length ?? 0
     ))).toBe(0);
+  });
+
+  test('Option+Arrow remains text navigation while Cmd+bracket navigates from an editor', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+
+    await page.getByRole('button', { name: 'Previous page' }).first().click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+
+    await page.keyboard.press('Alt+ArrowRight');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+
+    await page.keyboard.down('Meta');
+    await page.keyboard.press(']');
+    await page.keyboard.up('Meta');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
   });
 
   test('Cmd+Shift+D opens today when there is no active row selection', async ({ page }) => {

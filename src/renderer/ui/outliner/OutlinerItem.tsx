@@ -31,6 +31,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { selectVisibleRowsState } from '../interactions/selectionActions';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
@@ -49,6 +50,7 @@ import {
   clearFocusState,
   clearPendingInputState,
   cursorEnd,
+  cursorStart,
   cursorOffset as cursorAtOffset,
   focusTarget,
   focusTargetMatches,
@@ -301,6 +303,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         selectionAnchorId: rowId,
         selectionRootId: props.selectionRootId,
         selectionSource: 'ref-click',
+      }));
+    });
+  };
+  const selectAllVisibleRows = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    flushSync(() => {
+      props.setUi((prev) => selectVisibleRowsState(prev, {
+        byId: props.index.byId,
+        selectionRootId: props.selectionRootId,
       }));
     });
   };
@@ -1194,15 +1207,45 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
     if (intent === 'delete_empty') {
-      row.moveFocus(-1);
+      const liveUi = props.uiRef.current;
+      const visibleRows = flattenVisibleRows(
+        props.rootId,
+        props.index.byId,
+        liveUi.expanded,
+        liveUi.expandedHiddenFields,
+      );
+      const currentIndex = visibleRows.indexOf(props.nodeId);
+      const previousId = currentIndex > 0 ? visibleRows[currentIndex - 1] : null;
+      const nextId = currentIndex >= 0 && currentIndex < visibleRows.length - 1 ? visibleRows[currentIndex + 1] : null;
+      const targetForId = (id: NodeId) => {
+        const targetNode = props.index.byId.get(id);
+        const targetParentId = targetNode?.parentId ?? null;
+        return targetNode?.type === 'fieldEntry'
+          ? focusTarget(id, targetParentId, props.panelId, 'field-name')
+          : rowFocusTarget(id, targetParentId, props.panelId);
+      };
       // A field value routes through removeFieldValue so an auto-collected value
       // also drops its mirror reference in the option pool (no orphan options);
-      // a body node just goes to Trash. The renderer owns focus via moveFocus.
+      // a body node just goes to Trash. The renderer owns focus because the
+      // deleted row may be the first or only visible row in the current scope.
       if (props.fieldValue) {
         await props.run(() => api.removeFieldValue(props.nodeId), { applyFocus: false });
       } else {
-        await props.run(() => api.trashNode(props.nodeId));
+        await props.run(() => api.trashNode(props.nodeId), { applyFocus: false });
       }
+      props.setUi((prev) => {
+        if (previousId) {
+          return requestFocusState(prev, targetForId(previousId), cursorEnd());
+        }
+        if (nextId) {
+          return requestFocusState(prev, targetForId(nextId), cursorStart());
+        }
+        return requestFocusState(
+          prev,
+          focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+          cursorEnd(),
+        );
+      });
       return;
     }
 
@@ -1669,6 +1712,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             onMove={(direction) => void moveCurrentNode(direction)}
             onUndo={() => void props.run(() => api.undo())}
             onRedo={() => void props.run(() => api.redo())}
+            onSelectAllRows={selectAllVisibleRows}
             onDescriptionToggle={({ cursorOffset }) => {
               descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
               props.setUi((prev) => requestFocusState(

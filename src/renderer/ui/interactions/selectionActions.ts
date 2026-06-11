@@ -1,4 +1,6 @@
 import type { NodeId, NodeProjection, RichText } from '../../api/types';
+import type { UiState } from '../../state/document';
+import { buildSelectableRows } from '../../state/selectableRows';
 
 export type SelectionDirection = 'up' | 'down';
 
@@ -115,6 +117,36 @@ export function serializeSelectedRows(
       return `${'  '.repeat(depth)}- ${rowClipboardLabel(id, byId, selected)}`;
     })
     .join('\n');
+}
+
+export function selectVisibleRowsState(
+  state: UiState,
+  params: {
+    byId: Map<NodeId, NodeProjection>;
+    selectionRootId: NodeId;
+  },
+): UiState {
+  const rows = buildSelectableRows(params.selectionRootId, params.byId, {
+    expanded: state.expanded,
+    expandedHiddenFields: state.expandedHiddenFields,
+  }).map((row) => row.id);
+  const first = rows[0] ?? null;
+  return {
+    ...state,
+    focusedId: null,
+    focusedParentId: null,
+    focusedPanelId: null,
+    focusSurface: null,
+    focusRequest: null,
+    pendingInputChar: null,
+    pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
+    selectedId: first,
+    selectedIds: new Set(rows),
+    selectionAnchorId: first,
+    selectionRootId: params.selectionRootId,
+    selectionSource: 'global',
+  };
 }
 
 function selectedAncestorDepth(

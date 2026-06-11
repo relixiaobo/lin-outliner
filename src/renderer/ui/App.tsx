@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type FocusHint, type NodeId } from '../api/types';
-import { useProjectionStore, useUiState } from '../state/document';
+import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
@@ -13,6 +13,7 @@ import {
   clearFocusState,
   cursorAll,
   cursorEnd,
+  cursorStart,
   requestFocusState,
   requestPendingInputState,
   rowFocusTarget,
@@ -76,7 +77,29 @@ export function App() {
   const focusNode = useCallback((nodeId: NodeId | null) => {
     setUi((prev) => {
       if (!nodeId) return clearFocusState(prev);
-      return requestFocusState(prev, rowFocusTarget(nodeId, null, null), cursorEnd());
+      const currentIndex = indexRef.current;
+      const node = currentIndex?.byId.get(nodeId);
+      if (node?.type === 'search') return clearFocusState(prev);
+      const firstVisibleRowId = currentIndex
+        ? flattenVisibleRows(
+          nodeId,
+          currentIndex.byId,
+          prev.expanded,
+          prev.expandedHiddenFields,
+        )[0] ?? null
+        : null;
+      if (!firstVisibleRowId || !currentIndex) {
+        return requestFocusState(prev, focusTarget(nodeId, nodeId, null, 'trailing'), cursorEnd());
+      }
+      const firstVisibleRow = currentIndex.byId.get(firstVisibleRowId);
+      const firstVisibleParentId = firstVisibleRow?.parentId ?? nodeId;
+      return requestFocusState(
+        prev,
+        firstVisibleRow?.type === 'fieldEntry'
+          ? focusTarget(firstVisibleRowId, firstVisibleParentId, null, 'field-name')
+          : rowFocusTarget(firstVisibleRowId, firstVisibleParentId, null),
+        cursorStart(),
+      );
     });
   }, [setUi]);
 

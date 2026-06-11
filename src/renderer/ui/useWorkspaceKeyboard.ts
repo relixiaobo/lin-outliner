@@ -23,6 +23,7 @@ import {
   navigationTarget,
   orderedSelectedRows,
   resolveSelectionAnchor,
+  selectVisibleRowsState,
   selectedRootIds,
   serializeSelectedRows,
 } from './interactions/selectionActions';
@@ -57,6 +58,16 @@ async function writeClipboardText(text: string): Promise<boolean> {
     textarea.remove();
     return ok;
   }
+}
+
+function isBracketPageHistoryShortcut(
+  event: globalThis.KeyboardEvent,
+  direction: 'back' | 'forward',
+): boolean {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return false;
+  return direction === 'back'
+    ? event.key === '[' || event.code === 'BracketLeft'
+    : event.key === ']' || event.code === 'BracketRight';
 }
 
 function resolveKeyboardSelectionRoot(ui: UiState, index: DocumentIndex, rootId: NodeId): NodeId {
@@ -235,12 +246,18 @@ export function useWorkspaceKeyboard({
         });
         return;
       }
-      if (matchesShortcutEvent(event, 'global.nav_back') && !targetIsEditable) {
+      if (
+        matchesShortcutEvent(event, 'global.nav_back')
+        && (!targetIsEditable || isBracketPageHistoryShortcut(event, 'back'))
+      ) {
         event.preventDefault();
         onNavigateBack();
         return;
       }
-      if (matchesShortcutEvent(event, 'global.nav_forward') && !targetIsEditable) {
+      if (
+        matchesShortcutEvent(event, 'global.nav_forward')
+        && (!targetIsEditable || isBracketPageHistoryShortcut(event, 'forward'))
+      ) {
         event.preventDefault();
         onNavigateForward();
         return;
@@ -358,10 +375,8 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'select_all') {
-        setUi((prev) => selectKeyboardRowsState(prev, {
-          selectedId: rows[0] ?? prev.selectedId,
-          selectedIds: new Set(rows),
-          selectionAnchorId: rows[0] ?? prev.selectionAnchorId,
+        setUi((prev) => selectVisibleRowsState(prev, {
+          byId: currentIndex.byId,
           selectionRootId,
         }));
         return;

@@ -99,6 +99,58 @@ async function createFieldValueFixture(page: import('@playwright/test').Page) {
   return result;
 }
 
+async function createLeadingFieldValueFixture(page: import('@playwright/test').Page) {
+  const result = await page.evaluate(async (ids) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+      parentId: ids.today,
+      index: 0,
+      name: 'Notes',
+      fieldType: 'plain',
+    });
+    const entryId = field?.focus?.nodeId ?? '';
+    const first = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: entryId,
+      index: null,
+      text: 'First value',
+    });
+    const second = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: entryId,
+      index: null,
+      text: 'Second value',
+    });
+    return {
+      entryId,
+      firstValueId: first?.focus?.nodeId ?? '',
+      secondValueId: second?.focus?.nodeId ?? '',
+    };
+  }, ids);
+  await emitCurrentProjection(page);
+  return result;
+}
+
+async function createOnlyFieldFixture(page: import('@playwright/test').Page) {
+  const result = await page.evaluate(async (ids) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+      parentId: ids.today,
+      index: 0,
+      name: 'Notes',
+      fieldType: 'plain',
+    });
+    await win.lin?.invoke('batch_trash_nodes', { nodeIds: [ids.alpha, ids.beta, ids.gamma] });
+    return {
+      entryId: field?.focus?.nodeId ?? '',
+    };
+  }, ids);
+  await emitCurrentProjection(page);
+  return result;
+}
+
 async function createOwnerSystemFieldFixture(page: import('@playwright/test').Page) {
   const result = await page.evaluate(async (ids) => {
     const win = window as Window & {
@@ -179,6 +231,20 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
 
+  test('Cmd+A escalates from row text selection to visible row selection', async ({ page }) => {
+    await rowEditor(page, ids.beta).click();
+
+    await page.keyboard.press('Meta+A');
+    await expect(rowBody(page, ids.beta)).not.toHaveClass(/selected/);
+    await expect.poll(async () => page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('Beta');
+
+    await page.keyboard.press('Meta+A');
+    await expect(rowEditor(page, ids.beta)).not.toBeFocused();
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
   test('Cmd+A selects field values in the panel selection scope', async ({ page }) => {
     const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
 
@@ -189,6 +255,28 @@ test.describe('outliner selection keyboard parity', () => {
 
     await page.keyboard.press('Meta+A');
 
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, entryId)).toHaveClass(/selected/);
+    await expect(rowBody(page, firstValueId)).toHaveClass(/selected/);
+    await expect(rowBody(page, secondValueId)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
+  test('Cmd+A escalates from a field name to visible row selection', async ({ page }) => {
+    const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
+    const nameInput = row(page, entryId).locator('.field-name-input');
+
+    await nameInput.click();
+    await page.keyboard.press('Meta+A');
+    await expect(rowBody(page, entryId)).not.toHaveClass(/selected/);
+    await expect.poll(async () => nameInput.evaluate((input) => (
+      input instanceof HTMLInputElement
+        ? input.value.slice(input.selectionStart ?? 0, input.selectionEnd ?? 0)
+        : ''
+    ))).toBe('Notes');
+
+    await page.keyboard.press('Meta+A');
     await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
     await expect(rowBody(page, entryId)).toHaveClass(/selected/);
     await expect(rowBody(page, firstValueId)).toHaveClass(/selected/);
@@ -218,6 +306,54 @@ test.describe('outliner selection keyboard parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.trash);
     await expect(rowEditor(page, secondValueId)).toBeFocused();
+  });
+
+  test('Backspace at the start of a field name deletes the field row', async ({ page }) => {
+    const { entryId } = await createFieldValueFixture(page);
+    const nameInput = row(page, entryId).locator('.field-name-input');
+
+    await nameInput.click();
+    await nameInput.evaluate((input) => {
+      if (input instanceof HTMLInputElement) input.setSelectionRange(0, 0);
+    });
+    await page.keyboard.press('Backspace');
+
+    await expect.poll(async () => (await nodeById(page, entryId))?.parentId).toBe(ids.trash);
+    await expect(row(page, entryId)).toHaveCount(0);
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+  });
+
+  test('Backspace at the first field name with values focuses the next surviving row', async ({ page }) => {
+    const { entryId, firstValueId, secondValueId } = await createLeadingFieldValueFixture(page);
+    const nameInput = row(page, entryId).locator('.field-name-input');
+
+    await nameInput.click();
+    await nameInput.evaluate((input) => {
+      if (input instanceof HTMLInputElement) input.setSelectionRange(0, 0);
+    });
+    await page.keyboard.press('Backspace');
+
+    await expect.poll(async () => (await nodeById(page, entryId))?.parentId).toBe(ids.trash);
+    await expect(row(page, entryId)).toHaveCount(0);
+    await expect(row(page, firstValueId)).toHaveCount(0);
+    await expect(row(page, secondValueId)).toHaveCount(0);
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+  });
+
+  test('Backspace at the only field name keeps focus on the trailing draft', async ({ page }) => {
+    const { entryId } = await createOnlyFieldFixture(page);
+    const nameInput = row(page, entryId).locator('.field-name-input');
+
+    await expect(trailingEditor(page)).toBeVisible();
+    await nameInput.click();
+    await nameInput.evaluate((input) => {
+      if (input instanceof HTMLInputElement) input.setSelectionRange(0, 0);
+    });
+    await page.keyboard.press('Backspace');
+
+    await expect.poll(async () => (await nodeById(page, entryId))?.parentId).toBe(ids.trash);
+    await expect(row(page, entryId)).toHaveCount(0);
+    await expect(trailingEditor(page)).toBeFocused();
   });
 
   test('Cmd+A keeps synthetic system reference rows in the panel selection scope', async ({ page }) => {
