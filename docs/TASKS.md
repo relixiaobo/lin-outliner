@@ -637,15 +637,18 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   outliner-row focus must go through the focusRequest rail (IME composition guard,
   #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
   no collision with #179/#180.
-- **error-observability** (P2, plan file, **draft — direction PM-ratified 2026-06-11**) —
-  collect + surface runtime failures so caught-but-silenced errors (the #188 Dream 400 flood is
-  the motivating symptom) become visible. One `reportError` choke point + global
+- **error-observability** (P2, plan file, **draft — direction fully PM-ratified 2026-06-11**) —
+  collect runtime failures so caught-but-silenced errors (the #188 Dream 400 flood is the
+  motivating symptom) become legible. One `reportError` choke point + global
   `uncaughtException`/`unhandledRejection`/`window.onerror` net + a bounded, rotating local
-  diagnostic log with signature dedup. **Local-only, no remote platform/egress** (ruled out
-  Sentry/GlitchTip); hand-off is user-initiated — Settings "reveal/export diagnostics log" → user
-  sends it to us, analysis on our side, **no in-app dashboard**. Substrate TBD at claim time:
-  `electron-log` (recommended) vs extend `AppendOnlySeqLog`. Shape (a) one PR, foundation-first.
-  **Sequence after #184** (same `agentRuntime.ts` catch-sites). See `docs/plans/error-observability.md`.
+  diagnostic log. **Local-only, no remote/egress; silent recording** (no hint/badge/toast, `fatal`
+  doesn't interrupt); hand-off is user-initiated — Settings "reveal/export diagnostics log" → user
+  sends it to us, analysis on our side, **no in-app dashboard**. **Substrate decided: extend
+  `AppendOnlySeqLog`** with a structured, Sentry-event-shaped, upload-ready schema (NOT
+  `electron-log`) — chosen for the stated future of scrubbed cloud upload (redaction is auditable
+  only over structured records). Cloud uploader intentionally NOT built now (A7/YAGNI), schema
+  shaped for it. Shape (a) one PR, foundation-first. **Sequence after #184** (same
+  `agentRuntime.ts` catch-sites). See `docs/plans/error-observability.md`.
 
 ## Recently completed
 

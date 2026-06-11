@@ -92,65 +92,69 @@ is the only seam — A2). Catches the unknown-unknowns the typed paths miss.
 
 ### P3 — Local diagnostic log (the substrate)
 
-A bounded, rotating, findable local log file that captures handled + unhandled
-errors from both main and renderer. **Substrate is the one real build decision**
-(settle at claim time; touches deps → infrastructure-ownership):
+**Decision: extend our `AppendOnlySeqLog`** (`agentEventStore.ts:1733`) with a
+structured diagnostic-event schema — **not** `electron-log`. The deciding factor
+is the stated future of *scrubbed logs uploaded to a cloud platform*: that path's
+hard, risky part is **reliable redaction**, and redaction is auditable only over
+**structured, typed records** (an allow-list of which fields may leave), not over
+a logger's free-text lines. Structured records also map ~1:1 onto a cloud event
+model (level / message / fingerprint / tags), so "ship to cloud" later becomes a
+transport + a redaction pass, not a re-model. `electron-log` would save one-time
+plumbing (rotation, renderer transport, uncaught hooks) but we already have those
+patterns (the memory log's `maybeCompactMemoryLog`; the preload IPC bridge), and
+under the structured-only discipline the cloud future demands, its
+casual-line-logging ergonomics mostly evaporate. No new dependency; consistent
+with the event-sourced architecture (#152 spirit — diagnostics is a distinct
+family from the domain event logs, but the same append-only mechanism).
 
-- **Option A — adopt `electron-log` (lean).** Mature, MIT, Electron-standard:
-  main + renderer transports, size rotation, a documented log path, and built-in
-  uncaught/rejection hooks (`log.errorHandler` / `log.catchErrors`). Treats
-  diagnostics as *operational logging*, distinct from the event-sourced **domain**
-  logs — so it does not contradict the #152 "one shared seq-log" rule (that rule
-  is about the conversation/run/memory event logs, a different family). Cost: one
-  new dependency (coordinate `package.json` / `bun.lock`). **Recommended** — the
-  value here is a robust rotating file we can point a user at, which `electron-log`
-  gives for almost nothing.
-- **Option B — extend our `AppendOnlySeqLog`** (`agentEventStore.ts:1733`). No new
-  dep, structured JSONL we already parse. Cost: we re-build rotation + the
-  renderer→main transport + uncaught hooks that `electron-log` ships.
-
-Either way: structured records `(domain, severity, code?, message, context?,
-count, firstAt, lastAt)`; **signature dedup** so the Dream 400 is one line reading
-"×N", not N lines; **length-capped + redacted** message/context (strip obvious
-secrets/paths before write — the log may be sent to us); **bounded** size. No
-back-compat reader pre-release (format change → wipe dev userData).
+- **Record schema (Sentry-event-shaped, upload-ready):** `{ ts, domain, severity,
+  code?, fingerprint, message, context? }`. `fingerprint` is the **signature dedup**
+  key (so the Dream 400 is one record reading "×N" with `count` + `firstAt` /
+  `lastAt`, not N lines) **and** the future cloud dedup key.
+- **Redaction at the write boundary:** an allow-list scrub runs **before** write,
+  so what is stored locally is already what would ship — no "clean locally, leak
+  on upload" drift. `message`/`context` length-capped.
+- **Bounded + rotating** (mirror `maybeCompactMemoryLog`) so a flood can't grow
+  the file unbounded. No back-compat reader pre-release (format change → wipe dev
+  userData).
+- **Future cloud upload — shape for it, do not build it (A7/YAGNI):** keep a
+  conceptual transport seam, but ship **no uploader** now. Schema is upload-ready;
+  the pipeline is a clean later follow-up if/when we decide to send.
 
 ### P4 — Find & send (the only user-facing surface)
 
-Because analysis happens on **our** side, there is **no in-app dashboard** — just
-a way for the user to find the log and send it to us, in Settings:
+**Logging is silent — no proactive prompt, badge, or toast, ever** (PM-ratified:
+record quietly; the user is never interrupted). Analysis happens on **our** side,
+so there is **no in-app dashboard** either. The only surface is a passive way to
+hand us the log **when we ask for it**, in Settings:
 
 - **"Reveal diagnostics log"** → `shell.showItemInFolder(logPath)` opens the log
   in Finder so the user can attach it.
 - **"Export diagnostics…"** → a save dialog (or sanitized-clipboard copy via the
   allow-listed `clipboard-sanitized-write`) that bundles the recent log + minimal
   environment (app version, provider id, OS) into one artifact to send us.
-- *(Optional, can defer)* a restrained "something went wrong — Settings →
-  Diagnostics" hint when `error`/`fatal` records accumulate, so the user knows a
-  log exists to send. No layout shift (B7); status color only (B4); respects
-  reduced-motion/contrast (B8). If we skip it in v1, the fallback is simply
-  telling the user where to look when we ask for a log.
+
+No accumulation hint, no `fatal` interruption — uncaught/fatal records land in the
+file like everything else; we pull them when we ask.
 
 ## Decisions (PM-ratified 2026-06-11)
 
 - **Local-only, no remote platform / no egress.** Hand-off to us is
-  user-initiated (find/export the log and send it). Resolves the old Q4 and
-  rules out Sentry/GlitchTip.
-- **No in-app dashboard.** Analysis is on our side; the user-facing surface is
-  just find-&-send (P4). Resolves the old "view home" / "user-vs-dev v1"
-  questions.
+  user-initiated (find/export the log and send it). Rules out Sentry/GlitchTip.
+- **Silent recording — no proactive user-facing signal of any kind** (no hint,
+  badge, toast; `fatal` does not interrupt). The user is never bothered; we ask
+  for the log when we need it.
+- **No in-app dashboard.** Analysis is on our side; the only surface is
+  find-&-send (P4).
+- **Substrate = extend `AppendOnlySeqLog` with a structured, upload-ready schema**
+  (not `electron-log`), chosen for the stated future of scrubbed cloud upload —
+  redaction is auditable only over structured records (see P3).
 
-## Open questions (remaining)
+## Open questions
 
-1. **Substrate** — adopt `electron-log` (Option A, recommended) or extend our
-   `AppendOnlySeqLog` (Option B)? A reversible call but it touches deps
-   (infrastructure-ownership); settle at build-claim time.
-2. **In-app "go look" hint** — ship the optional P4 accumulation hint in v1, or
-   skip it and just tell the user where the log is when we ask? (Leaning skip for
-   v1.)
-3. **`fatal` routing** — should an uncaught `fatal` ever surface to the user at
-   all (a quiet "an error was logged" note), or stay silent in the file until we
-   ask for it?
+None blocking. The only deferred item is the **cloud-upload pipeline itself**
+(transport + opt-in + the send trigger), intentionally not built now (A7/YAGNI);
+the schema is shaped so it is a clean later follow-up.
 
 ## Sequencing / collisions
 
@@ -168,10 +172,10 @@ a way for the user to find the log and send it to us, in Settings:
       sites also report. (Foundation.)
 - [ ] P2 global `uncaughtException` / `unhandledRejection` / `window.onerror`
       handlers → `reportError`.
-- [ ] P3 diagnostic log substrate (`electron-log` or `AppendOnlySeqLog`) +
-      signature dedup + bounded rotation + redaction; unit tests for
-      dedup/cap/redaction.
-- [ ] P4 Settings "Reveal diagnostics log" + "Export diagnostics…"; (optional)
-      accumulation hint. Visual verification light + dark.
+- [ ] P3 diagnostic log on `AppendOnlySeqLog` + structured upload-ready schema +
+      fingerprint dedup + bounded rotation + write-boundary redaction; unit tests
+      for dedup/cap/redaction.
+- [ ] P4 Settings "Reveal diagnostics log" + "Export diagnostics…" (silent — no
+      hint/badge/toast). Visual verification light + dark.
 - [ ] Spec: add `docs/spec/error-observability.md` + register in
       `docs/spec/README.md`; fold this design in on ship.
