@@ -17,9 +17,11 @@ drafting agent needs no out-of-band context. cc-2's one-pager duties
 (trio reconciliation · usage-modes × zoom-ladder table · associative-mode
 data-gate threshold · per-PR collision checks) are **discharged and
 PM-ratified** — see *Program one-pager* below. Claimed by cc-2 2026-06-10;
-**Step 0 + PR-1 shipped (#183)**. Next runnable unit: PR-2, queued behind
-run-unification. PR-2 is implemented in the Codex branch
-`codex/agent-memory-realignment-pr-2`; next runnable unit after merge: PR-3.
+**Step 0 + PR-1 shipped (#183); PR-2 episodic layer shipped (#195)** — sources
+discriminated union, memory-owned episode gist, principal-gated reverse lookup,
+storage side of the 3-level zoom (durable gist survives raw-span loss). Next
+runnable unit: PR-3 (forgetting); PR-5 (schema layer) reuses PR-2's derived-node
+machinery.
 
 ## Goal
 

@@ -20,7 +20,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
-| Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
+| Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-2 merged, PR #195) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (sidebar pinned nodes merged, PR #191) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (new clone, 2026-06-11) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -77,7 +77,8 @@ Both 2026-06-09 lanes merged — board is between batches.
   episodic layer is in place) →
   **memory-theory realignment PR-1 + PR-2** (person rule + episodic layer — see
   Backlog § memory for the PM-ratified program; **Step 0 + PR-1 merged as PR #183**,
-  PR-2's run-unification prerequisite is now cleared by #184) →
+  **PR-2 episodic layer merged as PR #195** — both prerequisites for M3-B now on
+  `main`) →
   **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
   the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification +
   **realignment PR-1/PR-2** — PM-ratified 2026-06-10: agents must not cross-read
@@ -319,7 +320,9 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
     output gains `principal`; cross-pool duplication handled by Dream prompt guidance.
     Replaces the agent-memory-model §2 prose person rule. No schema change; old-format
     facts wiped per pre-release policy.
-  - **PR-2 episodic layer** (subsumes + upgrades D3 `agent-memory-episodic-index`;
+  - **PR-2 episodic layer** — **merged as PR #195** (see Recently completed; archived
+    `agent-memory-episodic-index` `superseded`) (subsumes + upgrades D3
+    `agent-memory-episodic-index`;
     **after run unification** — needs homogeneous `{seq, eventId}`): episode = first-
     class derived view with **memory-owned gist production** (compaction summaries are
     working-memory artifacts, a DIFFERENT product — the #178 "Dream reads compaction
@@ -644,6 +647,28 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **memory realignment PR-2: episodic memory sources** (codex, PR #195, plan-track) —
+  the D-4 episodic layer + D-5 sources reshape land together. `AgentMemorySource`
+  becomes a discriminated union — a raw stream span `{stream:'conversation'|'run',
+  streamId, range:{fromSeqExclusive, throughSeq, throughEventId}}` (each stream's own
+  seq space) or `{episodeId}`. Dream now writes a memory-owned `AgentMemoryEpisode`
+  gist (new `memory.episode_recorded` event) and semantic facts cite the episode; the
+  store keeps a principal-gated reverse index (episode → citing facts). Recall/evidence
+  zooms fact → episode gist → raw span, with conversation/run evidence resolved through
+  the shared `extractMemoryStreamEvidence` seq-window reader (legacy `messageRange`
+  resolver + `buildDreamMemoryExtractionSpan` removed). Storage layout bumped to **v3**
+  (clean-cut wipe, no legacy source reader). Gate review (this main agent) found three
+  items — all fixed pre-merge in `Preserve episode gist recall evidence`: (①) the
+  durable episode gist was dropped from recall when every raw span failed to resolve —
+  now the episode returns as evidence with its gist + empty raw list (plan calls the
+  gist the durable artifact); (②) the gist length is now reserved against `max_chars`
+  before raw spans and the gist itself is clamped to the remaining budget; (③) the
+  now-dead `buildDreamMemoryExtractionSpan` + helpers removed, its tests rewritten onto
+  the production `…FromEvidence` path. Gates green: typecheck, core 862/0-fail (+3 new
+  tests incl. a runtime recall integration test), renderer 410/0-fail. Spec synced
+  (architecture / data-model / delegation-runtime / event-log-rendering / tool-design);
+  `agent-memory-episodic-index` archived `superseded`. **Both M3-B memory prerequisites
+  (PR-1 person rule + PR-2 sources union) are now on `main`.**
 - **agent-run-unification** (cc-2, PR #184, plan-track) — dissolved the subagent
   entity per the PM-ratified plan: a delegated (child) run is an ordinary Run with
   its own `runs/<runId>/` ledger and `parentRunId` join; one `{seq, eventId}`

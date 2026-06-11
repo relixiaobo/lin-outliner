@@ -31,6 +31,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent memory: episodic sources + discriminated-union provenance (PR #195)** —
+  memory realignment PR-2 (D-4 episodic layer + D-5 sources reshape). A
+  `MemoryEntry.source` is now a discriminated union: a raw stream span
+  `{stream: 'conversation' | 'run', streamId, range: {fromSeqExclusive, throughSeq,
+  throughEventId}}` addressed in that stream's own seq space, or `{episodeId}`. Dream
+  consolidation now writes a memory-owned episode gist (new `memory.episode_recorded`
+  event projecting `AgentMemoryEpisode`) and the semantic facts it commits cite that
+  episode; the store maintains a principal-gated reverse index (episode → citing
+  facts). `recall(include_evidence)` zooms fact → episode gist → raw span, resolving
+  conversation and run evidence through one shared seq-window reader; the durable gist
+  is returned even when every raw span is gone (it is the memory-owned artifact), and
+  the gist reserves its share of `max_chars` before raw spans (and is itself clamped to
+  the remaining budget). The legacy `messageRange` evidence resolver and the dead
+  `buildDreamMemoryExtractionSpan` path were removed. Storage layout bumped to **v3**
+  with no legacy source reader — pre-release clean-cut wipe of old agent data, no
+  migration. Specs synced (agent architecture / data-model / delegation-runtime /
+  event-log-rendering / tool-design); the superseded `agent-memory-episodic-index`
+  draft is archived.
 - **Run unification: the subagent entity is dissolved (PR #184)** — the concept
   model's 7 primitives now hold in code: a delegation is just a Run whose
   `parentRunId` points at another run. A delegated (child) run is an ordinary
