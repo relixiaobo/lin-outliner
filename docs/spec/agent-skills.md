@@ -153,11 +153,14 @@ a positive trust fact and a UX completion, not a new security boundary.
 
 **Acceptance UI.** The primary in-flow path is the composer `skill_trust` card:
 the first automatic model invocation of an unratified mutable skill asks the user
-to accept the exact current content hash. The Settings → Skills tab remains a
-secondary management surface; it marks unratified rows "pending acceptance" with
-an **Accept** control, and accepted rows expose **Revoke acceptance**. The
-Security page also projects accepted skill hashes in **Granted Trust**. Both the
-card and Settings path call `agent_accept_skill`, which records
+to accept the exact current content hash. The card is tied to the active run's
+abort signal; stopping the run resolves it as declined and the `skill` tool
+returns `skill_not_ratified` instead of leaving a stale pending approval. The
+Settings → Skills tab remains a secondary management surface; it marks
+unratified rows "pending acceptance" with an **Accept** control, and accepted
+rows expose **Revoke acceptance**. The Security page also projects accepted skill
+hashes in **Granted Trust**. Both the card and Settings path call
+`agent_accept_skill`, which records
 `acceptedHash = contentHash`; `agent_revoke_skill_acceptance` clears it. Accept
 carries the `expectedHash` the renderer/runtime displayed and is refused on
 mismatch, so an agent write landing between render and click can never be

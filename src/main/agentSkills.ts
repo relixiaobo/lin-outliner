@@ -147,12 +147,14 @@ export interface SkillShellExecutionInput {
   skill: SkillDefinition;
   command: string;
   shell: string;
+  signal?: AbortSignal;
 }
 
 export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<string>;
 export type SkillTrustApprovalHandler = (input: {
   skill: SkillDefinition;
   parentToolCallId?: string;
+  signal?: AbortSignal;
 }) => Promise<boolean>;
 
 interface InvokeSkillInput {
@@ -160,6 +162,7 @@ interface InvokeSkillInput {
   args?: string;
   trigger: 'agent' | 'slash';
   parentToolCallId?: string;
+  signal?: AbortSignal;
 }
 
 export interface SkillForkExecutionInput {
@@ -482,6 +485,7 @@ export class AgentSkillRuntime {
       const accepted = await this.skillTrustApprovalHandler?.({
         skill,
         parentToolCallId: input.parentToolCallId,
+        signal: input.signal,
       });
       if (accepted) {
         const refreshed = await this.registry.resolveSkill(requestedName);
@@ -510,7 +514,7 @@ export class AgentSkillRuntime {
     }
     let renderedContent: string;
     try {
-      renderedContent = await renderSkillContent(skill, input.args ?? '', this.conversationId, this.executeSkillShell);
+      renderedContent = await renderSkillContent(skill, input.args ?? '', this.conversationId, this.executeSkillShell, input.signal);
     } catch (error) {
       return {
         ok: false,
@@ -665,13 +669,14 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
     ].join('\n'),
     parameters: SKILL_TOOL_PARAMETERS,
     executionMode: 'sequential',
-    execute: async (toolCallId, rawParams: unknown) => {
+    execute: async (toolCallId, rawParams: unknown, signal?: AbortSignal) => {
       const params = normalizeSkillToolParams(rawParams);
       const invocation = await runtime.invokeSkill({
         skill: params.skill,
         args: params.args,
         trigger: 'agent',
         parentToolCallId: toolCallId,
+        signal,
       });
 
       if (!invocation.ok) {
@@ -1364,18 +1369,20 @@ async function renderSkillContent(
   args: string,
   conversationId: string,
   executeSkillShell?: SkillShellExecutor,
+  signal?: AbortSignal,
 ): Promise<string> {
   let content = `Base directory for this skill: ${normalizePathForPrompt(skill.rootDir)}\n\n${skill.body}`;
   content = substituteArguments(content, args, true, skill.argumentNames);
   content = content.replace(/\$\{AGENT_SKILL_DIR\}/g, normalizePathForPrompt(skill.rootDir));
   content = content.replace(/\$\{AGENT_CONVERSATION_ID\}/g, conversationId);
-  return executeShellCommandsInSkillContent(content, skill, executeSkillShell);
+  return executeShellCommandsInSkillContent(content, skill, executeSkillShell, signal);
 }
 
 async function executeShellCommandsInSkillContent(
   content: string,
   skill: SkillDefinition,
   executeSkillShell?: SkillShellExecutor,
+  signal?: AbortSignal,
 ): Promise<string> {
   const matches = collectSkillShellMatches(content);
   if (matches.length === 0) return content;
@@ -1392,7 +1399,7 @@ async function executeShellCommandsInSkillContent(
   let cursor = 0;
   for (const match of matches) {
     rendered += content.slice(cursor, match.index);
-    const output = await executeSkillShell({ skill, command: match.command, shell });
+    const output = await executeSkillShell({ skill, command: match.command, shell, signal });
     rendered += output;
     cursor = match.index + match.raw.length;
   }

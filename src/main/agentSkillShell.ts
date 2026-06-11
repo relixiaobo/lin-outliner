@@ -50,7 +50,7 @@ export interface AgentSkillShellCommandInput {
   allowedTools?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
-  permissionNoticeHandler?: (input: AgentSkillShellPermissionNoticeInput) => Promise<void> | void;
+  permissionNoticeHandler?: (input: AgentSkillShellPermissionNoticeInput, signal?: AbortSignal) => Promise<void> | void;
   signal?: AbortSignal;
   toolCallId?: string;
 }
@@ -189,7 +189,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       toolCall,
       args: { command: input.command },
       decision,
-    });
+    }, input.signal);
     throw new AgentSkillShellError(
       'permission_denied',
       permissionDeniedToolResultMessage({

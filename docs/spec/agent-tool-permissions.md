@@ -180,9 +180,11 @@ Evaluated first; sourced from descriptors and the bash hard-deny rules
 `src/main/agentToolPermissionStore.ts` — `agent-tool-permissions.json` under
 `userData`, in the grouped form `{ permissions: { allow, ask, deny } }`. The
 Security page projects `allow` entries as granted action trust and lets the user
-revoke them individually. Skill content-hash trust still lives in the skill
-provenance store, but the Security page also lists accepted skill hashes in the
-same Granted Trust section and revokes them through the existing skill trust API.
+revoke them individually; revocation applies immediately and the row is also
+merged into any unsaved permission draft as `ask`. Skill content-hash trust still
+lives in the skill provenance store, but the Security page also lists accepted
+skill hashes in the same Granted Trust section and revokes them through the
+existing skill trust API.
 
 - **Fail-closed parse**: `parseGlobalToolPermissionSettings` /
   `parseGlobalToolPermissionRule` validate every rule string
@@ -231,8 +233,13 @@ move behind the same projection.
     *Not now* resolves false and the `skill` tool returns `skill_not_ratified`.
   - `permission_notice`: tell-only cards for hard/configured policy denials. The
     tool result remains `permission_denied`; the card only makes the block
-    visible and dismissible.
+    visible and dismissible. Notices are a single-slot surface per conversation:
+    a newer notice resolves and replaces any older pending notice instead of
+    queueing behind it.
   Detail panels show action / target / why / permission-kind or skill hash facts.
+  All three card kinds listen to the active run's abort signal. Stopping the run
+  resolves the pending card as `approved: false` (`run_aborted` for blocking
+  approval waiters) and removes it from renderer pending state.
 - **Security center** — the **Security** category in `AgentSettingsView.tsx`
   exposes the global trust level, a revocable Granted Trust projection over
   action allow rules and accepted skill hashes, and Advanced action-kind rows with allow/ask toggles

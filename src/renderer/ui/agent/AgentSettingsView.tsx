@@ -261,6 +261,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   // the refreshed skill list; one shared busy flag keeps the row controls quiet
   // while a mutation is in flight.
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
+  const [permissionTrustBusy, setPermissionTrustBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -503,7 +504,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
 
   const selectedAgent = routeAgent;
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
-  const actionTrustGrants = permissionDraft?.permissions.allow ?? [];
+  const actionTrustGrants = permissionSettings?.permissions.allow ?? [];
   const acceptedSkillTrustGrants = allSkills.filter((skill) => skill.accepted);
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const permissionDraftDirty = permissionDraft !== permissionSettings;
@@ -520,23 +521,32 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
 
   function setPermissionDecision(ruleValue: string, decision: 'allow' | 'ask') {
     setPermissionDraft((current) => {
-      const base = current ?? { permissions: { allow: [], ask: [], deny: [] }, diagnostics: [] };
-      const allow = removeRule(base.permissions.allow, ruleValue);
-      const ask = removeRule(base.permissions.ask, ruleValue);
-      const deny = [...base.permissions.deny];
-      if (decision === 'allow') allow.push(ruleValue);
-      else ask.push(ruleValue);
-      return {
-        ...base,
-        permissions: {
-          allow: uniqueStrings(allow),
-          ask: uniqueStrings(ask),
-          deny: uniqueStrings(deny),
-        },
-      };
+      const base = current ?? emptyPermissionSettings();
+      return permissionSettingsWithDecision(base, ruleValue, decision);
     });
     setNotice(null);
     setError(null);
+  }
+
+  async function revokeActionTrustGrant(ruleValue: string) {
+    if (!permissionSettings) return;
+    const baseSettings = permissionSettings;
+    setPermissionTrustBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const next = await api.agentUpdateToolPermissionSettings(permissionSettingsWithDecision(baseSettings, ruleValue, 'ask'));
+      setPermissionSettings(next);
+      setPermissionDraft((current) => {
+        if (!current || current === baseSettings) return next;
+        return permissionSettingsWithDecision(current, ruleValue, 'ask');
+      });
+      await onApplied();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setPermissionTrustBusy(false);
+    }
   }
 
   // Custom (OpenAI-compatible) providers are configured in the same native window,
@@ -1020,7 +1030,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                             trailing={(
                               <ButtonControl
                                 className="settings-row-button"
-                                onClick={() => setPermissionDecision(ruleValue, 'ask')}
+                                disabled={permissionTrustBusy}
+                                onClick={() => void revokeActionTrustGrant(ruleValue)}
                               >
                                 {t.settings.permissions.revokeGrant}
                               </ButtonControl>
@@ -1634,4 +1645,28 @@ function removeRule(rules: readonly string[], ruleValue: string): string[] {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function emptyPermissionSettings(): AgentToolPermissionSettingsView {
+  return { permissions: { allow: [], ask: [], deny: [] }, diagnostics: [] };
+}
+
+function permissionSettingsWithDecision(
+  settings: AgentToolPermissionSettingsView,
+  ruleValue: string,
+  decision: 'allow' | 'ask',
+): AgentToolPermissionSettingsView {
+  const allow = removeRule(settings.permissions.allow, ruleValue);
+  const ask = removeRule(settings.permissions.ask, ruleValue);
+  const deny = [...settings.permissions.deny];
+  if (decision === 'allow') allow.push(ruleValue);
+  else ask.push(ruleValue);
+  return {
+    ...settings,
+    permissions: {
+      allow: uniqueStrings(allow),
+      ask: uniqueStrings(ask),
+      deny: uniqueStrings(deny),
+    },
+  };
 }
