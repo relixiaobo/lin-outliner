@@ -1,5 +1,4 @@
 import {
-  getAgentEventActivePath,
   getAgentEventVisibleTranscript,
   type AgentEventMessageRecord,
   type AgentMemorySource,
@@ -16,6 +15,7 @@ import type {
   AgentConversationIndexEntry,
   AgentEventStore,
 } from './agentEventStore';
+import { extractCompactSummaryFromReminder } from './agentCompaction';
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -409,20 +409,24 @@ export class AgentPastChatsService {
     if (state.latestSeq === 0) {
       return pastChatsError('SOURCE_NOT_FOUND', `No run ledger was found for run ${runId}.`);
     }
-    const activePath = getAgentEventActivePath(state);
+    // The visible transcript (not the bare active path): a compaction re-anchors
+    // the run's path onto the post-compact root, but the compacted span stays
+    // addressable through the compaction record's expansion — §13.17 evidence
+    // preservation, held by the same machinery the conversation path uses.
+    const visible = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
     const [fromMessageId, throughMessageId] = source.messageRange;
-    const startIndex = activePath.findIndex((message) => message.id === fromMessageId);
+    const startIndex = visible.findIndex((message) => message.id === fromMessageId);
     if (startIndex < 0) {
       return pastChatsError(
         'NOT_ON_ACTIVE_BRANCH',
-        `The source message ${fromMessageId} was compacted away or is on a non-active branch of run ${runId}.`,
-        { nearbyMessageIds: nearbyMessageIds(activePath, { messageId: fromMessageId }) },
+        `The source message ${fromMessageId} was edited away or is on a non-active branch of run ${runId}.`,
+        { nearbyMessageIds: nearbyMessageIds(visible, { messageId: fromMessageId }) },
       );
     }
-    const throughIndex = activePath.findIndex((message) => message.id === throughMessageId);
+    const throughIndex = visible.findIndex((message) => message.id === throughMessageId);
     const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
     const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    const assembled = clampReadMessages(activePath.slice(startIndex, endIndex + 1), maxChars);
+    const assembled = clampReadMessages(visible.slice(startIndex, endIndex + 1), maxChars);
 
     return {
       mode: 'evidence',
@@ -535,7 +539,17 @@ function messageText(message: AgentEventMessageRecord): string {
     return message.outputSummary.trim();
   }
   if (message.role === 'user') {
-    return cleanUserMessageText(contentText(message.content));
+    const cleaned = cleanUserMessageText(contentText(message.content));
+    // Hidden boilerplate stays out of evidence text, with one exception (the
+    // #178 invariant, §13.17): a compaction reminder's summary is the only
+    // surviving carrier of the compacted-away content — surface it.
+    const summary = message.content
+      .map((part) => (part.type === 'text' ? extractCompactSummaryFromReminder(part.text) : null))
+      .find((value): value is string => Boolean(value));
+    if (summary) {
+      return [cleaned, `[summary of compacted earlier messages]\n${summary}`].filter(Boolean).join('\n');
+    }
+    return cleaned;
   }
   return contentText(message.content);
 }

@@ -55,10 +55,10 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // migration); an unreadable/corrupt sentinel is AMBIGUITY and fails open to
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
-const LAYOUT_SENTINEL_FILE = 'layout.json';
+export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // v2 = run unification: child runs write their own run ledgers; the
 // subagent_run.* conversation events and transcript-snapshot payloads are gone.
-const STORAGE_LAYOUT_VERSION = 2;
+export const STORAGE_LAYOUT_VERSION = 2;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;

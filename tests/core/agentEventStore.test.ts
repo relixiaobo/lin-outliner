@@ -8,6 +8,8 @@ import {
   agentCheckpointFileName,
   agentPayloadFileName,
   agentConversationDirName,
+  LAYOUT_SENTINEL_FILE,
+  STORAGE_LAYOUT_VERSION,
 } from '../../src/main/agentEventStore';
 
 const systemActor: AgentActor = { type: 'system' };
@@ -496,72 +498,66 @@ describe('agent event store', () => {
     return { conversationId, agentPrincipal, userPrincipal };
   }
 
-  test('a legacy sessions/ tree wipes the whole agent data root on first access', async () => {
+  test('pre-sentinel data (no layout.json) is positive proof and wipes the root + writes the sentinel', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
+      // Simulate a pre-sentinel generation: data exists but the sentinel does not.
+      await rm(path.join(root, LAYOUT_SENTINEL_FILE), { force: true });
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
+      expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+    });
+  });
+
+  test('a stale sentinel generation wipes the root and re-stamps the current one', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId } = await seedCurrentLayout(store);
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION - 1 })}\n`, 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+    });
+  });
+
+  test('a current sentinel proceeds with no wipe and no per-conversation probing', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId, agentPrincipal } = await seedCurrentLayout(store);
+      // Old-format artifacts are no longer probed for — the sentinel alone decides.
       await mkdir(path.join(root, 'sessions'), { recursive: true });
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
-      await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
+      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
     });
   });
 
-  test('a legacy session-index.json wipes the root', async () => {
-    await withStore(async (store, root) => {
-      const { conversationId } = await seedCurrentLayout(store);
-      await mkdir(path.join(root, 'indexes'), { recursive: true });
-      await writeFile(path.join(root, 'indexes', 'session-index.json'), '{}', 'utf8');
-
-      const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-    });
-  });
-
-  test('an agent pool inside the identity directory (agents/<id>/memory/) wipes the root', async () => {
+  test('a corrupt sentinel is ambiguity: fail OPEN — no wipe, store fully functional (#180 invariants)', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal } = await seedCurrentLayout(store);
-      const legacyPoolDir = path.join(store.agentPaths(agentPrincipal.type === 'agent' ? agentPrincipal.agentId : '').agentDir, 'memory');
-      await mkdir(legacyPoolDir, { recursive: true });
-      await writeFile(path.join(legacyPoolDir, 'events.jsonl'), '', 'utf8');
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), 'not-json {{{', 'utf8');
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
-      await expect(readdir(legacyPoolDir)).rejects.toThrow();
+      // The destructive path requires positive proof; corruption is not proof.
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
+      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
+      // The corrupt sentinel is left for the next launch to re-probe — never overwritten blindly.
+      await expect(readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8')).resolves.toContain('not-json');
     });
   });
 
-  test('a conversation log speaking the session.* vocabulary wipes the root', async () => {
+  test('a sentinel with a non-integer v is ambiguity too — fail open', async () => {
     await withStore(async (store, root) => {
-      const { conversationId, userPrincipal } = await seedCurrentLayout(store);
-      const legacyDir = path.join(root, 'conversations', agentConversationDirName('legacy-1'), 'segments');
-      await mkdir(legacyDir, { recursive: true });
-      await writeFile(
-        path.join(legacyDir, '000001.jsonl'),
-        `${JSON.stringify({
-          v: 1,
-          eventId: 'legacy-event-1',
-          seq: 1,
-          sessionId: 'legacy-1',
-          type: 'session.created',
-          createdAt: 1,
-          actor: { type: 'system' },
-          title: 'Legacy vocabulary',
-        })}\n`,
-        'utf8',
-      );
+      const { conversationId } = await seedCurrentLayout(store);
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), '{"v":"2"}\n', 'utf8');
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
-      await expect(readdir(path.join(root, 'conversations'))).rejects.toThrow();
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
     });
   });
 
@@ -1091,7 +1087,11 @@ describe('agent event store', () => {
   });
 
   test('reports malformed JSONL line numbers', async () => {
-    await withStore(async (store) => {
+    await withStore(async (store, root) => {
+      // Hand-seeded data needs the current-generation sentinel, or the store
+      // treats the root as another generation and wipes it (by design).
+      await mkdir(root, { recursive: true });
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`, 'utf8');
       const conversationId = 'conversation-1';
       const eventsPath = store.paths(conversationId).conversationEventsPath;
       await mkdir(path.dirname(eventsPath), { recursive: true });

@@ -105,7 +105,7 @@ describe('agent subagent UI', () => {
         subagent={subagentEntity()}
       />,
       {
-        payloads: { 'subagent-transcript-1': payloadText },
+        payloads: { 'subagent-1': payloadText },
       },
     );
 
@@ -134,7 +134,7 @@ describe('agent subagent UI', () => {
       />,
       {
         payloads: {
-          'subagent-transcript-1': JSON.stringify({
+          'subagent-1': JSON.stringify({
             v: 1,
             runId: 'subagent-1',
             messageCount: 1,
@@ -322,6 +322,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
       if (cmd === 'agent_payload_text') {
         return (payloads[String(args.payloadId)] ?? null) as T;
       }
+      if (cmd === 'agent_child_run_transcript') {
+        const raw = payloads[String(args.runId)];
+        if (!raw) return null as T;
+        return { messages: (JSON.parse(raw) as { messages: unknown[] }).messages } as T;
+      }
       if (cmd === 'agent_subagent_send') {
         return {
           status: 'queued',
@@ -425,15 +430,13 @@ function subagentEntity(): AgentRenderSubagentEntity {
     id: 'subagent-1',
     description: 'Inspect subagent UI',
     prompt: 'Inspect the current UI.',
-    subagentType: 'explorer',
+    agentType: 'explorer',
     contextMode: 'fork',
     status: 'completed',
     startedAt: 100,
     updatedAt: 260,
     completedAt: 260,
     result: 'Found the relevant UI path.',
-    transcriptPayloadId: 'subagent-transcript-1',
-    transcriptMessageCount: 4,
     parentToolCallId: 'tool-agent-1',
   };
 }

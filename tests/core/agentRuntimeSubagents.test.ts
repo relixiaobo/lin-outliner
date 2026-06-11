@@ -22,7 +22,8 @@ import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/
 import type { AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentPastChatsService } from '../../src/main/agentPastChats';
-import { subagentDreamEvidenceStartMessageIndex } from '../../src/main/agentSubagentTranscript';
+import { createPostCompactMessage } from '../../src/main/agentCompaction';
+import type { AgentEvent } from '../../src/core/agentEventLog';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
@@ -255,15 +256,6 @@ describe('agent runtime subagents', () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test('fork Dream evidence uses persisted boundaries and skips legacy unknown boundaries', () => {
-    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fresh' }, 5)).toBe(0);
-    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork', dreamEvidenceStartMessageIndex: 3 }, 5)).toBe(3);
-    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork' }, 5)).toBe(5);
-    // A boundary beyond the payload is stale coordinates from a superseded (compacted)
-    // transcript: the successor payload is fresh evidence in its entirety.
-    expect(subagentDreamEvidenceStartMessageIndex({ contextMode: 'fork', dreamEvidenceStartMessageIndex: 40 }, 1)).toBe(0);
-  });
-
   test('runs a fresh subagent from an AGENT.md definition and returns only the compact result to the parent', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-data-'));
@@ -428,7 +420,7 @@ describe('agent runtime subagents', () => {
     const parentEntries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
     const source = researcherEntries[0]?.sources[0];
     const dreamState = await store.readDreamState(agentPrincipal(researcherAgentId));
-    const runId = source?.subagentRunId ?? source?.runId;
+    const runId = source?.runId;
     const evidence = source
       ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
       : null;
@@ -436,60 +428,10 @@ describe('agent runtime subagents', () => {
     const dreamTask = projection?.taskIds
       .map((taskId) => projection.entities.tasks[taskId])
       .find((task) => task?.kind === 'dream' && task.runId === dreamState.lastCompleted?.runId);
-    const replacementPayload = runId
-      ? await store.writePayload(conversation.conversationId, {
-          id: `subagent-transcript-${runId}-replacement`,
-          data: JSON.stringify({
-            v: 1,
-            runId,
-            messageCount: 1,
-            messages: [fauxAssistantMessage(fauxText(
-              `Replacement transcript text that must not satisfy old provenance. ${'replacement evidence '.repeat(90)}`,
-            ))],
-          }),
-          mimeType: 'application/json',
-          role: 'subagent_transcript',
-          summary: 'Replacement subagent transcript',
-        })
-      : null;
-    const replayBeforeReplacement = await store.replay(conversation.conversationId);
-    const runBeforeReplacement = runId ? replayBeforeReplacement.subagents[runId] : null;
-    if (runId && replacementPayload && runBeforeReplacement) {
-      await store.appendEvents(conversation.conversationId, [
-        {
-          v: 1,
-          eventId: `test-payload-replacement-${runId}`,
-          seq: replayBeforeReplacement.latestSeq + 1,
-          conversationId: conversation.conversationId,
-          createdAt: Date.now(),
-          actor: { type: 'system' },
-          type: 'payload.created',
-          payload: replacementPayload,
-        },
-        {
-          v: 1,
-          eventId: `test-subagent-replacement-${runId}`,
-          seq: replayBeforeReplacement.latestSeq + 2,
-          conversationId: conversation.conversationId,
-          createdAt: Date.now(),
-          actor: { type: 'tool', toolName: 'Agent', toolCallId: runBeforeReplacement.parentToolCallId ?? 'tool-agent-1' },
-          type: 'subagent_run.updated',
-          subagentRunId: runId,
-          status: runBeforeReplacement.status,
-          completedAt: runBeforeReplacement.completedAt,
-          result: runBeforeReplacement.result,
-          error: runBeforeReplacement.error,
-          dreamEvidenceStartMessageIndex: 0,
-          transcriptPayload: replacementPayload,
-          transcriptMessageCount: 1,
-        },
-      ]);
-    }
-    const evidenceAfterPayloadReplacement = source
-      ? await new AgentPastChatsService(store).readMemorySourceEvidence({ source, maxChars: 2_000 })
-      : null;
+    // Idempotence: a second pass with no new ledger events past the watermark
+    // consolidates nothing new (the {seq, eventId} cursor holds).
     await runtime.runScheduledDreamsForTest(new Date(Date.now() + 48 * 60 * 60 * 1000));
-    const dreamStateAfterPayloadReplacement = await new AgentEventStore(dataRoot).readDreamState(agentPrincipal(researcherAgentId));
+    const entriesAfterSecondPass = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal(researcherAgentId));
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -507,33 +449,27 @@ describe('agent runtime subagents', () => {
       changes: { added: 1 },
     });
     expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.totalMessageCount : 0).toBeGreaterThan(0);
-    expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.agentRuns?.[runId!]?.transcriptPayloadId : null)
-      .toBe(source?.eventId);
+    // The run source is the unified shape: the run's OWN ledger coordinates.
     expect(source).toMatchObject({
-      kind: 'agent_run',
+      kind: 'run',
       conversationId: conversation.conversationId,
-      agentId: researcherAgentId,
     });
-    expect(runId).toMatch(/^subagent-/);
-    expect(source?.messageRange?.[0]).toContain(`${runId}:message:`);
-    expect(dreamState.watermark.agentRuns?.[runId!]?.messageCount).toBeGreaterThan(0);
+    expect(runId).toMatch(/^child-/);
+    expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.runs?.[runId!]?.throughEventId : null)
+      .toBe(source?.eventId);
+    expect(dreamState.watermark.runs?.[runId!]?.seq).toBeGreaterThan(0);
+    expect(dreamState.watermark.runs?.[runId!]?.eventId).toBe(source?.eventId ?? null);
     expect(evidence?.mode).toBe('evidence');
     expect(evidence?.mode === 'evidence' ? evidence.messages.some((message) => (
-      message.messageId.startsWith(`${runId}:message:`)
-      && message.text.includes('Researcher durable note: use teal source notes')
-    )) : false).toBe(true);
-    expect(evidenceAfterPayloadReplacement?.mode === 'evidence' ? evidenceAfterPayloadReplacement.messages.some((message) => (
       message.text.includes('Researcher durable note: use teal source notes')
     )) : false).toBe(true);
-    expect(evidenceAfterPayloadReplacement?.mode === 'evidence' ? evidenceAfterPayloadReplacement.messages.some((message) => (
-      message.text.includes('Replacement transcript text')
-    )) : false).toBe(false);
-    expect(dreamRequests.some((request) => request.includes('Replacement transcript text that must not satisfy old provenance.'))).toBe(true);
-    expect(dreamStateAfterPayloadReplacement.watermark.agentRuns?.[runId!]?.payloadId).toBe(replacementPayload?.id);
     expect(dreamRequests.some((request) => (
       request.includes('## Agent Run')
       && request.includes('Researcher durable note: use teal source notes')
     ))).toBe(true);
+    expect(entriesAfterSecondPass.map((entry) => entry.fact)).toEqual([
+      'uses teal source notes for synthesis',
+    ]);
   });
 
   test('scheduled Dream batches same-owner subagent runs by origin workspace', async () => {
@@ -598,76 +534,105 @@ describe('agent runtime subagents', () => {
     const conversation = await runtime.createConversation();
     const store = new AgentEventStore(dataRoot);
     const replay = await store.replay(conversation.conversationId);
-    const seedSubagentRun = async (
+    // The unified representation: a slim child_run.* lifecycle marker in the
+    // conversation log + the run's OWN ledger seeded as its own stream.
+    const seedChildRun = async (
       runId: string,
       toolCallId: string,
       originWorkspace: string,
       evidence: string,
       seqOffset: number,
     ) => {
-      const payload = await store.writePayload(conversation.conversationId, {
-        id: `subagent-transcript-${runId}`,
-        data: JSON.stringify({
-          v: 1,
-          runId,
-          messageCount: 1,
-          messages: [fauxAssistantMessage(fauxText(evidence))],
-        }),
-        mimeType: 'application/json',
-        role: 'subagent_transcript',
-        summary: `Transcript for ${runId}`,
-      });
       await store.appendEvents(conversation.conversationId, [
         {
           v: 1,
-          eventId: `test-payload-${runId}`,
+          eventId: `test-child-start-${runId}`,
           seq: replay.latestSeq + seqOffset,
           conversationId: conversation.conversationId,
           createdAt: Date.now() + seqOffset,
-          actor: { type: 'system' },
-          type: 'payload.created',
-          payload,
-        },
-        {
-          v: 1,
-          eventId: `test-subagent-start-${runId}`,
-          seq: replay.latestSeq + seqOffset + 1,
-          conversationId: conversation.conversationId,
-          createdAt: Date.now() + seqOffset + 1,
           actor: { type: 'tool', toolName: 'Agent', toolCallId },
-          type: 'subagent_run.started',
-          subagentRunId: runId,
+          type: 'child_run.started',
+          childRunId: runId,
           parentToolCallId: toolCallId,
           executingAgentId: ownerAgentId,
           memoryOwnerAgentId: ownerAgentId,
           memoryOriginWorkspace: originWorkspace,
           description: `seeded ${runId}`,
           prompt: `Seed ${runId}`,
-          subagentType: 'researcher',
+          agentType: 'researcher',
           contextMode: 'fresh',
-          transcriptPayload: payload,
-          transcriptMessageCount: 1,
         },
         {
           v: 1,
-          eventId: `test-subagent-complete-${runId}`,
-          seq: replay.latestSeq + seqOffset + 2,
+          eventId: `test-child-complete-${runId}`,
+          seq: replay.latestSeq + seqOffset + 1,
           conversationId: conversation.conversationId,
-          createdAt: Date.now() + seqOffset + 2,
+          createdAt: Date.now() + seqOffset + 1,
           actor: { type: 'tool', toolName: 'Agent', toolCallId },
-          type: 'subagent_run.updated',
-          subagentRunId: runId,
+          type: 'child_run.updated',
+          childRunId: runId,
           status: 'completed',
-          completedAt: Date.now() + seqOffset + 2,
+          completedAt: Date.now() + seqOffset + 1,
           result: 'done',
-          transcriptPayload: payload,
-          transcriptMessageCount: 1,
         },
       ]);
+      await store.appendRunStreamEvents(conversation.conversationId, runId, [
+        {
+          v: 1,
+          eventId: `${runId}-evt-1`,
+          seq: 1,
+          conversationId: conversation.conversationId,
+          createdAt: Date.now() + seqOffset,
+          actor: { type: 'tool', toolName: 'Agent', toolCallId },
+          runId,
+          type: 'run.started',
+          agentId: ownerAgentId as never,
+          anchor: { type: 'conversation', agentId: ownerAgentId as never, conversationId: conversation.conversationId },
+          kind: 'delegation',
+          trigger: { type: 'system' },
+        },
+        {
+          v: 1,
+          eventId: `${runId}-evt-2`,
+          seq: 2,
+          conversationId: conversation.conversationId,
+          createdAt: Date.now() + seqOffset + 1,
+          actor: { type: 'agent', agentId: ownerAgentId as never },
+          runId,
+          type: 'assistant_message.started',
+          messageId: `${runId}-m1`,
+          parentMessageId: null,
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+        },
+        {
+          v: 1,
+          eventId: `${runId}-evt-3`,
+          seq: 3,
+          conversationId: conversation.conversationId,
+          createdAt: Date.now() + seqOffset + 2,
+          actor: { type: 'agent', agentId: ownerAgentId as never },
+          runId,
+          type: 'assistant_message.completed',
+          messageId: `${runId}-m1`,
+          stopReason: 'stop',
+          content: [{ type: 'text', text: evidence }],
+        },
+        {
+          v: 1,
+          eventId: `${runId}-evt-4`,
+          seq: 4,
+          conversationId: conversation.conversationId,
+          createdAt: Date.now() + seqOffset + 3,
+          actor: { type: 'tool', toolName: 'Agent', toolCallId },
+          runId,
+          type: 'run.completed',
+        },
+      ] as AgentEvent[]);
     };
 
-    await seedSubagentRun('subagent-current-workspace', 'tool-current-workspace', currentWorkspace, currentEvidence, 1);
-    await seedSubagentRun('subagent-other-workspace', 'tool-other-workspace', otherWorkspace, otherEvidence, 10);
+    await seedChildRun('child-current-workspace', 'tool-current-workspace', currentWorkspace, currentEvidence, 1);
+    await seedChildRun('child-other-workspace', 'tool-other-workspace', otherWorkspace, otherEvidence, 10);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
 
     const entries = await store.listMemoryEntries(agentPrincipal(ownerAgentId));
@@ -1057,7 +1022,7 @@ describe('agent runtime subagents', () => {
       void store.replay(conversation.conversationId).then((state) => {
         replay = state;
       });
-      const run = Object.values(replay.subagents ?? {})[0];
+      const run = Object.values(replay.childRuns ?? {})[0];
       return run?.status === 'completed';
     }, 30_000);
 
@@ -1071,7 +1036,7 @@ describe('agent runtime subagents', () => {
 
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
 
-    const run = Object.values((await store.replay(conversation.conversationId)).subagents ?? {})[0]!;
+    const run = Object.values((await store.replay(conversation.conversationId)).childRuns ?? {})[0]!;
     const agentRunRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
     // The fork's pre-compaction work survives only inside the compacted summary; the
     // summary must therefore reach extraction (it is the still-pending content).
@@ -1083,9 +1048,10 @@ describe('agent runtime subagents', () => {
       !request.includes('## Agent Run') && request.includes('Parent compact summary: conversation evidence preserved.')
     ))).toBe(true);
 
-    // The watermark advanced onto the compacted payload — the run is covered, not skipped.
+    // The watermark advanced past the compaction in the run's own seq space —
+    // the run is covered, not skipped.
     const dreamState = await store.readDreamState(agentPrincipal('built-in:tenon:assistant'));
-    expect(dreamState.watermark.agentRuns?.[run.id]?.payloadId).toBe(run.transcriptPayloadId ?? null);
+    expect(dreamState.watermark.runs?.[run.id]?.seq).toBeGreaterThan(0);
 
     // The distilled fact's source binding resolves back to the summary evidence.
     const entries = await store.listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
@@ -1097,18 +1063,18 @@ describe('agent runtime subagents', () => {
       .toContain('Fork compact summary: teal pipeline verified.');
   });
 
-  // The plan's named trap (agent-memory-source-binding): the fork-prefix exclusion is
-  // recorded in pre-compaction message coordinates. Once the transcript payload is
-  // superseded by a (shorter) compacted one, a stale boundary must not be re-applied —
-  // clamping it into `min(evidenceStart, length)` silently skips the run FOREVER, so its
-  // compacted summary (now its only durable evidence) would never be distilled.
-  test('a payload-superseding compaction is Dreamed from index 0, never re-excluded as fork prefix', async () => {
+  // The #164/#178 trap, restated structurally: a fork's inherited context must
+  // never reach Dream, and a mid-life compaction must never cause the run's
+  // remaining evidence to be skipped. Both now hold by LEDGER POSITION (context
+  // before run.started; compaction = events past the watermark) instead of by
+  // positional boundary + payload-pin guards.
+  test('a compacted child ledger is still Dreamed past the watermark, and pre-compaction sources keep resolving', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-stale-boundary-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-stale-boundary-data-'));
     roots.push(localRoot, dataRoot);
 
     const ownerAgentId = 'built-in:tenon:researcher';
-    const runId = 'subagent-stale-boundary';
+    const runId = 'child-compacted-ledger';
     const toolCallId = 'tool-stale-boundary';
     const conclusionText = `Fork child conclusion: deployment pipeline verified. ${'fork conclusion evidence '.repeat(60)}`;
     const compactedText = `Compacted fork summary persists the deployment outcome. ${'compacted summary evidence '.repeat(60)}`;
@@ -1158,143 +1124,141 @@ describe('agent runtime subagents', () => {
     const conversation = await runtime.createConversation();
     const store = new AgentEventStore(dataRoot);
     const replay = await store.replay(conversation.conversationId);
-
-    // The original fork transcript: 3 copied parent-prefix messages + 1 child conclusion,
-    // boundary recorded at 3 (only the conclusion is the fork's own evidence).
-    const originalPayload = await store.writePayload(conversation.conversationId, {
-      id: `subagent-transcript-${runId}-original`,
-      data: JSON.stringify({
-        v: 1,
-        runId,
-        dreamEvidenceStartMessageIndex: 3,
-        messageCount: 4,
-        messages: [
-          fauxAssistantMessage(fauxText('Parent prefix message 1 — copied context, not fork evidence.')),
-          fauxAssistantMessage(fauxText('Parent prefix message 2 — copied context, not fork evidence.')),
-          fauxAssistantMessage(fauxText('Parent prefix message 3 — copied context, not fork evidence.')),
-          fauxAssistantMessage(fauxText(conclusionText)),
-        ],
-      }),
-      mimeType: 'application/json',
-      role: 'subagent_transcript',
-      summary: 'Original fork transcript',
+    const toolActor = { type: 'tool', toolName: 'Agent', toolCallId } as const;
+    const agentActor = { type: 'agent', agentId: ownerAgentId } as const;
+    const ledgerEvent = (seq: number, fields: Record<string, unknown>) => ({
+      v: 1,
+      eventId: `${runId}-evt-${seq}`,
+      seq,
+      conversationId: conversation.conversationId,
+      createdAt: Date.now() + seq,
+      runId,
+      ...fields,
     });
+
     await store.appendEvents(conversation.conversationId, [
       {
         v: 1,
-        eventId: `test-payload-${runId}-original`,
+        eventId: `test-child-start-${runId}`,
         seq: replay.latestSeq + 1,
         conversationId: conversation.conversationId,
         createdAt: Date.now(),
-        actor: { type: 'system' },
-        type: 'payload.created',
-        payload: originalPayload,
-      },
-      {
-        v: 1,
-        eventId: `test-subagent-start-${runId}`,
-        seq: replay.latestSeq + 2,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now() + 1,
-        actor: { type: 'tool', toolName: 'Agent', toolCallId },
-        type: 'subagent_run.started',
-        subagentRunId: runId,
+        actor: toolActor,
+        type: 'child_run.started',
+        childRunId: runId,
         parentToolCallId: toolCallId,
         executingAgentId: ownerAgentId,
         memoryOwnerAgentId: ownerAgentId,
         description: 'stale boundary fork',
         prompt: 'Verify the deployment pipeline.',
-        subagentType: 'lin-fork-subagent',
+        agentType: 'lin-fork-subagent',
         contextMode: 'fork',
-        dreamEvidenceStartMessageIndex: 3,
-        transcriptPayload: originalPayload,
-        transcriptMessageCount: 4,
       },
       {
         v: 1,
-        eventId: `test-subagent-complete-${runId}`,
-        seq: replay.latestSeq + 3,
+        eventId: `test-child-complete-${runId}`,
+        seq: replay.latestSeq + 2,
         conversationId: conversation.conversationId,
-        createdAt: Date.now() + 2,
-        actor: { type: 'tool', toolName: 'Agent', toolCallId },
-        type: 'subagent_run.updated',
-        subagentRunId: runId,
+        createdAt: Date.now() + 1,
+        actor: toolActor,
+        type: 'child_run.updated',
+        childRunId: runId,
         status: 'completed',
-        completedAt: Date.now() + 2,
+        completedAt: Date.now() + 1,
         result: 'done',
-        transcriptPayload: originalPayload,
-        transcriptMessageCount: 4,
       },
     ]);
+    // The ledger encodes the fork boundary structurally: inherited context BEFORE
+    // run.started, the run's own evidence after it.
+    await store.appendRunStreamEvents(conversation.conversationId, runId, [
+      ledgerEvent(1, {
+        actor: toolActor,
+        type: 'user_message.created',
+        messageId: `${runId}-prefix`,
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Parent prefix message — copied context, not fork evidence.' }],
+      }),
+      ledgerEvent(2, {
+        actor: toolActor,
+        type: 'run.started',
+        agentId: ownerAgentId,
+        anchor: { type: 'conversation', agentId: ownerAgentId, conversationId: conversation.conversationId },
+        kind: 'delegation',
+        trigger: { type: 'system' },
+      }),
+      ledgerEvent(3, {
+        actor: toolActor,
+        type: 'user_message.created',
+        messageId: `${runId}-directive`,
+        parentMessageId: `${runId}-prefix`,
+        content: [{ type: 'text', text: 'Directive: verify the deployment pipeline.' }],
+      }),
+      ledgerEvent(4, {
+        actor: agentActor,
+        type: 'assistant_message.started',
+        messageId: `${runId}-conclusion`,
+        parentMessageId: `${runId}-directive`,
+        providerId: 'openai',
+        modelId: 'gpt-4.1',
+      }),
+      ledgerEvent(5, {
+        actor: agentActor,
+        type: 'assistant_message.completed',
+        messageId: `${runId}-conclusion`,
+        parentMessageId: `${runId}-directive`,
+        stopReason: 'stop',
+        content: [{ type: 'text', text: conclusionText }],
+      }),
+      ledgerEvent(6, { actor: toolActor, type: 'run.completed' }),
+    ] as AgentEvent[]);
 
-    // Dream #1: only the fork's own evidence past the boundary is extracted.
+    // Dream #1: only the fork's own evidence past run.started is extracted.
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     const firstRunRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
     expect(firstRunRequests.some((request) => request.includes('Fork child conclusion'))).toBe(true);
     expect(firstRunRequests.some((request) => request.includes('Parent prefix message'))).toBe(false);
 
-    // Supersede the payload with a compacted 1-message transcript. Neither the new
-    // envelope nor the update event re-states the boundary — the event-model-legal shape
-    // in which the old boundary (3) exceeds the new payload length (1).
-    const compactedPayload = await store.writePayload(conversation.conversationId, {
-      id: `subagent-transcript-${runId}-compacted`,
-      data: JSON.stringify({
-        v: 1,
-        runId,
-        messageCount: 1,
-        messages: [fauxAssistantMessage(fauxText(compactedText))],
+    // A compaction lands in the ledger AFTER Dream #1: a compaction event + the
+    // post-compact message as a new root. The pre-compact span goes off-path; the
+    // summary is its surviving carrier.
+    const postCompact = createPostCompactMessage(compactedText, null, null, null, null);
+    const postCompactContent = (Array.isArray(postCompact.content) ? postCompact.content : [{ type: 'text', text: String(postCompact.content) }])
+      .filter((part): part is { type: 'text'; text: string } => (part as { type: string }).type === 'text');
+    await store.appendRunStreamEvents(conversation.conversationId, runId, [
+      ledgerEvent(7, {
+        actor: toolActor,
+        type: 'compaction.completed',
+        messageId: `${runId}-post-compact`,
+        summary: compactedText,
+        source: { fromMessageId: `${runId}-directive`, throughMessageId: `${runId}-conclusion` },
+        trigger: 'auto',
       }),
-      mimeType: 'application/json',
-      role: 'subagent_transcript',
-      summary: 'Compacted fork transcript',
-    });
-    const replayAfterFirstDream = await store.replay(conversation.conversationId);
-    await store.appendEvents(conversation.conversationId, [
-      {
-        v: 1,
-        eventId: `test-payload-${runId}-compacted`,
-        seq: replayAfterFirstDream.latestSeq + 1,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now() + 3,
-        actor: { type: 'system' },
-        type: 'payload.created',
-        payload: compactedPayload,
-      },
-      {
-        v: 1,
-        eventId: `test-subagent-compacted-${runId}`,
-        seq: replayAfterFirstDream.latestSeq + 2,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now() + 4,
-        actor: { type: 'tool', toolName: 'Agent', toolCallId },
-        type: 'subagent_run.updated',
-        subagentRunId: runId,
-        status: 'completed',
-        completedAt: Date.now() + 4,
-        result: 'done',
-        transcriptPayload: compactedPayload,
-        transcriptMessageCount: 1,
-      },
-    ]);
+      ledgerEvent(8, {
+        actor: toolActor,
+        type: 'user_message.created',
+        messageId: `${runId}-post-compact`,
+        parentMessageId: null,
+        content: postCompactContent,
+      }),
+    ] as AgentEvent[]);
 
-    // Dream #2: the compacted payload is fresh evidence in its entirety — the stale
-    // boundary must not clamp it into a permanent skip. (+48h from the real clock: the
-    // first dream recorded lastSuccessAt with Date.now(), so the schedule gate compares
-    // against real time.)
+    // Dream #2: the post-compact summary is fresh ledger content past the watermark —
+    // covered, never skipped. (+48h: the schedule gate compares against real time.)
     await runtime.runScheduledDreamsForTest(new Date(Date.now() + 48 * 60 * 60 * 1000));
     const secondRunRequests = dreamRequests.filter((request) => request.includes('Compacted fork summary'));
     expect(secondRunRequests.length).toBeGreaterThan(0);
     const dreamState = await store.readDreamState(agentPrincipal(ownerAgentId));
-    expect(dreamState.watermark.agentRuns?.[runId]?.payloadId).toBe(compactedPayload.id);
+    expect(dreamState.watermark.runs?.[runId]?.seq).toBe(8);
 
-    // Resolution regression: the source pinned BEFORE the supersession still resolves to
-    // the ORIGINAL evidence text via its payload pin — never silently to the compacted
-    // replacement — and an unresolvable range fails loud.
+    // Resolution regression: the source bound BEFORE the compaction still resolves to
+    // the ORIGINAL evidence text (the compacted span stays addressable through the
+    // compaction expansion) — never silently to the compacted summary — and an
+    // unresolvable range fails loud.
     const entries = await store.listMemoryEntries(agentPrincipal(ownerAgentId));
     const entry = entries.find((candidate) => candidate.fact === 'The deployment pipeline is verified.');
     expect(entry).toBeDefined();
     const source = entry!.sources[0]!;
-    expect(source.eventId).toBe(originalPayload.id);
+    expect(source).toMatchObject({ kind: 'run', runId });
     const pastChats = new AgentPastChatsService(store);
     const evidence = await pastChats.readMemorySourceEvidence({ source, maxChars: 4_000 });
     expect(evidence.mode).toBe('evidence');
@@ -1302,11 +1266,11 @@ describe('agent runtime subagents', () => {
     expect(evidenceText).toContain('Fork child conclusion');
     expect(evidenceText).not.toContain('Compacted fork summary');
     const tampered = await pastChats.readMemorySourceEvidence({
-      source: { ...source, messageRange: [`${runId}:message:98`, `${runId}:message:99`] },
+      source: { ...source, messageRange: [`${runId}-missing-1`, `${runId}-missing-2`] },
       maxChars: 4_000,
     });
     expect(tampered.mode).toBe('error');
-    expect(tampered.mode === 'error' ? tampered.code : null).toBe('SOURCE_NOT_FOUND');
+    expect(tampered.mode === 'error' ? tampered.code : null).toBe('NOT_ON_ACTIVE_BRANCH');
   });
 
   test('tracks a background subagent through AgentStatus', async () => {
@@ -1420,7 +1384,7 @@ describe('agent runtime subagents', () => {
 
     expect(script.pendingCount()).toBe(0);
     const notificationText = notificationContexts.join('\n');
-    expect(notificationText).toContain('subagent-notification');
+    expect(notificationText).toContain('agent-task-notification');
     expect(notificationText).toContain('bg-notify');
     expect(notificationText).toContain('Background notification result.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -1616,7 +1580,7 @@ describe('agent runtime subagents', () => {
     while (!resumeNotification && Date.now() < deadline) {
       const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
       resumeNotification = Object.values(replay.notifications).find(
-        (record) => record.source?.type === 'subagent' && record.source.subagentRunId === subagentId,
+        (record) => record.source?.type === 'run' && record.source.runId === subagentId,
       );
       if (!resumeNotification) await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -1677,10 +1641,13 @@ describe('agent runtime subagents', () => {
     const conversation = await firstRuntime.createConversation();
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background subagent.', firstSink);
     firstRuntime.closeConversation(conversation.conversationId);
-    const transcriptPayloadEvents = (await new AgentEventStore(dataRoot).readEvents(conversation.conversationId))
-      .filter((event) => event.type === 'payload.created' && event.payload?.role === 'subagent_transcript');
-    expect(new Set(transcriptPayloadEvents.map((event) => event.payload?.sha256)).size)
-      .toBe(transcriptPayloadEvents.length);
+    // The transcript is the child run's own ledger — no snapshot payloads exist.
+    const childRunId = Object.keys(
+      (await new AgentEventStore(dataRoot).replay(conversation.conversationId)).childRuns ?? {},
+    )[0]!;
+    const ledgerEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(childRunId);
+    expect(ledgerEvents.length).toBeGreaterThan(0);
+    expect(ledgerEvents.some((event) => event.type === 'run.started')).toBe(true);
 
     const restoredContexts: string[] = [];
     const secondScript = scriptedStream(
@@ -1724,7 +1691,7 @@ describe('agent runtime subagents', () => {
       status: 'completed',
       result: 'Restored background result.',
     });
-    expect(subagent?.transcriptMessageCount).toBeGreaterThan(0);
+
 
     await secondRuntime.sendMessage(conversation.conversationId, 'Check the restored background subagent status.');
 
@@ -1790,7 +1757,7 @@ describe('agent runtime subagents', () => {
     expect(subagentId).toBeTruthy();
     // The run is still alive (blocked) — persisted as running, no terminal yet.
     const beforeRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    expect(beforeRestart.subagents[subagentId]?.status).toBe('running');
+    expect(beforeRestart.childRuns[subagentId]?.status).toBe('running');
     expect(beforeRestart.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
 
     // Second runtime over the same data = a restart. Restoring marks the orphaned
@@ -1821,7 +1788,7 @@ describe('agent runtime subagents', () => {
     const afterRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
     expect(afterRestart.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
     const interruptedNotification = Object.values(afterRestart.notifications).find(
-      (record) => record.source?.type === 'subagent' && record.source.subagentRunId === subagentId,
+      (record) => record.source?.type === 'run' && record.source.runId === subagentId,
     );
     expect(interruptedNotification?.kind).toBe('task_failed');
 

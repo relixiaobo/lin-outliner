@@ -673,54 +673,32 @@ describe('agent event log', () => {
     expect(toolResult.content).toEqual([{ type: 'text', text: replacement }]);
   });
 
-  test('tracks subagent sidechain metadata without adding it to the active conversation', () => {
-    const transcriptPayload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'subagent-transcript-1',
-      storage: 'file',
-      mimeType: 'application/json',
-      byteLength: 128,
-      sha256: 'subagent-sha',
-      role: 'subagent_transcript',
-      summary: 'Subagent transcript',
-    };
-    const updatedPayload: AgentPayloadRef = {
-      ...transcriptPayload,
-      id: 'subagent-transcript-2',
-      byteLength: 256,
-      sha256: 'subagent-sha-2',
-    };
+  test('tracks child-run lifecycle markers without adding them to the active conversation', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },
-      { ...base(2, 'payload.created'), payload: transcriptPayload },
       {
-        ...base(3, 'subagent_run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        subagentRunId: 'subagent-1',
+        ...base(2, 'child_run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        childRunId: 'child-1',
+        parentRunId: 'run-parent',
         parentToolCallId: 'tool-agent-1',
         name: 'research',
         description: 'research docs',
         prompt: 'Research this.',
-        subagentType: 'general',
+        agentType: 'general',
         contextMode: 'fresh',
-        transcriptPayload,
-        transcriptMessageCount: 1,
       },
-      { ...base(4, 'payload.created'), payload: updatedPayload },
       {
-        ...base(5, 'subagent_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        subagentRunId: 'subagent-1',
+        ...base(3, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        childRunId: 'child-1',
         status: 'completed',
         completedAt: 1_700_000_000_100,
         result: 'Done.',
-        transcriptPayload: updatedPayload,
-        transcriptMessageCount: 3,
       },
       {
-        ...base(6, 'subagent_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        subagentRunId: 'subagent-1',
+        // A crash-retried 'running' update cannot resurrect a terminal record.
+        ...base(4, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        childRunId: 'child-1',
         status: 'running',
-        transcriptPayload: updatedPayload,
-        transcriptMessageCount: 4,
       },
     ];
 
@@ -728,13 +706,13 @@ describe('agent event log', () => {
 
     expect(getAgentEventActivePath(state)).toEqual([]);
     expect(deriveAgentPiMessages(state)).toEqual([]);
-    expect(state.subagents['subagent-1']).toMatchObject({
-      id: 'subagent-1',
+    expect(state.childRuns['child-1']).toMatchObject({
+      id: 'child-1',
       name: 'research',
+      agentType: 'general',
+      parentRunId: 'run-parent',
       status: 'completed',
       result: 'Done.',
-      transcriptPayloadId: 'subagent-transcript-2',
-      transcriptMessageCount: 4,
       parentToolCallId: 'tool-agent-1',
     });
   });
