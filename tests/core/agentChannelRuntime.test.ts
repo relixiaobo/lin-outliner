@@ -211,10 +211,21 @@ describe('agent channel runtime', () => {
     const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('Reviewed: ship it.'))]);
     const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
 
-    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(reviewerAgentId), {
+    const store = new AgentEventStore(dataRoot);
+    await store.addMemoryEntry(agentPrincipal(reviewerAgentId), {
       id: 'memory-reviewer-own',
       fact: 'Reviewer prefers terse verdicts.',
       sources: [conversationSource('seed-reviewer')],
+    });
+    await store.addMemoryEntry(agentPrincipal(MAIN_AGENT_ID), {
+      id: 'memory-main-co-member',
+      fact: 'Assistant tracks architecture seams for handoffs.',
+      sources: [conversationSource('seed-main')],
+    });
+    await store.addMemoryEntry(agentPrincipal('built-in:tenon:outsider'), {
+      id: 'memory-outsider',
+      fact: 'Outsider memory must not enter member briefings.',
+      sources: [conversationSource('seed-outsider')],
     });
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Review work' });
@@ -228,6 +239,9 @@ describe('agent channel runtime', () => {
     expect(calls[0]!.serialized).toContain('@user (the human user) said:');
     // The peer's own memory line is injected transiently into the assembled context.
     expect(calls[0]!.serialized).toContain('Reviewer prefers terse verdicts.');
+    // M3-B: agent co-member pools are visible by membership; non-member pools are not.
+    expect(calls[0]!.serialized).toContain('Assistant tracks architecture seams for handoffs.');
+    expect(calls[0]!.serialized).not.toContain('Outsider memory must not enter member briefings.');
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(state.conversation?.members).toEqual([
@@ -261,6 +275,12 @@ describe('agent channel runtime', () => {
     ]);
     const { runtime, calls, script, reviewerAgentId, dataRoot } = fixture;
 
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(reviewerAgentId), {
+      id: 'memory-reviewer-co-member',
+      fact: 'Reviewer watches for brittle hand-off assumptions.',
+      sources: [conversationSource('seed-reviewer')],
+    });
+
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Relay test' });
     await runtime.sendMessage(channel.conversationId, 'someone take a look');
 
@@ -269,6 +289,8 @@ describe('agent channel runtime', () => {
     expect(calls[1]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
     expect(calls[2]!.systemPrompt).not.toContain('REVIEWER_AGENT_BODY');
     expect(calls[3]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
+    // Coordinator reads the peer agent's distilled pool by the same membership rule.
+    expect(calls[0]!.serialized).toContain('Reviewer watches for brittle hand-off assumptions.');
     // Hand-off context: the reviewer sees the coordinator's reply as a preambled user block.
     expect(calls[1]!.serialized).toContain('@assistant (agent');
     expect(calls[1]!.serialized).toContain('Tenon Assistant');

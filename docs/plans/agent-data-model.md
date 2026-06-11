@@ -758,7 +758,8 @@ below is now built. It is **interface-first** — the `src/core/*` surface (`Mem
 landed first, then consumers. It adds **no new storage family and no parallel visibility
 system**, reuses the existing `Principal` type + `conversation.members`, and **revises shipped
 P1+P2** (PR #172) — pre-launch clean cut, no migration. The detail forks are resolved as noted
-below (defer agent↔agent reading; named `<principal>` zone; watermark-serialized user-Dream).
+below (agent↔agent reading shipped in M3-B; named `<principal>` zone;
+watermark-serialized user-Dream).
 
 ### The gap
 
@@ -834,9 +835,11 @@ The **user is always a member** of an agent's conversation, so the user's self-m
 is **automatically** shared across all the user's agents — no `publishMemoryTo`, no
 precedence table; visibility reuses `conversation.members` (already first-class).
 *(Revised 2026-06-10: D2's `isolated` tier was removed — each pool is one undivided
-self-model; `originWorkspace` never scopes retrieval.)* (Agent↔agent reading — A reads
-co-member B's self-model — is the same membership rule and can ship later; the core
-need is *agent → user*.)
+self-model; `originWorkspace` never scopes retrieval.)* M3-B ships the symmetric
+agent↔agent half: in a Channel, A reads co-member B's self-model by the same
+membership rule. Fresh child sidechains are not conversation members, so they
+read their own pool plus the parent conversation's user member, not the parent
+agent's pool.
 
 ### Security — the read-path gate
 
@@ -846,8 +849,10 @@ principal's raw conversations:
 
 - **Cross-principal recall returns the distilled `fact` only**; `sources` evidence
   expansion is permitted **only** for entries whose `principal` == the reader's own
-  (the runtime evidence service principal-gates the dereference). inv. 6's down-pointer
-  stays; the dereference is principal-gated.
+  (the runtime evidence service principal-gates the dereference and returns
+  `CROSS_PRINCIPAL_EVIDENCE` for mismatches). Cross-principal model-visible
+  results strip source pointers; inv. 6's down-pointer stays in storage, while
+  dereference is principal-gated.
 - A foreign-principal fact reaches the reader's prefix every turn → it carries the
   **highest load-time-scan bar** (the [[agent-memory-model]] Hardening layer).
 - **Scope: one user.** Cross-*user* sharing (multiple people) is a separate
@@ -881,9 +886,10 @@ principal's raw conversations:
 
 ### Forks — resolved (decide-and-note, within the ratified direction)
 
-1. **Agent↔agent reading** — **deferred.** The briefing/recall inject the reader's own pool
-   and the co-member *user* pool only; co-member *agent* pools are not read yet. The membership
-   rule already supports them (same `samePrincipal` check), so it is purely additive later.
+1. **Agent↔agent reading** — **shipped in M3-B.** The briefing/recall inject the reader's
+   own pool plus every co-member principal pool (user and agent alike), with
+   foreign pools rendered as named `<principal>` zones and raw evidence gated to
+   the reader's own pool.
 2. **`<principal>` provenance render** — **named zone.** A foreign principal's pool renders
    as a named `<principal name="…">` zone whose bullets carry the elided subject in the tag,
    keeping the human as the identity authority; only the reader's own pool renders as `<self>`.
@@ -924,7 +930,7 @@ concrete.)
 | **Retrieval** | three modes: chronic activation (resident briefing) · deliberate cued retrieval (`recall` + source access) · automatic association (deferred) | §8 assembly + the single `recall` tool; chronic activation renders a schema overview + strength-selected facts; the zoom ladder (schema → fact → episode gist → raw span, D-6) is the provenance axis |
 | **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | `memory.accessed` events (`via: briefing | recall`) projected into storage/retrieval strengths; recall hits strengthen more than briefing exposure; invalidated entries are excluded regardless of strength |
 | **Metamemory** | knowing what one knows before digging | derived schema/overview nodes over active memory entries; no-query `recall` returns the overview |
-| **Transactive layer** | co-members subscribe to each other's *semantic* stores; raw evidence never crosses principals | membership read (shipped #173 for the user pool) + M3-B (`agent-cross-agent-memory`) |
+| **Transactive layer** | co-members subscribe to each other's *semantic* stores; raw evidence never crosses principals | membership read (user pool shipped #173; agent co-member pools shipped in M3-B) |
 
 Standing constraint carried over from the agent-memory-model review, extended
 by D-6: strength, confidence, salience, episodes, and schema nodes are **never
@@ -948,13 +954,14 @@ gate.
 These are data-model-local; the experience/sequencing OQs live in
 [[agent-conversation-model]] and [[agent-program]].
 
-- **Cross-agent memory sharing — RESOLVED + SHIPPED (PR #173, 2026-06-10).** The contract —
+- **Cross-agent memory sharing — RESOLVED + SHIPPED (PR #173 + M3-B).** The contract —
   `MemoryEntry.principal` (replacing `agentId`, the user being an ordinary principal),
   per-principal Dream (write side), visibility by `conversation.members` (read side), and the
   cross-principal read-path security gate — is the **"Extension — principal-keyed memory"**
-  section above. Forks resolved: agent↔agent reading deferred (additive later via the same
-  membership rule); named `<principal>` zone; user-Dream scheduled + manual,
-  watermark-serialized.
+  section above. Forks resolved: agent↔agent reading uses the same membership
+  rule in Channels; named `<principal>` zone; user-Dream scheduled + manual,
+  watermark-serialized; evidence dereference refuses cross-principal access at
+  the evidence service.
 
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
   topic files. Memory is runtime-owned state, not an agent-writable file tree.

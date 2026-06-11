@@ -2223,16 +2223,21 @@ briefing and `recall` surface the reader's own pool plus every co-member
 principal's pool. The user is always a co-member, so the user's self-model is
 shared into every agent (the reader's own pool renders as the `<self>` zone; a
 co-member pool as a named `<principal>` zone — both verbatim bullet lists, no
-person assignment). Delegated child runs **inherit**
-user-pool visibility by design: their recall/briefing are wired to the parent
-session, and a sidechain is not a separate conversation with its own member list
-— it acts inside the user's conversation on the user's task. The membership
-check is the forward rule for future non-user-member conversations (e.g.
-agent↔agent channels). Agent↔agent reading of other agents' pools is not enabled
-yet. A **read-path security gate** bounds raw evidence:
+person assignment). In Channels, agent members read co-member agent pools by the
+same membership rule. Delegated child runs **inherit user-pool visibility** by
+design, but they do not automatically read the parent agent's pool: a fresh
+child sidechain is not itself a conversation member, so its readable set is the
+child's own pool plus the parent conversation's user member. A **read-path
+security gate** bounds raw evidence:
 `recall(include_evidence:true)` dereferences `sources` to raw transcript
 **only** for entries in the reader's own pool; a cross-principal fact reaches
 the reader distilled (fact only), never as another principal's raw conversation.
+The evidence service is the choke point: it compares the entry's owning
+principal with the requesting reader and returns `CROSS_PRINCIPAL_EVIDENCE` on
+mismatch. `recall` nests that typed refusal under the returned memory entry and
+strips cross-principal source pointers from the model-visible result. Foreign
+facts injected into another principal's briefing pass the shared secret-like
+redaction heuristic first.
 
 Explicit fact management is not a foreground model tool. The Settings/Profile UI
 can list, edit, and forget memory through IPC-backed runtime methods (forgetting
@@ -2372,35 +2377,12 @@ projection:
         "fact": "prefers direct answers",
         "status": "active",
         "created_at": 1800000000000,
-        "sources": [
-          {
-            "episode_id": "episode-1"
-          }
-        ],
+        "sources": [],
         "evidence": [
           {
-            "kind": "episode_gist",
-            "episode_id": "episode-1",
-            "gist": "The user asked for direct answers.",
-            "raw_sources": [
-              {
-                "stream": "conversation",
-                "stream_id": "conversation-1",
-                "range": {
-                  "from_seq_exclusive": 0,
-                  "through_seq": 4,
-                  "through_event_id": "event-4"
-                }
-              }
-            ]
-          },
-          {
-            "kind": "raw_span",
-            "conversation_id": "conversation-1",
-            "message_id": "user-1",
-            "role": "user",
-            "created_at": "2026-01-01T00:00:00.000Z",
-            "text": "Please keep answers direct."
+            "kind": "evidence_refusal",
+            "code": "CROSS_PRINCIPAL_EVIDENCE",
+            "message": "Raw memory evidence is only available for the reader principal that owns the memory pool."
           }
         ]
       }

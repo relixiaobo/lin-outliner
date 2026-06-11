@@ -204,4 +204,20 @@ describe('renderAgentMemoryBriefing', () => {
     expect(briefing).toContain('name="A &amp; &quot;B&quot;"');
     expect(briefing).not.toContain('< b style');
   });
+
+  test('redacts secret-like foreign pool facts before injection', () => {
+    const briefing = renderAgentMemoryBriefing(
+      [
+        entry({
+          id: 'p1',
+          principal: { type: 'agent', agentId: 'agent-peer' },
+          fact: 'keeps api_key=abcdefghijklmnopqrstuvwxyz123456 for tests',
+        }),
+      ],
+      { reader: READER, principalNameFor: () => 'Peer' },
+    );
+
+    expect(briefing).toContain('[redacted secret-like content]');
+    expect(briefing).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
+  });
 });

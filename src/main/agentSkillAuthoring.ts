@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { AgentSourceKind } from '../core/agentEventLog';
 import { type AgentSkillContentTarget, parseSkillMarkdown, skillContentHash } from './agentSkills';
+import { containsSecretLikeContent } from './agentSecretRedaction';
 
 export interface AgentSkillWriteAudit {
   skillName: string;
@@ -162,11 +163,7 @@ function validateSupportFile(target: AgentSkillContentTarget, content: string): 
 // leaked credential an exfiltration amplifier; a global secret block on ordinary file
 // writes would false-positive on normal code.
 function rejectSecretLookingContent(content: string): void {
-  if (
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)
-    || /\bsk-[A-Za-z0-9_-]{24,}\b/.test(content)
-    || /\b(?:api[_-]?key|secret|token)\s*[:=]\s*['"]?[A-Za-z0-9_./+=-]{24,}/i.test(content)
-  ) {
+  if (containsSecretLikeContent(content)) {
     throw new AgentSkillAuthoringError(
       'secret_like_skill_content',
       'Skill content appears to contain a secret.',
