@@ -2235,12 +2235,15 @@ context is insufficient.
 Evidence expansion is always nested under a returned memory entry. The runtime
 expands only that entry's `MemoryEntry.sources` through the internal evidence
 service. Episode sources return the memory-owned gist first, then expand their
-raw conversation/run stream sources. Conversation sources verify the retained
-active branch; run sources replay the referenced run's own ledger. Both paths
-clamp output by `max_chars`. Older conversations that have not been distilled
-into active memory entries are intentionally not foreground-recallable. Internal
-summary search and raw conversation/run reads remain available to runtime-owned
-Dream consolidation and diagnostics, not as public model tools.
+raw conversation/run stream sources with only the remaining character budget. If
+every raw source is gone or no longer resolves, the episode still returns as
+evidence with its durable gist and an empty raw span list. Conversation sources
+verify the retained active branch; run sources replay the referenced run's own
+ledger. Both paths clamp output by `max_chars`. Older conversations that have
+not been distilled into active memory entries are intentionally not
+foreground-recallable. Internal summary search and raw conversation/run reads
+remain available to runtime-owned Dream consolidation and diagnostics, not as
+public model tools.
 
 Tool results use the shared envelope and expose only the slim model-visible
 projection:

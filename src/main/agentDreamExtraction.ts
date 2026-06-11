@@ -3,7 +3,6 @@ import { isHiddenAgentContextBlock } from '../core/agentAttachments';
 import {
   type AgentEvent,
   type AgentEventMessageRecord,
-  type AgentEventReplayState,
   type AgentMemoryEntry,
   type AgentMemorySource,
   type AgentMemoryStreamSource,
@@ -91,52 +90,6 @@ export interface DreamMemoryExtractionRunInput {
   originWorkspace?: string;
   events: readonly AgentEvent[];
   fromSeqExclusive: number;
-}
-
-export function buildDreamMemoryExtractionSpan(
-  conversationId: string,
-  state: AgentEventReplayState,
-  runId: string,
-): DreamMemoryExtractionSpan | null {
-  const run = state.runs[runId];
-  if (run?.status !== 'completed') return null;
-  const activePath = getAgentEventRuntimeTranscriptPath(state);
-  const lastRunMessageIndex = findLastRunMessageIndex(activePath, runId);
-  if (lastRunMessageIndex < 0) return null;
-  const firstRunMessageIndex = findFirstRunMessageIndex(activePath, runId);
-  const fromIndex = findCurrentTurnStartIndex(activePath, firstRunMessageIndex);
-  const slice = activePath.slice(fromIndex, lastRunMessageIndex + 1);
-  const from = slice[0];
-  const through = slice.at(-1);
-  if (!from || !through) return null;
-  const transcript = renderDreamTranscript(slice);
-  if (!transcript.trim()) return null;
-  const source: AgentMemoryStreamSource = {
-    stream: 'conversation',
-    streamId: conversationId,
-    range: {
-      fromSeqExclusive: 0,
-      throughSeq: state.latestSeq,
-      throughEventId: state.latestEventId,
-    },
-  };
-  return {
-    id: `run:${runId}`,
-    runId,
-    sources: [source],
-    sourceRanges: [{
-      source,
-      fromSeqExclusive: 0,
-      throughSeq: state.latestSeq,
-      throughEventId: state.latestEventId,
-      messageCount: slice.length,
-      charCount: transcript.length,
-    }],
-    transcript,
-    totalMessageCount: slice.length,
-    totalCharCount: transcript.length,
-    consolidateOnly: false,
-  };
 }
 
 export function buildDreamMemoryExtractionSpanFromEvents(
@@ -556,23 +509,6 @@ function renderPersistedContent(content: readonly AgentPersistedContent[]): stri
     .filter(Boolean)
     .join('\n\n')
     .slice(0, DREAM_MESSAGE_CONTENT_CHAR_BUDGET);
-}
-
-function findFirstRunMessageIndex(messages: readonly AgentEventMessageRecord[], runId: string): number {
-  return messages.findIndex((message) => message.runId === runId);
-}
-
-function findLastRunMessageIndex(messages: readonly AgentEventMessageRecord[], runId: string): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.runId === runId) return index;
-  }
-  return -1;
-}
-
-function findCurrentTurnStartIndex(messages: readonly AgentEventMessageRecord[], firstRunMessageIndex: number): number {
-  const previous = messages[firstRunMessageIndex - 1];
-  if (previous?.role === 'user') return firstRunMessageIndex - 1;
-  return firstRunMessageIndex;
 }
 
 function truncateDreamTranscript(rendered: string): string {

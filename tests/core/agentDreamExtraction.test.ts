@@ -1,14 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
-import {
-  createEmptyAgentEventReplayState,
-  type AgentActor,
-  type AgentEventMessageRecord,
-} from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   buildDreamMemoryExtractionRequest,
-  buildDreamMemoryExtractionSpan,
+  buildDreamMemoryExtractionSpanFromEvidence,
   buildDreamSessionId,
   DREAM_SESSION_ID_MAX_CHARS,
 } from '../../src/main/agentDreamExtraction';
@@ -18,45 +14,89 @@ const userActor: AgentActor = { type: 'user', userId: 'user-1' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'agent-1' };
 const toolActor: AgentActor = { type: 'tool', toolName: 'node_read', toolCallId: 'tool-prev' };
 
-function message(input: {
-  id: string;
-  role: AgentEventMessageRecord['role'];
-  actor: AgentActor;
-  parentMessageId: string | null;
-  text: string;
-  runId?: string;
-  toolName?: string;
-}): AgentEventMessageRecord {
+function base(seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) {
   return {
-    id: input.id,
-    role: input.role,
-    actor: input.actor,
-    parentMessageId: input.parentMessageId,
-    content: [{ type: 'text', text: input.text }],
-    createdAt: 1_800_000_000_000,
-    updatedAt: 1_800_000_000_000,
-    status: 'completed',
-    runId: input.runId,
-    toolName: input.toolName,
+    v: 1 as const,
+    eventId: `conversation-1-event-${seq}`,
+    seq,
+    conversationId: 'conversation-1',
+    type,
+    createdAt: 1_800_000_000_000 + seq,
+    actor,
   };
 }
 
-// Build a replay state from completed runs plus a parent-linked message list;
-// rootMessageIds and childrenByParentId are derived from each message's parentMessageId.
-function replayStateWith(runIds: readonly string[], messages: readonly AgentEventMessageRecord[]) {
-  const state = createEmptyAgentEventReplayState();
-  state.latestEventId = 'event-terminal-new';
-  runIds.forEach((id, index) => {
-    state.runs[id] = { id, status: 'completed', startedAt: 10 + index * 20, updatedAt: 20 + index * 20 };
+function conversationCreated(): AgentEvent {
+  return { ...base(1, 'conversation.created'), title: 'Dream evidence' };
+}
+
+function runStarted(seq: number, runId: string): AgentEvent {
+  return {
+    ...base(seq, 'run.started', agentActor),
+    runId,
+    agentId: 'agent-1',
+  };
+}
+
+function runCompleted(seq: number, runId: string): AgentEvent {
+  return {
+    ...base(seq, 'run.completed', agentActor),
+    runId,
+  };
+}
+
+function userMessage(seq: number, messageId: string, text: string, parentMessageId: string | null, runId?: string): AgentEvent {
+  return {
+    ...base(seq, 'user_message.created', userActor),
+    runId,
+    messageId,
+    parentMessageId,
+    content: [{ type: 'text', text }],
+  };
+}
+
+function assistantStarted(seq: number, messageId: string, parentMessageId: string | null, runId: string): AgentEvent {
+  return {
+    ...base(seq, 'assistant_message.started', agentActor),
+    runId,
+    messageId,
+    parentMessageId,
+    providerId: 'test',
+    modelId: 'test',
+  };
+}
+
+function assistantCompleted(seq: number, messageId: string, text: string, runId: string): AgentEvent {
+  return {
+    ...base(seq, 'assistant_message.completed', agentActor),
+    runId,
+    messageId,
+    stopReason: 'stop',
+    content: [{ type: 'text', text }],
+  };
+}
+
+function toolResult(seq: number, messageId: string, parentMessageId: string, text: string, runId: string): AgentEvent {
+  return {
+    ...base(seq, 'tool_result.created', toolActor),
+    runId,
+    toolCallId: 'tool-prev',
+    messageId,
+    parentMessageId,
+    toolName: 'node_read',
+    content: [{ type: 'text', text }],
+  };
+}
+
+function conversationSpan(events: readonly AgentEvent[], fromSeqExclusive: number) {
+  return buildDreamMemoryExtractionSpanFromEvidence('run-new', {
+    conversations: [{
+      conversationId: 'conversation-1',
+      events: [conversationCreated(), ...events],
+      fromSeqExclusive,
+    }],
+    runs: [],
   });
-  for (const item of messages) {
-    state.messages[item.id] = item;
-    if (item.parentMessageId === null) state.rootMessageIds.push(item.id);
-    else (state.childrenByParentId[item.parentMessageId] ??= []).push(item.id);
-  }
-  state.latestMessageId = messages.at(-1)?.id ?? null;
-  state.latestSeq = messages.length;
-  return state;
 }
 
 const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>): string =>
@@ -66,47 +106,25 @@ const fenceOf = (text: string) => /<(evidence-[0-9a-f-]+)>/.exec(text)?.[1];
 
 describe('agent dream extraction', () => {
   test('does not cross a previous run boundary to find user provenance', () => {
-    const state = replayStateWith(['run-prev', 'run-new'], [
-      message({
-        id: 'user-prev',
-        role: 'user',
-        actor: userActor,
-        parentMessageId: null,
-        text: 'Previous turn instruction that must not become new-run evidence.',
-      }),
-      message({
-        id: 'assistant-prev',
-        role: 'assistant',
-        actor: agentActor,
-        parentMessageId: 'user-prev',
-        text: 'Previous run response.',
-        runId: 'run-prev',
-      }),
-      message({
-        id: 'tool-prev-result',
-        role: 'toolResult',
-        actor: toolActor,
-        parentMessageId: 'assistant-prev',
-        text: 'Previous run tool result.',
-        runId: 'run-prev',
-        toolName: 'node_read',
-      }),
-      message({
-        id: 'assistant-new',
-        role: 'assistant',
-        actor: agentActor,
-        parentMessageId: 'tool-prev-result',
-        text: 'New run response without a fresh user prompt.',
-        runId: 'run-new',
-      }),
-    ]);
+    const events = [
+      runStarted(2, 'run-prev'),
+      userMessage(3, 'user-prev', 'Previous turn instruction that must not become new-run evidence.', null, 'run-prev'),
+      assistantStarted(4, 'assistant-prev', 'user-prev', 'run-prev'),
+      assistantCompleted(5, 'assistant-prev', 'Previous run response.', 'run-prev'),
+      toolResult(6, 'tool-prev-result', 'assistant-prev', 'Previous run tool result.', 'run-prev'),
+      runCompleted(7, 'run-prev'),
+      runStarted(8, 'run-new'),
+      assistantStarted(9, 'assistant-new', 'tool-prev-result', 'run-new'),
+      assistantCompleted(10, 'assistant-new', 'New run response without a fresh user prompt.', 'run-new'),
+      runCompleted(11, 'run-new'),
+    ];
 
-    const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
+    const span = conversationSpan(events, 8);
 
     expect(span?.sources[0]).toMatchObject({
       stream: 'conversation',
       streamId: 'conversation-1',
-      range: { fromSeqExclusive: 0, throughSeq: 4 },
+      range: { fromSeqExclusive: 8, throughSeq: 11 },
     });
     expect(span?.transcript).toContain('New run response without a fresh user prompt.');
     expect(span?.transcript).not.toContain('Previous turn instruction');
@@ -114,30 +132,20 @@ describe('agent dream extraction', () => {
   });
 
   test('includes the directly adjacent user prompt for a normal completed turn', () => {
-    const state = replayStateWith(['run-new'], [
-      message({
-        id: 'user-new',
-        role: 'user',
-        actor: userActor,
-        parentMessageId: null,
-        text: 'Remember that concise answers are preferred.',
-      }),
-      message({
-        id: 'assistant-new',
-        role: 'assistant',
-        actor: agentActor,
-        parentMessageId: 'user-new',
-        text: 'I will answer concisely.',
-        runId: 'run-new',
-      }),
-    ]);
+    const events = [
+      runStarted(2, 'run-new'),
+      userMessage(3, 'user-new', 'Remember that concise answers are preferred.', null, 'run-new'),
+      assistantStarted(4, 'assistant-new', 'user-new', 'run-new'),
+      assistantCompleted(5, 'assistant-new', 'I will answer concisely.', 'run-new'),
+      runCompleted(6, 'run-new'),
+    ];
 
-    const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
+    const span = conversationSpan(events, 2);
 
     expect(span?.sources[0]).toMatchObject({
       stream: 'conversation',
       streamId: 'conversation-1',
-      range: { fromSeqExclusive: 0, throughSeq: 2 },
+      range: { fromSeqExclusive: 2, throughSeq: 6 },
     });
     expect(span?.transcript).toContain('Remember that concise answers are preferred.');
     expect(span?.transcript).toContain('I will answer concisely.');
@@ -205,42 +213,18 @@ describe('agent dream extraction', () => {
   // prompt snapshot (no model-in-loop harness); whether the model actually cites those spans is
   // verified manually.
   test('states the encoding policy and carries correction/surprise evidence inside the fence', () => {
-    const state = replayStateWith(['run-new'], [
-      message({
-        id: 'user-new',
-        role: 'user',
-        actor: userActor,
-        parentMessageId: null,
-        text: 'No — that assumption was wrong: this repo builds with bun, never npm.',
-      }),
-      message({
-        id: 'assistant-1',
-        role: 'assistant',
-        actor: agentActor,
-        parentMessageId: 'user-new',
-        text: 'Checking the lockfile.',
-        runId: 'run-new',
-      }),
-      message({
-        id: 'tool-result-1',
-        role: 'toolResult',
-        actor: toolActor,
-        parentMessageId: 'assistant-1',
-        text: 'ENOENT: package-lock.json does not exist; found bun.lock instead.',
-        runId: 'run-new',
-        toolName: 'node_read',
-      }),
-      message({
-        id: 'assistant-2',
-        role: 'assistant',
-        actor: agentActor,
-        parentMessageId: 'tool-result-1',
-        text: 'Confirmed: bun is the package manager here.',
-        runId: 'run-new',
-      }),
-    ]);
+    const events = [
+      runStarted(2, 'run-new'),
+      userMessage(3, 'user-new', 'No - that assumption was wrong: this repo builds with bun, never npm.', null, 'run-new'),
+      assistantStarted(4, 'assistant-1', 'user-new', 'run-new'),
+      assistantCompleted(5, 'assistant-1', 'Checking the lockfile.', 'run-new'),
+      toolResult(6, 'tool-result-1', 'assistant-1', 'ENOENT: package-lock.json does not exist; found bun.lock instead.', 'run-new'),
+      assistantStarted(7, 'assistant-2', 'tool-result-1', 'run-new'),
+      assistantCompleted(8, 'assistant-2', 'Confirmed: bun is the package manager here.', 'run-new'),
+      runCompleted(9, 'run-new'),
+    ];
 
-    const span = buildDreamMemoryExtractionSpan('conversation-1', state, 'run-new');
+    const span = conversationSpan(events, 2);
     expect(span).not.toBeNull();
     const text = promptText(buildDreamMemoryExtractionRequest({ span: span!, existingMemories: [] }));
 

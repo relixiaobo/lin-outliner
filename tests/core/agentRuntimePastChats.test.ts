@@ -489,6 +489,88 @@ describe('agent runtime past chats integration', () => {
     expect(finalAssistantText).toBe('We chose cobalt blue for focus rings.');
   });
 
+  test('recall keeps episode gist evidence when raw episode sources no longer resolve', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-episode-gist-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-episode-gist-data-'));
+    roots.push(localRoot, dataRoot);
+    const principal = agentPrincipal('built-in:tenon:assistant');
+    const store = new AgentEventStore(dataRoot);
+    const episode = await store.recordMemoryEpisode(principal, {
+      id: 'episode-recall-raw-missing',
+      gist: 'Durable gist survives raw loss in recall evidence.',
+      sources: [conversationSource('missing-recall-conversation', {
+        fromSeqExclusive: 1,
+        throughSeq: 2,
+        throughEventId: 'missing-recall-conversation-event-2',
+      })],
+      createdAt: 25,
+    });
+    await store.addMemoryEntry(principal, {
+      id: 'memory-recall-raw-missing',
+      fact: 'prefers recall to keep durable episode gist evidence',
+      sources: [{ episodeId: episode.id }],
+      createdAt: 30,
+    });
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('recall', {
+            query: 'durable episode gist',
+            include_evidence: true,
+            max_chars: 24,
+          }, { id: 'tool-recall-episode-gist' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          contexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Recalled.'));
+        },
+      ],
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, 'Can you recall durable episode gist evidence?');
+    const contextText = contexts.join('\n');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(contextText).toContain('memory-recall-raw-missing');
+    expect(contextText).toContain('episode_gist');
+    expect(contextText).toContain('Durable gist survives ra');
+    expect(contextText).toContain('evidence_truncated');
+  });
+
   test('recall reaches the user pool distilled but gates raw evidence to the reader own pool', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-gate-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recall-gate-data-'));

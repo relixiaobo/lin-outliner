@@ -3971,16 +3971,18 @@ export class AgentRuntime {
             if (sourceEvidence.mode !== 'evidence') continue;
             evidenceTruncated ||= sourceEvidence.outputTruncated;
             if (sourceEvidence.episode) {
+              const gist = clampEvidenceText(sourceEvidence.episode.gist, remainingChars);
               evidence.push({
                 kind: 'episode_gist',
                 source,
                 episodeId: sourceEvidence.episode.id,
-                gist: sourceEvidence.episode.gist,
+                gist: gist.text,
                 createdAt: sourceEvidence.episode.createdAt,
                 rawSources: sourceEvidence.episode.sources,
               });
-              remainingChars = Math.max(0, remainingChars - sourceEvidence.episode.gist.length);
-              if (remainingChars <= 0) {
+              evidenceTruncated ||= gist.truncated;
+              remainingChars = Math.max(0, remainingChars - gist.text.length);
+              if (remainingChars <= 0 || gist.truncated) {
                 evidenceTruncated = true;
                 break;
               }
@@ -7110,6 +7112,12 @@ function parseProviderQualifiedModel(value: string): { providerId: string; model
   const modelId = rest.join(separator);
   if (!providerId?.trim() || !modelId.trim()) return null;
   return { providerId: providerId.trim(), modelId: modelId.trim() };
+}
+
+function clampEvidenceText(text: string, maxChars: number): { text: string; truncated: boolean } {
+  if (text.length <= maxChars) return { text, truncated: false };
+  if (maxChars <= 0) return { text: '', truncated: true };
+  return { text: text.slice(0, maxChars), truncated: true };
 }
 
 function resolveSkillEffortOverride(

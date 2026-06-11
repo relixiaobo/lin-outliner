@@ -373,11 +373,11 @@ export class AgentPastChatsService {
     if (!episode) {
       return pastChatsError('SOURCE_NOT_FOUND', `No memory episode was found for ${source.episodeId}.`);
     }
-    let remainingChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
+    const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
+    let remainingChars = Math.max(0, maxChars - episode.gist.length);
     const messages: PastChatsEvidenceMessage[] = [];
     let totalChars = 0;
-    let outputTruncated = false;
-    let firstError: PastChatsErrorResult | null = null;
+    let outputTruncated = remainingChars === 0 && episode.sources.length > 0;
     for (const rawSource of episode.sources) {
       if (remainingChars <= 0) {
         outputTruncated = true;
@@ -385,7 +385,6 @@ export class AgentPastChatsService {
       }
       const evidence = await this.readStreamMemorySourceEvidence(rawSource, remainingChars, source);
       if (evidence.mode !== 'evidence') {
-        firstError ??= evidence;
         continue;
       }
       messages.push(...evidence.messages);
@@ -393,7 +392,6 @@ export class AgentPastChatsService {
       outputTruncated ||= evidence.outputTruncated;
       remainingChars = Math.max(0, remainingChars - evidence.totalChars);
     }
-    if (messages.length === 0 && firstError) return firstError;
     return {
       mode: 'evidence',
       source: { ...source },
