@@ -23,10 +23,12 @@ import {
 import type { ExternalContext } from '../core/launcher/context';
 import type { CaptureIntent } from '../core/launcher/sources';
 import {
+  diagnosticErrorMessage,
   diagnosticSourceLabel,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
+  serializeUnknownError,
   type DiagnosticsActionResult,
   type ErrorReport,
 } from '../core/errorObservability';
@@ -148,45 +150,19 @@ function reportRendererError(report: ErrorReport): void {
   void ipcRenderer.invoke(LIN_REPORT_RENDERER_ERROR_CHANNEL, report).catch(() => undefined);
 }
 
-function serializeErrorValue(value: unknown): { name?: string; message?: string; stack?: string } {
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-    };
-  }
-  if (typeof value === 'object' && value !== null) {
-    const record = value as Record<string, unknown>;
-    return {
-      ...(typeof record.name === 'string' ? { name: record.name } : {}),
-      ...(typeof record.message === 'string' ? { message: record.message } : {}),
-      ...(typeof record.stack === 'string' ? { stack: record.stack } : {}),
-    };
-  }
-  if (typeof value === 'string') return { message: value };
-  if (value === undefined) return {};
-  return { message: String(value) };
-}
-
-function rendererErrorMessage(value: unknown, fallback: string): string {
-  const serialized = serializeErrorValue(value);
-  return serialized.message || fallback;
-}
-
 window.addEventListener('error', (event) => {
   const source = event.filename ? diagnosticSourceLabel(event.filename) : undefined;
   reportRendererError({
     domain: 'render',
     severity: 'fatal',
     code: 'window-error',
-    message: event.message || rendererErrorMessage(event.error, 'Renderer error'),
+    message: event.message || diagnosticErrorMessage(event.error, 'Renderer error'),
     context: {
       ...(source ? { source } : {}),
       ...(typeof event.lineno === 'number' ? { line: event.lineno } : {}),
       ...(typeof event.colno === 'number' ? { column: event.colno } : {}),
     },
-    error: serializeErrorValue(event.error),
+    error: serializeUnknownError(event.error),
   });
 });
 
@@ -195,9 +171,9 @@ window.addEventListener('unhandledrejection', (event) => {
     domain: 'render',
     severity: 'fatal',
     code: 'window-unhandled-rejection',
-    message: rendererErrorMessage(event.reason, 'Unhandled renderer promise rejection'),
+    message: diagnosticErrorMessage(event.reason, 'Unhandled renderer promise rejection'),
     context: { operation: 'unhandledRejection' },
-    error: serializeErrorValue(event.reason),
+    error: serializeUnknownError(event.reason),
   });
 });
 
@@ -296,6 +272,7 @@ const api = {
     ipcRenderer.invoke(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL) as Promise<DiagnosticsActionResult>,
   exportDiagnostics: () =>
     ipcRenderer.invoke(LIN_EXPORT_DIAGNOSTICS_CHANNEL) as Promise<DiagnosticsActionResult>,
+  reportRendererError: (report: ErrorReport) => reportRendererError(report),
   onSettingsChanged: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on(LIN_SETTINGS_CHANGED_CHANNEL, handler);

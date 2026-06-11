@@ -81,6 +81,33 @@ export interface DiagnosticsActionResult {
   error?: string;
 }
 
+export function serializeUnknownError(error: unknown): SerializedError {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  if (isRecord(error)) {
+    const name = typeof error.name === 'string' ? error.name : undefined;
+    const message = typeof error.message === 'string' ? error.message : undefined;
+    const stack = typeof error.stack === 'string' ? error.stack : undefined;
+    return {
+      ...(name ? { name } : {}),
+      ...(message ? { message } : {}),
+      ...(stack ? { stack } : {}),
+    };
+  }
+  if (typeof error === 'string') return { message: error };
+  if (error === undefined) return {};
+  return { message: String(error) };
+}
+
+export function diagnosticErrorMessage(error: unknown, fallback: string): string {
+  return serializeUnknownError(error).message || fallback;
+}
+
 export function diagnosticSourceLabel(input: string): string | undefined {
   const value = input.trim();
   if (!value) return undefined;
@@ -99,4 +126,8 @@ export function diagnosticSourceLabel(input: string): string | undefined {
   const leaf = segments.at(-1);
   const label = leaf && leaf.length < pathPart.length ? leaf : pathPart;
   return label.replace(/\s+/g, ' ').slice(0, 120).trim() || undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

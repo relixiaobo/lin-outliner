@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   diagnosticSourceLabel,
+  serializeUnknownError,
   type DiagnosticEnvironment,
   type DiagnosticExportArtifact,
   type DiagnosticLogRecord,
@@ -98,9 +99,10 @@ export class DiagnosticLogStore {
   }
 
   async ensureLogFile(): Promise<string> {
-    await mkdir(path.dirname(this.logPath), { recursive: true });
-    await appendFile(this.logPath, '', 'utf8');
-    return this.logPath;
+    return this.log.enqueue(DIAGNOSTIC_LOG_KEY, async () => {
+      await this.compact();
+      return this.logPath;
+    });
   }
 
   async writeExport(filePath: string, environment: DiagnosticEnvironment): Promise<string> {
@@ -126,29 +128,6 @@ export class DiagnosticLogStore {
     await atomicWriteFile(this.logPath, records.length === 0 ? '' : serializeJsonl(records));
     this.log.setLatestSeq(DIAGNOSTIC_LOG_KEY, records.at(-1)?.seq ?? 0);
   }
-}
-
-export function serializeUnknownError(error: unknown): { name?: string; message?: string; stack?: string } {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    };
-  }
-  if (isRecord(error)) {
-    const name = typeof error.name === 'string' ? error.name : undefined;
-    const message = typeof error.message === 'string' ? error.message : undefined;
-    const stack = typeof error.stack === 'string' ? error.stack : undefined;
-    return {
-      ...(name ? { name } : {}),
-      ...(message ? { message } : {}),
-      ...(stack ? { stack } : {}),
-    };
-  }
-  if (typeof error === 'string') return { message: error };
-  if (error === undefined) return {};
-  return { message: String(error) };
 }
 
 function normalizeReport(report: ErrorReport): Required<Pick<ErrorReport, 'domain' | 'severity' | 'message'>> & {

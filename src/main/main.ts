@@ -24,6 +24,7 @@ import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTyp
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
+  serializeUnknownError,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
@@ -101,7 +102,7 @@ import {
   hasExplicitAgentLocalRoot,
   resolveAgentLocalFileRoot,
 } from './agentLocalRoot';
-import { DiagnosticLogStore, serializeUnknownError } from './diagnosticLog';
+import { DiagnosticLogStore } from './diagnosticLog';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);

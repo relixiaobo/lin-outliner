@@ -823,7 +823,7 @@ export class AgentEventStore {
     // next launch re-probe.
     this.storageLayoutPromise ??= this.ensureStorageGeneration().catch((error) => {
       this.reportStorageWarning(
-        `Agent storage generation probe failed; continuing on the current layout: ${error instanceof Error ? error.message : String(error)}`,
+        'Agent storage generation probe failed; continuing on the current layout.',
         error,
         { operation: 'ensureStorageGeneration' },
         'agent-storage-generation-probe-failed',
@@ -850,7 +850,7 @@ export class AgentEventStore {
       if (!isNotFoundError(error)) {
         // Unreadable (permissions, I/O): ambiguity — never wipe on error.
         this.reportStorageWarning(
-          `Agent storage sentinel unreadable; continuing on the current layout: ${error instanceof Error ? error.message : String(error)}`,
+          'Agent storage sentinel unreadable; continuing on the current layout.',
           error,
           { operation: 'readLayoutSentinel' },
           'agent-storage-sentinel-unreadable',

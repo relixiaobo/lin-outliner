@@ -38,9 +38,13 @@ Main installs process-level handlers:
 - `unhandledRejection` records a fatal `uncaught` diagnostic and lets the app keep
   running.
 
-Preload installs renderer handlers for `window.error` and
-`window.unhandledrejection`. They send a structured report to main over
-`lin:report-renderer-error`; the renderer never writes files directly.
+Preload installs handlers for `window.error` and `window.unhandledrejection` as
+the early, isolated-world safety net. The renderer entry installs the same
+handlers in the main world and reports through the preload bridge. Both paths
+send structured reports to main over `lin:report-renderer-error`; the renderer
+never writes files directly. Duplicate reports collapse by fingerprint. The
+real-Electron smoke suite verifies that renderer error and rejection events reach
+the local diagnostics file under `contextIsolation: true` and `sandbox: true`.
 
 ## Local Log
 
