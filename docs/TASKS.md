@@ -642,6 +642,17 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **sidebar pinned drag-to-pin + reorder** (main, PR #196, fast-track) — builds on the
+  Pinned section (PR #191). Drag an outliner node onto the Pinned section to pin it
+  (HTML5 DnD; `dropEffect = 'move'` matches the outliner source's `effectAllowed`, the
+  fix for the silent drop-cancel bug). Empty state is a dashed drop zone ("Drag to pin
+  nodes", en + zh-Hans). Pins insert at a position (neutral `--drop-line` insertion line
+  before/after a row by midpoint), and pinned rows are drag-reorderable via a dedicated
+  `PINNED_NODE_REORDER_MIME`. New `pinNodeAtIndex` (add-at-index + reorder-to-index with
+  index adjustment) is unit-tested (`tests/renderer/workspacePinnedNodes.test.tsx`).
+  Layout/alignment unchanged. Gate: `/code-review` (3 finder angles) + light/dark visual
+  — PASS; three non-blocking edge-case follow-ups noted on the PR.
+
 - **agent permission safety modes** (codex-2, PR #193, plan-track) — the app-level
   `permissionMode: trusted|restricted` becomes a global three-level `AgentSafetyMode`
   (`ask_first` / `balanced` (default) / `full_access`), a first-class default-policy

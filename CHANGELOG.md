@@ -12,6 +12,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Sidebar pinned: drag-to-pin + reorderable list (PR #196)** — the Pinned
+  section is now a real HTML5 drag target. Drag any node from the outliner onto
+  it to pin it; the drop handler sets `dropEffect = 'move'` to match the outliner
+  source's `effectAllowed = 'move'` (a `'copy'` mismatch makes the real browser
+  silently cancel the drop on release — a class of bug `dispatchEvent`-based e2e
+  can't catch). The empty Pinned section became a dashed drop zone reading "Drag
+  to pin nodes" (en + zh-Hans) that deepens its border + shows a faint fill on
+  dragover, replacing the flat right-click hint. Pins insert at a position, not
+  just append: dragging over a pinned row shows a single neutral insertion line
+  (reusing the outliner's `--drop-line` token) before/after the row by its
+  vertical midpoint, and pinned rows are themselves drag-reorderable within the
+  list via a dedicated `PINNED_NODE_REORDER_MIME` (distinct from the add-a-pin
+  outliner MIME). `pinNodeAtIndex` handles both add-at-index and reorder-to-index
+  (remove → re-insert with an index adjustment when the dragged item sat before
+  the target, so the drop lands where the insertion line showed). Sidebar layout
+  and the alignment guard are unchanged. Covered by a new renderer unit test
+  (`workspacePinnedNodes.test.tsx`: insert / append / reorder up+down / no-op /
+  unknown-node) plus an e2e drag-to-pin case. Known minor follow-ups (non-blocking,
+  recorded on the PR): expanded-pin drop treats the whole block as the unit;
+  hovering the section title appends; the 100-pin cap eviction differs from
+  `togglePin`.
+
 - **Local error observability (PR #194)** — a failure anywhere in the app now
   lands as a structured, deduplicated record in one local log, legible without
   reading the terminal. A single main-process `reportError({domain, severity,
