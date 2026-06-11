@@ -354,7 +354,7 @@ export const zhHans: PartialMessages = {
       collapseNode: ({ label }) => `折叠 ${label}`,
       expandNode: ({ label }) => `展开 ${label}`,
       pinnedSection: '已固定',
-      noPinnedHint: '右键点击节点以固定',
+      noPinnedHint: '拖动节点到此固定',
       pinnedNodesAriaLabel: '已固定节点',
       openRoot: ({ rootLabel }) => `打开 ${rootLabel}`,
       workspaceRootTreeAriaLabel: '工作区根节点树',

@@ -90,11 +90,30 @@ export function useWorkspacePinnedNodes(byId: DocumentIndex['byId'] | null) {
     ));
   }, [byId]);
 
+  // Insert a node into the pinned list at a specific position. Handles both adding a
+  // new pin (drag from the outline) and reordering an existing one (drag within the
+  // list): the node is removed first, then re-inserted, with `index` interpreted
+  // against the CURRENT list so a same-list move lands where the insertion line showed.
+  const pinNodeAtIndex = useCallback((nodeId: NodeId, index: number) => {
+    if (!byId?.has(nodeId)) return;
+    setPinnedNodeIds((current) => {
+      const currentIndex = current.indexOf(nodeId);
+      const without = current.filter((pinnedNodeId) => pinnedNodeId !== nodeId);
+      let target = index;
+      if (currentIndex !== -1 && currentIndex < index) target -= 1;
+      target = Math.max(0, Math.min(target, without.length));
+      if (currentIndex === target && currentIndex !== -1) return current;
+      const next = [...without.slice(0, target), nodeId, ...without.slice(target)];
+      return next.slice(0, MAX_PINNED_NODES);
+    });
+  }, [byId]);
+
   const pinnedNodeIdSet = useMemo(() => new Set(pinnedNodeIds), [pinnedNodeIds]);
   const isNodePinned = useCallback((nodeId: NodeId) => pinnedNodeIdSet.has(nodeId), [pinnedNodeIdSet]);
 
   return {
     isNodePinned,
+    pinNodeAtIndex,
     pinnedNodeIds,
     togglePin,
   };

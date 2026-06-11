@@ -517,14 +517,14 @@ test.describe('workspace layout resizing', () => {
   });
 
   test('sidebar pinned nodes persist and can be toggled from row context menus', async ({ page }) => {
-    await expect(page.locator('.sidebar-empty-row')).toContainText('Right-click a node to pin it');
+    await expect(page.locator('.sidebar-pin-dropzone')).toContainText('Drag to pin nodes');
 
     await rowBody(page, ids.alpha).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Pin', exact: true }).click();
 
     const pinnedTree = page.getByLabel('Pinned nodes');
     await expect(pinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' })).toBeVisible();
-    await expect(page.locator('.sidebar-empty-row')).toHaveCount(0);
+    await expect(page.locator('.sidebar-pin-dropzone')).toHaveCount(0);
 
     await rowBody(page, ids.alpha).click({ button: 'right' });
     await expect(page.getByRole('menuitem', { name: 'Unpin', exact: true })).toBeVisible();
@@ -552,7 +552,7 @@ test.describe('workspace layout resizing', () => {
     await page.getByRole('menuitem', { name: 'Unpin', exact: true }).click();
 
     await expect(page.getByLabel('Pinned nodes')).toHaveCount(0);
-    await expect(page.locator('.sidebar-empty-row')).toContainText('Right-click a node to pin it');
+    await expect(page.locator('.sidebar-pin-dropzone')).toContainText('Drag to pin nodes');
 
     await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Pin', exact: true }).click();
@@ -561,6 +561,47 @@ test.describe('workspace layout resizing', () => {
     await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Root' })).toBeVisible();
     await rootPinnedTree.getByRole('button', { name: 'Expand Root' }).click();
     await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Library' })).toBeVisible();
+  });
+
+  test('dragging an outliner node onto the pinned dropzone pins it', async ({ page }) => {
+    await expect(page.locator('.sidebar-pin-dropzone')).toContainText('Drag to pin nodes');
+
+    // Outliner rows use HTML5 DnD: dragstart writes the node id into a custom
+    // MIME on a shared DataTransfer; the sidebar reads it on drop. Dispatch the
+    // sequence manually so the real handlers run (synthetic mouse drags don't
+    // populate dataTransfer).
+    await page.evaluate((nodeId) => {
+      const source = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .row-bullet-button`);
+      if (!source) throw new Error(`Missing drag source ${nodeId}`);
+      const dataTransfer = new DataTransfer();
+      const rect = source.getBoundingClientRect();
+      source.dispatchEvent(new DragEvent('dragstart', {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        dataTransfer,
+      }));
+      const dropzone = document.querySelector<HTMLElement>('.sidebar-pin-dropzone');
+      if (!dropzone) throw new Error('Missing pinned dropzone');
+      const dropRect = dropzone.getBoundingClientRect();
+      const eventInit: DragEventInit = {
+        bubbles: true,
+        cancelable: true,
+        clientX: dropRect.left + dropRect.width / 2,
+        clientY: dropRect.top + dropRect.height / 2,
+        dataTransfer,
+      };
+      dropzone.dispatchEvent(new DragEvent('dragover', eventInit));
+      dropzone.dispatchEvent(new DragEvent('drop', eventInit));
+    }, ids.alpha);
+
+    const pinnedTree = page.getByLabel('Pinned nodes');
+    await expect(pinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' })).toBeVisible();
+    await expect(page.locator('.sidebar-pin-dropzone')).toHaveCount(0);
+    await expect.poll(async () => page.evaluate((key) => (
+      window.localStorage.getItem(key) ?? ''
+    ), WORKSPACE_PINNED_NODES_STORAGE_KEY)).toContain(`"nodeIds":["${ids.alpha}"]`);
   });
 
   test('sidebar pinned nodes drop stale ids on restore', async ({ page }) => {

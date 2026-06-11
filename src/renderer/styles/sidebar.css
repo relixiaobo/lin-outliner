@@ -173,15 +173,54 @@
   padding: 0 var(--space-4) 0 var(--sidebar-content-start);
 }
 
-.sidebar-empty-row {
+/* Empty pinned section: a dashed drop zone that invites dragging nodes in.
+   Functional state stays neutral (B3) — the border deepens and a faint fill
+   appears while a node hovers over the section. The -1px left padding absorbs the
+   dashed border so the pin icon aligns with the section title and nav icons. */
+.sidebar-pin-dropzone {
   display: flex;
-  height: var(--sidebar-row-height);
+  min-height: var(--sidebar-row-height);
   align-items: center;
   gap: var(--space-2);
   color: var(--text-faint);
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
-  padding: 0 var(--space-4) 0 var(--sidebar-content-start);
+  padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--sidebar-content-start) - 1px);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
+}
+
+.sidebar-section.pin-dragover .sidebar-pin-dropzone {
+  border-color: var(--border-strong);
+  background: var(--fill-2);
+  color: var(--text-body);
+}
+
+/* Pinned rows are drag-reorderable and accept drops at a position. The insertion point
+   is a single neutral line (same --drop-line token as the outliner) drawn before the
+   hovered row, or after the last row for the append slot. */
+.pinned-branch {
+  position: relative;
+}
+
+.pinned-branch.drop-before::before,
+.pinned-branch.drop-after::after {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--drop-line);
+  content: "";
+}
+
+.pinned-branch.drop-before::before {
+  top: calc(var(--space-1) * -1);
+}
+
+.pinned-branch.drop-after::after {
+  bottom: calc(var(--space-1) * -1);
 }
 
 .sidebar-empty-icon {
