@@ -2165,10 +2165,13 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         String(args.requestId),
         args.result,
       );
+    case 'agent_stop_run':
+      return agentRuntime.stopRun(
+        conversationId(),
+        String(args.runId),
+      );
     case 'agent_stop_conversation':
       return agentRuntime.stopConversation(conversationId());
-    case 'agent_stop_run':
-      return agentRuntime.stopRun(conversationId(), String(args.runId));
     case 'agent_reset_conversation':
       return agentRuntime.resetConversation(conversationId());
     case 'agent_close_conversation':

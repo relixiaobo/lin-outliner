@@ -96,6 +96,13 @@ export interface AgentStreamingRenderState {
   updatedAt: number;
 }
 
+export interface AgentRenderActiveRun {
+  runId: string;
+  agentId: string;
+  addressedByMessageId: string | null;
+  startedAt: number;
+}
+
 export interface AgentRenderChildRunEntity {
   id: string;
   name?: string;
@@ -212,15 +219,15 @@ export interface AgentRenderProjection {
   revision: number;
   conversationTitle: string | null;
   members: AgentRenderMemberView[];
+  activeRuns: AgentRenderActiveRun[];
   activeRunId: string | null;
-  /** The active run's executing agent — the Channel typing indicator's subject. */
+  /** Compatibility subject for single-run renderers; parallel UIs should read activeRuns. */
   activeRunAgentId: string | null;
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
   /**
-   * Channel user messages queued behind the active round (queue-all, no steer).
-   * Not yet in the event log — the round loop persists each when it routes it —
-   * so the thread renders these to keep the just-sent message visible.
+   * Compatibility field for the removed Channel queue-all stage.
+   * Channel user messages now persist before dispatch, so this remains empty.
    */
   queuedMessages: string[];
   activeCompaction: AgentRenderActiveCompaction | null;
@@ -240,6 +247,7 @@ export interface AgentRenderProjection {
 
 export interface BuildAgentRenderProjectionOptions {
   revision: number;
+  activeRuns?: AgentRenderActiveRun[];
   activeRunId?: string | null;
   activeRunAddressedByMessageId?: string | null;
   activityEntries?: readonly AgentRenderActivityEntry[];
@@ -301,16 +309,19 @@ export function buildAgentRenderProjection(
   }
   applyMessageAddressing(entities, options);
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
+  const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
+  const activeRunAgentId = activeRunId
+    ? state.runs[activeRunId]?.agentId ?? options.activeRuns?.find((run) => run.runId === activeRunId)?.agentId ?? null
+    : null;
 
   return {
     conversationId: state.conversation.id,
     revision: options.revision,
     conversationTitle: state.conversation.title,
     members: state.conversation.members.map((principal) => toRenderMemberView(principal, options)),
-    activeRunId: options.activeRunId ?? null,
-    activeRunAgentId: options.activeRunId
-      ? state.runs[options.activeRunId]?.agentId ?? null
-      : null,
+    activeRuns: options.activeRuns ?? [],
+    activeRunId,
+    activeRunAgentId,
     activityEntries: options.activityEntries
       ? options.activityEntries.map((entry) => ({ ...entry }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),

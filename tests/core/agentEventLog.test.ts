@@ -274,6 +274,89 @@ describe('agent event log', () => {
     });
   });
 
+  test('visible transcript keeps Channel peer reply slots but collapses regenerated slot versions', () => {
+    const reviewerActor: AgentActor = { type: 'agent', agentId: 'agent-2' };
+    const events: AgentEvent[] = [
+      { ...base(1, 'conversation.created'), title: 'Channel' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-channel',
+        parentMessageId: null,
+        content: [{ type: 'text', text: '@one @two compare' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-one', agentId: 'agent-1', addressedByMessageId: 'user-channel' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-one',
+        messageId: 'assistant-one',
+        parentMessageId: 'user-channel',
+        addressedByMessageId: 'user-channel',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(5, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-one',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'One original' }],
+      },
+      { ...base(6, 'run.completed'), runId: 'run-one' },
+      { ...base(7, 'run.started'), runId: 'run-two', agentId: 'agent-2', addressedByMessageId: 'user-channel' },
+      {
+        ...base(8, 'assistant_message.started', reviewerActor),
+        runId: 'run-two',
+        messageId: 'assistant-two',
+        parentMessageId: 'user-channel',
+        addressedByMessageId: 'user-channel',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(9, 'assistant_message.completed', reviewerActor),
+        messageId: 'assistant-two',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Two original' }],
+      },
+      { ...base(10, 'run.completed'), runId: 'run-two' },
+    ];
+
+    const peerState = replayAgentEvents(events);
+    expect(getAgentEventActivePath(peerState).map((message) => message.id)).toEqual(['user-channel', 'assistant-two']);
+    expect(getAgentEventVisibleTranscript(peerState).map((entry) => entry.message.id)).toEqual([
+      'user-channel',
+      'assistant-one',
+      'assistant-two',
+    ]);
+
+    const regeneratedState = replayAgentEvents([
+      ...events,
+      { ...base(11, 'branch.selected'), leafMessageId: 'user-channel' },
+      { ...base(12, 'run.started'), runId: 'run-one-b', agentId: 'agent-1', addressedByMessageId: 'user-channel' },
+      {
+        ...base(13, 'assistant_message.started', agentActor),
+        runId: 'run-one-b',
+        messageId: 'assistant-one-b',
+        parentMessageId: 'user-channel',
+        addressedByMessageId: 'user-channel',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(14, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-one-b',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'One regenerated' }],
+      },
+      { ...base(15, 'run.completed'), runId: 'run-one-b' },
+    ]);
+
+    expect(getAgentEventVisibleTranscript(regeneratedState).map((entry) => entry.message.id)).toEqual([
+      'user-channel',
+      'assistant-two',
+      'assistant-one-b',
+    ]);
+  });
+
   test('expands compacted active-path history for visible transcript reads', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Compaction' },

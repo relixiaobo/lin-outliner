@@ -334,10 +334,10 @@ export const api = {
     requestId: string,
     result: AskUserQuestionResult,
   ) => command<{ resolved: boolean }>('agent_resolve_user_question', { conversationId, requestId, result }),
+  agentStopRun: (conversationId: string, runId: string) =>
+    command<{ stopped: boolean }>('agent_stop_run', { conversationId, runId }),
   agentStopConversation: (conversationId: string) =>
     command<void>('agent_stop_conversation', { conversationId }),
-  agentStopRun: (conversationId: string, runId: string) =>
-    command<void>('agent_stop_run', { conversationId, runId }),
   agentResetConversation: (conversationId: string) =>
     command<void>('agent_reset_conversation', { conversationId }),
   agentCloseConversation: (conversationId: string) =>

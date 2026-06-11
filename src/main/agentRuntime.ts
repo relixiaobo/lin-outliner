@@ -6,6 +6,7 @@ import {
   type AgentLoopTurnUpdate,
   type StreamFn,
 } from '@earendil-works/pi-agent-core';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   // pi-ai's own vocabulary: per-"session" provider resources, keyed by our conversation id.
   cleanupSessionResources as cleanupPiConversationResources,
@@ -268,6 +269,7 @@ import {
 } from './agentSelfMaintenanceTools';
 import {
   buildAgentRenderProjection,
+  type AgentRenderActivityEntry,
   type AgentRenderActiveCompaction,
   type AgentRenderActiveDream,
   type AgentRenderDreamTaskEntity,
@@ -329,6 +331,7 @@ const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000]
 // How long each `status({wait})` poll blocks while waiting for a background-flagged
 // command child run to finish (it re-polls if the run is still going).
 const COMMAND_CHILD_RUN_WAIT_MS = 600_000;
+const CHANNEL_MAX_CONCURRENT_RUNS = 4;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -381,6 +384,13 @@ interface AgentPendingUserQuestion {
 }
 
 interface AgentActiveRunState extends AgentRuntimeActiveRunState {
+  startedAt: number;
+  agent: Agent;
+  channelTurn: boolean;
+  unsubscribe?: () => void;
+  channelDefinition?: AgentDefinition;
+  settled: Promise<void>;
+  resolveSettled: () => void;
   assistantMessageId: string | null;
   assistantText: string;
   toolCallMessageIds: Map<string, string>;
@@ -393,19 +403,6 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
    */
   addressedByMessageId: string | null;
 }
-
-/**
- * A Channel user message awaiting routing (the round queue, in-memory). A
- * message sent while a round is active is NOT persisted at send time: the event
- * tree is linear along the active path, and appending mid-run would re-point the
- * leaf and orphan the in-flight reply. The round loop persists each entry when
- * it routes it (mirroring the DM follow-up model); until then the renderer shows
- * it from the projection's queue. Edit/regenerate paths enqueue an
- * already-persisted message (they assert no round is active first).
- */
-type PendingChannelMessage =
-  | { kind: 'prompt'; prompt: UserMessage; messageText: string }
-  | { kind: 'persisted'; messageId: string; addressedTo: AgentPrincipal[] };
 
 /** One scheduled Channel turn: the agent to run and the message that addressed it. */
 interface ChannelTurnRequest {
@@ -427,6 +424,7 @@ type PublicConversationRuntimeEventInput =
 
 interface AgentConversationState {
   agent: Agent;
+  activeRuns: Map<string, AgentActiveRunState>;
   activeRun: AgentActiveRunState | null;
   lastRun: AgentActiveRunState | null;
   autoCompactConsecutiveFailures: number;
@@ -453,16 +451,10 @@ interface AgentConversationState {
   toolResultBudgetState: ToolResultBudgetState;
   /** Display names for member agents (agentId → name), for projections + preambles. */
   memberDisplayNames: Record<string, string>;
-  /**
-   * Channel round state: non-null while a round is draining (turns may be
-   * between runs, so `activeRun` alone cannot gate). Queue-all (no steer in
-   * Channels): user messages arriving mid-round persist immediately and join
-   * `pendingMessages`; `stopRequested` ends the round and discards unstarted
-   * routing, while `scopedStoppedRunIds` lets per-agent stops cancel only the
-   * addressed run and keep sibling turns independent.
-   */
-  channelRound: { stopRequested: boolean; scopedStoppedRunIds: Set<string> } | null;
-  pendingChannelMessages: PendingChannelMessage[];
+  pendingChannelTurns: ChannelTurnRequest[];
+  channelTurnStartsInProgress: number;
+  channelStopRequested: boolean;
+  channelDrainWaiters: Set<() => void>;
   unsubscribe: (() => void) | null;
 }
 
@@ -509,8 +501,14 @@ type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
 type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
 type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
+interface AgentRuntimeRunScope {
+  conversation: AgentConversationState;
+  agent: Agent;
+}
+
 export class AgentRuntime {
   private conversations = new Map<string, AgentConversationState>();
+  private readonly runScope = new AsyncLocalStorage<AgentRuntimeRunScope>();
   private osNotifier?: OsNotifier;
   // The conversation the user is actually VIEWING, reported by the renderer:
   // the displayed conversation when the agent dock is open, else null (the dock
@@ -527,6 +525,7 @@ export class AgentRuntime {
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, {
     conversationId: string;
+    runId?: string;
     request: AgentApprovalRequestView;
     alwaysAllowRule?: string;
     onApproved?: () => Promise<void>;
@@ -592,7 +591,7 @@ export class AgentRuntime {
     });
     this.contextManager = new AgentRuntimeContextManager<AgentConversationState>({
       refreshRuntimeSettings: (conversation) => this.refreshRuntimeSettings(conversation),
-      deriveRuntimePiMessages: (conversationId, eventState) => this.deriveRuntimePiMessages(conversationId, eventState),
+      deriveRuntimePiMessages: (conversationId, eventState, conversation) => this.deriveRuntimePiMessages(conversationId, eventState, conversation),
       appendConversationEvents: async (conversationId, conversation, inputs) => {
         await this.appendConversationEvents(conversationId, conversation, inputs);
       },
@@ -615,8 +614,8 @@ export class AgentRuntime {
           preservedMessages,
         )
       ),
-      persistToolOutputPayload: (conversationId, toolCallId, toolName, text) => (
-        this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
+      persistToolOutputPayload: (conversationId, toolCallId, toolName, text, runId) => (
+        this.persistToolOutputPayload(conversationId, toolCallId, toolName, text, runId)
       ),
       captureDebugPayload: (conversationId, payload, model) => this.captureDebugPayload(conversationId, payload, model),
       captureDebugResponse: (conversationId, response, model) => this.captureDebugResponse(conversationId, response, model),
@@ -848,11 +847,11 @@ export class AgentRuntime {
     if (this.isDefaultDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
     if (agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
     const conversation = await this.ensureConversationWithId(conversationId);
-    // Mid-round removal would yank a member whose run is live (or queued) and
+    // Mid-run removal would yank a member whose run is live (or queued) and
     // can flip the conversation's POV selection under it — membership changes
-    // wait for the round to settle.
-    if (conversation.channelRound || conversation.agent.state.isStreaming) {
-      throw new Error('Cannot remove a member while a Channel round is active.');
+    // wait for the Channel to settle.
+    if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) {
+      throw new Error('Cannot remove a member while a Channel run is active.');
     }
     const principal: AgentPrincipal = { type: 'agent', agentId };
     const members = conversation.eventState.conversation?.members ?? [];
@@ -1070,7 +1069,7 @@ export class AgentRuntime {
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'approval.resolved',
         actor: userActor(),
-        runId: this.activeRunId(conversation) ?? undefined,
+        runId: pending.runId,
         requestId,
         approved: resolvedApproved,
       }]);
@@ -1355,6 +1354,7 @@ export class AgentRuntime {
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
       await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
+      for (const run of this.activeRunList(conversation)) run.agent.abort();
       conversation.agent.abort();
       conversation.unsubscribe?.();
       clearPendingProjection(conversation);
@@ -1390,22 +1390,22 @@ export class AgentRuntime {
         await this.steerConversation(conversationId, messageText);
         return;
       }
-      const roundActive = multiAgent && (conversation.channelRound !== null || conversation.agent.state.isStreaming);
+      const channelActive = multiAgent && this.hasActiveRuns(conversation);
       const runtimeSettings = await this.refreshRuntimeSettings(conversation);
       const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
         ? parseCompactSlashCommand(messageText)
         : null;
       if (compactCommand) {
-        if (roundActive) throw new Error('Cannot compact while a Channel round is active.');
+        if (channelActive) throw new Error('Cannot compact while a Channel run is active.');
         await this.compactConversation(conversationId, conversation, compactCommand.instructions);
         return;
       }
       if (attachments.length === 0 && parseDreamSlashCommand(messageText) && this.dreamMemoryExtractionEnabled()) {
-        if (roundActive) throw new Error('Cannot run /dream while a Channel round is active.');
+        if (channelActive) throw new Error('Cannot run /dream while a Channel run is active.');
         await this.runManualDreamFromConversation(conversationId);
         return;
       }
-      if (!roundActive) {
+      if (!channelActive) {
         conversation.skillRuntime.resetRunPermissionRules();
         this.beginDebugQuery(conversation);
       }
@@ -1446,19 +1446,18 @@ export class AgentRuntime {
         agentListingReminder,
       }, now);
       if (multiAgent) {
-        // Queue-all (ratified, no steer in Channels): the message joins the
-        // round queue and is shown immediately from the projection; the round
-        // loop persists it when it routes it, keeping the event path linear
-        // past the in-flight reply. The gate covers ANY active Channel run —
-        // not just rounds: regenerate/retry and agent-task-notification flushes
-        // run turns with no channelRound, and starting a round under them
-        // would re-point the leaf beneath the in-flight reply. Those paths
-        // drain the queue when they settle.
+        const addressedTo = this.resolveAddressedMembers(messageText, channelMembers);
+        const messageId = await this.appendUserPromptEvent(conversationId, conversation, prompt, { addressedTo });
         userViewContextReminder.commit();
-        conversation.pendingChannelMessages.push({ kind: 'prompt', prompt, messageText });
-        this.emitProjection(conversationId, 'channel_message_queued');
-        if (conversation.channelRound || this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
-        await this.runChannelRound(conversationId, conversation);
+        this.enqueueChannelTurns(
+          conversationId,
+          conversation,
+          addressedTo
+            .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
+            .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId })),
+        );
+        await this.waitForChannelIdle(conversationId, conversation);
+        return;
       } else {
         await this.appendUserPromptEvent(conversationId, conversation, prompt);
         userViewContextReminder.commit();
@@ -1476,9 +1475,9 @@ export class AgentRuntime {
     }
   }
 
-  /** Edit/regenerate/retry/switch act on a settled transcript — a Channel round in flight means it is not settled. */
+  /** Edit/regenerate/retry/switch act on a settled transcript — any in-flight run means it is not settled. */
   private assertNoActiveChannelRound(conversation: AgentConversationState) {
-    if (conversation.channelRound) throw new Error('Cannot modify the transcript while a Channel round is active.');
+    if (this.hasActiveRuns(conversation)) throw new Error('Cannot modify the transcript while a Channel run is active.');
   }
 
   async editMessage(conversationId: string, nodeId: string, message: string) {
@@ -1487,7 +1486,6 @@ export class AgentRuntime {
     let startedRunId: string | null = null;
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
-      if (conversation.agent.state.isStreaming) throw new Error('Cannot edit while the agent is running.');
       this.assertNoActiveChannelRound(conversation);
       const target = requireEventMessage(conversation.eventState, nodeId);
       if (target.role !== 'user') throw new Error('Only user messages can be edited');
@@ -1512,8 +1510,14 @@ export class AgentRuntime {
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
       if (multiAgent && addressedTo) {
-        conversation.pendingChannelMessages.push({ kind: 'persisted', messageId, addressedTo });
-        await this.runChannelRound(conversationId, conversation);
+        this.enqueueChannelTurns(
+          conversationId,
+          conversation,
+          addressedTo
+            .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
+            .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId })),
+        );
+        await this.waitForChannelIdle(conversationId, conversation);
       } else {
         startedRunId = await this.startRun(conversationId, conversation);
         await conversation.agent.continue();
@@ -1529,7 +1533,6 @@ export class AgentRuntime {
   async regenerateMessage(conversationId: string, nodeId: string) {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
-      if (conversation.agent.state.isStreaming) throw new Error('Cannot regenerate while the agent is running.');
       this.assertNoActiveChannelRound(conversation);
       const targetId = findRegenerateTarget(conversation.eventState, nodeId);
       const target = requireEventMessage(conversation.eventState, targetId);
@@ -1552,16 +1555,11 @@ export class AgentRuntime {
       // started); this catch only surfaces the error.
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
-    // After the catch (mirroring the notification flush): a pre-turn throw
-    // must not strand messages queued behind this non-round turn.
-    const settled = this.conversations.get(conversationId);
-    if (settled) await this.drainChannelQueueIfIdle(conversationId, settled);
   }
 
   async retryMessage(conversationId: string, nodeId: string) {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
-      if (conversation.agent.state.isStreaming) throw new Error('Cannot retry while the agent is running.');
       this.assertNoActiveChannelRound(conversation);
       const target = requireEventMessage(conversation.eventState, nodeId);
       const parentId = target.parentMessageId;
@@ -1583,10 +1581,6 @@ export class AgentRuntime {
       // started); this catch only surfaces the error.
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
-    // After the catch (mirroring the notification flush): a pre-turn throw
-    // must not strand messages queued behind this non-round turn.
-    const settled = this.conversations.get(conversationId);
-    if (settled) await this.drainChannelQueueIfIdle(conversationId, settled);
   }
 
   /**
@@ -1609,10 +1603,11 @@ export class AgentRuntime {
     const ownerAgentId = owner.type === 'agent' ? owner.agentId : this.coordinatorAgentId();
     const members = conversation.eventState.conversation?.members ?? [];
     if (isMultiAgentConversation(members) || ownerAgentId !== this.coordinatorAgentId()) {
-      await this.runChannelTurn(conversationId, conversation, {
+      this.enqueueChannelTurns(conversationId, conversation, [{
         agentId: ownerAgentId,
         addressedByMessageId: parentId,
-      });
+      }]);
+      await this.waitForChannelIdle(conversationId, conversation);
       return;
     }
     let startedRunId: string | null = null;
@@ -1631,7 +1626,6 @@ export class AgentRuntime {
   async switchBranch(conversationId: string, nodeId: string) {
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
-      if (conversation.agent.state.isStreaming) throw new Error('Cannot switch branches while the agent is running.');
       this.assertNoActiveChannelRound(conversation);
       const leafMessageId = findLatestEventLeaf(conversation.eventState, nodeId).id;
       this.userViewContextReminderTracker.reset(conversationId);
@@ -1727,9 +1721,10 @@ export class AgentRuntime {
     if (!conversation) return;
     void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_stopped')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-    // stop ends the whole Channel round (ratified): the aborted run cancels,
-    // and the round loop discards unstarted routing with a thread trace.
-    if (conversation.channelRound) conversation.channelRound.stopRequested = true;
+    conversation.channelStopRequested = this.activeOrStartingChannelRunCount(conversation) > 0 || conversation.pendingChannelTurns.length > 0;
+    void this.discardPendingChannelTurns(conversationId, conversation, '')
+      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
     conversation.skillRuntime.resetRunPermissionRules();
     this.emitProjection(conversationId, 'stop_requested');
@@ -1737,23 +1732,20 @@ export class AgentRuntime {
 
   stopRun(conversationId: string, runId: string) {
     const conversation = this.conversations.get(conversationId);
-    if (!conversation) return;
-    const activeRun = conversation.activeRun;
-    if (!activeRun || activeRun.id !== runId) {
-      this.emitProjection(conversationId, 'stop_run_ignored');
-      return;
-    }
-    void this.clearPendingUserQuestionsForConversation(conversationId, 'run_stopped')
+    if (!conversation) return { stopped: false };
+    const run = conversation.activeRuns.get(runId);
+    if (!run) return { stopped: false };
+    void this.clearPendingUserQuestionsForRun(conversationId, runId, 'run_stopped')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-    conversation.channelRound?.scopedStoppedRunIds.add(runId);
-    conversation.agent.abort();
-    conversation.skillRuntime.resetRunPermissionRules();
-    this.emitProjection(conversationId, 'stop_run_requested');
+    run.agent.abort();
+    this.emitProjection(conversationId, 'run_stop_requested');
+    return { stopped: true };
   }
 
   resetConversation(conversationId: string) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
+    for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.reset();
     this.cleanupProviderConversationResources(conversationId);
     this.userViewContextReminderTracker.reset(conversationId);
@@ -1777,8 +1769,13 @@ export class AgentRuntime {
       conversation.eventState = eventState;
       conversation.agent.state.messages = [];
       conversation.autoCompactConsecutiveFailures = 0;
+      conversation.activeRuns.clear();
       conversation.activeRun = null;
       conversation.lastRun = null;
+      conversation.pendingChannelTurns = [];
+      conversation.channelTurnStartsInProgress = 0;
+      conversation.channelStopRequested = false;
+      conversation.channelDrainWaiters.clear();
       conversation.pendingChildRunNotifications.length = 0;
       conversation.queuedFollowUpSkillListingReservation = null;
       conversation.reactiveCompactRequested = false;
@@ -1797,6 +1794,7 @@ export class AgentRuntime {
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_closed')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
     conversation.unsubscribe?.();
     clearPendingProjection(conversation);
@@ -1814,7 +1812,7 @@ export class AgentRuntime {
       resolvedEvents.push({
         type: 'approval.resolved',
         actor: systemActor(),
-        runId: this.activeRunId(conversation) ?? undefined,
+        runId: pending.runId,
         requestId,
         approved: false,
       });
@@ -1845,7 +1843,7 @@ export class AgentRuntime {
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'approval.resolved',
         actor: systemActor(),
-        runId: this.activeRunId(conversation) ?? undefined,
+        runId: pending.runId,
         requestId,
         approved: false,
       }]);
@@ -1879,11 +1877,22 @@ export class AgentRuntime {
     }
   }
 
+  private async clearPendingUserQuestionsForRun(conversationId: string, runId: string, reason: string) {
+    for (const pending of [...this.pendingUserQuestions.values()]) {
+      if (pending.conversationId === conversationId && pending.runId === runId) {
+        await this.cancelUserQuestion(pending.requestId, reason);
+      }
+    }
+  }
+
   private async createConversationWithEventState(eventState: AgentEventReplayState) {
     if (!eventState.conversation) throw new Error('Cannot create agent runtime without conversation.created');
     const conversationId = eventState.conversation.id;
     this.reserveConversationId(conversationId);
     const existing = this.conversations.get(conversationId);
+    if (existing) {
+      for (const run of this.activeRunList(existing)) run.agent.abort();
+    }
     existing?.unsubscribe?.();
     existing?.agent.abort();
     if (existing) clearPendingProjection(existing);
@@ -1902,15 +1911,18 @@ export class AgentRuntime {
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
       conversationId,
+      permissionScopeProvider: () => (
+        this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null
+      ),
       skillTrustApprovalHandler: async ({ skill, parentToolCallId, signal }) => {
-        const current = conversationRef.current;
+        const current = this.currentRuntimeConversation(conversationRef.current);
         if (!current) return false;
         return this.requestSkillTrustApproval(conversationId, current, skill, parentToolCallId, signal);
       },
       executeSkillShell: async ({ command, skill, signal }) => {
         const activeSettings = await this.getRuntimeSettings();
         const globalPermissions = await readAgentToolPermissionConfig();
-        const current = conversationRef.current;
+        const current = this.currentRuntimeConversation(conversationRef.current);
         return executeAgentSkillShellCommand({
           approvalHandler: current
             ? (input, signal) => this.requestToolApproval(conversationId, current, input, signal)
@@ -1922,11 +1934,11 @@ export class AgentRuntime {
           allowedTools: skill.allowedTools,
           globalPermissions,
           permissionEventHandler: (input) => {
-            const currentConversation = conversationRef.current;
+            const currentConversation = this.currentRuntimeConversation(conversationRef.current);
             return currentConversation ? this.appendToolPermissionEvent(conversationId, currentConversation, input) : Promise.resolve();
           },
           permissionNoticeHandler: (input, noticeSignal) => {
-            const currentConversation = conversationRef.current;
+            const currentConversation = this.currentRuntimeConversation(conversationRef.current);
             return currentConversation ? this.showPermissionNotice(conversationId, currentConversation, input, noticeSignal) : Promise.resolve();
           },
           signal,
@@ -1934,7 +1946,7 @@ export class AgentRuntime {
         });
       },
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
-        const current = conversationRef.current;
+        const current = this.currentRuntimeConversation(conversationRef.current);
         if (!current) throw new Error('Cannot run forked skill before the agent conversation is ready.');
         const data = await current.delegationRuntime.invokeSkillChildAgent({
           skillName: skill.name,
@@ -1968,15 +1980,17 @@ export class AgentRuntime {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
           return this.createChildPiAgent(conversationId, conversationRef, providerConfig, input);
         },
-        getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
-        getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
-        getActiveRunId: () => conversationRef.current?.activeRun?.id ?? null,
+        getParentMessages: () => this.currentRuntimeAgent(agentRef.current)?.state.messages as AgentMessage[] ?? activePath,
+        getParentSystemPrompt: () => this.currentRuntimeAgent(agentRef.current)?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
+        getParentAgentId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.executingAgentId ?? this.agentIdentity.agentId,
+        getParentMemoryOwnerAgentId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.executingAgentId ?? this.agentIdentity.agentId,
+        getActiveRunId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null,
         getRuntimeSettings: () => this.getRuntimeSettings(),
         buildMemoryReminder: (agentId) => (
           this.buildMemoryReminder(agentId, conversationRef.current)
         ),
         childRunStarted: (snapshot, seed) => {
-          const current = conversationRef.current;
+          const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
           return this.childRunStarted(conversationId, current, snapshot, seed);
         },
@@ -1993,19 +2007,25 @@ export class AgentRuntime {
           this.runLedger.compacted(snapshot.id, { ...input, actor: this.childRunActor(snapshot) })
         ),
         childRunStatusChanged: (snapshot) => {
-          const current = conversationRef.current;
+          const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
           return this.childRunStatusChanged(conversationId, current, snapshot);
         },
         notifyChildRun: (snapshot) => {
-          const current = conversationRef.current;
+          const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
         reportError: (report) => this.reportError(report),
         restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
-          this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
+          this.persistToolOutputPayload(
+            conversationId,
+            toolCallId,
+            toolName,
+            text,
+            this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? undefined,
+          )
         ),
         completeCompactSummary: (compactConversationId, messages, model, customInstructions, signal) => (
           this.completeCompactSummary(compactConversationId, messages, model, customInstructions, signal)
@@ -2069,6 +2089,7 @@ export class AgentRuntime {
     const debugCounters = await this.loadDebugCounters(conversationId);
     const conversation: AgentConversationState = {
       agent,
+      activeRuns: new Map(),
       activeRun: null,
       lastRun: null,
       autoCompactConsecutiveFailures: 0,
@@ -2094,8 +2115,10 @@ export class AgentRuntime {
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       memberDisplayNames: { [this.agentIdentity.agentId]: this.agentIdentity.displayName },
-      channelRound: null,
-      pendingChannelMessages: [],
+      pendingChannelTurns: [],
+      channelTurnStartsInProgress: 0,
+      channelStopRequested: false,
+      channelDrainWaiters: new Set(),
       unsubscribe: null,
     };
     conversationRef.current = conversation;
@@ -2203,6 +2226,15 @@ export class AgentRuntime {
 
   private applyRuntimeToolSettings(conversation: AgentConversationState): void {
     conversation.delegationRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
+    const activeRun = conversation.activeRun;
+    if (
+      activeRun
+      && activeRun.executingAgentId !== this.agentIdentity.agentId
+      && activeRun.channelDefinition
+    ) {
+      this.applyChannelTurnToolSettings(conversation, activeRun.executingAgentId, activeRun.channelDefinition);
+      return;
+    }
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
@@ -2248,11 +2280,11 @@ export class AgentRuntime {
       providerApiKeyLoader: this.options.providerApiKeyLoader,
       permissionClassifier: this.options.permissionClassifier,
       permissionEventHandler: (eventInput) => {
-        const parentConversation = parentConversationRef.current;
+        const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
         return parentConversation ? this.appendToolPermissionEvent(parentConversationId, parentConversation, eventInput) : Promise.resolve();
       },
       permissionNoticeHandler: (noticeInput, signal) => {
-        const parentConversation = parentConversationRef.current;
+        const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
         return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
@@ -2267,7 +2299,7 @@ export class AgentRuntime {
       approvalHandler: input.unattended
         ? undefined
         : (approvalInput, signal) => {
-          const parentConversation = parentConversationRef.current;
+          const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
           if (!parentConversation) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
           return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal);
         },
@@ -2507,16 +2539,14 @@ export class AgentRuntime {
     if (conversation.childRunNotificationFlushInProgress) return;
     if (conversation.pendingChildRunNotifications.length === 0) return;
     // A notification-delivery run is the COORDINATOR's turn (its child runs);
-    // never interleave it into an active Channel round between member turns.
-    if (conversation.channelRound) return;
-    if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
+    // never interleave it into active Channel member turns.
+    if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) return;
 
     conversation.childRunNotificationFlushInProgress = true;
     let startedRunId: string | null = null;
     try {
       while (conversation.pendingChildRunNotifications.length > 0) {
-        if (conversation.channelRound) break;
-        if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) break;
+        if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) break;
         const notifications = conversation.pendingChildRunNotifications.splice(0);
         const prompt: UserMessage = {
           role: 'user',
@@ -2537,8 +2567,6 @@ export class AgentRuntime {
     } finally {
       conversation.childRunNotificationFlushInProgress = false;
     }
-    // Messages queued while a notification-delivery run was live route now.
-    await this.drainChannelQueueIfIdle(conversationId, conversation);
   }
 
   private async persistToolOutputPayload(
@@ -2546,9 +2574,10 @@ export class AgentRuntime {
     toolCallId: string,
     toolName: string,
     text: string,
+    runIdOverride?: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }> {
     const conversation = this.conversations.get(conversationId);
-    const runId = conversation ? this.activeRunId(conversation) ?? undefined : undefined;
+    const runId = runIdOverride ?? (conversation ? this.activeRunId(conversation) ?? undefined : undefined);
     const payload = await this.getEventStore().writePayload(conversationId, {
       id: `tool-output-${toolCallId}`,
       data: text,
@@ -2635,6 +2664,7 @@ export class AgentRuntime {
     payload: unknown,
     model: Model<any>,
     source: AgentDebugSnapshot['source'] = 'provider_payload',
+    runIdOverride?: string,
   ) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
@@ -2643,23 +2673,24 @@ export class AgentRuntime {
     const debugId = `debug-${randomUUID()}`;
     const envelope = createAgentDebugPayloadEnvelope(payload);
     const sourceLabel = source === 'provider_response' ? 'Provider response' : 'Provider payload';
+    const runId = runIdOverride ?? this.activeRunId(conversation) ?? undefined;
     const payloadRef = await this.getEventStore().writePayload(conversationId, {
       id: `${debugId}-payload`,
       data: envelope.json,
       mimeType: 'application/json',
-      runId: this.activeRunId(conversation) ?? undefined,
+      runId,
       role: 'debug',
       summary: `${sourceLabel} round ${turnIndex}`,
     });
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'payload.created',
       actor: systemActor(),
-      runId: this.activeRunId(conversation) ?? undefined,
+      runId,
       payload: payloadRef,
     }, {
       type: 'debug.snapshot.created',
       actor: systemActor(),
-      runId: this.activeRunId(conversation) ?? undefined,
+      runId,
       debugId,
       source,
       queryIndex: conversation.currentDebugQueryIndex,
@@ -2675,11 +2706,11 @@ export class AgentRuntime {
     this.debugProjectionCache.delete(conversationId);
   }
 
-  private async captureDebugResponse(conversationId: string, response: ProviderResponse, model: Model<any>) {
+  private async captureDebugResponse(conversationId: string, response: ProviderResponse, model: Model<any>, runIdOverride?: string) {
     await this.captureDebugPayload(conversationId, {
       status: response.status,
       headers: response.headers,
-    }, model, 'provider_response');
+    }, model, 'provider_response', runIdOverride);
   }
 
   private getRuntimeDebugSnapshot(conversationId: string, conversation: AgentConversationState) {
@@ -2787,26 +2818,6 @@ export class AgentRuntime {
    * a slow in-flight dream (an LLM call) must not block ⌘Q.
    */
   async drainPendingWrites(): Promise<void> {
-    // Queued Channel messages live only in main-process memory until a round
-    // routes them — flush them into the log first (unrouted; they render in the
-    // thread after restart) so nothing the user typed vanishes on quit.
-    for (const [conversationId, conversation] of this.conversations.entries()) {
-      const queued = conversation.pendingChannelMessages.splice(0);
-      for (const entry of queued) {
-        try {
-          await this.persistPendingChannelMessage(conversationId, conversation, entry);
-        } catch (error) {
-          // Best-effort on the quit path; the event-append settle below still runs.
-          this.reportWarn(
-            'persistence',
-            `Failed to flush a queued Channel message for ${conversationId} at quit: ${error instanceof Error ? error.message : String(error)}`,
-            error,
-            { conversationId, operation: 'persistPendingChannelMessage' },
-            'channel-message-quit-flush-failed',
-          );
-        }
-      }
-    }
     const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
     for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
     // Delegated-run ledgers append on their own per-run queues — settle them
@@ -3763,12 +3774,98 @@ export class AgentRuntime {
   }
 
   private activeRunId(conversation: AgentConversationState): string | null {
-    return conversation.activeRun?.id ?? null;
+    return conversation.activeRun?.id ?? conversation.activeRuns.keys().next().value ?? null;
   }
 
   private requireActiveRun(conversation: AgentConversationState): AgentActiveRunState {
-    if (!conversation.activeRun) throw new Error('Agent run state is not active.');
-    return conversation.activeRun;
+    const activeRun = conversation.activeRun ?? conversation.activeRuns.values().next().value;
+    if (!activeRun) throw new Error('Agent run state is not active.');
+    return activeRun;
+  }
+
+  private activeRunList(conversation: AgentConversationState): AgentActiveRunState[] {
+    return [...conversation.activeRuns.values()].sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
+  }
+
+  private hasActiveRuns(conversation: AgentConversationState): boolean {
+    return conversation.activeRuns.size > 0 || conversation.agent.state.isStreaming;
+  }
+
+  private activeChannelRuns(conversation: AgentConversationState): AgentActiveRunState[] {
+    return this.activeRunList(conversation).filter((run) => run.channelTurn);
+  }
+
+  private activeOrStartingChannelRunCount(conversation: AgentConversationState): number {
+    return this.activeChannelRuns(conversation).length + conversation.channelTurnStartsInProgress;
+  }
+
+  private maybeClearChannelStopRequested(conversation: AgentConversationState): void {
+    if (
+      conversation.channelStopRequested
+      && conversation.pendingChannelTurns.length === 0
+      && this.activeOrStartingChannelRunCount(conversation) === 0
+    ) {
+      conversation.channelStopRequested = false;
+    }
+  }
+
+  private notifyChannelDrainWaiters(conversation: AgentConversationState): void {
+    if (
+      conversation.pendingChannelTurns.length > 0
+      || conversation.channelTurnStartsInProgress > 0
+      || this.activeChannelRuns(conversation).length > 0
+    ) return;
+    const waiters = [...conversation.channelDrainWaiters];
+    conversation.channelDrainWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  private scopedConversation(
+    conversation: AgentConversationState,
+    activeRun: AgentActiveRunState,
+    agent: Agent = activeRun.agent,
+  ): AgentConversationState {
+    return new Proxy(conversation, {
+      get(target, property, receiver) {
+        if (property === 'activeRun') return activeRun;
+        if (property === 'agent') return agent;
+        return Reflect.get(target, property, receiver);
+      },
+      set(target, property, value, receiver) {
+        if (property === 'activeRun') {
+          if (value === null) {
+            target.activeRuns.delete(activeRun.id);
+            activeRun.unsubscribe?.();
+            activeRun.unsubscribe = undefined;
+            if (target.activeRun?.id === activeRun.id) target.activeRun = null;
+          } else {
+            target.activeRuns.set(activeRun.id, activeRun);
+            if (target.activeRun?.id === activeRun.id) target.activeRun = activeRun;
+          }
+          return true;
+        }
+        return Reflect.set(target, property, value, receiver);
+      },
+    });
+  }
+
+  private currentRuntimeConversation(fallback: AgentConversationState | null): AgentConversationState | null {
+    return this.runScope.getStore()?.conversation ?? fallback;
+  }
+
+  private currentRuntimeAgent(fallback: Agent | null): Agent | null {
+    return this.runScope.getStore()?.agent ?? fallback;
+  }
+
+  private runWithScope<T>(
+    conversation: AgentConversationState,
+    runState: AgentActiveRunState,
+    callback: () => T,
+  ): T {
+    return this.runScope.run({
+      conversation: this.scopedConversation(conversation, runState, runState.agent),
+      agent: runState.agent,
+    }, callback);
   }
 
   private currentAgentIdentity(model: Model<Api> | null): AgentIdentityRecord {
@@ -3783,7 +3880,7 @@ export class AgentRuntime {
     return messageId ? { type: 'message', messageId } : { type: 'manual' };
   }
 
-  private runFingerprint(conversation: AgentConversationState, executingAgentId?: string): AgentRunFingerprint {
+  private runFingerprint(conversation: AgentConversationState, executingAgentId?: string, agent: Agent = conversation.agent): AgentRunFingerprint {
     const agentId = executingAgentId ?? this.agentIdentity.agentId;
     return {
       appVersion: electronAppVersion(),
@@ -3793,14 +3890,14 @@ export class AgentRuntime {
         // when the run starts, so its live system prompt is the turn's real prompt.
         systemPrompt: agentId === this.agentIdentity.agentId
           ? this.agentIdentity.systemPrompt
-          : conversation.agent.state.systemPrompt,
+          : agent.state.systemPrompt,
       }),
       toolSchemaHash: 'runtime-tools',
       skillBindings: [],
       modelConfig: hashJson({
-        model: conversation.agent.state.model.id,
-        provider: conversation.agent.state.model.provider,
-        thinkingLevel: conversation.agent.state.thinkingLevel,
+        model: agent.state.model.id,
+        provider: agent.state.model.provider,
+        thinkingLevel: agent.state.thinkingLevel,
       }),
     };
   }
@@ -3817,16 +3914,24 @@ export class AgentRuntime {
     const projection = buildAgentRenderProjection(conversation.eventState, {
       revision: conversation.revision,
       activeRunId: this.activeRunId(conversation),
+      activeRuns: this.activeRunList(conversation).map((run) => ({
+        runId: run.id,
+        agentId: run.executingAgentId,
+        addressedByMessageId: run.addressedByMessageId,
+        startedAt: run.startedAt,
+      })),
       activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
-      queuedMessages: conversation.pendingChannelMessages
-        .filter((pending): pending is Extract<PendingChannelMessage, { kind: 'prompt' }> => pending.kind === 'prompt')
-        .map((pending) => pending.messageText),
+      activityEntries: this.channelActivityEntries(conversation),
+      queuedMessages: [],
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
-      isStreaming: conversation.agent.state.isStreaming,
+      isStreaming: this.hasActiveRuns(conversation),
       model: clone(conversation.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: conversation.agent.state.thinkingLevel,
-      pendingToolCallIds: Array.from(conversation.agent.state.pendingToolCalls),
+      pendingToolCallIds: uniqueStrings([
+        ...Array.from(conversation.agent.state.pendingToolCalls),
+        ...this.activeRunList(conversation).flatMap((run) => Array.from(run.agent.state.pendingToolCalls)),
+      ]),
       // Run/provider failures render inline as a failed assistant message (see
       // appendAssistantCompleted). The top-level banner is reserved for transient
       // operational errors delivered via the `error` event.
@@ -3839,6 +3944,43 @@ export class AgentRuntime {
       ...projection,
       conversationTitle: sanitizeConversationTitle(projection.conversationTitle),
     };
+  }
+
+  private channelActivityEntries(conversation: AgentConversationState): AgentRenderActivityEntry[] {
+    const entries = new Map<string, AgentRenderActivityEntry>();
+    for (const run of this.activeRunList(conversation)) {
+      if (!run.addressedByMessageId) continue;
+      const pendingToolCalls = run.agent.state.pendingToolCalls;
+      const persistedRun = conversation.eventState.runs[run.id];
+      const entry: AgentRenderActivityEntry = {
+        id: `${run.addressedByMessageId}:${run.executingAgentId}`,
+        agentId: run.executingAgentId,
+        runId: run.id,
+        messageId: latestAssistantMessageIdForRun(conversation.eventState, run.id),
+        addressedByMessageId: run.addressedByMessageId,
+        state: pendingToolCalls.size > 0 ? 'using_tools' : 'thinking',
+        updatedAt: persistedRun?.updatedAt ?? run.startedAt,
+      };
+      entries.set(entry.id, entry);
+    }
+
+    for (const turn of conversation.pendingChannelTurns) {
+      const id = `${turn.addressedByMessageId}:${turn.agentId}`;
+      if (entries.has(id)) continue;
+      const addressingMessage = conversation.eventState.messages[turn.addressedByMessageId];
+      entries.set(id, {
+        id,
+        agentId: turn.agentId,
+        runId: null,
+        messageId: null,
+        addressedByMessageId: turn.addressedByMessageId,
+        state: 'received',
+        updatedAt: addressingMessage?.updatedAt ?? 0,
+      });
+    }
+
+    return [...entries.values()]
+      .sort((left, right) => left.updatedAt - right.updatedAt || left.id.localeCompare(right.id));
   }
 
   private beginCompaction(
@@ -4942,6 +5084,7 @@ export class AgentRuntime {
 
       this.pendingApprovals.set(requestId, {
         conversationId,
+        runId: this.activeRunId(conversation) ?? undefined,
         request,
         alwaysAllowRule: request.alwaysAllowRule,
         resolve: (resolution) => {
@@ -5011,6 +5154,7 @@ export class AgentRuntime {
 
       this.pendingApprovals.set(requestId, {
         conversationId,
+        runId: this.activeRunId(conversation) ?? undefined,
         request,
         onApproved: async () => {
           await this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.acceptSkill(skill.name, contentHash));
@@ -5067,6 +5211,7 @@ export class AgentRuntime {
     };
     this.pendingApprovals.set(input.requestId, {
       conversationId,
+      runId: this.activeRunId(conversation) ?? undefined,
       request,
       resolve: () => {
         signal?.removeEventListener('abort', onAbort);
@@ -5455,22 +5600,25 @@ export class AgentRuntime {
     if (!runId) return;
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
-    const activeRun = conversation.activeRun;
-    if (!activeRun || activeRun.id !== runId || conversation.agent.state.isStreaming) return;
+    const activeRun = conversation.activeRuns.get(runId);
+    if (!activeRun || activeRun.agent.state.isStreaming) return;
+    const scoped = this.scopedConversation(conversation, activeRun);
     try {
-      await this.appendConversationEvents(conversationId, conversation, [{
+      await this.appendConversationEvents(conversationId, scoped, [{
         type: 'run.failed',
         actor: systemActor(),
         runId: activeRun.id,
-        errorMessage: conversation.agent.state.errorMessage ?? 'The run ended without a terminal agent event.',
-        usage: sumRunUsage(conversation.eventState, activeRun.id),
+        errorMessage: activeRun.agent.state.errorMessage ?? 'The run ended without a terminal agent event.',
+        usage: sumRunUsage(scoped.eventState, activeRun.id),
       }]);
     } catch {
       // Recording the failure is best-effort; freeing the slot is the
       // critical part — a wedged activeRun blocks the conversation forever.
     }
-    conversation.lastRun = activeRun;
-    conversation.activeRun = null;
+    scoped.lastRun = activeRun;
+    scoped.activeRun = null;
+    activeRun.resolveSettled();
+    this.notifyChannelDrainWaiters(conversation);
   }
 
   private async startRun(
@@ -5478,18 +5626,33 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     prompt: UserMessage | null = null,
     triggerOverride: AgentRunTrigger | null = null,
-    identity: { executingAgentId?: string; addressedByMessageId?: string | null } = {},
+    identity: {
+      executingAgentId?: string;
+      addressedByMessageId?: string | null;
+      agent?: Agent;
+      channelTurn?: boolean;
+      allowConcurrent?: boolean;
+      channelDefinition?: AgentDefinition;
+    } = {},
   ): Promise<string> {
-    // The single activeRun slot is what stamps every durable event of the turn;
-    // overwriting a live run would misattribute its remaining events. All
-    // legitimate transitions clear activeRun (agent_end) before the next run.
-    if (conversation.activeRun) {
+    if (!identity.allowConcurrent && this.hasActiveRuns(conversation)) {
       throw new Error('A run is already active in this conversation.');
     }
     const runId = randomUUID();
     const agentId = (identity.executingAgentId ?? this.agentIdentity.agentId) as AgentId;
+    const agent = identity.agent ?? conversation.agent;
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
     const runState: AgentActiveRunState = {
       id: runId,
+      startedAt: Date.now(),
+      agent,
+      channelTurn: identity.channelTurn === true,
+      channelDefinition: identity.channelDefinition,
+      settled,
+      resolveSettled,
       assistantMessageId: null,
       assistantText: '',
       lastSubmittedUserPrompt: prompt,
@@ -5498,10 +5661,12 @@ export class AgentRuntime {
       executingAgentId: agentId,
       addressedByMessageId: identity.addressedByMessageId ?? null,
     };
-    conversation.activeRun = runState;
+    conversation.activeRuns.set(runId, runState);
+    if (!identity.allowConcurrent) conversation.activeRun = runState;
     conversation.lastRun = null;
+    const scoped = identity.allowConcurrent ? this.scopedConversation(conversation, runState, agent) : conversation;
     try {
-      await this.appendConversationEvents(conversationId, conversation, [{
+      await this.appendConversationEvents(conversationId, scoped, [{
         type: 'run.started',
         actor: systemActor(),
         runId,
@@ -5509,14 +5674,16 @@ export class AgentRuntime {
         addressedByMessageId: runState.addressedByMessageId,
         anchor: { type: 'conversation', agentId, conversationId },
         kind: 'turn',
-        trigger: triggerOverride ?? this.runTrigger(conversation),
-        fingerprint: this.runFingerprint(conversation, agentId),
+        trigger: triggerOverride ?? this.runTrigger(scoped),
+        fingerprint: this.runFingerprint(scoped, agentId, agent),
         retention: 'hot',
       }]);
     } catch (error) {
       // The run never made it into the ledger — release the slot, or every
       // later run in this conversation hits the guard above until restart.
-      conversation.activeRun = null;
+      conversation.activeRuns.delete(runId);
+      if (conversation.activeRun?.id === runId) conversation.activeRun = null;
+      runState.resolveSettled();
       throw error;
     }
     return runId;
@@ -5533,213 +5700,218 @@ export class AgentRuntime {
     return [{ type: 'agent', agentId: this.coordinatorAgentId() as AgentId }];
   }
 
-  /**
-   * The Channel round loop (ratified 2026-06-10): drains the conversation's
-   * pending-message queue, one message = one round. Each round runs every
-   * addressed member sequentially — execution is serial, but SEMANTICS are
-   * independent: every turn's context cuts at the message that addressed it,
-   * so same-round co-addressees never see each other. A completed turn's reply
-   * may `@` members (hand-off): those turns are addressed BY that reply and the
-   * chain is unbounded — `stop` is the circuit breaker. One addressee's failure
-   * leaves its failed-run trace and never skips siblings; only a user stop
-   * (run.cancelled / stopRequested) ends the round, discarding unstarted
-   * routing with a visible trace.
-   */
-  private async runChannelRound(
+  private enqueueChannelTurns(
     conversationId: string,
     conversation: AgentConversationState,
+    turns: readonly ChannelTurnRequest[],
+  ): void {
+    if (turns.length === 0) {
+      this.notifyChannelDrainWaiters(conversation);
+      return;
+    }
+    conversation.pendingChannelTurns.push(...turns);
+    this.emitProjection(conversationId, 'channel_turns_enqueued');
+    void this.pumpChannelTurns(conversationId, conversation)
+      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+  }
+
+  private async pumpChannelTurns(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    while (
+      !conversation.channelStopRequested
+      && conversation.pendingChannelTurns.length > 0
+      && this.activeOrStartingChannelRunCount(conversation) < CHANNEL_MAX_CONCURRENT_RUNS
+    ) {
+      const request = conversation.pendingChannelTurns.shift()!;
+      const members = conversation.eventState.conversation?.members ?? [];
+      if (!members.some((member) => member.type === 'agent' && member.agentId === request.agentId)) continue;
+      conversation.channelTurnStartsInProgress += 1;
+      try {
+        await this.launchChannelTurn(conversationId, conversation, request);
+      } finally {
+        conversation.channelTurnStartsInProgress = Math.max(0, conversation.channelTurnStartsInProgress - 1);
+        this.maybeClearChannelStopRequested(conversation);
+        this.notifyChannelDrainWaiters(conversation);
+      }
+    }
+    this.notifyChannelDrainWaiters(conversation);
+  }
+
+  private async waitForChannelIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    while (
+      conversation.pendingChannelTurns.length > 0
+      || conversation.channelTurnStartsInProgress > 0
+      || this.activeChannelRuns(conversation).length > 0
+    ) {
+      await new Promise<void>((resolve) => {
+        conversation.channelDrainWaiters.add(resolve);
+      });
+    }
+    await this.persistAndEmitIdle(conversationId, conversation);
+  }
+
+  async drainChannelTurnsForTest(conversationId: string): Promise<void> {
+    const conversation = await this.ensureConversationWithId(conversationId);
+    await this.waitForChannelIdle(conversationId, conversation);
+  }
+
+  private async discardPendingChannelTurns(
+    conversationId: string,
+    conversation: AgentConversationState,
+    reason: string,
   ): Promise<void> {
-    if (conversation.channelRound) return;
-    // A non-round Channel run (regenerate/retry, notification flush) is live:
-    // starting a round under it would re-point the leaf beneath its in-flight
-    // reply. That path drains the queue when it settles.
-    if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
-    const round = { stopRequested: false, scopedStoppedRunIds: new Set<string>() };
-    conversation.channelRound = round;
+    const discardedTurns = conversation.pendingChannelTurns.length;
+    conversation.pendingChannelTurns = [];
     try {
-      // Outer loop: after a stop is handled, messages that arrived during the
-      // teardown route as a fresh logical round (a post-stop send is a new
-      // request, not part of the stopped round) — nothing strands in the queue.
-      while (conversation.pendingChannelMessages.length > 0) {
-        let discardedTurns = 0;
-        while (conversation.pendingChannelMessages.length > 0 && !round.stopRequested) {
-          const pending = conversation.pendingChannelMessages.shift()!;
-          let routed: { messageId: string; addressedTo: AgentPrincipal[] };
-          try {
-            routed = await this.persistPendingChannelMessage(conversationId, conversation, pending);
-          } catch (error) {
-            // One message's persist failure must not strand the rest of the queue.
-            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-            continue;
-          }
-          const turns: ChannelTurnRequest[] = routed.addressedTo
-            .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
-            .map((target) => ({ agentId: target.agentId, addressedByMessageId: routed.messageId }));
-          while (turns.length > 0) {
-            if (round.stopRequested) break;
-            const request = turns.shift()!;
-            const members = conversation.eventState.conversation?.members ?? [];
-            if (!members.some((member) => member.type === 'agent' && member.agentId === request.agentId)) continue;
-            const turn = await this.runChannelTurn(conversationId, conversation, request);
-            if (turn.cancelled) {
-              round.stopRequested = true;
-              break;
-            }
-            if (!turn.completed) continue; // failed run: its error trace is in the log; siblings still run
-            if (!turn.assistantMessageId) continue;
-            // The reply's hand-off addressing was persisted at completion
-            // (assistant_message.completed.addressedTo) — route from the record,
-            // not a re-parse, so the log and the routing can never disagree.
-            const reply = conversation.eventState.messages[turn.assistantMessageId];
-            for (const target of channelAgentMembers(reply?.addressedTo ?? [])) {
-              if (target.agentId === request.agentId) continue;
-              turns.push({ agentId: target.agentId, addressedByMessageId: turn.assistantMessageId });
-            }
-          }
-          discardedTurns += turns.length;
-        }
-        if (!round.stopRequested) break; // queue drained normally
-        // Stop: persist the stopped round's unrouted queued messages (the user
-        // typed them; they must not vanish) — they just never produce runs.
-        const unrouted = conversation.pendingChannelMessages;
-        conversation.pendingChannelMessages = [];
-        for (const pending of unrouted) {
-          try {
-            await this.persistPendingChannelMessage(conversationId, conversation, pending);
-          } catch (error) {
-            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-          }
-        }
-        if (discardedTurns > 0 || unrouted.length > 0) {
-          const parts = [
-            discardedTurns > 0 ? `${discardedTurns} unstarted turn(s) were discarded` : null,
-            unrouted.length > 0 ? `${unrouted.length} queued message(s) were not routed; they remain above and can be re-sent` : null,
-          ].filter((part): part is string => part !== null);
-          await this.appendSystemPromptEvent(conversationId, conversation, {
-            role: 'user',
-            content: [{
-              type: 'text',
-              text: systemReminder(`The user stopped this round. ${parts.join('; ')}.`),
-            }],
-            timestamp: Date.now(),
-          });
-        }
-        round.stopRequested = false;
+      if (discardedTurns > 0) {
+        await this.appendSystemPromptEvent(conversationId, conversation, {
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: systemReminder(`The user stopped this round. ${discardedTurns} unstarted turn(s) were discarded. ${reason}`.trim()),
+          }],
+          timestamp: Date.now(),
+        });
       }
     } finally {
-      conversation.channelRound = null;
-    }
-    // A push that raced the teardown (channelRound was still set when its send
-    // checked the gate) re-enters as a fresh round. Reached only on a normal
-    // exit — a throw propagates to the caller and the next trigger (send,
-    // settle-drain, quit-flush) picks the queue up instead, so a persistent
-    // failure cannot loop.
-    if (conversation.pendingChannelMessages.length > 0) {
-      await this.runChannelRound(conversationId, conversation);
+      this.maybeClearChannelStopRequested(conversation);
+      this.notifyChannelDrainWaiters(conversation);
     }
   }
 
-  /**
-   * Drain trigger for non-round Channel runs (regenerate/retry, notification
-   * flush): messages queued while such a run was live are routed when it
-   * settles — sendMessage's gate returned without starting a round.
-   */
-  private async drainChannelQueueIfIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    if (conversation.pendingChannelMessages.length === 0) return;
-    await this.runChannelRound(conversationId, conversation);
-  }
-
-  /**
-   * Persist one round-queue entry at routing time: a `prompt` entry is appended
-   * to the (now settled) active leaf with its addressing resolved against the
-   * current roster; a `persisted` entry (edit path) is already in the log.
-   */
-  private async persistPendingChannelMessage(
-    conversationId: string,
-    conversation: AgentConversationState,
-    pending: PendingChannelMessage,
-  ): Promise<{ messageId: string; addressedTo: AgentPrincipal[] }> {
-    if (pending.kind === 'persisted') return { messageId: pending.messageId, addressedTo: pending.addressedTo };
-    const members = conversation.eventState.conversation?.members ?? [];
-    const addressedTo = this.resolveAddressedMembers(pending.messageText, members);
-    const messageId = await this.appendUserPromptEvent(conversationId, conversation, pending.prompt, { addressedTo });
-    return { messageId, addressedTo };
-  }
-
-  /**
-   * One member's turn in a Channel, executed AS that member on the conversation's
-   * agent loop: its system prompt, model/effort, tool surface, memory line, and
-   * its §8 POV of the shared thread. The conversation agent is reconfigured for
-   * the turn and always restored — the event pipeline (approvals, permissions,
-   * steering, projections) is shared and untouched.
-   */
-  private async runChannelTurn(
+  private async launchChannelTurn(
     conversationId: string,
     conversation: AgentConversationState,
     request: ChannelTurnRequest,
-  ): Promise<{ completed: boolean; cancelled: boolean; text: string; assistantMessageId: string | null }> {
-    const agent = conversation.agent;
-    const targetAgentId = request.agentId;
-    const isMainAgent = targetAgentId === this.coordinatorAgentId();
-    const snapshot = {
-      systemPrompt: agent.state.systemPrompt,
-      model: agent.state.model,
-      thinkingLevel: agent.state.thinkingLevel,
-    };
-    let startedRunId: string | null = null;
+  ): Promise<void> {
+    let runState: AgentActiveRunState | null = null;
     try {
-      if (!isMainAgent) {
-        const profile = await this.resolveChannelPeerProfile(conversation, targetAgentId);
-        agent.state.systemPrompt = profile.systemPrompt;
-        agent.state.model = profile.model as never;
-        agent.state.thinkingLevel = profile.thinkingLevel as never;
-        this.applyChannelTurnToolSettings(conversation, targetAgentId, profile.definition);
-        await this.getEventStore().writeAgentIdentity(profile.identity);
-      }
-      const runId = await this.startRun(conversationId, conversation, null, null, {
-        executingAgentId: targetAgentId,
-        addressedByMessageId: request.addressedByMessageId,
+      const { agent, definition } = await this.createChannelTurnAgent(conversationId, conversation, request.agentId, () => {
+        if (!runState) return conversation;
+        return this.scopedConversation(conversation, runState, agent);
       });
-      startedRunId = runId;
-      // With the run active, this resolves to the member's §8 POV assembly with
-      // the independence cut — the same derivation every later model call re-runs.
-      agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
-      await agent.continue();
-      // Context overflow retries while the member's profile is still applied —
-      // the retry run must execute as the SAME member, never the coordinator.
-      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-      // An overflow retry completes the turn under a NEW runId — evaluate the
-      // run that actually settled the turn (lastRun, set at its agent_end),
-      // falling back to the original when no run reached agent_end at all.
-      const settledRunId = conversation.lastRun?.id ?? runId;
-      const run = conversation.eventState.runs[settledRunId];
-      const scopedStopped = run?.status === 'cancelled'
-        && (conversation.channelRound?.scopedStoppedRunIds.has(settledRunId) ?? false);
-      if (scopedStopped) conversation.channelRound?.scopedStoppedRunIds.delete(settledRunId);
-      return {
-        completed: run?.status === 'completed',
-        cancelled: run?.status === 'cancelled' && !scopedStopped,
-        text: latestAssistantTextForRun(conversation.eventState, settledRunId),
-        assistantMessageId: latestAssistantMessageIdForRun(conversation.eventState, settledRunId),
-      };
+      if (conversation.channelStopRequested) return;
+      const runId = await this.startRun(conversationId, conversation, null, { type: 'message', messageId: request.addressedByMessageId }, {
+        executingAgentId: request.agentId,
+        addressedByMessageId: request.addressedByMessageId,
+        agent,
+        channelTurn: true,
+        allowConcurrent: true,
+        channelDefinition: definition,
+      });
+      runState = conversation.activeRuns.get(runId) ?? null;
+      if (!runState) throw new Error(`Channel run failed to register: ${runId}`);
+      const scoped = this.scopedConversation(conversation, runState, agent);
+      agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, scoped, signal);
+      runState.unsubscribe = agent.subscribe(async (event) => {
+        await this.handlePiAgentEvent(conversationId, scoped, event);
+        if (event.type === 'agent_end') {
+          conversation.currentDebugQueryIndex = 0;
+        }
+        this.emitProjection(conversationId, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
+      });
+      agent.state.messages = await this.deriveRuntimePiMessages(conversationId, scoped.eventState, scoped) as never;
+      this.emitProjection(conversationId, 'channel_turn_started');
+      void this.finishChannelTurn(conversationId, conversation, runState, request)
+        .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     } catch (error) {
-      // A pre-run failure (profile resolution, provider config) must not kill
-      // the round's sibling turns; surface it, free THIS turn's run slot if it
-      // wedged, and let the loop continue.
-      await this.recoverFromRunError(conversationId, startedRunId);
+      await this.recoverFromRunError(conversationId, runState?.id ?? null);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-      return { completed: false, cancelled: false, text: '', assistantMessageId: null };
-    } finally {
-      agent.state.systemPrompt = snapshot.systemPrompt;
-      agent.state.model = snapshot.model;
-      agent.state.thinkingLevel = snapshot.thinkingLevel;
-      if (!isMainAgent) this.applyRuntimeToolSettings(conversation);
-      try {
-        agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
-      } catch {
-        // Restore is best-effort; the next turn re-derives from the event log anyway.
-      }
+      void this.pumpChannelTurns(conversationId, conversation)
+        .catch((pumpError) => this.emitError(conversationId, pumpError instanceof Error ? pumpError.message : String(pumpError)));
     }
+  }
+
+  private async finishChannelTurn(
+    conversationId: string,
+    conversation: AgentConversationState,
+    runState: AgentActiveRunState,
+    request: ChannelTurnRequest,
+  ): Promise<void> {
+    try {
+      await this.runWithScope(conversation, runState, () => runState.agent.continue());
+    } catch (error) {
+      await this.recoverFromRunError(conversationId, runState.id);
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+    } finally {
+      await runState.settled;
+      const run = conversation.eventState.runs[runState.id];
+      const assistantMessageId = latestAssistantMessageIdForRun(conversation.eventState, runState.id);
+      if (!conversation.channelStopRequested && run?.status === 'completed' && assistantMessageId) {
+        const reply = conversation.eventState.messages[assistantMessageId];
+        const handoffTurns = channelAgentMembers(reply?.addressedTo ?? [])
+          .filter((target) => target.agentId !== request.agentId)
+          .map((target): ChannelTurnRequest => ({
+            agentId: target.agentId,
+            addressedByMessageId: assistantMessageId,
+          }));
+        this.enqueueChannelTurns(conversationId, conversation, handoffTurns);
+      }
+      this.maybeClearChannelStopRequested(conversation);
+      await this.flushPendingDreamFinishedEvents(conversationId, conversation);
+      void this.pumpChannelTurns(conversationId, conversation)
+        .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+      this.notifyChannelDrainWaiters(conversation);
+      this.emitProjection(conversationId, 'channel_turn_finished');
+    }
+  }
+
+  private async createChannelTurnAgent(
+    conversationId: string,
+    conversation: AgentConversationState,
+    targetAgentId: string,
+    getScopedConversation: () => AgentConversationState,
+  ): Promise<{ agent: Agent; definition?: AgentDefinition }> {
+    const providerConfig = await this.getActiveProviderConfig();
+    if (!providerConfig) throw new Error('No enabled agent provider is configured.');
+    const runtimeSettings = await this.refreshRuntimeSettings(conversation);
+    const isMainAgent = targetAgentId === this.coordinatorAgentId();
+    const profile = isMainAgent ? null : await this.resolveChannelPeerProfile(conversation, targetAgentId);
+    if (profile) await this.getEventStore().writeAgentIdentity(profile.identity);
+    const model = profile?.model ?? this.resolveProviderModel(providerConfig);
+    const thinkingLevel = profile?.thinkingLevel ?? providerConfig.reasoningLevel;
+    const systemPrompt = profile?.systemPrompt ?? this.agentIdentity.systemPrompt;
+    const definition = profile?.definition;
+    const agent = createConfiguredAgent(conversationId, providerConfig, [], this.outlinerToolHost, {
+      localFileRoot: this.options.localFileRoot,
+      localWorkspace: conversation.localWorkspace,
+      model,
+      thinkingLevel,
+      systemPrompt,
+      permissionMode: this.options.permissionMode,
+      runtimeSettingsLoader: () => this.getRuntimeSettings(),
+      skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
+      skillRuntime: conversation.skillRuntime,
+      delegationRuntime: conversation.delegationRuntime,
+      recall: this.createRecallToolRuntime(targetAgentId, () => conversationId, () => getScopedConversation()),
+      askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => getScopedConversation()),
+      selfMaintenance: isMainAgent ? this.createSelfMaintenanceRuntime(() => conversationId, () => getScopedConversation()) : undefined,
+      streamFn: this.options.streamFn,
+      completeSimpleFn: this.options.completeSimpleFn,
+      providerApiKeyLoader: this.options.providerApiKeyLoader,
+      permissionClassifier: this.options.permissionClassifier,
+      permissionEventHandler: (input) => this.appendToolPermissionEvent(conversationId, getScopedConversation(), input),
+      permissionNoticeHandler: (input, signal) => this.showPermissionNotice(conversationId, getScopedConversation(), input, signal),
+      approvalHandler: (input, signal) => this.requestToolApproval(conversationId, getScopedConversation(), input, signal),
+      afterToolResult: (toolCallId, toolName, result, isError) => (
+        this.contextManager.afterToolResultForModelContext(conversationId, getScopedConversation(), toolCallId, toolName, result, isError)
+      ),
+      allowedTools: definition?.tools,
+      disallowedTools: definition?.disallowedTools,
+    }, async (payload, model) => {
+      try {
+        await this.captureDebugPayload(conversationId, payload, model, 'provider_payload', getScopedConversation().activeRun?.id);
+      } catch (error) {
+        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      }
+      return undefined;
+    }, async (response, model) => {
+      try {
+        await this.captureDebugResponse(conversationId, response, model, getScopedConversation().activeRun?.id);
+      } catch (error) {
+        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      }
+    });
+    return { agent, definition };
   }
 
   /**
@@ -5920,6 +6092,7 @@ export class AgentRuntime {
   private async handlePiAgentEvent(conversationId: string, conversation: AgentConversationState, event: PiAgentEvent) {
     if (event.type === 'message_start' || event.type === 'message_update') {
       if (isAssistantMessage(event.message)) {
+        if (conversation.activeRun?.channelTurn) return;
         await this.ensureAssistantStarted(conversationId, conversation, event.message);
         await this.appendAssistantDelta(conversationId, conversation, event.message);
       }
@@ -5974,9 +6147,14 @@ export class AgentRuntime {
       conversation.reactiveCompactRequested = Boolean(!cancelled && contextOverflow);
       if (!conversation.reactiveCompactRequested) activeRun.lastSubmittedUserPrompt = null;
       conversation.lastRun = activeRun;
+      conversation.activeRuns.delete(activeRun.id);
+      activeRun.unsubscribe?.();
+      activeRun.unsubscribe = undefined;
       conversation.activeRun = null;
-      conversation.skillRuntime.resetRunPermissionRules();
+      activeRun.resolveSettled();
+      conversation.skillRuntime.resetRunPermissionRules(activeRun.id);
       await this.getEventStore().maybeWriteCheckpoint(conversationId, conversation.eventState, { force: true });
+      if (!activeRun.channelTurn) this.notifyChannelDrainWaiters(conversation);
     }
   }
 
@@ -5991,8 +6169,8 @@ export class AgentRuntime {
       actor: this.runActor(conversation),
       runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
-      parentMessageId: conversation.eventState.selectedLeafMessageId,
       addressedByMessageId: activeRun.addressedByMessageId,
+      parentMessageId: activeRun.addressedByMessageId ?? conversation.eventState.selectedLeafMessageId,
       providerId: message.provider,
       modelId: message.model,
       apiId: message.api,
@@ -6098,7 +6276,8 @@ export class AgentRuntime {
         actor,
         runId: this.activeRunId(conversation) ?? undefined,
         messageId: this.createMessageId('tool-result'),
-        parentMessageId: conversation.eventState.selectedLeafMessageId,
+        parentMessageId: activeRun.toolCallMessageIds.get(message.toolCallId)
+          ?? latestAssistantMessageIdForRun(conversation.eventState, activeRun.id),
         toolCallId: message.toolCallId,
         toolName: message.toolName,
         isError: message.isError,
@@ -6140,7 +6319,7 @@ export class AgentRuntime {
   ) {
     const activeRun = conversation.activeRun;
     if (!activeRun || activeRun.toolCallMessageIds.has(toolCallId)) return;
-    const messageId = findLatestAssistantMessageId(conversation.eventState);
+    const messageId = latestAssistantMessageIdForRun(conversation.eventState, activeRun.id);
     if (!messageId) return;
     activeRun.toolCallMessageIds.set(toolCallId, messageId);
     await this.appendConversationEvents(conversationId, conversation, [{
@@ -6164,7 +6343,9 @@ export class AgentRuntime {
     isError: boolean,
   ) {
     const activeRun = conversation.activeRun;
-    const messageId = activeRun?.toolCallMessageIds.get(toolCallId) ?? findLatestAssistantMessageId(conversation.eventState);
+    const messageId = activeRun
+      ? activeRun.toolCallMessageIds.get(toolCallId) ?? latestAssistantMessageIdForRun(conversation.eventState, activeRun.id)
+      : findLatestAssistantMessageId(conversation.eventState);
     if (!messageId) return;
     const events: AgentEventInput[] = [{
       type: isError ? 'tool_call.failed' : 'tool_call.completed',
@@ -6182,13 +6363,14 @@ export class AgentRuntime {
   private async deriveRuntimePiMessages(
     conversationId: string,
     eventState: AgentEventReplayState,
+    scopedConversation?: AgentConversationState,
   ): Promise<AgentMessage[]> {
     // Every model call re-derives its context through here (the agent's
     // transformContext → prepareModelContext), so this is THE seam where a
     // multi-agent Channel turn gets its §8 POV assembly: the in-flight run's
     // executing member is the POV. Outside a run (restore, Dream, DMs) the
     // linear derivation stands.
-    const conversation = this.conversations.get(conversationId);
+    const conversation = scopedConversation ?? this.conversations.get(conversationId);
     const activeRun = conversation?.activeRun;
     if (
       conversation
@@ -7273,13 +7455,11 @@ function latestAssistantMessageIdForRun(eventState: AgentEventReplayState, runId
 }
 
 function latestAssistantRecordForRun(eventState: AgentEventReplayState, runId: string): AgentEventMessageRecord | null {
-  const path = getAgentEventActivePath(eventState);
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const record = path[index]!;
-    if (record.role !== 'assistant' || record.runId !== runId) continue;
-    return record;
-  }
-  return null;
+  return Object.values(eventState.messages)
+    .filter((record): record is AgentEventMessageRecord & { role: 'assistant' } => (
+      record.role === 'assistant' && record.runId === runId
+    ))
+    .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id))[0] ?? null;
 }
 
 /** Visible text of a live pi assistant message (the hand-off mention source at completion time). */
@@ -8115,6 +8295,10 @@ function commandConversationTitle(brief: string): string {
   const firstLine = brief.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
   if (!firstLine) return 'Command';
   return firstLine.length > 60 ? `${firstLine.slice(0, 59)}…` : firstLine;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function clone<T>(value: T): T {

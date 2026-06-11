@@ -1429,10 +1429,79 @@ export function getAgentEventVisibleTranscript(
 ): AgentEventVisibleTranscriptEntry[] {
   const entries: AgentEventVisibleTranscriptEntry[] = [];
   const expandingCompactions = new Set<string>();
-  for (const message of getAgentEventActivePath(state)) {
+  for (const message of getAgentEventVisibleTranscriptPath(state)) {
     appendVisibleTranscriptEntry(state, entries, expandingCompactions, message, false);
   }
   return entries;
+}
+
+function getAgentEventVisibleTranscriptPath(state: AgentEventReplayState): AgentEventMessageRecord[] {
+  const activePath = getAgentEventActivePath(state);
+  const activePathIds = new Set(activePath.map((message) => message.id));
+  const insertedChannelReplyIds = new Set<string>();
+  const visible: AgentEventMessageRecord[] = [];
+
+  for (const message of activePath) {
+    if (!insertedChannelReplyIds.has(message.id)) visible.push(message);
+    const replies = activeChannelReplySlotsForParent(state, message.id, activePathIds);
+    for (const reply of replies) {
+      if (insertedChannelReplyIds.has(reply.id)) continue;
+      visible.push(reply);
+      insertedChannelReplyIds.add(reply.id);
+    }
+  }
+
+  return visible;
+}
+
+function activeChannelReplySlotsForParent(
+  state: AgentEventReplayState,
+  parentMessageId: string,
+  activePathIds: ReadonlySet<string>,
+): AgentEventMessageRecord[] {
+  const children = state.childrenByParentId[parentMessageId] ?? [];
+  const slots = new Map<string, AgentEventMessageRecord[]>();
+  for (const childId of children) {
+    const child = state.messages[childId];
+    if (!isChannelReplySlotRoot(state, child, parentMessageId)) continue;
+    const agentId = agentSlotIdForMessage(state, child);
+    if (!agentId) continue;
+    const slotId = `${parentMessageId}:${agentId}`;
+    const slot = slots.get(slotId);
+    if (slot) slot.push(child);
+    else slots.set(slotId, [child]);
+  }
+
+  return [...slots.values()]
+    .map((slot) => (
+      slot.find((candidate) => activePathIds.has(candidate.id))
+      ?? slot.reduce((latest, candidate) => (
+        candidate.updatedAt > latest.updatedAt
+        || (candidate.updatedAt === latest.updatedAt && candidate.createdAt > latest.createdAt)
+          ? candidate
+          : latest
+      ))
+    ))
+    .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+}
+
+function isChannelReplySlotRoot(
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord | undefined,
+  parentMessageId: string,
+): message is AgentEventMessageRecord {
+  if (!message || message.role !== 'assistant') return false;
+  if (message.parentMessageId !== parentMessageId) return false;
+  if (message.addressedByMessageId !== parentMessageId) return false;
+  return Boolean(agentSlotIdForMessage(state, message));
+}
+
+function agentSlotIdForMessage(state: AgentEventReplayState, message: AgentEventMessageRecord): string | null {
+  if (message.runId) {
+    const runAgentId = state.runs[message.runId]?.agentId;
+    if (runAgentId) return runAgentId;
+  }
+  return message.actor.type === 'agent' ? message.actor.agentId : null;
 }
 
 export function getAgentEventConversationPath(state: AgentEventReplayState): AgentEventMessageRecord[] {

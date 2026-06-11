@@ -109,6 +109,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   revision: 0,
   conversationTitle: null,
   members: [],
+  activeRuns: [],
   activeRunId: null,
   activeRunAgentId: null,
   activityEntries: [],
@@ -502,8 +503,8 @@ export interface AgentRuntimeClient {
     requestId: string,
     result: AskUserQuestionResult,
   ) => Promise<{ resolved: boolean }>;
+  stopRun: (conversationId: string, runId: string) => Promise<{ stopped: boolean }>;
   stopConversation: (conversationId: string) => Promise<void>;
-  stopRun: (conversationId: string, runId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
 }
 
@@ -521,11 +522,11 @@ export interface LinAgentRuntimeView {
   conversationCost: number;
   /** Conversation members (user + agents); ≥2 agent members = a Channel. */
   members: AgentRenderMemberView[];
-  /** The active run's executing agent (Channel typing indicator subject). */
+  /** Compatibility subject for single-run renderers; parallel UIs should read projection.activeRuns. */
   activeRunAgentId: string | null;
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
-  /** Channel user messages queued behind the active round (not yet in the log). */
+  /** Compatibility field for the removed Channel queue-all stage. */
   queuedMessages: string[];
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
   unreadByConversationId: ReadonlyMap<string, number>;
@@ -587,8 +588,8 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
     api.agentResolveApproval(conversationId, requestId, approved, scope),
   resolveUserQuestion: (conversationId, requestId, result) =>
     api.agentResolveUserQuestion(conversationId, requestId, result),
-  stopConversation: (conversationId) => api.agentStopConversation(conversationId),
   stopRun: (conversationId, runId) => api.agentStopRun(conversationId, runId),
+  stopConversation: (conversationId) => api.agentStopConversation(conversationId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
 
