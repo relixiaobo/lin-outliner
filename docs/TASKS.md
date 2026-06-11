@@ -327,12 +327,14 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
     (`{stream, streamId, range} | {episodeId}`, same taste as the #161 anchor union);
     principal-gated reverse lookup (episodic → citing facts); storage side of the
     3-level zoom (fact → episode gist → raw span).
-  - **PR-3 forgetting** (was D1 `agent-memory-forgetting`): Bjork two-strength →
+  - **PR-3 forgetting** (was D1 `agent-memory-forgetting`) **merged as PR #199** (codex,
+    with PR-5) — see Recently completed; plan archived `done` in-PR. Bjork two-strength →
     briefing ranking; strengths are projections, never stored fields. Deliberate
     `recall` hits append retrieval events (the use-strengthens half of the loop —
     data the deferred associative mode will need).
   - **PR-5 semantic overview / schema layer (PM-ratified 2026-06-10, with PR-3 =
-    "chronic activation"):** the breadth zoom axis — Dream-maintained schema nodes
+    "chronic activation") merged as PR #199** (codex, with PR-3) — see Recently
+    completed. The breadth zoom axis — derived schema nodes
     (topic gist over fact clusters, same derived-node machinery as episode gist,
     members = fact ids, rebuildable) extend the down-pointer ladder upward:
     schema → fact → episode gist → raw. Briefing becomes overview + strength-
@@ -650,6 +652,29 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **memory realignment PR-3 + PR-5: forgetting + schema activation** (codex, PR #199,
+  plan-track) — chronic activation lands as one complete behavior, the two PRs merged
+  together because they recompose the same briefing assembly. Adds `memory.accessed`
+  events (`via: briefing | recall`, batched per turn) feeding a **rebuildable
+  two-strength projection** (storage strength never decays; retrieval strength decays
+  and governs injection — never deletion), plus derived **schema overview** nodes.
+  Briefing becomes a schema-overview breadth axis + activation-ranked fact budget
+  (replacing bare newest-12); no-query `recall` returns the overview as metamemory.
+  Recall hits strengthen more than passive briefing re-exposure. Gate raised three
+  design findings on the first head — all addressed in the second: an **anti-starvation
+  exploration slot** so a hardened resident set can't permanently lock out newly
+  consolidated facts; briefing access **throttled to one counted exposure per entry
+  per 24h** (recall still records every hit) to kill per-turn write amplification; and
+  the activation projection **memoized per pool version + day bucket** on the hot path.
+  Storage layout stays v3 (the change is purely additive — old logs project to empty
+  access stats, no wipe). Compaction folds access stats into two events preserving
+  counts + last-access; rebuild oracle, throttle, and anti-starvation all unit-tested.
+  Integration-checked against `main` (#198's `agentEventLog.ts` protocol-surface
+  changes) — typecheck + `test:core` green (882 pass). Specs synced in-PR
+  (`agent-data-model`, `agent-memory-foundations`, `agent-memory-realignment`,
+  `agent-architecture`, `agent-progress`, `agent-tool-design`); `agent-memory-forgetting`
+  archived `done`. Next realignment unit: PR-4 (retrieval engine).
 
 - **agent conversation UX proposal** (codex-2, PR #197, docs-only) — proposed the
   UX direction for agent conversation entry/identity (recipient-first starter,

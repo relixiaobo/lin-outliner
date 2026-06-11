@@ -12,6 +12,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Memory forgetting + schema activation: chronic activation (PR #199)** — the
+  agent memory briefing graduates from "newest 12 facts" to a two-strength
+  activation model (Bjork & Bjork's New Theory of Disuse). New `memory.accessed`
+  events (`via: briefing | recall`, batched once per turn per principal) feed a
+  **rebuildable** projection: **storage strength** never decays, **retrieval
+  strength** decays with disuse and governs injection ranking — entries fall out
+  of the working set, never get deleted (`invalidate` stays the only explicit
+  exit). Deliberate `recall` hits strengthen retrieval far more than passive
+  briefing re-exposure (the testing-effect asymmetry). The briefing now renders a
+  derived **schema overview** (breadth: topic-cluster labels + counts) ahead of an
+  activation-ranked fact budget (depth); calling `recall` with no `query` returns
+  that overview as **metamemory** (what the read set knows before digging) instead
+  of "recent 8". A hardened resident set cannot permanently starve newly
+  consolidated facts: the briefing order reserves periodic **exploration slots**
+  for newest/long-unbriefed entries, and briefing access is **throttled to one
+  counted exposure per entry per 24h** (recall records every hit). The activation
+  projection is memoized per pool version + day bucket on the hot path. Storage
+  layout stays at v3 — the change is purely additive (old logs project to empty
+  access stats); log compaction folds access stats into two events preserving
+  counts and last-access time. Specs synced in-PR (`agent-data-model`,
+  `agent-memory-foundations`, `agent-memory-realignment`, `agent-architecture`,
+  `agent-progress`, `agent-tool-design`); the `agent-memory-forgetting` plan is
+  archived `done`. Covered by core unit tests (rebuild oracle, access throttle,
+  anti-starvation ordering, schema overview).
+
 - **Full `ask_user_question` flow (PR #198)** — the structured user-elicitation
   tool grows from the v1 scaffold (PR #153) into its full shape. Answers now carry
   structured **node refs, local-file refs, and attachments** through durable
