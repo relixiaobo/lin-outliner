@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Full `ask_user_question` flow (PR #198)** — the structured user-elicitation
+  tool grows from the v1 scaffold (PR #153) into its full shape. Answers now carry
+  structured **node refs, local-file refs, and attachments** through durable
+  pending-question resolution instead of being flattened into answer text, and the
+  pending-question card swaps its plain `<textarea>` for a scoped rich answer editor
+  (the agent composer editor, gated by per-question `allow_references` /
+  `allow_attachments` flags: `@`-mentions, file references, attachments). Path-backed
+  answer attachments are materialized through the **same realpath-based local-root
+  jail** (`materializePathBackedAttachment`) as the main composer, so the tool cannot
+  become a file-read bypass; text/image attachments persist as payload refs before the
+  `user_question.answered` event is appended. A new **"Discuss first"** action resolves
+  the card with a dedicated `discussed` outcome — it skips required-answer validation,
+  returns `answers: []` plus a short `discuss.message`, and hands the model
+  instructions to ask a brief clarification in normal conversation (calling
+  `ask_user_question` again if structured input is still needed). Attachment management
+  is extracted into a reusable `useAgentComposerAttachmentManager` hook shared by the
+  main composer and the answer editor. Specs (`agent-tool-design.md` full contract,
+  `agent-event-log-rendering.md`, `agent-pi-mono-implementation.md`) and i18n (en +
+  zh-Hans) updated in-PR; covered by core, renderer, and e2e tests.
+
 - **Sidebar pinned: drag-to-pin + reorderable list (PR #196)** — the Pinned
   section is now a real HTML5 drag target. Drag any node from the outliner onto
   it to pin it; the drop handler sets `dropEffect = 'move'` to match the outliner
@@ -302,6 +322,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   `.dmg`. ([#170](https://github.com/relixiaobo/lin-outliner/pull/170))
 
 ### Internal
+
+- **Agent conversation UX plan ratified (PR #197, docs-only)** — adds
+  `docs/plans/agent-conversation-entry-identity-ux.md` (drafted by codex-2, then
+  revised on `main` into the PM-ratified contract after the review conversation):
+  five independent UX features over the ratified conversation semantics —
+  roster-as-DM-list + New Channel flow with an explicit DM→Channel escalation verb
+  (UI + arbitrary-agent-DM runtime in one PR) · speaker identity (DM header /
+  grouped Channel rows; subsumes `agent-avatar-v1`) · composer model chip becomes
+  display+navigate (the current menu mutates the global provider — fixed in one
+  step) · a Channel activity area built to the parallel co-addressee semantics
+  plus automatic reply anchors · time separators + native context-menu Details.
+  Also adds `docs/plans/agent-channel-parallel-runtime.md` (draft): concurrent
+  co-addressee execution + completion-order delivery as a pure execution-layer
+  upgrade of the already-committed independence semantics. Design only; no
+  runtime behavior change. ([#197](https://github.com/relixiaobo/lin-outliner/pull/197))
 
 - **Agent permission safety-modes plan ratified (PR #187, docs-only)** — adds
   `docs/plans/agent-permission-safety-modes.md` (PM-ratified consumer trust model:

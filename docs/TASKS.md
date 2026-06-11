@@ -21,8 +21,8 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-2 merged, PR #195) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (agent permission safety modes merged, PR #193) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (local error observability merged, PR #194) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (agent conversation UX proposal merged, PR #197) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (full ask_user_question flow merged, PR #198) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -373,14 +373,11 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   is `agent-conversation-model`'s.** Directional/security-sensitive — escalate the
   capability boundary to the PM before building. See
   `docs/plans/agent-self-modification.md`.
-- **agent-ask-user-question-tool** (P1, M1, **all PM gates closed 2026-06-10 —
-  dispatch-ready**) — v1 shipped in #153; the full version remains: `@`-refs/
-  attachments in answers + the dedicated "discuss" action (closes the interaction,
-  auto-messages the agent, conversation continues in the composer; the Q&A widget
-  is agent-response and never editable). Persistence across restart decided
-  (persists); execution shape declared (interface-first protocol PR, then ONE
-  complete feature PR). Builds on the merged path-first attachment model (#86).
-  `docs/plans/agent-ask-user-question-tool.md`.
+- **agent-ask-user-question-tool** (P1, M1) **merged as PR #198** (codex-3) — see
+  Recently completed; plan archived `done` in-gate. v1 shipped in #153; the full
+  version landed here: `@`-refs/attachments in answers (materialized through the same
+  realpath local-root jail as the composer) + the dedicated "discuss" action (closes
+  the card, auto-messages the agent, conversation continues in the composer).
 - **agent-import-skill** (P1, M1–M2 consumer, plan ratified, PR #98) — agent data-import capability:
   bundled deterministic adapters (Tana reference, validated against the real
   10,627-node export) for known formats + agent-authored parsers for unknown ones;
@@ -404,17 +401,29 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
-- **agent-avatar-v1** (P3, *fast-track, no plan file*, **PM-ratified 2026-06-10;
-  UNBLOCKED — M3-A #179 merged**) — derived avatars for message-stream speakers: agent-name initial
-  on a circular chip, hue deterministically derived from `agentId`, muted alpha-on-ink
-  tint (identity is CONTENT, not functional state — B3/B4 stay intact; circular per B6;
-  reuse the compact workspace-root-avatar idiom, `design-system.md:496`). Zero storage /
-  protocol change — rides the `actor` field M3-A adds to the render projection (the
-  name-level attribution ships in #179; this is its visual upgrade, kept out of #179's
-  scope). Components: `AgentMessageRow.tsx` / `AgentMessageFrame.tsx`; user principal
-  gets one too. Sync `design-system.md` in the same PR (A6) + light/dark visual gate.
-  A user-authorable `icon` frontmatter field (v2) was considered and deferred — touches
-  the AGENT.md format/parser; revisit after v1 is in use.
+- **agent-conversation-entry-identity-ux** (P2, plan file, **direction PM-ratified
+  2026-06-11** — drafted by codex-2 as PR #197, revised by main after the review
+  conversation) — the UX layer over the ratified conversation semantics, five
+  independent complete features: **A** roster-as-DM-list + New Channel flow +
+  explicit DM→Channel escalation verb (hard runtime dependency: arbitrary-agent
+  canonical DMs — UI + runtime in ONE plan-track PR); **B** speaker identity
+  (DM identity in the header, Channel rows avatar+name with consecutive grouping;
+  **subsumes `agent-avatar-v1`**, the previously standalone PM-ratified derived-avatar
+  design — absorbed here 2026-06-11); **C** composer model chip → display+navigate
+  (the current menu mutates the GLOBAL provider — a trap, fixed in one step; small
+  early-able PR); **D** Channel activity area built to the parallel semantics +
+  automatic reply anchors for completion-order readability; **E** time separators +
+  native context-menu Details (timestamp/speaker/model/tokens). Order: B+E → D → A;
+  C any time. See `docs/plans/agent-conversation-entry-identity-ux.md`.
+- **agent-channel-parallel-runtime** (P2, plan file, draft) — repay the M3-A
+  execution debt: co-addressees run concurrently, replies land in completion order.
+  Pure execution-layer upgrade of already-committed semantics (context cuts at the
+  addressing message — parallelizing changes no agent's words, only timing; PM-confirmed
+  2026-06-11, no product re-ratification needed). Scope: per-run active state set ·
+  immediate dispatch (queue-all dies) · completion-order append · scoped stop
+  (per-run + conversation-wide) · set-based transcript-mutation gates · concurrency
+  cap. **After** the UX plan's Feature D (the activity area + reply anchors must
+  exist before replies interleave). See `docs/plans/agent-channel-parallel-runtime.md`.
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
@@ -641,6 +650,39 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **agent conversation UX proposal** (codex-2, PR #197, docs-only) — proposed the
+  UX direction for agent conversation entry/identity (recipient-first starter,
+  DM/Channel switcher split, message-row identity, profile-owned model config,
+  fixed Channel activity area, message details menu). Reviewed by main + PM in
+  conversation; merged as the base, then revised on `main` by the main agent into
+  the PM-ratified contract: roster-as-DM-list replaces the morphing starter, DM
+  identity moves to the header (Channel rows get grouped attribution; subsumes
+  `agent-avatar-v1`), the composer model menu is treated as a global-provider trap
+  and fixed in one step, the activity area is designed to the parallel co-addressee
+  semantics with automatic reply anchors, and parallel Channel execution is split
+  out as `agent-channel-parallel-runtime` (execution-layer debt repayment, not a
+  product change). See `docs/plans/agent-conversation-entry-identity-ux.md` +
+  `docs/plans/agent-channel-parallel-runtime.md`; Backlog § Agent capabilities has
+  the build order (B+E → D → A; C any time; parallel runtime after D).
+
+- **full ask_user_question flow** (codex-3, PR #198, plan-track) — completes the
+  v1 scaffold (#153) into the full tool. Adds a dedicated `discussed` outcome (skips
+  required-answer validation, resolves with `answers: []` + `discuss.message`, returns
+  model-visible instructions to ask a short clarification in normal conversation), and
+  preserves structured node refs / file refs / answer attachments through durable
+  pending-question resolution instead of flattening them into answer text. Path-backed
+  answer attachments are materialized through the same realpath-based local-root jail
+  (`materializePathBackedAttachment`) as the main composer — `ask_user_question` is not
+  a file-read bypass. The pending-question `<textarea>` is replaced by a scoped rich
+  answer editor (the composer editor gated by `allow*` flags: @refs, file refs,
+  attachments, "Discuss first"); attachment management is extracted into a reusable
+  `useAgentComposerAttachmentManager` hook shared with the main composer. Spec synced
+  in-PR (`agent-tool-design.md` full contract, `agent-event-log-rendering.md`,
+  `agent-pi-mono-implementation.md`), i18n en + zh-Hans, core + renderer + e2e tests.
+  Gate: `/code-review` (medium) + typecheck + core/renderer suites — PASS; two
+  review findings (renderer↔runtime `allowAttachments` coupling; fileRefs metadata
+  comment) fixed before merge. Plan archived `done`.
 
 - **sidebar pinned drag-to-pin + reorder** (main, PR #196, fast-track) — builds on the
   Pinned section (PR #191). Drag an outliner node onto the Pinned section to pin it
