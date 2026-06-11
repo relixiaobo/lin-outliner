@@ -354,6 +354,122 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('submits pending question answers with node refs, file refs, and attachments', async ({ page }) => {
+    await emitAgentEvent(page, {
+      type: 'user_question_request',
+      conversationId: 'mock-agent-conversation',
+      requestId: 'question-rich-answer-e2e',
+      question: {
+        requestId: 'question-rich-answer-e2e',
+        conversationId: 'mock-agent-conversation',
+        runId: 'run-question-rich-answer-e2e',
+        toolCallId: 'tool-question-rich-answer-e2e',
+        request: {
+          submitLabel: 'Send answer',
+          questions: [{
+            id: 'context',
+            type: 'free_text',
+            header: 'Context',
+            question: 'What context should the agent use?',
+            required: true,
+            allowReferences: true,
+            allowAttachments: true,
+          }],
+        },
+      },
+      timestamp: 1_800_000_001_500,
+    });
+
+    const card = page.locator('.agent-question-card');
+    const input = card.locator('.agent-composer-editor .ProseMirror');
+    await input.click();
+    await page.keyboard.type('@Alpha');
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+    await expect(menu).toBeVisible();
+    await menu.getByRole('option', { name: /Alpha/ }).click();
+    await page.keyboard.type('use this with ');
+    await card.locator('.agent-composer-file-input').setInputFiles({
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('question notes'),
+    });
+
+    await expect(card.locator('[data-agent-node-ref="node-alpha"]')).toBeVisible();
+    await expect(card.locator('[data-agent-file-ref]')).toContainText('notes.txt');
+    await page.getByRole('button', { name: 'Send answer' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-conversation',
+      requestId: 'question-rich-answer-e2e',
+      result: {
+        requestId: 'question-rich-answer-e2e',
+        outcome: 'answered',
+        answers: [{
+          questionId: 'context',
+          text: '[[node:Alpha^node-alpha]] use this with [[file:notes.txt^%2Fmock%2Flocal-root%2Ftmp%2Fagent-attachments%2F1-notes.txt]]',
+          nodeRefs: [{ nodeId: 'node-alpha', label: 'Alpha' }],
+          fileRefs: [{
+            name: 'notes.txt',
+            path: '/mock/local-root/tmp/agent-attachments/1-notes.txt',
+            ref: 'notes.txt',
+            mimeType: 'text/plain',
+          }],
+          attachments: [{
+            kind: 'file',
+            name: 'notes.txt',
+            path: '/mock/local-root/tmp/agent-attachments/1-notes.txt',
+          }],
+        }],
+      },
+    });
+  });
+
+  test('resolves pending questions through the discuss action', async ({ page }) => {
+    await emitAgentEvent(page, {
+      type: 'user_question_request',
+      conversationId: 'mock-agent-conversation',
+      requestId: 'question-discuss-e2e',
+      question: {
+        requestId: 'question-discuss-e2e',
+        conversationId: 'mock-agent-conversation',
+        runId: 'run-question-discuss-e2e',
+        toolCallId: 'tool-question-discuss-e2e',
+        request: {
+          questions: [{
+            id: 'path',
+            type: 'single_choice',
+            question: 'Which path should the agent take?',
+            required: true,
+            options: [
+              { id: 'a', label: 'A' },
+              { id: 'b', label: 'B' },
+            ],
+          }],
+        },
+      },
+      timestamp: 1_800_000_001_600,
+    });
+
+    await page.getByRole('button', { name: 'Discuss first' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-conversation',
+      requestId: 'question-discuss-e2e',
+      result: {
+        requestId: 'question-discuss-e2e',
+        outcome: 'discussed',
+        answers: [],
+        discuss: { message: 'I want to discuss this before answering.' },
+      },
+    });
+  });
+
   test('inserts attachments inline and sends them as context', async ({ page }) => {
     await page.locator('.agent-composer-file-input').setInputFiles({
       name: 'notes.txt',

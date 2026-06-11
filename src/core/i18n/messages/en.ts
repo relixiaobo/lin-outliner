@@ -892,6 +892,8 @@ commandPalette: {
       dismiss: 'Dismiss',
       userQuestionTitle: 'Input needed',
       userQuestionSubmit: 'Submit answer',
+      userQuestionDiscuss: 'Discuss first',
+      userQuestionDiscussMessage: 'I want to discuss this before answering.',
       userQuestionAnswerPlaceholder: 'Type your answer...',
       userQuestionOtherPlaceholder: 'Other...',
       // Mention / slash popovers.
@@ -904,6 +906,7 @@ commandPalette: {
       noRecentMentions: 'No recent mentions',
       // Attachment errors.
       attachmentsCannotQueue: 'Attachments cannot be queued while the agent is running.',
+      attachmentsNotAllowed: 'Attachments are not allowed for this answer.',
       localFileSearchUnavailable: 'Local file search is not available in this window.',
       localFileNoLongerAvailable: 'That local file is no longer available.',
       maxAttachments: ({ max }: { max: number }) => `You can attach up to ${max} files.`,

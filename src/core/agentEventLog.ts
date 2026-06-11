@@ -319,13 +319,29 @@ export interface AgentUserQuestionNodeReference {
 }
 
 export interface AgentUserQuestionFileReference {
-  path: string;
+  attachmentId?: string;
+  entryKind?: 'file' | 'directory';
+  mimeType?: string;
+  name?: string;
+  path?: string;
+  ref?: string;
+  sizeBytes?: number;
   label?: string;
   payload?: AgentPayloadRef;
 }
 
 export interface AgentUserQuestionAttachment {
-  payload: AgentPayloadRef;
+  id?: string;
+  kind: 'image' | 'text' | 'file';
+  ref?: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  path?: string;
+  dataBase64?: string;
+  text?: string;
+  truncated?: boolean;
+  payload?: AgentPayloadRef;
   label?: string;
 }
 
@@ -341,7 +357,11 @@ export interface AgentUserQuestionAnswer {
 
 export interface AskUserQuestionResult {
   requestId: string;
+  outcome?: 'answered' | 'discussed';
   answers: AgentUserQuestionAnswer[];
+  discuss?: {
+    message: string;
+  };
 }
 
 export type AgentRunLogEvent =

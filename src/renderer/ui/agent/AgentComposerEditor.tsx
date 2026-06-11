@@ -112,6 +112,10 @@ export interface AgentComposerEditorHandle {
 }
 
 interface AgentComposerEditorProps {
+  allowFileReferences?: boolean;
+  allowMemberMentions?: boolean;
+  allowNodeReferences?: boolean;
+  allowSlashCommands?: boolean;
   currentNodeId: NodeId | null;
   index: DocumentIndex;
   isStreaming: boolean;
@@ -128,6 +132,7 @@ interface AgentComposerEditorProps {
   onSubmit: () => void;
   placeholder: string;
   slashCommands: AgentSlashCommandView[];
+  submitOnEnter?: boolean;
 }
 
 interface ComposerTrigger {
@@ -322,9 +327,16 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
     editorAriaLabelRef.current = t.agent.composer.editorAriaLabel;
 
     propsRef.current = props;
+    const allowFileReferences = props.allowFileReferences ?? true;
+    const allowMemberMentions = props.allowMemberMentions ?? true;
+    const allowNodeReferences = props.allowNodeReferences ?? true;
+    const allowSlashCommands = props.allowSlashCommands ?? true;
 
     const rawMentionItems = useMemo(() => trigger?.mode === 'mention'
       ? mentionMenuItems({
+          allowFileReferences,
+          allowMemberMentions,
+          allowNodeReferences,
           currentNodeId: props.currentNodeId,
           index: props.index,
           localFileSearch,
@@ -334,6 +346,9 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
           labels: referenceCandidateLabels(t),
         })
       : [], [
+        allowFileReferences,
+        allowMemberMentions,
+        allowNodeReferences,
         localFileSearch,
         props.currentNodeId,
         props.index,
@@ -350,9 +365,11 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
 
     const itemCount = useMemo(() => {
       if (!trigger) return 0;
-      if (trigger.mode === 'slash') return filterSlashCommands(props.slashCommands, trigger.query).length;
+      if (trigger.mode === 'slash') {
+        return allowSlashCommands ? filterSlashCommands(props.slashCommands, trigger.query).length : 0;
+      }
       return mentionItems.length;
-    }, [mentionItems.length, props.slashCommands, trigger]);
+    }, [allowSlashCommands, mentionItems.length, props.slashCommands, trigger]);
 
     const anchoredStyle = useAnchoredOverlay(menuRef, {
       anchorRect: trigger?.anchor ?? null,
@@ -484,7 +501,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
     }, [selectedMentionFile?.id, selectedMentionFile?.thumbnailDataUrl]);
 
     useEffect(() => {
-      if (!trigger || trigger.mode !== 'mention') {
+      if (!trigger || trigger.mode !== 'mention' || propsRef.current.allowFileReferences === false) {
         setLocalFileSearch((current) => current.status === 'idle'
           ? current
           : { error: null, query: '', results: [], status: 'idle' });
@@ -626,7 +643,8 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
 
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
-            propsRef.current.onSubmit();
+            if (propsRef.current.submitOnEnter === false) insertHardBreak(viewInstance);
+            else propsRef.current.onSubmit();
             return true;
           }
 
@@ -747,12 +765,29 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
     }
 
     function updateTrigger(view: EditorView) {
-      const nextTrigger = resolveComposerTrigger(view);
+      const nextTrigger = filterComposerTrigger(resolveComposerTrigger(view), propsRef.current);
       triggerRef.current = nextTrigger;
       setTrigger(nextTrigger);
     }
   },
 );
+
+function filterComposerTrigger(
+  trigger: ComposerTrigger | null,
+  props: AgentComposerEditorProps,
+): ComposerTrigger | null {
+  if (!trigger) return null;
+  if (trigger.mode === 'slash' && props.allowSlashCommands === false) return null;
+  if (
+    trigger.mode === 'mention'
+    && props.allowNodeReferences === false
+    && props.allowFileReferences === false
+    && props.allowMemberMentions === false
+  ) {
+    return null;
+  }
+  return trigger;
+}
 
 function emptyEditorState(): EditorState {
   return EditorState.create({
@@ -1322,6 +1357,9 @@ function iconForLocalFileKind(kind: InlineFileIconKind): AppIcon {
 }
 
 function mentionMenuItems({
+  allowFileReferences,
+  allowMemberMentions,
+  allowNodeReferences,
   currentNodeId,
   index,
   localFileSearch,
@@ -1330,6 +1368,9 @@ function mentionMenuItems({
   recentLocalFiles,
   labels,
 }: {
+  allowFileReferences: boolean;
+  allowMemberMentions: boolean;
+  allowNodeReferences: boolean;
   currentNodeId: NodeId | null;
   index: DocumentIndex;
   localFileSearch: {
@@ -1343,29 +1384,35 @@ function mentionMenuItems({
   labels: ReferenceCandidateLabels;
 }): MentionMenuItem[] {
   const trimmedQuery = query.trim();
-  const memberItems = memberMenuItems(members, trimmedQuery);
+  const memberItems = allowMemberMentions ? memberMenuItems(members, trimmedQuery) : [];
   if (!trimmedQuery) {
     return [
       ...memberItems,
-      ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES, labels).map((item): MentionMenuItem => ({
-        ...item,
-        section: 'Recent',
-      })),
-      ...recentLocalFiles.slice(0, MAX_MENTION_FILES).map((file): MentionMenuItem => ({
-        kind: 'file',
-        section: 'Recent',
-        key: `file:${file.id}`,
-        file,
-      })),
+      ...(allowNodeReferences
+        ? recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES, labels).map((item): MentionMenuItem => ({
+            ...item,
+            section: 'Recent',
+          }))
+        : []),
+      ...(allowFileReferences
+        ? recentLocalFiles.slice(0, MAX_MENTION_FILES).map((file): MentionMenuItem => ({
+            kind: 'file',
+            section: 'Recent',
+            key: `file:${file.id}`,
+            file,
+          }))
+        : []),
     ].slice(0, memberItems.length + MAX_MENTION_NODES + MAX_MENTION_FILES);
   }
-  const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery, labels)
-    .slice(0, MAX_MENTION_NODES)
-    .map((item): MentionMenuItem => ({
-      ...item,
-      section: 'Nodes',
-    }));
-  const fileItems = localFileSearch.query === query && localFileSearch.status === 'ready'
+  const nodeItems = allowNodeReferences
+    ? referenceMenuItems(index, currentNodeId, trimmedQuery, labels)
+      .slice(0, MAX_MENTION_NODES)
+      .map((item): MentionMenuItem => ({
+        ...item,
+        section: 'Nodes',
+      }))
+    : [];
+  const fileItems = allowFileReferences && localFileSearch.query === query && localFileSearch.status === 'ready'
     ? localFileSearch.results.slice(0, MAX_MENTION_FILES).map((file): MentionMenuItem => ({
         kind: 'file',
         section: 'Files',

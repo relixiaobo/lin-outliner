@@ -551,7 +551,11 @@ adapter maps envelope errors (`details.ok === false`) to
 
 Tenon configures a local `ask_user_question` tool for structured clarification.
 The runtime persists pending question events, exposes the pending question to the
-renderer, and resumes the blocked tool call when the user submits an answer.
+renderer, and resumes the blocked tool call when the user submits an answer or
+chooses the dedicated `discussed` outcome. Answer inputs use the same structured
+node-ref, local-file-ref, and attachment model as the main composer; path-backed
+answer attachments still pass through the realpath-based local-root jail and
+materialization path before they are persisted in `user_question.answered`.
 Web access is covered by `web_search` and `web_fetch`.
 
 ## Tenon Tool Registry
@@ -597,7 +601,7 @@ These agent-level tools are active on top of the P0 local/document surface.
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `recall` | Tenon agent memory store | Yes | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
-| `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, or free-text user input. |
+| `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, free-text, refs/attachments, or a discuss-before-answering outcome. |
 | `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
 | `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |

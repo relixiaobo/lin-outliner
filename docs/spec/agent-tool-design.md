@@ -60,6 +60,7 @@ surface.
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
 | `recall` | agent | No | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
+| `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
 | `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream (offline consolidation) for the current agent; cannot specify facts to save. |
 
 ### Deferred Tools
@@ -79,6 +80,9 @@ permission behavior harder to reason about.
 - Use `recall` for durable agent memory (cued retrieval over the semantic
   store). Raw episodic search is internal to runtime-owned evidence expansion
   and Dream consolidation, not a model-visible tool.
+- Use `ask_user_question` for decisions or missing context, not permission
+  approval. Permission approval answers "may the agent do this"; this tool
+  answers "what information or direction should the agent use next".
 - Use `dream` only as a trigger-only request for runtime-owned Dream
   consolidation. It is not a foreground fact write/update/forget API.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
@@ -90,6 +94,94 @@ permission behavior harder to reason about.
   with `file_read`.
 - Do not use a generic `node_batch`; batch capability belongs inside the
   relevant tool parameters.
+
+## `ask_user_question`
+
+`ask_user_question` is a run-scoped, blocking user-interaction tool. It is not a
+permission request and does not reuse approval cards or approval events.
+
+Input:
+
+```ts
+interface AskUserQuestionInput {
+  questions: Array<{
+    id: string;
+    type: "single_choice" | "multi_choice" | "free_text";
+    header?: string;
+    question: string;
+    required?: boolean;
+    allow_other?: boolean;
+    allow_references?: boolean;
+    allow_attachments?: boolean;
+    options?: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      recommended?: boolean;
+    }>;
+  }>;
+  submit_label?: string;
+}
+```
+
+Runtime validation enforces 1-4 questions, stable unique question ids, unique
+option ids/labels per question, 2-6 options for choice questions, no options for
+free-text questions, and no preview field. OpenAI function schemas stay permissive
+at the top level; conditional rules are enforced in TypeScript normalizers.
+
+Result:
+
+```ts
+interface AskUserQuestionResult {
+  requestId: string;
+  outcome?: "answered" | "discussed";
+  answers: Array<{
+    questionId: string;
+    selectedOptionIds?: string[];
+    text?: string;
+    notes?: string;
+    nodeRefs?: Array<{ nodeId: string; label?: string }>;
+    fileRefs?: Array<{
+      attachmentId?: string;
+      entryKind?: "file" | "directory";
+      name?: string;
+      path?: string;
+      ref?: string;
+      mimeType?: string;
+      sizeBytes?: number;
+      payload?: AgentPayloadRef;
+    }>;
+    attachments?: Array<{
+      id?: string;
+      kind: "image" | "text" | "file";
+      ref?: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      path?: string;
+      payload?: AgentPayloadRef;
+      truncated?: boolean;
+    }>;
+  }>;
+  discuss?: { message: string };
+}
+```
+
+`outcome: "answered"` is the normal path. Required validation accepts selected
+options, free text, structured refs, or attachments for questions that allow
+them. Node refs and local-file refs are preserved as structured fields instead of
+being flattened into answer text only. Path-backed answer attachments use the
+same realpath-based local-root jail and materialization path as the main agent
+composer; `ask_user_question` must not become a file-read bypass. Text/image
+answer attachments are persisted as payload refs before the `user_question`
+resolution event is appended.
+
+`outcome: "discussed"` is a dedicated close-the-card path. It skips required
+answer validation, resolves the tool call with `answers: []` plus
+`discuss.message`, and returns model-visible instructions to ask a short
+clarifying question in the normal conversation. If structured input is still
+needed after discussion, the agent must call `ask_user_question` again with a
+fresh request.
 
 ## Tool Description Style
 

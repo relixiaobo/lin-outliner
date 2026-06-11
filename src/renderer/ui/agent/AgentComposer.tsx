@@ -28,6 +28,7 @@ import type {
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
+  AgentComposerAttachmentButton,
   AgentComposerModelButton,
   AgentComposerPrimaryAction,
   AgentComposerToolbar,
@@ -205,8 +206,6 @@ export function AgentComposer({
   const [draft, setDraft] = useState<AgentComposerDraft>(EMPTY_DRAFT);
   const [sending, setSending] = useState(false);
   const [configSubmitting, setConfigSubmitting] = useState(false);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [moreModelsOpen, setMoreModelsOpen] = useState(false);
@@ -214,23 +213,33 @@ export function AgentComposer({
   const [recentLocalFiles, setRecentLocalFiles] = useState<AgentComposerLocalFileCandidate[]>([]);
   const editorRef = useRef<AgentComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const draftRef = useRef<AgentComposerDraft>(EMPTY_DRAFT);
   const dragDepthRef = useRef(0);
   const handledFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const {
+    attachments,
+    attachmentsRef,
+    attachmentError,
+    attachLocalFileCandidate,
+    addFilesInline,
+    detachAttachments,
+    handleAttachmentClick,
+    handleFileInputChange,
+    previewLocalFile,
+    pruneUnreferencedAttachments,
+    restoreAttachments,
+    searchLocalFiles,
+    setAttachmentError,
+  } = useAgentComposerAttachmentManager({
+    editorRef,
+    fileInputRef,
+    onLocalFileSelected: (file) => {
+      setRecentLocalFiles((current) => [file, ...current.filter((item) => item.id !== file.id)].slice(0, 8));
+    },
+  });
   const hasDraft = !draft.empty;
-
-  // Auto-dismiss the attachment error: it announces the problem, then fades so the
-  // composer doesn't keep a stale banner. Each new message restarts the timer (the
-  // dependency changes); a success path that clears it to null cancels the timer via
-  // cleanup before it fires.
-  useEffect(() => {
-    if (!attachmentError) return;
-    const timer = window.setTimeout(() => setAttachmentError(null), ATTACHMENT_ERROR_TIMEOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [attachmentError]);
 
   useEffect(() => {
     if (focusToken <= 0 || handledFocusTokenRef.current >= focusToken) return;
@@ -270,16 +279,6 @@ export function AgentComposer({
       setReasoningMenuOpen(false);
     }
   }, [modelMenuOpen]);
-
-  useEffect(() => {
-    attachmentsRef.current = attachments;
-  }, [attachments]);
-
-  useEffect(() => () => {
-    for (const attachment of attachmentsRef.current) {
-      revokeAttachmentPreview(attachment);
-    }
-  }, []);
 
   useEffect(() => {
     let canceled = false;
@@ -331,9 +330,8 @@ export function AgentComposer({
     } catch (error) {
       restoreDraftIfUnchanged(editorSnapshot);
       if (attachmentsRef.current.length === 0) {
-        attachmentsRef.current = sentAttachments;
         restoredAttachments = true;
-        setAttachments(sentAttachments);
+        restoreAttachments(sentAttachments);
       }
       setAttachmentError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -345,206 +343,6 @@ export function AgentComposer({
       sendingRef.current = false;
       setSending(false);
     }
-  }
-
-  async function addFiles(files: FileList | File[]): Promise<ComposerAttachment[]> {
-    const incoming = Array.from(files).filter((file) => file.size > 0);
-    if (incoming.length === 0) return [];
-
-    const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
-    if (remainingSlots <= 0) {
-      setAttachmentError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
-      return [];
-    }
-
-    const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
-    const existingHashes = new Set(attachmentsRef.current.map((attachment) => attachment.sha256).filter((hash): hash is string => Boolean(hash)));
-    const failures: string[] = [];
-    const nextAttachments: ComposerAttachment[] = [];
-    let skippedDuplicates = 0;
-    let skippedOverflow = 0;
-
-    for (const file of incoming) {
-      if (nextAttachments.length >= remainingSlots) {
-        skippedOverflow += 1;
-        continue;
-      }
-      try {
-        const nativePath = window.lin?.getFilePath?.(file) ?? '';
-        const fingerprint = fileFingerprint(file, nativePath);
-        if (nativePath && existingFingerprints.has(fingerprint)) {
-          skippedDuplicates += 1;
-          continue;
-        }
-        const prepared = nativePath ? null : await preparePathlessAttachmentBytes(file);
-        if (prepared?.sha256 && existingHashes.has(prepared.sha256)) {
-          skippedDuplicates += 1;
-          continue;
-        }
-        const attachment = await fileToAttachment(file, nativePath, prepared);
-        nextAttachments.push({ ...attachment, fingerprint });
-        existingFingerprints.add(fingerprint);
-        if (attachment.sha256) existingHashes.add(attachment.sha256);
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-
-    const referencedAttachments = withAttachmentRefs(nextAttachments, attachmentsRef.current);
-    if (referencedAttachments.length > 0) {
-      const merged = [...attachmentsRef.current, ...referencedAttachments];
-      attachmentsRef.current = merged;
-      setAttachments(merged);
-    }
-    setAttachmentError(
-      failures[0]
-        ?? duplicateMessage(skippedDuplicates, t.agent.composer)
-        ?? overflowMessage(skippedOverflow, t.agent.composer)
-        ?? null,
-    );
-    return referencedAttachments;
-  }
-
-  async function addFilesInline(files: FileList | File[]) {
-    const added = await addFiles(files);
-    if (added.length > 0) {
-      editorRef.current?.insertFileReferences(added.map(attachmentToFileReference));
-    }
-  }
-
-  async function addPickedLocalFilesInline(
-    files: PickedLocalFileAttachment[],
-    options: { insertReferences?: boolean } = {},
-  ): Promise<AgentComposerFileReference[]> {
-    const insertReferences = options.insertReferences ?? true;
-    if (files.length === 0) return [];
-    const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
-    if (remainingSlots <= 0) {
-      setAttachmentError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
-      return [];
-    }
-
-    const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
-    const failures: string[] = [];
-    const nextAttachments: ComposerAttachment[] = [];
-    let skippedDuplicates = 0;
-    let skippedOverflow = 0;
-
-    for (const file of files) {
-      if (nextAttachments.length >= remainingSlots) {
-        skippedOverflow += 1;
-        continue;
-      }
-      try {
-        const fingerprint = pickedLocalFileFingerprint(file);
-        if (existingFingerprints.has(fingerprint)) {
-          skippedDuplicates += 1;
-          continue;
-        }
-        const attachment = await pickedLocalFileToAttachment(file);
-        nextAttachments.push({ ...attachment, fingerprint });
-        existingFingerprints.add(fingerprint);
-      } catch (error) {
-        failures.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-
-    if (nextAttachments.length > 0) {
-      const referencedAttachments = withAttachmentRefs(nextAttachments, attachmentsRef.current);
-      const merged = [...attachmentsRef.current, ...referencedAttachments];
-      attachmentsRef.current = merged;
-      setAttachments(merged);
-      const refs = referencedAttachments.map(attachmentToFileReference);
-      if (insertReferences) editorRef.current?.insertFileReferences(refs);
-      setAttachmentError(
-        failures[0]
-          ?? duplicateMessage(skippedDuplicates, t.agent.composer)
-          ?? overflowMessage(skippedOverflow, t.agent.composer)
-          ?? null,
-      );
-      return refs;
-    }
-    setAttachmentError(
-      failures[0]
-        ?? duplicateMessage(skippedDuplicates, t.agent.composer)
-        ?? overflowMessage(skippedOverflow, t.agent.composer)
-        ?? null,
-    );
-    return [];
-  }
-
-  function detachAttachments() {
-    attachmentsRef.current = [];
-    setAttachments([]);
-    setAttachmentError(null);
-  }
-
-  async function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const input = event.currentTarget;
-    const files = input.files ? Array.from(input.files) : [];
-    input.value = '';
-    if (files.length === 0) return;
-    await addFilesInline(files);
-  }
-
-  async function handleAttachmentClick() {
-    if (window.lin?.pickLocalFiles) {
-      try {
-        const result = await window.lin.pickLocalFiles({
-          maxFiles: Math.max(1, MAX_ATTACHMENTS - attachmentsRef.current.length),
-        });
-        if (!result.canceled) {
-          await addPickedLocalFilesInline(result.files);
-          if (result.skippedCount) {
-            setAttachmentError((current) => current ?? overflowMessage(result.skippedCount ?? 0, t.agent.composer));
-          }
-        }
-        return;
-      } catch {
-        // Fall through to the web file input when the native picker is unavailable.
-      }
-    }
-
-    fileInputRef.current?.click();
-  }
-
-  async function searchLocalFiles(query: string): Promise<AgentComposerLocalFileCandidate[]> {
-    if (!window.lin?.searchLocalFiles) return [];
-    const result = await window.lin.searchLocalFiles({ query, limit: 8 });
-    return result.files;
-  }
-
-  async function previewLocalFile(
-    file: AgentComposerLocalFileCandidate,
-  ): Promise<AgentComposerLocalFileCandidate | null> {
-    if (file.thumbnailDataUrl || !window.lin?.previewLocalFile) return file.thumbnailDataUrl ? file : null;
-    const result = await window.lin.previewLocalFile({ id: file.id });
-    return result.thumbnailDataUrl
-      ? { ...file, thumbnailDataUrl: result.thumbnailDataUrl }
-      : null;
-  }
-
-  async function attachLocalFileCandidate(
-    file: AgentComposerLocalFileCandidate,
-  ): Promise<AgentComposerFileReference | null> {
-    if (!window.lin?.prepareLocalFile) {
-      setAttachmentError(t.agent.composer.localFileSearchUnavailable);
-      return null;
-    }
-    const result = await window.lin.prepareLocalFile({ id: file.id });
-    if (!result.file) {
-      setAttachmentError(t.agent.composer.localFileNoLongerAvailable);
-      return null;
-    }
-    const refs = await addPickedLocalFilesInline([{
-      ...result.file,
-      iconDataUrl: result.file.iconDataUrl ?? file.iconDataUrl,
-      thumbnailDataUrl: result.file.thumbnailDataUrl ?? file.thumbnailDataUrl,
-    }], { insertReferences: false });
-    if (refs.length > 0) {
-      setRecentLocalFiles((current) => [file, ...current.filter((item) => item.id !== file.id)].slice(0, 8));
-    }
-    return refs[0] ?? null;
   }
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
@@ -630,18 +428,6 @@ export function AgentComposer({
     editorRef.current?.restore(snapshot);
   }
 
-  function pruneUnreferencedAttachments(nextDraft: AgentComposerDraft) {
-    if (attachmentsRef.current.length === 0) return;
-    const referencedAttachmentIds = new Set(nextDraft.fileRefs.map((fileRef) => fileRef.attachmentId));
-    const nextAttachments = attachmentsRef.current.filter((attachment) => referencedAttachmentIds.has(attachment.id));
-    if (nextAttachments.length === attachmentsRef.current.length) return;
-    for (const attachment of attachmentsRef.current) {
-      if (!referencedAttachmentIds.has(attachment.id)) revokeAttachmentPreview(attachment);
-    }
-    attachmentsRef.current = nextAttachments;
-    setAttachments(nextAttachments);
-  }
-
   return (
     <form
       className="agent-composer"
@@ -678,8 +464,12 @@ export function AgentComposer({
         ) : pendingUserQuestion ? (
           <AgentUserQuestionCard
             key={pendingUserQuestion.requestId}
+            currentNodeId={currentNodeId}
+            index={index}
+            onNodeReferenceOpen={onNodeReferenceOpen}
             pendingQuestion={pendingUserQuestion}
             onResolve={onResolveUserQuestion}
+            recentLocalFiles={recentLocalFiles}
           />
         ) : (
           <>
@@ -763,6 +553,288 @@ export function AgentComposer({
       </div>
     </form>
   );
+}
+
+function useAgentComposerAttachmentManager({
+  allowAttachments = true,
+  editorRef,
+  fileInputRef,
+  onLocalFileSelected,
+}: {
+  allowAttachments?: boolean;
+  editorRef: { current: AgentComposerEditorHandle | null };
+  fileInputRef: { current: HTMLInputElement | null };
+  onLocalFileSelected?: (file: AgentComposerLocalFileCandidate) => void;
+}) {
+  const t = useT();
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => () => {
+    for (const attachment of attachmentsRef.current) {
+      revokeAttachmentPreview(attachment);
+    }
+  }, []);
+
+  // Attachment errors are transient hints; auto-clear them to avoid stale banners.
+  useEffect(() => {
+    if (!attachmentError) return;
+    const timer = window.setTimeout(() => setAttachmentError(null), ATTACHMENT_ERROR_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [attachmentError]);
+
+  async function addFiles(files: FileList | File[]): Promise<ComposerAttachment[]> {
+    if (!allowAttachments) {
+      setAttachmentError(t.agent.composer.attachmentsNotAllowed);
+      return [];
+    }
+    const incoming = Array.from(files).filter((file) => file.size > 0);
+    if (incoming.length === 0) return [];
+
+    const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
+    if (remainingSlots <= 0) {
+      setAttachmentError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
+      return [];
+    }
+
+    const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
+    const existingHashes = new Set(attachmentsRef.current.map((attachment) => attachment.sha256).filter((hash): hash is string => Boolean(hash)));
+    const failures: string[] = [];
+    const nextAttachments: ComposerAttachment[] = [];
+    let skippedDuplicates = 0;
+    let skippedOverflow = 0;
+
+    for (const file of incoming) {
+      if (nextAttachments.length >= remainingSlots) {
+        skippedOverflow += 1;
+        continue;
+      }
+      try {
+        const nativePath = window.lin?.getFilePath?.(file) ?? '';
+        const fingerprint = fileFingerprint(file, nativePath);
+        if (nativePath && existingFingerprints.has(fingerprint)) {
+          skippedDuplicates += 1;
+          continue;
+        }
+        const prepared = nativePath ? null : await preparePathlessAttachmentBytes(file);
+        if (prepared?.sha256 && existingHashes.has(prepared.sha256)) {
+          skippedDuplicates += 1;
+          continue;
+        }
+        const attachment = await fileToAttachment(file, nativePath, prepared);
+        nextAttachments.push({ ...attachment, fingerprint });
+        existingFingerprints.add(fingerprint);
+        if (attachment.sha256) existingHashes.add(attachment.sha256);
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const referencedAttachments = withAttachmentRefs(nextAttachments, attachmentsRef.current);
+    if (referencedAttachments.length > 0) {
+      const merged = [...attachmentsRef.current, ...referencedAttachments];
+      attachmentsRef.current = merged;
+      setAttachments(merged);
+    }
+    setAttachmentError(
+      failures[0]
+        ?? duplicateMessage(skippedDuplicates, t.agent.composer)
+        ?? overflowMessage(skippedOverflow, t.agent.composer)
+        ?? null,
+    );
+    return referencedAttachments;
+  }
+
+  async function addFilesInline(files: FileList | File[]) {
+    const added = await addFiles(files);
+    if (added.length > 0) {
+      editorRef.current?.insertFileReferences(added.map(attachmentToFileReference));
+    }
+  }
+
+  async function addPickedLocalFilesInline(
+    files: PickedLocalFileAttachment[],
+    options: { insertReferences?: boolean } = {},
+  ): Promise<AgentComposerFileReference[]> {
+    if (!allowAttachments) {
+      setAttachmentError(t.agent.composer.attachmentsNotAllowed);
+      return [];
+    }
+    const insertReferences = options.insertReferences ?? true;
+    if (files.length === 0) return [];
+    const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
+    if (remainingSlots <= 0) {
+      setAttachmentError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
+      return [];
+    }
+
+    const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
+    const failures: string[] = [];
+    const nextAttachments: ComposerAttachment[] = [];
+    let skippedDuplicates = 0;
+    let skippedOverflow = 0;
+
+    for (const file of files) {
+      if (nextAttachments.length >= remainingSlots) {
+        skippedOverflow += 1;
+        continue;
+      }
+      try {
+        const fingerprint = pickedLocalFileFingerprint(file);
+        if (existingFingerprints.has(fingerprint)) {
+          skippedDuplicates += 1;
+          continue;
+        }
+        const attachment = await pickedLocalFileToAttachment(file);
+        nextAttachments.push({ ...attachment, fingerprint });
+        existingFingerprints.add(fingerprint);
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (nextAttachments.length > 0) {
+      const referencedAttachments = withAttachmentRefs(nextAttachments, attachmentsRef.current);
+      const merged = [...attachmentsRef.current, ...referencedAttachments];
+      attachmentsRef.current = merged;
+      setAttachments(merged);
+      const refs = referencedAttachments.map(attachmentToFileReference);
+      if (insertReferences) editorRef.current?.insertFileReferences(refs);
+      setAttachmentError(
+        failures[0]
+          ?? duplicateMessage(skippedDuplicates, t.agent.composer)
+          ?? overflowMessage(skippedOverflow, t.agent.composer)
+          ?? null,
+      );
+      return refs;
+    }
+    setAttachmentError(
+      failures[0]
+        ?? duplicateMessage(skippedDuplicates, t.agent.composer)
+        ?? overflowMessage(skippedOverflow, t.agent.composer)
+        ?? null,
+    );
+    return [];
+  }
+
+  function detachAttachments() {
+    attachmentsRef.current = [];
+    setAttachments([]);
+    setAttachmentError(null);
+  }
+
+  function restoreAttachments(nextAttachments: ComposerAttachment[]) {
+    attachmentsRef.current = nextAttachments;
+    setAttachments(nextAttachments);
+  }
+
+  function pruneUnreferencedAttachments(nextDraft: AgentComposerDraft): ComposerAttachment[] {
+    if (attachmentsRef.current.length === 0) return attachmentsRef.current;
+    const referencedAttachmentIds = new Set(nextDraft.fileRefs.map((fileRef) => fileRef.attachmentId));
+    const nextAttachments = attachmentsRef.current.filter((attachment) => referencedAttachmentIds.has(attachment.id));
+    if (nextAttachments.length === attachmentsRef.current.length) return attachmentsRef.current;
+    for (const attachment of attachmentsRef.current) {
+      if (!referencedAttachmentIds.has(attachment.id)) revokeAttachmentPreview(attachment);
+    }
+    attachmentsRef.current = nextAttachments;
+    setAttachments(nextAttachments);
+    return nextAttachments;
+  }
+
+  async function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const files = input.files ? Array.from(input.files) : [];
+    input.value = '';
+    if (files.length === 0) return;
+    await addFilesInline(files);
+  }
+
+  async function handleAttachmentClick() {
+    if (!allowAttachments) {
+      setAttachmentError(t.agent.composer.attachmentsNotAllowed);
+      return;
+    }
+    if (window.lin?.pickLocalFiles) {
+      try {
+        const result = await window.lin.pickLocalFiles({
+          maxFiles: Math.max(1, MAX_ATTACHMENTS - attachmentsRef.current.length),
+        });
+        if (!result.canceled) {
+          await addPickedLocalFilesInline(result.files);
+          if (result.skippedCount) {
+            setAttachmentError((current) => current ?? overflowMessage(result.skippedCount ?? 0, t.agent.composer));
+          }
+        }
+        return;
+      } catch {
+        // Fall through to the web file input when the native picker is unavailable.
+      }
+    }
+
+    fileInputRef.current?.click();
+  }
+
+  async function searchLocalFiles(query: string): Promise<AgentComposerLocalFileCandidate[]> {
+    if (!window.lin?.searchLocalFiles) return [];
+    const result = await window.lin.searchLocalFiles({ query, limit: 8 });
+    return result.files;
+  }
+
+  async function previewLocalFile(
+    file: AgentComposerLocalFileCandidate,
+  ): Promise<AgentComposerLocalFileCandidate | null> {
+    if (file.thumbnailDataUrl || !window.lin?.previewLocalFile) return file.thumbnailDataUrl ? file : null;
+    const result = await window.lin.previewLocalFile({ id: file.id });
+    return result.thumbnailDataUrl
+      ? { ...file, thumbnailDataUrl: result.thumbnailDataUrl }
+      : null;
+  }
+
+  async function attachLocalFileCandidate(
+    file: AgentComposerLocalFileCandidate,
+  ): Promise<AgentComposerFileReference | null> {
+    if (!allowAttachments) {
+      setAttachmentError(t.agent.composer.attachmentsNotAllowed);
+      return null;
+    }
+    if (!window.lin?.prepareLocalFile) {
+      setAttachmentError(t.agent.composer.localFileSearchUnavailable);
+      return null;
+    }
+    const result = await window.lin.prepareLocalFile({ id: file.id });
+    if (!result.file) {
+      setAttachmentError(t.agent.composer.localFileNoLongerAvailable);
+      return null;
+    }
+    const refs = await addPickedLocalFilesInline([{
+      ...result.file,
+      iconDataUrl: result.file.iconDataUrl ?? file.iconDataUrl,
+      thumbnailDataUrl: result.file.thumbnailDataUrl ?? file.thumbnailDataUrl,
+    }], { insertReferences: false });
+    if (refs.length > 0) onLocalFileSelected?.(file);
+    return refs[0] ?? null;
+  }
+
+  return {
+    attachments,
+    attachmentsRef,
+    attachmentError,
+    addFilesInline,
+    attachLocalFileCandidate,
+    detachAttachments,
+    handleAttachmentClick,
+    handleFileInputChange,
+    previewLocalFile,
+    pruneUnreferencedAttachments,
+    restoreAttachments,
+    searchLocalFiles,
+    setAttachmentError,
+  };
 }
 
 function AgentApprovalCard({
@@ -917,24 +989,29 @@ function AgentApprovalCard({
 }
 
 function AgentUserQuestionCard({
+  currentNodeId,
+  index,
+  onNodeReferenceOpen,
   pendingQuestion,
   onResolve,
+  recentLocalFiles,
 }: {
+  currentNodeId: NodeId | null;
+  index: DocumentIndex;
+  onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
   pendingQuestion: AgentUserQuestionPendingView;
   onResolve: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
+  recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
 }) {
   const t = useT();
   const [submitting, setSubmitting] = useState(false);
-  const [draft, setDraft] = useState<Record<string, { selectedOptionIds: string[]; text: string }>>(() => (
-    Object.fromEntries(pendingQuestion.request.questions.map((question) => [question.id, {
-      selectedOptionIds: [],
-      text: '',
-    }]))
+  const [draft, setDraft] = useState<Record<string, AgentQuestionAnswerDraft>>(() => (
+    Object.fromEntries(pendingQuestion.request.questions.map((question) => [question.id, emptyQuestionAnswerDraft()]))
   ));
 
   function updateSelection(questionId: string, optionId: string, checked: boolean, multi: boolean) {
     setDraft((current) => {
-      const value = current[questionId] ?? { selectedOptionIds: [], text: '' };
+      const value = current[questionId] ?? emptyQuestionAnswerDraft();
       const selectedOptionIds = multi
         ? checked
           ? [...new Set([...value.selectedOptionIds, optionId])]
@@ -944,10 +1021,10 @@ function AgentUserQuestionCard({
     });
   }
 
-  function updateText(questionId: string, text: string) {
+  function updateAnswerDraft(questionId: string, update: Partial<AgentQuestionAnswerDraft>) {
     setDraft((current) => {
-      const value = current[questionId] ?? { selectedOptionIds: [], text: '' };
-      return { ...current, [questionId]: { ...value, text } };
+      const value = current[questionId] ?? emptyQuestionAnswerDraft();
+      return { ...current, [questionId]: { ...value, ...update } };
     });
   }
 
@@ -955,8 +1032,8 @@ function AgentUserQuestionCard({
     if (question.required === false) return true;
     const value = draft[question.id];
     if (!value) return false;
-    if (question.type === 'free_text') return value.text.trim().length > 0;
-    return value.selectedOptionIds.length > 0 || (question.allowOther && value.text.trim().length > 0);
+    if (question.type === 'free_text') return hasQuestionAnswerDraftContent(value);
+    return value.selectedOptionIds.length > 0 || (question.allowOther && hasQuestionAnswerDraftContent(value));
   });
 
   async function submit() {
@@ -965,14 +1042,38 @@ function AgentUserQuestionCard({
     try {
       await onResolve(pendingQuestion.requestId, {
         requestId: pendingQuestion.requestId,
+        outcome: 'answered',
         answers: pendingQuestion.request.questions.map((question) => {
-          const value = draft[question.id] ?? { selectedOptionIds: [], text: '' };
-          return {
+          const value = draft[question.id] ?? emptyQuestionAnswerDraft();
+          const answer = {
             questionId: question.id,
             selectedOptionIds: question.type === 'free_text' ? undefined : value.selectedOptionIds,
             text: value.text.trim() || undefined,
+            nodeRefs: value.nodeRefs.length > 0
+              ? value.nodeRefs.map((ref) => ({ nodeId: ref.nodeId, label: ref.title }))
+              : undefined,
+            fileRefs: value.fileRefs.length > 0 ? value.fileRefs : undefined,
+            attachments: value.attachments.length > 0 ? value.attachments.map(toAttachmentPayload) : undefined,
           };
+          return answer;
         }),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function discuss() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onResolve(pendingQuestion.requestId, {
+        requestId: pendingQuestion.requestId,
+        outcome: 'discussed',
+        answers: [],
+        discuss: {
+          message: t.agent.composer.userQuestionDiscussMessage,
+        },
       });
     } finally {
       setSubmitting(false);
@@ -983,8 +1084,11 @@ function AgentUserQuestionCard({
     <div className="agent-question-card" role="group" aria-label={t.agent.composer.userQuestionTitle}>
       <div className="agent-question-title">{t.agent.composer.userQuestionTitle}</div>
       {pendingQuestion.request.questions.map((question) => {
-        const value = draft[question.id] ?? { selectedOptionIds: [], text: '' };
+        const value = draft[question.id] ?? emptyQuestionAnswerDraft();
         const multi = question.type === 'multi_choice';
+        const allowReferences = question.allowReferences ?? question.type === 'free_text';
+        const allowAttachments = (question.allowAttachments ?? question.type === 'free_text') || allowReferences;
+        const usesRichAnswer = question.type === 'free_text' || question.allowOther || allowReferences || allowAttachments;
         return (
           <div className="agent-question-item" key={question.id}>
             {question.header ? <div className="agent-question-header">{question.header}</div> : null}
@@ -1007,13 +1111,16 @@ function AgentUserQuestionCard({
                 ))}
               </div>
             ) : null}
-            {question.type === 'free_text' || question.allowOther ? (
-              <textarea
-                className="agent-question-text"
-                onChange={(event) => updateText(question.id, event.currentTarget.value)}
+            {usesRichAnswer ? (
+              <AgentQuestionAnswerEditor
+                allowAttachments={allowAttachments}
+                allowReferences={allowReferences}
+                currentNodeId={currentNodeId}
+                index={index}
+                onChange={(update) => updateAnswerDraft(question.id, update)}
+                onNodeReferenceOpen={onNodeReferenceOpen}
                 placeholder={question.type === 'free_text' ? t.agent.composer.userQuestionAnswerPlaceholder : t.agent.composer.userQuestionOtherPlaceholder}
-                rows={question.type === 'free_text' ? 3 : 2}
-                value={value.text}
+                recentLocalFiles={recentLocalFiles}
               />
             ) : null}
           </div>
@@ -1028,6 +1135,142 @@ function AgentUserQuestionCard({
         >
           {pendingQuestion.request.submitLabel ?? t.agent.composer.userQuestionSubmit}
         </button>
+        <button
+          className="agent-approval-button"
+          disabled={submitting}
+          onClick={() => void discuss()}
+          type="button"
+        >
+          {t.agent.composer.userQuestionDiscuss}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface AgentQuestionAnswerDraft {
+  selectedOptionIds: string[];
+  text: string;
+  nodeRefs: AgentComposerNodeReference[];
+  fileRefs: AgentComposerFileReference[];
+  attachments: ComposerAttachment[];
+}
+
+function emptyQuestionAnswerDraft(): AgentQuestionAnswerDraft {
+  return {
+    selectedOptionIds: [],
+    text: '',
+    nodeRefs: [],
+    fileRefs: [],
+    attachments: [],
+  };
+}
+
+function hasQuestionAnswerDraftContent(value: AgentQuestionAnswerDraft): boolean {
+  return value.text.trim().length > 0
+    || value.nodeRefs.length > 0
+    || value.fileRefs.length > 0
+    || value.attachments.length > 0;
+}
+
+function AgentQuestionAnswerEditor({
+  allowAttachments,
+  allowReferences,
+  currentNodeId,
+  index,
+  onChange,
+  onNodeReferenceOpen,
+  placeholder,
+  recentLocalFiles,
+}: {
+  allowAttachments: boolean;
+  allowReferences: boolean;
+  currentNodeId: NodeId | null;
+  index: DocumentIndex;
+  onChange: (update: Partial<AgentQuestionAnswerDraft>) => void;
+  onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
+  placeholder: string;
+  recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
+}) {
+  const editorRef = useRef<AgentComposerEditorHandle>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const {
+    attachments,
+    attachmentsRef,
+    attachmentError,
+    addFilesInline,
+    attachLocalFileCandidate,
+    handleAttachmentClick,
+    handleFileInputChange,
+    previewLocalFile,
+    pruneUnreferencedAttachments,
+    searchLocalFiles,
+  } = useAgentComposerAttachmentManager({
+    allowAttachments,
+    editorRef,
+    fileInputRef,
+  });
+
+  function emitDraft(nextDraft: AgentComposerDraft, nextAttachments = attachmentsRef.current) {
+    onChange({
+      text: nextDraft.text,
+      nodeRefs: nextDraft.nodeRefs,
+      fileRefs: nextDraft.fileRefs,
+      attachments: nextAttachments,
+    });
+  }
+
+  function handleDraftChange(nextDraft: AgentComposerDraft) {
+    const nextAttachments = pruneUnreferencedAttachments(nextDraft);
+    emitDraft(nextDraft, nextAttachments);
+  }
+
+  return (
+    <div className="agent-question-answer">
+      {attachmentError ? (
+        <div className="agent-composer-error" role="status">
+          {attachmentError}
+        </div>
+      ) : null}
+      <div className="agent-question-text agent-question-editor-shell">
+        <AgentComposerEditor
+          ref={editorRef}
+          allowFileReferences={allowReferences}
+          allowMemberMentions={false}
+          allowNodeReferences={allowReferences}
+          allowSlashCommands={false}
+          currentNodeId={currentNodeId}
+          index={index}
+          isStreaming={false}
+          members={[]}
+          onChange={handleDraftChange}
+          onFilesPasted={(files) => void addFilesInline(files)}
+          onLocalFilePreview={previewLocalFile}
+          onLocalFileSearch={searchLocalFiles}
+          onLocalFileSelect={attachLocalFileCandidate}
+          onNodeReferenceClick={onNodeReferenceOpen}
+          recentLocalFiles={recentLocalFiles}
+          onStop={() => undefined}
+          onSubmit={() => undefined}
+          placeholder={placeholder}
+          slashCommands={[]}
+          submitOnEnter={false}
+        />
+        {allowAttachments ? (
+          <div className="agent-question-answer-toolbar">
+            <input
+              ref={fileInputRef}
+              className="agent-composer-file-input"
+              multiple
+              onChange={handleFileInputChange}
+              type="file"
+            />
+            <AgentComposerAttachmentButton
+              disabled={attachments.length >= MAX_ATTACHMENTS}
+              onClick={() => void handleAttachmentClick()}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );

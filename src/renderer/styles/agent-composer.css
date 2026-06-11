@@ -303,6 +303,32 @@
   padding: var(--space-3);
 }
 
+.agent-question-editor-shell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0;
+}
+
+.agent-question-editor-shell .agent-composer-editor {
+  min-height: calc(var(--control-size-xl) * 1.25);
+  max-height: 180px;
+  margin-inline: 0;
+  padding: var(--space-3);
+}
+
+.agent-question-editor-shell .agent-composer-editor.is-empty::before {
+  top: var(--space-3);
+  left: var(--space-3);
+}
+
+.agent-question-answer-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 var(--space-2) var(--space-2);
+}
+
 .agent-question-text::placeholder {
   color: var(--text-faint);
 }
@@ -315,6 +341,7 @@
 .agent-question-actions {
   display: flex;
   min-width: 0;
+  gap: var(--space-2);
 }
 
 .agent-attachment-list {
