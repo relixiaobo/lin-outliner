@@ -8,401 +8,590 @@ updated: 2026-06-11
 
 ## Goal
 
-Replace the current expert-oriented permission surface with a small set of
-user-facing safety modes. The user chooses a level once, then Lin derives the
-tool policy, approval frequency, and workspace-skill trust behavior from that
-level. The lowest-friction level must be able to default-allow normal execution
-and permissions for a workspace, while the runtime keeps non-negotiable hard
-blocks for host destruction, credential exfiltration, persistence writes, and
-permission/payment self-modification.
+Unify Lin's user-facing agent security model around one concept: **trust**.
 
-This is a plan proposal for main review, not an implementation PR.
+Users should not have to understand action-kind rows, skill ratification chips,
+agent `restricted` modes, JSON permission rules, and hard-denial failures as
+separate systems. The product should expose:
+
+1. one global trust level;
+2. one interrupt card;
+3. one Security page for grants, revocation, sensitive access, and recent
+   permission activity.
+
+The runtime keeps the existing descriptor-based permission evaluator and hard
+redlines. The new mode ladder decides what happens when no explicit trust grant
+applies.
+
+This is a design proposal for main/PM review, not an implementation PR.
 
 ## Non-goals
 
 - Do not relax Electron renderer hardening, CSP, window navigation policy,
-  OS-permission allow-lists, or `userData` isolation.
-- Do not remove per-action rules or approval event logging; presets sit above the
-  existing engine.
-- Do not implement enterprise policy/admin controls.
-- Do not add migrations. Pre-release settings may be normalized in place.
+  OS-permission allow-lists, `userData` isolation, or secret storage.
+- Do not weaken hard blocks for host destruction, credential exfiltration,
+  persistence writes, unknown shell, permission modification, or payments.
+- Do not encode Full Access by materializing broad global allow rules.
+- Do not expose the delegation sandbox as a user trust level.
+- Do not add per-workspace trust storage now. The product has no user-visible
+  folder handoff yet.
+- Do not add migrations. Pre-release settings normalize-or-default at read time;
+  no legacy reader is kept.
 
 ## Current State
 
 The shipped product has two permission modes:
 
-- `trusted`: the runtime default in `DEFAULT_AGENT_RUNTIME_SETTINGS`.
-- `restricted`: a tool-preapproval mode used by custom agents and skill
-  `allowed-tools`.
+- `trusted`: runtime default.
+- `restricted`: a deny-non-preapproved tool sandbox used by custom agents,
+  subagents, and skill `allowed-tools`.
 
-The runtime setting is a two-value protocol type:
-`AgentPermissionMode = 'trusted' | 'restricted'`. Settings normalization accepts
-only those values, so introducing new modes touches the protocol surface, settings
-normalization, agent authoring, i18n, and tests.
+`AgentPermissionMode = 'trusted' | 'restricted'` is a protocol surface. Settings
+normalization accepts only those values. Custom agent authoring exposes
+Inherit/Restricted/Trusted even though `restricted` is really an internal
+delegation mechanism rather than a consumer trust posture.
 
-Every tool call goes through `agentRuntime.ts` `beforeToolCall`, which loads
-global permission rules, combines skill/subagent preapproval rules, then calls
-`evaluateAgentToolPermission`. The evaluator is already the correct policy seam:
-it returns only `allow`, `ask`, or `deny`.
+Every governed tool call goes through the same runtime seam:
+`agentRuntime.ts` `beforeToolCall` loads global permission rules, combines skill
+and subagent preapproval rules, and calls `evaluateAgentToolPermission`. That
+evaluator derives `ToolActionDescriptor`s and returns exactly one of `allow`,
+`ask`, or `deny`.
 
-The decision engine is descriptor based. Each tool action maps to an
-`AgentToolActionKind` and a `ToolActionDescriptor` with a default decision,
-external-effect flag, high-consequence flag, access scope, and optional hard
-block. Current defaults are mixed:
+The decision engine is already the right foundation:
 
-- Allowed by default: workspace file reads/writes, outliner edits, web search,
+- Descriptors classify action kind, access scope, default decision, reversibility,
+  external effect, high consequence, and optional platform hard block.
+- Platform hard blocks are evaluated before global rules.
+- Configured deny wins.
+- `restricted` currently denies non-preapproved tools before descriptor defaults
+  can allow or ask.
+- Configured allow/ask rules then refine descriptor defaults inside the parser's
+  allowed envelope.
+- Compound shell commands aggregate the most restrictive segment decision.
+
+Current descriptor defaults are mixed:
+
+- Allowed by default: allowed-root file reads/writes, outliner edits, web search,
   memory recall, status/config reads, safe read/search shell commands.
 - Ask by default: web fetch, node delete, local code execution/project scripts,
   dependency install, network writes, git push/GitHub mutation, deploy/publish,
   file delete, subagent spawn, skill writes, Dream, config writes, sensitive path
   reads, background processes, sandbox override.
-- Denied/hard-blocked: unknown shell, outside-workspace access unless the run
-  opted into outside access, credential/persistence/git-internal writes,
-  sensitive-data exfiltration, destructive host commands, permission modification,
-  and payment purchase.
+- Denied/hard-blocked: unknown shell, outside-root access unless the run opted
+  into outside access, credential/persistence/git-internal writes,
+  sensitive-data exfiltration, destructive host commands, permission
+  modification, and payment purchase.
 
 Global permissions are stored as `agent-tool-permissions.json` under `userData`
 with `{ permissions: { allow, ask, deny } }`. Parsing is intentionally
-fail-closed. The settings UI exposes common action-kind rows as `Ask first` or
-`Always allow`; invalid/unsupported JSON rules surface diagnostics.
-
-The approval card supports `Approve once`, `Always allow` when a validated
-`Action(...)` rule exists, and `Deny once`. "Always allow" appends one global
-allow rule. Many high-leverage actions cannot currently be globally allowed:
+fail-closed. Many high-leverage actions cannot be globally allowed today:
 `agent.config.write`, `agent.memory.dream`, `agent.skill.write`,
 `agent.subagent.spawn`, `shell.unknown`, and broad/arbitrary `Bash(...)` rules.
-That means a true "Full Access" mode cannot be implemented as prefilled global
-allow rules without weakening the parser. It needs a first-class mode layer.
+This is correct and should not be weakened to fake a Full Access mode.
 
-The ask resolver is conservative. Explicit configured `ask` always asks;
-safe-read allow-list descriptors auto-allow; every shipped descriptor has
+The approval card supports `Approve once`, `Always allow` when a validated
+`Action(...)` rule exists, and `Deny once`. Skill trust has a separate Settings
+flow: project skills and agent-authored skills are hidden from automatic model
+use until accepted. A model-triggered unaccepted skill currently fails in chat and
+points users to Settings.
+
+The ask resolver is conservative. Explicit configured asks always ask; safe-read
+allow-list descriptors can auto-allow; every shipped descriptor currently has
 `classifierAutoAllowEligible: false`, so the classifier path is effectively dead
 in production. If no approval channel exists, an ask becomes a structured
 permission denial. Skill embedded shell uses the same evaluator and ask resolver.
 
-Project skills now require exact-byte acceptance before automatic model use.
-Accepted skills still do not bypass runtime permissions; their `allowed-tools`
-only add run-scoped preapproval metadata. Slash invocation remains user consent
-for that run. This is safer than the old fail-open behavior, but it creates a
-granular acceptance burden for consumer users when a trusted workspace ships many
-skills.
+The native host security shell is separate from agent trust: renderer windows
+keep `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; the
+packaged renderer gets CSP; navigation is blocked or opened externally; Electron
+permissions are denied except sanitized clipboard write; single-instance and
+before-quit flush stay fixed. These are safety-floor controls, not mode controls.
 
-The Electron/native host security shell is separate from agent permissions:
-renderer windows keep `contextIsolation: true`, `sandbox: true`,
-`nodeIntegration: false`; navigation is blocked or opened externally; packaged
-`file://` gets CSP; Electron permissions are denied except sanitized clipboard
-write; single-instance and before-quit flush stay fixed. These controls should
-not vary by agent safety mode.
+## Product Fact: No Workspace Yet
+
+The original proposal modeled trust around a workspace identity. That is not a
+shipped product concept.
+
+Today the agent local file root is set once at launch:
+
+```ts
+const agentLocalFileRoot = process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd();
+```
+
+There is no folder picker, no per-conversation root, and no renderer-visible
+workspace/folder trust surface. The "workspace = project clone" experience exists
+for developers because dev scripts launch from repo clones. Consumers using the
+packaged app do not choose a workspace.
+
+Therefore the current product should use **global app trust**:
+
+- one global `safetyMode`;
+- one global trust ledger;
+- no `WorkspaceTrustSettings`;
+- no workspace identity resolver;
+- no per-workspace mode override;
+- no batch-accept-per-workspace skill mechanism.
+
+Later, if Lin introduces an explicit "hand Lin a folder" gesture, that gesture is
+the trust moment. Picking the folder records one revocable ledger grant. No
+separate VS Code-style trust dialog is needed because the functional action and
+the trust grant are the same user gesture.
+
+## Required Precursor: Local Root Boundary
+
+This plan must not ship on top of an unbounded file root.
+
+If a packaged app launched from Finder gets `process.cwd() === "/"`, the current
+fallback makes the permission engine treat the whole disk as the allowed file
+area. Sensitive paths still have separate descriptors, but ordinary paths
+outside the app's intended local area would default as in-root. Full Access on
+top of that boundary would be full disk access.
+
+This is independent of the mode ladder and should be verified/fixed first. The
+separate filed item is `docs/plans/agent-local-root-boundary.md`.
 
 ## Product Problem
 
-The current surface is correct for engineers but too fragmented for ordinary
-consumer users:
+Today the user-facing security surface is fragmented.
 
-- Users see repeated per-action prompts and may train themselves to click
-  through without reading.
-- The Settings permission center requires understanding action kinds such as
-  `shell.project_script` or `git.publish_remote`.
-- Skill acceptance is exact-byte and safe, but per-skill acceptance does not map
-  to the user's real intent: "I trust this workspace/project."
-- "Trusted" sounds like the low-friction mode, but it still asks for many common
-  development actions. "Restricted" is a developer-facing term rather than a
-  consumer-facing safety level.
+Interrupts:
 
-The right abstraction is a preset ladder, with advanced per-action overrides
-available but not primary.
+- approval cards;
+- structured denials that can read as silent failures;
+- pending skill failures in chat with remediation hidden in Settings.
 
-## Proposed Modes
+Configuration surfaces:
 
-Expose four safety modes in user-facing copy. Keep internal identifiers explicit
-and stable.
+- Permissions pane with action rows and JSON diagnostics;
+- Skills pane with pending/accepted chips and accept/revoke controls;
+- Agent editor with Inherit/Restricted/Trusted;
+- hand-edited permission JSON;
+- unexposed outside-root flags.
 
-| UI name | Internal id | Product meaning | Default behavior |
+Vocabularies:
+
+- `trusted` / `restricted`;
+- `Ask first` / `Always allow`;
+- pending / accepted skill trust;
+- `allow` / `ask` / `deny`.
+
+Those surfaces all express the same underlying judgment:
+
+```text
+principal x scope x capability -> allow | ask | deny
+```
+
+The engine already implements that judgment once. The product should stop
+presenting each grant family as a separate feature.
+
+## Four-Layer Model
+
+### 1. Safety floor
+
+Invisible and non-configurable:
+
+- Electron/native hardening;
+- platform hard blocks;
+- credential and persistence redlines;
+- sensitive-data exfiltration blocks;
+- unknown shell deny;
+- permission/payment modification deny;
+- secret storage decisions.
+
+No trust level or ledger fact can bypass this layer.
+
+### 2. Trust ledger
+
+Everything the user has granted is one fact type:
+
+```ts
+interface TrustGrant {
+  id: string;
+  subject: 'user' | 'system';
+  scope: 'global' | { kind: 'folder'; root: string }; // folder is future-only
+  grant:
+    | { kind: 'action'; actionKind: AgentToolActionKind }
+    | { kind: 'skill_hash'; skillFile: string; contentHash: string; source: 'user' | 'project' }
+    | { kind: 'sensitive_files' }
+    | { kind: 'folder_access'; root: string };
+  provenance:
+    | { kind: 'approval_card'; conversationId?: string; requestId?: string }
+    | { kind: 'settings' }
+    | { kind: 'future_folder_handoff' };
+  createdAt: number;
+  revokedAt?: number;
+}
+```
+
+An "always allow web fetch" action, an accepted skill hash, and a future handed
+folder are instances of the same ledger. Each is individually revocable and shown
+in one Security page.
+
+This does not require collapsing all current stores in the first implementation.
+The plan requires one product abstraction and one renderer view. The backing
+implementation can adapt the existing global permission store and skill
+provenance store behind a ledger-shaped projection, then consolidate storage
+later if needed.
+
+### 3. Default policy
+
+The mode ladder defines what happens when the safety floor allows the action and
+no ledger fact speaks.
+
+Recommended global trust levels:
+
+| UI name | Internal id | Default policy |
+| --- | --- | --- |
+| Ask First | `ask_first` | Allow passive reads/searches/status. Ask before local edits, deletes, shell execution, web fetch, external effects, skill acceptance, subagents, config writes, and Dream. |
+| Balanced | `balanced` | Recommended default. Preserve today's effective `trusted` behavior: allow ordinary outline/file edits and passive reads; ask for execution, deletes, dependency installs, web fetch, external mutations, sensitive/outside paths, subagents, skill writes, config writes, Dream, and unaccepted skills. |
+| Full Access | `full_access` | Lowest-friction automation. Allow classified non-redline local execution, allowed-root edits and deletes, web fetch, dependency install, network writes, git push/GitHub mutation, subagents, Dream, and accepted skill invocation. Keep deploy/publish, sandbox override, sensitive local reads, agent-authored skill acceptance, unknown shell, and all hard redlines out of the automatic allow set. |
+
+I recommend shipping three trust levels. `Read Only` is a task posture ("analyze
+this, do not touch anything"), not a trust posture. It belongs later as a
+per-conversation toggle, similar to a plan-mode constraint, not on the global
+trust ladder. PM can still choose to keep four modes; the engine shape is the
+same.
+
+### 4. Delegation sandbox
+
+This is internal and should not appear in user vocabulary.
+
+The existing `restricted` behavior remains useful for custom agents, subagents,
+and skills: deny non-preapproved tools under a preapproval envelope. It is not a
+global user trust level and must not map to `ask_first`.
+
+Custom agents become narrow-only relative to the global trust level:
+
+- "Follow global" (default);
+- "Restricted" (deny non-preapproved tools).
+
+They must not widen above the global mode through a user-facing setting. This
+settles the old open question about custom-agent widening.
+
+Explicitly not unified into the trust ledger:
+
+- the delegation sandbox itself;
+- Electron/native hardening;
+- secret storage;
+- provider authentication;
+- payment/permission-management hard blocks.
+
+Forcing these into the ledger would dirty the abstraction. They remain safety
+floor or internal mechanism.
+
+## Trust Level Semantics
+
+Recommended profile decisions:
+
+| Action category | Ask First | Balanced | Full Access |
 | --- | --- | --- | --- |
-| Read Only | `read_only` | Let the agent analyze but not change anything. | Allow passive reads/searches/status. Deny local mutations, shell execution beyond read/search, external writes, subagents, skill writes, config writes, Dream writes, and automatic project-skill trust. |
-| Ask First | `ask_first` | Maximum visibility with fewer hard denials than current `restricted`. | Allow passive reads/searches. Ask before workspace edits, deletes, local execution, web fetch, external effects, subagents, skill writes, config writes, Dream, and project-skill automatic use. |
-| Balanced | `balanced` | Recommended default for most users. | Equivalent to today's `trusted` plus cleaner grouped UX: allow normal local reads/writes and outliner edits; ask for code execution, deletes, dependency installs, web fetch, external mutations, sensitive/outside paths, subagents, skill writes, config writes, Dream, and new/changed project skills. |
-| Full Access | `full_access` | Lowest-friction workspace automation. | Allow classified non-redline tool actions for this workspace by default, including local execution, workspace edits/deletes, web fetch, dependency install, git/GitHub mutation, deploy/publish, network writes, subagent spawn, Dream, and skill invocation. Still block hard redlines and keep audit events. |
+| Local/outliner reads, search, status | allow | allow | allow |
+| Local/outliner edits | ask | allow | allow |
+| Local deletes | ask | ask | allow |
+| Read outside current root | ask only if the run opted into outside access | ask only if the run opted into outside access | ask until a future folder handoff exists |
+| Sensitive local reads | ask behind separate opt-in | ask behind separate opt-in | ask behind separate opt-in |
+| Sensitive/persistence writes | deny | deny | deny |
+| Web search | allow | allow | allow |
+| Web fetch | ask | ask | allow |
+| Local project scripts/code execution | ask | ask | allow |
+| Dependency install | ask | ask | allow |
+| Network write | ask | ask | allow |
+| Git/GitHub mutation | ask | ask | allow |
+| Deploy/publish | ask | ask | ask |
+| Background process | ask | ask | allow, with visible running task state |
+| Sandbox override | ask | ask | ask |
+| Skill write | ask | ask | allow write, but agent-authored skill trust still requires explicit acceptance |
+| Skill automatic use | ask/accept via card | accepted skills only | accepted skills plus human-authored global trust defaults |
+| Subagent spawn | ask | ask | allow |
+| Config write | ask | ask | ask |
+| Dream write | ask | ask | allow |
+| Unknown shell | deny with tell-only card | deny with tell-only card | deny with tell-only card |
 
-Recommended product default: `balanced`.
+Open Q2 is resolved in this proposal:
 
-Allow users to choose `full_access` during onboarding or from Settings. Also allow
-an advanced preference: "Use this as my default for new workspaces." That answers
-"can I set default trust?" without silently making every install full access.
+- git push and GitHub mutation are allowed in Full Access because they are common
+  and usually recoverable;
+- deploy/publish remains ask even in Full Access because it is less frequent and
+  costliest to reverse.
 
-## Safety Floors
+Sensitive local reads are never bundled into a trust level. They require the
+independent "Read sensitive computer files" switch in Security.
 
-Mode presets may reduce prompts, but they must not disable the following floors:
+## Skill Trust and Self-Amplification
 
-1. Platform hard blocks always run before preset decisions.
-2. User-configured deny rules always win.
-3. Sensitive-data exfiltration is always denied.
-4. Host destruction, disk formatting, power commands, remote-code pipe-to-shell,
-   known shell obfuscation, git-internal writes, credential/persistence writes,
-   permission modification, and payment purchase are always denied.
-5. Unknown shell remains denied in all modes. Full Access does not mean "run text
-   the classifier cannot understand."
-6. Electron renderer/native-host hardening is not mode-dependent.
-7. Every allowed/blocked/asked decision is still written to the permission event
-   log.
+Full Access must not create a self-amplification loop.
 
-The only debatable floor is `agent.subagent.spawn`. Today it cannot be globally
-allowed. For Full Access, I recommend allowing it by profile, not by global rule,
-because the user explicitly selected a mode that means autonomous execution.
-Balanced and stricter modes should continue to ask.
+Rule:
 
-## Workspace Trust
+```text
+auto trust never applies when current skill content is agent-authored
+contentHash === agentHash => explicit user acceptance required in every mode
+```
 
-Add a workspace-level trust layer instead of forcing users to accept every skill
-one by one.
+The provenance store already tracks `agentHash`, so the evaluator can preserve
+the existing asymmetry:
 
-Proposed behavior:
+- human-authored or hand-edited skill content may auto-ratify under Full Access;
+- agent-authored skill content always raises an in-flow review/accept card;
+- accepting a skill records the exact content hash in the trust ledger;
+- changing the bytes invalidates that grant unless the new content is human-
+  authored and the default policy permits auto-ratification.
 
-- `read_only`: project skills are slash-visible, but automatic project-skill
-  listing remains disabled unless the exact skill bytes were individually
-  accepted.
-- `ask_first`: same as current exact-byte behavior.
-- `balanced`: show a single "Trust current workspace skills" action when pending
-  project skills exist. It records acceptance for all currently displayed
-  `project` skill hashes. New or changed project skills return to pending.
-- `full_access`: when the user enables Full Access for the workspace, the runtime
-  records a workspace trust fact and treats current project skills as accepted
-  for automatic model use. New or changed project skills can either auto-ratify
-  under the workspace trust fact or appear in a quiet "recently trusted" audit
-  list. Main should decide this product point; my recommendation is:
-  auto-ratify project skills under Full Access, but keep a Settings audit row and
-  a one-click "revoke workspace skill trust" action.
+The user-facing explanation should be simple:
 
-Trust should be scoped to a workspace identity, not global skill names. Use a
-normalized root path plus optional git remote identity when available. Do not
-reuse trust across unrelated clones unless the user sets Full Access as a global
-default for new workspaces.
+> Lin created or changed a skill for itself. Review it before it can run
+> automatically.
 
-Skill acceptance remains a trust fact, not a permission bypass. Full Access makes
-skill discovery and downstream tool calls low-friction, but the hard redlines
-still stand.
+Skill trust remains a trust fact, not a permission bypass. A skill's
+`allowed-tools` still narrows or preapproves downstream calls within the
+permission engine, and the safety floor still applies.
+
+## The Card
+
+All mid-flow security contact should use one card.
+
+For ask decisions, exits are ordered by prominence:
+
+1. **Allow once** — the only primary button; Enter-able.
+2. **Always allow this action** — secondary; writes an action trust grant.
+3. **Hand everything to Lin, stop asking** — secondary/destructive-style trust
+   escalation; switches global mode to Full Access.
+4. **Deny**.
+
+Rationale:
+
+- Every interruption is also the upgrade path.
+- Users escalate trust exactly when friction occurs, not by discovering Settings.
+- The card remains a two-key decision for novices: primary allow, secondary deny.
+  Trust escalation exits are visually secondary so the card is not a quiz.
+
+Skill acceptance moves into the same card:
+
+- First automatic model use of an unaccepted skill raises:
+  "Skill X requests automatic use."
+- Exits: View, Accept, Not now.
+- Agent-authored skills always use this path, including in Full Access.
+- Settings still lists skills, but no chat failure should send users hunting for
+  a hidden remedy.
+
+Hard denials use the same card in tell-only form:
+
+- what was blocked;
+- why it was blocked;
+- raw command or target;
+- View command/details;
+- Re-run with explicit approval, when a safe explicit path exists.
+
+The decision remains `deny`; only the presentation changes. This is especially
+important in Full Access, where silent `shell.unknown` denial would otherwise
+feel contradictory.
+
+## Settings IA
+
+Replace the Permissions page with a **Security** page.
+
+```text
+Security
+  1. Trust level
+     Ask First / Balanced (recommended) / Full Access
+
+  2. Granted trust
+     One revocable list:
+       - action allows
+       - accepted skill hashes
+       - future folder grants
+     Each row shows what, when, provenance, and Revoke.
+
+  3. Sensitive access
+     "Read sensitive computer files" independent switch, default OFF.
+     This is not included in any trust level.
+
+  4. Recent activity
+     Human-readable permission event feed.
+
+  Advanced
+     Existing action rows and Ignored JSON Rules, unchanged.
+```
+
+Related pages:
+
+- Agent editor: remove Trusted/Restricted vocabulary. Expose only "Follow global"
+  and "Restricted" (narrow-only delegation sandbox).
+- Skills page: keep functional management (enable/disable, view, undo agent
+  edit). Trust chips/buttons become a second view of the same ledger facts, not a
+  separate trust system.
+
+Migration map:
+
+- Current global `permissionMode: trusted` -> `safetyMode: balanced`.
+- Current global `permissionMode: restricted` -> `safetyMode: ask_first` only for
+  the app-level setting.
+- Agent-definition `permission-mode: restricted` -> delegation sandbox
+  `Restricted`.
+- Agent-definition `permission-mode: trusted` -> default/inherit, because agents
+  are narrow-only.
+- Permissions rows -> Advanced, verbatim.
+- JSON diagnostics -> Advanced, verbatim.
+- Skill accept/revoke -> ledger facts; Skills page keeps a view.
+- Hand-edited JSON -> unchanged expert backdoor.
+- Outside-root flags -> stay unexposed until an explicit folder handoff product
+  exists.
+
+## Consumer Experience Acceptance Bar
+
+The revised design should satisfy these product properties:
+
+- Security decisions required before first use: **0**. Default Balanced works
+  immediately.
+- Decisions for a fully smooth experience: **1**. One tap on "stop asking" from
+  the card when the user actually feels friction.
+- Concepts to understand: **1**: trust.
+- Interrupt forms: **1**: the card, with a tell-only variant for blocks.
+- Management surfaces: **1**: Security.
+- Pure outliner usage: **0 permission touchpoints, ever**. A user who only
+  creates, edits, and organizes outline content must not see trust prompts.
+  Outline editing is allowed in Balanced and Full Access; the product should
+  protect this property in tests.
 
 ## Engine Design
 
-Do not encode modes by materializing many global allow/ask rules. The existing
-rule parser intentionally rejects broad and high-leverage allow rules; preserving
-that property is valuable. Add a preset layer to the policy evaluator.
+Do not encode modes by writing many global allow/ask rules. Keep a first-class
+default-policy layer in the evaluator.
 
 Suggested pipeline:
 
 1. Derive descriptors exactly as today.
-2. Apply platform hard blocks exactly as today.
-3. Apply configured deny rules.
-4. Apply safety-mode profile decision.
-5. Apply configured ask/allow overrides as refinements within the mode's allowed
-   override envelope.
-6. Route `ask` through the existing ask resolver.
-7. Emit the same permission events.
+2. Apply safety-floor platform hard blocks exactly as today.
+3. Apply configured deny rules and revoked ledger facts.
+4. Apply explicit trust ledger grants.
+5. Apply default safety-mode profile decision.
+6. Apply configured ask/allow advanced overrides inside the allowed override
+   envelope.
+7. Route `ask` through the existing ask resolver/card.
+8. Emit permission events.
 
-The profile layer can be implemented as a table over descriptor fields:
-
-```ts
-type AgentSafetyMode = 'read_only' | 'ask_first' | 'balanced' | 'full_access';
-
-interface SafetyModeProfile {
-  decide(descriptor: ToolActionDescriptor): GlobalToolPermissionDecision | null;
-  allowOutsideWorkspaceRead: boolean;
-  allowOutsideWorkspaceWrite: boolean;
-  projectSkillTrust: 'exact_hash' | 'batch_exact_hash' | 'workspace_auto';
-}
-```
-
-`null` means "use descriptor default." This lets `balanced` stay close to today's
-behavior while `read_only`, `ask_first`, and `full_access` are explicit.
-
-Recommended profile decisions:
-
-| Action category | Read Only | Ask First | Balanced | Full Access |
-| --- | --- | --- | --- | --- |
-| Local/outliner reads, search, status | allow | allow | allow | allow |
-| Workspace file/outliner edits | deny | ask | allow | allow |
-| Local deletes | deny | ask | ask | allow |
-| Read outside workspace | deny | ask if workspace policy permits | ask if workspace policy permits | allow if workspace is in Full Access |
-| Sensitive path read | deny | ask | ask | ask or allow only after separate "Computer files" opt-in |
-| Sensitive/persistence write | deny | deny | deny | deny |
-| Web search | allow | allow | allow | allow |
-| Web fetch | deny or ask | ask | ask | allow |
-| Local project scripts/code execution | deny | ask | ask | allow |
-| Dependency install | deny | ask | ask | allow |
-| Network write | deny | ask | ask | allow |
-| Git/GitHub mutation | deny | ask | ask | allow |
-| Deploy/publish | deny | ask | ask | allow |
-| Background process | deny | ask | ask | allow, but surface running task visibly |
-| Sandbox override | deny | ask | ask | ask even in Full Access |
-| Skill write | deny | ask | ask | allow in Full Access, but created/changed skill enters trust audit |
-| Skill invoke | allow only for accepted/user-invoked | allow | allow accepted | allow with workspace trust |
-| Subagent spawn | deny | ask | ask | allow |
-| Config write / permission modify | deny | ask for config write, deny permission modify | ask for config write, deny permission modify | ask for config write, deny permission modify |
-| Dream write | deny | ask | ask | allow |
-| Unknown shell | deny | deny | deny | deny |
-
-The "Sensitive path read" row is intentionally not fully decided. For a consumer
-product, Full Access to the workspace should not automatically mean the agent can
-read SSH keys, Keychains, `.env`, or package tokens. If product wants true whole
-computer automation, make that a separate second switch under Full Access:
-"Include sensitive local files." It should remain off by default.
-
-## Settings Model
-
-Replace or alias `permissionMode` with a new protocol field:
+Mode-derived events need a stable source value, for example:
 
 ```ts
-type AgentSafetyMode = 'read_only' | 'ask_first' | 'balanced' | 'full_access';
-
-interface AgentRuntimeSettings {
-  safetyMode: AgentSafetyMode;
-  permissionMode?: never; // or transitional alias during one PR
-}
+type AgentPermissionEventSource =
+  | 'configured_allow'
+  | 'configured_ask'
+  | 'configured_deny'
+  | 'safety_mode_profile'
+  | 'trust_ledger'
+  | 'safe_allowlist'
+  | 'classifier'
+  | 'runtime'
+  | 'user';
 ```
 
-Because the product is pre-release, prefer replacing the field cleanly and
-normalizing old values:
+The exact union lives with the event taxonomy, but the plan must reserve a
+distinct `safety_mode_profile` source so audit and debugging can distinguish
+mode-derived allows from explicit grants.
 
-- old `trusted` -> `balanced`
-- old `restricted` -> `ask_first` for runtime settings
-- old agent-definition `permission-mode: restricted` -> `ask_first`
-- old agent-definition `permission-mode: trusted` -> `balanced`
+## Coordination Requirements
 
-If the team wants a smaller protocol diff, keep `permissionMode` as the storage
-field for one PR and extend its union. I do not recommend that long-term because
-"permission mode" is the wrong user-facing frame.
-
-Global action rules stay as advanced overrides:
-
-- Settings primary pane shows the preset selector and clear consequences.
-- "Advanced permissions" disclosure shows the existing action rows.
-- Existing `Always allow` approval writes still append action rules.
-- Invalid JSON diagnostics stay visible.
-
-Add per-workspace override storage:
-
-```ts
-interface WorkspaceTrustSettings {
-  workspaceId: string;
-  safetyMode?: AgentSafetyMode;
-  projectSkillTrust?: 'exact_hash' | 'workspace_auto';
-  updatedAt: number;
-}
-```
-
-This can live under `userData` next to permission settings. Keep it local and
-machine-specific.
-
-## UI Design
-
-Onboarding and Settings should present modes as a single segmented/list choice,
-not as ten permission rows.
-
-Recommended copy:
-
-- Read Only: "Analyze only. No edits or commands."
-- Ask First: "Ask before changing files, running code, or contacting sites."
-- Balanced: "Work normally in this workspace. Ask for risky or external actions."
-- Full Access: "Run, edit, install, publish, and use workspace skills without
-  routine prompts. Hard safety blocks still apply."
-
-When the user chooses Full Access, show a compact confirmation sheet:
-
-- Scope: current workspace.
-- What becomes automatic: commands, edits, installs, network/Git/deploy actions,
-  subagents, workspace skills.
-- What remains blocked: credential exfiltration, destructive host commands,
-  persistence/credential writes, unknown shell, permission/payment modification.
-- Optional checkbox: "Use Full Access as my default for new workspaces."
-
-For pending project skills in Balanced, replace many Accept buttons with a
-workspace row:
-
-- "3 workspace skills are pending."
-- Primary action: "Trust current workspace skills."
-- Secondary action: view individual skills.
-
-For Full Access, show a persistent status chip in Settings:
-"Full Access for this workspace." Include "Revoke" and "Review activity."
+- Rename or replace `AgentPermissionMode` with `AgentSafetyMode` for the
+  user-facing default policy. Record this in `docs/plans/agent-program.md` F6 as
+  a post-M0 protocol revision in the same implementation change.
+- Keep the delegation sandbox as a separate internal mechanism.
+- Add `safety_mode_profile` / `trust_ledger` event-source mapping wherever
+  permission events are specified.
+- No `WorkspaceTrustSettings` or agent-data-model §5 addition is needed now,
+  because there is no folder handoff product.
+- Implementation should rebase after #184 (`cc-2/agent-run-unification`) because
+  that PR touches adjacent runtime permission flow.
+- Normalize-or-default old setting values at read time. Do not keep legacy
+  readers.
+- The local-root boundary verification/fix is sequenced before implementing Full
+  Access.
 
 ## Implementation Plan
 
 This is one complete feature PR after PM/main ratification.
 
-1. Rename/extend protocol:
-   - Add `AgentSafetyMode` in core types.
-   - Normalize old `trusted`/`restricted`.
-   - Update runtime settings, agent definitions, authoring markdown parsing, and
-     i18n.
-2. Add mode profile evaluation:
-   - Keep descriptor derivation and hard blocks unchanged.
-   - Insert `resolveSafetyModeDecision` after hard blocks and configured deny.
-   - Keep events and ask resolver unchanged.
-3. Add workspace trust settings:
-   - Store per-workspace safety/trust state under `userData`.
-   - Add batch accept for current project skill hashes.
-   - Add Full Access workspace-auto trust behavior.
-4. Redesign Settings:
-   - Replace top-level permission rows with preset selector.
-   - Move existing rows under Advanced.
-   - Add Full Access confirmation sheet and workspace-skill batch trust row.
-5. Update specs and tests:
-   - `docs/spec/agent-tool-permissions.md`
-   - `docs/spec/agent-skills.md`
-   - core tests for every profile/action category
-   - renderer tests for preset save/advanced overrides
-   - e2e Settings visual checks for light/dark Full Access and pending skills
+1. Protocol and settings:
+   - Add `AgentSafetyMode = 'ask_first' | 'balanced' | 'full_access'`.
+   - Normalize old global `trusted`/`restricted`.
+   - Update runtime settings, agent authoring parsing/serialization, i18n, and
+     specs.
+2. Delegation sandbox:
+   - Preserve restricted deny-non-preapproved behavior.
+   - Change Agent editor UI to Follow global / Restricted.
+   - Ensure agent definitions can only narrow relative to global policy.
+3. Trust ledger projection:
+   - Add a ledger-shaped view over action grants and skill hash grants.
+   - Keep existing stores initially if that reduces risk.
+   - Make grants individually revocable from Security.
+4. Mode profile evaluation:
+   - Insert safety-mode default decisions after safety floor and explicit ledger
+     grants.
+   - Keep hard blocks and ask resolver unchanged.
+   - Add permission event sources for mode and ledger decisions.
+5. Unified card:
+   - Add graduated exits for ask cards.
+   - Move skill acceptance into the card.
+   - Add tell-only cards for hard denials.
+6. Security page:
+   - Replace Permissions top-level IA with Trust level, Granted trust, Sensitive
+     access, Recent activity, and Advanced.
+   - Keep Skills page as a secondary view for skill management/trust.
+7. Specs and tests:
+   - Update `docs/spec/agent-tool-permissions.md`.
+   - Update `docs/spec/agent-skills.md`.
+   - Update `docs/plans/agent-program.md` F6 coordination notes.
+   - Core tests for mode matrix, ledger grants, hard floors, restricted sandbox,
+     agent-authored skill acceptance, event sources, and local-root guard.
+   - Renderer/e2e tests for Security page, card exits, skill acceptance card,
+     tell-only denial card, and pure-outline zero-touch behavior.
 
 ## Acceptance Criteria
 
-- A user can select `Read Only`, `Ask First`, `Balanced`, or `Full Access` in
-  Settings.
-- `Balanced` preserves today's effective default behavior except for grouped UX.
-- `Full Access` allows classified non-redline workspace actions without approval
-  prompts.
-- Hard redlines still deny before any mode or global allow rule.
-- A user can set Full Access as the default for new workspaces.
-- Project skills can be trusted in batch for the current workspace.
-- Full Access can auto-ratify workspace project skills according to the ratified
-  product decision.
-- Approval events still record mode-derived allows/blocks.
-- Existing `trusted`/`restricted` settings normalize deterministically.
+- The app exposes one global trust level: Ask First, Balanced, or Full Access.
+- Balanced preserves today's practical default behavior while using the new IA.
+- Full Access allows classified non-redline routine automation without prompts.
+- Deploy/publish, sandbox override, sensitive local reads, agent-authored skill
+  automatic use, unknown shell, and safety-floor redlines are not silently
+  auto-allowed by Full Access.
+- All user grants appear in one revocable Security ledger view.
+- Skill acceptance can happen in-flow from the card.
+- Hard denials are visible tell-only cards, not silent structured failures.
+- Custom agents can only follow global policy or narrow into the restricted
+  delegation sandbox.
+- Permission events distinguish safety-mode decisions and explicit trust grants.
+- Pure outline creation/editing never triggers permission UI.
+- Old `trusted`/`restricted` settings normalize deterministically at read time.
 
 ## Risks
 
-- Full Access can surprise users if it includes external mutations such as git
-  push or deploy. Mitigation: make the confirmation sheet concrete, keep the
-  scope visible, and provide quick revoke.
-- "Whole computer" trust is materially different from "workspace" trust.
-  Mitigation: Full Access is workspace-scoped first; sensitive local paths need a
-  separate explicit opt-in if product wants that capability.
-- Per-agent modes may conflict with global mode. Mitigation: subagent/agent
-  profile mode should narrow or inherit by default; widening above the workspace
-  mode should require explicit user creation/editing.
-- Existing tests use `trusted`/`restricted`. Mitigation: normalize old values and
-  update fixtures in one PR.
-- PR #184 run unification touches adjacent runtime permission flow. No direct
-  file overlap is required for this plan document, but implementation should
-  rebase after #184 if it lands first.
+- Full Access can surprise users if it includes external mutation. Mitigation:
+  put git/GitHub mutation in Full Access but keep deploy/publish as ask; show
+  recent activity and cheap revoke.
+- Too many card exits can feel like a quiz. Mitigation: one primary button
+  (`Allow once`); escalation exits are secondary.
+- A ledger abstraction can become a storage migration sink. Mitigation: ship a
+  ledger projection first; consolidate stores later only if it removes real
+  complexity.
+- "Sensitive computer files" is hard to explain. Mitigation: keep it separate
+  from trust levels and default OFF.
+- The local-root boundary may be unsafe in packaged builds. Mitigation: verify
+  and fix before implementation.
 
-## Open Questions for Main / PM
+## Open Questions for PM
 
-1. Should Full Access auto-ratify newly changed project skills, or only batch
-   accept the current hashes when the mode is enabled?
-2. Should Full Access include git push/deploy by default, or should external
-   publish remain a separate opt-in inside Full Access?
-3. Should sensitive local reads ever be covered by Full Access, or always require
-   a separate "Computer files" permission?
-4. Should custom agent definitions be allowed to widen above the workspace's
-   selected safety mode, or only narrow it?
-5. Should the product default be `balanced` for all users, or should onboarding
-   force an explicit choice before the first agent run?
+1. Ship three trust levels now, or keep Read Only as a fourth global level despite
+   it being a task posture?
+2. Should "Hand everything to Lin, stop asking" appear on every approval card or
+   only after repeated prompts?
+3. Should Full Access include all GitHub CLI mutations, or only git push and PR
+   creation/update classes?
+4. Should the ledger projection preserve the old Permissions page URL/route as an
+   Advanced subroute for continuity?
 
 ## Collision Check
 
 Open PRs checked on 2026-06-11:
 
-- #186 `codex-2/focus-selection-polish`: no overlap; UI focus/selection.
-- #184 `cc-2/agent-run-unification`: adjacent runtime permission flow, no direct
-  overlap with this docs-only proposal. Implementation should sequence behind or
-  rebase over #184 if both change `agentRuntime.ts` / permission event flow.
+- #186 `codex-2/focus-selection-polish`: no direct overlap; UI focus/selection.
+- #184 `cc-2/agent-run-unification`: adjacent runtime permission flow; no direct
+  docs-file overlap. Implementation must sequence behind or rebase over #184.
