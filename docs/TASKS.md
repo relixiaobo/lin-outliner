@@ -20,7 +20,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
-| Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-2 merged, PR #195) |
+| Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-3/PR-5 merged, PR #199) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (agent conversation UX proposal merged, PR #197) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (full ask_user_question flow merged, PR #198) |
 | Anti | `lin-outliner-anti/` | — | idle |

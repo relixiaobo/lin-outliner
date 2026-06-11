@@ -54,6 +54,12 @@ folded into `docs/spec/`. **Remaining:** mid-run `needs-input` (deferred by deci
 - **Multi-member Channels in the first cut** (N agents in one room). Real
   subsystem; staged to P3, and even then **sequential turn-taking, not concurrent**
   (the concurrency collisions are the expensive part — see Adversarial review).
+  **Revised 2026-06-11 (PM):** serialized execution was an M3-A staging
+  simplification, not the product model — co-addressees are semantically
+  independent (the independence cut), so concurrent execution +
+  completion-order delivery changes no agent's words, only timing. It is now
+  planned as a pure execution-layer upgrade:
+  `docs/plans/agent-channel-parallel-runtime.md`.
 - **Proactive / initiative agents** (Cumora-style). Rejected — wrong for a
   focused outliner (AGENTS.md B10). Agents act only when addressed. **Carve-out:**
   the deferred completion notice of a *user-initiated* background task is **not**
@@ -363,7 +369,10 @@ separate router subsystem, but **a Member with a role flag**. The rules:
    model or prompt**. This is what keeps it simple.
 4. **Hand-off is a relay, not concurrency.** The coordinator yields the floor; the
    addressed member takes it. Stays inside sequential turn-taking (§2) — none of the
-   shared-session-state collisions apply.
+   shared-session-state collisions apply. **(2026-06-11: the routing shape is
+   unchanged under the parallel runtime — a hand-off target is still addressed
+   by the completed reply; it just dispatches on that reply's completion,
+   concurrently with unrelated in-flight runs.)**
 
 Three constraints keep it clean:
 
@@ -876,7 +885,10 @@ history.)
 
 **Response:** P3 does **sequential turn-taking** (one member runs at a time, à la
 Rebecca @mention chains), which dodges *all* the concurrency collisions — they are
-concurrency bugs, not multi-agent bugs. Who actually replies is resolved by a
+concurrency bugs, not multi-agent bugs. **(2026-06-11: dodging was the M3-A
+stage; the collisions are now scheduled to be repaid — per-run active state,
+scoped stop, shared-state audit — in
+`docs/plans/agent-channel-parallel-runtime.md`.)** Who actually replies is resolved by a
 **coordinator Member** (§Channel routing): explicit `@` addresses directly,
 un-addressed messages fall to the coordinator, hand-offs are sequential relays. The
 genuinely required changes shrink to: **per-agent POV derivation** (on top of the P1
@@ -1055,7 +1067,11 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
 - **Memory in `.agents/agents/<name>/memory/`** → rejected; config is read-only /
   dual-scoped. Memory → `userData/agent/agents/<agentId>/memory/` (§5).
 - **Concurrent multi-agent rooms** → rejected for P3; sequential turn-taking
-  avoids the shared-state collisions (§2).
+  avoids the shared-state collisions (§2). **Superseded 2026-06-11 (PM):**
+  concurrent co-addressee execution + completion-order delivery ratified as a
+  pure execution-layer upgrade — the independence cut already makes replies
+  order-free; the §2 collisions get repaid, not dodged
+  (`agent-channel-parallel-runtime`).
 - **No-router vs heavy-router for Channels** → both rejected; a **coordinator
   Member** (a per-channel role flag, default = the main agent) is the middle path:
   explicit `@` bypasses it (no chokepoint), un-addressed messages get a home, and

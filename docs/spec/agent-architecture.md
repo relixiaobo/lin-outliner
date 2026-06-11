@@ -96,6 +96,12 @@ clean-cut, no migration).
     drain the queue when they settle; quit flushes any still-queued messages
     into the log unrouted so nothing the user typed vanishes. DM behavior is
     untouched (streaming, steer, inline process).
+  - **Execution staging (2026-06-11):** serialized rounds + queue-all are the
+    M3-A execution stage, not the product model — the independence cut makes
+    co-addressees order-free, so `docs/plans/agent-channel-parallel-runtime.md`
+    (ratified direction) replaces them with concurrent dispatch +
+    completion-order delivery; this section describes current behavior until
+    that lands.
   - Each peer turn runs as that agent (own definition/model/skills/memory line,
     `actor` stamped on its messages) and reads the thread through the per-POV
     flatten (`agentChannel.ts` `flattenAgentPathForPov`, composed with the
