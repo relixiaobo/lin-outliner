@@ -79,7 +79,7 @@ export interface AgentActiveDreamEntry {
 
 export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
-// A child run run surfaced inline in the transcript as a boundary — the permanent
+// A child run surfaced inline in the transcript as a boundary — the permanent
 // record of the run in its conversation (its final result lives on the entity).
 export interface AgentChildRunEntry {
   id: string;

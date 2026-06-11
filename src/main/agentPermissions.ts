@@ -585,7 +585,7 @@ export function deriveAgentToolActionDescriptors(input: {
       accessScope: 'none',
       title: 'child run status',
       summary: 'Read the status of a background child run.',
-      consequence: 'This reads local child run run state.',
+      consequence: 'This reads local child run state.',
       defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,

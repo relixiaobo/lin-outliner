@@ -11,7 +11,7 @@ import {
   replayAgentEvents,
 } from '../core/agentEventLog';
 import type { UserMessage } from '../core/agentTypes';
-import { extractCompactSummaryFromReminder } from './agentCompaction';
+import { compactedSpanEvidenceText } from './agentCompaction';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
 
 const DREAM_TRANSCRIPT_CHAR_BUDGET = 60_000;
@@ -80,7 +80,6 @@ export interface DreamMemoryExtractionRunInput {
   conversationId: string;
   agentId: string;
   runId: string;
-  parentToolCallId?: string;
   originWorkspace?: string;
   events: readonly AgentEvent[];
   fromSeqExclusive: number;
@@ -403,22 +402,54 @@ function evidenceRangeFromEvents(
 
   const state = replayAgentEvents(sortedEvents);
   const activePath = getAgentEventRuntimeTranscriptPath(state);
-  const evidenceMessageIds = new Set(evidenceEvents.flatMap(messageIdsFromEvidenceEvent));
+  // A `tool_result.replaced` is a lossy slimming artifact of an EXISTING
+  // message, never new content: it must not pull a message created at-or-before
+  // the frontier back into the window. On a fork-child ledger that frontier is
+  // the structural boundary — an inherited fork-prefix tool result slimmed
+  // during the child's own turns would otherwise leak parent-context content
+  // into the child's Dream evidence. (A `user_message.edited` stays included:
+  // an edit IS new content.)
+  const createdSeqByMessageId = new Map<string, number>();
+  for (const event of sortedEvents) {
+    if (
+      (event.type === 'user_message.created'
+        || event.type === 'assistant_message.started'
+        || event.type === 'tool_result.created')
+      && typeof event.messageId === 'string'
+      && !createdSeqByMessageId.has(event.messageId)
+    ) {
+      createdSeqByMessageId.set(event.messageId, event.seq);
+    }
+  }
+  const evidenceMessageIds = new Set(
+    evidenceEvents
+      .filter((event) => (
+        event.type !== 'tool_result.replaced'
+        || (createdSeqByMessageId.get(event.messageId) ?? 0) > fromSeqExclusive
+      ))
+      .flatMap(messageIdsFromEvidenceEvent),
+  );
   const messages = activePath.filter((message) => evidenceMessageIds.has(message.id));
   if (messages.length === 0) return null;
 
   const transcript = renderDreamTranscript(messages);
   if (!transcript.trim()) return null;
 
+  // Provenance points at the last EVIDENCE event; the CURSOR records the
+  // scanned tail. They differ on purpose: a terminal run's ledger ends with a
+  // non-evidence `run.completed`, and a last-evidence cursor would sit forever
+  // below the tail — the already-digested skip would never fire and every
+  // Dream pass would re-read every historical run ledger.
   const throughEvent = evidenceEvents.at(-1)!;
+  const scanTail = sortedEvents.at(-1)!;
   return {
     messages,
     transcript,
     range: {
       source: makeSource(messages[0]!, messages.at(-1)!, throughEvent),
       fromSeqExclusive,
-      throughSeq: throughEvent.seq,
-      throughEventId: throughEvent.eventId,
+      throughSeq: scanTail.seq,
+      throughEventId: scanTail.eventId,
       messageCount: messages.length,
       charCount: transcript.length,
     },
@@ -453,8 +484,8 @@ function renderDreamMessage(message: AgentEventMessageRecord, index: number): st
  * evidence-preserving compaction invariant, [[agent-data-model]] §13.17).
  */
 function renderHiddenBlockEvidence(text: string): string[] {
-  const summary = extractCompactSummaryFromReminder(text);
-  return summary ? [`[summary of compacted earlier messages]\n${summary}`] : [];
+  const evidence = compactedSpanEvidenceText(text);
+  return evidence ? [evidence] : [];
 }
 
 function renderPersistedContent(content: readonly AgentPersistedContent[]): string {

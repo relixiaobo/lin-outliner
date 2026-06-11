@@ -13,6 +13,7 @@ import {
   type AgentRunKind,
 } from '../core/agentEventLog';
 import type { AgentEventStore } from './agentEventStore';
+import { persistedContentModelText } from './agentToolOutputSlimming';
 
 // The write seam for a delegated (child) run's OWN ledger ([[agent-run-unification]]
 // Design 1). A child run is an ordinary Run: its transcript is append-only run-log
@@ -27,11 +28,6 @@ import type { AgentEventStore } from './agentEventStore';
 // Events after the FIRST `run.started` are consolidation evidence; the copied fork
 // prefix before it is inherited context (what `dreamEvidenceStartMessageIndex` used
 // to express positionally — now stable under rename and compaction).
-
-interface RunLedgerPersistedMessage {
-  messageId: string;
-  events: AgentEvent[];
-}
 
 interface RunLedgerRunState {
   conversationId: string;
@@ -217,11 +213,47 @@ export class AgentRunLedgerWriter {
           });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
     });
+    // No eviction on terminal: a same-session resume reuses the live agent (and
+    // this registration) directly. The map only ever holds runs spawned or
+    // resumed in THIS session — restore-on-open is records-only — so it is
+    // bounded by session activity, not run history.
   }
 
   /**
-   * Rebuild writer state from the ledger (restart restore). Returns the replayed
-   * state, or null when the ledger does not exist yet.
+   * Mirror a restore-time interruption into the run's OWN ledger: the
+   * conversation marks the run failed; without this the run stream (the
+   * unified representation's source of truth for run lifecycle) would
+   * self-describe as `running` forever. No-ops when the ledger is missing
+   * (nothing to reconcile) or already terminal on its own stream.
+   */
+  async markInterrupted(
+    conversationId: string,
+    runId: string,
+    options: { actor: AgentActor; errorMessage: string },
+  ): Promise<void> {
+    const state = await this.restore(conversationId, runId);
+    if (!state) return;
+    const status = state.runs[runId]?.status;
+    if (status && status !== 'running') {
+      this.runs.delete(runId);
+      return;
+    }
+    const run = this.requireRun(runId);
+    await this.enqueue(runId, run, async () => {
+      const event = this.buildEvent(run, runId, {
+        type: 'run.failed',
+        actor: options.actor,
+        runId,
+        errorMessage: options.errorMessage,
+      });
+      await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+    });
+    this.runs.delete(runId);
+  }
+
+  /**
+   * Rebuild writer state from the ledger (restore on resume). Returns the
+   * replayed state, or null when the ledger does not exist yet.
    */
   async restore(conversationId: string, runId: string): Promise<AgentEventReplayState | null> {
     const state = await this.options.store().replayRunStream(runId);
@@ -243,8 +275,23 @@ export class AgentRunLedgerWriter {
     return state;
   }
 
-  hasRun(runId: string): boolean {
-    return this.runs.has(runId);
+  /**
+   * Register a run whose ledger does not exist yet — a conversation record
+   * whose seed never landed (e.g. a crash inside the spawn window). The next
+   * event (the resume's `run.started`) becomes the ledger's first event and
+   * thus the Dream-evidence boundary: the continuation is the run's own work;
+   * the lost original context stays lost.
+   */
+  register(conversationId: string, runId: string): void {
+    if (this.runs.has(runId)) return;
+    this.runs.set(runId, {
+      conversationId,
+      latestSeq: 0,
+      tailMessageId: null,
+      pathMessageIds: [],
+      toolCallMessageIds: new Map(),
+      queue: Promise.resolve(),
+    });
   }
 
   private requireRun(runId: string): RunLedgerRunState {
@@ -265,16 +312,6 @@ export class AgentRunLedgerWriter {
     message: AgentMessage,
     actor: AgentActor,
   ): Promise<AgentEvent[]> {
-    const persisted = await this.persistMessage(run, runId, message, actor);
-    return persisted?.events ?? [];
-  }
-
-  private async persistMessage(
-    run: RunLedgerRunState,
-    runId: string,
-    message: AgentMessage,
-    actor: AgentActor,
-  ): Promise<RunLedgerPersistedMessage | null> {
     if (message.role === 'user') {
       const messageId = newMessageId('user');
       const content = await this.userContent(run, runId, message);
@@ -286,7 +323,7 @@ export class AgentRunLedgerWriter {
         parentMessageId: this.linkTail(run, messageId),
         content,
       });
-      return { messageId, events: [event] };
+      return [event];
     }
     if (message.role === 'assistant') {
       const assistant = message as AssistantMessage;
@@ -312,7 +349,7 @@ export class AgentRunLedgerWriter {
         content: fromPiAssistantContent(assistant.content),
         usage: assistant.usage,
       });
-      return { messageId, events: [started, completed] };
+      return [started, completed];
     }
     if (message.role === 'toolResult') {
       const messageId = newMessageId('tool-result');
@@ -333,12 +370,12 @@ export class AgentRunLedgerWriter {
         parentMessageId: this.linkTail(run, messageId),
         isError: message.isError === true,
         content,
-        outputSummary: summarizeOutput(persistedContentSummaryText(content)),
+        outputSummary: summarizeOutput(persistedContentModelText(content)),
       });
       run.toolCallMessageIds.set(message.toolCallId, messageId);
-      return { messageId, events: [event] };
+      return [event];
     }
-    return null;
+    return [];
   }
 
   private async userContent(run: RunLedgerRunState, runId: string, message: AgentMessage): Promise<AgentPersistedContent[]> {
@@ -383,21 +420,12 @@ export function fromPiAssistantContent(content: AssistantMessage['content']): Ag
   });
 }
 
-function persistedContentSummaryText(content: readonly AgentPersistedContent[]): string {
-  return content
-    .map((part) => {
-      if (part.type === 'text') return part.text;
-      if (part.type === 'payload_ref') return part.label ?? part.payload.summary ?? '';
-      if (part.type === 'image') return part.alt ?? '[image]';
-      return '';
-    })
-    .join(' ')
-    .trim();
-}
-
+// Same clip convention as the conversation stream's `summarizeToolResult`
+// (agentRuntime) — the `outputSummary` field must read identically no matter
+// which stream wrote it (past-chats evidence and search prefer it).
 function summarizeOutput(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 200 ? collapsed : `${collapsed.slice(0, 197)}...`;
+  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 500).trim()}...`;
 }
 
 function newMessageId(prefix: string): string {

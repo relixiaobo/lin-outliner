@@ -46,7 +46,7 @@ child run path:
 ```text
 main agent conversation
   -> Agent tool
-      -> child run run
+      -> child run
           -> pi-mono Agent instance
           -> sidechain transcript
           -> status/progress/result notification
@@ -244,7 +244,7 @@ files reviewed: `src/agency_swarm/agency/core.py`,
 Lin decision: good evidence that generic agent messaging needs explicit scope.
 Lin should not expose general cross-agent messaging in the first version.
 `AgentSend` should be a same-conversation continuation tool for an existing
-background child run run, not a global routing primitive.
+background child run, not a global routing primitive.
 
 [OpenHands Agent Delegation](https://docs.openhands.dev/sdk/guides/agent-delegation)
 
@@ -310,7 +310,7 @@ crew/team/workflow/memory concepts into the first child run implementation.
   layer. Do not silently load untrusted local agent definitions from arbitrary
   directories.
 - `AgentSend` is intentionally narrow: continue or message an existing
-  same-conversation background child run run. Cross-conversation and global agent
+  same-conversation background child run. Cross-conversation and global agent
   messaging are future product features and should use a separate design.
 - Team/DAG/coordinator/shared-memory systems are valid future workflows, but
   they solve a different problem. Adding them now would blur the boundary
@@ -354,33 +354,33 @@ Deferred frontmatter:
 
 The markdown body is the child run system prompt supplement.
 
-### Running Child run
+### Running child run
+
+The in-memory run record (delegation runtime). The transcript is NOT part of the
+durable record — it is the run's own ledger, replayed on demand; `messages` is
+the live continuation context, loaded lazily on resume:
 
 ```ts
-type AgentChild runRun = {
-  id: string;
-  conversationId: string;
+type AgentRunRecord = {
+  id: string;                       // also the run ledger id (runs/<id>/)
   name?: string;
-  child runType: string;
   description: string;
   prompt: string;
-  status: 'running' | 'completed' | 'failed' | 'stopped';
+  agentType: string;
   contextMode: 'fresh' | 'fork';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
   executingAgentId: string;
   parentAgentId: string;
+  parentRunId?: string;             // the delegating run (run tree)
+  parentToolCallId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
-  dreamEvidenceStartMessageIndex?: number;
-  transcriptPayloadId?: string;
-  model?: string;
-  effort?: string;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
-  transcriptMessageCount: number;
-  parentToolCallId?: string;
   result?: string;
   error?: string;
+  messages: AgentMessage[];         // live context; empty until resume restores it
 };
 ```
 
@@ -445,11 +445,14 @@ Fork requirements:
 - Preserve parent thinking/runtime params that affect cache keys.
 - Include parent messages as the fork prefix.
 - Add a short fork directive message that scopes the child task.
-- Persist the fork Dream evidence start index as run metadata. Dream must not
-  rediscover the boundary by scanning transcript text, because compaction can
-  rewrite or remove the marker text.
+- The fork Dream-evidence boundary is STRUCTURAL: the ledger seeds
+  `[fork context messages…, run.started, directive…]` and evidence is
+  everything past the first `run.started`. Dream must not rediscover the
+  boundary by scanning transcript text or counting positions — compaction and
+  slimming can rewrite both.
 - Prevent recursive fork from inside a forked child run.
-- Store the fork transcript in sidechain storage, not in the parent transcript.
+- Store the fork transcript in the run's own ledger, not in the parent
+  transcript.
 
 ### Sidechain Transcript
 
@@ -466,13 +469,13 @@ tool noise into the main conversation.
 
 The sidechain transcript is still durable evidence. Fresh child run transcripts
 are Dream evidence for the called agent's `memoryOwnerAgentId`; fork transcripts
-are Dream evidence for the parent agent. Dream skips the copied parent-context
-prefix of a fork transcript and starts from the fork directive plus child-side
-messages, so parent history is not reprocessed as new fork evidence. If a legacy
-fork transcript has no persisted boundary, Dream skips that uncertain transcript
-instead of falling back to index 0. When a fork transcript is compacted, the
-compaction prompt omits copied pre-fork parent context and the compacted summary
-becomes the new Dream evidence start.
+are Dream evidence for the parent agent. Dream reads only events past the
+structural boundary (the ledger's first `run.started`), so parent history is
+never reprocessed as fork evidence — and a `tool_result.replaced` that slims an
+INHERITED fork-prefix result never re-enters the window (replacements are lossy
+artifacts of existing messages, not new content). When a fork ledger is
+compacted, the post-compact summary message is fresh ledger content past the
+watermark and is Dreamed like any other evidence (§13.17).
 
 ## Model-Facing Tools
 
@@ -772,23 +775,18 @@ task output file.
 
 Implemented parent-conversation events:
 
-- `child run_run.started`
-- `child run_run.updated`
+- `child_run.started`
+- `child_run.updated`
 
-Implemented payload role:
+`child_run.started` (the conversation marker) records stable run metadata: id,
+optional same-conversation name, description, prompt, agent type, fresh/fork
+context mode, execution identity, parent agent identity, parent run id, memory
+owner identity, memory origin workspace, and parent tool call id.
 
-- `child run_transcript`
-
-`child run_run.started` records stable run metadata: id, optional same-conversation
-name, description, prompt, child run type, fresh/fork context mode, execution
-identity, parent agent identity, memory owner identity, memory origin workspace,
-Dream evidence start index, parent tool call id, transcript payload ref, and
-transcript message count.
-
-`child run_run.updated` records status transitions and transcript movement:
-`running`, `completed`, `failed`, or `stopped`, plus final result/error and the
-latest transcript payload ref. It can also move the Dream evidence start index
-when compaction rewrites the sidechain transcript.
+`child_run.updated` (the conversation marker) records status transitions:
+`running`, `completed`, `failed`, or `stopped`, plus final result/error. The
+transcript itself never moves through conversation events — it lives in the
+run's own ledger.
 
 Replay must not let a late `running` transcript update downgrade an already
 terminal run. This mirrors the concurrency shape in cc-2.1, where transcript
@@ -811,17 +809,21 @@ agent/
 ```
 
 The parent conversation plus its run logs remain the product source of truth for
-user-visible conversation state. The sidechain transcript is stored as immutable
-JSON payload snapshots and referenced by the child run run record. This keeps the
-parent model context clean while still allowing status, restore, debug, and
-continuation.
+user-visible conversation state. The sidechain transcript IS the run's own
+ledger (`runs/<run-id>/events.jsonl`, its own seq space, replayed alone); the
+conversation stream keeps only the slim `child_run.started/updated` markers.
+This keeps the parent model context clean while still allowing status, restore,
+debug, and continuation. Spawn ordering is ledger-seed first, conversation
+marker second: a crash inside the spawn window leaves an invisible orphan ledger
+directory, never an un-resumable phantom run in the conversation.
 
-Transcript payloads include the same execution and memory owner ids as the run
-record plus the Dream evidence start index. Dream memory sources record the
-specific transcript payload id as `source.eventId`; evidence expansion must read
-that recorded payload rather than the run's latest payload, so provenance remains
-stable after later compaction or transcript snapshots. The parent model only
-receives the `Agent` tool result projection.
+Dream memory sources address the run stream directly (`kind: 'run'`, stable
+message-id range, `source.eventId` = the last evidence event); evidence
+expansion replays the ledger's visible transcript, so provenance stays stable
+across later compactions. The Dream watermark cursor records the SCANNED TAIL
+seq (not the last evidence seq) so an already-digested terminal run is skipped
+on later passes from its run-meta alone, without re-reading the ledger. The
+parent model only receives the `Agent` tool result projection.
 
 ## Compaction And Resume
 
@@ -847,15 +849,31 @@ main agent:
 - invoked skill restore if the child run loaded skills.
 - recent full-file context restore when available in the child workspace.
 
-App restart restores:
+App restart restores **records only** — no ledger IO on the conversation-open
+path. A run's transcript is replayed from its own ledger lazily:
 
-- completed/stopped/failed child run metadata;
-- sidechain transcripts for `AgentStatus`;
-- resumable background child runs when there is a persisted transcript.
+- on first resume (`AgentSend` to a non-live run): the host restores the ledger
+  writer and re-derives the continuation context. If the ledger is MISSING (a
+  crash between the spawn's ledger seed and nothing else — the seed lands before
+  the conversation marker, so this is a residual edge), the writer is registered
+  empty and the resume's `run.started` becomes the ledger's first event; the run
+  stays resumable instead of wedging.
+- on drill-in (`agent_child_run_transcript`): the ledger is replayed directly,
+  cached on its tail seq (one run-meta read decides freshness). The open panel
+  polls this while the run is live and refetches on entity changes.
 
 If a child run was persisted as `running` but there is no live pi-mono `Agent`
-after restore, Lin marks it as failed with an interruption message and preserves
-the transcript. It can still be continued through `AgentSend`.
+after restore, Lin marks it as failed with an interruption message — in BOTH
+representations: the conversation gets `child_run.updated{failed}` and the run's
+own ledger gets a mirrored `run.failed` (without it the run stream would
+self-describe as running forever). It can still be continued through `AgentSend`.
+
+A delegated-run ledger uses the memory log's torn-tail policy, not the
+conversation log's strict one: a half-written FINAL line (crash artifact of an
+interrupted append) is dropped on read and truncated by the next append's
+repair; mid-file corruption still fails loudly. Restore-time reconciliation is
+contained per run — a corrupt child ledger degrades to a warning and can never
+brick its parent conversation.
 
 ## Permission Layer
 
@@ -968,8 +986,8 @@ Implemented.
   an unrestricted tool profile; the hidden `<memory>` briefing is still
   owner-scoped background context.
 - The parent receives only the final result or error.
-- Sidechain transcript snapshots are persisted as `child run_transcript`
-  payloads.
+- The sidechain transcript is the run's own ledger (`runs/<run-id>/`); there
+  are no transcript snapshot payloads.
 
 ### Fork Agent
 
@@ -995,7 +1013,7 @@ Implemented for same-conversation background runs.
 - Completion, failure, and stopped states are returned to the parent model
   through hidden child run notifications.
 - The renderer derives current-conversation task entries from persisted
-  `child run_run` projection state; this is a UI view, not a separate task store.
+  `child_run.*` projection state; this is a UI view, not a separate task store.
 
 ### Resume
 
@@ -1027,7 +1045,7 @@ Implemented for the current first-class surfaces.
 
 - `Agent` tool blocks show child run metadata and transcript access.
 - The agent header exposes a Tasks button. It opens a current-conversation task
-  panel derived from `child run_run` projection data, ordered with running work
+  panel derived from `child_run.*` projection data, ordered with running work
   first, and shows status, type/mode, message count, and latest update time.
 - Task rows can open the existing child run details panel; running task rows can
   stop the child run through `AgentStop`.

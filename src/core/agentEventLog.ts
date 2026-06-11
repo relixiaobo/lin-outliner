@@ -476,7 +476,6 @@ export interface AgentDreamProcessedConversation {
 
 export interface AgentDreamProcessedRun {
   conversationId: string;
-  parentToolCallId?: string;
   fromSeqExclusive: number;
   throughSeq: number;
   throughEventId: string | null;

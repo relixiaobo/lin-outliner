@@ -54,7 +54,7 @@ const UP_TO_SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> 
 9. Context for Continuing Work: summarize the state, decisions, and assumptions needed to understand the preserved newer messages that will follow.`;
 
 const FULL_COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
-This summary is for a continuing assistant session where work may involve outliner editing, knowledge organization, UI state, agent skills/childRuns, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
+This summary is for a continuing assistant session where work may involve outliner editing, knowledge organization, UI state, agent skills/child runs, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
 
 ${DETAILED_ANALYSIS_INSTRUCTIONS}
 
@@ -65,7 +65,7 @@ If there is a next step, make sure it follows directly from the most recent expl
 const UP_TO_COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the transcript shown below. This summary will be placed at the start of a continuing session, and newer messages that build on this context will follow after your summary verbatim. You do not see those newer messages here.
 Summarize thoroughly so that the assistant can read your summary plus the preserved newer messages and continue naturally.
 
-This summary is for a continuing assistant session where work may involve outliner editing, knowledge organization, UI state, agent skills/childRuns, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
+This summary is for a continuing assistant session where work may involve outliner editing, knowledge organization, UI state, agent skills/child runs, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
 
 ${DETAILED_ANALYSIS_INSTRUCTIONS}
 
@@ -225,6 +225,16 @@ export function compactSummaryReminder(summary: string, recentMessagesPreserved 
  * match would misclassify any block that merely QUOTES the preamble — leaking that block's
  * hidden context into Dream evidence on every turn.
  */
+/**
+ * The one rendering of a compaction reminder as evidence text, shared by the
+ * Dream transcript renderer and the past-chats evidence reader (the §13.17
+ * surviving-carrier invariant must surface identically in both).
+ */
+export function compactedSpanEvidenceText(reminderText: string): string | null {
+  const summary = extractCompactSummaryFromReminder(reminderText);
+  return summary ? `[summary of compacted earlier messages]\n${summary}` : null;
+}
+
 export function extractCompactSummaryFromReminder(text: string): string | null {
   const trimmed = text.trimStart();
   if (!trimmed.startsWith(SYSTEM_REMINDER_START)) return null;

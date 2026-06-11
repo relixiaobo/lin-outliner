@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { act } from 'react';
+import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
@@ -215,6 +215,52 @@ describe('agent child run UI', () => {
         conversationId: 'conversation-1',
       },
       }]);
+  });
+
+  test('an open panel refetches the transcript when the projected entity changes', async () => {
+    // The conversation projection carries no per-message child data, so the
+    // panel must refetch on every entity change (status flips, updatedAt
+    // bumps) — the regression was a fetch keyed on childRun.id alone, which
+    // froze an open panel for the run's whole lifetime.
+    let setChildRun: (entity: AgentRenderChildRunEntity) => void = () => undefined;
+    function Wrapper() {
+      const [childRun, set] = useState<AgentRenderChildRunEntity>({
+        ...childRunEntity(),
+        status: 'running',
+        completedAt: undefined,
+        result: undefined,
+        updatedAt: 100,
+      });
+      setChildRun = set;
+      return (
+        <AgentChildRunDetailsPanel
+          onClose={() => undefined}
+          conversationId="conversation-1"
+          childRun={childRun}
+        />
+      );
+    }
+    const rendered = renderComponent(<Wrapper />, {
+      payloads: {
+        'child-1': JSON.stringify({
+          messages: [{ role: 'user', timestamp: 100, content: [{ type: 'text', text: 'Inspect the current UI.' }] }],
+        }),
+      },
+    });
+
+    await waitForText(rendered, 'Inspect the current UI.');
+    const fetchCount = () => rendered.commands.filter((call) => call.cmd === 'agent_child_run_transcript').length;
+    const before = fetchCount();
+    expect(before).toBeGreaterThanOrEqual(1);
+
+    // The run completes: the projected entity's status/updatedAt change and
+    // the panel re-fetches without being closed and reopened.
+    await act(async () => {
+      setChildRun({ ...childRunEntity(), updatedAt: 300, completedAt: 300 });
+      await Promise.resolve();
+    });
+    await waitForText(rendered, 'Inspect the current UI.');
+    expect(fetchCount()).toBeGreaterThan(before);
   });
 
   test('lists Dream tasks as read-only agent tasks', async () => {

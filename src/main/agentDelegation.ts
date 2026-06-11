@@ -207,6 +207,13 @@ export interface AgentDelegationRuntimeHost {
   /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
   childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
   notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
+  /**
+   * Re-register the run's ledger writer and re-derive its transcript from the
+   * run's OWN ledger — the resume path's restore (restore-on-open is records
+   * only; transcripts load lazily here). Null when no ledger exists; the
+   * writer is then registered empty so the continuation can still record.
+   */
+  restoreChildRunLedger(runId: string): Promise<AgentMessage[] | null>;
   persistToolOutputPayload(
     toolCallId: string,
     toolName: string,
@@ -297,12 +304,6 @@ export interface AgentChildRunSnapshot {
   result?: string;
   error?: string;
   parentToolCallId?: string;
-}
-
-export interface AgentRestoredChildRun {
-  record: AgentChildRunRecord;
-  /** The live transcript replayed from the child run's own ledger. */
-  transcriptMessages: AgentMessage[];
 }
 
 interface AgentToolParams {
@@ -442,8 +443,14 @@ export class AgentDelegationRuntime {
     return current === null || current === agentListingIdentity(agent);
   }
 
-  restorePersistedRuns(restoredRuns: readonly AgentRestoredChildRun[]): void {
-    for (const { record, transcriptMessages } of restoredRuns) {
+  /**
+   * Register persisted child-run records on conversation restore. Records only
+   * — no transcript IO: a run's messages are replayed from its own ledger
+   * lazily, on first resume (`send` → host.restoreChildRunLedger). Drill-in
+   * reads never touch this state (they replay the ledger directly).
+   */
+  restorePersistedRuns(records: readonly AgentChildRunRecord[]): void {
+    for (const record of records) {
       if (this.runs.has(record.id)) continue;
       const executingAgentId = record.executingAgentId ?? this.executingAgentId;
       const parentAgentId = record.parentAgentId ?? this.executingAgentId;
@@ -471,7 +478,7 @@ export class AgentDelegationRuntime {
         updatedAt: record.updatedAt,
         completedAt: record.completedAt,
         depth: this.depth + 1,
-        messages: transcriptMessages.map(cloneAgentMessage),
+        messages: [],
         ledgerSeededMessages: new WeakSet(),
         result: record.result,
         error: record.error,
@@ -479,7 +486,7 @@ export class AgentDelegationRuntime {
         terminalNotificationSent: true,
         turnCount: 0,
         parentToolCallId: record.parentToolCallId,
-        toolResultBudgetState: restoreToolResultBudgetStateFromAgentMessages(transcriptMessages),
+        toolResultBudgetState: createToolResultBudgetState(),
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
       };
@@ -546,12 +553,22 @@ export class AgentDelegationRuntime {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
       const wasStopped = run.status === 'stopped';
+      if (wasStopped) run.agent = undefined;
+      // No live agent (restart restore, or a stopped run): rebuild the
+      // continuation context from the run's OWN ledger and re-register its
+      // writer — restore-on-open is records-only, so this is where the
+      // transcript actually loads. A missing ledger degrades to an empty
+      // context (the writer is registered empty), keeping the run resumable.
+      if (!run.agent) {
+        const restored = await this.host.restoreChildRunLedger(run.id);
+        run.messages = (restored ?? []).map(cloneAgentMessage);
+        run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
+      }
       run.status = 'running';
       run.error = undefined;
       run.completedAt = undefined;
       run.detached = true;
       run.terminalNotificationSent = false;
-      if (wasStopped) run.agent = undefined;
       run.updatedAt = Date.now();
       await this.ensureLiveAgent(run);
       await this.host.childRunStatusChanged(snapshotRun(run));
@@ -649,27 +666,8 @@ export class AgentDelegationRuntime {
       depth: this.depth + 1,
       maxDepth: this.maxDepth,
       ancestry: [...this.ancestry, definition.name],
-      host: {
-        createChildAgent: (input) => this.host.createChildAgent(input),
-        getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
-        getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
-        // A grandchild's parent run is THIS child run — the run tree chains.
-        getActiveRunId: () => runId,
-        getRuntimeSettings: () => this.host.getRuntimeSettings(),
-        buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
-        childRunStarted: (snapshot, seed) => this.host.childRunStarted(snapshot, seed),
-        childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
-        childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
-        childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
-        childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
-        notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
-        persistToolOutputPayload: (toolCallId, toolName, text) => (
-          this.host.persistToolOutputPayload(toolCallId, toolName, text)
-        ),
-        completeCompactSummary: (conversationId, messages, model, customInstructions, signal) => (
-          this.host.completeCompactSummary(conversationId, messages, model, customInstructions, signal)
-        ),
-      },
+      // A grandchild's parent run is THIS child run — the run tree chains.
+      host: this.buildChildHost(() => runId, () => childAgent),
     });
     childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const preloadMessages = await this.preloadAgentSkills(definition, skillRuntime);
@@ -961,7 +959,7 @@ export class AgentDelegationRuntime {
 
   private async runMemoryReminder(run: AgentRunRecord): Promise<string | null> {
     // The briefing is resident (query-independent), so the cache key is just the memory owner —
-    // it stays warm across a long child run run instead of thrashing on per-turn query text.
+    // it stays warm across a long child run instead of thrashing on per-turn query text.
     const key = run.memoryOwnerAgentId;
     if (run.memoryReminderCache?.key === key) return run.memoryReminderCache.text;
     const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId);
@@ -1092,26 +1090,7 @@ export class AgentDelegationRuntime {
       depth: this.depth + 1,
       maxDepth: this.maxDepth,
       ancestry: [...this.ancestry, definition.name],
-      host: {
-        createChildAgent: (input) => this.host.createChildAgent(input),
-        getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
-        getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
-        getActiveRunId: () => run.id,
-        getRuntimeSettings: () => this.host.getRuntimeSettings(),
-        buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
-        childRunStarted: (snapshot, seed) => this.host.childRunStarted(snapshot, seed),
-        childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
-        childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
-        childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
-        childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
-        notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
-        persistToolOutputPayload: (toolCallId, toolName, text) => (
-          this.host.persistToolOutputPayload(toolCallId, toolName, text)
-        ),
-        completeCompactSummary: (conversationId, messages, model, customInstructions, signal) => (
-          this.host.completeCompactSummary(conversationId, messages, model, customInstructions, signal)
-        ),
-      },
+      host: this.buildChildHost(() => run.id, () => childAgent),
     });
     const systemPrompt = run.contextMode === 'fork'
       ? this.host.getParentSystemPrompt()
@@ -1146,6 +1125,40 @@ export class AgentDelegationRuntime {
     this.installRunContextTransform(run);
   }
 
+  /**
+   * The grandchild runtime's host: every callback forwards to THIS runtime's
+   * host (one wiring, shared by the spawn and the restart-continuation paths —
+   * a forwarder added in one and missed in the other would break only the
+   * resume path, the one tests exercise least). Only the run identity and the
+   * live-agent accessor differ per call site.
+   */
+  private buildChildHost(
+    getRunId: () => string,
+    getChildAgent: () => Agent | null,
+  ): AgentDelegationRuntimeHost {
+    return {
+      createChildAgent: (input) => this.host.createChildAgent(input),
+      getParentMessages: () => getChildAgent()?.state.messages as AgentMessage[] ?? [],
+      getParentSystemPrompt: () => getChildAgent()?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
+      getActiveRunId: () => getRunId(),
+      getRuntimeSettings: () => this.host.getRuntimeSettings(),
+      buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
+      childRunStarted: (snapshot, seed) => this.host.childRunStarted(snapshot, seed),
+      childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
+      childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
+      childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
+      childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
+      notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
+      restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
+      persistToolOutputPayload: (toolCallId, toolName, text) => (
+        this.host.persistToolOutputPayload(toolCallId, toolName, text)
+      ),
+      completeCompactSummary: (conversationId, messages, model, customInstructions, signal) => (
+        this.host.completeCompactSummary(conversationId, messages, model, customInstructions, signal)
+      ),
+    };
+  }
+
   private async resolveDefinitionForRun(run: AgentRunRecord): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
     if (run.contextMode === 'fork') return createForkAgentDefinition();
@@ -1169,7 +1182,7 @@ export class AgentDelegationRuntime {
 
   private reserveRunningSlot(): RunningSlotReservation {
     if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_CHILD_RUNS) {
-      throw new Error(`Too many childRuns are already running in this session. Limit: ${MAX_CONCURRENT_CHILD_RUNS}.`);
+      throw new Error(`Too many child runs are already running in this session. Limit: ${MAX_CONCURRENT_CHILD_RUNS}.`);
     }
     this.reservedRunningSlots += 1;
     let released = false;
@@ -1299,10 +1312,6 @@ export function buildForkContextMessages(parentMessages: readonly AgentMessage[]
     } satisfies ToolResultMessage);
   }
   return messages;
-}
-
-export function buildForkChildRunMessages(parentMessages: readonly AgentMessage[], directive: string): AgentMessage[] {
-  return [...buildForkContextMessages(parentMessages), createHiddenUserMessage(buildForkDirective(directive))];
 }
 
 export function normalizeAgentToolNames(rules: readonly string[] | undefined): string[] | undefined {

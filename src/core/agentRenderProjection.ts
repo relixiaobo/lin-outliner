@@ -39,7 +39,7 @@ export type AgentRenderRow =
       archived?: boolean;
     }
   | {
-      // A child run run surfaced inline in the transcript as a boundary (its final
+      // A child run surfaced inline in the transcript as a boundary (its final
       // result IS the conversation's record of the run). A main-agent-spawned run
       // sits right after the assistant turn that launched it; a parentless run (a
       // scheduled/Run-now command fire) is placed by start time.
@@ -375,7 +375,7 @@ function childRunInsertIndex(
   return index < 0 ? -1 : index + 1;
 }
 
-// Splice each child run run into the transcript as a boundary row, earliest first
+// Splice each child run into the transcript as a boundary row, earliest first
 // (the index is recomputed against the growing list each iteration).
 function insertChildRunRows(
   rows: AgentRenderRow[],

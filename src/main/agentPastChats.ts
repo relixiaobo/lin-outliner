@@ -15,7 +15,7 @@ import type {
   AgentConversationIndexEntry,
   AgentEventStore,
 } from './agentEventStore';
-import { extractCompactSummaryFromReminder } from './agentCompaction';
+import { compactedSpanEvidenceText } from './agentCompaction';
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -171,6 +171,11 @@ interface ConversationIndexedEntry {
 
 export class AgentPastChatsService {
   private readonly visibleConversationCache = new Map<string, VisibleConversationCacheEntry>();
+  // The run-side mirror of visibleConversationCache: one memory entry's run
+  // commonly backs several facts, so consecutive evidence fetches replay the
+  // same (usually immutable, terminal) ledger. Keyed on the ledger tail seq via
+  // one tiny run-meta read.
+  private readonly visibleRunCache = new Map<string, { latestSeq: number; messages: AgentEventMessageRecord[] }>();
 
   constructor(private readonly eventStore: AgentEventStore) {}
 
@@ -405,15 +410,10 @@ export class AgentPastChatsService {
       return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
     }
 
-    const state = await this.eventStore.replayRunStream(runId);
-    if (state.latestSeq === 0) {
+    const visible = await this.visibleRunMessages(runId);
+    if (!visible) {
       return pastChatsError('SOURCE_NOT_FOUND', `No run ledger was found for run ${runId}.`);
     }
-    // The visible transcript (not the bare active path): a compaction re-anchors
-    // the run's path onto the post-compact root, but the compacted span stays
-    // addressable through the compaction record's expansion — §13.17 evidence
-    // preservation, held by the same machinery the conversation path uses.
-    const visible = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
     const [fromMessageId, throughMessageId] = source.messageRange;
     const startIndex = visible.findIndex((message) => message.id === fromMessageId);
     if (startIndex < 0) {
@@ -445,6 +445,24 @@ export class AgentPastChatsService {
 
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
     return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
+  }
+
+  /**
+   * The visible transcript of a delegated run's ledger (not the bare active
+   * path): a compaction re-anchors the run's path onto the post-compact root,
+   * but the compacted span stays addressable through the compaction record's
+   * expansion — §13.17 evidence preservation, held by the same machinery the
+   * conversation path uses. Null when no ledger exists.
+   */
+  private async visibleRunMessages(runId: string): Promise<AgentEventMessageRecord[] | null> {
+    const meta = await this.eventStore.readRunMetaProjection(runId);
+    const cached = this.visibleRunCache.get(runId);
+    if (meta && cached && cached.latestSeq === meta.latestSeq) return cached.messages;
+    const state = await this.eventStore.replayRunStream(runId);
+    if (state.latestSeq === 0) return null;
+    const messages = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
+    this.visibleRunCache.set(runId, { latestSeq: state.latestSeq, messages });
+    return messages;
   }
 
   private async visibleConversationMessages(conversationId: string): Promise<VisibleConversationCacheEntry> {
@@ -543,11 +561,11 @@ function messageText(message: AgentEventMessageRecord): string {
     // Hidden boilerplate stays out of evidence text, with one exception (the
     // #178 invariant, §13.17): a compaction reminder's summary is the only
     // surviving carrier of the compacted-away content — surface it.
-    const summary = message.content
-      .map((part) => (part.type === 'text' ? extractCompactSummaryFromReminder(part.text) : null))
+    const evidence = message.content
+      .map((part) => (part.type === 'text' ? compactedSpanEvidenceText(part.text) : null))
       .find((value): value is string => Boolean(value));
-    if (summary) {
-      return [cleaned, `[summary of compacted earlier messages]\n${summary}`].filter(Boolean).join('\n');
+    if (evidence) {
+      return [cleaned, evidence].filter(Boolean).join('\n');
     }
     return cleaned;
   }

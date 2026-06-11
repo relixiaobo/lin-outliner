@@ -37,6 +37,9 @@ interface AgentChildRunDetailsPanelProps {
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
 }
 
+/** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
+const LIVE_TRANSCRIPT_POLL_MS = 1_500;
+
 function formatDuration(startedAt: number, endedAt: number): string {
   const elapsed = Math.max(0, endedAt - startedAt);
   if (elapsed < 1000) return '<1s';
@@ -404,13 +407,23 @@ export function AgentChildRunDetailsPanel({
     requestRef.current += 1;
   }, [childRun?.id]);
 
+  // Fetch on open, refetch on every projected entity change (status flips,
+  // updatedAt bumps), and POLL while the run is live: the conversation
+  // projection carries no per-message child data, so polling the run ledger is
+  // the only signal that new messages landed. The main process keys the
+  // transcript on the ledger tail seq (one tiny run-meta read), so an
+  // unchanged poll is near-free.
   useEffect(() => {
     if (!childRun) return undefined;
     loadTranscript();
+    const interval = childRun.status === 'running'
+      ? window.setInterval(loadTranscript, LIVE_TRANSCRIPT_POLL_MS)
+      : null;
     return () => {
+      if (interval !== null) window.clearInterval(interval);
       requestRef.current += 1;
     };
-  }, [loadTranscript, childRun?.id]);
+  }, [loadTranscript, childRun?.id, childRun?.status, childRun?.updatedAt]);
 
   const messages = useMemo(() => parseTranscript(rawTranscript), [rawTranscript]);
   const toolResults = useMemo(() => buildToolResultMap(messages), [messages]);
@@ -438,6 +451,9 @@ export function AgentChildRunDetailsPanel({
     try {
       await api.agentChildRunSend(conversationId, childRun.id, message);
       setFollowUpDraft('');
+      // Refresh eagerly; anything the loop has not drained into the ledger
+      // yet is picked up by the live poll on the next tick.
+      loadTranscript();
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {

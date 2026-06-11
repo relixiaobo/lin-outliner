@@ -455,10 +455,18 @@ describe('agent runtime childRuns', () => {
       conversationId: conversation.conversationId,
     });
     expect(runId).toMatch(/^child-/);
+    // The cursor records the SCANNED TAIL (here the terminal run.completed),
+    // not the last evidence event — that split is what lets the next pass skip
+    // an already-digested terminal run without re-reading its ledger. The
+    // provenance side (source.eventId) still points at the last evidence event.
+    const ledgerEvents = await store.readRunStreamEvents(runId!);
+    const ledgerTail = ledgerEvents.at(-1)!;
+    expect(ledgerTail.type).toBe('run.completed');
     expect(dreamTask?.kind === 'dream' ? dreamTask.processed?.runs?.[runId!]?.throughEventId : null)
-      .toBe(source?.eventId);
-    expect(dreamState.watermark.runs?.[runId!]?.seq).toBeGreaterThan(0);
-    expect(dreamState.watermark.runs?.[runId!]?.eventId).toBe(source?.eventId ?? null);
+      .toBe(ledgerTail.eventId);
+    expect(dreamState.watermark.runs?.[runId!]?.seq).toBe(ledgerTail.seq);
+    expect(dreamState.watermark.runs?.[runId!]?.eventId).toBe(ledgerTail.eventId);
+    expect(source?.eventId).not.toBe(ledgerTail.eventId);
     expect(evidence?.mode).toBe('evidence');
     expect(evidence?.mode === 'evidence' ? evidence.messages.some((message) => (
       message.text.includes('Researcher durable note: use teal source notes')
@@ -1273,6 +1281,175 @@ describe('agent runtime childRuns', () => {
     expect(tampered.mode === 'error' ? tampered.code : null).toBe('NOT_ON_ACTIVE_BRANCH');
   });
 
+  test('slimming an inherited fork-prefix tool result never leaks parent context into Dream evidence', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-boundary-leak-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-boundary-leak-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const ownerAgentId = 'built-in:tenon:researcher';
+    const runId = 'child-boundary-leak';
+    const toolCallId = 'tool-boundary-leak';
+    const ownWorkText = `Fork child own work: PIPELINE-OK. ${'fork own work evidence '.repeat(60)}`;
+
+    const dreamRequests: string[] = [];
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'isolated',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: scriptedStream([], () => undefined).streamFn,
+        completeSimpleFn: async (model, context) => {
+          dreamRequests.push(textFromContext(context));
+          return normalizeAssistantMessage(
+            fauxAssistantMessage(JSON.stringify({ actions: [] })),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const conversation = await runtime.createConversation();
+    const store = new AgentEventStore(dataRoot);
+    const replay = await store.replay(conversation.conversationId);
+    const toolActor = { type: 'tool', toolName: 'Agent', toolCallId } as const;
+    const agentActor = { type: 'agent', agentId: ownerAgentId } as const;
+    const ledgerEvent = (seq: number, fields: Record<string, unknown>) => ({
+      v: 1,
+      eventId: `${runId}-evt-${seq}`,
+      seq,
+      conversationId: conversation.conversationId,
+      createdAt: Date.now() + seq,
+      runId,
+      ...fields,
+    });
+
+    await store.appendEvents(conversation.conversationId, [
+      {
+        v: 1,
+        eventId: `test-child-start-${runId}`,
+        seq: replay.latestSeq + 1,
+        conversationId: conversation.conversationId,
+        createdAt: Date.now(),
+        actor: toolActor,
+        type: 'child_run.started',
+        childRunId: runId,
+        parentToolCallId: toolCallId,
+        executingAgentId: ownerAgentId,
+        memoryOwnerAgentId: ownerAgentId,
+        description: 'boundary leak fork',
+        prompt: 'Verify the deployment pipeline.',
+        agentType: 'lin-fork-child',
+        contextMode: 'fork',
+      },
+      {
+        v: 1,
+        eventId: `test-child-complete-${runId}`,
+        seq: replay.latestSeq + 2,
+        conversationId: conversation.conversationId,
+        createdAt: Date.now() + 1,
+        actor: toolActor,
+        type: 'child_run.updated',
+        childRunId: runId,
+        status: 'completed',
+        completedAt: Date.now() + 1,
+        result: 'done',
+      },
+    ]);
+    // Fork prefix (inherited context) BEFORE run.started; then — the leak shape —
+    // the child's budget pass slims that INHERITED tool result, appending a
+    // post-boundary tool_result.replaced whose messageId points pre-boundary.
+    await store.appendRunStreamEvents(conversation.conversationId, runId, [
+      ledgerEvent(1, {
+        actor: toolActor,
+        type: 'user_message.created',
+        messageId: `${runId}-prefix-user`,
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Parent ask: fetch the runbook.' }],
+      }),
+      ledgerEvent(2, {
+        actor: toolActor,
+        type: 'tool_result.created',
+        messageId: `${runId}-prefix-tool`,
+        parentMessageId: `${runId}-prefix-user`,
+        toolCallId: 'tool-parent-fetch',
+        toolName: 'web_fetch',
+        isError: false,
+        content: [{ type: 'text', text: 'PARENT-FETCH-ORIGINAL: inherited web content.' }],
+        outputSummary: 'PARENT-FETCH-ORIGINAL summary',
+      }),
+      ledgerEvent(3, {
+        actor: toolActor,
+        type: 'run.started',
+        agentId: ownerAgentId,
+        anchor: { type: 'conversation', agentId: ownerAgentId, conversationId: conversation.conversationId },
+        kind: 'delegation',
+        trigger: { type: 'system' },
+      }),
+      ledgerEvent(4, {
+        actor: toolActor,
+        type: 'user_message.created',
+        messageId: `${runId}-directive`,
+        parentMessageId: `${runId}-prefix-tool`,
+        content: [{ type: 'text', text: 'Directive: verify the deployment pipeline.' }],
+      }),
+      ledgerEvent(5, {
+        actor: toolActor,
+        type: 'tool_result.replaced',
+        messageId: `${runId}-prefix-tool`,
+        toolCallId: 'tool-parent-fetch',
+        content: [{ type: 'text', text: 'PARENT-FETCH-PREVIEW: persisted-output label.' }],
+        outputSummary: 'PARENT-FETCH-PREVIEW summary',
+      }),
+      ledgerEvent(6, {
+        actor: agentActor,
+        type: 'assistant_message.started',
+        messageId: `${runId}-own-work`,
+        parentMessageId: `${runId}-directive`,
+        providerId: 'openai',
+        modelId: 'gpt-4.1',
+      }),
+      ledgerEvent(7, {
+        actor: agentActor,
+        type: 'assistant_message.completed',
+        messageId: `${runId}-own-work`,
+        parentMessageId: `${runId}-directive`,
+        stopReason: 'stop',
+        content: [{ type: 'text', text: ownWorkText }],
+      }),
+      ledgerEvent(8, { actor: toolActor, type: 'run.completed' }),
+    ] as AgentEvent[]);
+
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+
+    const runRequests = dreamRequests.filter((request) => request.includes('## Agent Run'));
+    expect(runRequests.length).toBeGreaterThan(0);
+    expect(runRequests.some((request) => request.includes('Fork child own work'))).toBe(true);
+    // Neither the inherited original nor its slimming replacement may cross the
+    // structural fork boundary into the child's Dream evidence.
+    expect(runRequests.some((request) => request.includes('PARENT-FETCH-ORIGINAL'))).toBe(false);
+    expect(runRequests.some((request) => request.includes('PARENT-FETCH-PREVIEW'))).toBe(false);
+  });
+
   test('tracks a background child run through AgentStatus', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-data-'));
@@ -1590,6 +1767,98 @@ describe('agent runtime childRuns', () => {
     releaseOriginalChild();
   });
 
+  test('a conversation record whose ledger seed never landed stays resumable (register-empty path)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-missing-ledger-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-missing-ledger-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const runId = 'child-missing-ledger';
+    const { AgentRuntime } = await loadRuntimeModule();
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Continued without the lost seed.'))],
+      () => undefined,
+    );
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+    const conversation = await runtime.createConversation();
+    runtime.closeConversation(conversation.conversationId);
+
+    // The crash window: the conversation records the run, but runs/<id>/ was
+    // never seeded (no events.jsonl). Pre-fix this run was permanently wedged —
+    // every send failed with "Unknown child-run ledger".
+    const store = new AgentEventStore(dataRoot);
+    const replay = await store.replay(conversation.conversationId);
+    await store.appendEvents(conversation.conversationId, [
+      {
+        v: 1,
+        eventId: `test-child-start-${runId}`,
+        seq: replay.latestSeq + 1,
+        conversationId: conversation.conversationId,
+        createdAt: Date.now(),
+        actor: { type: 'tool', toolName: 'Agent', toolCallId: 'tool-lost-seed' },
+        type: 'child_run.started',
+        childRunId: runId,
+        parentToolCallId: 'tool-lost-seed',
+        executingAgentId: 'built-in:tenon:assistant',
+        memoryOwnerAgentId: 'built-in:tenon:assistant',
+        description: 'lost seed run',
+        prompt: 'Verify the deployment pipeline.',
+        agentType: 'general',
+        contextMode: 'fresh',
+      },
+      {
+        v: 1,
+        eventId: `test-child-failed-${runId}`,
+        seq: replay.latestSeq + 2,
+        conversationId: conversation.conversationId,
+        createdAt: Date.now() + 1,
+        actor: { type: 'system' },
+        type: 'child_run.updated',
+        childRunId: runId,
+        status: 'failed',
+        completedAt: Date.now() + 1,
+        error: 'interrupted',
+      },
+    ] as AgentEvent[]);
+    expect(await store.readRunStreamEvents(runId)).toEqual([]);
+
+    const queued = await runtime.childRunSend(conversation.conversationId, runId, 'Continue the lost run.');
+    expect(queued).toMatchObject({ agent_id: runId, status: 'queued' });
+    const status = await runtime.childRunStatus(conversation.conversationId, runId, { wait: true });
+    expect(status).toMatchObject({
+      agent_id: runId,
+      status: 'completed',
+      result: 'Continued without the lost seed.',
+    });
+
+    // The continuation became the ledger's own history: the resume's
+    // run.started is the FIRST event (and thus the Dream-evidence boundary),
+    // followed by the follow-up and the child's reply.
+    const ledgerEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(runId);
+    expect(ledgerEvents[0]?.type).toBe('run.started');
+    expect(ledgerEvents[0]?.seq).toBe(1);
+    expect(ledgerEvents.some((event) => (
+      event.type === 'user_message.created'
+      && JSON.stringify(event.content).includes('Continue the lost run.')
+    ))).toBe(true);
+    expect(ledgerEvents.at(-1)?.type).toBe('run.completed');
+  });
+
   test('persists child run sidechain metadata and restores status by name', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-data-'));
@@ -1784,6 +2053,12 @@ describe('agent runtime childRuns', () => {
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
     const restoredChildRun = restored.renderProjection.entities.childRuns[childRunId];
     expect(restoredChildRun?.status).toBe('failed');
+
+    // The terminal is mirrored into the run's OWN ledger too: the unified run
+    // representation must not self-describe as `running` forever while the
+    // conversation says failed.
+    const runStream = await new AgentEventStore(dataRoot).replayRunStream(childRunId);
+    expect(runStream.runs[childRunId]?.status).toBe('failed');
 
     const afterRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
     expect(afterRestart.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);

@@ -1101,6 +1101,49 @@ describe('agent event store', () => {
     });
   });
 
+  test('a torn trailing line in a delegated-run ledger is dropped on read and truncated on the next append', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-1';
+      const runId = 'child-torn-tail';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Torn tail' },
+      ]);
+      const runEvent = (seq: number): AgentEvent => ({
+        ...base(conversationId, seq, 'user_message.created', userActor),
+        eventId: `${runId}-evt-${seq}`,
+        runId,
+        messageId: `${runId}-message-${seq}`,
+        parentMessageId: seq === 1 ? null : `${runId}-message-${seq - 1}`,
+        content: [{ type: 'text', text: `child message ${seq}` }],
+      } as AgentEvent);
+      await store.appendRunStreamEvents(conversationId, runId, [runEvent(1), runEvent(2)]);
+
+      // Crash artifact: an interrupted append leaves half a JSON object as the
+      // final line of the run's events.jsonl.
+      const runEventsPath = store.runPaths(runId).runEventsPath;
+      await writeFile(runEventsPath, `${await readFile(runEventsPath, 'utf8')}{"v":1,"eventId":"TORN-FRAGMENT`, 'utf8');
+
+      // Read: the torn FINAL line is dropped; the intact prefix stays readable
+      // (a corrupt child ledger must never brick its parent conversation).
+      const events = await store.readRunStreamEvents(runId);
+      expect(events.map((event) => event.seq)).toEqual([1, 2]);
+      expect((await store.replayRunStream(runId)).latestSeq).toBe(2);
+
+      // Append (a resume): the before-append repair truncates the fragment, the
+      // new event lands after the intact tail, and the file is whole again.
+      await store.appendRunStreamEvents(conversationId, runId, [runEvent(3)]);
+      const after = await store.readRunStreamEvents(runId);
+      expect(after.map((event) => event.seq)).toEqual([1, 2, 3]);
+      const raw = await readFile(runEventsPath, 'utf8');
+      expect(raw.includes('TORN-FRAGMENT')).toBe(false);
+      expect(raw.endsWith('\n')).toBe(true);
+
+      // A malformed line in the MIDDLE is real corruption and still fails loudly.
+      await writeFile(runEventsPath, `not-json\n${raw}`, 'utf8');
+      await expect(store.readRunStreamEvents(runId)).rejects.toThrow(/agent run event JSON/);
+    });
+  });
+
   test('stores payload bytes outside the JSONL event stream', async () => {
     await withStore(async (store) => {
       const conversationId = 'conversation-1';

@@ -26,7 +26,7 @@ function statusLabel(childRun: AgentRenderChildRunEntity, labels: BoundaryLabels
   return labels.ranAt({ time: clockLabel(childRun.completedAt ?? childRun.updatedAt) });
 }
 
-// The inline transcript divider for a child run run — the conversation's permanent
+// The inline transcript divider for a child run — the conversation's permanent
 // record of the run (its final result, expandable). Mirrors the compaction/dream
 // boundaries: a centered control between two rules, expanding to the result with a
 // link into the full run. Used for both a parentless command fire and a

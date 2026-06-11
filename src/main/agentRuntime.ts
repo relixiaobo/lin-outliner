@@ -165,7 +165,6 @@ import {
   AGENT_DELEGATE_TOOL_NAME,
   AgentDelegationRuntime,
   type AgentChildAgentCreateInput,
-  type AgentRestoredChildRun,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
 import {
@@ -179,7 +178,7 @@ import {
   duplicateAgentDefinitionFile,
   updateAgentDefinitionFile,
 } from './agentAuthoring';
-import { AgentRunLedgerWriter } from './agentRunLedger';
+import { AgentRunLedgerWriter, fromPiAssistantContent } from './agentRunLedger';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
@@ -306,6 +305,7 @@ const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
+const CHILD_RUN_TRANSCRIPT_CACHE_LIMIT = 16;
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
 const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
 // In-memory per-command failure backoff (openclaw-style); process-level, never
@@ -397,6 +397,9 @@ interface ChannelTurnRequest {
 }
 
 type RendererProjectionDomainEvent = Extract<AgentDomainEvent, { lane: 'renderer-projection' }>;
+
+/** One Dream pass's single sweep over every conversation's childRuns records. */
+type DreamChildRunHarvest = { conversationId: string; runs: AgentChildRunRecord[] }[];
 type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'approval_request' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'approval_resolved' }>, 'conversationId' | 'timestamp'>
@@ -537,6 +540,9 @@ export class AgentRuntime {
   private readonly agentIdentity: AgentIdentityRecord;
   private readonly domainEvents: AgentDomainEventBus;
   /** The write seam for delegated runs' own ledgers ([[agent-run-unification]]). */
+  /** Drill-in transcripts keyed on the run ledger's tail seq (see childRunTranscript). */
+  private readonly childRunTranscriptCache = new Map<string, { latestSeq: number; messages: AgentMessage[] }>();
+
   private readonly runLedger = new AgentRunLedgerWriter({
     store: () => this.getEventStore(),
     persister: {
@@ -1080,12 +1086,23 @@ export class AgentRuntime {
   /**
    * The drill-in transcript for a delegated run: its OWN ledger replayed alone
    * and derived to pi messages ([[agent-run-unification]] — replaces the
-   * transcript-snapshot payload read).
+   * transcript-snapshot payload read). Cached on the ledger tail seq (one tiny
+   * run-meta read decides freshness), so the panel's live poll re-replays only
+   * when the ledger actually grew.
    */
   async childRunTranscript(conversationId: string, runId: string): Promise<{ messages: AgentMessage[] } | null> {
+    const meta = await this.getEventStore().readRunMetaProjection(runId);
+    const cached = this.childRunTranscriptCache.get(runId);
+    if (meta && cached && cached.latestSeq === meta.latestSeq) return { messages: cached.messages };
     const state = await this.getEventStore().replayRunStream(runId);
     if (state.latestSeq === 0) return null;
-    return { messages: await this.deriveRuntimePiMessages(conversationId, state) };
+    const messages = await this.deriveRuntimePiMessages(conversationId, state);
+    if (this.childRunTranscriptCache.size >= CHILD_RUN_TRANSCRIPT_CACHE_LIMIT) {
+      const oldest = this.childRunTranscriptCache.keys().next().value;
+      if (oldest !== undefined) this.childRunTranscriptCache.delete(oldest);
+    }
+    this.childRunTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages });
+    return { messages };
   }
 
   async childRunStatus(
@@ -1846,11 +1863,12 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.childRunStarted(conversationId, current, snapshot, seed);
         },
-        childRunMessage: (snapshot, message) => {
-          // Coalesced ping so an open drill-in panel knows to refetch the child transcript.
-          this.emitProjection(conversationId, 'child_run.updated', 'coalesce');
-          return this.runLedger.appendMessage(snapshot.id, message, this.childRunActor(snapshot));
-        },
+        childRunMessage: (snapshot, message) => (
+          // No projection ping here: the conversation projection carries no
+          // per-message child data, and an open drill-in panel polls the run
+          // ledger while the run is live (the poll is meta-keyed, near-free).
+          this.runLedger.appendMessage(snapshot.id, message, this.childRunActor(snapshot))
+        ),
         childRunToolResultReplaced: (snapshot, toolCallId, text) => (
           this.runLedger.replaceToolResult(snapshot.id, toolCallId, text, this.childRunActor(snapshot))
         ),
@@ -1867,6 +1885,7 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
+        restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
         ),
@@ -1960,7 +1979,10 @@ export class AgentRuntime {
     conversationRef.current = conversation;
     await this.refreshMemberDisplayNames(conversation);
     await this.markInterruptedChildRunsOnRestore(conversationId, conversation);
-    conversation.delegationRuntime.restorePersistedRuns(await this.loadPersistedChildRuns(conversationId, conversation.eventState));
+    // Restore is records-only — no ledger IO on the conversation-open path. A
+    // run's transcript is replayed from its own ledger lazily, on first resume
+    // (restoreChildRunLedger) or drill-in (childRunTranscript).
+    conversation.delegationRuntime.restorePersistedRuns(Object.values(conversation.eventState.childRuns ?? {}));
     agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, conversation, signal);
 
     conversation.unsubscribe = agent.subscribe(async (event) => {
@@ -2140,22 +2162,20 @@ export class AgentRuntime {
     });
   }
 
-  private async loadPersistedChildRuns(
-    conversationId: string,
-    eventState: AgentEventReplayState,
-  ): Promise<AgentRestoredChildRun[]> {
-    const runs: AgentRestoredChildRun[] = [];
-    for (const record of Object.values(eventState.childRuns ?? {})) {
-      // The live transcript is the child run's OWN ledger, replayed alone
-      // ([[agent-run-unification]] Design 1) — registering it with the ledger
-      // writer also rebuilds the writer's append state (seq, chain tail).
-      const childState = await this.runLedger.restore(conversationId, record.id);
-      const transcriptMessages = childState
-        ? await this.deriveRuntimePiMessages(conversationId, childState)
-        : [];
-      runs.push({ record, transcriptMessages });
+  /**
+   * Re-register the run's ledger writer (and re-derive its transcript) from the
+   * run's OWN ledger — the resume path's restore. Returns null when no ledger
+   * exists; the writer is then registered empty, so the resume's `run.started`
+   * becomes the ledger's first event (a conversation record whose seed never
+   * landed stays resumable instead of wedging on "Unknown child-run ledger").
+   */
+  private async restoreChildRunLedger(conversationId: string, runId: string): Promise<AgentMessage[] | null> {
+    const state = await this.runLedger.restore(conversationId, runId);
+    if (!state) {
+      this.runLedger.register(conversationId, runId);
+      return null;
     }
-    return runs;
+    return this.deriveRuntimePiMessages(conversationId, state);
   }
 
   private async markInterruptedChildRunsOnRestore(
@@ -2168,6 +2188,20 @@ export class AgentRuntime {
 
     const interruptedError = 'The delegated child run was interrupted before conversation restore.';
     const completedAt = Date.now();
+    // Mirror the terminal into each run's OWN ledger first — without it the run
+    // stream would self-describe as `running` forever, contradicting the
+    // conversation record. Contained per run: a corrupt child ledger must
+    // degrade to a warning, never block opening the parent conversation.
+    for (const run of runningRuns) {
+      try {
+        await this.runLedger.markInterrupted(conversationId, run.id, {
+          actor: systemActor(),
+          errorMessage: interruptedError,
+        });
+      } catch (error) {
+        console.warn(`Could not mirror the interruption into run ledger ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     await this.appendConversationEvents(conversationId, conversation, runningRuns.map((run): AgentEventInput => ({
       type: 'child_run.updated',
       actor: systemActor(),
@@ -2214,6 +2248,19 @@ export class AgentRuntime {
     seed: { contextMessages: readonly AgentMessage[]; evidenceMessages: readonly AgentMessage[] },
   ): Promise<void> {
     const actor = this.childRunActor(snapshot);
+    // Ledger seed BEFORE the conversation marker: if the seed fails (crash,
+    // disk error) the spawn aborts with no conversation record — an orphan
+    // ledger directory is invisible and harmless, while the reverse order
+    // would leave a permanently un-resumable phantom run in the conversation.
+    await this.runLedger.runStarted({
+      conversationId,
+      runId: snapshot.id,
+      agentId: snapshot.executingAgentId as AgentId,
+      parentRunId: snapshot.parentRunId,
+      actor,
+      contextMessages: seed.contextMessages,
+      evidenceMessages: seed.evidenceMessages,
+    });
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'child_run.started',
       actor,
@@ -2230,15 +2277,6 @@ export class AgentRuntime {
       agentType: snapshot.agentType,
       contextMode: snapshot.contextMode,
     }]);
-    await this.runLedger.runStarted({
-      conversationId,
-      runId: snapshot.id,
-      agentId: snapshot.executingAgentId as AgentId,
-      parentRunId: snapshot.parentRunId,
-      actor,
-      contextMessages: seed.contextMessages,
-      evidenceMessages: seed.evidenceMessages,
-    });
     this.emitProjection(conversationId, 'child_run.started', 'coalesce');
   }
 
@@ -2336,7 +2374,7 @@ export class AgentRuntime {
   private async flushChildRunNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
     if (conversation.childRunNotificationFlushInProgress) return;
     if (conversation.pendingChildRunNotifications.length === 0) return;
-    // A notification-delivery run is the COORDINATOR's turn (its childRuns);
+    // A notification-delivery run is the COORDINATOR's turn (its child runs);
     // never interleave it into an active Channel round between member turns.
     if (conversation.channelRound) return;
     if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
@@ -2932,7 +2970,13 @@ export class AgentRuntime {
    * failures; the guard here only covers task-creation throws.
    */
   private async fireDream(trigger: AgentDreamTrigger, now: Date): Promise<void> {
-    const principals = await this.listDreamPrincipals();
+    // Gates before any scanning: a disabled/read-only/provider-less pass must
+    // not pay the all-conversations replay sweep just to bail per pool.
+    if (!await this.dreamPassGatesOpen()) return;
+    // ONE replay sweep per pass: every pool reads this harvest instead of
+    // re-replaying every conversation per principal.
+    const childRunHarvest = await this.harvestChildRunRecords();
+    const principals = await this.listDreamPrincipals(childRunHarvest);
     // Drop failure-backoff entries for pools that are no longer dream principals (e.g. a deleted
     // agent), so the in-memory map stays bounded to live pools. A live pool with an armed window
     // is always in this set (it ran a Dream to arm it), so its backoff is never pruned here.
@@ -2942,17 +2986,27 @@ export class AgentRuntime {
     }
     for (const principal of principals) {
       try {
-        await this.fireDreamForPool(principal, trigger, now);
+        await this.fireDreamForPool(principal, trigger, now, childRunHarvest);
       } catch (error) {
         console.warn(`Dream pass failed for ${principalKey(principal)}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
+  /** The pass-level Dream gates (also re-checked per task for the manual path). */
+  private async dreamPassGatesOpen(): Promise<boolean> {
+    if (!this.dreamMemoryExtractionEnabled()) return false;
+    if ((await this.dreamMemoryScope()).readOnly) return false;
+    return Boolean(await this.getActiveProviderConfig());
+  }
+
   /** Every pool with a Dream: the user pool plus each known agent's pool. */
-  private async listDreamPrincipals(): Promise<AgentPrincipal[]> {
-    const agentIds = await this.listDreamAgentIds();
-    return [this.userPrincipal(), ...agentIds.map((agentId): AgentPrincipal => ({ type: 'agent', agentId }))];
+  private async listDreamPrincipals(harvest?: DreamChildRunHarvest): Promise<AgentPrincipal[]> {
+    const agentIds = new Set<string>([this.agentIdentity.agentId]);
+    for (const { runs } of harvest ?? await this.harvestChildRunRecords()) {
+      for (const run of runs) agentIds.add(this.memoryOwnerAgentIdForChildRun(run));
+    }
+    return [this.userPrincipal(), ...[...agentIds].sort().map((agentId): AgentPrincipal => ({ type: 'agent', agentId }))];
   }
 
   /** Run one pool's Dream, serialized per pool by `principalKey`. */
@@ -2960,6 +3014,7 @@ export class AgentRuntime {
     principal: AgentPrincipal,
     trigger: AgentDreamTrigger,
     now: Date,
+    childRunHarvest?: DreamChildRunHarvest,
   ): Promise<AgentDreamRunResult | null> {
     const guardKey = principalKey(principal);
     if (this.dreamingPools.has(guardKey)) {
@@ -2976,7 +3031,7 @@ export class AgentRuntime {
     }
     this.dreamingPools.add(guardKey);
     try {
-      const task = await this.createDreamMemoryExtractionTask(principal, trigger, now);
+      const task = await this.createDreamMemoryExtractionTask(principal, trigger, now, childRunHarvest);
       if (!task) return null;
       const result = await this.runDreamMemoryExtractionTask(task);
       this.recordDreamFailureBackoff(guardKey, result, now);
@@ -3051,6 +3106,7 @@ export class AgentRuntime {
     principal: AgentPrincipal,
     trigger: AgentDreamTrigger,
     now: Date,
+    childRunHarvest?: DreamChildRunHarvest,
   ): Promise<AgentDreamMemoryExtractionTask | null> {
     if (!this.dreamMemoryExtractionEnabled()) return null;
     const memoryScope = await this.dreamMemoryScope();
@@ -3068,7 +3124,7 @@ export class AgentRuntime {
           runs: await this.collectDreamRunInputs(
             principal.agentId,
             dreamState.watermark,
-            await this.getEventStore().listConversationIds(),
+            childRunHarvest ?? await this.harvestChildRunRecords(),
           ),
         }
       : {
@@ -3125,7 +3181,7 @@ export class AgentRuntime {
    *
    * Reach, honestly stated: child run recall/briefing are wired to the PARENT conversation, and every
    * user-created conversation has the user as a member, so today this returns true on all live
-   * paths — childRuns INHERIT user-pool visibility by design (they act inside the user's
+   * paths — child runs INHERIT user-pool visibility by design (they act inside the user's
    * conversation on the user's task; sidechains are not separate conversations with their own
    * member lists in M0). The membership check is the forward rule for when non-user-member
    * conversations exist (e.g. agent↔agent channels); missing membership info defaults open
@@ -3178,29 +3234,37 @@ export class AgentRuntime {
     return batches;
   }
 
-  private async listDreamAgentIds(): Promise<string[]> {
-    const ids = new Set<string>([this.agentIdentity.agentId]);
+  /** One sweep over every conversation's childRuns records (the per-pass harvest). */
+  private async harvestChildRunRecords(): Promise<DreamChildRunHarvest> {
+    const harvest: DreamChildRunHarvest = [];
     for (const conversationId of await this.getEventStore().listConversationIds()) {
       const state = await this.getEventStore().replay(conversationId);
-      for (const run of Object.values(state.childRuns ?? {})) {
-        ids.add(this.memoryOwnerAgentIdForChildRun(run));
-      }
+      const runs = Object.values(state.childRuns ?? {});
+      if (runs.length > 0) harvest.push({ conversationId, runs });
     }
-    return [...ids].sort();
+    return harvest;
   }
 
   private async collectDreamRunInputs(
     agentId: string,
     watermark: AgentDreamWatermark,
-    conversationIds: readonly string[],
+    harvest: DreamChildRunHarvest,
   ): Promise<DreamMemoryExtractionRunInput[]> {
     const inputs: DreamMemoryExtractionRunInput[] = [];
-    for (const conversationId of conversationIds) {
-      const state = await this.getEventStore().replay(conversationId);
-      for (const run of Object.values(state.childRuns ?? {})) {
+    for (const { conversationId, runs } of harvest) {
+      for (const run of runs) {
         if (run.status === 'running') continue;
         const owner = this.memoryOwnerAgentIdForChildRun(run);
         if (owner !== agentId) continue;
+
+        // Already-consolidated skip BEFORE the ledger file read: the watermark
+        // records the scanned tail seq, so one tiny run-meta read settles a
+        // terminal run that was already digested.
+        const cursorSeq = watermark.runs?.[run.id]?.seq ?? 0;
+        if (cursorSeq > 0) {
+          const meta = await this.getEventStore().readRunMetaProjection(run.id);
+          if (meta && meta.latestSeq <= cursorSeq) continue;
+        }
 
         // The run's own ledger digests like any stream ([[agent-run-unification]]
         // Design 3): one `{seq, eventId}` cursor, no payload pinning, no positional
@@ -3209,14 +3273,13 @@ export class AgentRuntime {
         const events = await this.getEventStore().readRunStreamEvents(run.id);
         if (events.length === 0) continue;
         const boundarySeq = events.find((event) => event.type === 'run.started')?.seq ?? 0;
-        const fromSeqExclusive = Math.max(watermark.runs?.[run.id]?.seq ?? 0, boundarySeq);
+        const fromSeqExclusive = Math.max(cursorSeq, boundarySeq);
         const latestSeq = events.at(-1)?.seq ?? 0;
         if (latestSeq <= fromSeqExclusive) continue;
         inputs.push({
           conversationId,
           agentId,
           runId: run.id,
-          parentToolCallId: run.parentToolCallId,
           originWorkspace: run.memoryOriginWorkspace,
           events,
           fromSeqExclusive,
@@ -3998,7 +4061,7 @@ export class AgentRuntime {
           diagnostics.push({
             id: 'agents.disabled',
             severity: 'warning',
-            message: `${runtimeSettings.disabledAgents.length} childRuns are disabled.`,
+            message: `${runtimeSettings.disabledAgents.length} agents are disabled.`,
           });
         }
         return {
@@ -6275,19 +6338,6 @@ function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
   };
 }
 
-function fromPiAssistantContent(content: AssistantMessage['content']): AgentPersistedContent[] {
-  return content.map((part): AgentPersistedContent => {
-    if (part.type === 'text') return { type: 'text', text: part.text };
-    if (part.type === 'thinking') return { type: 'thinking', thinking: part.thinking, redacted: part.redacted };
-    return {
-      type: 'toolCall',
-      id: part.id,
-      name: part.name,
-      arguments: part.arguments,
-    };
-  });
-}
-
 function textPersistedContent(text: string): AgentPersistedContent[] {
   return [{ type: 'text', text }];
 }
@@ -7254,7 +7304,6 @@ function dreamProcessedRuns(
   ranges: readonly DreamMemoryExtractionSourceRange[],
 ): Record<string, {
   conversationId: string;
-  parentToolCallId?: string;
   fromSeqExclusive: number;
   throughSeq: number;
   throughEventId: string | null;

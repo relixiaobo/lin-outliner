@@ -56,8 +56,11 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
-// v2 = run unification: child runs write their own run ledgers; the
-// child_run.* conversation events and transcript-snapshot payloads are gone.
+// v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
+// events.jsonl`, own seq space) excluded from conversation replay; the
+// conversation stream keeps only the slim child_run.started/updated markers.
+// The pre-unification entity-grade events and transcript-snapshot payloads
+// are gone.
 export const STORAGE_LAYOUT_VERSION = 2;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
@@ -254,6 +257,15 @@ interface AgentEventSearchIndex {
 
 export class AgentEventStore {
   private readonly agentEventLog = new AppendOnlySeqLog<AgentEvent>('agent event', parseEventsJsonl);
+  // Delegated-run ledgers get the memory log's torn-tail policy, NOT the
+  // conversation log's strict one: they are high-write append-only sidecars, so
+  // a half-written FINAL line is a routine crash artifact of an interrupted
+  // child-message append (the run is marked interrupted on restore anyway). A
+  // tolerant parse keeps the transcript readable — and keeps one corrupt child
+  // ledger from bricking its whole parent conversation — and lets the
+  // before-append repair truncate the fragment so a resume can append again.
+  // Mid-file corruption still fails loudly on both logs.
+  private readonly runEventLog = new AppendOnlySeqLog<AgentEvent>('agent run event', parseRunEventsJsonl);
   private readonly memoryEventLog = new AppendOnlySeqLog<AgentMemoryEvent>('agent memory event', parseMemoryEventsJsonl);
   private indexQueue = Promise.resolve();
   private readonly memoryProjectionByPrincipal = new Map<string, AgentMemoryProjectionCache>();
@@ -374,14 +386,14 @@ export class AgentEventStore {
       }
     }
     const runPaths = this.runPaths(runId);
-    await this.agentEventLog.enqueue(runStreamLogKey(runId), async () => {
-      const latestSeq = await this.agentEventLog.latestSeq(runStreamLogKey(runId), () => [runPaths.runEventsPath]);
+    await this.runEventLog.enqueue(runStreamLogKey(runId), async () => {
+      const latestSeq = await this.runEventLog.latestSeq(runStreamLogKey(runId), () => [runPaths.runEventsPath]);
       const firstSeq = events[0]!.seq;
       if (firstSeq <= latestSeq) {
         throw new Error(`Run-stream event seq ${firstSeq} is not after existing seq ${latestSeq}`);
       }
-      await this.agentEventLog.append(runPaths.runEventsPath, events);
-      this.agentEventLog.setLatestSeq(runStreamLogKey(runId), events.at(-1)!.seq);
+      await this.runEventLog.append(runPaths.runEventsPath, events);
+      this.runEventLog.setLatestSeq(runStreamLogKey(runId), events.at(-1)!.seq);
       const metaEvents = events.filter((event) => !isStreamingDeltaEvent(event));
       if (metaEvents.length > 0) {
         const meta = await this.updateRunMeta(conversationId, runId, metaEvents);
@@ -393,7 +405,7 @@ export class AgentEventStore {
   /** Read a delegated run's own ledger (its independent event stream). */
   async readRunStreamEvents(runId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
-    return this.agentEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+    return this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
   }
 
   /** Replay a delegated run's ledger into its own independent state. */
@@ -494,7 +506,10 @@ export class AgentEventStore {
       rm(this.runPaths(runId).runDir, { recursive: true, force: true })
     )));
     this.agentEventLog.deleteKey(conversationId);
-    for (const runId of runIds) this.agentEventLog.deleteKey(runStreamLogKey(runId));
+    for (const runId of runIds) {
+      this.agentEventLog.deleteKey(runStreamLogKey(runId));
+      this.runEventLog.deleteKey(runStreamLogKey(runId));
+    }
     await this.removeConversationFromIndex(conversationId);
     await this.removeConversationFromSearchIndex(conversationId);
   }
@@ -818,6 +833,7 @@ export class AgentEventStore {
     // Positive proof of another generation (stale `v` or no sentinel at all).
     await rm(this.rootDir, { recursive: true, force: true });
     this.agentEventLog.clear();
+    this.runEventLog.clear();
     this.memoryEventLog.clear();
     this.memoryProjectionByPrincipal.clear();
     await mkdir(this.rootDir, { recursive: true });
@@ -2354,6 +2370,40 @@ function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
   return events;
 }
 
+/**
+ * The delegated-run ledger parse: like {@link parseEventsJsonl} but a torn FINAL
+ * line — the crash artifact of an interrupted child-message append — is dropped
+ * with a warning instead of failing the read (same policy as the memory log:
+ * the run is marked interrupted on restore, so the lost in-flight event is
+ * accounted for). A malformed line in the middle is real corruption and still
+ * fails loudly.
+ */
+function parseRunEventsJsonl(raw: string, source: string): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  const lines = raw.split(/\r?\n/);
+  let lastContentIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]!.trim().length > 0) {
+      lastContentIndex = index;
+      break;
+    }
+  }
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!.trim();
+    if (!line) continue;
+    try {
+      events.push(JSON.parse(line) as AgentEvent);
+    } catch (error) {
+      if (index === lastContentIndex) {
+        console.warn(`Dropping torn trailing agent run event at ${source}:${index + 1}`);
+        break;
+      }
+      throw new Error(`Invalid agent run event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return events;
+}
+
 function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[] {
   const events: AgentMemoryEvent[] = [];
   const lines = raw.split(/\r?\n/);
@@ -2634,7 +2684,6 @@ function normalizeDreamProcessedRuns(value: unknown): Record<string, AgentDreamP
     if (fromSeqExclusive === null || throughSeq === null || fromSeqExclusive < 0 || throughSeq < fromSeqExclusive) continue;
     runs[runId] = {
       conversationId: raw.conversationId,
-      parentToolCallId: normalizeOptionalString(raw.parentToolCallId),
       fromSeqExclusive: Math.trunc(fromSeqExclusive),
       throughSeq: Math.trunc(throughSeq),
       throughEventId: typeof raw.throughEventId === 'string' || raw.throughEventId === null ? raw.throughEventId : null,

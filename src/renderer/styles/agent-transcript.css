@@ -184,7 +184,7 @@
   gap: var(--space-2);
 }
 
-/* Child run run boundary — the inline record of a child run run (mirrors the
+/* Child-run boundary — the inline record of a child run (mirrors the
    compaction boundary: a centered control between two rules, expanding to the
    final result). Neutral functional styling (B3/B4). */
 .agent-child-run-boundary {
