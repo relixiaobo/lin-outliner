@@ -163,7 +163,7 @@ fallback/interaction outcomes.
   action / target / why / permission-kind + the always-allow rule string.
 - **Permission center** — the **Permissions** category in `AgentSettingsView.tsx`
   renders the common action-kind rows with allow/ask toggles
-  (`agent.subagent.spawn` is shown non-allowable), reads/writes via
+  (`agent.delegate.spawn` is shown non-allowable), reads/writes via
   `agentGetToolPermissionSettings`, and surfaces store diagnostics. There is no
   in-app raw-JSON editor (advanced users edit the file directly).
 

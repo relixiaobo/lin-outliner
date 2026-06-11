@@ -71,7 +71,7 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   removed by the archived hardening pass.
 - **Subagents** — fresh / fork / background runs + sidechain transcripts + background
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
-  (`docs/spec/agent-subagent-runtime-plan.md`).
+  (`docs/spec/agent-delegation-runtime.md`).
 - **Memory v1 + retrieval authority** — event-sourced per-agent durable memory
   (`memory.entry_*`), global-default retrieval with opt-in isolation tiers, and the single
   read-only `recall` tool (#152/#158). Write authority is exactly Settings/Profile UI +

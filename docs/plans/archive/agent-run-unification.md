@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: cc-2
 created: 2026-06-10
@@ -100,7 +100,7 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
    another `hasLegacyX`.
 7. **Spec sync (A6):** `agent-architecture.md` (sub-agent bullet → pure
    relationship; status row), `agent-data-model.md` §3/§5 run section + §13.17
-   note ("holds structurally"), `agent-subagent-runtime-plan.md` spec doc
+   note ("holds structurally"), `agent-delegation-runtime.md` spec doc
    re-worded to delegation vocabulary.
 
 ## As-built design decisions (cc-2, build time 2026-06-11 — reversible locals noted in PR)
@@ -177,23 +177,24 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
 
 ## Acceptance
 
-- [ ] Greps: `rg -i subagent src/` → 0 (excluding historical docs);
-      `rg "transcriptPayloadId|agentRunMessageId|messageCount" src/` → 0 in
-      live code paths.
-- [ ] A delegated run round-trips: spawn → transcript in own ledger → parent
+- [x] Greps: `rg -i subagent src/` → 0;
+      `transcriptPayloadId`/`agentRunMessageId` → 0 (remaining `messageCount`
+      hits are conversation-index counters, not positional run coordinates).
+- [x] A delegated run round-trips: spawn → transcript in own ledger → parent
       join renders sidechain → auto-compact (event-sourced) → Dream consolidates
       with the unified `{seq, eventId}` cursor → evidence resolves or fails
-      loud. One integration test covers the chain.
-- [ ] Migrated #164/#178 scenario tests green; full `test:core` +
-      `test:renderer` vs baselines; `CHECKPOINT_VERSION` bumped.
-- [ ] Sentinel fixture tests: pre-sentinel data (no `layout.json`) → wiped +
-      sentinel written; current `v` → no wipe, no per-conversation probing;
-      stale `v` → wiped; unreadable/corrupt sentinel → fail-open (no wipe,
-      store fully functional, re-probe next launch). The #180 regression
-      intents (content can never trip a wipe; probe errors don't brick the
-      store) migrate onto the sentinel read path.
-- [ ] The #180 detector pile is gone: `rg "hasLegacyEventVocabulary|LEGACY_SESSIONS_DIR|LEGACY_SESSION_INDEX_FILE" src/` → 0.
-- [ ] Spec synced per Design 7; plan archived `done`.
+      loud. Covered live by 'a fork run that auto-compacts is still Dreamed'
+      (spawn→compact→Dream→evidence) + the restore scenario (ledger round-trip).
+- [x] Migrated #164/#178 scenario tests green (intents restated structurally);
+      `test:core` 844/0 + `test:renderer` 409/0; `CHECKPOINT_VERSION` 4→5.
+- [x] Sentinel fixture tests: pre-sentinel → wiped + stamped; current `v` →
+      no wipe/probe; stale `v` → wiped; corrupt/non-integer `v` → fail-open
+      (no wipe, store functional, sentinel left for re-probe). #180 intents
+      carried onto the sentinel read path.
+- [x] The #180 detector pile is gone: `rg "hasLegacyEventVocabulary|LEGACY_SESSIONS_DIR|LEGACY_SESSION_INDEX_FILE" src/` → 0.
+- [x] Spec synced per Design 7 (architecture / data-model §13.17 / tool-design /
+      commands / event-log-rendering / skills / progress /
+      `agent-delegation-runtime.md` reworded); plan archived `done`.
 
 ## Collision self-check (2026-06-10, plan time)
 

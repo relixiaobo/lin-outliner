@@ -209,7 +209,7 @@ Keep from the reference implementation:
 - sidecar payload/metadata files
 - write queue and flush discipline
 - resume from chain plus repair/filter passes
-- subagent/sidechain concept as future-compatible shape
+- delegation/sidechain concept as future-compatible shape
 - compaction and content replacement as persisted events
 
 Do not copy:
@@ -383,8 +383,8 @@ type AgentEventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'subagent_run.started'
-  | 'subagent_run.updated'
+  | 'child_run.started'
+  | 'child_run.updated'
   | 'compaction.completed'
   | 'dream.finished'
   | 'payload.created'
@@ -408,11 +408,11 @@ A `notification.created` is **anchored to exactly one conversation**
 (`conversationId`, mandatory — there are no conversation-less notifications) and
 carries a `kind` (`task_completed` / `task_failed`; `needs_input` and `status` are
 reserved with no emitter yet) plus an optional `source`
-(`{ type: 'run' | 'subagent'; … }`) naming the off-floor run that produced it. A
-detached subagent terminal emits one with an id keyed on the completion instant
+(`{ type: 'run'; runId }`) naming the off-floor run that produced it. A
+detached child-run terminal emits one with an id keyed on the completion instant
 (`notification-<runId>-<completedAt>`) so a *resumed* run that finishes again is
 delivered, not deduped; a **user-initiated stop** raises none (the user's own
-action); a subagent left **running when the app dies** is marked failed and raises
+action); a child run left **running when the app dies** is marked failed and raises
 its notification on the next restore. `needs_input` (reserved) would reuse the
 run-log `user_question.*` lifecycle for the actual pause/answer/resume; the
 notification only routes the attention signal to the origin conversation.
@@ -645,7 +645,6 @@ type AgentPayloadRole =
   | 'preview'
   | 'text_extract'
   | 'tool_output'
-  | 'subagent_transcript'
   | 'debug';
 
 interface AgentPayloadDisplayMetadata {
@@ -792,10 +791,10 @@ Rules:
   hidden anchor message, with status, processed counts, and memory-change counts
   in `entities.dreams`. Active manual `/dream` runs append a transient
   `activeDream` row until the marker is written.
-- `subagent_run.*` events become dedicated **subagent boundary rows** in
-  `transcriptRows` (kind `'subagent'`, keyed by run id, backed by
-  `entities.subagents`). They are the conversation's permanent record of a run —
-  every subagent's final result lands inline in its own DM/channel as an
+- `child_run.*` events become dedicated **child-run boundary rows** in
+  `transcriptRows` (kind `'child-run'`, keyed by run id, backed by
+  `entities.childRuns`). They are the conversation's permanent record of a run —
+  every child run's final result lands inline in its own DM/channel as an
   expandable summary with a "View full run" link into the full transcript. A
   parented run (a main-agent spawn, `parentToolCallId` set) anchors right after
   its tool-result row, else after the assistant message that issued the call, and

@@ -24,7 +24,7 @@ metadata** of these, not separate primitives.
    (DM + Channel, M3-A #179)
 3. **Run** — one unit of agent execution (one reply or task). Anchored to a
    conversation (the only home). Holds **all** execution detail. The 4 "kinds"
-   (turn/background/subagent/scheduled) are **derived** from `trigger` + `parentRunId`
+   (turn/background/delegation/scheduled) are **derived** from `trigger` + `parentRunId`
    + foreground-ness; **Task is a view** (= background runs, grouped by `agentId`). ✅
 4. **Memory** — a Principal's subjective self-model. Follows the *principal*, not
    the conversation. Canonically framed (PM-ratified 2026-06-10) in the standard
@@ -60,11 +60,14 @@ clean-cut, no migration).
 - **Delegation (a child run — NOT a separate kind of agent)** — an agent spawns helper
   runs (fork = the same agent continuing in a child run; fresh = an ordinary typed agent
   with its own identity + memory line, #164). Child runs carry `parentRunId`; not
-  conversation members. ✅ — with one honest caveat: the *code* still implements
-  "subagent" as an entity-grade species (transcript = payload snapshot in parent state,
-  own coordinate codec + watermark shape) rather than the pure Run relationship the
-  model claims. **Dissolution PM-ratified 2026-06-10:** `agent-run-unification` (after
-  M3-A, before M3-B) makes child runs ordinary run ledgers and deletes the species.
+  conversation members. ✅ — and the code now honors the model
+  (`agent-run-unification`, shipped): a delegated run is an ordinary Run with its
+  OWN `runs/<runId>/` ledger (its own seq space, replayed alone), kind
+  `delegation`, joined to the parent by `parentRunId`/`parentToolCallId`; one
+  `{seq, eventId}` evidence + watermark scheme everywhere; child compaction is
+  event-sourced like a conversation's. The former entity-grade species
+  (transcript payload snapshots, the `runId:message:N` codec, the positional
+  Dream cursor) is deleted.
 - **Peer agent (a Channel member)** — multiple agent Principals share one conversation
   with the user; routed by `addressedTo` (a run is produced iff a principal is addressed;
   coordinator = the default addressee, PM-ratified 2026-06-10). ✅ (M3-A #179,

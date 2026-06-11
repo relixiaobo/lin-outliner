@@ -31,7 +31,7 @@ For agent work:
 1. `agent-event-log-rendering.md`
 2. `agent-pi-mono-implementation.md`
 3. `agent-skills.md`
-4. `agent-subagent-runtime-plan.md`
+4. `agent-delegation-runtime.md`
 5. `agent-tool-design.md`
 6. `agent-tool-permissions.md`
 7. `agent-progress.md`
@@ -52,7 +52,7 @@ For agent work:
 | `agent-event-log-rendering.md` | Canonical event-sourced agent data, debug, persistence, and render projection architecture. | Changing agent state, event store, debug, persistence, replay, or render projection. |
 | `agent-pi-mono-implementation.md` | pi-mono runtime boundary and Electron integration. | Changing provider loop, runtime execution, approvals, keys, streaming, or pi-mono adapter behavior. |
 | `agent-skills.md` | Skill discovery, loading, slash invocation, compaction restore, and skill permission modes / tool preapproval. | Changing agent skills, `/compact`, `/dream`, skill permission modes, or skill settings. |
-| `agent-subagent-runtime-plan.md` | Same-session Agent/subagent runtime, cc-2.1 alignment, non-goals, tools, implementation status, and tests. | Changing subagents, fork/fresh agent runs, background subagents, sidechain transcripts, or skill `context: fork`. |
+| `agent-delegation-runtime.md` | Same-session Agent/delegation runtime (child runs), cc-2.1 alignment, non-goals, tools, implementation status, and tests. | Changing delegation, fork/fresh child runs, background child runs, sidechain transcripts, or skill `context: fork`. |
 | `agent-tool-design.md` | Public agent tool protocol and tool behavior contracts. | Adding or changing agent tools. |
 | `agent-tool-permissions.md` | The runtime allow/ask/deny permission policy: action kinds, platform hard blocks, the bash classifier, ask resolution, sensitive-data redlines, the global store, and events. | Changing how tool calls are allowed/asked/denied, hard blocks, the classifier, or the permission store. |
 | `launcher.md` | The global launcher: prewarmed window + NSPanel, hotkey, A3 security posture, the modeless capture/search model, basic-info capture + providers, inline node search, and the `launcher:*` IPC surface. | Changing the launcher window, capture, node search, or its commands/IPC. |

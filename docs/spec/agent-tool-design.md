@@ -2103,7 +2103,7 @@ keeps `sources` down-pointers to the conversation or agent-run evidence that
 created it. Conversation sources carry `conversationId` plus optional
 `runId`/`messageRange`/`eventId`. Agent-run sources carry
 `kind: "agent_run"`, the parent `conversationId`, `agentId`,
-`subagentRunId`/`runId`, synthetic transcript `messageRange`, optional
+`runId`, ledger `messageRange`, optional
 `parentToolCallId`, and the transcript payload id as `eventId`. Evidence reads
 for agent-run sources are payload-bound: if `eventId` is present, the runtime
 reads that exact transcript payload instead of the run's current payload.
@@ -2124,7 +2124,7 @@ briefing and `recall` surface the reader's own pool plus every co-member
 principal's pool. The user is always a co-member, so the user's self-model is
 shared into every agent (the reader's own pool renders as the `<self>` zone; a
 co-member pool as a named `<principal>` zone — both verbatim bullet lists, no
-person assignment). Subagents **inherit**
+person assignment). Delegated child runs **inherit**
 user-pool visibility by design: their recall/briefing are wired to the parent
 session, and a sidechain is not a separate conversation with its own member list
 — it acts inside the user's conversation on the user's task. The membership
@@ -2190,17 +2190,17 @@ message count is larger. The foreground model must not claim specific saved,
 updated, or forgotten durable facts through a tool call unless `recall` returns
 those facts after Dream completes.
 
-Subagent memory ownership is explicit. A fresh typed subagent runs as the called
+Child-run memory ownership is explicit. A fresh typed child agent runs as the called
 agent definition: its `<memory>` briefing and `recall` tool read that
 agent's memory, and its sidechain transcript is Dream evidence for that same
 agent. The parent agent's Dream sees only the parent conversation surface, such
 as the `Agent` tool call and compact result projection, not the full fresh
-subagent transcript. A fork subagent keeps the parent agent as both execution
+child transcript. A fork keeps the parent agent as both execution
 identity and memory owner; its sidechain transcript can become Dream evidence for
 the parent, but Dream uses the persisted fork evidence boundary instead of
 scanning marker text. Legacy fork transcripts without a persisted boundary are
 skipped rather than replayed from index 0. Agent-definition `tools` remain an
-allow-list: `recall` is not injected into a fresh subagent that explicitly omits
+allow-list: `recall` is not injected into a fresh child agent that explicitly omits
 it.
 
 Each normal user turn receives a bounded `<memory>` briefing — the
@@ -2230,7 +2230,7 @@ context is insufficient.
 Evidence expansion is always nested under a returned memory entry. The runtime
 expands only that entry's `MemoryEntry.sources` through the internal evidence
 service. Conversation sources verify the retained active branch. Agent-run
-sources read the referenced subagent transcript payload and expand only the
+sources replay the referenced run's own ledger and expand only the
 synthetic transcript message range. Both paths clamp output by `max_chars`. Older
 conversations that have not been distilled into active memory entries are
 intentionally not foreground-recallable. Internal summary search and raw

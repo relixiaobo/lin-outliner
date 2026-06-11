@@ -34,7 +34,7 @@ Supported frontmatter fields:
 - `model`: optional model override for inline skills, or child-agent model override for forked skills.
 - `effort`: optional reasoning effort override for inline skills, or child-agent effort override for forked skills.
 - `shell`: optional shell for embedded command expansion. Lin currently supports `bash`.
-- `context: fork`: runs the rendered skill body through the same-conversation subagent runtime instead of injecting it into the parent context.
+- `context: fork`: runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context.
 - `agent`: optional agent definition for `context: fork` skills. If omitted, Lin uses the built-in `general` agent. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
 - `paths`: path-conditional activation patterns.
 
@@ -70,11 +70,11 @@ When the model calls the `skill` tool for an inline skill:
 When the model calls the `skill` tool for a `context: fork` skill:
 
 1. `AgentSkillRuntime` resolves, validates, and renders the skill body.
-2. `AgentSubagentRuntime` starts a sidechain subagent run using the rendered skill body as the child prompt.
+2. `AgentDelegationRuntime` starts a sidechain child run using the rendered skill body as the child prompt.
 3. The skill's `agent` field selects the agent definition; if absent, Lin uses `general`.
 4. The skill's `allowed-tools` rules are passed as child-run preapproval metadata.
 5. The skill's `model` and `effort` fields apply to the child agent run.
-6. The parent receives only the final subagent result or error as the `skill` tool result.
+6. The parent receives only the final child-run result or error as the `skill` tool result.
 7. The rendered skill body is not injected into the parent context and is not recorded as an invoked parent skill for compact restore.
 
 Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; the skills it writes are still born unratified.
@@ -234,7 +234,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
-| `context: fork` and `agent` | Supported through the same-conversation `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
+| `context: fork` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Forked skill bodies run in a sidechain child run and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts them (Settings → Skills). User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
@@ -328,4 +328,4 @@ Agent settings expose two modes:
 - `trusted`: default. Most tool calls are allowed, with hard blocks for catastrophic filesystem/disk/power commands and workspace-boundary file access.
 - `restricted`: only a small safe base set is allowed unless a matching `allowed-tools` rule preapproves the tool call.
 
-Skill `allowed-tools` is preapproval metadata, not a visibility allowlist. Inline skill rules are scoped to the current parent agent run and cleared when the run ends, stops, or resets. `context: fork` skill rules are passed to the child subagent run as preapproved tool rules.
+Skill `allowed-tools` is preapproval metadata, not a visibility allowlist. Inline skill rules are scoped to the current parent agent run and cleared when the run ends, stops, or resets. `context: fork` skill rules are passed to the child run as preapproved tool rules.
