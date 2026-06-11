@@ -89,6 +89,8 @@ import {
   type AgentRunMeta,
   type AgentChildRunRecord,
   type AgentUserQuestionAnswer,
+  type AgentUserQuestionAttachment,
+  type AgentUserQuestionFileReference,
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
 import {
@@ -110,7 +112,7 @@ import {
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
-import { agentToolResult, isToolEnvelope, successEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
 import {
@@ -250,7 +252,11 @@ import type {
   AgentSlashCommandView,
   DocumentProjection,
 } from '../core/types';
-import { ASK_USER_QUESTION_TOOL_NAME, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  askUserQuestionToolResult,
+  type AgentAskUserQuestionRuntime,
+} from './agentAskUserQuestionTool';
 import {
   normalizeRuntimeSettingPatch,
   readRuntimeSetting,
@@ -4359,10 +4365,14 @@ export class AgentRuntime {
     const conversation = await this.ensureConversationWithId(conversationId);
     const pending = this.pendingUserQuestions.get(requestId) ?? this.pendingUserQuestionFromReplay(conversationId, conversation, requestId);
     if (!pending || pending.conversationId !== conversationId) return { resolved: false };
-    const result = normalizeAskUserQuestionResult(requestId, pending.request, resultInput);
+    const { result, payloadEvents } = await this.normalizeAskUserQuestionResult(
+      conversationId,
+      pending,
+      resultInput,
+    );
     const validationError = this.validateUserQuestionResult(pending.request, result);
     if (validationError) throw new Error(validationError);
-    const events: AgentEventInput[] = [{
+    const events: AgentEventInput[] = [...payloadEvents, {
       type: 'user_question.answered',
       actor: userActor(),
       runId: pending.runId,
@@ -4388,16 +4398,150 @@ export class AgentRuntime {
     request: AgentUserQuestionRequestView,
     result: AskUserQuestionResult,
   ): string | null {
+    if (result.outcome === 'discussed') {
+      return result.discuss?.message?.trim() ? null : 'A discuss result requires a message.';
+    }
     const answers = new Map(result.answers.map((answer) => [answer.questionId, answer]));
     for (const question of request.questions) {
       if (question.required === false) continue;
       const answer = answers.get(question.id);
       if (!answer) return `Question ${question.id} is required.`;
-      const hasText = typeof answer.text === 'string' && answer.text.trim().length > 0;
-      const hasOptions = Array.isArray(answer.selectedOptionIds) && answer.selectedOptionIds.length > 0;
-      if (!hasText && !hasOptions) return `Question ${question.id} is required.`;
+      if (!hasUserQuestionAnswerContent(answer)) return `Question ${question.id} is required.`;
     }
     return null;
+  }
+
+  private async normalizeAskUserQuestionResult(
+    conversationId: string,
+    pending: AgentPendingUserQuestion,
+    input: unknown,
+  ): Promise<{ result: AskUserQuestionResult; payloadEvents: AgentEventInput[] }> {
+    const inputRecord = isRecord(input) ? input : {};
+    const outcome = inputRecord.outcome === 'discussed' || inputRecord.outcome === 'discuss'
+      ? 'discussed'
+      : 'answered';
+    if (outcome === 'discussed') {
+      const rawDiscuss = isRecord(inputRecord.discuss) ? inputRecord.discuss.message : inputRecord.message;
+      const message = typeof rawDiscuss === 'string' && rawDiscuss.trim()
+        ? rawDiscuss.trim().slice(0, 1000)
+        : 'I want to discuss this before answering.';
+      return {
+        result: {
+          requestId: pending.requestId,
+          outcome,
+          answers: [],
+          discuss: { message },
+        },
+        payloadEvents: [],
+      };
+    }
+
+    const inputAnswers = Array.isArray(inputRecord.answers) ? inputRecord.answers : [];
+    const answersByQuestionId = new Map<string, unknown>();
+    for (const answer of inputAnswers) {
+      if (!isRecord(answer) || typeof answer.questionId !== 'string') continue;
+      answersByQuestionId.set(answer.questionId, answer);
+    }
+
+    const answers: AgentUserQuestionAnswer[] = [];
+    const payloadEvents: AgentEventInput[] = [];
+    for (const question of pending.request.questions) {
+      const raw = answersByQuestionId.get(question.id);
+      if (!isRecord(raw)) continue;
+      const answer: AgentUserQuestionAnswer = { questionId: question.id };
+      if (question.type === 'single_choice' || question.type === 'multi_choice') {
+        const allowed = new Set((question.options ?? []).map((option) => option.id));
+        const selected = Array.isArray(raw.selectedOptionIds)
+          ? raw.selectedOptionIds.filter((id): id is string => typeof id === 'string' && allowed.has(id))
+          : [];
+        answer.selectedOptionIds = question.type === 'single_choice' ? selected.slice(0, 1) : selected;
+      }
+
+      const allowReferences = question.allowReferences ?? question.type === 'free_text';
+      const allowAttachments = (question.allowAttachments ?? question.type === 'free_text') || allowReferences;
+      const normalizedAttachments = allowAttachments
+        ? await this.normalizeUserQuestionAnswerAttachments(conversationId, pending, raw.attachments)
+        : { attachments: [], payloadEvents: [], pathMap: new Map<string, string>() };
+      payloadEvents.push(...normalizedAttachments.payloadEvents);
+
+      const rawText = typeof raw.text === 'string' ? raw.text.trim().slice(0, 4000) : '';
+      const text = rewriteFileReferenceMarkerPaths(rawText, normalizedAttachments.pathMap);
+      const notes = typeof raw.notes === 'string' ? raw.notes.trim().slice(0, 4000) : '';
+      if (text) answer.text = text;
+      if (notes) answer.notes = notes;
+      if (allowReferences) {
+        const nodeRefs = normalizeUserQuestionNodeRefs(raw.nodeRefs);
+        const fileRefs = normalizeUserQuestionFileRefs(raw.fileRefs, normalizedAttachments.pathMap);
+        if (nodeRefs.length > 0) answer.nodeRefs = nodeRefs;
+        if (fileRefs.length > 0) answer.fileRefs = fileRefs;
+      }
+      if (normalizedAttachments.attachments.length > 0) answer.attachments = normalizedAttachments.attachments;
+      answers.push(answer);
+    }
+
+    return {
+      result: {
+        requestId: pending.requestId,
+        outcome,
+        answers,
+      },
+      payloadEvents,
+    };
+  }
+
+  private async normalizeUserQuestionAnswerAttachments(
+    conversationId: string,
+    pending: AgentPendingUserQuestion,
+    rawAttachments: unknown,
+  ): Promise<{
+    attachments: AgentUserQuestionAttachment[];
+    payloadEvents: AgentEventInput[];
+    pathMap: Map<string, string>;
+  }> {
+    const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(rawAttachments));
+    const attachments: AgentUserQuestionAttachment[] = [];
+    const payloadEvents: AgentEventInput[] = [];
+    for (const attachment of materialized.attachments) {
+      const base = {
+        id: attachment.id,
+        kind: attachment.kind,
+        ref: attachment.ref,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      };
+      if (attachment.kind === 'file') {
+        attachments.push({ ...base, kind: 'file', path: attachment.path });
+        continue;
+      }
+
+      const payload = await this.getEventStore().writePayload(conversationId, {
+        data: attachment.kind === 'image'
+          ? Buffer.from(stripDataUrlPrefix(attachment.dataBase64), 'base64')
+          : attachment.text,
+        mimeType: attachment.mimeType,
+        runId: pending.runId,
+        role: 'source',
+        summary: attachment.name,
+        truncated: attachment.kind === 'text' ? attachment.truncated : undefined,
+      });
+      payloadEvents.push({
+        type: 'payload.created',
+        actor: systemActor(),
+        runId: pending.runId,
+        payload,
+      });
+      if (attachment.kind === 'image') {
+        attachments.push({ ...base, kind: 'image', path: attachment.path, payload });
+      } else {
+        attachments.push({ ...base, kind: 'text', truncated: attachment.truncated, payload });
+      }
+    }
+    return {
+      attachments,
+      payloadEvents,
+      pathMap: materialized.pathMap,
+    };
   }
 
   private replayedUserQuestionToolResultInput(
@@ -4414,7 +4558,7 @@ export class AgentRuntime {
     const messageId = `tool-result-${pending.toolCallId}-${randomUUID()}`;
     // Reuse the shared envelope helper so a replayed answer renders identically to
     // the live ask_user_question tool result the model otherwise sees.
-    const toolResult = agentToolResult(successEnvelope(ASK_USER_QUESTION_TOOL_NAME, result), result);
+    const toolResult = askUserQuestionToolResult(result);
     return {
       type: 'tool_result.created',
       actor: toolActor(ASK_USER_QUESTION_TOOL_NAME, pending.toolCallId),
@@ -6562,6 +6706,12 @@ function stringOrFallback(value: unknown, fallback: string): string {
   return trimmed || fallback;
 }
 
+function stringParam(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
 function nullableCompactString(value: unknown, maxLength: number): string | null {
   const text = compactString(value, maxLength);
   return text || null;
@@ -6835,38 +6985,68 @@ function parseAgentSkillWriteAudit(value: unknown): AgentSkillWriteAudit | null 
   };
 }
 
-function normalizeAskUserQuestionResult(
-  requestId: string,
-  request: AgentUserQuestionRequestView,
+function normalizeUserQuestionNodeRefs(input: unknown): NonNullable<AgentUserQuestionAnswer['nodeRefs']> {
+  if (!Array.isArray(input)) return [];
+  const out: NonNullable<AgentUserQuestionAnswer['nodeRefs']> = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (!isRecord(raw) || typeof raw.nodeId !== 'string') continue;
+    const nodeId = raw.nodeId.trim();
+    if (!nodeId || seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    const label = typeof raw.title === 'string' && raw.title.trim()
+      ? raw.title.trim().slice(0, 200)
+      : typeof raw.label === 'string' && raw.label.trim()
+        ? raw.label.trim().slice(0, 200)
+        : undefined;
+    out.push({ nodeId, ...(label ? { label } : {}) });
+  }
+  return out;
+}
+
+function normalizeUserQuestionFileRefs(
   input: unknown,
-): AskUserQuestionResult {
-  const inputAnswers = isRecord(input) && Array.isArray(input.answers) ? input.answers : [];
-  const answersByQuestionId = new Map<string, unknown>();
-  for (const answer of inputAnswers) {
-    if (!isRecord(answer) || typeof answer.questionId !== 'string') continue;
-    answersByQuestionId.set(answer.questionId, answer);
-  }
-
-  const answers: AgentUserQuestionAnswer[] = [];
-  for (const question of request.questions) {
-    const raw = answersByQuestionId.get(question.id);
+  pathMap: Map<string, string>,
+): AgentUserQuestionFileReference[] {
+  if (!Array.isArray(input)) return [];
+  const out: AgentUserQuestionFileReference[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
     if (!isRecord(raw)) continue;
-    const answer: AgentUserQuestionAnswer = { questionId: question.id };
-    if (question.type === 'single_choice' || question.type === 'multi_choice') {
-      const allowed = new Set((question.options ?? []).map((option) => option.id));
-      const selected = Array.isArray(raw.selectedOptionIds)
-        ? raw.selectedOptionIds.filter((id): id is string => typeof id === 'string' && allowed.has(id))
-        : [];
-      answer.selectedOptionIds = question.type === 'single_choice' ? selected.slice(0, 1) : selected;
-    }
-    const text = typeof raw.text === 'string' ? raw.text.trim().slice(0, 4000) : '';
-    const notes = typeof raw.notes === 'string' ? raw.notes.trim().slice(0, 4000) : '';
-    if (text) answer.text = text;
-    if (notes) answer.notes = notes;
-    answers.push(answer);
+    const attachmentId = stringParam(raw.attachmentId, 120);
+    const rawPath = stringParam(raw.path, 2000);
+    // File refs are user-supplied metadata. Only attachment-backed paths are
+    // rewritten through the materialization map; unresolved paths stay as labels.
+    const pathValue = rawPath ? pathMap.get(rawPath) ?? rawPath : undefined;
+    const ref = sanitizeFileReferenceRef(stringParam(raw.ref, 120) ?? stringParam(raw.name, 120) ?? '');
+    const key = attachmentId ?? pathValue ?? ref;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const mimeType = stringParam(raw.mimeType, 200);
+    const sizeBytes = typeof raw.sizeBytes === 'number' && Number.isFinite(raw.sizeBytes)
+      ? Math.max(0, raw.sizeBytes)
+      : undefined;
+    const entryKind = raw.entryKind === 'directory' || mimeType === 'inode/directory' ? 'directory' : 'file';
+    out.push({
+      ...(attachmentId ? { attachmentId } : {}),
+      entryKind,
+      ...(stringParam(raw.name, 200) ? { name: stringParam(raw.name, 200) } : {}),
+      ...(pathValue ? { path: pathValue } : {}),
+      ...(ref ? { ref } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+    });
   }
+  return out;
+}
 
-  return { requestId, answers };
+function hasUserQuestionAnswerContent(answer: AgentUserQuestionAnswer): boolean {
+  return (typeof answer.text === 'string' && answer.text.trim().length > 0)
+    || (typeof answer.notes === 'string' && answer.notes.trim().length > 0)
+    || (Array.isArray(answer.selectedOptionIds) && answer.selectedOptionIds.length > 0)
+    || (Array.isArray(answer.nodeRefs) && answer.nodeRefs.length > 0)
+    || (Array.isArray(answer.fileRefs) && answer.fileRefs.length > 0)
+    || (Array.isArray(answer.attachments) && answer.attachments.length > 0);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

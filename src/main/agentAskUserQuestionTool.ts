@@ -83,7 +83,7 @@ export function createAskUserQuestionTool(
         return askUserQuestionError(normalized.code, normalized.message);
       }
       try {
-        return askUserQuestionResult(await runtime.ask(toolCallId, normalized.request, signal));
+        return askUserQuestionToolResult(await runtime.ask(toolCallId, normalized.request, signal));
       } catch (error) {
         return askUserQuestionError('QUESTION_CANCELLED', errorMessage(error));
       }
@@ -91,8 +91,12 @@ export function createAskUserQuestionTool(
   };
 }
 
-function askUserQuestionResult(result: AskUserQuestionResult) {
-  const envelope = successEnvelope(ASK_USER_QUESTION_TOOL_NAME, result);
+export function askUserQuestionToolResult(result: AskUserQuestionResult) {
+  const envelope = successEnvelope(ASK_USER_QUESTION_TOOL_NAME, result, {
+    instructions: result.outcome === 'discussed'
+      ? 'The user wants to discuss before answering. Ask a short clarification question in normal conversation. If structured input is still required after discussion, call ask_user_question again.'
+      : undefined,
+  });
   return agentToolResult(envelope, result);
 }
 

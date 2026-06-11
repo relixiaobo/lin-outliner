@@ -259,10 +259,27 @@ describe('agent runtime conversations', () => {
             id: 'direction',
             type: 'single_choice',
             question: 'Which path?',
+            allowReferences: true,
+            allowAttachments: true,
             options: [
               { id: 'a', label: 'A' },
               { id: 'b', label: 'B' },
             ],
+          }, {
+            id: 'node-context',
+            type: 'free_text',
+            question: 'Which node has the context?',
+            allowReferences: true,
+          }, {
+            id: 'file-context',
+            type: 'free_text',
+            question: 'Which file has the context?',
+            allowReferences: true,
+          }, {
+            id: 'attachment-context',
+            type: 'free_text',
+            question: 'Attach the context.',
+            allowAttachments: true,
           }],
         },
       },
@@ -283,7 +300,57 @@ describe('agent runtime conversations', () => {
 
     await runtime.resolveUserQuestion(conversationId, 'question-1', {
       requestId: 'question-1',
-      answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+      answers: [{
+        questionId: 'direction',
+        selectedOptionIds: ['b'],
+        text: 'use [[file:readme^README.md]]',
+        nodeRefs: [{ nodeId: 'node-1', title: 'Referenced node' }],
+        fileRefs: [{
+          attachmentId: 'attachment-1',
+          entryKind: 'file',
+          name: 'README.md',
+          path: 'README.md',
+          ref: 'readme',
+          mimeType: 'text/markdown',
+          sizeBytes: 12,
+        }],
+        attachments: [{
+          id: 'attachment-1',
+          kind: 'text',
+          name: 'notes.txt',
+          ref: 'notes',
+          mimeType: 'text/plain',
+          sizeBytes: 5,
+          text: 'hello',
+        }],
+      }, {
+        questionId: 'node-context',
+        nodeRefs: [{ nodeId: 'node-only', title: 'Node only' }],
+      }, {
+        questionId: 'file-context',
+        fileRefs: [{
+          attachmentId: 'file-ref-only',
+          entryKind: 'file',
+          iconDataUrl: 'data:image/png;base64,icon',
+          name: 'reference.md',
+          path: 'reference.md',
+          ref: 'reference',
+          mimeType: 'text/markdown',
+          sizeBytes: 24,
+          thumbnailDataUrl: 'data:image/png;base64,thumb',
+        }],
+      }, {
+        questionId: 'attachment-context',
+        attachments: [{
+          id: 'attachment-only',
+          kind: 'text',
+          name: 'context.txt',
+          ref: 'context',
+          mimeType: 'text/plain',
+          sizeBytes: 11,
+          text: 'hello world',
+        }],
+      }],
     });
 
     const replay = await new AgentEventStore(dataRoot).replay(conversationId);
@@ -291,7 +358,56 @@ describe('agent runtime conversations', () => {
       status: 'answered',
       result: {
         requestId: 'question-1',
-        answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+        outcome: 'answered',
+        answers: [{
+          questionId: 'direction',
+          selectedOptionIds: ['b'],
+          text: 'use [[file:readme^README.md]]',
+          nodeRefs: [{ nodeId: 'node-1', label: 'Referenced node' }],
+          fileRefs: [{
+            attachmentId: 'attachment-1',
+            entryKind: 'file',
+            name: 'README.md',
+            path: 'README.md',
+            ref: 'readme',
+            mimeType: 'text/markdown',
+            sizeBytes: 12,
+          }],
+          attachments: [{
+            id: 'attachment-1',
+            kind: 'text',
+            name: 'notes.txt',
+            ref: 'notes',
+            mimeType: 'text/plain',
+            sizeBytes: 5,
+            payload: expect.objectContaining({ kind: 'payload_ref', mimeType: 'text/plain' }),
+          }],
+        }, {
+          questionId: 'node-context',
+          nodeRefs: [{ nodeId: 'node-only', label: 'Node only' }],
+        }, {
+          questionId: 'file-context',
+          fileRefs: [{
+            attachmentId: 'file-ref-only',
+            entryKind: 'file',
+            name: 'reference.md',
+            path: 'reference.md',
+            ref: 'reference',
+            mimeType: 'text/markdown',
+            sizeBytes: 24,
+          }],
+        }, {
+          questionId: 'attachment-context',
+          attachments: [{
+            id: 'attachment-only',
+            kind: 'text',
+            name: 'context.txt',
+            ref: 'context',
+            mimeType: 'text/plain',
+            sizeBytes: 11,
+            payload: expect.objectContaining({ kind: 'payload_ref', mimeType: 'text/plain' }),
+          }],
+        }],
       },
     });
     const toolResult = getAgentEventActivePath(replay).find(
@@ -310,10 +426,155 @@ describe('agent runtime conversations', () => {
     expect(toolResult?.content[0]).toMatchObject({ type: 'text' });
     expect(JSON.parse((toolResult?.content[0] as { text: string }).text)).toEqual({
       ok: true,
-      data: {
+      data: replay.userQuestions['question-1']!.result,
+    });
+  });
+
+  test('resolves durable pending user questions with a discuss outcome', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const conversationId = 'lin-agent-channel-question-discuss';
+    const events: AgentEvent[] = [
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-1',
+        seq: 1,
+        conversationId,
+        type: 'conversation.created',
+        createdAt: 1,
+        actor: { type: 'system' },
+        title: 'Question channel',
+        members: [
+          { type: 'user', userId: 'local-user' },
+          { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        ],
+        goal: 'Question channel',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-2',
+        seq: 2,
+        conversationId,
+        type: 'run.started',
+        createdAt: 2,
+        actor: { type: 'system' },
+        runId: 'run-1',
+        agentId: 'built-in:tenon:assistant',
+        kind: 'turn',
+        trigger: { type: 'manual' },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-3',
+        seq: 3,
+        conversationId,
+        type: 'assistant_message.started',
+        createdAt: 3,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        messageId: 'assistant-question-1',
+        parentMessageId: null,
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-4',
+        seq: 4,
+        conversationId,
+        type: 'tool_call.started',
+        createdAt: 4,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        messageId: 'assistant-question-1',
+        toolCallId: 'tool-question-1',
+        name: 'ask_user_question',
+        inputSummary: '{"questions":[{"id":"direction"}]}',
+        args: { questions: [{ id: 'direction' }] },
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-5',
+        seq: 5,
+        conversationId,
+        type: 'assistant_message.completed',
+        createdAt: 5,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
+        messageId: 'assistant-question-1',
+        stopReason: 'toolUse',
+        content: [{
+          type: 'toolCall',
+          id: 'tool-question-1',
+          name: 'ask_user_question',
+          arguments: { questions: [{ id: 'direction' }] },
+        }],
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'event-6',
+        seq: 6,
+        conversationId,
+        type: 'user_question.requested',
+        createdAt: 6,
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-1',
         requestId: 'question-1',
-        answers: [{ questionId: 'direction', selectedOptionIds: ['b'], text: 'ignored text' }],
+        toolCallId: 'tool-question-1',
+        request: {
+          questions: [{
+            id: 'direction',
+            type: 'single_choice',
+            question: 'Which path?',
+            options: [
+              { id: 'a', label: 'A' },
+              { id: 'b', label: 'B' },
+            ],
+          }],
+        },
+      },
+    ];
+    await new AgentEventStore(dataRoot).appendEvents(conversationId, events);
+    const { runtime } = await createRuntime(dataRoot);
+
+    await runtime.resolveUserQuestion(conversationId, 'question-1', {
+      requestId: 'question-1',
+      outcome: 'discussed',
+      discuss: { message: 'Can we discuss the tradeoffs first?' },
+      answers: [],
+    });
+
+    const replay = await new AgentEventStore(dataRoot).replay(conversationId);
+    expect(replay.userQuestions['question-1']).toMatchObject({
+      status: 'answered',
+      result: {
+        requestId: 'question-1',
+        outcome: 'discussed',
+        discuss: { message: 'Can we discuss the tradeoffs first?' },
+        answers: [],
       },
     });
+    const toolResult = getAgentEventActivePath(replay).find(
+      (message) => message.role === 'toolResult' && message.toolCallId === 'tool-question-1',
+    );
+    const visible = JSON.parse((toolResult?.content[0] as { text: string }).text);
+    expect(visible).toMatchObject({
+      ok: true,
+      data: {
+        requestId: 'question-1',
+        outcome: 'discussed',
+        discuss: { message: 'Can we discuss the tradeoffs first?' },
+        answers: [],
+      },
+    });
+    expect(visible.instructions).toContain('discuss before answering');
   });
 });

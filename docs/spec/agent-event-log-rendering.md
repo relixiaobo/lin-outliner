@@ -426,6 +426,12 @@ action); a child run left **running when the app dies** is marked failed and rai
 its notification on the next restore. `needs_input` (reserved) would reuse the
 run-log `user_question.*` lifecycle for the actual pause/answer/resume; the
 notification only routes the attention signal to the origin conversation.
+`user_question.answered` stores the resolved `AskUserQuestionResult`: either an
+`answered` payload with per-question text, selected option ids, structured node
+refs, local-file refs, and answer attachment payload refs, or a `discussed`
+payload with a short message that closes the card and returns the run to normal
+conversation. Path-backed answer attachments are materialized through the same
+local-root jail as normal composer attachments before the event is appended.
 
 Replay projects two derived structures on `AgentEventReplayState`:
 
