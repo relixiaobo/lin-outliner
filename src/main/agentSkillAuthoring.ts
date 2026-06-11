@@ -79,7 +79,7 @@ export function validateAgentSkillContentWrite(input: {
     previousBytes,
     nextBytes,
     warnings: target.isSkillFile
-      ? ['Agent-written skills start unratified: slash-invocable immediately, excluded from the model listing until the user accepts the skill or edits it by hand.']
+      ? ['Agent-written skills start unratified: slash-invocable immediately, excluded from the model listing until the user accepts the skill. Workspace skills also require acceptance before automatic model use.']
       : ['Support files are not loaded automatically; the skill must reference them explicitly.'],
   };
 }
@@ -174,4 +174,3 @@ function rejectSecretLookingContent(content: string): void {
     );
   }
 }
-

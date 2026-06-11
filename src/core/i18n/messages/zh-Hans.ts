@@ -195,6 +195,7 @@ export const zhHans: PartialMessages = {
       installedAriaLabel: '已安装的能力',
       toggleSkill: ({ name }: { name: string }) => `切换 ${name}`,
       pendingChip: '待接受',
+      pendingWorkspaceChip: '工作区 - 未接受',
       acceptedChip: '已接受',
       acceptButton: '接受',
       acceptSkill: ({ name }: { name: string }) => `接受 ${name} 用于自动调用`,

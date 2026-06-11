@@ -1164,9 +1164,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                   <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
                     {allSkills.map((skill) => {
                       const disabled = isSkillDisabled(skill.name);
-                      // Trust state is derived in main: unratified = agent-authored
-                      // bytes the user has not yet accepted. Built-in / hand-authored
-                      // rows are always ratified and render unchanged.
+                      // Trust state is derived in main: unratified rows are excluded
+                      // from automatic model use until the user accepts these bytes.
                       const pending = !skill.ratified;
                       const trustActions: RowMenuAction[] = [];
                       if (skill.accepted) {
@@ -1192,7 +1191,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                               /{skill.displayName || skill.name}
                               <span className="settings-chip">{skill.source}</span>
                               {pending ? (
-                                <span className="settings-chip">{t.settings.skills.pendingChip}</span>
+                                <span className="settings-chip">
+                                  {skill.source === 'project'
+                                    ? t.settings.skills.pendingWorkspaceChip
+                                    : t.settings.skills.pendingChip}
+                                </span>
                               ) : skill.accepted ? (
                                 <span className="settings-chip">{t.settings.skills.acceptedChip}</span>
                               ) : null}

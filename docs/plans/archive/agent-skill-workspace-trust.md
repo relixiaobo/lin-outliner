@@ -1,9 +1,9 @@
 ---
-status: draft
+status: done
 priority: P2
-owner: unassigned
+owner: codex
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 ---
 
 # Workspace trust for `project` skills (per-skill acceptance)
@@ -74,15 +74,15 @@ heuristic.
 
 ## Acceptance
 
-- [ ] Fixture test: a `project` skill with no provenance record loads
+- [x] Fixture test: a `project` skill with no provenance record loads
       unratified and is absent from the model skill listing; `/name` slash
       invocation still works; accept → ratified + listed; any content change →
       drops back to unratified.
-- [ ] Regression: `user` + `built-in` skills and agent-written acceptance
+- [x] Regression: `user` + `built-in` skills and agent-written acceptance
       behavior unchanged.
-- [ ] `bun run typecheck` + `bun run test:core` green vs known baselines; Skills
+- [x] `bun run typecheck` + `bun run test:core` green vs known baselines; Skills
       tab visual check light + dark.
-- [ ] Spec sync per Design 5; plan archived `done`.
+- [x] Spec sync per Design 5; plan archived `done`.
 
 ## Collision self-check (2026-06-10, plan time)
 

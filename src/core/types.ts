@@ -834,12 +834,12 @@ export interface SkillDefinition {
   userInvocable: boolean;
   modelInvocable: boolean;
   /**
-   * Trust state, derived (never stored): false while the skill's current content
-   * hash matches the last agent-written hash (recorded by the file-tool gateway)
-   * AND the user has not accepted those bytes. Unratified skills are excluded from
-   * the model skill listing and refuse model-triggered invocation; slash invocation
-   * always works (the user's command is per-run consent). A user hand-edit changes
-   * the hash and self-ratifies the skill; accepting it records the hash as trusted.
+   * Trust state, derived (never stored). Project skills are false until the user
+   * accepts the current content hash. User-source skills are false while the current
+   * content hash matches the last agent-written hash AND the user has not accepted
+   * those bytes. Unratified skills are excluded from the model skill listing and
+   * refuse model-triggered invocation; slash invocation always works (the user's
+   * command is per-run consent). Built-ins are always true.
    */
   ratified: boolean;
   /** True when the user explicitly accepted exactly these bytes for automatic model use. */
