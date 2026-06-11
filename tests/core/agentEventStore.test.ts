@@ -1424,6 +1424,53 @@ describe('agent event store', () => {
     });
   });
 
+  test('throttles resident briefing access writes but records deliberate recall practice', async () => {
+    await withStore(async (store) => {
+      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+      const now = 1_800_000_000_000;
+      const dayMs = 24 * 60 * 60 * 1000;
+      await store.addMemoryEntry(principal, {
+        id: 'memory-access-throttle',
+        fact: 'needs bounded resident re-exposure writes',
+        sources: [conversationSource('conversation-access')],
+        createdAt: now,
+      });
+
+      await expect(store.recordMemoryAccess(principal, {
+        via: 'briefing',
+        entryIds: ['memory-access-throttle'],
+        createdAt: now,
+      })).resolves.toMatchObject({ type: 'memory.accessed' });
+      await expect(store.recordMemoryAccess(principal, {
+        via: 'briefing',
+        entryIds: ['memory-access-throttle'],
+        createdAt: now + 1,
+      })).resolves.toBeNull();
+      await expect(store.recordMemoryAccess(principal, {
+        via: 'recall',
+        entryIds: ['memory-access-throttle'],
+        createdAt: now + 2,
+      })).resolves.toMatchObject({ type: 'memory.accessed' });
+      await expect(store.recordMemoryAccess(principal, {
+        via: 'recall',
+        entryIds: ['memory-access-throttle'],
+        createdAt: now + 3,
+      })).resolves.toMatchObject({ type: 'memory.accessed' });
+      await expect(store.recordMemoryAccess(principal, {
+        via: 'briefing',
+        entryIds: ['memory-access-throttle'],
+        createdAt: now + dayMs,
+      })).resolves.toMatchObject({ type: 'memory.accessed' });
+
+      expect(await store.memoryStrength(principal, 'memory-access-throttle', now + dayMs)).toMatchObject({
+        briefingCount: 2,
+        recallCount: 2,
+        lastBriefingAt: now + dayMs,
+        lastRecallAt: now + 3,
+      });
+    });
+  });
+
   test('tolerates a torn trailing memory event line but rejects mid-file corruption', async () => {
     await withStore(async (store, root) => {
       const agentId = 'built-in:tenon:assistant';

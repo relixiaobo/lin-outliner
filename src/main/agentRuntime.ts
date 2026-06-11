@@ -170,7 +170,7 @@ import {
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
-import { mergeMemoryOverviews } from '../core/agentMemoryActivation';
+import { mergeMemoryOverviews, orderMemoryEntriesForBriefing } from '../core/agentMemoryActivation';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
@@ -4561,11 +4561,11 @@ export class AgentRuntime {
       // Interleave so the shared user pool gets a fair share of the resident budget — a self-first
       // concatenation would let an agent with a full self-model starve the user zone entirely.
       const selected = interleaveMemoryEntries(
-        selfActivation.entries.map((item) => item.entry),
-        userActivation?.entries.map((item) => item.entry) ?? [],
+        orderMemoryEntriesForBriefing(selfActivation.entries, { now }).map((item) => item.entry),
+        orderMemoryEntriesForBriefing(userActivation?.entries ?? [], { now }).map((item) => item.entry),
         MEMORY_BRIEFING_MAX_ENTRIES,
       );
-      await this.recordMemoryAccessForEntries(selected, 'briefing');
+      await this.recordMemoryAccessForEntries(selected, 'briefing', now);
       const overview = mergeMemoryOverviews(
         [selfActivation.overview, userActivation?.overview],
         {
@@ -4595,6 +4595,7 @@ export class AgentRuntime {
   private async recordMemoryAccessForEntries(
     entries: readonly AgentMemoryEntry[],
     via: 'briefing' | 'recall',
+    createdAt?: number,
   ): Promise<void> {
     if (entries.length === 0) return;
     const groups = new Map<string, { principal: AgentPrincipal; entryIds: string[] }>();
@@ -4605,7 +4606,11 @@ export class AgentRuntime {
       groups.set(key, group);
     }
     await Promise.all([...groups.values()].map((group) => (
-      this.getEventStore().recordMemoryAccess(group.principal, { via, entryIds: group.entryIds })
+      this.getEventStore().recordMemoryAccess(group.principal, {
+        via,
+        entryIds: group.entryIds,
+        ...(createdAt === undefined ? {} : { createdAt }),
+      })
     )));
   }
 
@@ -7751,9 +7756,10 @@ function clampRecallLimit(limit: number | undefined): number {
  * Round-robin merge of the reader's own pool and a shared (user) pool into a single budget,
  * own-first within each round. A plain `own.concat(shared).slice(limit)` would let a reader with
  * a full self-model starve the shared zone to nothing (review #2/#3); interleaving guarantees the
- * shared pool a fair share of whatever budget remains. Each input is already activation-ranked;
- * the merge preserves that within each source. De-duplicates by entry id (an entry can only belong
- * to one pool today, but the guard keeps the merge total honest if that ever changes).
+ * shared pool a fair share of whatever budget remains. Each input is already ordered for its
+ * surface (activation-ranked for recall, resident activation + exploration for briefing); the merge
+ * preserves that within each source. De-duplicates by entry id (an entry can only belong to one pool
+ * today, but the guard keeps the merge total honest if that ever changes).
  */
 function interleaveMemoryEntries(
   own: readonly AgentMemoryEntry[],

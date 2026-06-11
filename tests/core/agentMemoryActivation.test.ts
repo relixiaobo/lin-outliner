@@ -3,6 +3,7 @@ import type { AgentMemoryEntry } from '../../src/core/agentEventLog';
 import {
   buildMemoryOverview,
   mergeMemoryOverviews,
+  orderMemoryEntriesForBriefing,
   rankMemoryEntriesByActivation,
   type AgentMemoryOverview,
 } from '../../src/core/agentMemoryActivation';
@@ -46,6 +47,27 @@ function overview(
 }
 
 describe('agent memory activation', () => {
+  test('keeps newest unbriefed facts from being starved by hardened resident entries', () => {
+    const now = 1_800_000_000_000;
+    const hardened = Array.from({ length: 12 }, (_, index) => (
+      entry(`memory-hardened-${index}`, `keeps established resident fact ${index}`, now - 90 * 24 * 60 * 60 * 1000 + index)
+    ));
+    const newest = entry('memory-new-fact', 'needs a first resident briefing chance', now);
+    const accessStats = new Map(hardened.map((item) => [item.id, {
+      briefingCount: 50,
+      recallCount: 0,
+      lastBriefingAt: now,
+      lastRecallAt: null,
+    }]));
+
+    const ranked = rankMemoryEntriesByActivation([...hardened, newest], accessStats, now);
+    expect(ranked.slice(0, 12).map((item) => item.entry.id)).not.toContain(newest.id);
+
+    const resident = orderMemoryEntriesForBriefing(ranked, { now }).slice(0, 12).map((item) => item.entry.id);
+    expect(resident).toContain(newest.id);
+    expect(resident.indexOf(newest.id)).toBeLessThanOrEqual(4);
+  });
+
   test('builds Unicode schema labels instead of collapsing CJK facts to general', () => {
     const ranked = rankMemoryEntriesByActivation([
       entry('memory-cn-1', '偏好简洁代码评审', 1),

@@ -72,9 +72,6 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
-// v4 = memory realignment PR-3/PR-5: memory.accessed events feed rebuildable
-// access-strength projections and derived schema overview nodes for chronic
-// activation. No legacy reader; pre-release clean-cut wipes old agent data.
 // v3 = memory realignment PR-2: memory sources are a discriminated union
 // (`{stream, streamId, range}` or `{episodeId}`) and memory-owned episode gist
 // nodes live in the principal memory log. No legacy source reader; pre-release
@@ -84,7 +81,7 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // conversation stream keeps only the slim child_run.started/updated markers.
 // The pre-unification entity-grade events and transcript-snapshot payloads
 // are gone.
-export const STORAGE_LAYOUT_VERSION = 4;
+export const STORAGE_LAYOUT_VERSION = 3;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
@@ -94,6 +91,8 @@ const SEARCH_INDEX_PREVIEW_CHARS = 240;
 export const MAX_AGENT_MEMORY_FACT_CHARS = 2_000;
 const MEMORY_COMPACTION_MIN_EVENTS = 64;
 const MEMORY_COMPACTION_CHURN_FACTOR = 2;
+const MEMORY_ACTIVATION_CACHE_BUCKET_MS = 24 * 60 * 60 * 1000;
+const MEMORY_BRIEFING_ACCESS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface AgentPayloadWriteInput {
   id?: string;
@@ -273,6 +272,12 @@ interface AgentMemoryProjectionCache {
   episodes: Map<string, AgentMemoryEpisode>;
   memoryIdsByEpisodeId: Map<string, Set<string>>;
   accessStatsByEntryId: Map<string, AgentMemoryAccessStats>;
+  activationCache?: {
+    latestSeq: number;
+    dayBucket: number;
+    ranked: AgentMemoryRankedEntry[];
+    overview: AgentMemoryOverview;
+  };
   dream: AgentDreamState;
 }
 
@@ -908,14 +913,30 @@ export class AgentEventStore {
     await this.ensureStorageLayout();
     const now = options.now ?? Date.now();
     const projection = await this.getMemoryProjection(principal);
+    const dayBucket = memoryActivationDayBucket(now);
+    const cached = projection.activationCache;
+    if (cached && cached.latestSeq === projection.latestSeq && cached.dayBucket === dayBucket) {
+      return {
+        entries: cached.ranked.slice(0, clampMemoryLimit(options.limit)),
+        overview: { ...cached.overview, generatedAt: now },
+        totalEntries: cached.ranked.length,
+      };
+    }
     const ranked = rankMemoryEntriesByActivation(
       [...projection.entries.values()].filter((entry) => entry.status === 'active'),
       projection.accessStatsByEntryId,
       now,
     );
+    const overview = buildMemoryOverview(ranked, { generatedAt: now });
+    projection.activationCache = {
+      latestSeq: projection.latestSeq,
+      dayBucket,
+      ranked,
+      overview,
+    };
     return {
       entries: ranked.slice(0, clampMemoryLimit(options.limit)),
-      overview: buildMemoryOverview(ranked, { generatedAt: now }),
+      overview,
       totalEntries: ranked.length,
     };
   }
@@ -937,16 +958,20 @@ export class AgentEventStore {
     return this.memoryEventLog.enqueue(key, async () => {
       const projection = await this.getMemoryProjection(principal);
       const seen = new Set<string>();
+      const createdAt = input.createdAt ?? Date.now();
       const accesses = input.entryIds
         .filter((entryId) => {
           if (seen.has(entryId)) return false;
           seen.add(entryId);
           const entry = projection.entries.get(entryId);
-          return !!entry && entry.status === 'active';
+          if (!entry || entry.status !== 'active') return false;
+          if (input.via === 'briefing' && wasBriefedRecently(projection.accessStatsByEntryId.get(entryId), createdAt)) {
+            return false;
+          }
+          return true;
         })
         .map((entryId) => ({ entryId, count: 1 }));
       if (accesses.length === 0) return null;
-      const createdAt = input.createdAt ?? Date.now();
       const event = await this.nextMemoryEvent(principal, {
         type: 'memory.accessed',
         createdAt,
@@ -3062,6 +3087,15 @@ function clampMemoryLimit(limit: number | undefined): number {
 
 function compareMemoryEventsForReplay(left: AgentMemoryEvent, right: AgentMemoryEvent): number {
   return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
+}
+
+function memoryActivationDayBucket(now: number): number {
+  return Math.floor(now / MEMORY_ACTIVATION_CACHE_BUCKET_MS);
+}
+
+function wasBriefedRecently(stats: AgentMemoryAccessStats | undefined, now: number): boolean {
+  if (!stats || stats.lastBriefingAt === null) return false;
+  return now - stats.lastBriefingAt < MEMORY_BRIEFING_ACCESS_WINDOW_MS;
 }
 
 function isPresent<T>(value: T | null | undefined): value is T {

@@ -2227,8 +2227,14 @@ limited to the fixed injected-entry budget. Selection is **resident**, not
 query-ranked: the fact budget is filled by activation strength, where
 `memory.accessed` events from `recall` hits strengthen retrieval more than
 passive briefing re-exposure, and old inactive entries decay out of the working
-set without being invalidated. Query-specific retrieval is the `recall` tool's
-job (the volatile tail). The render is a pure projection that hides storage scaffolding
+set without being invalidated. The resident order is activation-major with
+periodic exploration slots for newest never-briefed or long-unbriefed entries,
+so a hardened working set cannot permanently starve newly consolidated facts.
+Passive briefing access is also capped to one counted exposure per entry per
+24-hour window; deliberate `recall` hits still record every returned hit. The
+activation projection is memoized per pool version and day bucket on the hot
+path. Query-specific retrieval is the `recall` tool's job (the volatile tail).
+The render is a pure projection that hides storage scaffolding
 (`id`, `status`) and groups
 entries into **zones by pool relative to the reader**: the reading agent's own
 pool renders as the `<self>` zone; any other principal's subscribed pool renders

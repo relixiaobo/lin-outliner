@@ -8,10 +8,17 @@ import {
 } from './textSearchAnalyzer';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+// V1 activation constants are deliberately asymmetric rather than empirically
+// fitted: new entries get a short initial shelf life, passive briefing is weak
+// restudy, and deliberate recall is stronger/longer-lived retrieval practice.
 const INITIAL_RETRIEVAL_HALF_LIFE_DAYS = 14;
 const BRIEFING_RETRIEVAL_HALF_LIFE_DAYS = 10;
 const RECALL_RETRIEVAL_HALF_LIFE_DAYS = 45;
 const MAX_SCHEMA_NODES = 8;
+// Resident briefing remains mostly activation-ranked, with one exploration
+// slot after each few hardened entries for new or long-unbriefed facts.
+const RESIDENT_BRIEFING_NOVELTY_INTERVAL = 4;
+const RESIDENT_BRIEFING_STALE_DAYS = 7;
 
 const MEMORY_SCHEMA_STOP_WORDS = new Set([
   'about',
@@ -77,6 +84,8 @@ export interface AgentMemoryStrength {
   retrievalStrength: number;
   briefingCount: number;
   recallCount: number;
+  lastBriefingAt: number | null;
+  lastRecallAt: number | null;
   lastAccessedAt: number | null;
 }
 
@@ -135,6 +144,8 @@ export function computeMemoryStrength(
     retrievalStrength: roundStrength(initialActivation + briefingActivation + recallActivation),
     briefingCount: access.briefingCount,
     recallCount: access.recallCount,
+    lastBriefingAt: access.lastBriefingAt,
+    lastRecallAt: access.lastRecallAt,
     lastAccessedAt: latestTimestamp(access.lastBriefingAt, access.lastRecallAt),
   };
 }
@@ -147,6 +158,49 @@ export function rankMemoryEntriesByActivation(
   return entries
     .map((entry) => ({ entry, strength: computeMemoryStrength(entry, accessStats.get(entry.id), now) }))
     .sort(compareRankedMemoryEntries);
+}
+
+/**
+ * Resident briefing is weak retrieval practice, but a pure activation sort can
+ * lock the same entries into the budget forever. Keep most of the list
+ * activation-ranked while giving newest unbriefed/stale entries periodic
+ * exploration slots.
+ */
+export function orderMemoryEntriesForBriefing(
+  entries: readonly AgentMemoryRankedEntry[],
+  options: { now?: number; noveltyInterval?: number; staleAfterDays?: number } = {},
+): AgentMemoryRankedEntry[] {
+  const now = options.now ?? Date.now();
+  const noveltyInterval = Math.max(1, Math.trunc(options.noveltyInterval ?? RESIDENT_BRIEFING_NOVELTY_INTERVAL));
+  const staleMs = Math.max(0, (options.staleAfterDays ?? RESIDENT_BRIEFING_STALE_DAYS) * DAY_MS);
+  const novelty: AgentMemoryRankedEntry[] = [];
+  const activated: AgentMemoryRankedEntry[] = [];
+
+  for (const item of entries) {
+    const lastBriefingAt = item.strength.lastBriefingAt;
+    if (lastBriefingAt === null || now - lastBriefingAt >= staleMs) {
+      novelty.push(item);
+    } else {
+      activated.push(item);
+    }
+  }
+
+  novelty.sort(compareNoveltyMemoryEntries);
+
+  const ordered: AgentMemoryRankedEntry[] = [];
+  let activatedIndex = 0;
+  let noveltyIndex = 0;
+  while (activatedIndex < activated.length || noveltyIndex < novelty.length) {
+    for (let count = 0; count < noveltyInterval && activatedIndex < activated.length; count += 1) {
+      ordered.push(activated[activatedIndex]!);
+      activatedIndex += 1;
+    }
+    if (noveltyIndex < novelty.length) {
+      ordered.push(novelty[noveltyIndex]!);
+      noveltyIndex += 1;
+    }
+  }
+  return ordered;
 }
 
 export function buildMemoryOverview(
@@ -238,6 +292,15 @@ function compareRankedMemoryEntries(left: AgentMemoryRankedEntry, right: AgentMe
     right.strength.retrievalStrength - left.strength.retrievalStrength
     || right.strength.storageStrength - left.strength.storageStrength
     || right.entry.createdAt - left.entry.createdAt
+    || right.entry.id.localeCompare(left.entry.id)
+  );
+}
+
+function compareNoveltyMemoryEntries(left: AgentMemoryRankedEntry, right: AgentMemoryRankedEntry): number {
+  return (
+    right.entry.createdAt - left.entry.createdAt
+    || left.strength.briefingCount - right.strength.briefingCount
+    || right.strength.retrievalStrength - left.strength.retrievalStrength
     || right.entry.id.localeCompare(left.entry.id)
   );
 }
