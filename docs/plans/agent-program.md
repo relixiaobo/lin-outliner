@@ -313,16 +313,15 @@ reinvent.
     **`docs/plans/agent-memory-realignment.md`** (ratified decisions D-1…D-9 +
     rationale; cc-2 claims with the one-pager). PR-1 + PR-2 are **hard
     prerequisites for M3-B**.
-  - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate**
+  - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate — built**
     (the one new primitive; depends on Phase 1 + M3-A + the clean-cut + run
     unification — its citing rides the unified evidence scheme — **+ realignment
     PR-1/PR-2**: cross-reading pools needs the reader-independent person rule and
-    the final `sources` union, so M3-B builds on final shapes). Plan:
-    `agent-cross-agent-memory`.
+    the final `sources` union, so M3-B builds on final shapes). Plan archived:
+    `archive/agent-cross-agent-memory`.
   - **M3-C — per-agent POV inspector** (derived view over M3-A's assembly
     derivation). Plan: `agent-pov-projection`.
-  - Open PM gates carried inside the plans: group default-`addressedTo` (M3-A Q1)
-    · uniform co-member pool rule (M3-B Q1). `who-configures-whom` stays deferred
+  - Open PM gates carried inside the plans: `who-configures-whom` stays deferred
     (main-agent-first default, untouched by M3); `doc snapshot+delta` belongs to
     the memory-prefix/cache work, not M3.
 - **Parallel (orthogonal, not blocked):** `agent-skill-acceptance` (PR A, cc) — **merged

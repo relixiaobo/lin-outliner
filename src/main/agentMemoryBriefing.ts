@@ -2,6 +2,7 @@ import type { AgentMemoryEntry, AgentPrincipal } from '../core/agentEventLog';
 import type { AgentMemoryOverview, AgentMemorySchemaNode } from '../core/agentMemoryActivation';
 import { principalKey, samePrincipal } from '../core/agentEventLog';
 import { escapeXml } from './agentReminderXml';
+import { redactSecretLikeContent } from './agentSecretRedaction';
 
 // The injection projection for distilled memory ([[agent-memory-realignment]] D-2). Storage
 // and injection are two different representations: the assembly layer keeps the structured
@@ -74,8 +75,9 @@ export function renderAgentMemoryBriefing(
     }
     const key = principalKey(entry.principal);
     const bucket = principalPools.get(key);
-    if (bucket) bucket.facts.push(entry.fact);
-    else principalPools.set(key, { principal: entry.principal, facts: [entry.fact] });
+    const fact = redactSecretLikeContent(entry.fact);
+    if (bucket) bucket.facts.push(fact);
+    else principalPools.set(key, { principal: entry.principal, facts: [fact] });
   }
 
   const zones: string[] = [];

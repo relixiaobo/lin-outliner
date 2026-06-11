@@ -126,14 +126,17 @@ truth.
     (`agents/<agentId>/` keeps only `identity.json`), on the shared append-only
     seq-log primitive with conversation/run logs
   - single model-visible `recall` tool over active durable memory entries, reading
-    the reader's own pool + co-member user pool, with optional nested evidence
-    expansion through `MemoryEntry.sources` gated to the reader's own pool
+    the reader's own pool + every conversation co-member principal's pool, with
+    optional nested evidence expansion through `MemoryEntry.sources` gated in the
+    evidence service to the reader's own pool (cross-principal requests return a
+    typed refusal and distilled facts only)
   - bounded `<memory>` turn briefing injection: derived schema overview +
-    activation-ranked fact selection over the reader's own pool + co-member user
-    pool, rendered into reader-relative `<self>` / `<principal>` zones as verbatim
-    bullet lists (one phrasing rule: third-person-singular subject-elided storage,
-    no subject prepending at render — [[agent-memory-realignment]] D-2; storage
-    scaffolding hidden)
+    activation-ranked fact selection over the reader's own pool + every
+    conversation co-member principal's pool, rendered into reader-relative
+    `<self>` / `<principal>` zones as verbatim bullet lists (one phrasing rule:
+    third-person-singular subject-elided storage, no subject prepending at render
+    — [[agent-memory-realignment]] D-2; storage scaffolding hidden; foreign facts
+    pass the shared secret-like redaction heuristic before injection)
   - runtime `memoryIsolation` modes: global and read-only-global (pause Dream
     writes); a pool is one undivided self-model — `originWorkspace` is provenance
     metadata, never a retrieval fence

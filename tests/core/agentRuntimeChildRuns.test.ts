@@ -436,7 +436,12 @@ describe('agent runtime childRuns', () => {
     const dreamState = await store.readDreamState(agentPrincipal(researcherAgentId));
     const runId = rawSource?.stream === 'run' ? rawSource.streamId : undefined;
     const evidence = source
-      ? await new AgentPastChatsService(store).readMemorySourceEvidence({ principal: agentPrincipal(researcherAgentId), source, maxChars: 2_000 })
+      ? await new AgentPastChatsService(store).readMemorySourceEvidence({
+        principal: agentPrincipal(researcherAgentId),
+        reader: agentPrincipal(researcherAgentId),
+        source,
+        maxChars: 2_000,
+      })
       : null;
     const projection = latestProjection(sink.events);
     const dreamTask = projection?.taskIds
@@ -1085,6 +1090,7 @@ describe('agent runtime childRuns', () => {
     expect(entry).toBeDefined();
     const evidence = await new AgentPastChatsService(store).readMemorySourceEvidence({
       principal: agentPrincipal('built-in:tenon:assistant'),
+      reader: agentPrincipal('built-in:tenon:assistant'),
       source: entry!.sources[0]!,
       maxChars: 4_000,
     });
@@ -1295,6 +1301,7 @@ describe('agent runtime childRuns', () => {
     const pastChats = new AgentPastChatsService(store);
     const evidence = await pastChats.readMemorySourceEvidence({
       principal: agentPrincipal(ownerAgentId),
+      reader: agentPrincipal(ownerAgentId),
       source,
       maxChars: 4_000,
     });
@@ -1306,6 +1313,8 @@ describe('agent runtime childRuns', () => {
     expect(evidenceText).not.toContain('Compacted fork summary');
     if (!rawSource) throw new Error('Expected raw run source');
     const tampered = await pastChats.readMemorySourceEvidence({
+      principal: agentPrincipal(ownerAgentId),
+      reader: agentPrincipal(ownerAgentId),
       source: {
         ...rawSource,
         range: {

@@ -80,7 +80,7 @@ export interface AgentRecallRuntimeEntry {
   evidenceTruncated?: boolean;
 }
 
-export type AgentRecallEvidence = AgentRecallEpisodeEvidence | AgentRecallRawEvidence;
+export type AgentRecallEvidence = AgentRecallEpisodeEvidence | AgentRecallRawEvidence | AgentRecallEvidenceRefusal;
 
 export interface AgentRecallEpisodeEvidence {
   kind: 'episode_gist';
@@ -103,6 +103,12 @@ export interface AgentRecallRawEvidence {
   toolName?: string;
   isError?: boolean;
   messageTruncated?: boolean;
+}
+
+export interface AgentRecallEvidenceRefusal {
+  kind: 'evidence_refusal';
+  code: 'CROSS_PRINCIPAL_EVIDENCE';
+  message: string;
 }
 
 export interface AgentRecallToolData {
@@ -242,6 +248,13 @@ function visibleSource(source: AgentMemorySource): unknown {
 }
 
 function visibleEvidence(evidence: AgentRecallEvidence): unknown {
+  if (evidence.kind === 'evidence_refusal') {
+    return {
+      kind: 'evidence_refusal',
+      code: evidence.code,
+      message: evidence.message,
+    };
+  }
   if (evidence.kind === 'episode_gist') {
     return {
       kind: 'episode_gist',

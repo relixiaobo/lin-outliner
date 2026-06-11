@@ -234,6 +234,42 @@ describe('agent recall tool', () => {
     });
   });
 
+  test('renders typed evidence refusals under cross-principal entries', async () => {
+    const runtime: AgentRecallToolRuntime = {
+      reader: READER,
+      recall: async () => ({
+        entries: [{
+          entry: {
+            ...entry('memory-foreign', 'keeps private run notes'),
+            principal: { type: 'agent', agentId: 'agent-peer' },
+            sources: [],
+          },
+          evidence: [{
+            kind: 'evidence_refusal',
+            code: 'CROSS_PRINCIPAL_EVIDENCE',
+            message: 'Raw memory evidence is only available for the reader principal that owns the memory pool.',
+          }],
+        }],
+        totalEntries: 1,
+      }),
+    };
+    const tool = createRecallTool(runtime);
+
+    expect(visibleData(await tool.execute('tool-1', { query: 'private', include_evidence: true }))).toMatchObject({
+      ok: true,
+      data: {
+        entries: [{
+          memory_id: 'memory-foreign',
+          subject: 'agent-peer',
+          evidence: [{
+            kind: 'evidence_refusal',
+            code: 'CROSS_PRINCIPAL_EVIDENCE',
+          }],
+        }],
+      },
+    });
+  });
+
   test('reports empty recall without implying history is absent', async () => {
     const runtime: AgentRecallToolRuntime = {
       reader: READER,

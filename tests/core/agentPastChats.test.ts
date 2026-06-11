@@ -303,7 +303,12 @@ describe('agent past chats', () => {
           throughEventId: `${conversationId}-event-4`,
         },
       };
-      const evidence = await service.readMemorySourceEvidence({ source, maxChars: 120 });
+      const evidence = await service.readMemorySourceEvidence({
+        principal: memoryPrincipal,
+        reader: memoryPrincipal,
+        source,
+        maxChars: 120,
+      });
 
       expect(evidence.mode).toBe('evidence');
       if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
@@ -311,6 +316,30 @@ describe('agent past chats', () => {
       expect(evidence.source).toEqual(source);
       expect(evidence.messages.map((message) => message.messageId)).toEqual(['user-evidence', 'assistant-evidence']);
       expect(evidence.messages.map((message) => message.text).join('\n')).toContain('terse direct answers');
+    });
+  });
+
+  test('refuses cross-principal memory evidence at the service boundary', async () => {
+    await withStore(async (_store, service) => {
+      const evidence = await service.readMemorySourceEvidence({
+        principal: memoryPrincipal,
+        reader: { type: 'agent', agentId: 'agent-2' },
+        source: {
+          stream: 'conversation',
+          streamId: 'conversation-memory-evidence',
+          range: {
+            fromSeqExclusive: 1,
+            throughSeq: 4,
+            throughEventId: 'conversation-memory-evidence-event-4',
+          },
+        },
+        maxChars: 120,
+      });
+
+      expect(evidence).toMatchObject({
+        mode: 'error',
+        code: 'CROSS_PRINCIPAL_EVIDENCE',
+      });
     });
   });
 
@@ -333,6 +362,7 @@ describe('agent past chats', () => {
 
       const evidence = await service.readMemorySourceEvidence({
         principal: memoryPrincipal,
+        reader: memoryPrincipal,
         source: { episodeId: episode.id },
         maxChars: 200,
       });
@@ -376,6 +406,7 @@ describe('agent past chats', () => {
 
       const evidence = await service.readMemorySourceEvidence({
         principal: memoryPrincipal,
+        reader: memoryPrincipal,
         source: { episodeId: episode.id },
         maxChars: 70,
       });

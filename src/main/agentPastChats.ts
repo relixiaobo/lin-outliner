@@ -1,6 +1,7 @@
 import {
   conversationIdOfRun,
   getAgentEventVisibleTranscript,
+  samePrincipal,
   type AgentEventMessageRecord,
   type AgentMemoryEpisode,
   type AgentMemorySource,
@@ -59,7 +60,8 @@ export interface PastChatsReadParams {
 
 export interface PastChatsEvidenceParams {
   source: AgentMemorySource;
-  principal?: AgentPrincipal;
+  principal: AgentPrincipal;
+  reader: AgentPrincipal;
   maxChars?: number;
 }
 
@@ -161,6 +163,7 @@ export type PastChatsErrorCode =
   | 'CONVERSATION_NOT_FOUND'
   | 'NOT_ON_ACTIVE_BRANCH'
   | 'CONVERSATION_IS_CURRENT'
+  | 'CROSS_PRINCIPAL_EVIDENCE'
   | 'SOURCE_NOT_FOUND';
 
 export interface PastChatsErrorResult {
@@ -354,6 +357,12 @@ export class AgentPastChatsService {
   }
 
   async readMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
+    if (!samePrincipal(params.principal, params.reader)) {
+      return pastChatsError(
+        'CROSS_PRINCIPAL_EVIDENCE',
+        'Raw memory evidence is only available for the reader principal that owns the memory pool.',
+      );
+    }
     const source = params.source;
     if ('episodeId' in source) {
       return this.readEpisodeMemorySourceEvidence(params);
@@ -365,9 +374,6 @@ export class AgentPastChatsService {
     const source = params.source;
     if (!('episodeId' in source)) {
       return pastChatsError('SOURCE_NOT_FOUND', 'Memory source is not an episode source.');
-    }
-    if (!params.principal) {
-      return pastChatsError('SOURCE_NOT_FOUND', 'Episode memory source requires the owning principal.');
     }
     const episode = await this.eventStore.getMemoryEpisode(params.principal, source.episodeId);
     if (!episode) {

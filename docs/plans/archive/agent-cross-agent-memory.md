@@ -1,10 +1,10 @@
 ---
-status: draft
+status: done
 priority: P1
-owner: unassigned
+owner: codex
 phase: M3-B
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 ---
 
 # M3-B: cross-agent memory sharing + the cross-principal isolation gate
@@ -96,7 +96,7 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
    behavior; flip `agent-architecture.md`'s "cross-agent memory sharing +
    isolation gate" row ◻ → ✅; archive this plan `done`.
 
-## Non-goals (boundary — 钉死)
+## Non-goals (boundary — pinned)
 
 - **NO publish/subscribe ACL or per-fact sharing controls** — visibility is
   membership, full stop (ratified; a publish primitive was explicitly rejected
@@ -117,21 +117,24 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
   pool, no special case. One rule, consistent with "user is an ordinary
   Principal". Pinned — do not re-open.
 - **Q2 — foreign-pool volume cap.** Reversible local — dev decides and notes in
-  the PR (suggested start: half the own-pool cap).
+  the PR (suggested start: half the own-pool cap). **Decision shipped:** use the
+  existing single resident/query budget with round-robin interleave across all
+  readable pools. This preserves a fair share for co-member pools without adding
+  a second tuning knob before usage data exists.
 
 ## Acceptance
 
-- [ ] In a 2-agent Channel, agent A's briefing contains a named `<principal>`
+- [x] In a 2-agent Channel, agent A's briefing contains a named `<principal>`
       zone with B's distilled facts (verbatim bullets, PR-1 phrasing rule) and
       vice versa; a non-member agent's pool never appears.
-- [ ] Gate negative tests: cross-principal `recall(include_evidence:true)`
+- [x] Gate negative tests: cross-principal `recall(include_evidence:true)`
       returns the distilled fact + a typed refusal for evidence; the refusal
       holds at the evidence-service choke point (unit test calls the service
       directly, not just through the tool).
-- [ ] Own-principal evidence expansion still works (regression).
-- [ ] Foreign-pool facts pass the redaction heuristic at injection.
-- [ ] `bun run typecheck` + `bun run test:core` green vs known baselines.
-- [ ] Spec sync per Design 4; plan archived `done`.
+- [x] Own-principal evidence expansion still works (regression).
+- [x] Foreign-pool facts pass the redaction heuristic at injection.
+- [x] `bun run typecheck` + `bun run test:core` green vs known baselines.
+- [x] Spec sync per Design 4; plan archived `done`.
 
 ## Collision self-check (2026-06-10, plan time)
 

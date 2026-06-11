@@ -663,6 +663,9 @@ describe('agent runtime past chats integration', () => {
     // Own-pool evidence dereferences to raw transcript…
     expect(contextText).toContain('We chose cobalt blue for focus rings in the agent UI.');
     // …but a cross-principal (user) fact never leaks another principal's raw conversation.
+    expect(contextText).toContain('evidence_refusal');
+    expect(contextText).toContain('CROSS_PRINCIPAL_EVIDENCE');
+    expect(contextText).not.toContain(userEvidenceConversation);
     expect(contextText).not.toContain('Secret phrasing: I always want terse reviews from the start.');
   });
 

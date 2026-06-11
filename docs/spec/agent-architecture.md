@@ -28,8 +28,8 @@ metadata** of these, not separate primitives.
    + foreground-ness; **Task is a view** (= background runs, grouped by `agentId`). ✅
 4. **Memory** — a Principal's subjective self-model. Follows the *principal*, not
    the conversation. Canonically framed (PM-ratified 2026-06-10) in the standard
-   cognitive-science vocabulary — see *The memory system* below. ✅ (per-principal) /
-   ◻ (transactive sharing, M3-B)
+   cognitive-science vocabulary — see *The memory system* below. ✅
+   (per-principal + transactive sharing)
 5. **Skill** — a reusable instruction, bound by name from one shared library. ✅
 6. **Agent** — an authorable Principal: persona (`AGENT.md` body → system prompt) +
    model/effort + skill bindings + tool/permission profile + its own memory line. ✅
@@ -154,8 +154,8 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
   deletion).
 - **Social layer:** transactive memory — co-members subscribe to each other's
   *semantic* stores by conversation membership; raw evidence never crosses
-  principals (user pool shipped #173; agent pools = M3-B, gated on realignment
-  PR-1 + PR-2).
+  principals (user pool shipped #173; agent co-member pools shipped in M3-B,
+  gated on realignment PR-1 + PR-2).
 
 Definitions + binding authoring rules: `agent-memory-foundations.md` (meta).
 Work on this frame: `agent-memory-academic-alignment` (#181, language
@@ -188,24 +188,24 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | `addressedTo`, `member.added/removed`, `<principal>` render hook | ✅ built | connected in M3-A (#179): `addressedTo` written on user messages + read by routing; membership events applied on replay + folded into the conversation index |
 | Create a >1-agent conversation (Channel) | ✅ built | `agent_create_conversation` takes `{agentIds, goal, seedText}`; add/remove member commands + header "+" member menu in the UI; "add agent to DM" spawns a seeded Channel (DM itself never converts); mention-token collisions rejected at create/add |
 | Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery + queue-all rounds; UI: composer member typeahead, header/list member display, actor badges, typing indicator + run drill-in |
-| Cross-agent memory sharing + isolation gate | ◻ missing | the one new primitive (M3-B) |
+| Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |
 | Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |
 | Memory source binding under compaction (#164) | ✅ built | Realignment PR-2 records fact sources as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over conversation/run ledgers. `recall include_evidence` zooms fact → episode gist → raw span; PR #178's compaction evidence invariant remains pinned in `agent-data-model` §13.17. |
 
-Forward sequencing for the gaps above lives in `agent-program.md` § *M3 sequencing &
+Forward sequencing for the remaining gap lives in `agent-program.md` § *M3 sequencing &
 readiness* (debt-first: settle the map → fix #164 → then three independent complete
 features: **M3-A** working multi-agent Channel — shipped (#179, membership + routing +
-peer reply in one PR) → **M3-B** cross-agent memory + isolation gate → **M3-C**
-per-agent POV inspector).
+peer reply in one PR) → **M3-B** cross-agent memory + isolation gate — built here →
+**M3-C** per-agent POV inspector).
 
 ## Known tensions / honest caveats
 
-- **Elegance was partly on paper; the storage foundation is now verified clean** —
-  membership + routing are exercised as of M3-A, but cross-agent memory sharing is
-  still missing (M3-B), so the Principal symmetry is real yet not fully exercised
-  on the memory layer.
+- **Principal symmetry is now exercised on the memory layer** — membership +
+  routing shipped in M3-A, and M3-B extends the same membership rule to
+  co-member agent memory reads. The remaining M3 gap is the stored/inspectable
+  per-agent POV projection (M3-C), not the memory primitive.
 - **"user = agent" oversells**; the honest model is `(user + self-agent) = one agent`,
   symmetric only in the memory/identity layer.
-- **The cross-principal isolation gate is load-bearing** — unifying "self" and "other"
-  memory under one mechanism also unifies the failure mode; it must be a hard
-  architectural boundary, not a recall-path convention, before sharing ships.
+- **The cross-principal isolation gate is load-bearing** — unifying "self" and
+  "other" memory under one mechanism also unifies the failure mode; the gate now
+  lives in the evidence service, not in recall-path convention.
