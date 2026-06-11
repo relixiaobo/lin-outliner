@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
+  commandCalls,
   e2eProjection,
   ids,
   nodeById,
@@ -27,6 +28,18 @@ async function placeCursor(page: Page, nodeId: string, placement: 'start' | 'end
     selection?.addRange(range);
   }, placement);
   await page.waitForTimeout(25);
+}
+
+async function waitForRowMoveAnimation(page: Page, id: string) {
+  await expect.poll(async () => rowBody(page, id).evaluate((element) => (
+    element.classList.contains('row-move-animating')
+  )), { timeout: 1000 }).toBe(true);
+}
+
+async function waitForRowMoveAnimationToSettle(page: Page, id: string) {
+  await expect.poll(async () => rowBody(page, id).evaluate((element) => (
+    element.classList.contains('row-move-animating')
+  ))).toBe(false);
 }
 
 async function placeCursorAtTextOffset(page: Page, nodeId: string, offset: number) {
@@ -68,13 +81,7 @@ async function placeCursorAtTextOffset(page: Page, nodeId: string, offset: numbe
 async function selectEditorContents(page: Page, nodeId: string) {
   const editor = rowEditor(page, nodeId);
   await editor.click();
-  await editor.evaluate((element) => {
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
+  await page.keyboard.press('Meta+A');
   await page.waitForTimeout(25);
 }
 
@@ -415,12 +422,27 @@ test.describe('outliner row editing parity', () => {
     await placeCursor(page, ids.beta, 'end');
     await page.keyboard.press('Tab');
 
+    await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await waitForRowMoveAnimationToSettle(page, ids.beta);
 
     await page.keyboard.press('Shift+Tab');
 
+    await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+  });
+
+  test('Shift+Tab while editing a panel-root row is a no-op', async ({ page }) => {
+    await placeCursor(page, ids.beta, 'end');
+
+    const beforeCalls = (await commandCalls(page)).length;
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('outdent_node');
     await expect(rowEditor(page, ids.beta)).toBeFocused();
   });
 
@@ -443,6 +465,31 @@ test.describe('outliner row editing parity', () => {
 
     const alpha = await nodeById(page, ids.alpha);
     expect(alpha?.children).toEqual([createdId]);
+  });
+
+  test('Shift+Tab on an only child removes the emptied parent trailing draft', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
+    const createdId = (await todayChildren(page))[1];
+    expect(createdId).toBeTruthy();
+    await expect(rowEditor(page, createdId)).toBeFocused();
+
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([createdId]);
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([]);
+    await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, createdId, ids.beta, ids.gamma]);
+    await expect(rowEditor(page, createdId)).toBeFocused();
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+    await expect(trailingEditor(page)).toBeVisible();
   });
 
   test('Arrow navigation at editor boundaries moves focus through visible rows', async ({ page }) => {

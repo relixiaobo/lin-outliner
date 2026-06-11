@@ -35,12 +35,13 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
 import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { outlinerChildren } from '../shared';
+import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { AgentIcon, CalendarIcon } from '../icons';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldNameReusePopover } from './FieldNameReusePopover';
+import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
 import { fieldChoiceLabel } from '../../state/outlinerRows';
 import {
@@ -302,35 +303,41 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.entryId, props.index.byId);
       if (!targetParentId) return;
-      const expandTargetAndRememberCursor = () => props.setUi((prev) => {
-        const expanded = new Set(prev.expanded);
-        expanded.add(targetParentId);
-        return requestFocusState(
-          { ...prev, expanded },
-          fieldNameTargetAfterStructureChange,
-          cursorAtOffset(cursorOffset),
-        );
+      await props.run(() => api.indentNode(props.entryId), {
+        applyFocus: false,
+        beforeApply: () => {
+          animateOutlinerRowMovementAfterNextCommit();
+          props.setUi((prev) => {
+            const expanded = new Set(prev.expanded);
+            expanded.add(targetParentId);
+            return requestFocusState(
+              { ...prev, expanded },
+              fieldNameTargetAfterStructureChange,
+              cursorAtOffset(cursorOffset),
+            );
+          });
+        },
       });
-      expandTargetAndRememberCursor();
-      const result = await props.run(() => api.indentNode(props.entryId));
-      if (result) {
-        expandTargetAndRememberCursor();
-      }
       return;
     }
-    props.setUi((prev) => requestFocusState(
-      prev,
-      fieldNameTargetAfterStructureChange,
-      cursorAtOffset(cursorOffset),
-    ));
-    const result = await props.run(() => api.outdentNode(props.entryId));
-    if (result) {
-      props.setUi((prev) => requestFocusState(
-        prev,
-        fieldNameTargetAfterStructureChange,
-        cursorAtOffset(cursorOffset),
-      ));
-    }
+    const emptiedParentIds = parentIdsEmptiedByOutdent([props.entryId], props.index.byId, props.rootId);
+    if (props.parentId === props.rootId) return;
+    await props.run(() => api.outdentNode(props.entryId), {
+      applyFocus: false,
+      beforeApply: () => {
+        animateOutlinerRowMovementAfterNextCommit();
+        props.setUi((prev) => {
+          const next = emptiedParentIds.size > 0
+            ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
+            : prev;
+          return requestFocusState(
+            next,
+            fieldNameTargetAfterStructureChange,
+            cursorAtOffset(cursorOffset),
+          );
+        });
+      },
+    });
   };
 
   const focusFieldValueNode = () => {

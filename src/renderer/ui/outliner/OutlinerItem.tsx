@@ -30,7 +30,7 @@ import {
   replaceRichTextRangeWithText,
   richTextEquals,
 } from '../editor/richTextCodec';
-import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
@@ -43,7 +43,7 @@ import {
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { outlinerChildren, textOf } from '../shared';
+import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -68,6 +68,9 @@ import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
+import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
+import { buildOutlinerRows } from './row-model';
+import { draftCreateIndex, previousDraftSiblingId } from '../../state/trailingDraftPlacement';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { CommandRunButton, useCommandRun } from './CommandFieldValue';
@@ -123,6 +126,9 @@ interface OutlinerItemProps {
   // under `nodeId` (kept stable so the editor is never remounted), after which
   // the row is rendered like any other content row.
   draft?: boolean;
+  // Optional visual anchor for a relocated trailing draft. When present, the
+  // draft sits after this sibling and materializes at the same structural index.
+  draftAfterId?: NodeId | null;
   // Empty-state placeholder shown on this trailing draft's editor (definition
   // template / options blocks), so an empty section reads "add here" instead of
   // a lone label over a near-invisible ghost bullet. Ignored once materialized.
@@ -137,6 +143,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
   const tf = useT().outliner.field;
   const realNode = props.index.byId.get(props.nodeId);
+  const parentNode = props.index.byId.get(props.parentId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
   const node = realNode ?? (props.draft ? makeDraftNode(props.nodeId, props.parentId) : undefined);
@@ -200,6 +207,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
     // trailing editor is findable the way the legacy TrailingInput row was.
     draft: props.draft === true && !realNode,
+    draftAfterId: props.draftAfterId,
   });
   // A not-yet-materialized draft is also "focused" when keyboard navigation
   // targets the parent's trailing surface (the existing trailing-focus signal);
@@ -434,6 +442,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     return result.nodeId;
   };
 
+  const currentDraftCreateIndex = () => draftCreateIndex(parentNode, props.draftAfterId ?? null);
+  const placementAfterMaterializedDraft = () => (
+    props.draftAfterId && !props.fieldValue
+      ? { parentId: props.parentId, afterId: props.nodeId, panelId: props.panelId }
+      : null
+  );
+  const materializedDraftFocusState = (state: UiState) => ({
+    ...selectFocusState(
+      state,
+      rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+    ),
+    trailingDraftPlacement: placementAfterMaterializedDraft(),
+  });
+
   // Materialization: turn the draft into a real node under its stable id on
   // commit. Runs once; the create and the text patches that follow share one undo
   // group (see DocumentService). Keystrokes that land during the IPC round-trip
@@ -457,11 +479,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     materializeStartedRef.current = true;
     const seed = draftContentRef.current;
     const fieldValue = props.fieldValue;
+    const createIndex = currentDraftCreateIndex();
     const runCreate = fieldValue
       ? () => fieldValue.materializeValue(props.nodeId, seed.text)
       : () => props.run(
-        () => api.materializeDraftNode(props.parentId, null, seed.text, props.nodeId),
-        { applyFocus: false },
+        () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId),
+        {
+          applyFocus: false,
+          beforeApply: () => {
+            props.setUi(materializedDraftFocusState);
+          },
+        },
       );
     pendingTextPatchRef.current = pendingTextPatchRef.current
       .then(runCreate)
@@ -478,10 +506,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         }
       })
       .then(() => {
-        props.setUi((prev) => selectFocusState(
-          prev,
-          rowFocusTarget(props.nodeId, props.parentId, props.panelId),
-        ));
+        props.setUi(materializedDraftFocusState);
       });
     void pendingTextPatchRef.current;
   };
@@ -931,6 +956,32 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // From the empty trailing draft, step focus up to the visually-previous row
   // without creating or deleting anything (the draft has no real node).
   const focusPreviousFromDraft = (placement: CursorPlacement = cursorEnd()) => {
+    if (props.draftAfterId) {
+      const liveUi = props.uiRef.current;
+      const localVisibleRows = flattenVisibleRows(
+        props.parentId,
+        props.index.byId,
+        liveUi.expanded,
+        liveUi.expandedHiddenFields,
+      );
+      const siblingRows = buildOutlinerRows(
+        props.index.byId.get(props.parentId),
+        props.index.byId,
+        { expandedHiddenFields: liveUi.expandedHiddenFields },
+      );
+      const afterIndex = siblingRows.findIndex((row) => row.id === props.draftAfterId);
+      const nextSibling = afterIndex < 0
+        ? undefined
+        : siblingRows.slice(afterIndex + 1).find((row) => row.type === 'content' || row.type === 'field');
+      const nextIndex = nextSibling ? localVisibleRows.indexOf(nextSibling.id) : -1;
+      const previousId = nextIndex > 0
+        ? localVisibleRows[nextIndex - 1]
+        : localVisibleRows[localVisibleRows.length - 1];
+      if (previousId) {
+        requestRowFocus(previousId, placement, props.index.byId.get(previousId)?.parentId ?? null);
+      }
+      return;
+    }
     if (props.parentId === props.rootId) {
       const visible = flattenVisibleRows(
         props.rootId,
@@ -953,12 +1004,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // Used after a committed field value row's Enter and after the options overlay
   // picks/creates, so every "add another value" gesture funnels through the same
   // draft (everything is a node; values append via that draft).
-  const focusTrailingDraft = () => {
-    props.setUi((prev) => requestFocusState(
-      prev,
-      focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
-      cursorEnd(),
-    ));
+  const focusTrailingDraft = (afterId: NodeId | null = null) => {
+    props.setUi((prev) => {
+      const next = requestFocusState(
+        prev,
+        focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+        cursorEnd(),
+      );
+      return afterId
+        ? {
+          ...next,
+          trailingDraftPlacement: { parentId: props.parentId, afterId, panelId: props.panelId },
+        }
+        : next;
+    });
   };
 
   // Append an existing pool option as a reference (the additive options overlay),
@@ -987,7 +1046,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const materializeDraftAndAdvance = async () => {
     materializeDraft();
     await pendingTextPatchRef.current;
-    focusTrailingDraft();
+    focusTrailingDraft(!props.fieldValue ? props.nodeId : null);
   };
 
   // Commit a date the picker produced. A draft materializes with the picked text
@@ -1025,11 +1084,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         // renderer trailing draft via materializeDraftAndAdvance, so Enter there never
         // leaks a stray empty sibling.)
         if (!payload.atEnd) replaceLocalDraftContent(payload.before);
+        const materializedIndex = currentDraftCreateIndex();
+        const continuationIndex = materializedIndex === null ? null : materializedIndex + 1;
         materializeDraft();
         await pendingTextPatchRef.current;
         await props.run(() => api.createNode(
           props.parentId,
-          null,
+          continuationIndex,
           payload.atEnd ? '' : payload.after.text,
         ));
         return;
@@ -1188,8 +1249,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       // Relocation is pure focus + expand — no create, no indent IPC, so there is
       // no materialize→indent flicker and no stray empty node.
       if (!shiftKey) {
-        const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-        const indentTarget = siblings[siblings.length - 1];
+        const siblingRows = buildOutlinerRows(
+          parentNode,
+          props.index.byId,
+          { expandedHiddenFields: props.uiRef.current.expandedHiddenFields },
+        );
+        const indentTarget = previousDraftSiblingId(siblingRows, props.draftAfterId ?? null);
         if (!indentTarget) return; // no previous sibling to nest under
         props.setUi((prev) => {
           const expanded = new Set(prev.expanded);
@@ -1205,47 +1270,58 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       if (props.parentId === props.rootId) return; // already at the top level
       const grandParentId = props.index.byId.get(props.parentId)?.parentId;
       if (!grandParentId) return;
-      props.setUi((prev) => requestFocusState(
-        prev,
-        focusTarget(grandParentId, grandParentId, props.panelId, 'trailing'),
-        cursorEnd(),
-      ));
+      props.setUi((prev) => ({
+        ...requestFocusState(
+          prev,
+          focusTarget(grandParentId, grandParentId, props.panelId, 'trailing'),
+          cursorEnd(),
+        ),
+        trailingDraftPlacement: {
+          parentId: grandParentId,
+          afterId: props.parentId,
+          panelId: props.panelId,
+        },
+      }));
       return;
     }
     await commitDraft();
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
       if (!targetParentId) return;
-      const expandTarget = () => props.setUi((prev) => {
-        const expanded = new Set(prev.expanded);
-        expanded.add(targetParentId);
-        return { ...prev, expanded };
+      await props.run(() => api.indentNode(props.nodeId), {
+        applyFocus: false,
+        beforeApply: () => {
+          animateOutlinerRowMovementAfterNextCommit();
+          props.setUi((prev) => {
+            const expanded = expandIndentTargets(prev.expanded, [props.nodeId], props.index.byId);
+            return requestFocusState(
+              { ...prev, expanded },
+              rowFocusTarget(props.nodeId, null, props.panelId),
+              cursorAtOffset(cursorOffset),
+            );
+          });
+        },
       });
-      const focusIndentedRow = () => props.setUi((prev) => requestFocusState(
-        prev,
-        rowFocusTarget(props.nodeId, null, props.panelId),
-        cursorAtOffset(cursorOffset),
-      ));
-      expandTarget();
-      const result = await props.run(() => api.indentNode(props.nodeId));
-      if (result) {
-        focusIndentedRow();
-      }
       return;
     }
-    props.setUi((prev) => requestFocusState(
-      prev,
-      rowFocusTarget(props.nodeId, null, props.panelId),
-      cursorAtOffset(cursorOffset),
-    ));
-    const result = await props.run(() => api.outdentNode(props.nodeId));
-    if (result) {
-      props.setUi((prev) => requestFocusState(
-        prev,
-        rowFocusTarget(props.nodeId, null, props.panelId),
-        cursorAtOffset(cursorOffset),
-      ));
-    }
+    if (props.parentId === props.rootId) return;
+    const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
+    await props.run(() => api.outdentNode(props.nodeId), {
+      applyFocus: false,
+      beforeApply: () => {
+        animateOutlinerRowMovementAfterNextCommit();
+        props.setUi((prev) => {
+          const next = emptiedParentIds.size > 0
+            ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
+            : prev;
+          return requestFocusState(
+            next,
+            rowFocusTarget(props.nodeId, null, props.panelId),
+            cursorAtOffset(cursorOffset),
+          );
+        });
+      },
+    });
   };
 
   const moveCurrentNode = async (direction: 'up' | 'down') => {
@@ -2091,6 +2167,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
     || prev.ui.selectionSource !== next.ui.selectionSource
     || prev.ui.pendingReferenceConversion !== next.ui.pendingReferenceConversion
     || prev.ui.pendingReferenceTypeAhead !== next.ui.pendingReferenceTypeAhead
+    || prev.ui.trailingDraftPlacement !== next.ui.trailingDraftPlacement
   )) {
     return false;
   }

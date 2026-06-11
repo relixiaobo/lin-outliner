@@ -167,6 +167,34 @@ describe('Core', () => {
     expect(core.state().nodes[first].children).toContain(second);
   });
 
+  test('batch indent skips selected runs that start at the parent boundary', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'First'));
+    const second = mustFocus(core.createNode(today, null, 'Second'));
+
+    core.batchIndentNodes([first, second]);
+
+    expect(core.state().nodes[first].parentId).toBe(today);
+    expect(core.state().nodes[second].parentId).toBe(today);
+    expect(core.state().nodes[today].children).toEqual([first, second]);
+  });
+
+  test('batch indent moves a selected run under the external previous sibling', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'First'));
+    const second = mustFocus(core.createNode(today, null, 'Second'));
+    const third = mustFocus(core.createNode(today, null, 'Third'));
+
+    core.batchIndentNodes([third, second]);
+
+    expect(core.state().nodes[second].parentId).toBe(first);
+    expect(core.state().nodes[third].parentId).toBe(first);
+    expect(core.state().nodes[first].children).toEqual([second, third]);
+    expect(core.state().nodes[today].children).toEqual([first]);
+  });
+
   test('focuses the last inserted root when creating a tree batch', () => {
     const core = Core.new();
     const today = core.projection().todayId;

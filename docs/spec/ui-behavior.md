@@ -58,7 +58,7 @@ keyboard or pointer change should be checked against this matrix.
 | `Enter` on expanded row with children | Create the first child and focus it. |
 | `Tab` | Indent under previous sibling; pre-expand that sibling and restore cursor offset. |
 | `Tab` on first child | No-op. |
-| `Shift+Tab` | Outdent after parent and restore cursor offset. |
+| `Shift+Tab` | Outdent after parent, collapse the previous parent if it becomes empty, and restore cursor offset. Rows whose parent is the current panel root are a no-op. |
 | `Backspace` at start with text | Merge into the previous visible content row when possible, then restore the cursor at the join offset. |
 | `Backspace` on empty leaf row | Trash the row and focus the previous visible row. |
 | `Backspace` on empty row with children | Block deletion so a subtree is not removed by accident. |
@@ -71,11 +71,11 @@ keyboard or pointer change should be checked against this matrix.
 
 | Interaction | Expected behavior |
 | --- | --- |
-| Printable text on empty trailing row | Create an eager child and keep editing that node. |
-| `Enter` with text | Create content, then create/focus a new empty row in the same parent. |
-| Empty `Enter` | Create/focus an empty child. |
-| `Tab` | Relocate the trailing input under the last child and expand that child. The draft stays a draft — the cursor stays put and no node is created until text is typed. |
-| `Shift+Tab` | Relocate the trailing input one parent level up (no node created until text is typed). |
+| Printable text on empty trailing row | Create an eager child at the draft's current visual position and keep editing that node. If the draft was relocated after a sibling, the fresh trailing draft stays after the newly materialized node. |
+| `Enter` with text | Create content at the draft's current visual position, then create/focus a new empty row immediately after it in the same parent. |
+| Empty `Enter` | Create/focus an empty child at the draft's current visual position and keep the next trailing draft immediately after it. |
+| `Tab` | Relocate the trailing input under the sibling immediately before the draft's current visual position and expand that sibling. At the scope end, this is the last child; after `Shift+Tab`, this is the parent the draft follows. The draft stays a draft — the cursor stays put and no node is created until text is typed. If there is no preceding sibling, `Tab` is a no-op. |
+| `Shift+Tab` | Relocate the trailing input one parent level up, immediately after the current parent in that scope (no node created until text is typed). At the current panel root, `Shift+Tab` is a no-op. |
 | Empty `Backspace` after a `Tab` relocate | The draft now sits under the (empty) sibling it was relocated into, so the "parent has no children" rule below applies: collapse that sibling and focus it. |
 | Empty `Backspace` when parent has no children | Collapse the parent and focus it. |
 | Empty `Backspace` when parent has children | Focus the last visible child. |
@@ -178,7 +178,7 @@ implicit previous/next body rows for text editing commands.
 | Printable key on selected row | Append that character and enter edit mode. |
 | `Shift+ArrowUp/Down` | Extend visible row selection. |
 | `Mod+A` | Select every selectable row in the current panel scope, including stored field value rows. |
-| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection anchor. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
+| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection mode, selected rows, and selection anchor. Tab applies only to contiguous selected runs whose first row has an unselected previous sibling; a selected run at the start of its parent is a no-op, so later selected rows never become children of earlier selected rows. Shift+Tab never moves rows above the current panel root; panel-root rows are a no-op. Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Visible rows that change position during the structural move use a short transform-only movement animation; `prefers-reduced-motion: reduce` disables it. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
 | `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference field value still routes through field-value removal. |
 
 ## Paste And Clipboard Conversion Matrix

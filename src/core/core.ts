@@ -1211,16 +1211,22 @@ export class Core {
 
   batchIndentNodes(nodeIds: string[]): CommandOutcome {
     return this.mutate(() => {
-      for (const nodeId of nodeIds) {
+      const initial = this.snapshot();
+      const batch = new Set(nodeIds);
+      const targetParentIds = new Map<string, string>();
+      const operationIds = orderNodeIdsByDocumentPosition(initial, nodeIds);
+      for (const nodeId of operationIds) {
+        const targetParentId = batchIndentTargetParentId(initial, nodeId, batch);
+        if (targetParentId) targetParentIds.set(nodeId, targetParentId);
+      }
+      for (const nodeId of operationIds) {
+        const newParentId = targetParentIds.get(nodeId);
+        if (!newParentId) continue;
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
+        if (!state.nodes[newParentId]) continue;
         try {
           ensureNodeMovable(state, nodeId);
-          const parentId = state.nodes[nodeId].parentId;
-          if (!parentId) continue;
-          const index = childIndex(state, parentId, nodeId);
-          if (!index) continue;
-          const newParentId = requiredNode(state, parentId).children[index - 1];
           ensureParentMutable(state, newParentId);
           ensureParentCanContainChildInstance(state, newParentId, childInstanceTargetId(state, nodeId), nodeId);
           this.loro.moveNode(nodeId, newParentId, undefined);
@@ -3640,6 +3646,48 @@ function normalizeTextList(values: string[]): string[] {
 function childIndex(state: DocumentState, parentId: string, childId: string): number | undefined {
   const index = state.nodes[parentId]?.children.indexOf(childId) ?? -1;
   return index >= 0 ? index : undefined;
+}
+
+function batchIndentTargetParentId(
+  state: DocumentState,
+  nodeId: string,
+  batch: ReadonlySet<string>,
+): string | null {
+  let currentId: string | undefined = nodeId;
+  while (currentId) {
+    const node: Node | undefined = state.nodes[currentId];
+    const parentId: string | undefined = node?.parentId;
+    const parent: Node | undefined = parentId ? state.nodes[parentId] : undefined;
+    const index: number = parent?.children.indexOf(currentId) ?? -1;
+    if (!parent || index <= 0) return null;
+
+    const previousSiblingId: string | undefined = parent.children[index - 1];
+    if (!previousSiblingId) return null;
+    if (!batch.has(previousSiblingId)) return previousSiblingId;
+    currentId = previousSiblingId;
+  }
+  return null;
+}
+
+function orderNodeIdsByDocumentPosition(state: DocumentState, nodeIds: readonly string[]): string[] {
+  const ranks = new Map<string, number>();
+  let nextRank = 0;
+  const visit = (nodeId: string) => {
+    if (ranks.has(nodeId)) return;
+    const node = state.nodes[nodeId];
+    if (!node) return;
+    ranks.set(nodeId, nextRank);
+    nextRank += 1;
+    for (const childId of node.children) visit(childId);
+  };
+  Object.values(state.nodes)
+    .filter((node) => !node.parentId)
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .forEach((node) => visit(node.id));
+  return [...nodeIds].sort((left, right) => (
+    (ranks.get(left) ?? Number.MAX_SAFE_INTEGER)
+    - (ranks.get(right) ?? Number.MAX_SAFE_INTEGER)
+  ));
 }
 
 function topLevelNodeIds(state: DocumentState, nodeIds: string[]): string[] {

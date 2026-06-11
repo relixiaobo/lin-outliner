@@ -7,10 +7,11 @@ import type { DocumentIndex, UiState } from '../state/document';
 import { buildSelectableRows } from '../state/selectableRows';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
-import { expandIndentTargets } from './interactions/outlinerStructure';
+import { batchIndentNodeIds, expandIndentTargets } from './interactions/outlinerStructure';
 import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
 import {
   idsAllowedForStructuralBatch,
+  idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   runSelectionDelete,
   runSelectionDuplicate,
@@ -36,7 +37,8 @@ import {
   requestFocusState,
   rowFocusTarget,
 } from './focus/focusModel';
-import type { CommandRunner } from './shared';
+import { animateOutlinerRowMovementAfterNextCommit } from './outliner/rowMoveAnimation';
+import { collapseExpandedParentIds, parentIdsEmptiedByOutdent, type CommandRunner } from './shared';
 
 async function writeClipboardText(text: string): Promise<boolean> {
   if (!text) return true;
@@ -500,39 +502,60 @@ export function useWorkspaceKeyboard({
             byId: currentIndex.byId,
             rowMap: rowsById,
           })
-          : idsAllowedForStructuralBatch({
-            ids: batchIds,
-            panelRootId: selectionRootId,
-            byId: currentIndex.byId,
-            rowMap: rowsById,
-          });
+          : action === 'batch_outdent'
+            ? idsAllowedForStructuralOutdentBatch({
+              ids: batchIds,
+              panelRootId: selectionRootId,
+              byId: currentIndex.byId,
+              rowMap: rowsById,
+            })
+            : idsAllowedForStructuralBatch({
+              ids: batchIds,
+              panelRootId: selectionRootId,
+              byId: currentIndex.byId,
+              rowMap: rowsById,
+            });
         const operationIds = action === 'batch_checkbox'
           ? targetIdsForRows(operationRowIds, currentIndex.byId)
-          : operationRowIds;
+          : action === 'batch_indent'
+            ? batchIndentNodeIds(operationRowIds, currentIndex.byId)
+            : operationRowIds;
         if (operationIds.length === 0) return;
-        if (action === 'batch_indent') {
-          setUi((prev) => ({
-            ...prev,
-            expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
-          }));
-        }
-        void run(() => batchOperation(operationIds)).then((result) => {
-          if (result && action === 'batch_indent') {
-            setUi((prev) => ({
-              ...prev,
-              expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
-            }));
-          }
+        const emptiedParentIds = action === 'batch_outdent'
+          ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)
+          : new Set<NodeId>();
+        const structuralAction = action === 'batch_indent' || action === 'batch_outdent';
+        const restoredSelection = {
+          selectedId: anchor,
+          selectedIds: new Set(batchIds),
+          selectionAnchorId: anchor,
+          selectionRootId,
+        };
+        void run(() => batchOperation(operationIds), {
+          applyFocus: false,
+          beforeApply: structuralAction
+            ? () => {
+              animateOutlinerRowMovementAfterNextCommit();
+              setUi((prev) => {
+                const liveIndex = latestStateRef.current.index ?? currentIndex;
+                const expanded = action === 'batch_indent'
+                  ? expandIndentTargets(prev.expanded, operationIds, liveIndex.byId)
+                  : action === 'batch_outdent' && emptiedParentIds.size > 0
+                    ? collapseExpandedParentIds(prev.expanded, emptiedParentIds)
+                    : prev.expanded;
+                return selectKeyboardRowsState(
+                  { ...prev, expanded },
+                  restoredSelection,
+                );
+              });
+            }
+            : undefined,
+        }).then((result) => {
+          if (!result) return;
           if (action === 'batch_checkbox') {
-            setUi((prev) => selectKeyboardRowsState(prev, {
-              selectedId: anchor,
-              selectedIds: new Set(batchIds),
-              selectionAnchorId: anchor,
-              selectionRootId,
-            }));
+            setUi((prev) => selectKeyboardRowsState(prev, restoredSelection));
             return;
           }
-          requestEditFocus(anchor);
         });
       }
     };

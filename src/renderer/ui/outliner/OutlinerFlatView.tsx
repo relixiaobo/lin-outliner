@@ -196,6 +196,16 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const trailingFocusedParentId = ui.focusSurface === 'trailing' && ui.focusedPanelId === props.panelId
     ? ui.focusedId
     : null;
+  const draftFocusedParentId = ui.focusSurface === 'row'
+    && ui.focusedPanelId === props.panelId
+    && ui.focusedId
+    && !byId.has(ui.focusedId)
+    ? ui.focusedParentId
+    : null;
+  const trailingDraftPlacement = ui.trailingDraftPlacement
+    && (ui.trailingDraftPlacement.panelId === null || ui.trailingDraftPlacement.panelId === props.panelId)
+    ? ui.trailingDraftPlacement
+    : null;
 
   const rows = useMemo(
     () => buildVisualRows(props.parentId, byId, {
@@ -205,6 +215,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       rootTrailingDraft: props.trailingDraft ?? 'none',
       draftIdFor,
       trailingFocusedParentId,
+      draftFocusedParentId,
+      trailingDraftPlacement,
     }),
     [
       props.parentId,
@@ -215,6 +227,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       props.trailingDraft,
       draftIdFor,
       trailingFocusedParentId,
+      draftFocusedParentId,
+      trailingDraftPlacement,
     ],
   );
 
@@ -478,6 +492,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             setDragId={props.setDragId}
             referencePath={row.referencePath}
             draft={row.draft}
+            draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
             flat
           />

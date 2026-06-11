@@ -8,6 +8,7 @@ import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
 import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem } from './row-model';
 import { useTrailingDraftId } from './draftRow';
+import { insertTrailingDraftRow, resolveTrailingDraftAfterId } from '../../state/trailingDraftPlacement';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
@@ -69,12 +70,19 @@ export function OutlinerView(props: OutlinerViewProps) {
   // field values use 'auto', which is why the bug surfaced only there.
   const draftFocused = props.ui.focusedId === draftId
     && props.ui.focusedPanelId === props.panelId;
+  const placementAfterId = resolveTrailingDraftAfterId({
+    placement: props.ui.trailingDraftPlacement,
+    parentId: props.parentId,
+    panelId: props.panelId,
+    rows: builtRows,
+  });
   const showDraft = Boolean(parent) && (
     trailingMode === 'always'
     || (trailingMode === 'auto' && (builtRows.length === 0 || trailingFocused || draftFocused))
   );
+  const draftRow: OutlinerRowItem = { id: draftId, type: 'content', draft: true, afterId: placementAfterId };
   const rows: OutlinerRowItem[] = showDraft
-    ? [...builtRows, { id: draftId, type: 'content', draft: true }]
+    ? insertTrailingDraftRow(builtRows, draftRow, placementAfterId)
     : builtRows;
 
   useEffect(() => {
@@ -161,6 +169,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             setDragId={props.setDragId}
             referencePath={props.referencePath ?? [props.rootId]}
             draft={row.draft}
+            draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft ? props.draftPlaceholder : undefined}
             fieldValue={props.fieldValue}
             // An already-selected (not focused) reference value row reuses the

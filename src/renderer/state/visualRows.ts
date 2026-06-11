@@ -1,6 +1,8 @@
 import type { NodeId, NodeProjection } from '../api/types';
 import { buildOutlinerRows, readViewConfig } from './outlinerRows';
 import { outlinerChildParentId } from './document';
+import type { TrailingDraftPlacement } from './document';
+import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 
 // A single flattened, depth-aware outliner row. The recursive
 // OutlinerView/OutlinerItem render is being replaced by one windowed flat list,
@@ -31,6 +33,7 @@ export type VisualRow =
     parentId: NodeId;
     referencePath: NodeId[];
     draft?: boolean;
+    afterId?: NodeId | null;
   };
 
 export type TrailingDraftMode = 'always' | 'auto' | 'none';
@@ -52,6 +55,9 @@ export interface VisualRowsOptions {
   // Parent whose trailing surface currently holds keyboard focus (drives the
   // 'auto' trailing draft just like OutlinerView's `trailingFocused`).
   trailingFocusedParentId?: NodeId | null;
+  // Parent whose renderer-only draft row currently holds settled row focus.
+  draftFocusedParentId?: NodeId | null;
+  trailingDraftPlacement?: TrailingDraftPlacement | null;
 }
 
 export function buildVisualRows(
@@ -86,6 +92,45 @@ export function buildVisualRows(
     }
 
     const builtRows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
+    const showDraft = trailingMode === 'always'
+      || (
+        trailingMode === 'auto'
+        && (
+          builtRows.length === 0
+          || options.trailingFocusedParentId === parentId
+          || options.draftFocusedParentId === parentId
+        )
+      );
+    const draftId = showDraft ? options.draftIdFor?.(parentId) ?? null : null;
+    const placementAfterId = resolveTrailingDraftAfterId({
+      placement: options.trailingDraftPlacement,
+      parentId,
+      rows: builtRows,
+    });
+    const pushDraft = () => {
+      if (!draftId) return;
+      // Key by the draft's own id (not its position), identical to the key the
+      // row will have once the draft materializes into a real child under the
+      // same id. This keeps the React component — and its editor — mounted
+      // across materialization, so eager input is never interrupted.
+      out.push({
+        kind: 'content',
+        key: `${prefix}>${draftId}`,
+        nodeId: draftId,
+        depth,
+        parentId,
+        referencePath,
+        draft: true,
+        afterId: placementAfterId,
+      });
+    };
+    let draftInserted = false;
+    const maybePushDraftAfter = (rowId: NodeId) => {
+      if (!draftId || !placementAfterId || draftInserted || placementAfterId !== rowId) return;
+      pushDraft();
+      draftInserted = true;
+    };
+
     for (let i = 0; i < builtRows.length; i += 1) {
       const row = builtRows[i];
       if (row.type === 'group') {
@@ -115,6 +160,7 @@ export function buildVisualRows(
           isLastInFieldGroup: builtRows[i + 1]?.type !== 'field',
         });
         if (expanded.has(row.id)) descend(row.id, depth, referencePath, keyPath);
+        maybePushDraftAfter(row.id);
         continue;
       }
       // content
@@ -127,20 +173,10 @@ export function buildVisualRows(
         referencePath,
       });
       if (expanded.has(row.id)) descend(row.id, depth, referencePath, keyPath);
+      maybePushDraftAfter(row.id);
     }
 
-    const showDraft = trailingMode === 'always'
-      || (trailingMode === 'auto' && (builtRows.length === 0 || options.trailingFocusedParentId === parentId));
-    if (showDraft) {
-      const draftId = options.draftIdFor?.(parentId) ?? null;
-      if (draftId) {
-        // Key by the draft's own id (not its position), identical to the key the
-        // row will have once the draft materializes into a real child under the
-        // same id. This keeps the React component — and its editor — mounted
-        // across materialization, so eager input is never interrupted.
-        out.push({ kind: 'content', key: `${prefix}>${draftId}`, nodeId: draftId, depth, parentId, referencePath, draft: true });
-      }
-    }
+    if (draftId && !draftInserted) pushDraft();
   };
 
   const descend = (rowId: NodeId, depth: number, referencePath: NodeId[], keyPath: NodeId[]) => {

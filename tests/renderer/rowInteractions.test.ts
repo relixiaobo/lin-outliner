@@ -6,6 +6,7 @@ import {
   resolveEditorTriggerText,
   resolveTriggerForceCreateIntent,
 } from '../../src/renderer/ui/interactions/rowInteractions';
+import { parentIdsEmptiedByOutdent } from '../../src/renderer/ui/shared';
 import { resolveRowPointerSelectAction } from '../../src/renderer/ui/interactions/rowPointerSelection';
 import { clampMenuIndex, nextMenuIndex } from '../../src/renderer/ui/interactions/menuNavigation';
 import { resolveFieldOptions, resolveSelectedOptionId } from '../../src/renderer/ui/interactions/fieldOptions';
@@ -30,6 +31,7 @@ import {
   shortcutDefinitionsForScope,
 } from '../../src/renderer/ui/interactions/shortcutRegistry';
 import {
+  batchIndentNodeIds,
   expandIndentTargets,
   indentTargetParentId,
   previousVisibleRowId,
@@ -534,8 +536,83 @@ describe('row interaction resolvers', () => {
     expect([...expandIndentTargets(new Set(['already']), ['second', 'third'], byId)].sort()).toEqual([
       'already',
       'first',
-      'second',
     ]);
+  });
+
+  test('filters batch indent to runs with an unselected previous sibling', () => {
+    const root = {
+      id: 'root',
+      children: ['first', 'second', 'third', 'fourth'],
+    };
+    const first = {
+      id: 'first',
+      parentId: 'root',
+      children: [],
+    };
+    const second = {
+      id: 'second',
+      parentId: 'root',
+      children: [],
+    };
+    const third = {
+      id: 'third',
+      parentId: 'root',
+      children: [],
+    };
+    const fourth = {
+      id: 'fourth',
+      parentId: 'root',
+      children: [],
+    };
+    const byId = new Map<string, any>([
+      [root.id, root],
+      [first.id, first],
+      [second.id, second],
+      [third.id, third],
+      [fourth.id, fourth],
+    ]);
+
+    expect(batchIndentNodeIds(['first', 'second'], byId)).toEqual([]);
+    expect(batchIndentNodeIds(['second', 'third'], byId)).toEqual(['second', 'third']);
+    expect(batchIndentNodeIds(['first', 'third'], byId)).toEqual(['third']);
+  });
+
+  test('detects parents that become empty after outdenting selected children', () => {
+    const root = {
+      id: 'root',
+      children: ['parent', 'outside'],
+    };
+    const parent = {
+      id: 'parent',
+      parentId: 'root',
+      children: ['first', 'second'],
+    };
+    const first = {
+      id: 'first',
+      parentId: 'parent',
+      children: [],
+    };
+    const second = {
+      id: 'second',
+      parentId: 'parent',
+      children: [],
+    };
+    const outside = {
+      id: 'outside',
+      parentId: 'root',
+      children: [],
+    };
+    const byId = new Map<string, any>([
+      [root.id, root],
+      [parent.id, parent],
+      [first.id, first],
+      [second.id, second],
+      [outside.id, outside],
+    ]);
+
+    expect([...parentIdsEmptiedByOutdent(['first'], byId)]).toEqual([]);
+    expect([...parentIdsEmptiedByOutdent(['first', 'second'], byId)]).toEqual(['parent']);
+    expect([...parentIdsEmptiedByOutdent(['first', 'second'], byId, 'parent')]).toEqual([]);
   });
 
   test('uses visible row order when merging with backspace at row start', () => {

@@ -13,6 +13,7 @@ import {
   row,
   rowBody,
   rowEditor,
+  trailingEditor,
 } from './outlinerMock';
 
 async function emitCurrentProjection(page: import('@playwright/test').Page) {
@@ -22,6 +23,17 @@ async function emitCurrentProjection(page: import('@playwright/test').Page) {
     projection: await e2eProjection(page),
     timestamp: Date.now(),
   });
+}
+
+async function todayChildren(page: import('@playwright/test').Page) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
+async function waitForRowMoveAnimation(page: import('@playwright/test').Page, id: string) {
+  await expect.poll(async () => rowBody(page, id).evaluate((element) => (
+    element.classList.contains('row-move-animating')
+  )), { timeout: 1000 }).toBe(true);
 }
 
 async function createReferenceFixture(page: import('@playwright/test').Page) {
@@ -252,35 +264,104 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowBody(page, ids.gamma)).not.toHaveClass(/selected/);
   });
 
-  test('Tab indents selected rows under the previous sibling and keeps the target expanded', async ({ page }) => {
+  test('Tab indents selected rows under the previous sibling and keeps them selected', async ({ page }) => {
     await multiSelect(page, [ids.beta]);
 
     await page.keyboard.press('Tab');
 
+    await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(row(page, ids.beta)).toBeVisible();
-    await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowEditor(page, ids.beta)).not.toBeFocused();
   });
 
-  test('Shift+Tab outdents an indented row back to the parent scope', async ({ page }) => {
-    // Select beta, indent it under alpha (Tab carries the caret into the row editor),
-    // then Shift+Tab outdents it straight back to the parent scope without losing the
-    // row. Mirrors the sibling "Tab indents selected rows" case.
-    //
-    // NOTE: this deliberately Shift+Tabs from the editor rather than re-selecting beta
-    // first. Re-selecting a programmatically-focused row hits a pre-existing per-row
-    // memo bug (a DOM-focused row does not re-render on a focus->selection ui change;
-    // see the focused-row-selection-render-skip note, perf branch #35), so the
-    // selection->Shift+Tab path can't be exercised until that is fixed.
+  test('Tab on the first selected child run is a no-op', async ({ page }) => {
+    await rowEditor(page, ids.beta).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+
+    await rowEditor(page, ids.gamma).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await row(page, ids.beta).click({ modifiers: ['Meta'] });
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+
+    const beforeCalls = (await commandCalls(page)).length;
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('batch_indent_nodes');
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
+  test('Shift+Tab outdents selected rows back to the parent scope and keeps them selected', async ({ page }) => {
     await multiSelect(page, [ids.beta]);
     await page.keyboard.press('Tab');
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
-    await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect.poll(async () => rowBody(page, ids.beta).evaluate((element) => (
+      element.classList.contains('row-move-animating')
+    ))).toBe(false);
 
     await page.keyboard.press('Shift+Tab');
 
+    await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
-    await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowEditor(page, ids.beta)).not.toBeFocused();
+  });
+
+  test('Shift+Tab on selected panel-root rows is a no-op', async ({ page }) => {
+    await multiSelect(page, [ids.beta, ids.gamma]);
+
+    const beforeCalls = (await commandCalls(page)).length;
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.today);
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('batch_outdent_nodes');
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
+  test('Shift+Tab on multiple selected children removes the emptied parent trailing draft', async ({ page }) => {
+    await rowEditor(page, ids.beta).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+
+    await rowEditor(page, ids.gamma).click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await row(page, ids.beta).click({ modifiers: ['Meta'] });
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.today);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([]);
+    await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, ids.beta, ids.gamma]);
+    await expect(row(page, ids.beta)).toBeVisible();
+    await expect(row(page, ids.gamma)).toBeVisible();
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
 
   test('Cmd+Enter cycles checkbox state for all selected target rows', async ({ page }) => {

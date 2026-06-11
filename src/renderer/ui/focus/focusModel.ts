@@ -63,6 +63,7 @@ export function selectFocusState(state: UiState, target: FocusTarget): UiState {
     selectionRootId: null,
     selectionSource: null,
     pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
   };
 }
 
@@ -103,6 +104,7 @@ export function clearFocusState(state: UiState): UiState {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
   };
 }
 

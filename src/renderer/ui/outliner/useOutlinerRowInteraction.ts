@@ -33,6 +33,7 @@ import {
   selectFocusState,
 } from '../focus/focusModel';
 import { buildOutlinerRows } from './row-model';
+import { trailingDraftPlacementEquals } from '../../state/trailingDraftPlacement';
 
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
@@ -58,6 +59,7 @@ interface UseOutlinerRowInteractionOptions {
   // create under, so e2e (and any sibling lookup) can find the trailing editor by
   // `[data-trailing-parent-id]` the way the legacy TrailingInput row did.
   draft?: boolean;
+  draftAfterId?: NodeId | null;
 }
 
 const DROP_TARGET_CHANGE_EVENT = 'lin:outliner-drop-target-change';
@@ -87,6 +89,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     dragId,
     setDragId,
     draft,
+    draftAfterId,
   } = options;
   const byId = index.byId;
   const [dropPosition, setDropPosition] = useState<DropHoverPosition | null>(null);
@@ -122,8 +125,18 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [dropTargetKey]);
 
   const updateSelection = useCallback(() => {
-    setUi((prev) => selectFocusState(prev, rowFocusTarget(rowId, parentId, panelId)));
-  }, [panelId, parentId, rowId, setUi]);
+    setUi((prev) => {
+      const next = selectFocusState(prev, rowFocusTarget(rowId, parentId, panelId));
+      if (!draft) return next;
+      const placement = { parentId, afterId: draftAfterId ?? null, panelId };
+      return {
+        ...next,
+        trailingDraftPlacement: trailingDraftPlacementEquals(prev.trailingDraftPlacement, placement)
+          ? prev.trailingDraftPlacement
+          : placement,
+      };
+    });
+  }, [draft, draftAfterId, panelId, parentId, rowId, setUi]);
 
   const toggleExpandOrSelect = useCallback(() => {
     if (!hasChildren) {
