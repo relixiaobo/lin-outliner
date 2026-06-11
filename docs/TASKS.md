@@ -244,17 +244,12 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-local-root-boundary** (P1, `draft`, **build-ready now** — any free dev agent) —
-  verify/fix the packaged-app agent file root: the `process.cwd()` fallback may resolve
-  to `/` from Finder, making the whole disk count as in-root (default-allow ordinary
-  file ops). Small, high-value, no dependencies; hard prerequisite for Full Access in
-  `agent-permission-safety-modes`. See `docs/plans/agent-local-root-boundary.md`.
 - **agent-permission-safety-modes** (P1, `draft`, **design ratified 2026-06-11**, PR #187) —
   consumer trust model: four-layer abstraction (safety floor / trust ledger / 3-level
   default policy Ask First·Balanced·Full Access / internal delegation sandbox), one
   approval card with graduated exits + in-flow skill acceptance + tell-only denial
-  cards, one Security settings page. Implementation sequenced **after**
-  `agent-local-root-boundary` and rebases over #184 (run unification). Protocol rename
+  cards, one Security settings page. The `agent-local-root-boundary` prerequisite is
+  **cleared** (PR #192, merged); still rebases over #184 (run unification). Protocol rename
   `AgentPermissionMode`→`AgentSafetyMode` must be recorded in `agent-program` F6 in the
   same change. See `docs/plans/agent-permission-safety-modes.md` (incl. ratified
   decisions).
@@ -646,6 +641,20 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-local-root-boundary** (codex, PR #192, plan-track) — fixes the packaged-app
+  agent file root: the old `LIN_AGENT_LOCAL_ROOT ?? process.cwd()` fallback could
+  resolve to `/` on a Finder launch, making the whole disk the allowed file area. New
+  pure resolver `src/main/agentLocalRoot.ts` — trimmed env override wins, dev keeps
+  `process.cwd()` (repo-bound via `dev:*`), packaged falls back to the dedicated
+  `<userData>/agent-local-root` (a sibling of the app's own persistence, never `/`,
+  never full `userData`), `mkdirSync` at startup so bash/file-tool cwd exists. Verified
+  end-to-end at the gate: root flows into the permission engine `workspaceRoot`
+  (`agentRuntime.ts:6763` → `agentPermissions.ts:262`) and the bash/file-tool `spawn`
+  cwd (`agentLocalTools.ts`); net narrowing only, sensitive-path redlines unchanged.
+  One review nit folded in pre-merge (trim-before-resolve consistency + a whitespace-env
+  test). Spec synced (`agent-tool-permissions.md` "Allowed file area"), plan archived
+  `done`. typecheck + core 854 pass / 2 skip / 0 fail; clean rebase over #191. Clears the
+  Full Access prerequisite in `agent-permission-safety-modes`.
 - **Sidebar pinned nodes** (codex-2, PR #191, plan-track) — implements the stubbed
   Pinned section: renderer-local pins under localStorage key
   `lin-outliner:workspace-layout:v3:pinned`, toggled from the outliner row context

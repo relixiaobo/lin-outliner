@@ -31,6 +31,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Packaged agent local-file root no longer defaults to `/` (PR #192)** — the
+  launch-time fallback was `LIN_AGENT_LOCAL_ROOT ?? process.cwd()`; in a packaged
+  app launched from Finder, `process.cwd()` can be `/`, which made the whole disk
+  the agent's allowed file area (ordinary non-sensitive reads/writes outside any
+  intended project boundary defaulting to in-root behavior). Root resolution is
+  now a pure resolver (`src/main/agentLocalRoot.ts`): a non-empty
+  `LIN_AGENT_LOCAL_ROOT` (trimmed) is an explicit override; source/dev runs keep
+  `process.cwd()` (the `dev:*` scripts run from the repo clone, so dev stays
+  repo-bound); packaged runs with no override use the dedicated
+  `<userData>/agent-local-root` directory — a sibling of the app's own
+  persistence, never `/` and never the full `userData` — created at startup so
+  bash/file-tool cwd exists. This only narrows the default-allow area; the
+  sensitive-path redlines and out-of-root deny/ask rules are unchanged. Boundary
+  semantics documented in `docs/spec/agent-tool-permissions.md`. Hard prerequisite
+  for Full Access in `agent-permission-safety-modes`, now cleared.
+
 - **Dream backoff hygiene + manual-bypass coverage (PR #190)** — follow-up to #189
   closing its two accepted gate notes: `fireDream` now prunes `dreamFailureBackoff`
   entries for pools that are no longer dream principals (e.g. a deleted agent) at the
