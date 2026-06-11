@@ -128,4 +128,5 @@ state + callback); `outliner/NodeContextMenu.tsx` (Pin/Unpin item). No
 - [x] Sidebar row right-click → context menu with Pin/Unpin.
 - [x] Drag-to-pin explicitly left unshipped; empty state points to context menu.
 - [x] Persist across restart; dead-id sanitization verified.
-- [x] `bun run typecheck` + `test:renderer`; light + dark visual gate.
+- [x] `bun run typecheck`, `bun run test:renderer`, and
+      `bun run test:e2e -- tests/e2e/workspace-layout.spec.ts`.

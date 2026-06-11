@@ -185,7 +185,19 @@ export function Sidebar(props: SidebarProps) {
 
       {rootNode && (
         <div className="sidebar-section sidebar-root-section">
-          <div className="sidebar-root-row">
+          <div
+            className="sidebar-root-row"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setContextMenu({
+                x: event.clientX,
+                y: event.clientY,
+                nodeId: rootNode.id,
+                label: rootLabel,
+              });
+            }}
+          >
             <ButtonControl
               aria-label={t.shell.sidebar.openRoot({ rootLabel })}
               className={`sidebar-root-button ${rootActive ? 'active' : ''}`}

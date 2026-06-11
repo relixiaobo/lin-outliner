@@ -535,6 +535,12 @@ test.describe('workspace layout resizing', () => {
 
     await expect(page.getByLabel('Pinned nodes')).toHaveCount(0);
     await expect(page.locator('.sidebar-empty-row')).toContainText('Right-click a node to pin it');
+
+    await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Pin', exact: true }).click();
+
+    const rootPinnedTree = page.getByLabel('Pinned nodes');
+    await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Root' })).toBeVisible();
   });
 
   test('sidebar pinned nodes drop stale ids on restore', async ({ page }) => {
