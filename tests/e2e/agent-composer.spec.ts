@@ -159,6 +159,89 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('renders skill trust approvals as accept/not-now cards', async ({ page }) => {
+    await emitAgentEvent(page, {
+      type: 'approval_request',
+      conversationId: 'mock-agent-conversation',
+      requestId: 'skill-trust-e2e',
+      request: {
+        requestId: 'skill-trust-e2e',
+        conversationId: 'mock-agent-conversation',
+        kind: 'skill_trust',
+        toolCallId: 'tool-skill-trust-e2e',
+        toolName: 'skill',
+        title: 'Skill review-pr requests automatic use.',
+        target: '/review-pr',
+        reason: 'Accept the current skill content hash before Lin can invoke it automatically.',
+        details: [{ label: 'Content hash', value: 'abc123' }],
+        skillTrust: {
+          name: 'review-pr',
+          source: 'project',
+          contentHash: 'abc123',
+        },
+      },
+      timestamp: 1_800_000_003_000,
+    });
+
+    const card = page.locator('.agent-approval-card');
+    await expect(card).toBeVisible();
+    await expect(card.getByText('Skill review-pr requests automatic use.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Accept skill' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Not now' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Hand everything to Lin, stop asking' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Accept skill' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'skill-trust-e2e')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-conversation',
+      requestId: 'skill-trust-e2e',
+      approved: true,
+      scope: 'once',
+    });
+  });
+
+  test('renders permission notices as dismiss-only cards', async ({ page }) => {
+    await emitAgentEvent(page, {
+      type: 'approval_request',
+      conversationId: 'mock-agent-conversation',
+      requestId: 'permission-notice-e2e',
+      request: {
+        requestId: 'permission-notice-e2e',
+        conversationId: 'mock-agent-conversation',
+        kind: 'permission_notice',
+        toolCallId: 'tool-notice-e2e',
+        toolName: 'bash',
+        title: 'Blocked unknown shell command',
+        target: '$(cat ./script.sh)',
+        reason: 'Unknown or ambiguous shell execution.',
+        details: [{ label: 'Permission kind', value: 'shell.unknown' }],
+      },
+      timestamp: 1_800_000_003_100,
+    });
+
+    const card = page.locator('.agent-approval-card');
+    await expect(card).toBeVisible();
+    await expect(card.getByText('Blocked unknown shell command')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Accept skill' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Deny once' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'permission-notice-e2e')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-conversation',
+      requestId: 'permission-notice-e2e',
+      approved: false,
+      scope: 'once',
+    });
+  });
+
   test('pastes multi-line text as multiple lines instead of collapsing to one', async ({ page }) => {
     const input = page.getByLabel('Agent message');
     await input.click();

@@ -85,6 +85,7 @@ export interface SkillLoadOptions {
   conversationId?: string;
   executeSkillShell?: SkillShellExecutor;
   executeForkedSkill?: SkillForkExecutor;
+  skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   provenanceStore?: AgentSkillProvenanceStore;
 }
 
@@ -149,6 +150,10 @@ export interface SkillShellExecutionInput {
 }
 
 export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<string>;
+export type SkillTrustApprovalHandler = (input: {
+  skill: SkillDefinition;
+  parentToolCallId?: string;
+}) => Promise<boolean>;
 
 interface InvokeSkillInput {
   skill: string;
@@ -278,6 +283,7 @@ export class AgentSkillRuntime {
   private readonly conversationId: string;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeForkedSkill?: SkillForkExecutor;
+  private readonly skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
   private readonly activePermissionRules = new Set<string>();
@@ -290,6 +296,7 @@ export class AgentSkillRuntime {
     this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
     this.executeSkillShell = options.executeSkillShell;
     this.executeForkedSkill = options.executeForkedSkill;
+    this.skillTrustApprovalHandler = options.skillTrustApprovalHandler;
   }
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
@@ -456,7 +463,7 @@ export class AgentSkillRuntime {
       return { ok: false, code: 'invalid_skill', message: `Invalid skill format: ${input.skill}` };
     }
 
-    const skill = await this.registry.resolveSkill(requestedName);
+    let skill = await this.registry.resolveSkill(requestedName);
     if (!skill) {
       return { ok: false, code: 'unknown_skill', message: `Unknown skill: ${requestedName}` };
     }
@@ -472,6 +479,16 @@ export class AgentSkillRuntime {
       };
     }
     if (input.trigger === 'agent' && !skill.ratified) {
+      const accepted = await this.skillTrustApprovalHandler?.({
+        skill,
+        parentToolCallId: input.parentToolCallId,
+      });
+      if (accepted) {
+        const refreshed = await this.registry.resolveSkill(requestedName);
+        if (refreshed?.ratified) skill = refreshed;
+      }
+    }
+    if (input.trigger === 'agent' && !skill.ratified) {
       // The ratification gate: unaccepted agent-authored or workspace-borne skills
       // must not be wielded on the model's own initiative. Slash invocation is
       // unaffected — the user's command is per-run consent — so escalation through
@@ -479,7 +496,7 @@ export class AgentSkillRuntime {
       return {
         ok: false,
         code: 'skill_not_ratified',
-        message: `Skill ${skill.name} is not yet accepted for automatic use. Ask the user to run /${skill.name} themselves, or to accept the skill in Settings -> Skills.`,
+        message: `Skill ${skill.name} is not yet accepted for automatic use.`,
         skill,
       };
     }

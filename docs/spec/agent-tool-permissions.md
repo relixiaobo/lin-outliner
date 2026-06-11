@@ -201,7 +201,8 @@ Two event families are persisted today (the runtime emits both):
 - **Policy decision** — `tool.permission.checked` / `tool.permission.resolved`
   (`src/core/agentEventLog.ts`).
 - **UI surface** — `approval.requested` / `approval.resolved` plus transient
-  approval IPC.
+  approval IPC. `AgentApprovalRequestView.kind` distinguishes
+  `tool_permission`, `skill_trust`, and tell-only `permission_notice` cards.
 
 The denied tool result is `{ ok: false, error: { code: 'permission_denied',
 recoverable, details: { reason } } }`. Reasons use the canonical permission
@@ -220,12 +221,18 @@ move behind the same projection.
 
 ## UI surfaces
 
-- **Composer approval card** (`AgentComposer.tsx` `AgentApprovalCard`) — *Approve
-  once* (`once`), *Always allow* (`always`, only when an always-allow rule is
-  offered), *Hand everything to Lin, stop asking* (sets global `safetyMode` to
-  `full_access`, then approves the current request once), and *Deny once*. Detail
-  panel shows action / target / why / permission-kind + the always-allow rule
-  string.
+- **Composer card** (`AgentComposer.tsx` `AgentApprovalCard`) — one component
+  renders three interrupt forms:
+  - `tool_permission`: *Approve once* (`once`), *Always allow* (`always`, only
+    when an always-allow rule is offered), *Hand everything to Lin, stop asking*
+    (`full_access`, which sets global `safetyMode` to `full_access` and approves
+    the current request), and *Deny once*.
+  - `skill_trust`: *Accept skill* records the exact current skill content hash;
+    *Not now* resolves false and the `skill` tool returns `skill_not_ratified`.
+  - `permission_notice`: tell-only cards for hard/configured policy denials. The
+    tool result remains `permission_denied`; the card only makes the block
+    visible and dismissible.
+  Detail panels show action / target / why / permission-kind or skill hash facts.
 - **Security center** — the **Security** category in `AgentSettingsView.tsx`
   exposes the global trust level, a revocable Granted Trust projection over
   action allow rules and accepted skill hashes, and Advanced action-kind rows with allow/ask toggles

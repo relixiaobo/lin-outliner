@@ -51,7 +51,6 @@ import {
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
-import { api } from '../../api/client';
 
 interface AgentComposerProps {
   currentNodeId: NodeId | null;
@@ -796,12 +795,24 @@ function AgentApprovalCard({
     if (!window.confirm(t.agent.composer.fullAccessConfirm)) return;
     setSubmitting('full_access');
     try {
-      await api.agentUpdateRuntimeSettings({ safetyMode: 'full_access' });
-      await onResolve(approval.requestId, true, 'once');
+      await onResolve(approval.requestId, true, 'full_access');
     } finally {
       setSubmitting(null);
     }
   }
+
+  async function dismissNotice() {
+    if (submitting) return;
+    setSubmitting('deny');
+    try {
+      await onResolve(approval.requestId, false, 'once');
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  const isSkillTrust = approval.kind === 'skill_trust';
+  const isNotice = approval.kind === 'permission_notice';
 
   return (
     <div className="agent-approval-card" role="group" aria-label={approval.title}>
@@ -834,40 +845,72 @@ function AgentApprovalCard({
         ) : null}
       </div>
       <div className="agent-approval-actions">
-        <button
-          className="agent-approval-button is-primary"
-          disabled={!!submitting}
-          onClick={() => void resolve(true, 'once')}
-          type="button"
-        >
-          {t.agent.composer.approveOnce}
-        </button>
-        {approval.alwaysAllowRule ? (
+        {isNotice ? (
           <button
-            className="agent-approval-button"
+            className="agent-approval-button is-primary"
             disabled={!!submitting}
-            onClick={() => void resolve(true, 'always')}
+            onClick={() => void dismissNotice()}
             type="button"
           >
-            {t.agent.composer.alwaysAllow}
+            {t.agent.composer.dismiss}
           </button>
-        ) : null}
-        <button
-          className="agent-approval-button"
-          disabled={!!submitting}
-          onClick={() => void stopAsking()}
-          type="button"
-        >
-          {t.agent.composer.stopAsking}
-        </button>
-        <button
-          className="agent-approval-button"
-          disabled={!!submitting}
-          onClick={() => void resolve(false, 'once')}
-          type="button"
-        >
-          {t.agent.composer.denyOnce}
-        </button>
+        ) : isSkillTrust ? (
+          <>
+            <button
+              className="agent-approval-button is-primary"
+              disabled={!!submitting}
+              onClick={() => void resolve(true, 'once')}
+              type="button"
+            >
+              {t.agent.composer.acceptSkill}
+            </button>
+            <button
+              className="agent-approval-button"
+              disabled={!!submitting}
+              onClick={() => void resolve(false, 'once')}
+              type="button"
+            >
+              {t.agent.composer.notNow}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="agent-approval-button is-primary"
+              disabled={!!submitting}
+              onClick={() => void resolve(true, 'once')}
+              type="button"
+            >
+              {t.agent.composer.approveOnce}
+            </button>
+            {approval.alwaysAllowRule ? (
+              <button
+                className="agent-approval-button"
+                disabled={!!submitting}
+                onClick={() => void resolve(true, 'always')}
+                type="button"
+              >
+                {t.agent.composer.alwaysAllow}
+              </button>
+            ) : null}
+            <button
+              className="agent-approval-button"
+              disabled={!!submitting}
+              onClick={() => void stopAsking()}
+              type="button"
+            >
+              {t.agent.composer.stopAsking}
+            </button>
+            <button
+              className="agent-approval-button"
+              disabled={!!submitting}
+              onClick={() => void resolve(false, 'once')}
+              type="button"
+            >
+              {t.agent.composer.denyOnce}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

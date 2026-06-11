@@ -5,6 +5,7 @@ import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
   alwaysAllowRuleForDescriptor,
+  compareToolPermissionResolutionPriority,
   parseGlobalToolPermissionSettings,
   resolveGlobalToolPermissionDecision,
   type AgentToolActionKind,
@@ -436,9 +437,7 @@ function resolveSafetyModeProfileDecision(
     };
   });
   resolutions.sort((left, right) => (
-    permissionDecisionRank(right.decision) - permissionDecisionRank(left.decision)
-    || permissionDescriptorRiskRank(right.descriptor) - permissionDescriptorRiskRank(left.descriptor)
-    || permissionSourceRank(right.source) - permissionSourceRank(left.source)
+    compareToolPermissionResolutionPriority(left, right, (resolution) => permissionSourceRank(resolution.source))
   ));
   return resolutions[0] ?? {
     decision: 'deny',
@@ -458,23 +457,6 @@ function safetyModeDecisionForDescriptor(
   }
   if (FULL_ACCESS_ALLOW_ACTIONS.has(descriptor.actionKind)) return 'allow';
   return descriptor.defaultDecision;
-}
-
-function permissionDecisionRank(decision: GlobalToolPermissionDecision): number {
-  if (decision === 'deny') return 2;
-  if (decision === 'ask') return 1;
-  return 0;
-}
-
-function permissionDescriptorRiskRank(descriptor: ToolActionDescriptor): number {
-  let rank = 0;
-  if (descriptor.externalEffect) rank += 4;
-  if (descriptor.highConsequence) rank += 2;
-  if (descriptor.accessScope === 'sensitive_local_path') rank += 2;
-  if (descriptor.accessScope === 'outside_allowed_file_area') rank += 1;
-  if (!descriptor.reversible) rank += 1;
-  if (descriptor.actionKind.includes('unknown')) rank += 5;
-  return rank;
 }
 
 function permissionSourceRank(source: SafetyModeProfileSource): number {
@@ -1339,6 +1321,31 @@ function askForDescriptor(
       permissionSource,
     },
   );
+}
+
+export function approvalNoticeForDeniedDecision(
+  toolName: string,
+  decision: AgentPermissionDenyDecision,
+): AgentApprovalRequest {
+  const descriptor = decision.descriptor ?? decision.descriptors?.[0];
+  const target = descriptor?.command ?? descriptor?.summary ?? toolName;
+  const details: AgentApprovalDetail[] = [
+    { label: 'Tool', value: toolName },
+    { label: 'Target', value: target },
+    { label: 'Why blocked', value: decision.reason },
+    { label: 'Permission kind', value: descriptor?.actionKind ?? decision.code },
+  ];
+  if (descriptor?.command && descriptor.command !== target) {
+    details.push({ label: 'Command', value: descriptor.command });
+  }
+  if (decision.redline || descriptor?.platformHardBlock) {
+    details.push({ label: 'Safety floor', value: 'This block cannot be bypassed by trust settings.' });
+  }
+  return {
+    title: `Blocked ${descriptor?.title ?? toolName}`,
+    target,
+    details,
+  };
 }
 
 export function toPermissionClassifierInput(toolNameInput: string, args: unknown): AgentPermissionClassifierProjection | null {

@@ -1010,24 +1010,24 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                   {actionTrustGrants.length > 0 || acceptedSkillTrustGrants.length > 0 ? (
                     <>
                       {actionTrustGrants.map((ruleValue) => {
-                      const known = COMMON_PERMISSION_RULES.find((rule) => rule.ruleValue === ruleValue);
-                      const label = known ? t.settings.permissions.rules[known.id].label : ruleValue;
-                      return (
-                        <InsetRow
-                          key={ruleValue}
-                          label={label}
-                          sublabel={known ? ruleValue : t.settings.permissions.actionGrantSublabel}
-                          trailing={(
-                            <ButtonControl
-                              className="settings-row-button"
-                              onClick={() => setPermissionDecision(ruleValue, 'ask')}
-                            >
-                              {t.settings.permissions.revokeGrant}
-                            </ButtonControl>
-                          )}
-                          wrap
-                        />
-                      );
+                        const known = COMMON_PERMISSION_RULES.find((rule) => rule.ruleValue === ruleValue);
+                        const label = known ? t.settings.permissions.rules[known.id].label : ruleValue;
+                        return (
+                          <InsetRow
+                            key={ruleValue}
+                            label={label}
+                            sublabel={known ? ruleValue : t.settings.permissions.actionGrantSublabel}
+                            trailing={(
+                              <ButtonControl
+                                className="settings-row-button"
+                                onClick={() => setPermissionDecision(ruleValue, 'ask')}
+                              >
+                                {t.settings.permissions.revokeGrant}
+                              </ButtonControl>
+                            )}
+                            wrap
+                          />
+                        );
                       })}
                       {acceptedSkillTrustGrants.map((skill) => (
                         <InsetRow
