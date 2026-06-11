@@ -22,7 +22,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (M3-B cross-agent memory + isolation gate merged, PR #200) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (UX B+E+C identity/metadata/model-chip merged, PR #201); next lane UX D |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (full ask_user_question flow merged, PR #198) |
+| Codex 3 | `lin-outliner-codex-3/` | — | building file-attachments feature PR (protocol slice merged, PR #204) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -35,7 +35,7 @@ the flow; merge order owned by main.
 |---|---|---|---|
 | 1 | codex | **`agent-channel-parallel-runtime`** (round 2; M3-B merged as PR #200 — see Recently completed — freed the `agentRuntime.ts` slot). Build may overlap codex-2's D, but **merge is gated behind D**, and the `agentRenderProjection.ts` activity surface is D's to define — the parallel PR re-points it at per-run state and rebases on D. | plan-track |
 | 2 | codex-2 | **UX Feature D** — Channel activity area (parallel-presence model) + automatic reply anchors (round 2; B+E+C merged as PR #201 — see Recently completed). Renderer/projection only; defines the activity-entry projection surface the parallel runtime will later feed. | plan-track |
-| 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Touches `core/types.ts` → shared-interface-first: land the protocol slice as its own PR before the feature. | plan-track |
+| 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Protocol slice **merged as PR #204** (see Recently completed); now building the complete feature PR (core handler, persistence, ingest, renderer rows, system actions) on top — gate adds `/security-review`. | plan-track |
 
 Relay: merge order **D → parallel runtime** (main enforces). **Realignment PR-4**
 (retrieval) is unblocked by #200 — slots into the next free lane. UX **Feature A**
@@ -666,6 +666,22 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **file-attachments protocol slice** (codex-3, PR #204, plan-track) — The
+  shared-interface-first slice for `file-attachments`: adds the `attachment`
+  `NodeType` + `AttachmentNode` shape and extends `AssetMetadata` with the derived
+  metadata fields (`thumbnailAssetId`, `pdfPageCount`, `audioDurationMs`,
+  `videoDurationMs`), and reserves three command names — `create_attachment_node`
+  (document), `pick_attachment_files` / `copy_asset_file` (asset) — for the follow-up.
+  Purely additive (+20 lines, `core/types.ts` + `core/commands.ts` only); the
+  `AttachmentNode` scalars are optional, matching the `ImageNode` staged-union
+  pattern. Gate: typecheck + test:core green; new `NodeType` variant verified not to
+  break union exhaustiveness; reserved names feed the `Set`-based command guards (no
+  exhaustive handler map), so name-without-handler is inert until PR-2. The complete
+  feature (core handler, Loro persistence, AssetService ingest + PDF thumbnail,
+  range-capable `asset://` serving, renderer rows, Finder/paste/picker ingest,
+  open/reveal/copy actions, specs, tests) lands next as its own PR — that one adds
+  `/security-review` at the gate (file IO + clipboard write).
 
 - **Agent conversation UX B+E+C: identity, metadata, model chip** (codex-2,
   PR #201, plan-track) — Channel rows show a deterministic identity chip + speaker

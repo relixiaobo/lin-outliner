@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **File-attachment protocol slice (PR #204)** — Shared-interface-first protocol
+  surface for the `file-attachments` feature (no handlers yet). Adds the
+  `attachment` `NodeType` and an `AttachmentNode` shape (`assetId`, `mimeType`,
+  `originalFilename`, `fileSize`, `thumbnailAssetId`, `pdfPageCount`,
+  `audioDurationMs`, `videoDurationMs` — all optional at the persisted/projection
+  layer, mirroring `ImageNode`), extends `AssetMetadata` with the matching derived
+  fields, and reserves three command names for the follow-up implementation:
+  `create_attachment_node` (document), `pick_attachment_files` and `copy_asset_file`
+  (asset). Purely additive; lets parallel agents rebase on the protocol before the
+  complete feature lands. typecheck + test:core green.
+
 - **Agent conversation identity, message metadata, and the model chip (PR #201)** —
   Channel assistant rows now carry a deterministic circular identity chip plus a
   speaker name + `@mention` for **every** speaker (including the coordinator),
