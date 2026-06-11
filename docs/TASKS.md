@@ -21,7 +21,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-2 merged, PR #195) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (sidebar pinned nodes merged, PR #191) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (agent permission safety modes merged, PR #193) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (local error observability merged, PR #194) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -246,16 +246,11 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-permission-safety-modes** (P1, `draft`, **design ratified 2026-06-11**, PR #187) —
-  consumer trust model: four-layer abstraction (safety floor / trust ledger / 3-level
-  default policy Ask First·Balanced·Full Access / internal delegation sandbox), one
-  approval card with graduated exits + in-flow skill acceptance + tell-only denial
-  cards, one Security settings page. The `agent-local-root-boundary` prerequisite is
-  **cleared** (PR #192, merged) and #184 (run unification) is merged — builds on
-  current `main`. Protocol rename
-  `AgentPermissionMode`→`AgentSafetyMode` must be recorded in `agent-program` F6 in the
-  same change. See `docs/plans/agent-permission-safety-modes.md` (incl. ratified
-  decisions).
+- **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
+  completed; plan archived `done` in-PR. The global `AgentSafetyMode`
+  (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
+  notice), Full Access escalation, and the Security settings page shipped; the
+  `AgentPermissionMode`→`AgentSafetyMode` rename is recorded in `agent-program` F6.
 - **agent-conversation-model** (P1, the spine, M0–M3) — IM-native rebuild: durable Agents
   in **DMs/Channels** over the ambient outline; the per-agent **memory line**; background
   tasks + notifications; sequential multi-member Channels + **coordinator** routing;
@@ -647,6 +642,34 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent permission safety modes** (codex-2, PR #193, plan-track) — the app-level
+  `permissionMode: trusted|restricted` becomes a global three-level `AgentSafetyMode`
+  (`ask_first` / `balanced` (default) / `full_access`), a first-class default-policy
+  layer in `evaluateAgentToolPermission` (after configured deny / restricted sandbox /
+  configured allow-ask, before the descriptor default). The profile never materializes
+  as broad allow rules and can never weaken a hard floor — `full_access` promotes only
+  classified non-redline routine automation (allowed-root edits/deletes, web fetch,
+  local/project/dependency execution, network writes, git/GitHub mutation, subagent
+  spawn, Dream, skill writes, background processes) and still asks for deploy/publish,
+  sandbox override, config writes, sensitive reads, outside-root access, while unknown
+  shell / sensitive writes / exfiltration / host destruction / permission modification /
+  payment stay denied; `ask_first` also asks for ordinary local edits + skill invoke.
+  Legacy app-level `permissionMode` normalizes at read/write; agent definitions keep
+  `permission-mode: restricted` only as a narrow delegation sandbox and legacy `trusted`
+  frontmatter is ignored on parse. The approval card grew to three kinds
+  (`tool_permission` / `skill_trust` / `permission_notice`): a *Hand everything to Lin,
+  stop asking* exit that flips the global mode to `full_access`, an in-flow exact-hash
+  skill-acceptance card, and tell-only single-slot denial notices; all three honor the
+  run abort signal. Settings → Permissions becomes **Security** (global trust level +
+  revocable **Granted Trust** over action allow rules and accepted skill hashes +
+  **Advanced** action rows). Gate review (this main agent), two rounds: round 1 flagged
+  missing abort handling on the new cards, unbounded notice accumulation, and a
+  save-vs-immediate revoke inconsistency; round 2 resolved all (shared
+  `denyPendingApprovalForRuntime` + abort-signal threading, single-slot notice dedup,
+  immediate action-grant revoke). Gates green: typecheck, core 866/0-fail (+5 tests),
+  renderer 410/0-fail, e2e composer+settings 61/61 (unrelated geometry timing flakes
+  only). Specs synced (agent-tool-permissions / agent-skills / agent-tool-design /
+  agent-program F6); plan archived `done`.
 - **local error observability** (codex-3, PR #194, plan-track) — a failure anywhere
   (handled-but-degrading, unhandled, foreground, or background) now lands as a
   structured, deduplicated record in one local log, legible without the terminal.

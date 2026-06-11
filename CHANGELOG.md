@@ -57,6 +57,50 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent permission safety modes (PR #193)** — the app-level
+  `permissionMode: trusted|restricted` is replaced by a global three-level
+  `AgentSafetyMode` (`ask_first` / `balanced` (default) / `full_access`) that
+  supplies descriptor default decisions as a first-class policy layer inside
+  `evaluateAgentToolPermission`, ordered after configured deny / the restricted
+  delegation sandbox / configured allow-ask and before the descriptor default. The
+  profile never materializes as broad allow rules and can never weaken a hard
+  floor: `full_access` only promotes classified non-redline routine automation
+  (allowed-root file/outliner edits + deletes, web fetch, local/project/dependency
+  execution, network writes, git/GitHub mutation, subagent spawn, Dream, skill
+  content writes, background processes) and still asks for deploy/publish, sandbox
+  override, config writes, sensitive local reads, and outside-root access — unknown
+  shell, sensitive writes, exfiltration, host destruction, permission modification,
+  and payment stay denied; `ask_first` additionally asks for ordinary local
+  file/outliner edits and skill invocation. Legacy stored `permissionMode`
+  normalizes at read/write (`restricted→ask_first`, `trusted→balanced`); agent
+  definitions keep `permission-mode: restricted` only as a narrow delegation
+  sandbox and legacy `permission-mode: trusted` frontmatter is ignored on parse so
+  a definition can never widen above the global mode. The composer approval card
+  grew from one form to three kinds (`tool_permission` / `skill_trust` /
+  `permission_notice`): tool approvals add a *Hand everything to Lin, stop asking*
+  action that switches the global mode to `full_access` and approves the current
+  call; the in-flow `skill_trust` card accepts an unratified mutable skill's exact
+  current content hash (refused on mismatch) so automatic use no longer needs a
+  Settings detour; tell-only `permission_notice` cards make hard/configured denials
+  visible and dismissible (single-slot per conversation — a newer notice resolves
+  and replaces the older). All three card kinds listen to the active run's abort
+  signal and resolve as declined (`run_aborted` for blocking waiters) on stop. The
+  Settings → Permissions page becomes **Security**: a global trust-level control, a
+  revocable **Granted Trust** projection over action allow rules (revoked
+  immediately, also merged into any unsaved draft) and accepted skill hashes, plus
+  the prior action-kind rows demoted to **Advanced**. New permission event sources
+  (`safety_mode_profile`; reserved `trust_ledger`) distinguish default from
+  explicit resolution paths. Gate review (this main agent), two rounds: round 1
+  flagged missing abort handling on the two new card kinds, unbounded
+  permission-notice accumulation, and a save-vs-immediate inconsistency between the
+  two Granted Trust revoke buttons; round 2 resolved all — a shared
+  `denyPendingApprovalForRuntime` helper + abort-signal threading through skill
+  tool / skill-shell / notice paths, single-slot notice dedup, and immediate action-
+  grant revocation. Gates green: typecheck, core 866/0-fail (+5 new edge-case
+  tests), renderer 410/0-fail, e2e (composer + settings) 61/61 with the new
+  skill-trust / notice / Security specs (unrelated composer-geometry timing flakes
+  only). Specs synced (agent-tool-permissions / agent-skills / agent-tool-design /
+  agent-program F6); plan archived `done`.
 - **Agent memory: episodic sources + discriminated-union provenance (PR #195)** —
   memory realignment PR-2 (D-4 episodic layer + D-5 sources reshape). A
   `MemoryEntry.source` is now a discriminated union: a raw stream span
