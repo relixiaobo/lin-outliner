@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (M3-A multi-agent Channel merged, PR #179) |
+| Claude Code | `lin-outliner-cc/` | — | idle (Dream cache-key cap fix merged, PR #188) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
 | Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (focus/selection polish merged, PR #186) |
@@ -639,6 +639,17 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Dream sessionId cache-key cap** (cc, PR #188, fast-track) — the Dream batch stream
+  `sessionId` was `${principalKey}:dream:${runId}:${n}` = 79 chars, overflowing the
+  provider `prompt_cache_key` 64-char cap (pi-ai clamps the body field but still writes
+  the untruncated id into the `session-id` request header), so every packaged-app Dream
+  on the `openai-codex` provider failed with HTTP 400. Dropped the `principalKey` prefix
+  (`runId` = `dream-run-<uuid>` is already globally unique; the prefix bought no cache
+  affinity) → `dream:<runId>:<n>` = 54 chars, extracted into one `buildDreamSessionId`
+  builder with a 64-char-cap unit test. Gate: `/code-review` clean (no findings),
+  typecheck + core 844 pass / 2 skip / 0 fail. Textual-merge overlap with #184 flagged,
+  no semantic conflict (whichever lands second rebases).
 
 - **Outliner focus/selection polish** (codex-2, PR #186, fast-track) — page entry
   auto-focuses the first visible body row (trailing draft on empty pages; search

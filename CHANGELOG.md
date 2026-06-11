@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Dream sessionId stays within the provider `prompt_cache_key` cap (PR #188)** —
+  the Dream batch stream `sessionId` was `${principalKey}:dream:${runId}:${n}` =
+  79 chars; pi-ai clamps the request body's `prompt_cache_key` to 64 but still
+  writes the untruncated id into the `session-id` request header, so the
+  `openai-codex` backend rejected every packaged-app Dream with HTTP 400
+  (`Invalid 'prompt_cache_key': … length 79`). Dropped the `principalKey` prefix
+  (`runId` = `dream-run-<uuid>` is already globally unique and the prefix bought no
+  cache affinity) → new form `dream:<runId>:<n>` = 54 chars. The format now lives
+  in one `buildDreamSessionId(runId, batchIndex)` builder so no caller can
+  re-prepend a principal; a unit test guards the 64-char cap. Normal chat was
+  unaffected (its `conversationId` is 29 chars).
+
 - **Outliner indent and trailing-draft placement (PR #182)** — closes the boarded
   fast-track `outliner-indent-draft-fixes`. Batch Tab no longer force-expands the
   selected siblings themselves, and the skip-batch-members run rule now lives in core
