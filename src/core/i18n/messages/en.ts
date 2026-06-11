@@ -1048,7 +1048,7 @@ commandPalette: {
       metaAgentId: 'Agent ID',
       metaType: 'Type',
       metaParentToolCall: 'Parent tool call',
-      metaTranscriptPayload: 'Transcript payload',
+      metaParentRun: 'Parent run',
       metaStarted: 'Started',
       metaUpdated: 'Updated',
       metaNone: 'none',

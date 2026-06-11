@@ -195,9 +195,6 @@ function visibleSource(source: AgentMemorySource): unknown {
     ...(source.summaryId ? { summary_id: source.summaryId } : {}),
     ...(source.messageRange ? { message_range: source.messageRange } : {}),
     ...(source.runId ? { run_id: source.runId } : {}),
-    ...(source.subagentRunId ? { subagent_run_id: source.subagentRunId } : {}),
-    ...(source.agentId ? { agent_id: source.agentId } : {}),
-    ...(source.parentToolCallId ? { parent_tool_call_id: source.parentToolCallId } : {}),
     ...(source.eventId ? { event_id: source.eventId } : {}),
   };
 }

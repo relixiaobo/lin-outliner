@@ -45,9 +45,10 @@ export function AgentSubagentBoundary({
 
   const running = subagent.status === 'running';
   const isError = subagent.status === 'failed' || subagent.status === 'stopped';
-  const description = subagent.description.trim() || subagent.name?.trim() || subagent.subagentType;
+  const description = subagent.description.trim() || subagent.name?.trim() || subagent.agentType;
   const body = (subagent.error ?? '').trim() || (subagent.result ?? '').trim();
-  const canOpen = Boolean(subagent.transcriptPayloadId) && Boolean(onOpenTranscript);
+  // The transcript is the child run's own ledger — always addressable by run id.
+  const canOpen = Boolean(onOpenTranscript);
 
   return (
     <section className="agent-subagent-boundary" aria-label={`${labels.label} · ${description}`}>

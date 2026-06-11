@@ -55,7 +55,6 @@ function taskMetaParts(task: AgentTaskEntry, labels: Messages['agent']['task'], 
   }
   return [
     task.subtitle,
-    labels.messages({ count: task.subagent.transcriptMessageCount }),
     formatTaskTime(task.updatedAt, locale),
   ];
 }

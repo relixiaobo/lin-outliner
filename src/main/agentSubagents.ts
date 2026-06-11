@@ -8,7 +8,7 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, AgentSubagentActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
-import type { AgentPayloadRef, AgentSubagentRunRecord } from '../core/agentEventLog';
+import type { AgentChildRunRecord, AgentChildRunStatus, AgentPayloadRef } from '../core/agentEventLog';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
@@ -174,10 +174,31 @@ export interface AgentSubagentRuntimeHost {
   createChildAgent(input: AgentSubagentCreateInput): Agent;
   getParentMessages(): AgentMessage[];
   getParentSystemPrompt(): string;
+  /** The parent run currently executing (the delegating side of the run tree). */
+  getActiveRunId(): string | null;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
   buildMemoryReminder(agentId: string): Promise<string | null>;
-  persistSubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
-  notifySubagentRun(snapshot: AgentSubagentRunSnapshot): Promise<void>;
+  /**
+   * A child run started: append the slim `child_run.started` conversation marker
+   * and seed the child's OWN run ledger ([[agent-run-unification]] Design 1) —
+   * context messages (fork prefix) before `run.started`, the directive after it.
+   */
+  childRunStarted(
+    snapshot: AgentChildRunSnapshot,
+    seed: { contextMessages: readonly AgentMessage[]; evidenceMessages: readonly AgentMessage[] },
+  ): Promise<void>;
+  /** A completed child message (user / assistant / toolResult) → child ledger. */
+  childRunMessage(snapshot: AgentChildRunSnapshot, message: AgentMessage): Promise<void>;
+  /** A slimming replacement of an earlier tool result → `tool_result.replaced` in the child ledger. */
+  childRunToolResultReplaced(snapshot: AgentChildRunSnapshot, toolCallId: string, text: string): Promise<void>;
+  /** Event-sourced child compaction (Design 4). */
+  childRunCompacted(
+    snapshot: AgentChildRunSnapshot,
+    input: { postCompactMessage: AgentMessage; summary: string; trigger: 'auto' | 'reactive' },
+  ): Promise<void>;
+  /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
+  childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
+  notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
   persistToolOutputPayload(
     toolCallId: string,
     toolName: string,
@@ -215,16 +236,22 @@ interface AgentRunRecord {
   definition: AgentDefinition | null;
   executingAgentId: string;
   parentAgentId: string;
+  parentRunId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
-  dreamEvidenceStartMessageIndex: number;
-  status: 'running' | 'completed' | 'failed' | 'stopped';
+  status: AgentChildRunStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
   depth: number;
   agent?: Agent;
   messages: AgentMessage[];
+  /**
+   * Messages the ledger was seeded with at spawn — the subscription must not
+   * re-append them when the loop re-emits `message_end` for its prompt inputs
+   * (which it does; the old snapshot path double-recorded them).
+   */
+  ledgerSeededMessages: WeakSet<AgentMessage>;
   result?: string;
   error?: string;
   completion?: Promise<void>;
@@ -236,7 +263,6 @@ interface AgentRunRecord {
   toolResultBudgetState: ToolResultBudgetState;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
-  pendingPersist?: Promise<void>;
   skillRuntime?: AgentSkillRuntime;
   localWorkspace?: AgentLocalWorkspaceContext;
   memoryReminderCache?: { key: string; text: string | null };
@@ -244,30 +270,30 @@ interface AgentRunRecord {
 
 type RunningSlotReservation = () => void;
 
-export interface AgentSubagentRunSnapshot {
+export interface AgentChildRunSnapshot {
   id: string;
   name?: string;
   description: string;
   prompt: string;
-  subagentType: string;
+  agentType: string;
   contextMode: 'fresh' | 'fork';
   executingAgentId: string;
   parentAgentId: string;
+  parentRunId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
-  dreamEvidenceStartMessageIndex: number;
-  status: 'running' | 'completed' | 'failed' | 'stopped';
+  status: AgentChildRunStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
   result?: string;
   error?: string;
-  transcriptMessages: AgentMessage[];
   parentToolCallId?: string;
 }
 
 export interface AgentSubagentRestoredRun {
-  record: AgentSubagentRunRecord;
+  record: AgentChildRunRecord;
+  /** The live transcript replayed from the child run's own ledger. */
   transcriptMessages: AgentMessage[];
 }
 
@@ -424,11 +450,12 @@ export class AgentSubagentRuntime {
         name: record.name,
         description: record.description,
         prompt: record.prompt,
-        subagentType: record.subagentType,
+        subagentType: record.agentType,
         contextMode: record.contextMode,
         definition: null,
         executingAgentId,
         parentAgentId,
+        parentRunId: record.parentRunId,
         memoryOwnerAgentId,
         memoryOriginWorkspace,
         status: record.status,
@@ -437,6 +464,7 @@ export class AgentSubagentRuntime {
         completedAt: record.completedAt,
         depth: this.depth + 1,
         messages: transcriptMessages.map(cloneAgentMessage),
+        ledgerSeededMessages: new WeakSet(),
         result: record.result,
         error: record.error,
         detached: false,
@@ -446,9 +474,6 @@ export class AgentSubagentRuntime {
         toolResultBudgetState: restoreToolResultBudgetStateFromAgentMessages(transcriptMessages),
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
-        dreamEvidenceStartMessageIndex: record.dreamEvidenceStartMessageIndex ?? (
-          record.contextMode === 'fork' ? transcriptMessages.length : 0
-        ),
       };
       this.runs.set(run.id, run);
       if (run.name) this.names.set(run.name, run.id);
@@ -505,7 +530,8 @@ export class AgentSubagentRuntime {
       if (!run.agent) throw new Error(`Agent ${run.id} is not live in this process. Start a continuation instead.`);
       run.agent.followUp(message);
       run.updatedAt = Date.now();
-      await this.queuePersistRunUpdate(run);
+      // The follow-up reaches the ledger through the message_end subscription
+      // when the loop drains it — no status change to record here.
       return { ...runToToolData(run), status: 'queued', instructions: 'Message queued for the running background agent.' };
     }
 
@@ -520,7 +546,7 @@ export class AgentSubagentRuntime {
       if (wasStopped) run.agent = undefined;
       run.updatedAt = Date.now();
       await this.ensureLiveAgent(run);
-      await this.queuePersistRunUpdate(run);
+      await this.host.childRunStatusChanged(snapshotRun(run));
       releaseStartupSlot();
       run.completion = this.runChildAgent(run, [message], undefined, true);
       return { ...runToToolData(run), status: 'queued', instructions: 'Agent continuation started in the background.' };
@@ -539,7 +565,7 @@ export class AgentSubagentRuntime {
       run.updatedAt = run.completedAt;
       run.agent?.abort();
       run.agent = undefined;
-      await this.queuePersistRunUpdate(run);
+      await this.host.childRunStatusChanged(snapshotRun(run));
       if (run.detached) void this.notifyTerminalRun(run).catch(() => undefined);
     }
     return runToToolData(run);
@@ -565,7 +591,7 @@ export class AgentSubagentRuntime {
     const name = params.name?.trim();
     if (name && this.names.has(name)) throw new Error(`Agent name is already in use in this session: ${name}`);
 
-    const runId = `subagent-${randomUUID()}`;
+    const runId = `child-${randomUUID()}`;
     const subagentConversationId = `${this.hostConversationPrefix()}-${runId}`;
     const parentAgentId = this.executingAgentId;
     const executingAgentId = contextMode === 'fork'
@@ -619,10 +645,16 @@ export class AgentSubagentRuntime {
         createChildAgent: (input) => this.host.createChildAgent(input),
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
+        // A grandchild's parent run is THIS child run — the run tree chains.
+        getActiveRunId: () => runId,
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
         buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
-        persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
-        notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
+        childRunStarted: (snapshot, seed) => this.host.childRunStarted(snapshot, seed),
+        childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
+        childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
+        childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
+        childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
+        notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.host.persistToolOutputPayload(toolCallId, toolName, text)
         ),
@@ -633,12 +665,17 @@ export class AgentSubagentRuntime {
     });
     childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const preloadMessages = await this.preloadAgentSkills(definition, skillRuntime);
-    const promptMessages = contextMode === 'fork'
-      ? buildForkSubagentMessages(this.host.getParentMessages(), params.prompt)
+    // The ledger seed split ([[agent-run-unification]]): inherited context (the
+    // fork prefix) lands BEFORE `run.started` and is excluded from Dream
+    // evidence; the directive (+ skill preloads) land after it — the same
+    // boundary `dreamEvidenceStartMessageIndex` used to express positionally.
+    const contextMessages = contextMode === 'fork'
+      ? buildForkContextMessages(this.host.getParentMessages())
+      : [];
+    const evidenceMessages = contextMode === 'fork'
+      ? [createHiddenUserMessage(buildForkDirective(params.prompt))]
       : [...preloadMessages, createUserMessage(params.prompt)];
-    const dreamEvidenceStartMessageIndex = contextMode === 'fork'
-      ? Math.max(0, promptMessages.length - 1)
-      : 0;
+    const promptMessages = [...contextMessages, ...evidenceMessages];
     const systemPrompt = contextMode === 'fork'
       ? this.host.getParentSystemPrompt()
       : buildFreshAgentSystemPrompt(definition);
@@ -668,6 +705,8 @@ export class AgentSubagentRuntime {
 
     const background = params.run_in_background === true || definition.background === true;
     const now = Date.now();
+    const ledgerSeededMessages = new WeakSet<AgentMessage>();
+    for (const message of promptMessages) ledgerSeededMessages.add(message);
     run = {
       id: runId,
       name,
@@ -678,15 +717,16 @@ export class AgentSubagentRuntime {
       definition,
       executingAgentId,
       parentAgentId,
+      parentRunId: this.host.getActiveRunId() ?? undefined,
       memoryOwnerAgentId,
       memoryOriginWorkspace,
-      dreamEvidenceStartMessageIndex,
       status: 'running',
       startedAt: now,
       updatedAt: now,
       depth: this.depth + 1,
       agent: childAgent,
       messages: [...promptMessages],
+      ledgerSeededMessages,
       completion: Promise.resolve(),
       detached: background,
       terminalNotificationSent: false,
@@ -704,7 +744,7 @@ export class AgentSubagentRuntime {
     releaseStartupSlot();
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
-    await this.persistRunStarted(run);
+    await this.host.childRunStarted(snapshotRun(run), { contextMessages, evidenceMessages });
 
     run.completion = this.runChildAgent(run, promptMessages, background ? undefined : signal, background);
     if (background) {
@@ -753,10 +793,14 @@ export class AgentSubagentRuntime {
         return;
       }
       if (event.type === 'message_end') {
+        // The loop re-emits message_end for its prompt INPUTS too — skip the
+        // messages the ledger (and run.messages) were already seeded with at
+        // spawn, so neither records them twice.
+        if (run.ledgerSeededMessages.has(event.message as AgentMessage)) return;
         if (isRecordableAgentMessage(event.message)) {
           run.messages.push(cloneAgentMessage(event.message));
           run.updatedAt = Date.now();
-          void this.queuePersistRunUpdate(run).catch(() => undefined);
+          void this.host.childRunMessage(snapshotRun(run), event.message as AgentMessage).catch(() => undefined);
         }
       }
     });
@@ -809,7 +853,7 @@ export class AgentSubagentRuntime {
     } finally {
       if (signal && !detached) signal.removeEventListener('abort', abort);
       if (run.agent === agent) {
-        await this.queuePersistRunUpdate(run).catch(() => undefined);
+        await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
         if (detached) void this.notifyTerminalRun(run).catch(() => undefined);
       }
     }
@@ -819,7 +863,7 @@ export class AgentSubagentRuntime {
     if (run.status === 'running') return;
     if (run.terminalNotificationSent) return;
     run.terminalNotificationSent = true;
-    await this.host.notifySubagentRun(snapshotRun(run));
+    await this.host.notifyChildRun(snapshotRun(run));
   }
 
   private installRunContextTransform(run: AgentRunRecord): void {
@@ -874,6 +918,7 @@ export class AgentSubagentRuntime {
       if (!message || message.role !== 'toolResult') continue;
       if (toolResultText(message) === candidate.replacement) continue;
       replaceToolResultText(message, candidate.replacement);
+      void this.host.childRunToolResultReplaced(snapshotRun(run), candidate.toolCallId, candidate.replacement).catch(() => undefined);
       changed = true;
     }
 
@@ -890,6 +935,8 @@ export class AgentSubagentRuntime {
         replaceToolResultText(message, persisted.label);
         run.toolResultBudgetState.seenIds.add(candidate.toolCallId);
         run.toolResultBudgetState.replacements.set(candidate.toolCallId, persisted.label);
+        // The ledger records what the model sees from here on (`tool_result.replaced`).
+        void this.host.childRunToolResultReplaced(snapshotRun(run), candidate.toolCallId, persisted.label).catch(() => undefined);
         changed = true;
       } catch {
         run.toolResultBudgetState.seenIds.add(candidate.toolCallId);
@@ -901,7 +948,6 @@ export class AgentSubagentRuntime {
     run.messages = nextMessages.map(cloneAgentMessage);
     if (run.agent) run.agent.state.messages = nextMessages as never;
     run.updatedAt = Date.now();
-    await this.queuePersistRunUpdate(run).catch(() => undefined);
     return withMemoryReminder(await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages, memoryReminder);
   }
 
@@ -968,22 +1014,28 @@ export class AgentSubagentRuntime {
             preservedFilePaths: new Set<string>(),
           })
         : [];
-      const compactedMessages = [
-        createPostCompactMessage(
-          summary,
-          run.skillRuntime?.createInvokedSkillsReminder() ?? null,
-          run.skillRuntime?.createSkillListingStateReminder() ?? null,
-          null,
-          createPostCompactRestoredFilesReminder(restoredFiles),
-        ),
-      ];
+      const postCompactMessage = createPostCompactMessage(
+        summary,
+        run.skillRuntime?.createInvokedSkillsReminder() ?? null,
+        run.skillRuntime?.createSkillListingStateReminder() ?? null,
+        null,
+        createPostCompactRestoredFilesReminder(restoredFiles),
+      );
+      const compactedMessages = [postCompactMessage];
       run.messages = compactedMessages.map(cloneAgentMessage);
-      run.dreamEvidenceStartMessageIndex = 0;
       if (run.agent) run.agent.state.messages = compactedMessages as never;
       run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(compactedMessages);
       run.autoCompactConsecutiveFailures = 0;
       run.updatedAt = Date.now();
-      await this.queuePersistRunUpdate(run).catch(() => undefined);
+      // Event-sourced ([[agent-run-unification]] Design 4): the ledger appends a
+      // compaction event + the post-compact message as a new root; the compacted
+      // span stays in the ledger off-path. The in-memory working state above is
+      // exactly its replay.
+      await this.host.childRunCompacted(snapshotRun(run), {
+        postCompactMessage,
+        summary,
+        trigger,
+      }).catch(() => undefined);
       return compactedMessages;
     } catch (error) {
       if (isAbortError(error, signal)) throw error;
@@ -1036,10 +1088,15 @@ export class AgentSubagentRuntime {
         createChildAgent: (input) => this.host.createChildAgent(input),
         getParentMessages: () => childAgent?.state.messages as AgentMessage[] ?? [],
         getParentSystemPrompt: () => childAgent?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
+        getActiveRunId: () => run.id,
         getRuntimeSettings: () => this.host.getRuntimeSettings(),
         buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
-        persistSubagentRun: (snapshot) => this.host.persistSubagentRun(snapshot),
-        notifySubagentRun: (snapshot) => this.host.notifySubagentRun(snapshot),
+        childRunStarted: (snapshot, seed) => this.host.childRunStarted(snapshot, seed),
+        childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
+        childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
+        childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
+        childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
+        notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.host.persistToolOutputPayload(toolCallId, toolName, text)
         ),
@@ -1100,21 +1157,6 @@ export class AgentSubagentRuntime {
     if (definition) return definition.name;
     const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
     throw new Error(`Agent type '${normalized}' not found. Available agents: ${names || 'none'}`);
-  }
-
-  private persistRunStarted(run: AgentRunRecord): Promise<void> {
-    return this.host.persistSubagentRun(snapshotRun(run));
-  }
-
-  private persistRunUpdate(run: AgentRunRecord): Promise<void> {
-    return this.host.persistSubagentRun(snapshotRun(run));
-  }
-
-  private queuePersistRunUpdate(run: AgentRunRecord): Promise<void> {
-    const previous = run.pendingPersist?.catch(() => undefined) ?? Promise.resolve();
-    const next = previous.then(() => this.persistRunUpdate(run));
-    run.pendingPersist = next.then(() => undefined, () => undefined);
-    return next;
   }
 
   private reserveRunningSlot(): RunningSlotReservation {
@@ -1229,7 +1271,13 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
   ];
 }
 
-export function buildForkSubagentMessages(parentMessages: readonly AgentMessage[], directive: string): AgentMessage[] {
+/**
+ * The inherited fork context: the parent's live transcript (cloned) with
+ * unresolved tool calls closed by placeholder results. The directive is NOT
+ * part of this — it is the fork's first evidence message, after the ledger's
+ * `run.started` boundary.
+ */
+export function buildForkContextMessages(parentMessages: readonly AgentMessage[]): AgentMessage[] {
   const messages = parentMessages.map(cloneAgentMessage);
   const unresolved = collectUnresolvedToolCalls(messages);
   for (const toolCall of unresolved) {
@@ -1242,8 +1290,11 @@ export function buildForkSubagentMessages(parentMessages: readonly AgentMessage[
       timestamp: Date.now(),
     } satisfies ToolResultMessage);
   }
-  messages.push(createHiddenUserMessage(buildForkDirective(directive)));
   return messages;
+}
+
+export function buildForkSubagentMessages(parentMessages: readonly AgentMessage[], directive: string): AgentMessage[] {
+  return [...buildForkContextMessages(parentMessages), createHiddenUserMessage(buildForkDirective(directive))];
 }
 
 export function normalizeAgentToolNames(rules: readonly string[] | undefined): string[] | undefined {
@@ -1589,26 +1640,25 @@ function runToToolData(run: AgentRunRecord): AgentSubagentToolData {
   };
 }
 
-function snapshotRun(run: AgentRunRecord): AgentSubagentRunSnapshot {
+function snapshotRun(run: AgentRunRecord): AgentChildRunSnapshot {
   return {
     id: run.id,
     name: run.name,
     description: run.description,
     prompt: run.prompt,
-    subagentType: run.subagentType,
+    agentType: run.subagentType,
     contextMode: run.contextMode,
     executingAgentId: run.executingAgentId,
     parentAgentId: run.parentAgentId,
+    parentRunId: run.parentRunId,
     memoryOwnerAgentId: run.memoryOwnerAgentId,
     memoryOriginWorkspace: run.memoryOriginWorkspace,
-    dreamEvidenceStartMessageIndex: run.dreamEvidenceStartMessageIndex,
     status: run.status,
     startedAt: run.startedAt,
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
     result: run.result,
     error: run.error,
-    transcriptMessages: run.messages.map(cloneAgentMessage),
     parentToolCallId: run.parentToolCallId,
   };
 }

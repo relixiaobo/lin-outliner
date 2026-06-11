@@ -189,7 +189,7 @@ function subagentToolStatus(subagent: AgentRenderSubagentEntity): ToolStatus {
 }
 
 function formatSubagentMode(subagent: AgentRenderSubagentEntity): string {
-  return `${subagent.contextMode} · ${subagent.subagentType}`;
+  return `${subagent.contextMode} · ${subagent.agentType}`;
 }
 
 function formatSubagentDuration(subagent: AgentRenderSubagentEntity): string {
@@ -231,7 +231,7 @@ function SubagentInlineDetails({
   const result = previewText(subagent.result);
   const error = previewText(subagent.error);
   const prompt = previewText(subagent.prompt);
-  const canOpenTranscript = !!subagent.transcriptPayloadId && !!onOpenTranscript;
+  const canOpenTranscript = !!onOpenTranscript;
 
   return (
     <div className="agent-subagent-inline">
@@ -243,10 +243,6 @@ function SubagentInlineDetails({
         <div>
           <dt>{t.agent.subagent.mode}</dt>
           <dd>{formatSubagentMode(subagent)}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.subagent.messages}</dt>
-          <dd>{subagent.transcriptMessageCount}</dd>
         </div>
         <div>
           <dt>{t.agent.subagent.duration}</dt>
@@ -306,7 +302,7 @@ function SubagentInlineDetails({
           onClick={() => onOpenTranscript?.(subagent.id)}
         >
           <FileTextIcon size={ICON_SIZE.menu} />
-          <span>{subagent.transcriptPayloadId ? t.agent.subagent.viewTranscript : t.agent.subagent.transcriptUnavailable}</span>
+          <span>{t.agent.subagent.viewTranscript}</span>
         </ButtonControl>
         <ToolCopyButton ariaLabel={t.agent.subagent.copyId} text={subagent.id} />
       </div>

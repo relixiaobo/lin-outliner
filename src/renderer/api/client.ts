@@ -290,6 +290,8 @@ export const api = {
     command<string | null>('agent_debug_payload', { conversationId, payloadId }),
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
+  agentChildRunTranscript: (conversationId: string, runId: string) =>
+    command<{ messages: unknown[] } | null>('agent_child_run_transcript', { conversationId, runId }),
   agentSubagentStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
     command<AgentSubagentActionResult>('agent_subagent_status', { conversationId, agentId, ...options }),
   agentSubagentSend: (conversationId: string, agentId: string, message: string) =>

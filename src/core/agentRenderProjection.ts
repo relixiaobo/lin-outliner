@@ -11,7 +11,7 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentDreamCompletedChanges,
-  type AgentSubagentRunRecord,
+  type AgentChildRunRecord,
 } from './agentEventLog';
 import { agentMentionToken } from './agentChannel';
 
@@ -99,19 +99,18 @@ export interface AgentRenderSubagentEntity {
   name?: string;
   description: string;
   prompt: string;
-  subagentType: string;
-  contextMode: AgentSubagentRunRecord['contextMode'];
+  agentType: string;
+  contextMode: AgentChildRunRecord['contextMode'];
+  parentRunId?: string;
   executingAgentId?: string;
   parentAgentId?: string;
   memoryOwnerAgentId?: string;
-  status: AgentSubagentRunRecord['status'];
+  status: AgentChildRunRecord['status'];
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
   result?: string;
   error?: string;
-  transcriptPayloadId?: string;
-  transcriptMessageCount: number;
   parentToolCallId?: string;
 }
 
@@ -268,7 +267,7 @@ export function buildAgentRenderProjection(
   }
 
   const taskIds: string[] = [];
-  const subagentRunIds = Object.values(state.subagents ?? {})
+  const subagentRunIds = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id))
     .map((run) => {
       entities.subagents[run.id] = toRenderSubagentEntity(run);
@@ -353,7 +352,7 @@ function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCa
 function subagentInsertIndex(
   rows: AgentRenderRow[],
   entities: AgentRenderEntities,
-  run: AgentSubagentRunRecord,
+  run: AgentChildRunRecord,
 ): number {
   if (run.parentToolCallId) {
     const resultIndex = rows.findIndex(
@@ -383,7 +382,7 @@ function insertSubagentRows(
   entities: AgentRenderEntities,
   state: AgentEventReplayState,
 ): AgentRenderRow[] {
-  const runs = Object.values(state.subagents ?? {})
+  const runs = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
   if (runs.length === 0) return rows;
   const result = [...rows];
@@ -515,17 +514,17 @@ function toRenderMessageEntity(
   };
 }
 
-function toRenderSubagentEntity(run: AgentSubagentRunRecord): AgentRenderSubagentEntity {
+function toRenderSubagentEntity(run: AgentChildRunRecord): AgentRenderSubagentEntity {
   return { ...run };
 }
 
-function toRenderSubagentTaskEntity(run: AgentSubagentRunRecord): AgentRenderSubagentTaskEntity {
+function toRenderSubagentTaskEntity(run: AgentChildRunRecord): AgentRenderSubagentTaskEntity {
   return {
     id: `subagent:${run.id}`,
     kind: 'subagent',
     status: run.status,
     title: run.description.trim() || run.name?.trim() || run.id,
-    subtitle: `${run.contextMode} · ${run.subagentType}`,
+    subtitle: `${run.contextMode} · ${run.agentType}`,
     startedAt: run.startedAt,
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,

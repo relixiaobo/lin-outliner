@@ -109,6 +109,7 @@ export const AGENT_COMMANDS = [
   'agent_debug_totals',
   'agent_debug_payload',
   'agent_payload_text',
+  'agent_child_run_transcript',
   'agent_subagent_status',
   'agent_subagent_send',
   'agent_subagent_stop',

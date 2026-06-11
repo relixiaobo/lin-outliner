@@ -81,15 +81,9 @@ function isAgentMessage(value: unknown): value is AgentMessage {
   return value.role === 'user' || value.role === 'assistant' || value.role === 'toolResult';
 }
 
-function parseTranscript(raw: string | null): AgentMessage[] {
+function parseTranscript(raw: unknown[] | null): AgentMessage[] {
   if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.messages)) return [];
-    return parsed.messages.filter(isAgentMessage);
-  } catch {
-    return [];
-  }
+  return raw.filter(isAgentMessage);
 }
 
 function toolResultFromMessage(message: ToolResultMessage): AgentToolResultWithPayloads {
@@ -306,9 +300,6 @@ function TranscriptTimeline({
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
   const t = useT();
-  if (!subagent.transcriptPayloadId) {
-    return <div className="agent-subagent-empty">{t.agent.subagent.transcriptNotAvailable}</div>;
-  }
   if (loading && messages.length === 0) {
     return (
       <div className="agent-subagent-empty">
@@ -372,26 +363,26 @@ export function AgentSubagentDetailsPanel({
   const [followUpDraft, setFollowUpDraft] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState<'send' | 'stop' | null>(null);
-  const [rawTranscript, setRawTranscript] = useState<string | null>(null);
+  const [rawTranscript, setRawTranscript] = useState<unknown[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
 
   const loadTranscript = useCallback(() => {
-    if (!conversationId || !subagent?.transcriptPayloadId) return;
+    if (!conversationId || !subagent?.id) return;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setLoading(true);
     setError(null);
-    void api.agentPayloadText(conversationId, subagent.transcriptPayloadId)
-      .then((text) => {
+    void api.agentChildRunTranscript(conversationId, subagent.id)
+      .then((result) => {
         if (requestId !== requestRef.current) return;
-        if (text === null) {
+        if (result === null) {
           setRawTranscript(null);
           setError(t.agent.subagent.transcriptPayloadUnavailable);
           return;
         }
-        setRawTranscript(text);
+        setRawTranscript(result.messages);
       })
       .catch((caught) => {
         if (requestId === requestRef.current) {
@@ -401,7 +392,7 @@ export function AgentSubagentDetailsPanel({
       .finally(() => {
         if (requestId === requestRef.current) setLoading(false);
       });
-  }, [conversationId, subagent?.transcriptPayloadId, t.agent.subagent.transcriptPayloadUnavailable]);
+  }, [conversationId, subagent?.id, t.agent.subagent.transcriptPayloadUnavailable]);
 
   useEffect(() => {
     setActiveTab('timeline');
@@ -434,7 +425,7 @@ export function AgentSubagentDetailsPanel({
   const canSendFollowUp = true;
   const canStop = subagent.status === 'running';
   const tabs = [
-    ['timeline', t.agent.subagent.tabTimeline({ count: messages.length || subagent.transcriptMessageCount })],
+    ['timeline', t.agent.subagent.tabTimeline({ count: messages.length })],
     ['result', t.agent.subagent.tabResult],
     ['metadata', t.agent.subagent.tabMetadata],
   ] as const;
@@ -480,8 +471,8 @@ export function AgentSubagentDetailsPanel({
           <p>
             {t.agent.subagent.metaLine({
               mode: subagent.contextMode,
-              type: subagent.subagentType,
-              count: subagent.transcriptMessageCount,
+              type: subagent.agentType,
+              count: messages.length,
               duration: formatDuration(subagent.startedAt, endedAt),
             })}
           </p>
@@ -587,15 +578,15 @@ export function AgentSubagentDetailsPanel({
             </div>
             <div>
               <dt>{t.agent.subagent.metaType}</dt>
-              <dd>{subagent.subagentType}</dd>
+              <dd>{subagent.agentType}</dd>
             </div>
             <div>
               <dt>{t.agent.subagent.metaParentToolCall}</dt>
               <dd>{subagent.parentToolCallId ?? t.agent.subagent.metaNone}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.metaTranscriptPayload}</dt>
-              <dd>{subagent.transcriptPayloadId ?? t.agent.subagent.metaNone}</dd>
+              <dt>{t.agent.subagent.metaParentRun}</dt>
+              <dd>{subagent.parentRunId ?? t.agent.subagent.metaNone}</dd>
             </div>
             <div>
               <dt>{t.agent.subagent.metaStarted}</dt>

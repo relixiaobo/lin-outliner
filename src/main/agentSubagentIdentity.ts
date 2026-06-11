@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { AgentSubagentRunRecord } from '../core/agentEventLog';
+import type { AgentChildRunRecord } from '../core/agentEventLog';
 import type { AgentDefinition } from '../core/types';
 
 export function agentDefinitionAgentId(agent: AgentDefinition): string {
@@ -11,7 +11,7 @@ export function agentDefinitionAgentId(agent: AgentDefinition): string {
 }
 
 export function resolveSubagentMemoryOwner(
-  run: Pick<AgentSubagentRunRecord, 'contextMode' | 'executingAgentId' | 'memoryOwnerAgentId' | 'parentAgentId'>,
+  run: Pick<AgentChildRunRecord, 'contextMode' | 'executingAgentId' | 'memoryOwnerAgentId' | 'parentAgentId'>,
   fallbackMemoryOwnerAgentId: string,
 ): string {
   if (run.memoryOwnerAgentId) return run.memoryOwnerAgentId;

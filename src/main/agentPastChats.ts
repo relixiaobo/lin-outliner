@@ -1,11 +1,10 @@
 import {
+  getAgentEventActivePath,
   getAgentEventVisibleTranscript,
   type AgentEventMessageRecord,
   type AgentMemorySource,
   type AgentPersistedContent,
-  type AgentPayloadRef,
 } from '../core/agentEventLog';
-import type { AgentMessage } from '../core/agentTypes';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -17,12 +16,6 @@ import type {
   AgentConversationIndexEntry,
   AgentEventStore,
 } from './agentEventStore';
-import {
-  agentRunMessageId,
-  agentRunSourceMessageWindow,
-  parseSubagentTranscriptEnvelope,
-  type SubagentTranscriptEnvelope,
-} from './agentSubagentTranscript';
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -349,8 +342,8 @@ export class AgentPastChatsService {
 
   async readMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
     const source = params.source;
-    if (source.kind === 'agent_run') {
-      return this.readAgentRunMemorySourceEvidence(params);
+    if (source.kind === 'run') {
+      return this.readRunMemorySourceEvidence(params);
     }
     if (!source.messageRange) {
       return pastChatsError('SOURCE_NOT_FOUND', 'Memory source does not include an addressable message range.');
@@ -393,11 +386,17 @@ export class AgentPastChatsService {
     };
   }
 
-  private async readAgentRunMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
+  /**
+   * Evidence in a delegated run's OWN ledger ([[agent-run-unification]] Design 2):
+   * replay the run stream and window its active path by the source's stable
+   * message ids — the SAME resolution semantics as the conversation path
+   * (fail loud off the active path; no payload pinning, no positional codec).
+   */
+  private async readRunMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
     const source = params.source;
-    const runId = source.subagentRunId ?? source.runId;
+    const runId = source.runId;
     if (!runId || !source.messageRange) {
-      return pastChatsError('SOURCE_NOT_FOUND', 'Agent-run memory source does not include an addressable run message range.');
+      return pastChatsError('SOURCE_NOT_FOUND', 'Run memory source does not include an addressable run message range.');
     }
 
     const conversations = await this.conversationMetaById();
@@ -406,32 +405,24 @@ export class AgentPastChatsService {
       return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
     }
 
-    const state = await this.eventStore.replay(source.conversationId);
-    const run = state.subagents[runId];
-    const payloadId = source.eventId ?? run?.transcriptPayloadId;
-    if (!payloadId) {
-      return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
+    const state = await this.eventStore.replayRunStream(runId);
+    if (state.latestSeq === 0) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No run ledger was found for run ${runId}.`);
     }
-    const payload = state.payloads[payloadId];
-    if (!payload) {
-      return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
+    const activePath = getAgentEventActivePath(state);
+    const [fromMessageId, throughMessageId] = source.messageRange;
+    const startIndex = activePath.findIndex((message) => message.id === fromMessageId);
+    if (startIndex < 0) {
+      return pastChatsError(
+        'NOT_ON_ACTIVE_BRANCH',
+        `The source message ${fromMessageId} was compacted away or is on a non-active branch of run ${runId}.`,
+        { nearbyMessageIds: nearbyMessageIds(activePath, { messageId: fromMessageId }) },
+      );
     }
-
-    const envelope = await this.readSubagentTranscriptEnvelope(source.conversationId, payload);
-    if (!envelope || envelope.runId !== runId) {
-      return pastChatsError('SOURCE_NOT_FOUND', `No transcript payload was found for agent run ${runId}.`);
-    }
-    const window = agentRunSourceMessageWindow(source, runId, envelope.messages.length);
-    if (!window) {
-      return pastChatsError('SOURCE_NOT_FOUND', `The source message range was not found in agent run ${runId}.`);
-    }
+    const throughIndex = activePath.findIndex((message) => message.id === throughMessageId);
+    const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
     const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    const assembled = clampRuntimeReadMessages(
-      runId,
-      envelope.messages.slice(window.startIndex, window.endIndex + 1),
-      maxChars,
-      window.startIndex,
-    );
+    const assembled = clampReadMessages(activePath.slice(startIndex, endIndex + 1), maxChars);
 
     return {
       mode: 'evidence',
@@ -446,18 +437,6 @@ export class AgentPastChatsService {
       totalChars: assembled.totalChars,
       outputTruncated: assembled.outputTruncated,
     };
-  }
-
-  private async readSubagentTranscriptEnvelope(
-    conversationId: string,
-    payload: AgentPayloadRef,
-  ): Promise<SubagentTranscriptEnvelope | null> {
-    try {
-      const raw = await this.eventStore.readPayload(conversationId, payload);
-      return parseSubagentTranscriptEnvelope(raw);
-    } catch {
-      return null;
-    }
   }
 
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
@@ -551,49 +530,6 @@ function clampReadMessages(messages: readonly AgentEventMessageRecord[], maxChar
   return { messages: out, totalChars, outputTruncated };
 }
 
-function clampRuntimeReadMessages(
-  runId: string,
-  messages: readonly AgentMessage[],
-  maxChars: number,
-  startIndex = 0,
-): {
-  messages: PastChatsReadMessage[];
-  totalChars: number;
-  outputTruncated: boolean;
-} {
-  const full = messages.map((message, index) => ({
-    message,
-    messageId: agentRunMessageId(runId, startIndex + index),
-    text: runtimeMessageText(message),
-  }));
-  const totalChars = full.reduce((sum, item) => sum + item.text.length, 0);
-  let remaining = maxChars;
-  let outputTruncated = totalChars > maxChars;
-  const out: PastChatsReadMessage[] = [];
-
-  for (const item of full) {
-    if (remaining <= 0) {
-      outputTruncated = true;
-      break;
-    }
-    const truncated = item.text.length > remaining;
-    const text = truncated ? item.text.slice(0, remaining).trimEnd() : item.text;
-    remaining -= text.length;
-    out.push({
-      messageId: item.messageId,
-      role: runtimeMessageRole(item.message),
-      createdAt: isoTime(runtimeMessageTimestamp(item.message)),
-      text,
-      toolName: item.message.role === 'toolResult' ? item.message.toolName : undefined,
-      isError: item.message.role === 'toolResult' ? item.message.isError : undefined,
-      messageTruncated: truncated || undefined,
-    });
-    if (truncated) break;
-  }
-
-  return { messages: out, totalChars, outputTruncated };
-}
-
 function messageText(message: AgentEventMessageRecord): string {
   if (message.role === 'toolResult' && message.outputSummary?.trim()) {
     return message.outputSummary.trim();
@@ -625,35 +561,9 @@ function contentText(content: readonly AgentPersistedContent[]): string {
     .trim();
 }
 
-function runtimeMessageText(message: AgentMessage): string {
-  if (message.role === 'toolResult') return runtimeContentText(message.content);
-  return runtimeContentText(message.content);
-}
 
-function runtimeContentText(content: AgentMessage['content']): string {
-  if (typeof content === 'string') return content.trim();
-  if (!Array.isArray(content)) return '';
-  return content
-    .map((part) => {
-      if (!isRecord(part)) return '';
-      if (part.type === 'text' && typeof part.text === 'string') return part.text;
-      if (part.type === 'thinking') return '[thinking]';
-      if (part.type === 'toolCall') return `[tool:${String(part.name ?? 'unknown')} ${summarizeJson(part.arguments)}]`;
-      if (part.type === 'image') return '[image]';
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-}
 
-function runtimeMessageRole(message: AgentMessage): PastChatsRole {
-  return message.role === 'assistant' || message.role === 'toolResult' ? message.role : 'user';
-}
 
-function runtimeMessageTimestamp(message: AgentMessage): number {
-  return typeof message.timestamp === 'number' ? message.timestamp : Date.now();
-}
 
 function cleanUserMessageText(text: string): string {
   return text

@@ -1853,6 +1853,8 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.debugPayload(conversationId(), String(args.payloadId));
     case 'agent_payload_text':
       return agentRuntime.payloadText(conversationId(), String(args.payloadId));
+    case 'agent_child_run_transcript':
+      return agentRuntime.childRunTranscript(conversationId(), String(args.runId));
     case 'agent_subagent_status':
       return agentRuntime.subagentStatus(conversationId(), String(args.agentId), {
         wait: args.wait === true,

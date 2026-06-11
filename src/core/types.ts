@@ -739,19 +739,16 @@ export interface AgentConversationListMeta {
 
 export interface AgentMemorySourceView {
   conversationId: string;
-  kind?: 'conversation' | 'agent_run';
+  kind?: 'conversation' | 'run';
   summaryId?: string;
   messageRange?: [string, string];
   runId?: string;
-  subagentRunId?: string;
-  agentId?: string;
-  parentToolCallId?: string;
   eventId?: string;
 }
 
 export interface AgentMemoryEntryView {
   id: string;
-  /** The subject this fact is about — the pool it belongs to. */
+  /** The pool this fact lives in — its owner/believer (whose self-model). */
   principal: AgentPrincipal;
   fact: string;
   originWorkspace?: string;

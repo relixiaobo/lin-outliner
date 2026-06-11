@@ -84,7 +84,7 @@ import {
   type AgentRunFingerprint,
   type AgentRunTrigger,
   type AgentRunMeta,
-  type AgentSubagentRunRecord,
+  type AgentChildRunRecord,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
@@ -135,7 +135,7 @@ import {
   mergeMemorySources,
   parseDreamMemoryActions,
   type DreamMemoryAction,
-  type DreamMemoryExtractionAgentRunInput,
+  type DreamMemoryExtractionRunInput,
   type DreamMemoryExtractionSpan,
   type DreamMemoryExtractionSourceRange,
 } from './agentDreamExtraction';
@@ -166,7 +166,7 @@ import {
   AgentSubagentRuntime,
   type AgentSubagentCreateInput,
   type AgentSubagentRestoredRun,
-  type AgentSubagentRunSnapshot,
+  type AgentChildRunSnapshot,
 } from './agentSubagents';
 import {
   agentDefinitionAgentId,
@@ -179,12 +179,7 @@ import {
   duplicateAgentDefinitionFile,
   updateAgentDefinitionFile,
 } from './agentAuthoring';
-import {
-  createSubagentTranscriptEnvelope,
-  parseSubagentTranscriptEnvelope,
-  subagentDreamEvidenceStartMessageIndex,
-  type SubagentTranscriptEnvelope,
-} from './agentSubagentTranscript';
+import { AgentRunLedgerWriter } from './agentRunLedger';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
@@ -541,6 +536,24 @@ export class AgentRuntime {
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
   private readonly agentIdentity: AgentIdentityRecord;
   private readonly domainEvents: AgentDomainEventBus;
+  /** The write seam for delegated runs' own ledgers ([[agent-run-unification]]). */
+  private readonly runLedger = new AgentRunLedgerWriter({
+    store: () => this.getEventStore(),
+    persister: {
+      persistUserContent: async (conversationId, runId, content) => (
+        await this.persistPiUserContent(conversationId, content, { imageSummary: 'Attached image', runId })
+      ).content,
+      persistToolResultContent: async (conversationId, runId, toolCallId, toolName, content) => (
+        await this.persistPiUserContent(conversationId, content, {
+          imageSummary: `${toolName} image output`,
+          textPayloadRole: 'tool_output',
+          textSummary: toolName,
+          textPayloadIdPrefix: `tool-output-${runId}-${toolCallId}`,
+          runId,
+        })
+      ).content,
+    },
+  });
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
@@ -1062,6 +1075,17 @@ export class AgentRuntime {
     if (!payload || !isTextPayloadRole(payload.role) || !isTextPayloadMimeType(payload.mimeType)) return null;
     const bytes = await this.getEventStore().readPayload(conversationId, payload);
     return bytes.toString('utf8');
+  }
+
+  /**
+   * The drill-in transcript for a delegated run: its OWN ledger replayed alone
+   * and derived to pi messages ([[agent-run-unification]] — replaces the
+   * transcript-snapshot payload read).
+   */
+  async childRunTranscript(conversationId: string, runId: string): Promise<{ messages: AgentMessage[] } | null> {
+    const state = await this.getEventStore().replayRunStream(runId);
+    if (state.latestSeq === 0) return null;
+    return { messages: await this.deriveRuntimePiMessages(conversationId, state) };
   }
 
   async subagentStatus(
@@ -1812,19 +1836,36 @@ export class AgentRuntime {
         },
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
+        getActiveRunId: () => conversationRef.current?.activeRun?.id ?? null,
         getRuntimeSettings: () => this.getRuntimeSettings(),
         buildMemoryReminder: (agentId) => (
           this.buildMemoryReminder(agentId, conversationRef.current)
         ),
-        persistSubagentRun: (snapshot) => {
+        childRunStarted: (snapshot, seed) => {
           const current = conversationRef.current;
           if (!current) return Promise.resolve();
-          return this.persistSubagentRun(conversationId, current, snapshot);
+          return this.childRunStarted(conversationId, current, snapshot, seed);
         },
-        notifySubagentRun: (snapshot) => {
+        childRunMessage: (snapshot, message) => {
+          // Coalesced ping so an open drill-in panel knows to refetch the child transcript.
+          this.emitProjection(conversationId, 'child_run.updated', 'coalesce');
+          return this.runLedger.appendMessage(snapshot.id, message, this.childRunActor(snapshot));
+        },
+        childRunToolResultReplaced: (snapshot, toolCallId, text) => (
+          this.runLedger.replaceToolResult(snapshot.id, toolCallId, text, this.childRunActor(snapshot))
+        ),
+        childRunCompacted: (snapshot, input) => (
+          this.runLedger.compacted(snapshot.id, { ...input, actor: this.childRunActor(snapshot) })
+        ),
+        childRunStatusChanged: (snapshot) => {
           const current = conversationRef.current;
           if (!current) return Promise.resolve();
-          return this.notifySubagentRun(conversationId, current, snapshot);
+          return this.childRunStatusChanged(conversationId, current, snapshot);
+        },
+        notifyChildRun: (snapshot) => {
+          const current = conversationRef.current;
+          if (!current) return Promise.resolve();
+          return this.notifyChildRun(conversationId, current, snapshot);
         },
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
@@ -2104,11 +2145,13 @@ export class AgentRuntime {
     eventState: AgentEventReplayState,
   ): Promise<AgentSubagentRestoredRun[]> {
     const runs: AgentSubagentRestoredRun[] = [];
-    for (const record of Object.values(eventState.subagents ?? {})) {
-      const payloadId = record.transcriptPayloadId;
-      const payload = payloadId ? eventState.payloads[payloadId] : undefined;
-      const transcriptMessages = payload
-        ? await this.readSubagentTranscriptPayload(conversationId, payload)
+    for (const record of Object.values(eventState.childRuns ?? {})) {
+      // The live transcript is the child run's OWN ledger, replayed alone
+      // ([[agent-run-unification]] Design 1) — registering it with the ledger
+      // writer also rebuilds the writer's append state (seq, chain tail).
+      const childState = await this.runLedger.restore(conversationId, record.id);
+      const transcriptMessages = childState
+        ? await this.deriveRuntimePiMessages(conversationId, childState)
         : [];
       runs.push({ record, transcriptMessages });
     }
@@ -2119,23 +2162,22 @@ export class AgentRuntime {
     conversationId: string,
     conversation: AgentConversationState,
   ): Promise<void> {
-    const runningRuns = Object.values(conversation.eventState.subagents ?? {})
+    const runningRuns = Object.values(conversation.eventState.childRuns ?? {})
       .filter((run) => run.status === 'running');
     if (runningRuns.length === 0) return;
 
-    const interruptedError = 'Subagent was interrupted before conversation restore.';
+    const interruptedError = 'The delegated child run was interrupted before conversation restore.';
     const completedAt = Date.now();
     await this.appendConversationEvents(conversationId, conversation, runningRuns.map((run): AgentEventInput => ({
-      type: 'subagent_run.updated',
+      type: 'child_run.updated',
       actor: systemActor(),
-      subagentRunId: run.id,
+      childRunId: run.id,
       status: 'failed',
       completedAt,
       error: interruptedError,
-      transcriptMessageCount: run.transcriptMessageCount,
     })));
 
-    // "Don't go silent": a background subagent that died while the app was closed
+    // "Don't go silent": a background child run that died while the app was closed
     // must still raise a durable badge (and OS banner) on restore — not vanish.
     // Durable delivery only here (no live model-injection): the conversation is being
     // restored, not running a turn, and recovery is re-spawn, not resume.
@@ -2143,9 +2185,9 @@ export class AgentRuntime {
       await this.emitTaskNotification(conversationId, conversation, {
         notificationId: `notification-${run.id}-${completedAt}`,
         kind: 'task_failed',
-        title: `Subagent "${run.description}" was interrupted.`,
+        title: `Agent task "${run.description}" was interrupted.`,
         body: interruptedError,
-        source: { type: 'subagent', subagentRunId: run.id },
+        source: { type: 'run', runId: run.id },
         actor: run.parentToolCallId
           ? toolActor(AGENT_SUBAGENT_TOOL_NAME, run.parentToolCallId)
           : systemActor(),
@@ -2153,102 +2195,80 @@ export class AgentRuntime {
     }
   }
 
-  private async readSubagentTranscriptPayload(
-    conversationId: string,
-    payload: AgentPayloadRef,
-  ): Promise<AgentMessage[]> {
-    return (await this.readSubagentTranscriptEnvelope(conversationId, payload))?.messages ?? [];
-  }
-
-  private async readSubagentTranscriptEnvelope(
-    conversationId: string,
-    payload: AgentPayloadRef,
-  ): Promise<SubagentTranscriptEnvelope | null> {
-    try {
-      const raw = await this.getEventStore().readPayload(conversationId, payload);
-      return parseSubagentTranscriptEnvelope(raw);
-    } catch {
-      return null;
-    }
-  }
-
-  private async persistSubagentRun(
-    conversationId: string,
-    conversation: AgentConversationState,
-    snapshot: AgentSubagentRunSnapshot,
-  ): Promise<void> {
-    const actor = snapshot.parentToolCallId
+  private childRunActor(snapshot: AgentChildRunSnapshot): AgentActor {
+    return snapshot.parentToolCallId
       ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
       : systemActor();
-    const exists = Boolean(conversation.eventState.subagents[snapshot.id]);
-    const existingRun = conversation.eventState.subagents[snapshot.id];
-    const transcriptEnvelope = createSubagentTranscriptEnvelope({
-      runId: snapshot.id,
+  }
+
+  /**
+   * A child run started ([[agent-run-unification]] Design 1): append the slim
+   * `child_run.started` conversation marker (the boundary-row/task-panel feed)
+   * and seed the child's OWN run ledger — context before `run.started`, the
+   * directive after it.
+   */
+  private async childRunStarted(
+    conversationId: string,
+    conversation: AgentConversationState,
+    snapshot: AgentChildRunSnapshot,
+    seed: { contextMessages: readonly AgentMessage[]; evidenceMessages: readonly AgentMessage[] },
+  ): Promise<void> {
+    const actor = this.childRunActor(snapshot);
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'child_run.started',
+      actor,
+      childRunId: snapshot.id,
+      parentRunId: snapshot.parentRunId,
+      parentToolCallId: snapshot.parentToolCallId,
       executingAgentId: snapshot.executingAgentId,
       parentAgentId: snapshot.parentAgentId,
       memoryOwnerAgentId: snapshot.memoryOwnerAgentId,
-      dreamEvidenceStartMessageIndex: snapshot.dreamEvidenceStartMessageIndex,
-      messages: snapshot.transcriptMessages,
+      memoryOriginWorkspace: snapshot.memoryOriginWorkspace,
+      name: snapshot.name,
+      description: snapshot.description,
+      prompt: snapshot.prompt,
+      agentType: snapshot.agentType,
+      contextMode: snapshot.contextMode,
+    }]);
+    await this.runLedger.runStarted({
+      conversationId,
+      runId: snapshot.id,
+      agentId: snapshot.executingAgentId as AgentId,
+      parentRunId: snapshot.parentRunId,
+      actor,
+      contextMessages: seed.contextMessages,
+      evidenceMessages: seed.evidenceMessages,
     });
-    const transcriptData = JSON.stringify(transcriptEnvelope);
-    const transcriptSha = createHash('sha256').update(transcriptData).digest('hex');
-    const existingPayload = existingRun?.transcriptPayloadId
-      ? conversation.eventState.payloads[existingRun.transcriptPayloadId]
-      : undefined;
-    const payload = existingPayload?.sha256 === transcriptSha
-      ? undefined
-      : await this.getEventStore().writePayload(conversationId, {
-          id: `subagent-transcript-${snapshot.id}-${snapshot.transcriptMessages.length}-${transcriptSha.slice(0, 12)}`,
-          data: transcriptData,
-          mimeType: 'application/json',
-          role: 'subagent_transcript',
-          summary: `Subagent ${snapshot.subagentType} transcript (${snapshot.transcriptMessages.length} messages)`,
-        });
-    await this.appendConversationEvents(conversationId, conversation, [
-      ...(payload ? [{
-        type: 'payload.created' as const,
-        actor,
-        payload,
-      }] : []),
-      exists
-        ? {
-            type: 'subagent_run.updated',
-            actor,
-            subagentRunId: snapshot.id,
-            status: snapshot.status,
-            completedAt: snapshot.completedAt,
-            result: snapshot.result,
-            error: snapshot.error,
-            dreamEvidenceStartMessageIndex: snapshot.dreamEvidenceStartMessageIndex,
-            transcriptPayload: payload,
-            transcriptMessageCount: snapshot.transcriptMessages.length,
-          }
-        : {
-            type: 'subagent_run.started',
-            actor,
-            subagentRunId: snapshot.id,
-            parentToolCallId: snapshot.parentToolCallId,
-            executingAgentId: snapshot.executingAgentId,
-            parentAgentId: snapshot.parentAgentId,
-            memoryOwnerAgentId: snapshot.memoryOwnerAgentId,
-            memoryOriginWorkspace: snapshot.memoryOriginWorkspace,
-            dreamEvidenceStartMessageIndex: snapshot.dreamEvidenceStartMessageIndex,
-            name: snapshot.name,
-            description: snapshot.description,
-            prompt: snapshot.prompt,
-            subagentType: snapshot.subagentType,
-            contextMode: snapshot.contextMode,
-            transcriptPayload: payload,
-            transcriptMessageCount: snapshot.transcriptMessages.length,
-          },
-    ]);
-    this.emitProjection(conversationId, exists ? 'subagent_run.updated' : 'subagent_run.started', 'coalesce');
+    this.emitProjection(conversationId, 'child_run.started', 'coalesce');
   }
 
-  private async notifySubagentRun(
+  private async childRunStatusChanged(
     conversationId: string,
     conversation: AgentConversationState,
-    snapshot: AgentSubagentRunSnapshot,
+    snapshot: AgentChildRunSnapshot,
+  ): Promise<void> {
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'child_run.updated',
+      actor: this.childRunActor(snapshot),
+      childRunId: snapshot.id,
+      status: snapshot.status,
+      completedAt: snapshot.completedAt,
+      result: snapshot.result,
+      error: snapshot.error,
+    }]);
+    await this.runLedger.statusChanged(snapshot.id, snapshot.status, {
+      actor: this.childRunActor(snapshot),
+      errorMessage: snapshot.error,
+      agentId: snapshot.executingAgentId as AgentId,
+      parentRunId: snapshot.parentRunId,
+    });
+    this.emitProjection(conversationId, 'child_run.updated', 'coalesce');
+  }
+
+  private async notifyChildRun(
+    conversationId: string,
+    conversation: AgentConversationState,
+    snapshot: AgentChildRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
     // A user-initiated stop is the user's own action — it raises no badge/OS
@@ -2267,10 +2287,8 @@ export class AgentRuntime {
         kind: subagentNotificationKind(snapshot.status),
         title: subagentNotificationTitle(snapshot),
         body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
-        source: { type: 'subagent', subagentRunId: snapshot.id },
-        actor: snapshot.parentToolCallId
-          ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
-          : systemActor(),
+        source: { type: 'run', runId: snapshot.id },
+        actor: this.childRunActor(snapshot),
       });
     }
     conversation.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
@@ -3047,7 +3065,7 @@ export class AgentRuntime {
     const evidence = principal.type === 'agent'
       ? {
           conversations: [],
-          agentRuns: await this.collectDreamAgentRunInputs(
+          runs: await this.collectDreamRunInputs(
             principal.agentId,
             dreamState.watermark,
             await this.getEventStore().listConversationIds(),
@@ -3055,7 +3073,7 @@ export class AgentRuntime {
         }
       : {
           conversations: await this.collectDreamConversationInputs(dreamState),
-          agentRuns: [],
+          runs: [],
         };
     const evidenceSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, evidence);
     const newVolume = evidenceSpan?.totalCharCount ?? 0;
@@ -3129,13 +3147,13 @@ export class AgentRuntime {
         events: readonly AgentEvent[];
         fromSeqExclusive: number;
       }[];
-      agentRuns: readonly DreamMemoryExtractionAgentRunInput[];
+      runs: readonly DreamMemoryExtractionRunInput[];
     },
   ): AgentDreamMemoryExtractionBatch[] {
     const batches: AgentDreamMemoryExtractionBatch[] = [];
     const conversationSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, {
       conversations: inputs.conversations,
-      agentRuns: [],
+      runs: [],
     });
     if (conversationSpan) {
       batches.push({
@@ -3144,12 +3162,12 @@ export class AgentRuntime {
       });
     }
 
-    // Agent-run evidence still groups by the workspace each run happened in, so a new fact's
+    // Run evidence still groups by the workspace each run happened in, so a new fact's
     // provenance tag names where it was learned — grouping is for tagging, not partitioning.
-    for (const group of groupDreamAgentRunInputsByOriginWorkspace(inputs.agentRuns)) {
+    for (const group of groupDreamRunInputsByOriginWorkspace(inputs.runs)) {
       const span = buildDreamMemoryExtractionSpanFromEvidence(runId, {
         conversations: [],
-        agentRuns: group.inputs,
+        runs: group.inputs,
       });
       if (!span) continue;
       batches.push({
@@ -3164,64 +3182,51 @@ export class AgentRuntime {
     const ids = new Set<string>([this.agentIdentity.agentId]);
     for (const conversationId of await this.getEventStore().listConversationIds()) {
       const state = await this.getEventStore().replay(conversationId);
-      for (const run of Object.values(state.subagents ?? {})) {
-        ids.add(this.memoryOwnerAgentIdForSubagentRun(run));
+      for (const run of Object.values(state.childRuns ?? {})) {
+        ids.add(this.memoryOwnerAgentIdForChildRun(run));
       }
     }
     return [...ids].sort();
   }
 
-  private async collectDreamAgentRunInputs(
+  private async collectDreamRunInputs(
     agentId: string,
     watermark: AgentDreamWatermark,
     conversationIds: readonly string[],
-  ): Promise<DreamMemoryExtractionAgentRunInput[]> {
-    const inputs: DreamMemoryExtractionAgentRunInput[] = [];
+  ): Promise<DreamMemoryExtractionRunInput[]> {
+    const inputs: DreamMemoryExtractionRunInput[] = [];
     for (const conversationId of conversationIds) {
       const state = await this.getEventStore().replay(conversationId);
-      for (const run of Object.values(state.subagents ?? {})) {
+      for (const run of Object.values(state.childRuns ?? {})) {
         if (run.status === 'running') continue;
-        const owner = this.memoryOwnerAgentIdForSubagentRun(run);
+        const owner = this.memoryOwnerAgentIdForChildRun(run);
         if (owner !== agentId) continue;
 
-        const payload = run.transcriptPayloadId ? state.payloads[run.transcriptPayloadId] : undefined;
-        if (!payload) continue;
-        const envelope = await this.readSubagentTranscriptEnvelope(conversationId, payload);
-        if (!envelope) continue;
-        const transcriptMessages = envelope.messages;
-        // Prefer the envelope's own fork boundary: it is written atomically with the
-        // messages it indexes, so it is always in the live payload's coordinates. The
-        // replayed run-record boundary can be stale relative to a payload-superseding
-        // compaction; using it could re-exclude a compacted summary as "fork prefix" and
-        // permanently skip the run's only remaining evidence.
-        const evidenceStart = subagentDreamEvidenceStartMessageIndex({
-          contextMode: run.contextMode,
-          dreamEvidenceStartMessageIndex: envelope.dreamEvidenceStartMessageIndex ?? run.dreamEvidenceStartMessageIndex,
-        }, transcriptMessages.length);
-        const cursor = watermark.agentRuns?.[run.id];
-        const fromMessageCountExclusive = Math.min(
-          cursor?.payloadId === payload.id
-            ? Math.max(cursor.messageCount, evidenceStart)
-            : evidenceStart,
-          transcriptMessages.length,
-        );
-        if (transcriptMessages.length <= fromMessageCountExclusive) continue;
+        // The run's own ledger digests like any stream ([[agent-run-unification]]
+        // Design 3): one `{seq, eventId}` cursor, no payload pinning, no positional
+        // coordinates. The fork boundary is structural — the ledger's first
+        // `run.started` seq — so a compaction can never stale it.
+        const events = await this.getEventStore().readRunStreamEvents(run.id);
+        if (events.length === 0) continue;
+        const boundarySeq = events.find((event) => event.type === 'run.started')?.seq ?? 0;
+        const fromSeqExclusive = Math.max(watermark.runs?.[run.id]?.seq ?? 0, boundarySeq);
+        const latestSeq = events.at(-1)?.seq ?? 0;
+        if (latestSeq <= fromSeqExclusive) continue;
         inputs.push({
           conversationId,
           agentId,
-          subagentRunId: run.id,
+          runId: run.id,
           parentToolCallId: run.parentToolCallId,
-          transcriptPayloadId: payload.id,
           originWorkspace: run.memoryOriginWorkspace,
-          transcriptMessages,
-          fromMessageCountExclusive,
+          events,
+          fromSeqExclusive,
         });
       }
     }
     return inputs;
   }
 
-  private memoryOwnerAgentIdForSubagentRun(run: AgentSubagentRunRecord): string {
+  private memoryOwnerAgentIdForChildRun(run: AgentChildRunRecord): string {
     return resolveSubagentMemoryOwner(run, this.agentIdentity.agentId);
   }
 
@@ -3288,7 +3293,7 @@ export class AgentRuntime {
         watermark: task.watermark,
         processed: {
           conversations: dreamProcessedConversations(task.span.sourceRanges),
-          agentRuns: dreamProcessedAgentRuns(task.span.sourceRanges),
+          runs: dreamProcessedRuns(task.span.sourceRanges),
           totalMessageCount: task.span.totalMessageCount,
           totalCharCount: task.span.totalCharCount,
           consolidateOnly: task.span.consolidateOnly,
@@ -5996,10 +6001,10 @@ function buildEnvironmentContextReminder(now: Date): string {
   ].filter(Boolean).join('\n');
 }
 
-function groupDreamAgentRunInputsByOriginWorkspace(
-  inputs: readonly DreamMemoryExtractionAgentRunInput[],
-): Array<{ originWorkspace?: string; inputs: DreamMemoryExtractionAgentRunInput[] }> {
-  const groups = new Map<string, { originWorkspace?: string; inputs: DreamMemoryExtractionAgentRunInput[] }>();
+function groupDreamRunInputsByOriginWorkspace(
+  inputs: readonly DreamMemoryExtractionRunInput[],
+): Array<{ originWorkspace?: string; inputs: DreamMemoryExtractionRunInput[] }> {
+  const groups = new Map<string, { originWorkspace?: string; inputs: DreamMemoryExtractionRunInput[] }>();
   for (const input of inputs) {
     const key = input.originWorkspace ?? '';
     let group = groups.get(key);
@@ -6263,9 +6268,6 @@ function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
       summaryId: source.summaryId,
       messageRange: source.messageRange,
       runId: source.runId,
-      subagentRunId: source.subagentRunId,
-      agentId: source.agentId,
-      parentToolCallId: source.parentToolCallId,
       eventId: source.eventId,
     })),
     status: entry.status,
@@ -6359,8 +6361,7 @@ function isTextPayloadMimeType(mimeType: string): boolean {
 function isTextPayloadRole(role: AgentPayloadRef['role']): boolean {
   return role === 'tool_output'
     || role === 'text_extract'
-    || role === 'preview'
-    || role === 'subagent_transcript';
+    || role === 'preview';
 }
 
 function summarizeJson(value: unknown): string {
@@ -7042,27 +7043,26 @@ function subagentNotificationKind(
   return status === 'failed' ? 'task_failed' : 'task_completed';
 }
 
-function subagentNotificationTitle(snapshot: AgentSubagentRunSnapshot): string {
-  if (snapshot.status === 'failed') return `Subagent "${snapshot.description}" failed.`;
-  if (snapshot.status === 'stopped') return `Subagent "${snapshot.description}" was stopped.`;
-  return `Subagent "${snapshot.description}" completed.`;
+function subagentNotificationTitle(snapshot: AgentChildRunSnapshot): string {
+  if (snapshot.status === 'failed') return `Agent task "${snapshot.description}" failed.`;
+  if (snapshot.status === 'stopped') return `Agent task "${snapshot.description}" was stopped.`;
+  return `Agent task "${snapshot.description}" completed.`;
 }
 
-function formatSubagentNotification(snapshot: AgentSubagentRunSnapshot): string {
+function formatSubagentNotification(snapshot: AgentChildRunSnapshot): string {
   const summary = subagentNotificationTitle(snapshot);
   return [
-    '<subagent-notification>',
+    '<agent-task-notification>',
     `<agent_id>${escapeXml(snapshot.id)}</agent_id>`,
     snapshot.name ? `<name>${escapeXml(snapshot.name)}</name>` : null,
     `<description>${escapeXml(snapshot.description)}</description>`,
-    `<subagent_type>${escapeXml(snapshot.subagentType)}</subagent_type>`,
+    `<agent_type>${escapeXml(snapshot.agentType)}</agent_type>`,
     `<context_mode>${escapeXml(snapshot.contextMode)}</context_mode>`,
     `<status>${escapeXml(snapshot.status)}</status>`,
     `<summary>${escapeXml(summary)}</summary>`,
-    `<transcript_message_count>${snapshot.transcriptMessages.length}</transcript_message_count>`,
     snapshot.result ? `<result>${escapeXml(snapshot.result)}</result>` : null,
     snapshot.error ? `<error>${escapeXml(snapshot.error)}</error>` : null,
-    '</subagent-notification>',
+    '</agent-task-notification>',
   ].filter((line): line is string => line !== null).join('\n');
 }
 
@@ -7199,21 +7199,25 @@ function taskStatusRank(status: AgentRenderTaskStatus): number {
   return 3;
 }
 
+// ONE cursor shape for every stream ([[agent-run-unification]] Design 3): a
+// conversation and a delegated run's ledger advance the same `{seq, eventId}`
+// frontier — the positional `{messageCount, payloadId}` cursor died with the
+// transcript-snapshot representation.
 function dreamWatermarkFromSpan(
   previous: AgentDreamWatermark,
   ranges: readonly DreamMemoryExtractionSourceRange[],
 ): AgentDreamWatermark {
   const conversations = { ...previous.conversations };
-  const agentRuns = { ...(previous.agentRuns ?? {}) };
+  const runs = { ...(previous.runs ?? {}) };
   for (const range of ranges) {
-    if (range.source.kind === 'agent_run') {
-      const runId = range.source.subagentRunId ?? range.source.runId;
+    if (range.source.kind === 'run') {
+      const runId = range.source.runId;
       if (!runId) continue;
-      const current = agentRuns[runId];
-      if (current?.payloadId === range.throughEventId && current.messageCount > range.throughSeq) continue;
-      agentRuns[runId] = {
-        messageCount: range.throughSeq,
-        payloadId: range.throughEventId,
+      const current = runs[runId];
+      if (current && current.seq > range.throughSeq) continue;
+      runs[runId] = {
+        seq: range.throughSeq,
+        eventId: range.throughEventId,
       };
       continue;
     }
@@ -7225,7 +7229,7 @@ function dreamWatermarkFromSpan(
       eventId: range.throughEventId,
     };
   }
-  return { conversations, agentRuns };
+  return { conversations, runs };
 }
 
 function dreamProcessedConversations(
@@ -7237,7 +7241,7 @@ function dreamProcessedConversations(
   messageCount: number;
   charCount: number;
 }> {
-  return Object.fromEntries(ranges.filter((range) => range.source.kind !== 'agent_run').map((range) => [range.source.conversationId, {
+  return Object.fromEntries(ranges.filter((range) => range.source.kind !== 'run').map((range) => [range.source.conversationId, {
     fromSeqExclusive: range.fromSeqExclusive,
     throughSeq: range.throughSeq,
     throughEventId: range.throughEventId,
@@ -7246,27 +7250,26 @@ function dreamProcessedConversations(
   }]));
 }
 
-function dreamProcessedAgentRuns(
+function dreamProcessedRuns(
   ranges: readonly DreamMemoryExtractionSourceRange[],
 ): Record<string, {
-  parentConversationId: string;
+  conversationId: string;
   parentToolCallId?: string;
-  fromMessageCountExclusive: number;
-  throughMessageCount: number;
-  transcriptPayloadId: string | null;
+  fromSeqExclusive: number;
+  throughSeq: number;
+  throughEventId: string | null;
   messageCount: number;
   charCount: number;
 }> {
   return Object.fromEntries(ranges.flatMap((range) => {
-    if (range.source.kind !== 'agent_run') return [];
-    const runId = range.source.subagentRunId ?? range.source.runId;
+    if (range.source.kind !== 'run') return [];
+    const runId = range.source.runId;
     if (!runId) return [];
     return [[runId, {
-      parentConversationId: range.source.conversationId,
-      parentToolCallId: range.source.parentToolCallId,
-      fromMessageCountExclusive: range.fromSeqExclusive,
-      throughMessageCount: range.throughSeq,
-      transcriptPayloadId: range.throughEventId,
+      conversationId: range.source.conversationId,
+      fromSeqExclusive: range.fromSeqExclusive,
+      throughSeq: range.throughSeq,
+      throughEventId: range.throughEventId,
       messageCount: range.messageCount,
       charCount: range.charCount,
     }]];

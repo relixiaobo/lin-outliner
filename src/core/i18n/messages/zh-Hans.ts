@@ -960,7 +960,7 @@ commandPalette: {
       metaAgentId: '智能体 ID',
       metaType: '类型',
       metaParentToolCall: '父工具调用',
-      metaTranscriptPayload: '记录负载',
+      metaParentRun: '父运行',
       metaStarted: '开始时间',
       metaUpdated: '更新时间',
       metaNone: '无',
