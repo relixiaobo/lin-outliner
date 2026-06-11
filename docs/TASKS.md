@@ -20,7 +20,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
-| Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-3/PR-5 merged, PR #199) |
+| Codex | `lin-outliner-codex/` | — | idle (M3-B cross-agent memory + isolation gate merged, PR #200) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (agent conversation UX proposal merged, PR #197) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (full ask_user_question flow merged, PR #198) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -33,14 +33,15 @@ the flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 1 | codex | **M3-B** cross-agent memory (`agent-cross-agent-memory`; prereqs PR-1 #183 + PR-2 #195 on `main`). One-pager requirement: all new runtime code is set-of-runs-aware — no new single-run-slot assumptions (A7; `agent-channel-parallel-runtime` is coming). Holds the `agentRuntime.ts` slot. | plan-track |
+| 1 | codex | **M3-B** cross-agent memory + isolation gate — **merged as PR #200** (see Recently completed). Freed the `agentRuntime.ts` slot. | plan-track |
 | 2 | codex-2 | **UX B + E + C** (`agent-conversation-entry-identity-ux`) — speaker identity, time separators/Details, composer model chip → display+navigate; on merge, continue to **D** (activity area + reply anchors). | plan-track |
 | 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained; main's recommendation — PM confirmation pending). Touches `core/types.ts` → shared-interface-first: land the protocol slice as its own PR before the feature. | plan-track |
 
-Relay: **`agent-channel-parallel-runtime` starts when M3-B merges (runtime slot
-frees) AND UX D merges** — natural taker is codex after M3-B. **Realignment
-PR-4** (retrieval) collides with M3-B in the memory-retrieval area — slots in
-after M3-B merges. UX **Feature A** (roster + arbitrary-agent DMs) follows the
+Relay: **M3-B merged (PR #200) — the `agentRuntime.ts` runtime slot is now free.**
+`agent-channel-parallel-runtime` starts once **UX D merges** (the remaining gate) —
+natural taker is codex. **Realignment PR-4** (retrieval), which collided with M3-B
+in the memory-retrieval area, is now unblocked. UX **Feature A** (roster +
+arbitrary-agent DMs) follows the
 parallel runtime in the `agentRuntime.ts` queue (one runtime-touching PR in
 flight at a time: M3-B → parallel runtime → A). M3-C follows D.
 
@@ -667,6 +668,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **M3-B: cross-agent memory sharing + the cross-principal isolation gate** (codex,
+  PR #200, plan-track) — M3's one genuinely new primitive. Briefing and `recall`
+  generalize from `[self, user]` to **every co-member principal's** distilled pool,
+  derived from `conversation.members` (foreign agent pools render as named
+  `<principal>` zones); visibility is membership, no publish ACL. The load-bearing
+  half is the **hard isolation gate**: a single evidence-service choke point
+  (`readMemorySourceEvidence`) refuses any cross-principal `sources[]` dereference
+  with a typed `CROSS_PRINCIPAL_EVIDENCE` — distilled facts cross, raw transcript
+  never does; foreign entries reach the model with sources stripped + secret-redacted.
+  Fresh child sidechains keep user-pool visibility but never read the parent agent's
+  pool. The gate raised one finding on the first head — the refactor that extracted
+  the secret heuristic into a shared helper had silently weakened the skill-write
+  rejection gate (private-key match narrowed from header-only to a full `BEGIN…END`
+  block); fixed on the second head by splitting into a conservative **detection** set
+  (skill-write) and a full-block **redaction** set (memory-fact injection), with a
+  dedicated test. typecheck + test:core green (887/2/0); security review confirmed the
+  gate airtight. Specs synced in-PR; plan archived `done`.
 
 - **memory realignment PR-3 + PR-5: forgetting + schema activation** (codex, PR #199,
   plan-track) — chronic activation lands as one complete behavior, the two PRs merged

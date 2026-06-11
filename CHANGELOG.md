@@ -12,6 +12,33 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Cross-agent memory sharing + the cross-principal isolation gate (PR #200)** —
+  M3's one genuinely new primitive. In a Channel, each agent member's briefing and
+  `recall` now read not just its own pool and the user's but **every co-member
+  principal's** distilled self-model — visibility is conversation membership, with
+  no publish ACL. The pool list generalizes from `[self, user]` to all co-members
+  derived from `conversation.members`; foreign agent pools render as named
+  `<principal name="…">` zones, the reader's own as `<self>`. A **hard architectural
+  gate** guarantees no principal can dereference another's raw evidence: the single
+  choke point is the evidence service (`readMemorySourceEvidence`), which refuses
+  any `sources[]` dereference whose owning `principal` ≠ the reader with a typed
+  `CROSS_PRINCIPAL_EVIDENCE` error — the distilled `fact` stays available, raw
+  transcript never crosses. Cross-principal entries reach the model distilled-only:
+  source pointers stripped and the fact secret-redacted at the injection boundary.
+  Fresh child sidechains keep their isolation — they inherit user-pool visibility
+  but never read the parent agent's pool unless they are actual conversation
+  members. The N-pool briefing/recall budget uses a fair round-robin interleave so
+  a full self-model can't starve co-member zones. The secret heuristic is now a
+  shared helper split into a conservative header-only **detection** set
+  (skill-write rejection) and a full-block **redaction** set (memory-fact
+  injection), so the skill-authoring gate keeps its original strictness. Specs
+  synced in-PR (`agent-data-model`, `agent-tool-design`, `agent-architecture`,
+  `agent-progress`, `agent-program`); the `agent-cross-agent-memory` plan is
+  archived `done`. Covered by core unit tests: service-level gate refusal, recall
+  refusal projection, briefing redaction, Channel positive-share + non-member
+  exclusion, end-to-end runtime gate, own-evidence regression + tamper, and the
+  detection/redaction split.
+
 - **Memory forgetting + schema activation: chronic activation (PR #199)** — the
   agent memory briefing graduates from "newest 12 facts" to a two-strength
   activation model (Bjork & Bjork's New Theory of Disuse). New `memory.accessed`
