@@ -101,7 +101,7 @@ test.describe('agent settings window', () => {
       const row = settings.locator('.inset-row', { hasText: '/workspace-review' });
       await expect(row).toBeVisible();
       await expect(row.locator('.settings-chip', { hasText: 'project' })).toBeVisible();
-      const workspaceChip = row.locator('.settings-chip', { hasText: 'Workspace - not accepted' });
+      const workspaceChip = row.locator('.settings-chip', { hasText: 'Workspace · not accepted' });
       await expect(workspaceChip).toBeVisible();
       const acceptButton = row.getByRole('button', { name: 'Accept workspace-review for automatic use' });
       await expect(acceptButton).toBeVisible();

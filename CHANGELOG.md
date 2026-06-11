@@ -157,6 +157,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Workspace skills require explicit acceptance (PR #185)** — `project`-source skills
+  (anything under the workspace's `.agents/skills`, including nested discovery and
+  in-root additional directories) now fail **closed**: they stay out of the automatic
+  model skill listing and refuse model-triggered invocation until the user accepts the
+  exact current `SKILL.md` content hash in Settings → Skills. Slash invocation still
+  works immediately (the user's command is per-run consent). Hand-edit
+  self-ratification is now `user`-source only; a repo update changes the hash and
+  drops an accepted workspace skill back to pending. Trust derivation is a single
+  pure function (`deriveSkillTrust`) feeding both model gates; the Skills tab marks
+  unaccepted project rows with a workspace-specific chip. Spec folded into
+  `docs/spec/agent-skills.md`; plan `agent-skill-workspace-trust` archived `done`.
+  Follow-up copy fix on `main`: the pending chip separator now uses the codebase's
+  `·` convention in both locales.
+
 - **Memory realignment Step 0 + PR-1: one person rule, bullet briefing, recall subject (PR #183)** —
   first unit of the PM-ratified `agent-memory-realignment` program (charter decisions D-1…D-9; the
   program one-pager + R1–R6 trio reconciliation ratified and recorded in the charter in-PR).

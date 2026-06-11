@@ -20,7 +20,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (M3-A multi-agent Channel merged, PR #179) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
-| Codex | `lin-outliner-codex/` | — | idle (outliner indent/draft fixes merged, PR #182) |
+| Codex | `lin-outliner-codex/` | — | idle (workspace skill trust merged, PR #185) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (registered 2026-06-11) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -46,10 +46,9 @@ Both 2026-06-09 lanes merged — board is between batches.
   completed.
   - `agent-skill-acceptance` (cc) **merged** as PR #175 — see Recently completed.
     Plan archived `done` inside the PR itself (PR A + slimmed PR B, single-step undo).
-  - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills —
-    **plan drafted + direction PM-ratified 2026-06-10 (reuse per-skill acceptance):**
-    `docs/plans/agent-skill-workspace-trust.md`. Executable-script support-file
-    ratify+sandbox and M2 curation dry-run stay deferred.
+  - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills
+    (codex) **merged** as PR #185 — see Recently completed; plan archived `done` in-PR.
+    Executable-script support-file ratify+sandbox and M2 curation dry-run stay deferred.
 - **Multi-agent (M3) — debt-first sequencing ratified 2026-06-10.** A read-only audit
   verified the storage foundation is clean (three-ledger migration done; §4 principal/
   membership on `main` via #173) and the load-bearing debt is small + contained. New
@@ -626,6 +625,17 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Workspace skill trust: `project` skills require explicit acceptance** (codex, PR #185) —
+  closes the `agent-skill-acceptance` follow-up (plan `agent-skill-workspace-trust`
+  archived `done` in-PR). Cloned-repo `.agents/skills` content now fails closed: out of
+  the model listing and refusing model-triggered invocation until the user accepts the
+  exact current content hash (Settings → Skills, workspace-specific pending chip);
+  slash invocation stays per-run consent. Hand-edit self-ratification is `user`-source
+  only; trust derivation centralized in one pure function feeding both model gates.
+  Gate: manual review + typecheck · core 843/0 · renderer 409/0 · agent-settings e2e
+  22/22 · visual light+dark (pending and accepted states). One copy nit (chip separator)
+  fixed on `main` post-merge.
 
 - **memory realignment Step 0 + PR-1: one person rule, bullet briefing, recall subject,
   authority-doc rewrite** (cc-2, PR #183) — the first unit of the PM-ratified
