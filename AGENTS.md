@@ -22,7 +22,7 @@ them in the same change rather than letting them drift.
 | Typecheck | `bun run typecheck` |
 | Unit tests | `bun run test:core` · `bun run test:renderer` |
 | E2E tests | `bun run test:e2e` (Playwright) |
-| Dev run (per clone) | `bun run dev:<main\|cc\|cc-2\|codex\|anti>` — isolates `userData` |
+| Dev run (per clone) | `bun run dev:<main\|cc\|cc-2\|codex\|codex-2\|anti>` — isolates `userData` |
 | Packaged build | `bun run app:build` → unsigned `.dmg` in `release/` |
 
 Run `bun run typecheck` + the relevant tests before marking a PR ready. macOS is
@@ -119,7 +119,7 @@ Authority: `docs/spec/design-system.md`. The load-bearing rules:
 
 ## How We Work Together
 
-Five clones run side-by-side under `~/Coding/`, sharing one GitHub origin
+Six clones run side-by-side under `~/Coding/`, sharing one GitHub origin
 (`relixiaobo/lin-outliner`). Sync happens **only through PRs to `main`** — treat
 the clones as separate machines that share a remote, never via local cross-clone
 operations.
@@ -130,6 +130,7 @@ operations.
   lin-outliner-cc/      ← Claude Code dev agent
   lin-outliner-cc-2/    ← Claude Code dev agent (second)
   lin-outliner-codex/   ← Codex dev agent
+  lin-outliner-codex-2/ ← Codex dev agent (second)
   lin-outliner-anti/    ← Claude Code dev agent (anti)
 ```
 
@@ -149,9 +150,10 @@ start of a session and act accordingly.
 - **PM (human)** — owns demand (what to build), judgment (approve plans,
   GO/NO-GO), and flow (what's in flight, what merges next). **Ratifies plans; does
   not co-design them.** Does not write or line-review code.
-- **Dev agents** (`cc`, `cc-2`, `codex`, `anti` — all equal) — **draft** the plan
-  (what + how) AND build it. `codex` is a different model (Codex/GPT); the rest
-  are Claude Code. No agent has a special role beyond its clone.
+- **Dev agents** (`cc`, `cc-2`, `codex`, `codex-2`, `anti` — all equal) — **draft**
+  the plan (what + how) AND build it. `codex` and `codex-2` are a different model
+  (Codex/GPT); the rest are Claude Code. No agent has a special role beyond its
+  clone.
 - **Main agent** (`lin-outliner/`) — the **end-stage integration gatekeeper**:
   runs the review gate, merges, sequences, keeps `main` clean. Does **not** frame
   work up front (that would serialize the front); reads the board for integration
@@ -163,6 +165,7 @@ start of a session and act accordingly.
 | `lin-outliner-cc/` | Claude Code | `cc/<topic>` | Draft plan with PM, build, open Draft PR. |
 | `lin-outliner-cc-2/` | Claude Code | `cc-2/<topic>` | Draft plan with PM, build, open Draft PR. |
 | `lin-outliner-codex/` | Codex | `codex/<topic>` | Draft plan with PM, build, open Draft PR. |
+| `lin-outliner-codex-2/` | Codex | `codex-2/<topic>` | Draft plan with PM, build, open Draft PR. |
 | `lin-outliner-anti/` | Claude Code | `anti/<topic>` | Draft plan with PM, build, open Draft PR. |
 
 Topic should map to a plan in `docs/plans/` when possible; one branch per plan,
@@ -295,7 +298,8 @@ reads it:
 
 Use the clone's `dev:*` script so each stays isolated: `dev:main` →
 `$HOME/.lin-outliner-main`, `dev:cc` → `…-cc`, `dev:cc-2`, `dev:codex`,
-`dev:anti`. Never point a dev run at the installed prod app's data.
+`dev:codex-2`, `dev:anti`. Never point a dev run at the installed prod app's
+data.
 The dev-only `.lin-outliner-*` directory names intentionally stay as
 compatibility names for now; renaming them would touch every clone's `dev:*`
 script and is a separate change.
