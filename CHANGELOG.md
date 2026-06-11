@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **A failing scheduled Dream backs off instead of re-firing every tick (PR #189)** —
+  the Dream scheduler ticks every 60s and its gate only consults the pool's last
+  *success* (`shouldFireDateSchedule(…, lastSuccessAt)`); a failed Dream advances
+  neither `lastSuccessAt` nor the watermark, so a persistently failing Dream
+  (provider down, quota, …) re-created a fresh `failed` run record every minute,
+  per pool — up to 1440/day/pool. Added a per-pool, in-memory failure backoff
+  (sibling to the `dreamingPools` guard): after a *scheduled* Dream fails, the pool
+  is held off for an exponentially growing, capped window (5 min → 10 → 20 → … →
+  6 h cap), cleared on the first success. A manual `/dream` ignores the window (the
+  user asked for it now) and its outcome still resets the backoff, so a manual run
+  can un-stick the schedule; `skipped` outcomes leave the window untouched. The
+  curve is a pure helper (`dreamBackoff.ts`). In-memory by design — transient
+  scheduler control state, not durable self-model — so a restart costs one extra
+  attempt, never a flood. Does not retroactively clean already-piled records.
+
 - **Dream sessionId stays within the provider `prompt_cache_key` cap (PR #188)** —
   the Dream batch stream `sessionId` was `${principalKey}:dream:${runId}:${n}` =
   79 chars; pi-ai clamps the request body's `prompt_cache_key` to 64 but still

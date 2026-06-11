@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (Dream cache-key cap fix merged, PR #188) |
+| Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
 | Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (focus/selection polish merged, PR #186) |
@@ -639,6 +639,18 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Dream failure backoff** (cc, PR #189, fast-track) — a persistently failing scheduled
+  Dream re-fired every 60s tick (its gate only consults `lastSuccessAt`, which a failure
+  never advances), flooding the run list with up to 1440 `failed` records/day/pool. Added
+  a per-pool in-memory failure backoff (sibling to `dreamingPools`): scheduled failures
+  hold the pool off for an exponential, capped window (5 min → 6 h), cleared on first
+  success; manual `/dream` ignores the window and still resets it; `skipped` leaves it
+  untouched. Pure curve helper `dreamBackoff.ts`. Gate: two independent adversarial
+  reviewers + mutation-tested integration guard, no real bugs; typecheck + core 849 pass
+  / 2 skip / 0 fail. Two accepted non-blocking notes (benign Map entry for dead pools;
+  integration test covers the fail-path, unit tests cover the rest) — **follow-up PR
+  closes both.** Independent of #188 (different lines); textual-only overlap with #184.
 
 - **Dream sessionId cache-key cap** (cc, PR #188, fast-track) — the Dream batch stream
   `sessionId` was `${principalKey}:dream:${runId}:${n}` = 79 chars, overflowing the
