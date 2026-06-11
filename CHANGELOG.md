@@ -29,6 +29,35 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   (`useDismissibleOverlay`, `state/persistence.ts`) replacing three duplicated
   copies. Empty-state hint copy updated (en + zh-Hans).
 
+### Changed
+
+- **Run unification: the subagent entity is dissolved (PR #184)** — the concept
+  model's 7 primitives now hold in code: a delegation is just a Run whose
+  `parentRunId` points at another run. A delegated (child) run is an ordinary
+  Run with its own `runs/<runId>/` append-only ledger; the parent stores only
+  the `parentToolCallId ↔ childRunId` join — `state.subagents` and transcript
+  payload snapshots are gone. ONE evidence addressing scheme everywhere (stable
+  `{seq, eventId}`; the `runId:message:N` codec and payload pinning deleted),
+  ONE watermark shape (`{seq, eventId}` per stream; the positional
+  `{messageCount, payloadId}` cursor deleted), ONE compaction semantics
+  (event-sourced; the snapshot-rewrite path deleted — the #178
+  evidence-preserving invariant now holds structurally). The word `Subagent`
+  left the type system (`agent_child_run_*` commands, `child_run.*` events,
+  delegation/child-run vocabulary); AGENT.md frontmatter parsing exists exactly
+  once (`core/agentMarkdown.ts`); a `layout.json {v}` generation sentinel
+  replaces the #180 detector pile (fail-open invariants carried over;
+  pre-release wipe, no migration). Fork-vs-fresh semantics (#164), memory
+  ownership, permission flow (verified byte-equivalent at the gate), sidechain
+  rendering, and task-panel visibility are preserved. Hardened across two gate
+  rounds: a `runs.json` read-modify-write race that could silently drop a
+  finished turn's messages from replay is serialized onto the index queue
+  (red-verified regression test); the child-run reducer now accepts
+  terminal→running as resume semantics; the e2e layer genuinely migrated to the
+  new transcript command; quit-path settling covers per-run ledger queues; the
+  new `agent_child_run_transcript` IPC fail-closes on cross-conversation reads;
+  Dream skips delegation ledgers missing their `run.started` boundary. E2E
+  316/316 green; visual verification light + dark passed.
+
 ### Fixed
 
 - **Packaged agent local-file root no longer defaults to `/` (PR #192)** — the

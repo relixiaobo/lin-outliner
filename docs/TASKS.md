@@ -19,7 +19,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (sidebar pinned nodes merged, PR #191) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -69,14 +69,14 @@ Both 2026-06-09 lanes merged — board is between batches.
   scoping defect; visual light+dark passed in round 3). Unblocks
   `agent-run-unification` (dispatch-ready) and `agent-avatar-v1` (the `actor`
   render-projection field is on `main`) →
-  **run unification** (`agent-run-unification`, **PM-ratified 2026-06-10**: dissolve
-  the subagent entity — child runs become ordinary run ledgers, one evidence scheme,
-  one watermark shape, event-sourced compaction; the #164/#178 guards become
-  structural; now also the coordinate foundation for the memory-realignment episodic
-  layer) →
+  **run unification** (`agent-run-unification`, **merged as PR #184** — see Recently
+  completed; dissolved the subagent entity: child runs are ordinary run ledgers, one
+  evidence scheme, one watermark shape, event-sourced compaction; the #164/#178
+  guards became structural; the coordinate foundation for the memory-realignment
+  episodic layer is in place) →
   **memory-theory realignment PR-1 + PR-2** (person rule + episodic layer — see
   Backlog § memory for the PM-ratified program; **Step 0 + PR-1 merged as PR #183**,
-  PR-2 needs run unification) →
+  PR-2's run-unification prerequisite is now cleared by #184) →
   **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
   the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification +
   **realignment PR-1/PR-2** — PM-ratified 2026-06-10: agents must not cross-read
@@ -249,7 +249,8 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   default policy Ask First·Balanced·Full Access / internal delegation sandbox), one
   approval card with graduated exits + in-flow skill acceptance + tell-only denial
   cards, one Security settings page. The `agent-local-root-boundary` prerequisite is
-  **cleared** (PR #192, merged); still rebases over #184 (run unification). Protocol rename
+  **cleared** (PR #192, merged) and #184 (run unification) is merged — builds on
+  current `main`. Protocol rename
   `AgentPermissionMode`→`AgentSafetyMode` must be recorded in `agent-program` F6 in the
   same change. See `docs/plans/agent-permission-safety-modes.md` (incl. ratified
   decisions).
@@ -636,11 +637,27 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `AppendOnlySeqLog`** with a structured, Sentry-event-shaped, upload-ready schema (NOT
   `electron-log`) — chosen for the stated future of scrubbed cloud upload (redaction is auditable
   only over structured records). Cloud uploader intentionally NOT built now (A7/YAGNI), schema
-  shaped for it. Shape (a) one PR, foundation-first. **Sequence after #184** (same
-  `agentRuntime.ts` catch-sites). See `docs/plans/error-observability.md`.
+  shaped for it. Shape (a) one PR, foundation-first. The #184 sequencing gate is
+  cleared (merged) — build on current `main`'s `agentRuntime.ts` catch-sites. See
+  `docs/plans/error-observability.md`.
 
 ## Recently completed
 
+- **agent-run-unification** (cc-2, PR #184, plan-track) — dissolved the subagent
+  entity per the PM-ratified plan: a delegated (child) run is an ordinary Run with
+  its own `runs/<runId>/` ledger and `parentRunId` join; one `{seq, eventId}`
+  evidence scheme and watermark shape (positional `runId:message:N` codec, payload
+  pinning, and the `{messageCount, payloadId}` cursor all deleted); event-sourced
+  compaction everywhere (#178's invariant now structural); `Subagent` left the type
+  system; frontmatter parsing consolidated onto `core/agentMarkdown.ts`;
+  `layout.json {v}` sentinel replaced the #180 detector pile. Two gate rounds:
+  round 1 found 3 blockers (e2e mock identifier breakage from a careless rename
+  sweep, e2e layer renamed-not-migrated, a `runs.json` RMW race across two serial
+  queues that silently dropped replay messages) + reducer/spec majors, and supplied
+  the semantic rebase map over #185/#188–#190; round 2 verified all fixes, the
+  fireDream conflict resolution, e2e 316/316, and visual light+dark. Plan archived
+  `done` in-PR; spec synced (architecture / data-model / delegation-runtime /
+  event-log-rendering / tool-design / progress).
 - **agent-local-root-boundary** (codex, PR #192, plan-track) — fixes the packaged-app
   agent file root: the old `LIN_AGENT_LOCAL_ROOT ?? process.cwd()` fallback could
   resolve to `/` on a Finder launch, making the whole disk the allowed file area. New

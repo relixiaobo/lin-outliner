@@ -153,8 +153,9 @@ truth.
     path without supplying memory facts
   - fresh typed child agents use their own agent identity for the `<memory>` briefing,
     `recall`, and child-ledger Dream evidence; forks inherit the
-    parent agent's memory owner and use a persisted Dream evidence boundary;
-    agent-run memory sources bind evidence to the recorded transcript payload id,
+    parent agent's memory owner and use the structural fork boundary (events past
+    the child ledger's first `run.started`); run-sourced memory sources bind
+    evidence to stable run-ledger ids (`{seq, eventId}` + message ids, post-#184),
     and owner-anchored Dream tasks appear in the shared task projection
   - projected-state cache, idempotent forget, and high-churn log compaction
   - permission classification for read-only `agent.memory.recall` and
