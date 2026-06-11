@@ -196,7 +196,6 @@
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   font-weight: 700;
-  line-height: 24px;
   user-select: none;
 }
 
@@ -204,7 +203,6 @@
   width: 28px;
   height: 28px;
   flex-basis: 28px;
-  line-height: 28px;
 }
 
 .agent-message-action-button {
