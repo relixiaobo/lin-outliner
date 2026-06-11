@@ -1115,7 +1115,6 @@ export function AgentChatPanel({
 
     return (
       <AgentMessageRow
-        actorId={speakerAgentId}
         actorLabel={actorLabel}
         actorMention={actorMention}
         busy={isStreaming}
@@ -1137,7 +1136,6 @@ export function AgentChatPanel({
         toolResults={toolResults}
         turnEnded={row.turnEnded}
         turnPhase={row.turnPhase}
-        speakerId={detailSpeakerAgentId ?? (row.entry.message.role === 'user' ? 'user' : undefined)}
         speakerLabel={detailSpeakerLabel}
         speakerMention={detailSpeakerMention}
       />
@@ -1192,7 +1190,6 @@ export function AgentChatPanel({
           {dmAgentId && dmAgentLabel ? (
             <>
               <AgentIdentityAvatar
-                id={dmAgentId}
                 label={dmAgentLabel}
                 mention={dmAgentMention}
                 size="md"

@@ -192,8 +192,8 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  background: hsl(var(--agent-avatar-hue, 220deg) 34% 48% / 0.16);
-  color: hsl(var(--agent-avatar-hue, 220deg) 34% 30%);
+  background: var(--fill-2);
+  color: var(--text-soft);
   font-size: var(--font-ui-xs);
   font-weight: 700;
   line-height: 24px;
@@ -205,13 +205,6 @@
   height: 28px;
   flex-basis: 28px;
   line-height: 28px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .agent-identity-avatar {
-    background: hsl(var(--agent-avatar-hue, 220deg) 34% 68% / 0.18);
-    color: hsl(var(--agent-avatar-hue, 220deg) 42% 78%);
-  }
 }
 
 .agent-message-action-button {

@@ -63,7 +63,6 @@ const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 interface AgentMessageRowProps {
   /** Speaker name for Channel attribution; null/undefined renders no badge (DM, user, coordinator). */
   actorLabel?: string | null;
-  actorId?: string | null;
   /** The speaker's `@` token, shown as the badge tooltip. */
   actorMention?: string;
   busy?: boolean;
@@ -87,7 +86,6 @@ interface AgentMessageRowProps {
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
-  speakerId?: string | null;
 }
 
 interface UserDisplayContent {
@@ -330,14 +328,12 @@ function AgentMessageDetailsPopover({
   message,
   locale,
   onClose,
-  speakerId,
   speakerLabel,
   speakerMention,
 }: {
   message: UserMessage | AssistantMessage;
   locale: string;
   onClose: () => void;
-  speakerId: string;
   speakerLabel: string;
   speakerMention?: string | null;
 }) {
@@ -366,7 +362,7 @@ function AgentMessageDetailsPopover({
   return (
     <div className="agent-message-details-popover" ref={detailsRef} role="dialog" aria-label={t.agent.message.details}>
       <div className="agent-message-details-speaker">
-        <AgentIdentityAvatar id={speakerId} label={speakerLabel} mention={speakerMention} />
+        <AgentIdentityAvatar label={speakerLabel} mention={speakerMention} />
         <span>{speakerLabel}</span>
         {speakerMention ? <small>{`@${speakerMention}`}</small> : null}
       </div>
@@ -588,7 +584,6 @@ function renderAssistantBlocks(
 
 export function AgentMessageRow({
   actorLabel = null,
-  actorId = null,
   actorMention,
   busy = false,
   contentKey,
@@ -611,7 +606,6 @@ export function AgentMessageRow({
   turnPhase = 'idle',
   speakerLabel = null,
   speakerMention = null,
-  speakerId = null,
 }: AgentMessageRowProps) {
   const t = useT();
   const { locale } = useI18n();
@@ -661,8 +655,6 @@ export function AgentMessageRow({
   const nodeId = entry.nodeId;
   const resolvedSpeakerLabel = speakerLabel
     ?? (message.role === 'user' ? t.agent.message.you : t.agent.message.roleAssistant);
-  const resolvedSpeakerId = speakerId
-    ?? (message.role === 'user' ? 'user' : actorId ?? actorMention ?? 'assistant');
 
   async function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -804,7 +796,6 @@ export function AgentMessageRow({
               locale={locale}
               message={message}
               onClose={() => setDetailsOpen(false)}
-              speakerId={resolvedSpeakerId}
               speakerLabel={resolvedSpeakerLabel}
               speakerMention={speakerMention}
             />
@@ -845,7 +836,6 @@ export function AgentMessageRow({
     <AgentMessageFrame role="assistant" onContextMenu={handleContextMenu}>
       {actorLabel ? (
         <AgentIdentityAvatar
-          id={actorId ?? actorMention ?? actorLabel}
           label={actorLabel}
           mention={actorMention}
         />
@@ -897,7 +887,6 @@ export function AgentMessageRow({
             locale={locale}
             message={message}
             onClose={() => setDetailsOpen(false)}
-            speakerId={resolvedSpeakerId}
             speakerLabel={resolvedSpeakerLabel}
             speakerMention={speakerMention}
           />
