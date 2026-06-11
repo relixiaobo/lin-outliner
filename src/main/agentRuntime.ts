@@ -4069,6 +4069,7 @@ export class AgentRuntime {
     const reader: AgentPrincipal = { type: 'agent', agentId };
     return {
       reader,
+      principalNameFor: (principal) => this.memoryPrincipalName(principal, getConversation()),
       recall: async (options) => {
         const conversation = getConversation();
         const limit = clampRecallLimit(options.limit);

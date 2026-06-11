@@ -60,6 +60,8 @@ const RECALL_TOOL_PARAMETERS = {
 export interface AgentRecallToolRuntime {
   /** The principal whose context the tool runs in — its own pool surfaces as subject "self". */
   reader: AgentPrincipal;
+  /** Human-facing name for a non-reader principal pool; defaults to a principal-derived label. */
+  principalNameFor?: (principal: AgentPrincipal) => string;
   recall(options: {
     query?: string;
     limit?: number;
@@ -156,7 +158,7 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
           truncated: entries.length > 0 && result.totalEntries > entries.length,
           evidenceTruncated: entries.some((entry) => entry.evidenceTruncated),
           overview: result.overview,
-        }, elapsed(started), runtime.reader);
+        }, elapsed(started), runtime);
       } catch (error) {
         return recallToolError('FAILED', error instanceof Error ? error.message : String(error), started);
       }
@@ -167,9 +169,9 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
 function recallToolResult(
   data: AgentRecallToolData,
   durationMs: number,
-  reader: AgentPrincipal,
+  runtime: Pick<AgentRecallToolRuntime, 'reader' | 'principalNameFor'>,
 ): AgentToolResult<ToolEnvelope<AgentRecallToolData>> {
-  const visible = visibleRecallToolData(data, reader);
+  const visible = visibleRecallToolData(data, runtime.reader, runtime.principalNameFor);
   return agentToolResult(successEnvelope<AgentRecallToolData>('recall', data, {
     instructions: recallInstructions(data),
     metrics: {
@@ -190,7 +192,11 @@ function recallToolError(
   }));
 }
 
-function visibleRecallToolData(data: AgentRecallToolData, reader: AgentPrincipal): unknown {
+function visibleRecallToolData(
+  data: AgentRecallToolData,
+  reader: AgentPrincipal,
+  principalNameFor: ((principal: AgentPrincipal) => string) | undefined,
+): unknown {
   return {
     entries: data.entries.map((entry) => ({
       memory_id: entry.memoryId,
@@ -198,7 +204,7 @@ function visibleRecallToolData(data: AgentRecallToolData, reader: AgentPrincipal
       // results are distinguishable only by accidental wording ([[agent-memory-realignment]]
       // D-3). Speaks the briefing's vocabulary — "self" / the same zone name — never a raw
       // internal principal key the model might echo into prose (gate round, #183).
-      subject: recallSubject(entry.principal, reader),
+      subject: recallSubject(entry.principal, reader, principalNameFor),
       fact: entry.fact,
       status: entry.status,
       created_at: entry.createdAt,
@@ -283,8 +289,12 @@ function visibleEvidence(evidence: AgentRecallEvidence): unknown {
 // The reader-relative subject of a pool — the SAME vocabulary the briefing's zones use
 // (`self` ↔ `<self>`, a friendly name ↔ `<principal name="…">`), so recall results ground
 // against the briefing instead of leaking internal principal keys.
-function recallSubject(principal: AgentPrincipal, reader: AgentPrincipal): string {
-  return samePrincipal(principal, reader) ? 'self' : defaultPrincipalName(principal);
+function recallSubject(
+  principal: AgentPrincipal,
+  reader: AgentPrincipal,
+  principalNameFor: ((principal: AgentPrincipal) => string) | undefined,
+): string {
+  return samePrincipal(principal, reader) ? 'self' : (principalNameFor?.(principal) ?? defaultPrincipalName(principal));
 }
 
 function recallInstructions(data: AgentRecallToolData): string | undefined {

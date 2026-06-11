@@ -237,6 +237,7 @@ describe('agent recall tool', () => {
   test('renders typed evidence refusals under cross-principal entries', async () => {
     const runtime: AgentRecallToolRuntime = {
       reader: READER,
+      principalNameFor: (principal) => (principal.type === 'agent' ? 'Code Reviewer' : 'The user'),
       recall: async () => ({
         entries: [{
           entry: {
@@ -260,7 +261,7 @@ describe('agent recall tool', () => {
       data: {
         entries: [{
           memory_id: 'memory-foreign',
-          subject: 'agent-peer',
+          subject: 'Code Reviewer',
           evidence: [{
             kind: 'evidence_refusal',
             code: 'CROSS_PRINCIPAL_EVIDENCE',
