@@ -290,60 +290,159 @@
   white-space: pre-wrap;
 }
 
-/* Channel typing indicator (ratified IM model): the only trace of an in-flight
-   run in the thread. Neutral text (B3); the dots animate unless reduced-motion.
-   It is a real control (opens the working-state panel) — color-deepen on hover,
-   no fill box (B6). */
-.agent-channel-typing {
-  display: inline-flex;
-  width: fit-content;
+/* Channel activity rail: fixed-height parallel presence at the composer boundary.
+   Entries can come and go without changing the transcript/composer geometry. */
+.agent-channel-activity {
+  --agent-channel-activity-height: calc(var(--control-size-xl) + var(--space-8));
+  --agent-channel-activity-item-height: calc(var(--control-size-xl) + var(--space-1));
+  --agent-channel-activity-entry-max: calc(var(--control-size-xl) * 5 + var(--space-8));
+
+  display: flex;
+  height: var(--agent-channel-activity-height);
+  min-height: var(--agent-channel-activity-height);
+  flex: 0 0 var(--agent-channel-activity-height);
   align-items: center;
-  gap: var(--space-3);
-  margin: var(--space-3) 0;
-  border-radius: var(--radius-sm);
+  border-top: 1px solid var(--border-subtle);
   color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-  transition: color var(--motion-fast);
+  padding: 0 var(--agent-content-x);
+  user-select: none;
 }
 
-.agent-channel-typing:hover,
-.agent-channel-typing:focus-visible {
+.agent-channel-activity-list {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+}
+
+.agent-channel-activity-item-shell {
+  position: relative;
+  min-width: 0;
+  max-width: var(--agent-channel-activity-entry-max);
+  flex: 1 1 0;
+}
+
+.agent-channel-activity-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: var(--agent-channel-activity-item-height);
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  padding: 0 var(--space-2);
+  transition:
+    background var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.agent-channel-activity-item-shell:has(.agent-channel-activity-stop) .agent-channel-activity-item {
+  padding-right: var(--agent-channel-activity-item-height);
+}
+
+.agent-channel-activity-item:hover,
+.agent-channel-activity-item:focus-visible,
+.agent-channel-activity-item-shell.is-selected .agent-channel-activity-item {
+  background: var(--fill-2);
   color: var(--text-strong);
 }
 
-.agent-channel-typing-dots {
+.agent-channel-activity-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: var(--line-ui-xs);
+}
+
+.agent-channel-activity-copy > span,
+.agent-channel-activity-copy > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-channel-activity-copy > span {
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+}
+
+.agent-channel-activity-copy > small {
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+}
+
+.agent-channel-activity-stop {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
   display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
   align-items: center;
-  gap: var(--space-1);
-}
-
-.agent-channel-typing-dots span {
-  width: 4px;
-  height: 4px;
+  justify-content: center;
   border-radius: var(--radius-pill);
-  background: currentColor;
-  animation: agent-channel-typing-bounce 1.2s ease-in-out infinite;
+  background: var(--fill-2);
+  color: var(--text-soft);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    color var(--motion-fast),
+    opacity var(--motion-fast);
 }
 
-.agent-channel-typing-dots span:nth-child(2) {
-  animation-delay: 0.15s;
+.agent-channel-activity-item-shell:hover .agent-channel-activity-stop,
+.agent-channel-activity-stop:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.agent-channel-typing-dots span:nth-child(3) {
-  animation-delay: 0.3s;
+.agent-channel-activity-stop:hover,
+.agent-channel-activity-stop:focus-visible {
+  color: var(--text-strong);
 }
 
-@keyframes agent-channel-typing-bounce {
-  0%, 60%, 100% { opacity: 0.35; }
-  30% { opacity: 1; }
+.agent-channel-activity-overflow {
+  display: inline-flex;
+  height: var(--control-size-md);
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-3);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .agent-channel-typing-dots span {
-    animation: none;
-    opacity: 0.7;
-  }
+.agent-reply-anchor {
+  display: inline-flex;
+  max-width: 100%;
+  width: fit-content;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  margin-bottom: var(--space-2);
+  transition: color var(--motion-fast);
+}
+
+.agent-reply-anchor:hover,
+.agent-reply-anchor:focus-visible {
+  color: var(--text-strong);
+}
+
+.agent-reply-anchor > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A Channel message queued behind the active round: visible immediately but not

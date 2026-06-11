@@ -68,6 +68,7 @@ interface AgentMessageRowProps {
   busy?: boolean;
   contentKey?: string;
   entry: AgentMessageEntry;
+  highlighted?: boolean;
   index: DocumentIndex;
   isLastInTurn?: boolean;
   onEdit?: (nodeId: string, message: string) => void | Promise<void>;
@@ -86,6 +87,13 @@ interface AgentMessageRowProps {
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
+  replyAnchor?: AgentReplyAnchor | null;
+  onReplyAnchorClick?: (targetMessageId: string) => void;
+}
+
+export interface AgentReplyAnchor {
+  targetMessageId: string;
+  quote: string;
 }
 
 interface UserDisplayContent {
@@ -588,6 +596,7 @@ export function AgentMessageRow({
   busy = false,
   contentKey,
   entry,
+  highlighted = false,
   index,
   isLastInTurn = true,
   onCopy,
@@ -606,6 +615,8 @@ export function AgentMessageRow({
   turnPhase = 'idle',
   speakerLabel = null,
   speakerMention = null,
+  replyAnchor = null,
+  onReplyAnchorClick,
 }: AgentMessageRowProps) {
   const t = useT();
   const { locale } = useI18n();
@@ -688,7 +699,7 @@ export function AgentMessageRow({
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
     if (editing && nodeId) {
       return (
-        <AgentMessageFrame role="user">
+        <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="user">
           <div className="agent-user-edit-card">
             <textarea
               autoFocus
@@ -725,7 +736,7 @@ export function AgentMessageRow({
       );
     }
     return (
-      <AgentMessageFrame role="user" onContextMenu={handleContextMenu}>
+      <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="user" onContextMenu={handleContextMenu}>
         <div className="agent-user-content">
           {hasVisibleContent ? (
             <AgentUserCollapsibleContent measureKey={contentMeasureKey}>
@@ -833,7 +844,7 @@ export function AgentMessageRow({
   if (assistantBlocks.length === 0 && !hasError && !turnActive) return null;
 
   return (
-    <AgentMessageFrame role="assistant" onContextMenu={handleContextMenu}>
+    <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
       {actorLabel ? (
         <AgentIdentityAvatar
           label={actorLabel}
@@ -841,6 +852,16 @@ export function AgentMessageRow({
         />
       ) : null}
       <AgentAssistantContent>
+        {replyAnchor ? (
+          <ButtonControl
+            className="agent-reply-anchor"
+            onClick={() => onReplyAnchorClick?.(replyAnchor.targetMessageId)}
+            title={t.agent.message.replyAnchorTitle}
+          >
+            <span aria-hidden>↩</span>
+            <span>{`"${replyAnchor.quote}"`}</span>
+          </ButtonControl>
+        ) : null}
         {actorLabel ? (
           <div
             className="agent-message-actor"

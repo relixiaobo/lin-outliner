@@ -826,7 +826,14 @@ commandPalette: {
       conversations: 'Channels',
       noConversations: 'No channels',
       channelMembers: 'Channel members',
-      memberTyping: ({ name }: { name: string }) => `${name} is replying...`,
+      channelActivity: 'Channel activity',
+      activityOverflow: ({ count }: { count: number }) => `+${count}`,
+      activityStates: {
+        thinking: 'thinking',
+        usingTools: 'using tools',
+        received: 'received',
+      },
+      stopActivityEntry: ({ name }: { name: string }) => `Stop ${name}`,
       openTypingDetails: 'View working state',
       closeTypingDetails: 'Close working state',
       typingNoDetailYet: 'No activity yet.',
@@ -951,6 +958,7 @@ commandPalette: {
       timestamp: 'Time',
       model: 'Model',
       tokens: 'Tokens',
+      replyAnchorTitle: 'Jump to addressed message',
       tokenLabels: {
         input: 'input',
         output: 'output',

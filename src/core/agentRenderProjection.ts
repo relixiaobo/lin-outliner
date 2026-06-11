@@ -13,7 +13,7 @@ import {
   type AgentDreamCompletedChanges,
   type AgentChildRunRecord,
 } from './agentEventLog';
-import { agentMentionToken } from './agentChannel';
+import { agentMentionToken, channelAgentMembers } from './agentChannel';
 
 export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'child-run';
 
@@ -66,9 +66,11 @@ export interface AgentRenderMessageEntity {
   branches: AgentRenderBranchState | null;
   actor: AgentActor;
   addressedTo?: AgentPrincipal[];
+  addressedByMessageId?: string | null;
   apiId?: string;
   providerId?: string;
   modelId?: string;
+  runId?: string;
   stopReason?: string;
   usage?: AgentEventMessageRecord['usage'];
   errorMessage?: string;
@@ -112,6 +114,18 @@ export interface AgentRenderChildRunEntity {
   result?: string;
   error?: string;
   parentToolCallId?: string;
+}
+
+export type AgentRenderActivityState = 'received' | 'thinking' | 'using_tools';
+
+export interface AgentRenderActivityEntry {
+  id: string;
+  agentId: string;
+  runId: string | null;
+  messageId: string | null;
+  addressedByMessageId: string;
+  state: AgentRenderActivityState;
+  updatedAt: number;
 }
 
 export interface AgentRenderCompactionEntity {
@@ -201,6 +215,8 @@ export interface AgentRenderProjection {
   activeRunId: string | null;
   /** The active run's executing agent — the Channel typing indicator's subject. */
   activeRunAgentId: string | null;
+  /** Channel activity entries: one addressed agent per unfinished addressing message. */
+  activityEntries: AgentRenderActivityEntry[];
   /**
    * Channel user messages queued behind the active round (queue-all, no steer).
    * Not yet in the event log — the round loop persists each when it routes it —
@@ -225,6 +241,9 @@ export interface AgentRenderProjection {
 export interface BuildAgentRenderProjectionOptions {
   revision: number;
   activeRunId?: string | null;
+  activeRunAddressedByMessageId?: string | null;
+  activityEntries?: readonly AgentRenderActivityEntry[];
+  messageAddressedByMessageIds?: Record<string, string | null | undefined>;
   queuedMessages?: string[];
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
@@ -280,6 +299,8 @@ export function buildAgentRenderProjection(
     entities.tasks[task.id] = task;
     if (!taskIds.includes(task.id)) taskIds.push(task.id);
   }
+  applyMessageAddressing(entities, options);
+  const pendingToolCallIds = options.pendingToolCallIds ?? [];
 
   return {
     conversationId: state.conversation.id,
@@ -290,13 +311,16 @@ export function buildAgentRenderProjection(
     activeRunAgentId: options.activeRunId
       ? state.runs[options.activeRunId]?.agentId ?? null
       : null,
+    activityEntries: options.activityEntries
+      ? options.activityEntries.map((entry) => ({ ...entry }))
+      : buildDerivedActivityEntries(state, options, pendingToolCallIds),
     queuedMessages: options.queuedMessages ?? [],
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     isStreaming: options.isStreaming ?? !!streaming,
     model: options.model ?? {},
     thinkingLevel: options.thinkingLevel ?? 'off',
-    pendingToolCallIds: options.pendingToolCallIds ?? [],
+    pendingToolCallIds,
     errorMessage: options.errorMessage ?? null,
     rows,
     transcriptRows,
@@ -305,6 +329,85 @@ export function buildAgentRenderProjection(
     entities,
     streaming,
   };
+}
+
+function applyMessageAddressing(
+  entities: AgentRenderEntities,
+  options: BuildAgentRenderProjectionOptions,
+) {
+  for (const [messageId, addressedByMessageId] of Object.entries(options.messageAddressedByMessageIds ?? {})) {
+    const message = entities.messages[messageId];
+    if (message && addressedByMessageId) message.addressedByMessageId = addressedByMessageId;
+  }
+  if (!options.activeRunId || !options.activeRunAddressedByMessageId) return;
+  for (const message of Object.values(entities.messages)) {
+    if (message.role === 'assistant' && message.runId === options.activeRunId) {
+      message.addressedByMessageId = options.activeRunAddressedByMessageId;
+    }
+  }
+}
+
+function buildDerivedActivityEntries(
+  state: AgentEventReplayState,
+  options: BuildAgentRenderProjectionOptions,
+  pendingToolCallIds: readonly string[],
+): AgentRenderActivityEntry[] {
+  const activeRunId = options.activeRunId ?? null;
+  if (!activeRunId || !options.activeRunAddressedByMessageId) return [];
+  const activeRun = state.runs[activeRunId];
+  const activeAgentId = activeRun?.agentId;
+  if (!activeAgentId || activeRun.status !== 'running') return [];
+
+  const addressedByMessageId = options.activeRunAddressedByMessageId;
+  const addressingMessage = state.messages[addressedByMessageId];
+  const addressedAgents = channelAgentMembers(addressingMessage?.addressedTo ?? []);
+  const agentIds = addressedAgents.length > 0
+    ? addressedAgents.map((principal) => principal.agentId)
+    : [activeAgentId];
+  const pendingAgentIds = new Set(agentIds);
+  const activeRunMessageId = latestAssistantMessageIdForRun(state, activeRunId);
+
+  if (addressingMessage) {
+    for (const message of Object.values(state.messages)) {
+      if (message.role !== 'assistant' || !message.runId) continue;
+      const run = state.runs[message.runId];
+      if (!run?.agentId || !pendingAgentIds.has(run.agentId)) continue;
+      if (run.status === 'running') continue;
+      if (message.createdAt < addressingMessage.createdAt) continue;
+      pendingAgentIds.delete(run.agentId);
+    }
+    for (const run of Object.values(state.runs)) {
+      if (!run.agentId || !pendingAgentIds.has(run.agentId)) continue;
+      if (run.addressedByMessageId !== addressedByMessageId) continue;
+      if (run.status === 'running') continue;
+      pendingAgentIds.delete(run.agentId);
+    }
+  }
+
+  if (!pendingAgentIds.has(activeAgentId)) pendingAgentIds.add(activeAgentId);
+
+  return agentIds
+    .filter((agentId) => pendingAgentIds.has(agentId))
+    .map((agentId) => ({
+      id: `${addressedByMessageId}:${agentId}`,
+      agentId,
+      runId: agentId === activeAgentId ? activeRunId : null,
+      messageId: agentId === activeAgentId ? activeRunMessageId : null,
+      addressedByMessageId,
+      state: agentId === activeAgentId
+        ? (pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking')
+        : 'received',
+      updatedAt: agentId === activeAgentId ? activeRun.updatedAt : addressingMessage?.updatedAt ?? activeRun.startedAt,
+    }));
+}
+
+function latestAssistantMessageIdForRun(state: AgentEventReplayState, runId: string): string | null {
+  let latest: AgentEventMessageRecord | null = null;
+  for (const message of Object.values(state.messages)) {
+    if (message.role !== 'assistant' || message.runId !== runId) continue;
+    if (!latest || message.createdAt > latest.createdAt) latest = message;
+  }
+  return latest?.id ?? null;
 }
 
 function buildActiveRows(
@@ -502,9 +605,11 @@ function toRenderMessageEntity(
     branches: getAgentEventMessageBranches(state, message.id),
     actor: message.actor,
     addressedTo: message.addressedTo?.slice(),
+    addressedByMessageId: message.addressedByMessageId ?? null,
     apiId: message.apiId,
     providerId: message.providerId,
     modelId: message.modelId,
+    runId: message.runId,
     stopReason: message.stopReason,
     usage: message.usage,
     errorMessage: message.errorMessage,

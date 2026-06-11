@@ -17,7 +17,7 @@ import type {
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import { agentMentionToken, channelAgentMembers } from '../../../core/agentChannel';
-import type { AgentRenderMemberView } from '../../../core/agentRenderProjection';
+import type { AgentRenderActivityEntry, AgentRenderMemberView } from '../../../core/agentRenderProjection';
 import type {
   AgentDefinitionView,
   AgentApprovalResolutionScope,
@@ -37,7 +37,6 @@ import type {
 } from '../../agent/runtime';
 import {
   AddIcon,
-  AgentIcon,
   CheckIcon,
   ChevronDownIcon,
   CloseIcon,
@@ -45,6 +44,7 @@ import {
   ICON_SIZE,
   NewConversationIcon,
   PencilIcon,
+  StopIcon,
   TrashIcon,
   UsedToolsIcon,
   WarningIcon,
@@ -56,6 +56,7 @@ import { AgentComposer } from './AgentComposer';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
+import type { AgentReplyAnchor } from './AgentMessageRow';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
@@ -190,6 +191,66 @@ function getEntryTimestamp(entry: AgentConversationEntry): number {
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
 
+function textFromConversationEntry(entry: AgentMessageEntry): string {
+  const { content } = entry.message;
+  if (typeof content === 'string') return content;
+  return content
+    .flatMap((block) => {
+      const part = block as {
+        type: string;
+        text?: string;
+        thinking?: string;
+        name?: string;
+        alt?: string;
+        label?: string;
+        payload?: { summary?: string };
+      };
+      if (part.type === 'text') return [part.text ?? ''];
+      if (part.type === 'thinking') return [part.thinking ?? ''];
+      if (part.type === 'toolCall') return [`[tool:${part.name ?? 'unknown'}]`];
+      if (part.type === 'image') return [part.alt ?? ''];
+      if (part.type === 'payload_ref') return [part.label || part.payload?.summary || ''];
+      return [];
+    })
+    .join(' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function truncateReplyAnchorQuote(text: string): string {
+  const normalized = text.replace(/\s+/gu, ' ').trim();
+  if (normalized.length <= 72) return normalized;
+  return `${normalized.slice(0, 69).trimEnd()}...`;
+}
+
+function buildReplyAnchorMap(rows: readonly AgentConversationRenderRow[]): Map<string, AgentReplyAnchor> {
+  const messageById = new Map<string, AgentMessageEntry>();
+  for (const row of rows) {
+    if (row.entry.kind === 'message' && row.entry.nodeId) messageById.set(row.entry.nodeId, row.entry);
+  }
+
+  const anchors = new Map<string, AgentReplyAnchor>();
+  let nearestUserMessageId: string | null = null;
+  for (const row of rows) {
+    if (row.entry.kind !== 'message') continue;
+    const messageId = row.entry.nodeId;
+    if (!messageId) continue;
+    if (row.entry.message.role === 'user') {
+      nearestUserMessageId = messageId;
+      continue;
+    }
+    if (row.entry.message.role !== 'assistant') continue;
+    const addressedByMessageId = row.entry.addressedByMessageId;
+    if (!addressedByMessageId || addressedByMessageId === nearestUserMessageId) continue;
+    const source = messageById.get(addressedByMessageId);
+    if (!source) continue;
+    const quote = truncateReplyAnchorQuote(textFromConversationEntry(source));
+    if (!quote) continue;
+    anchors.set(messageId, { targetMessageId: addressedByMessageId, quote });
+  }
+  return anchors;
+}
+
 function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
   return entry.kind === 'message' && entry.message.role === 'assistant';
 }
@@ -204,7 +265,9 @@ function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
 function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
   const leftAgentId = left.actor?.type === 'agent' ? left.actor.agentId : null;
   const rightAgentId = right.actor?.type === 'agent' ? right.actor.agentId : null;
-  return leftAgentId === null || rightAgentId === null || leftAgentId === rightAgentId;
+  if (leftAgentId === null || rightAgentId === null) return true;
+  if (leftAgentId !== rightAgentId) return false;
+  return (left.addressedByMessageId ?? null) === (right.addressedByMessageId ?? null);
 }
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
@@ -502,6 +565,92 @@ function AgentTranscriptRowShell({
   );
 }
 
+function activityStateLabel(entry: AgentRenderActivityEntry, t: ReturnType<typeof useT>): string {
+  if (entry.state === 'using_tools') return t.agent.chat.activityStates.usingTools;
+  if (entry.state === 'received') return t.agent.chat.activityStates.received;
+  return t.agent.chat.activityStates.thinking;
+}
+
+function activityAgentLabel(
+  entry: AgentRenderActivityEntry,
+  memberByAgentId: Map<string, AgentRenderMemberView>,
+  agentDefinitionById: Map<string, AgentDefinitionView>,
+): { label: string; mention: string } {
+  const member = memberByAgentId.get(entry.agentId);
+  const definition = agentDefinitionById.get(entry.agentId);
+  const mention = member?.mention ?? agentMentionToken(entry.agentId);
+  const label = agentDefinitionName(definition) ?? member?.displayName ?? `@${mention}`;
+  return { label, mention };
+}
+
+function AgentChannelActivityArea({
+  agentDefinitionById,
+  entries,
+  memberByAgentId,
+  onOpenEntry,
+  onStopEntry,
+  selectedEntryId,
+}: {
+  agentDefinitionById: Map<string, AgentDefinitionView>;
+  entries: readonly AgentRenderActivityEntry[];
+  memberByAgentId: Map<string, AgentRenderMemberView>;
+  onOpenEntry: (entryId: string) => void;
+  onStopEntry: (entry: AgentRenderActivityEntry) => void;
+  selectedEntryId: string | null;
+}) {
+  const t = useT();
+  const visibleEntries = entries.slice(0, 2);
+  const overflowCount = entries.length - visibleEntries.length;
+
+  return (
+    <div className="agent-channel-activity" aria-label={t.agent.chat.channelActivity}>
+      <div className="agent-channel-activity-list">
+        {visibleEntries.map((entry) => {
+          const { label, mention } = activityAgentLabel(entry, memberByAgentId, agentDefinitionById);
+          const stateLabel = activityStateLabel(entry, t);
+          const canStop = entry.runId !== null;
+          return (
+            <div
+              className={`agent-channel-activity-item-shell is-${entry.state}${selectedEntryId === entry.id ? ' is-selected' : ''}`}
+              key={entry.id}
+            >
+              <ButtonControl
+                aria-pressed={selectedEntryId === entry.id}
+                className="agent-channel-activity-item"
+                onClick={() => onOpenEntry(entry.id)}
+                title={`${label} · ${stateLabel}`}
+              >
+                <AgentIdentityAvatar label={label} mention={mention} />
+                <span className="agent-channel-activity-copy">
+                  <span>{label}</span>
+                  <small>{stateLabel}</small>
+                </span>
+              </ButtonControl>
+              {canStop ? (
+                <IconButton
+                  className="agent-channel-activity-stop"
+                  icon={StopIcon}
+                  label={t.agent.chat.stopActivityEntry({ name: label })}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onStopEntry(entry);
+                  }}
+                  variant="message"
+                />
+              ) : null}
+            </div>
+          );
+        })}
+        {overflowCount > 0 ? (
+          <span className="agent-channel-activity-overflow" title={t.agent.chat.activityOverflow({ count: overflowCount })}>
+            {t.agent.chat.activityOverflow({ count: overflowCount })}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function AgentChatPanel({
   index,
   dockOpen,
@@ -533,13 +682,14 @@ export function AgentChatPanel({
     conversationId,
     conversationTitle,
     members,
-    activeRunAgentId,
+    activityEntries,
     queuedMessages,
     steer: steerRuntime,
     childRuns,
     childRunsByParentToolCallId,
     switchBranch,
     stop,
+    stopRun,
     tasks,
     toolResults,
     turnPhase,
@@ -557,6 +707,8 @@ export function AgentChatPanel({
   const [editingTitle, setEditingTitle] = useState('');
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
+  const [selectedActivityEntryId, setSelectedActivityEntryId] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
@@ -567,6 +719,7 @@ export function AgentChatPanel({
   const conversationsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
   const dockOpenRef = useRef(dockOpen);
@@ -625,27 +778,35 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(threadEntries, isChannel ? 'idle' : turnPhase),
     [threadEntries, isChannel, turnPhase],
   );
+  const replyAnchorByMessageId = useMemo(
+    () => buildReplyAnchorMap(conversationRows),
+    [conversationRows],
+  );
   const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
   const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
-  // Channel typing indicator: who is replying right now, and its live in-flight
-  // entry (the one filtered OUT of the thread) for the working-state drill-in.
-  const typingAgentId = isChannel && isStreaming ? activeRunAgentId : null;
-  const typingMember = typingAgentId ? memberByAgentId.get(typingAgentId) : undefined;
-  const typingLabel = typingAgentId
-    ? typingMember?.displayName ?? `@${agentMentionToken(typingAgentId)}`
+  const selectedActivityEntry = selectedActivityEntryId
+    ? activityEntries.find((entry) => entry.id === selectedActivityEntryId) ?? null
     : null;
-  const typingEntry = useMemo(() => {
-    if (!isChannel) return null;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index]!;
-      if (entry.kind === 'message' && entry.message.role === 'assistant' && entry.streaming) return entry;
+  // Channel activity drill-in: live in-flight entries are filtered out of the
+  // thread, but each activity item can still open its own working-state detail.
+  const workingEntryByMessageId = useMemo(() => {
+    const byId = new Map<string, AgentMessageEntry>();
+    if (!isChannel) return byId;
+    for (const entry of entries) {
+      if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming) continue;
+      if (entry.nodeId) byId.set(entry.nodeId, entry);
     }
-    return null;
+    return byId;
   }, [entries, isChannel]);
-  const [runPanelOpen, setRunPanelOpen] = useState(false);
-  useEffect(() => {
-    if (!typingAgentId) setRunPanelOpen(false);
-  }, [typingAgentId]);
+  const workingEntryByRunId = useMemo(() => {
+    const byId = new Map<string, AgentMessageEntry>();
+    if (!isChannel) return byId;
+    for (const entry of entries) {
+      if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming || !entry.runId) continue;
+      byId.set(entry.runId, entry);
+    }
+    return byId;
+  }, [entries, isChannel]);
   // Member management entry (A8: the user-reachable way to create a Channel —
   // adding an agent to the DM spawns a seeded Channel and switches to it).
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
@@ -710,6 +871,34 @@ export function AgentChatPanel({
     rowHeightsRef.current.set(rowKey, height);
     setMeasureVersion((version) => version + 1);
   }, []);
+
+  const revealMessage = useCallback((messageId: string) => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+    const findTarget = () => Array
+      .from(scrollElement.querySelectorAll<HTMLElement>('[data-agent-message-id]'))
+      .find((element) => element.dataset.agentMessageId === messageId) ?? null;
+    const target = findTarget();
+    if (target) {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
+    } else {
+      const rowIndex = conversationRows.findIndex((row) => (
+        row.entry.kind === 'message' && row.entry.nodeId === messageId
+      ));
+      const item = rowIndex >= 0 ? virtualLayout.items[rowIndex] : undefined;
+      if (item) {
+        scrollElement.scrollTop = Math.max(0, item.top - scrollElement.clientHeight / 3);
+        updateScrollMetrics(scrollElement);
+      }
+    }
+    setHighlightedMessageId(messageId);
+    if (highlightTimeoutRef.current !== null) window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((current) => (current === messageId ? null : current));
+      highlightTimeoutRef.current = null;
+    }, 1400);
+  }, [conversationRows, updateScrollMetrics, virtualLayout.items]);
 
   const loadProviderSettings = useCallback(async () => {
     const requestId = providerSettingsRequestRef.current + 1;
@@ -798,6 +987,10 @@ export function AgentChatPanel({
       window.cancelAnimationFrame(scrollFrameRef.current);
       scrollFrameRef.current = null;
     }
+    if (highlightTimeoutRef.current !== null) {
+      window.clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -824,6 +1017,12 @@ export function AgentChatPanel({
   useEffect(() => {
     if (selectedChildRunId && !childRuns[selectedChildRunId]) setSelectedChildRunId(null);
   }, [selectedChildRunId, childRuns]);
+
+  useEffect(() => {
+    if (selectedActivityEntryId && !activityEntries.some((entry) => entry.id === selectedActivityEntryId)) {
+      setSelectedActivityEntryId(null);
+    }
+  }, [activityEntries, selectedActivityEntryId]);
 
   // A command Run reveals its delivery conversation and asks for the task panel —
   // the run is a parentless child run, so it surfaces there (the open task panel
@@ -1099,6 +1298,8 @@ export function AgentChatPanel({
           },
         }
       : row.entry;
+    const rowMessageId = row.entry.nodeId;
+    const replyAnchor = rowMessageId ? replyAnchorByMessageId.get(rowMessageId) ?? null : null;
 
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
       ? async () => {
@@ -1120,6 +1321,7 @@ export function AgentChatPanel({
         busy={isStreaming}
         contentKey={row.contentKey}
         entry={displayEntry}
+        highlighted={rowMessageId !== null && rowMessageId === highlightedMessageId}
         index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
@@ -1138,6 +1340,8 @@ export function AgentChatPanel({
         turnPhase={row.turnPhase}
         speakerLabel={detailSpeakerLabel}
         speakerMention={detailSpeakerMention}
+        replyAnchor={replyAnchor}
+        onReplyAnchorClick={revealMessage}
       />
     );
   }
@@ -1533,20 +1737,20 @@ export function AgentChatPanel({
             </div>
           </div>
         ))}
-        {typingLabel ? (
-          <ButtonControl
-            aria-expanded={runPanelOpen}
-            className="agent-channel-typing"
-            onClick={() => setRunPanelOpen((open) => !open)}
-            title={t.agent.chat.openTypingDetails}
-          >
-            <span className="agent-channel-typing-dots" aria-hidden>
-              <span /><span /><span />
-            </span>
-            <span>{t.agent.chat.memberTyping({ name: typingLabel })}</span>
-          </ButtonControl>
-        ) : null}
       </div>
+
+      {isChannel ? (
+        <AgentChannelActivityArea
+          agentDefinitionById={agentDefinitionById}
+          entries={activityEntries}
+          memberByAgentId={memberByAgentId}
+          onOpenEntry={setSelectedActivityEntryId}
+          onStopEntry={(entry) => {
+            if (entry.runId) stopRun(entry.runId);
+          }}
+          selectedEntryId={selectedActivityEntryId}
+        />
+      ) : null}
 
       <AgentComposer
         currentNodeId={composerCurrentNodeId(userViewContext, index)}
@@ -1575,44 +1779,55 @@ export function AgentChatPanel({
         childRun={selectedChildRun}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
       />
-      {runPanelOpen && typingLabel ? (
-        <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
-          <header className="agent-child-run-details-header">
-            <div className="agent-child-run-title-block">
-              <div className="agent-child-run-title-line">
-                <AgentIcon size={ICON_SIZE.menu} />
-                <span>{t.agent.chat.memberTyping({ name: typingLabel })}</span>
+      {selectedActivityEntry ? (() => {
+        const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
+        const stateLabel = activityStateLabel(selectedActivityEntry, t);
+        const selectedWorkingEntry = selectedActivityEntry.messageId
+          ? workingEntryByMessageId.get(selectedActivityEntry.messageId) ?? null
+          : selectedActivityEntry.runId
+            ? workingEntryByRunId.get(selectedActivityEntry.runId) ?? null
+            : null;
+        return (
+          <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
+            <header className="agent-child-run-details-header">
+              <div className="agent-child-run-title-block">
+                <div className="agent-child-run-title-line">
+                  <AgentIdentityAvatar label={label} mention={mention} />
+                  <span>{`${label} · ${stateLabel}`}</span>
+                </div>
               </div>
-            </div>
-            <IconButton
-              className="agent-child-run-close"
-              icon={CloseIcon}
-              label={t.agent.chat.closeTypingDetails}
-              onClick={() => setRunPanelOpen(false)}
-              variant="panel"
-            />
-          </header>
-          <div className="agent-child-run-details-body">
-            {typingEntry ? (
-              <AgentMessageRow
-                busy={isStreaming}
-                entry={typingEntry}
-                index={index}
-                onNodeReferenceOpen={onOpenNodeReference}
-                onOpenChildRunTranscript={setSelectedChildRunId}
-                pendingToolCallIds={pendingToolCallIds}
-                conversationId={conversationId}
-                streaming
-                childRunsByParentToolCallId={childRunsByParentToolCallId}
-                toolResults={toolResults}
-                turnPhase={turnPhase}
+              <IconButton
+                className="agent-child-run-close"
+                icon={CloseIcon}
+                label={t.agent.chat.closeTypingDetails}
+                onClick={() => setSelectedActivityEntryId(null)}
+                variant="panel"
               />
-            ) : (
-              <div className="agent-child-run-empty">{t.agent.chat.typingNoDetailYet}</div>
-            )}
-          </div>
-        </aside>
-      ) : null}
+            </header>
+            <div className="agent-child-run-details-body">
+              {selectedWorkingEntry ? (
+                <AgentMessageRow
+                  busy={isStreaming}
+                  entry={selectedWorkingEntry}
+                  index={index}
+                  onNodeReferenceOpen={onOpenNodeReference}
+                  onOpenChildRunTranscript={setSelectedChildRunId}
+                  pendingToolCallIds={pendingToolCallIds}
+                  conversationId={conversationId}
+                  streaming
+                  childRunsByParentToolCallId={childRunsByParentToolCallId}
+                  toolResults={toolResults}
+                  turnPhase={turnPhase}
+                />
+              ) : (
+                <div className="agent-child-run-empty">
+                  {t.agent.chat.typingNoDetailYet}
+                </div>
+              )}
+            </div>
+          </aside>
+        );
+      })() : null}
       {taskPanelOpen && !selectedChildRun ? (
         <AgentTaskPanel
           conversationId={conversationId}

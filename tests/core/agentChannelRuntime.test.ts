@@ -21,6 +21,7 @@ import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/
 import type { AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 
 const MAIN_AGENT_ID = 'built-in:tenon:assistant';
 
@@ -108,6 +109,12 @@ function createWindowSink() {
       },
     },
   };
+}
+
+function latestRenderProjection(events: AgentRuntimeEvent[]): AgentRenderProjection {
+  const projection = [...events].reverse().find((event) => event.type === 'projection')?.renderProjection;
+  if (!projection) throw new Error('No render projection emitted.');
+  return projection;
 }
 
 interface RecordedCall {
@@ -315,7 +322,7 @@ describe('agent channel runtime', () => {
       fauxAssistantMessage(fauxText('MAIN_TAKE_ALPHA — coordinator view.')),
       fauxAssistantMessage(fauxText('REVIEWER_TAKE_BETA — reviewer view.')),
     ]);
-    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+    const { runtime, sink, calls, reviewerAgentId, dataRoot } = fixture;
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Independent takes' });
     await runtime.sendMessage(channel.conversationId, '@assistant @reviewer give me independent takes');
@@ -328,10 +335,27 @@ describe('agent channel runtime', () => {
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const userRecord = Object.values(state.messages).find((record) => record.role === 'user');
     expect(userRecord?.addressedTo).toEqual([agentPrincipal(MAIN_AGENT_ID), agentPrincipal(reviewerAgentId)]);
+    const runRecords = Object.values(state.runs).sort((left, right) => left.startedAt - right.startedAt);
+    expect(runRecords.map((record) => record.addressedByMessageId)).toEqual([
+      userRecord?.id,
+      userRecord?.id,
+    ]);
     // Both replies still land in the shared thread as messages.
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
     expect(texts).toContain('MAIN_TAKE_ALPHA');
     expect(texts).toContain('REVIEWER_TAKE_BETA');
+    const assistantRecords = Object.values(state.messages)
+      .filter((record) => record.role === 'assistant')
+      .sort((left, right) => left.createdAt - right.createdAt);
+    expect(assistantRecords.map((record) => record.addressedByMessageId)).toEqual([
+      userRecord?.id,
+      userRecord?.id,
+    ]);
+    const projection = latestRenderProjection(sink.events);
+    expect(assistantRecords.map((record) => projection.entities.messages[record.id]?.addressedByMessageId)).toEqual([
+      userRecord?.id,
+      userRecord?.id,
+    ]);
   });
 
   test('one addressee failing leaves its trace and never skips siblings', async () => {
@@ -413,6 +437,65 @@ describe('agent channel runtime', () => {
     expect(texts).toContain('unstarted turn(s) were discarded');
     expect(texts).toContain('queued message(s) were not routed');
     expect(texts).toContain('QUEUED_BEHIND_STOP');
+  });
+
+  test('scoped run stop cancels only that addressee and lets Channel siblings run', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', [
+      '---',
+      'description: Reviews drafts with a critical eye.',
+      '---',
+      'REVIEWER_AGENT_BODY: always review thoroughly.',
+    ].join('\n'));
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    let resolveStreamStarted: (() => void) | null = null;
+    const streamStarted = new Promise<void>((resolve) => {
+      resolveStreamStarted = resolve;
+    });
+    let firstSignal: AbortSignal | undefined;
+    let callCount = 0;
+    const streamFn = ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+      callCount += 1;
+      calls.push({
+        systemPrompt: context.systemPrompt ?? '',
+        serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
+      });
+      const stream = createAssistantMessageEventStream();
+      if (callCount === 1) {
+        firstSignal = options?.signal;
+        resolveStreamStarted?.();
+        return stream;
+      }
+      queueMicrotask(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('REVIEWER_AFTER_SCOPED_STOP.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+    const { runtime, sink } = await createRuntime(dataRoot, localRoot, streamFn);
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Scoped stop test' });
+    const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
+    await streamStarted;
+    const activeRunId = latestRenderProjection(sink.events).activeRunId;
+    expect(activeRunId).toBeTruthy();
+    runtime.stopRun(channel.conversationId, activeRunId!);
+    await send;
+
+    expect(firstSignal?.aborted).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const runStatuses = Object.values(state.runs).map((run) => run.status);
+    expect(runStatuses).toEqual(['cancelled', 'completed']);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('REVIEWER_AFTER_SCOPED_STOP');
+    expect(texts).not.toContain('The user stopped this round.');
   });
 
   test('a non-round Channel run (regenerate) gates sends: the message queues and routes after it settles', async () => {

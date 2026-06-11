@@ -467,4 +467,237 @@ describe('agent render projection', () => {
     expect(projection.transcriptRows.map((row) => row.id))
       .toEqual(['user:user-1', 'assistant:assistant-1', 'child-run:sub-1']);
   });
+
+  test('derives Channel activity entries from an active addressed run', () => {
+    const state = replayAgentEvents([
+      {
+        ...base(1, 'conversation.created'),
+        title: 'Channel',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+          { type: 'agent', agentId: 'agent-3' },
+        ],
+      },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-channel',
+        parentMessageId: null,
+        content: [{ type: 'text', text: '@one @two @three compare this.' }],
+        addressedTo: [
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+          { type: 'agent', agentId: 'agent-3' },
+        ],
+      },
+      { ...base(3, 'run.started'), runId: 'run-agent-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-agent-1',
+        messageId: 'assistant-agent-1',
+        parentMessageId: 'user-channel',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(5, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-agent-1',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Agent one done.' }],
+      },
+      { ...base(6, 'run.completed'), runId: 'run-agent-1' },
+      { ...base(7, 'run.started'), runId: 'run-agent-2', agentId: 'agent-2' },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      activeRunId: 'run-agent-2',
+      activeRunAddressedByMessageId: 'user-channel',
+      pendingToolCallIds: ['tool-call-2'],
+    });
+
+    expect(projection.activityEntries).toEqual([
+      {
+        id: 'user-channel:agent-2',
+        agentId: 'agent-2',
+        runId: 'run-agent-2',
+        messageId: null,
+        addressedByMessageId: 'user-channel',
+        state: 'using_tools',
+        updatedAt: 1_700_000_000_007,
+      },
+      {
+        id: 'user-channel:agent-3',
+        agentId: 'agent-3',
+        runId: null,
+        messageId: null,
+        addressedByMessageId: 'user-channel',
+        state: 'received',
+        updatedAt: 1_700_000_000_002,
+      },
+    ]);
+  });
+
+  test('drops failed Channel addressees from derived activity even if no assistant message landed', () => {
+    const state = replayAgentEvents([
+      {
+        ...base(1, 'conversation.created'),
+        title: 'Channel',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+          { type: 'agent', agentId: 'agent-3' },
+        ],
+      },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-channel',
+        parentMessageId: null,
+        content: [{ type: 'text', text: '@one @two @three compare this.' }],
+        addressedTo: [
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+          { type: 'agent', agentId: 'agent-3' },
+        ],
+      },
+      {
+        ...base(3, 'run.started'),
+        runId: 'run-agent-1',
+        agentId: 'agent-1',
+        addressedByMessageId: 'user-channel',
+      },
+      { ...base(4, 'run.failed'), runId: 'run-agent-1', errorMessage: 'boom' },
+      {
+        ...base(5, 'run.started'),
+        runId: 'run-agent-2',
+        agentId: 'agent-2',
+        addressedByMessageId: 'user-channel',
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      activeRunId: 'run-agent-2',
+      activeRunAddressedByMessageId: 'user-channel',
+    });
+
+    expect(projection.activityEntries.map((entry) => entry.agentId)).toEqual(['agent-2', 'agent-3']);
+  });
+
+  test('accepts explicit message addressing for reply-anchor rendering', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Anchors' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Original question' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Later answer' }],
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      messageAddressedByMessageIds: { 'assistant-1': 'user-1' },
+    });
+
+    expect(projection.entities.messages['assistant-1']?.addressedByMessageId).toBe('user-1');
+  });
+
+  test('projects persisted reply-anchor addressing on completed assistant messages', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Historical anchors' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-original',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Original question' }],
+      },
+      {
+        ...base(3, 'user_message.created', userActor),
+        messageId: 'user-newer',
+        parentMessageId: 'user-original',
+        content: [{ type: 'text', text: 'Newer question' }],
+      },
+      { ...base(4, 'run.started'), runId: 'run-late', agentId: 'agent-1' },
+      {
+        ...base(5, 'assistant_message.started', agentActor),
+        runId: 'run-late',
+        messageId: 'assistant-late',
+        parentMessageId: 'user-newer',
+        addressedByMessageId: 'user-original',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(6, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-late',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Late answer' }],
+      },
+      { ...base(7, 'run.completed'), runId: 'run-late' },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.entities.messages['assistant-late']?.status).toBe('completed');
+    expect(projection.entities.messages['assistant-late']?.addressedByMessageId).toBe('user-original');
+  });
+
+  test('keeps explicit Channel activity entries from multiple addressing messages', () => {
+    const state = replayAgentEvents([
+      {
+        ...base(1, 'conversation.created'),
+        title: 'Parallel activity',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+        ],
+      },
+    ]);
+    const activityEntries = [
+      {
+        id: 'user-1:agent-1',
+        agentId: 'agent-1',
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        addressedByMessageId: 'user-1',
+        state: 'thinking' as const,
+        updatedAt: 1_700_000_000_010,
+      },
+      {
+        id: 'user-2:agent-2',
+        agentId: 'agent-2',
+        runId: 'run-2',
+        messageId: 'assistant-2',
+        addressedByMessageId: 'user-2',
+        state: 'using_tools' as const,
+        updatedAt: 1_700_000_000_020,
+      },
+    ];
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      activityEntries,
+    });
+
+    expect(projection.activityEntries).toEqual(activityEntries);
+    expect(projection.activityEntries).not.toBe(activityEntries);
+  });
 });

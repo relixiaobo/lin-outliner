@@ -128,6 +128,7 @@ export const AGENT_COMMANDS = [
   'agent_resolve_approval',
   'agent_resolve_user_question',
   'agent_stop_conversation',
+  'agent_stop_run',
   'agent_reset_conversation',
   'agent_close_conversation',
   'agent_list_slash_commands',

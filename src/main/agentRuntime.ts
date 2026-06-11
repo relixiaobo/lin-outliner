@@ -458,9 +458,10 @@ interface AgentConversationState {
    * between runs, so `activeRun` alone cannot gate). Queue-all (no steer in
    * Channels): user messages arriving mid-round persist immediately and join
    * `pendingMessages`; `stopRequested` ends the round and discards unstarted
-   * routing.
+   * routing, while `scopedStoppedRunIds` lets per-agent stops cancel only the
+   * addressed run and keep sibling turns independent.
    */
-  channelRound: { stopRequested: boolean } | null;
+  channelRound: { stopRequested: boolean; scopedStoppedRunIds: Set<string> } | null;
   pendingChannelMessages: PendingChannelMessage[];
   unsubscribe: (() => void) | null;
 }
@@ -1732,6 +1733,22 @@ export class AgentRuntime {
     conversation.agent.abort();
     conversation.skillRuntime.resetRunPermissionRules();
     this.emitProjection(conversationId, 'stop_requested');
+  }
+
+  stopRun(conversationId: string, runId: string) {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    const activeRun = conversation.activeRun;
+    if (!activeRun || activeRun.id !== runId) {
+      this.emitProjection(conversationId, 'stop_run_ignored');
+      return;
+    }
+    void this.clearPendingUserQuestionsForConversation(conversationId, 'run_stopped')
+      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    conversation.channelRound?.scopedStoppedRunIds.add(runId);
+    conversation.agent.abort();
+    conversation.skillRuntime.resetRunPermissionRules();
+    this.emitProjection(conversationId, 'stop_run_requested');
   }
 
   resetConversation(conversationId: string) {
@@ -3800,6 +3817,7 @@ export class AgentRuntime {
     const projection = buildAgentRenderProjection(conversation.eventState, {
       revision: conversation.revision,
       activeRunId: this.activeRunId(conversation),
+      activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
       queuedMessages: conversation.pendingChannelMessages
         .filter((pending): pending is Extract<PendingChannelMessage, { kind: 'prompt' }> => pending.kind === 'prompt')
         .map((pending) => pending.messageText),
@@ -5488,6 +5506,7 @@ export class AgentRuntime {
         actor: systemActor(),
         runId,
         agentId,
+        addressedByMessageId: runState.addressedByMessageId,
         anchor: { type: 'conversation', agentId, conversationId },
         kind: 'turn',
         trigger: triggerOverride ?? this.runTrigger(conversation),
@@ -5535,7 +5554,7 @@ export class AgentRuntime {
     // starting a round under it would re-point the leaf beneath its in-flight
     // reply. That path drains the queue when it settles.
     if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
-    const round = { stopRequested: false };
+    const round = { stopRequested: false, scopedStoppedRunIds: new Set<string>() };
     conversation.channelRound = round;
     try {
       // Outer loop: after a stop is handled, messages that arrived during the
@@ -5694,9 +5713,12 @@ export class AgentRuntime {
       // falling back to the original when no run reached agent_end at all.
       const settledRunId = conversation.lastRun?.id ?? runId;
       const run = conversation.eventState.runs[settledRunId];
+      const scopedStopped = run?.status === 'cancelled'
+        && (conversation.channelRound?.scopedStoppedRunIds.has(settledRunId) ?? false);
+      if (scopedStopped) conversation.channelRound?.scopedStoppedRunIds.delete(settledRunId);
       return {
         completed: run?.status === 'completed',
-        cancelled: run?.status === 'cancelled',
+        cancelled: run?.status === 'cancelled' && !scopedStopped,
         text: latestAssistantTextForRun(conversation.eventState, settledRunId),
         assistantMessageId: latestAssistantMessageIdForRun(conversation.eventState, settledRunId),
       };
@@ -5970,6 +5992,7 @@ export class AgentRuntime {
       runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
       parentMessageId: conversation.eventState.selectedLeafMessageId,
+      addressedByMessageId: activeRun.addressedByMessageId,
       providerId: message.provider,
       modelId: message.model,
       apiId: message.api,
