@@ -157,6 +157,30 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Memory realignment Step 0 + PR-1: one person rule, bullet briefing, recall subject (PR #183)** —
+  first unit of the PM-ratified `agent-memory-realignment` program (charter decisions D-1…D-9; the
+  program one-pager + R1–R6 trio reconciliation ratified and recorded in the charter in-PR).
+  **Authority docs rewritten** (`agent-memory-foundations`, `agent-data-model` canonical table +
+  Extension §reframe, `agent-architecture` §memory): raw ledgers are ground truth *below* memory;
+  the episodic layer (episodes + memory-owned gist) is the acknowledged gap PR-2 fills; the index is
+  pure pointers (gist is episodic content, not index); `MemoryEntry.principal` is documented as the
+  pool's **owner/believer** (whose self-model), matching what the write paths always did; the
+  raw-first Dream-evidence rule is restated to bind context-management artifacts (compaction
+  summaries stay locators, never evidence; memory-owned episode gist becomes the post-supersede
+  carrier in PR-2). **One person rule** (D-2): both Dream pools now write third-person-singular,
+  subject-elided facts — the subject stays normalized in the pool key (rename-safe) — and the
+  `<memory>` briefing renders zone-tagged **bullet lists** (`<self>` / `<principal name="…">`, no
+  subject prepending, no conjugation; the old prose render baked today's single reader into storage
+  as a verb form and misrendered for any other reader). **`recall` grounds against the briefing**
+  (D-3): visible entries carry a reader-relative `subject` ("self" or the same display name the
+  briefing zone uses, single shared name source); raw internal principal keys never reach the model.
+  Cross-pool duplication is now prompt-guided (D-9, with a run-log-only-evidence escape hatch).
+  No schema change (one protocol-surface doc comment). Gate: one fix round; local integration
+  test-merge against post-#179 main (typecheck · core 844/0 incl. all M3-A tests · renderer 409/0)
+  before merge. **Post-merge: wipe `~/.lin-outliner-*` dev userData in every clone** — legacy
+  base-form facts are off-contract under the new render.
+  ([#183](https://github.com/relixiaobo/lin-outliner/pull/183))
+
 - **Memory language surfaces speak the academic model (PR #181)** — `agent-memory-academic-alignment`
   shipped (plan archived `done` in-PR; subsumed the former D2 `agent-memory-encoding-signal`). Language
   surfaces only, zero storage/schema/tool-contract change. The Dream prompt is rewritten as a

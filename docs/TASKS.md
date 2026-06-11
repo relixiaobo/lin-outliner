@@ -19,7 +19,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (M3-A multi-agent Channel merged, PR #179) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | next: draft the memory-theory realignment program one-pager (see Backlog § memory) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
 | Codex | `lin-outliner-codex/` | — | idle (outliner indent/draft fixes merged, PR #182) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (registered 2026-06-11) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -76,7 +76,7 @@ Both 2026-06-09 lanes merged — board is between batches.
   structural; now also the coordinate foundation for the memory-realignment episodic
   layer) →
   **memory-theory realignment PR-1 + PR-2** (person rule + episodic layer — see
-  Backlog § memory for the PM-ratified program; PR-1 can run in parallel earlier,
+  Backlog § memory for the PM-ratified program; **Step 0 + PR-1 merged as PR #183**,
   PR-2 needs run unification) →
   **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
   the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification +
@@ -300,7 +300,8 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
     truth below memory · episodic layer = episodes + gist (noted as D3-pending) ·
     index = pure bidirectional pointers · `principal` redefined as **pool owner /
     believer (whose self-model)**, not "subject the fact is about".
-  - **PR-1 person rule + read surfaces** (immediate; **hard prerequisite for M3-B**):
+  - **PR-1 person rule + read surfaces** — **merged as PR #183 (with Step 0)**, see
+    Recently completed (**the M3-B hard prerequisite is half-cleared; PR-2 remains**):
     ONE Dream phrasing rule — third-person-singular, subject-elided facts in ALL pools
     (subject stays normalized in the pool key; rename-safe); briefing render becomes
     zone-tagged bullet lists (no subject prepending, no prose conjugation — the
@@ -625,6 +626,27 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **memory realignment Step 0 + PR-1: one person rule, bullet briefing, recall subject,
+  authority-doc rewrite** (cc-2, PR #183) — the first unit of the PM-ratified
+  `agent-memory-realignment` program (charter D-1…D-9; one-pager + R1–R6 trio dispositions
+  ratified and folded into the charter in-PR). **Step 0:** `agent-memory-foundations` +
+  `agent-data-model` (canonical table + Extension §reframe → believer-keying) +
+  `agent-architecture` §memory rewritten, not patched — raw ledgers = ground truth below
+  memory; episodic layer = episodes + gist (PR-2-pending); index = pure pointers;
+  `principal` = pool owner/believer; R2 boundary restated raw-first (context-management
+  summaries stay locators; episode gist is the post-supersede evidence carrier; rationale
+  pointer-ized to foundations §2). **PR-1:** ONE Dream phrasing rule
+  (third-person-singular, subject-elided, both pools) + D-9 cross-pool guidance with the
+  run-log-only escape hatch; briefing renders zone-tagged bullet lists (subject lives in
+  the zone tag/pool key — no prepending, no conjugation); `recall` gains reader-relative
+  `subject` ("self" / the briefing's own zone name via the shared `defaultPrincipalName`
+  source — no internal principal keys reach the model). Gate ran one fix round (recall
+  vocabulary grounding, Dream prompt honesty, D-8 remnants); integration test-merge
+  against post-#179 main verified before merge (core 844/0 incl. all M3-A tests).
+  Typecheck · core 811/0 · renderer 405/0 at head. **Post-merge: every clone wipes
+  `~/.lin-outliner-*` dev userData** (legacy base-form facts would render under the
+  third-person intro) and rebases active branches.
 
 - **M3-A: working multi-agent Channel — membership + routing + peer reply** (cc, PR #179) —
   the first user-reachable multi-agent milestone, ONE complete feature (plan archived `done`
