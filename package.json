@@ -12,6 +12,7 @@
     "dev:cc-2": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-cc-2\" electron-vite dev",
     "dev:codex": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-codex\" electron-vite dev",
     "dev:codex-2": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-codex-2\" electron-vite dev",
+    "dev:codex-3": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-codex-3\" electron-vite dev",
     "dev:anti": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-anti\" electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "preview": "vite preview",

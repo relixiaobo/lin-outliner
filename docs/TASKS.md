@@ -22,6 +22,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (sidebar pinned nodes merged, PR #191) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (new clone, 2026-06-11) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
