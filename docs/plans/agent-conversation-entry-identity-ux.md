@@ -95,9 +95,20 @@ Conversation list, two sections:
 - **Channels.** Title, stacked member avatars, unread badge, rename/delete.
 
 One creation verb: **New Channel** — member multi-select over the roster + a
-goal field. Goal is required but light (single line, example placeholder):
-unlike a human group name, the goal is a functional input that steers the
-coordinator, so requiring it is load-bearing, not form ceremony.
+goal field + an optional seed note (an explicit first message shared with the
+room). Goal is required but light (single line, example placeholder): unlike a
+human group name, the goal is a functional input that steers the coordinator,
+so requiring it is load-bearing, not form ceremony.
+
+Channel header and member management:
+
+- the Channel title (goal) is the primary label; stacked member avatars are
+  secondary context;
+- member add/remove lives behind a **Members** popover, not loose header
+  icons; removal of the coordinator is disabled, and removal is disabled while
+  runs are in flight (matching runtime rules);
+- historical attribution survives member removal (already the stored-record
+  behavior; the UI must not re-resolve past speakers against the live roster).
 
 DM → Channel escalation: the DM header action is labeled **"Create a Channel
 with <Agent>…"** (never a bare `+`). It opens the New Channel flow with that
@@ -276,8 +287,10 @@ Touches `agentRenderProjection.ts`, `AgentMessageRow.tsx`,
 
 - Every configured agent appears in the Direct Messages roster; one click
   opens its continuous DM (no "new conversation" ceremony).
-- Creating a Channel = pick members + name a goal; the seed/system line and
-  membership match the ratified spawn semantics.
+- Creating a Channel = pick members + name a goal (+ optional seed note); the
+  seed/system line and membership match the ratified spawn semantics.
+- Channel membership is managed from a Members popover; removing the
+  coordinator is disabled, as is removal while runs are in flight.
 - The DM escalation verb names its consequence; the original DM is unchanged
   and a system line in the new Channel says so.
 - DM rows are quiet with identity in the header; Channel rows show grouped
