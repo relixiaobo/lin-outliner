@@ -28,6 +28,26 @@ the original broad plan.
   global config can only narrow/loosen within what the descriptor and the
   fail-closed rules permit.
 
+## Allowed file area
+
+The runtime passes one resolved local file root into the permission engine as
+`workspaceRoot`; file tools and bash path classifiers treat that directory as the
+allowed file area.
+
+- A non-empty `LIN_AGENT_LOCAL_ROOT` environment variable is an explicit override
+  and resolves with normal `path.resolve` semantics.
+- Source/dev runs with no override keep using `process.cwd()`. The clone-specific
+  `dev:*` scripts run from the repo clone, so local file tools stay repo-bound in
+  development.
+- Packaged runs with no override never use `process.cwd()`. Finder and OS
+  launches may report `/` as the process cwd, which would make the whole disk
+  look like the allowed file area. The packaged fallback is the dedicated
+  `<userData>/agent-local-root` directory, created at startup.
+
+This boundary does not loosen the sensitive-path redlines below. Paths outside
+the allowed file area still deny or ask according to the descriptor defaults and
+global permission rules.
+
 ## Evaluation pipeline
 
 Entry point: `agentRuntime.ts` `beforeToolCall` is the only call site driving the

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +87,10 @@ import { getFrontmostApp } from './context/providers/browser';
 import type { FrontmostApp } from './context/providers/browser';
 import type { ExternalContext } from '../core/launcher/context';
 import type { SearchHit } from '../core/types';
+import {
+  hasExplicitAgentLocalRoot,
+  resolveAgentLocalFileRoot,
+} from './agentLocalRoot';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -147,7 +152,15 @@ const localFileIconCache = new Map<string, string | null>();
 const localFileThumbnailCache = new Map<string, string | null>();
 const pendingLocalFileIconLoads = new Map<string, Promise<string | null>>();
 const pendingLocalFileThumbnailLoads = new Map<string, Promise<string | null>>();
-const agentLocalFileRoot = process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd();
+const agentLocalFileRoot = resolveAgentLocalFileRoot({
+  envLocalRoot: process.env.LIN_AGENT_LOCAL_ROOT,
+  cwd: process.cwd(),
+  isPackaged: app.isPackaged,
+  userDataPath: app.getPath('userData'),
+});
+if (app.isPackaged && !hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
+  mkdirSync(agentLocalFileRoot, { recursive: true });
+}
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   dreamMemoryExtractionEnabled: true,
