@@ -20,6 +20,7 @@ import type {
   AgentProviderConfigView,
   AgentProviderOption,
   AgentReasoningLevel,
+  AgentSafetyMode,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   ProviderAuthView,
@@ -39,9 +40,13 @@ interface AgentProviderConfig {
 
 interface ProviderConfigFile {
   activeProviderId?: string;
-  agent?: Partial<AgentRuntimeSettings>;
+  agent?: StoredAgentRuntimeSettings;
   providers: AgentProviderConfig[];
 }
+
+type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings> & {
+  permissionMode?: 'trusted' | 'restricted';
+};
 
 // Stored credential shape — mirrors pi-mono's coding-agent `AuthCredential`
 // (discriminated on `type`, oauth flattened) so we reuse its shape rather than
@@ -72,11 +77,11 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 }
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
-const AGENT_PERMISSION_MODES = ['trusted', 'restricted'] as const;
+const AGENT_SAFETY_MODES = ['ask_first', 'balanced', 'full_access'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 const AGENT_MEMORY_ISOLATIONS = ['global', 'read-only-global'] as const;
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
-  permissionMode: 'trusted',
+  safetyMode: 'balanced',
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
@@ -347,11 +352,9 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
   };
 }
 
-function normalizeAgentRuntimeSettings(input?: Partial<AgentRuntimeSettings> | null): AgentRuntimeSettings {
+function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
-    permissionMode: isAgentPermissionMode(input?.permissionMode)
-      ? input.permissionMode
-      : DEFAULT_AGENT_RUNTIME_SETTINGS.permissionMode,
+    safetyMode: normalizeSafetyMode(input),
     automaticSkillsEnabled: booleanOrDefault(input?.automaticSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.automaticSkillsEnabled),
     slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
     compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
@@ -372,6 +375,13 @@ function normalizeAgentRuntimeSettings(input?: Partial<AgentRuntimeSettings> | n
     disabledSkills: normalizeStringList(input?.disabledSkills),
     disabledAgents: normalizeStringList(input?.disabledAgents),
   };
+}
+
+function normalizeSafetyMode(input?: StoredAgentRuntimeSettings | null): AgentSafetyMode {
+  if (isAgentSafetyMode(input?.safetyMode)) return input.safetyMode;
+  if (input?.permissionMode === 'restricted') return 'ask_first';
+  if (input?.permissionMode === 'trusted') return 'balanced';
+  return DEFAULT_AGENT_RUNTIME_SETTINGS.safetyMode;
 }
 
 function booleanOrDefault(value: unknown, fallback: boolean): boolean {
@@ -552,8 +562,8 @@ function isAgentReasoningLevel(value: unknown): value is AgentReasoningLevel {
   return typeof value === 'string' && (AGENT_REASONING_LEVELS as readonly string[]).includes(value);
 }
 
-function isAgentPermissionMode(value: unknown): value is AgentRuntimeSettings['permissionMode'] {
-  return typeof value === 'string' && (AGENT_PERMISSION_MODES as readonly string[]).includes(value);
+function isAgentSafetyMode(value: unknown): value is AgentSafetyMode {
+  return typeof value === 'string' && (AGENT_SAFETY_MODES as readonly string[]).includes(value);
 }
 
 function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['providerCacheRetention'] {

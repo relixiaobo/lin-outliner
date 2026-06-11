@@ -1,6 +1,6 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
-import type { AgentPermissionMode } from '../core/types';
+import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
 import type { AgentApprovalResolutionScope } from '../core/agentTypes';
 import { evaluateAgentToolPermission, type AgentPermissionAskDecision, type GlobalToolPermissionConfig } from './agentPermissions';
 import { resolveAgentPermissionAsk, type PermissionDeniedReason } from './agentPermissionAskResolver';
@@ -34,6 +34,7 @@ export interface AgentSkillShellCommandInput {
   command: string;
   localRoot?: string;
   permissionMode?: AgentPermissionMode;
+  safetyMode?: AgentSafetyMode;
   allowedTools?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
@@ -64,6 +65,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     args: { command: input.command },
     policy: {
       mode: input.permissionMode,
+      safetyMode: input.safetyMode,
       workspaceRoot: input.localRoot,
       preapprovedToolRules: input.allowedTools ?? [],
       globalPermissions: input.globalPermissions,

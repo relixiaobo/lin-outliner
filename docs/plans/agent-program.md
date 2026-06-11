@@ -3,7 +3,7 @@ status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-09
+updated: 2026-06-11
 ---
 
 # Agent Program — Foundation, Dependency Graph, Release Milestones
@@ -128,7 +128,7 @@ that consume it — proof it belongs here, not inside one feature plan.
 | F3 | **`actor` on message records** | `AgentEventMessageRecord.actor` is required; runtime-authored events use the stable assistant principal instead of a hardcoded `'pi-mono'` author | conversation-model (notifications, multi-agent POV, forwarding), task delivery |
 | F4 | **Internal domain-event bus + taxonomy** | The M0 bus exists with persisted-log, renderer-projection, trusted-observer, and hook-interceptor lanes. Consumer-specific notification/hook policy remains later work. | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
 | F5 | **`AgentSessionState` split** | Active-run state is structurally separated from the runtime session object and aligns with the F2 run log. Remaining session-shaped runtime fields are internal bridge debt, not a protocol shape for new consumers. | background tasks, scheduled routines, multi-agent channels |
-| F6 | **Protocol-surface type adds (consolidated)** | Consolidated event/type reservations landed for task, notification, config, review-card, skill audit, user-question/widget state, run meta, payload scope, and command nodes | all plans |
+| F6 | **Protocol-surface type adds (consolidated)** | Consolidated event/type reservations landed for task, notification, config, review-card, skill audit, user-question/widget state, run meta, payload scope, command nodes, and the `AgentSafetyMode` user-facing default policy split from the restricted delegation sandbox | all plans |
 
 ### Cross-plan event taxonomy (design ONCE)
 

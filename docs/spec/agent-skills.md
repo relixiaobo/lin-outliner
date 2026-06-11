@@ -321,11 +321,22 @@ Intentional omissions:
 - Partial compact around a selected transcript pivot: omitted until there is a UI workflow that needs it.
 - Legacy command directories and legacy config paths: omitted because Lin follows the agent skills standard paths only.
 
-## Permission Mode
+## Permission Inputs
 
-Agent settings expose two modes:
+The user-facing default policy is the app-level Security `safetyMode`
+(`ask_first`, `balanced`, `full_access`) described in
+`agent-tool-permissions.md`. Agent definitions and skills cannot widen above that
+global policy.
 
-- `trusted`: default. Most tool calls are allowed, with hard blocks for catastrophic filesystem/disk/power commands and workspace-boundary file access.
-- `restricted`: only a small safe base set is allowed unless a matching `allowed-tools` rule preapproves the tool call.
+Agent settings expose only a narrow delegation sandbox:
 
-Skill `allowed-tools` is preapproval metadata, not a visibility allowlist. Inline skill rules are scoped to the current parent agent run and cleared when the run ends, stops, or resets. `context: fork` skill rules are passed to the child run as preapproved tool rules.
+- **Follow global**: no sandbox; the run uses the global safety mode and normal
+  descriptor defaults.
+- **Restricted**: only a small safe base set is allowed unless a matching
+  `allowed-tools` rule preapproves the tool call.
+
+Legacy `permission-mode: trusted` frontmatter is ignored. Skill `allowed-tools`
+is preapproval metadata, not a visibility allowlist. Inline skill rules are
+scoped to the current parent agent run and cleared when the run ends, stops, or
+resets. `context: fork` skill rules are passed to the child run as preapproved
+tool rules.

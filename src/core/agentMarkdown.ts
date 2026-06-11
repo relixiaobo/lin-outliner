@@ -8,7 +8,7 @@
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { AgentAuthoringInput } from './agentTypes';
-import type { AgentPermissionMode } from './types';
+import type { AgentDelegationPermissionMode } from './types';
 
 /**
  * Serialize an authoring input to `AGENT.md` text. Only set fields are emitted;
@@ -103,8 +103,8 @@ export function parseStringList(value: unknown): string[] | undefined {
   return undefined;
 }
 
-export function parsePermissionMode(value: unknown): AgentPermissionMode | undefined {
-  return value === 'trusted' || value === 'restricted' ? value : undefined;
+export function parsePermissionMode(value: unknown): AgentDelegationPermissionMode | undefined {
+  return value === 'restricted' ? value : undefined;
 }
 
 export function parseBoolean(value: unknown): boolean | undefined {

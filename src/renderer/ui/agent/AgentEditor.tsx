@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type {
   AgentAuthoringInput,
   AgentDefinitionView,
-  AgentPermissionMode,
+  AgentDelegationPermissionMode,
   AgentReasoningLevel,
   AgentStorageLocation,
   SkillDefinition,
@@ -61,7 +61,7 @@ interface AgentFormState {
   body: string;
   model: string;
   effort: string;
-  permissionMode: '' | AgentPermissionMode;
+  permissionMode: '' | AgentDelegationPermissionMode;
   maxTurns: string;
   background: boolean;
   // Allowed tools: catalog names that are checked. All-checked (or none) ⇒ the
@@ -175,14 +175,13 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
               </SelectControl>
             </FormField>
             <FormField as="div" className="settings-sheet-row settings-sheet-row-control" label={<span className="settings-sheet-row-label">{t.permissionMode}</span>}>
-              <SegmentedControl<'' | AgentPermissionMode>
+              <SegmentedControl<'' | AgentDelegationPermissionMode>
                 disabled={readOnly}
                 label={t.permissionMode}
                 onChange={(value) => update('permissionMode', value)}
                 options={[
                   { value: '', label: t.permissionInherit },
                   { value: 'restricted', label: t.restricted },
-                  { value: 'trusted', label: t.trusted },
                 ]}
                 value={form.permissionMode}
               />

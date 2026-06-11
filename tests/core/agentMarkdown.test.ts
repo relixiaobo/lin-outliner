@@ -48,6 +48,11 @@ describe('serializeAgentMarkdown ⇄ parseAgentAuthoringInput', () => {
     const back = parseAgentAuthoringInput(serializeAgentMarkdown({ name: 'x', description: '', body: '', model: 'inherit' }));
     expect(back.model).toBeUndefined();
   });
+
+  test('legacy trusted permission mode no longer widens agent definitions', () => {
+    const input = parseAgentAuthoringInput(['---', 'name: legacy', 'permission-mode: trusted', '---', '', 'Body.'].join('\n'));
+    expect(input.permissionMode).toBeUndefined();
+  });
 });
 
 describe('parseAgentAuthoringInput tolerance', () => {

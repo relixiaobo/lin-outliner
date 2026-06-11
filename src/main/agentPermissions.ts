@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
-import type { AgentPermissionMode } from '../core/types';
+import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
 import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
@@ -15,7 +15,7 @@ import {
 } from './agentToolPermissionRules';
 import { resolveSkillContentTarget } from './agentSkills';
 
-export type { AgentPermissionMode } from '../core/types';
+export type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
 export type {
   AgentToolActionKind,
   GlobalToolPermissionConfig,
@@ -40,6 +40,7 @@ export interface AgentApprovalRequest {
 
 export interface AgentPermissionPolicy {
   mode: AgentPermissionMode;
+  safetyMode: AgentSafetyMode;
   workspaceRoot: string;
   denyTools: readonly string[];
   preapprovedToolRules: readonly string[];
@@ -54,6 +55,7 @@ export interface AgentPermissionPolicy {
 
 export interface AgentPermissionPolicyInput {
   mode?: AgentPermissionMode;
+  safetyMode?: AgentSafetyMode;
   workspaceRoot?: string;
   denyTools?: readonly string[];
   preapprovedToolRules?: readonly string[];
@@ -71,7 +73,7 @@ interface AgentPermissionDecisionBase {
   code?: string;
   preapproved: boolean;
   ruleId?: string;
-  permissionSource?: 'configured_allow' | 'configured_ask' | 'default';
+  permissionSource?: 'configured_allow' | 'configured_ask' | 'default' | 'safety_mode_profile' | 'trust_ledger';
   descriptor?: ToolActionDescriptor;
   descriptors?: readonly ToolActionDescriptor[];
 }
@@ -259,6 +261,7 @@ const EXFIL_OPAQUE_SINK_PATTERNS: readonly RegExp[] = [
 export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
   return {
     mode: input.mode ?? 'trusted',
+    safetyMode: input.safetyMode ?? 'balanced',
     workspaceRoot: path.resolve(input.workspaceRoot ?? process.cwd()),
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
@@ -302,7 +305,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   }
 
   const globalResolution = resolveGlobalToolPermissionDecision(descriptors, policy.globalPermissions);
-  if (globalResolution?.decision === 'deny') {
+  if (globalResolution?.source === 'configured_deny') {
     return deny(
       'configured_deny',
       `A global permission rule denied ${globalResolution.descriptor.title}.`,
@@ -329,22 +332,20 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     );
   }
 
-  if (globalResolution?.decision === 'allow') {
+  if (globalResolution?.source === 'configured_allow') {
     return allow(
       access,
       preapproved,
-      globalResolution.source === 'configured_allow'
-        ? `Allowed by global rule ${globalResolution.rule?.ruleValue ?? globalResolution.descriptor.actionKind}.`
-        : undefined,
+      `Allowed by global rule ${globalResolution.rule?.ruleValue ?? globalResolution.descriptor.actionKind}.`,
       {
         descriptor: globalResolution.descriptor,
         descriptors,
-        permissionSource: globalResolution.source === 'configured_allow' ? 'configured_allow' : 'default',
+        permissionSource: 'configured_allow',
       },
     );
   }
 
-  if (globalResolution?.decision === 'ask') {
+  if (globalResolution?.source === 'configured_ask') {
     return askForDescriptor(
       globalResolution.descriptor as DerivedToolActionDescriptor,
       access,
@@ -354,12 +355,130 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     );
   }
 
+  const profileResolution = resolveSafetyModeProfileDecision(descriptors, policy.safetyMode);
+  if (profileResolution.decision === 'deny') {
+    return deny(
+      profileResolution.descriptor.code ?? profileResolution.descriptor.actionKind,
+      profileResolution.descriptor.consequence,
+      access,
+      preapproved,
+      profileResolution.descriptor.redline,
+      {
+        descriptor: profileResolution.descriptor,
+        descriptors,
+      },
+    );
+  }
+  if (profileResolution.decision === 'ask') {
+    return askForDescriptor(
+      profileResolution.descriptor,
+      access,
+      preapproved,
+      profileResolution.source,
+      descriptors,
+    );
+  }
   return allow(
     access,
     preapproved,
-    undefined,
-    { descriptors },
+    profileResolution.source === 'safety_mode_profile'
+      ? `Allowed by ${policy.safetyMode} safety mode.`
+      : undefined,
+    {
+      descriptor: profileResolution.descriptor,
+      descriptors,
+      permissionSource: profileResolution.source,
+    },
   );
+}
+
+type SafetyModeProfileSource = 'default' | 'safety_mode_profile';
+
+interface SafetyModeProfileResolution {
+  decision: GlobalToolPermissionDecision;
+  source: SafetyModeProfileSource;
+  descriptor: DerivedToolActionDescriptor;
+}
+
+const ASK_FIRST_ASK_ACTIONS = new Set<AgentToolActionKind>([
+  'file.edit.allowed_file_area',
+  'outline.edit',
+  'agent.skill.invoke',
+]);
+
+const FULL_ACCESS_ALLOW_ACTIONS = new Set<AgentToolActionKind>([
+  'file.edit.allowed_file_area',
+  'file.delete.allowed_file_area',
+  'outline.edit',
+  'outline.delete',
+  'web.fetch',
+  'shell.local_code_execution',
+  'shell.project_script',
+  'shell.dependency_install',
+  'shell.network_write',
+  'git.publish_remote',
+  'agent.delegate.spawn',
+  'agent.memory.dream',
+  'agent.skill.write',
+  'shell.background_process',
+]);
+
+function resolveSafetyModeProfileDecision(
+  descriptors: readonly DerivedToolActionDescriptor[],
+  safetyMode: AgentSafetyMode,
+): SafetyModeProfileResolution {
+  const resolutions = descriptors.map((descriptor): SafetyModeProfileResolution => {
+    const decision = safetyModeDecisionForDescriptor(descriptor, safetyMode);
+    return {
+      decision,
+      source: decision === descriptor.defaultDecision ? 'default' : 'safety_mode_profile',
+      descriptor,
+    };
+  });
+  resolutions.sort((left, right) => (
+    permissionDecisionRank(right.decision) - permissionDecisionRank(left.decision)
+    || permissionDescriptorRiskRank(right.descriptor) - permissionDescriptorRiskRank(left.descriptor)
+    || permissionSourceRank(right.source) - permissionSourceRank(left.source)
+  ));
+  return resolutions[0] ?? {
+    decision: 'deny',
+    source: 'default',
+    descriptor: unknownShellDescriptor('No permission descriptor was derived.'),
+  };
+}
+
+function safetyModeDecisionForDescriptor(
+  descriptor: DerivedToolActionDescriptor,
+  safetyMode: AgentSafetyMode,
+): GlobalToolPermissionDecision {
+  if (descriptor.defaultDecision === 'deny') return 'deny';
+  if (safetyMode === 'balanced') return descriptor.defaultDecision;
+  if (safetyMode === 'ask_first') {
+    return ASK_FIRST_ASK_ACTIONS.has(descriptor.actionKind) ? 'ask' : descriptor.defaultDecision;
+  }
+  if (FULL_ACCESS_ALLOW_ACTIONS.has(descriptor.actionKind)) return 'allow';
+  return descriptor.defaultDecision;
+}
+
+function permissionDecisionRank(decision: GlobalToolPermissionDecision): number {
+  if (decision === 'deny') return 2;
+  if (decision === 'ask') return 1;
+  return 0;
+}
+
+function permissionDescriptorRiskRank(descriptor: ToolActionDescriptor): number {
+  let rank = 0;
+  if (descriptor.externalEffect) rank += 4;
+  if (descriptor.highConsequence) rank += 2;
+  if (descriptor.accessScope === 'sensitive_local_path') rank += 2;
+  if (descriptor.accessScope === 'outside_allowed_file_area') rank += 1;
+  if (!descriptor.reversible) rank += 1;
+  if (descriptor.actionKind.includes('unknown')) rank += 5;
+  return rank;
+}
+
+function permissionSourceRank(source: SafetyModeProfileSource): number {
+  return source === 'safety_mode_profile' ? 1 : 0;
 }
 
 export function matchesAgentToolRule(rule: string, toolNameInput: string, args: unknown): boolean {
@@ -1193,7 +1312,7 @@ function askForDescriptor(
   descriptor: DerivedToolActionDescriptor,
   access: AgentPermissionAccess,
   preapproved: boolean,
-  permissionSource: 'configured_ask' | 'default',
+  permissionSource: 'configured_ask' | 'default' | 'safety_mode_profile' | 'trust_ledger',
   descriptors: readonly DerivedToolActionDescriptor[],
 ): AgentPermissionAskDecision {
   const reason = descriptor.consequence;

@@ -2,11 +2,11 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppIcon } from '../icons';
 import type {
   AgentModelOption,
-  AgentPermissionMode,
   AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
   AgentReasoningLevel,
+  AgentSafetyMode,
   AgentDefinitionView,
   AgentAuthoringInput,
   AgentStorageLocation,
@@ -72,7 +72,7 @@ interface DraftConfig {
   reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   enabled: boolean;
-  permissionMode: AgentPermissionMode;
+  safetyMode: AgentSafetyMode;
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
@@ -158,7 +158,7 @@ const EMPTY_DRAFT: DraftConfig = {
   reasoningLevel: 'off',
   baseUrl: '',
   enabled: true,
-  permissionMode: 'trusted',
+  safetyMode: 'balanced',
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
@@ -426,7 +426,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   }, []);
 
   useEffect(() => {
-    if (category === 'skills') {
+    if (category === 'permissions' || category === 'skills') {
       const id = beginRequest();
       setLoadingSkills(true);
       setError(null);
@@ -503,10 +503,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
 
   const selectedAgent = routeAgent;
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
+  const actionTrustGrants = permissionDraft?.permissions.allow ?? [];
+  const acceptedSkillTrustGrants = allSkills.filter((skill) => skill.accepted);
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const permissionDraftDirty = permissionDraft !== permissionSettings;
   const showFooterActions = category === 'permissions'
-    ? permissionDraftDirty
+    ? permissionDraftDirty || runtimeDraftDirty
     : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
 
   function permissionDecision(ruleValue: string): 'deny' | 'allow' | 'ask' {
@@ -556,7 +558,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     setNotice(null);
     try {
       await api.agentUpdateRuntimeSettings({
-        permissionMode: draft.permissionMode,
+        safetyMode: draft.safetyMode,
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
         compactEnabled: draft.compactEnabled,
@@ -980,6 +982,76 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
               </section>
             ) : category === 'permissions' ? (
               <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
+                <InsetGroup ariaLabel={t.settings.permissions.trustLevelAriaLabel} label={t.settings.permissions.trustLevelGroup}>
+                  <InsetRow
+                    label={t.settings.permissions.trustLevelLabel}
+                    sublabel={t.settings.permissions.trustLevelSublabel}
+                    trailing={(
+                      <SegmentedControl<AgentSafetyMode>
+                        label={t.settings.permissions.trustLevelLabel}
+                        onChange={(value) => {
+                          setDraft((current) => ({ ...current, safetyMode: value }));
+                          setNotice(null);
+                          setError(null);
+                        }}
+                        options={[
+                          { value: 'ask_first', label: t.settings.permissions.askFirstMode },
+                          { value: 'balanced', label: t.settings.permissions.balancedMode },
+                          { value: 'full_access', label: t.settings.permissions.fullAccessMode },
+                        ]}
+                        value={draft.safetyMode}
+                      />
+                    )}
+                    wrap
+                  />
+                </InsetGroup>
+
+                <InsetGroup ariaLabel={t.settings.permissions.grantedTrustAriaLabel} label={t.settings.permissions.grantedTrustGroup}>
+                  {actionTrustGrants.length > 0 || acceptedSkillTrustGrants.length > 0 ? (
+                    <>
+                      {actionTrustGrants.map((ruleValue) => {
+                      const known = COMMON_PERMISSION_RULES.find((rule) => rule.ruleValue === ruleValue);
+                      const label = known ? t.settings.permissions.rules[known.id].label : ruleValue;
+                      return (
+                        <InsetRow
+                          key={ruleValue}
+                          label={label}
+                          sublabel={known ? ruleValue : t.settings.permissions.actionGrantSublabel}
+                          trailing={(
+                            <ButtonControl
+                              className="settings-row-button"
+                              onClick={() => setPermissionDecision(ruleValue, 'ask')}
+                            >
+                              {t.settings.permissions.revokeGrant}
+                            </ButtonControl>
+                          )}
+                          wrap
+                        />
+                      );
+                      })}
+                      {acceptedSkillTrustGrants.map((skill) => (
+                        <InsetRow
+                          key={`skill:${skill.name}:${skill.contentHash ?? ''}`}
+                          label={`/${skill.displayName || skill.name}`}
+                          sublabel={t.settings.permissions.skillGrantSublabel}
+                          trailing={(
+                            <ButtonControl
+                              className="settings-row-button"
+                              disabled={skillTrustBusy}
+                              onClick={() => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name))}
+                            >
+                              {t.settings.permissions.revokeGrant}
+                            </ButtonControl>
+                          )}
+                          wrap
+                        />
+                      ))}
+                    </>
+                  ) : (
+                    <InsetRow disabled label={t.settings.permissions.noGrantedTrust} />
+                  )}
+                </InsetGroup>
+
                 <InsetGroup ariaLabel={t.settings.permissions.commonActionsAriaLabel} label={t.settings.permissions.commonActionsGroup}>
                   {COMMON_PERMISSION_RULES.map((rule) => {
                     const decision = permissionDecision(rule.ruleValue);
@@ -1518,10 +1590,10 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
 
 function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
   DraftConfig,
-  'permissionMode' | 'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText' | 'additionalAgentDirectoriesText'
+  'safetyMode' | 'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText' | 'additionalAgentDirectoriesText'
 > {
   return {
-    permissionMode: settings.agent.permissionMode,
+    safetyMode: settings.agent.safetyMode ?? 'balanced',
     automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
     slashSkillsEnabled: settings.agent.slashSkillsEnabled,
     compactEnabled: settings.agent.compactEnabled,
@@ -1532,7 +1604,7 @@ function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
 
 function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSettingsView): boolean {
   const runtime = runtimeSettingsToDraft(settings);
-  return draft.permissionMode !== runtime.permissionMode
+  return draft.safetyMode !== (runtime.safetyMode ?? 'balanced')
     || draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
     || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
     || draft.compactEnabled !== runtime.compactEnabled

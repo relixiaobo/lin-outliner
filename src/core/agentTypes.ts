@@ -15,7 +15,7 @@ import type {
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
-import type { AgentDefinition, AgentPermissionMode, NodeId, NodeType } from './types';
+import type { AgentDefinition, AgentDelegationPermissionMode, NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
@@ -57,7 +57,7 @@ export interface AgentAuthoringInput {
   body: string;
   model?: string;
   effort?: string;
-  permissionMode?: AgentPermissionMode;
+  permissionMode?: AgentDelegationPermissionMode;
   maxTurns?: number;
   tools?: string[];
   disallowedTools?: string[];

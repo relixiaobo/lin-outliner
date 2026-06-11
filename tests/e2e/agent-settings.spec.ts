@@ -37,8 +37,8 @@ test.describe('agent settings window', () => {
     // Visiting another category records history, so back becomes available. The
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
-    await settings.getByRole('button', { name: /^Permissions/ }).click();
-    await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
+    await settings.getByRole('button', { name: /^Security/ }).click();
+    await expect(settings.getByRole('list', { name: 'Advanced' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -50,7 +50,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Advanced' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -119,7 +119,7 @@ test.describe('agent settings window', () => {
 
   test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.getByRole('button', { name: /^Permissions/ }).click();
+    await settings.getByRole('button', { name: /^Security/ }).click();
     const content = settings.locator('.settings-content');
     const popups = settings.locator('.settings-permissions-section .select-popup-input');
     await expect(popups).toHaveCount(10);

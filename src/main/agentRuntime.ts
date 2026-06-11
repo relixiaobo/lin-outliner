@@ -1811,7 +1811,8 @@ export class AgentRuntime {
             : undefined,
           command,
           localRoot: this.options.localFileRoot,
-          permissionMode: this.options.permissionMode ?? activeSettings.permissionMode,
+          permissionMode: this.options.permissionMode,
+          safetyMode: activeSettings.safetyMode,
           allowedTools: skill.allowedTools,
           globalPermissions,
           permissionEventHandler: (input) => {
@@ -6823,7 +6824,8 @@ function createConfiguredAgent(
         toolName: toolCall.name,
         args,
         policy: {
-          mode: options.permissionMode ?? runtimeSettings?.permissionMode,
+          mode: options.permissionMode,
+          safetyMode: runtimeSettings?.safetyMode,
           workspaceRoot: localFileRoot,
           globalPermissions,
           preapprovedToolRules: [

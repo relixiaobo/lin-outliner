@@ -25,6 +25,8 @@ export type AgentPermissionDeniedReason =
 export type AgentToolPermissionEventSource =
   | 'global_rule'
   | 'action_default'
+  | 'safety_mode_profile'
+  | 'trust_ledger'
   | 'configured_deny'
   | 'policy_denied'
   | 'classifier'
@@ -37,6 +39,8 @@ export type AgentToolPermissionEventSource =
 export type AgentToolPermissionResolvedBy =
   | 'classifier'
   | 'safe_allowlist'
+  | 'safety_mode_profile'
+  | 'trust_ledger'
   | 'user_once'
   | 'allow_rule_update'
   | 'global_rule'

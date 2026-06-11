@@ -3,6 +3,8 @@ export type {
   AgentProviderConfigInput,
   AgentProviderConfigView,
   AgentPermissionMode,
+  AgentDelegationPermissionMode,
+  AgentSafetyMode,
   AgentModelOption,
   AgentProviderOption,
   AgentReasoningLevel,
