@@ -776,7 +776,7 @@ export function NodePanel(props: NodePanelProps) {
             openId={props.rootId}
             selectedIds={props.ui.selectedIds}
             index={props.index}
-            isNodePinned={props.isNodePinned}
+            isPinned={props.isNodePinned(props.rootId)}
             run={props.run}
             onRoot={props.onRoot}
             onTogglePin={props.onTogglePin}

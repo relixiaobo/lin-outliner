@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
@@ -7,6 +7,7 @@ import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useT } from '../../i18n/I18nProvider';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
@@ -48,22 +49,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
     width: 220,
   });
 
-  useEffect(() => {
-    if (!menu) return undefined;
-    const close = (event: globalThis.MouseEvent) => {
-      if (menuRef.current?.contains(event.target as Node)) return;
-      setMenu(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenu(null);
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [menu]);
+  useDismissibleOverlay(menuRef, () => setMenu(null), { disabled: !menu });
 
   const removeTag = () => {
     void run(() => api.removeTag(nodeId, tag.id));

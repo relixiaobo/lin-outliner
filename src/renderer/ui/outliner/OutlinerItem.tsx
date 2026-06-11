@@ -1973,7 +1973,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           // need the current full set. uiRef is refreshed every NodePanel render.
           selectedIds={props.uiRef.current.selectedIds}
           index={props.index}
-          isNodePinned={props.isNodePinned}
+          isPinned={props.isNodePinned(drillDownId)}
           run={props.run}
           onRoot={props.onRoot}
           onTogglePin={props.onTogglePin}
@@ -2164,12 +2164,26 @@ function focusAncestorToken(
   return null;
 }
 
+function outlinerItemOpenId(props: OutlinerItemProps): NodeId {
+  const node = props.index.byId.get(props.nodeId);
+  if (node?.type === 'reference' && node.targetId) {
+    return resolveReferenceTargetId(node.targetId, props.index.byId) ?? node.id;
+  }
+  return props.nodeId;
+}
+
+function outlinerItemPinned(props: OutlinerItemProps): boolean {
+  return props.isNodePinned(outlinerItemOpenId(props));
+}
+
 // Skip re-rendering a row when neither its tracked data revision nor the global
-// UI generation changed and its structural position is unchanged. Function props
-// (run/onRoot/setUi/...) are intentionally not compared: they are either stable
-// (useState/useCallback) or close only over stable values, so a retained closure
-// stays correct. Draft rows are never memoized — they are not in the projection,
-// so renderRev cannot track them. Missing revision info forces a re-render.
+// UI generation changed and its structural position is unchanged. Most function
+// props (run/onRoot/setUi/...) are intentionally not compared: they are either
+// stable (useState/useCallback) or close only over stable values, so a retained
+// closure stays correct. Pin state is derived explicitly below because it is
+// renderer chrome state outside the document revision stream. Draft rows are
+// never memoized — they are not in the projection, so renderRev cannot track
+// them. Missing revision info forces a re-render.
 function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps): boolean {
   if (prev.draft || next.draft) return false;
   if (prev.nodeId !== next.nodeId) return false;
@@ -2187,6 +2201,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   const prevRev = prev.index.renderRev?.get(prev.nodeId);
   const nextRev = next.index.renderRev?.get(next.nodeId);
   if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
+  if (outlinerItemPinned(prev) !== outlinerItemPinned(next)) return false;
   if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;
   // Propagate a focus/pending-input request down to a nested target (see above).
   if (focusAncestorToken(prev, prev.ui.focusRequest) !== focusAncestorToken(next, next.ui.focusRequest)) return false;

@@ -776,7 +776,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           openId={drillDownId}
           selectedIds={props.ui.selectedIds}
           index={props.index}
-          isNodePinned={props.isNodePinned}
+          isPinned={props.isNodePinned(drillDownId)}
           run={props.run}
           onRoot={props.onRoot}
           onTogglePin={props.onTogglePin}

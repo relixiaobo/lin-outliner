@@ -121,8 +121,11 @@ they are persisted in localStorage under
 `lin-outliner:workspace-layout:v3:pinned`, sanitized against the live projection
 on restore, and can be toggled from the outliner row context menu or from a
 reduced sidebar row context menu. They preserve insertion order, are not
-reorderable, and do not participate in core undo/redo. The root outline renders
-all real root children (Daily notes,
+reorderable, and do not participate in core undo/redo. A pinned node remains
+pinned while it is in Trash; the sidebar row stays visible with a line-through
+label to show that the node has been deleted. Pinned ids are dropped only when
+the node id no longer exists in the projection. The root outline renders all real
+root children (Daily notes,
 Library, Schema, Saved searches, Trash, Settings — none hidden). The current
 workspace root itself is a clickable row with a compact avatar. Sidebar rows
 share one content axis; primary-nav entries and the workspace-root avatar sit on

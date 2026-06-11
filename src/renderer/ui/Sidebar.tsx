@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
@@ -20,9 +20,11 @@ import { MenuItem } from './primitives/MenuItem';
 import { MenuSurface } from './primitives/MenuSurface';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from './primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from './primitives/useDismissibleOverlay';
 import { textOf } from './shared';
 import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
+import { isNodeInTrash } from './interactions/nodeLocation';
 
 const primaryNavItems = [
   { key: 'today', icon: CalendarIcon },
@@ -69,7 +71,7 @@ export function Sidebar(props: SidebarProps) {
   const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
 
-  const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = [props.projection.rootId]) => {
+  const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = []) => {
     const node = props.index.byId.get(nodeId);
     if (!node) return null;
     const presentation = sidebarNodePresentation(node, props.index.byId, {
@@ -85,11 +87,17 @@ export function Sidebar(props: SidebarProps) {
     const active = props.rootId === node.id || props.rootId === presentation.navigateId;
     const label = presentation.label;
     const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
+    const trashed = presentation.navigateId !== props.projection.trashId
+      && isNodeInTrash(props.index, presentation.navigateId);
 
     return (
       <div className="workspace-tree-branch" key={node.id}>
         <div
-          className={`workspace-tree-row ${active ? 'active' : ''}`}
+          className={[
+            'workspace-tree-row',
+            active ? 'active' : '',
+            trashed ? 'trashed' : '',
+          ].filter(Boolean).join(' ')}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -214,7 +222,7 @@ export function Sidebar(props: SidebarProps) {
           </div>
           <div className="workspace-tree" aria-label={t.shell.sidebar.workspaceRootTreeAriaLabel}>
             {rootChildren.map((child) => (
-              renderWorkspaceTree(child.id)
+              renderWorkspaceTree(child.id, 0, [props.projection.rootId])
             ))}
           </div>
         </div>
@@ -284,21 +292,7 @@ function SidebarNodeContextMenu(props: SidebarNodeContextMenuProps) {
     width: 240,
   });
 
-  useEffect(() => {
-    const close = (event: globalThis.MouseEvent) => {
-      if (menuRef.current?.contains(event.target as Node)) return;
-      props.onClose();
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose();
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [props.onClose]);
+  useDismissibleOverlay(menuRef, props.onClose);
 
   const item = (label: string, icon: ReactNode, onClick: () => void) => (
     <MenuItem

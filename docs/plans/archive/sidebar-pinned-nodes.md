@@ -52,8 +52,8 @@ state (not the core document).** No `src/core/*` change.
 ### State hook
 
 New `useWorkspacePinnedNodes()` (or fold into the layout hook): `{ pinnedNodeIds,
-pinNode, unpinNode, togglePin }`, persisted on change, loaded + validated on
-init. Wire at the App root and pass `pinnedNodeIds` + `onTogglePin` down.
+togglePin }`, persisted on change, loaded + validated on init. Wire at the App
+root and pass `pinnedNodeIds` + `onTogglePin` down.
 
 ### Sidebar rendering
 
@@ -78,7 +78,7 @@ nodes" → "Right-click a node to pin it".
 The drag source already sets `OUTLINER_NODE_DRAG_MIME`
 (`useOutlinerRowInteraction`). To honor the original "Drag to pin nodes"
 affordance, add `onDragOver` (preventDefault + `dropEffect`) + `onDrop` (read the
-MIME, `pinNode(id)`) to the Pinned section. Trade-off: drag-to-pin is
+MIME, `togglePin(id)`) to the Pinned section. Trade-off: drag-to-pin is
 discoverable but adds ambiguity (add vs reorder) and risks confusion with the
 outliner's move-drag. Recommend shipping **context-menu pin first**; add
 drag-to-pin only if wanted (see open questions).
@@ -102,8 +102,10 @@ Users can toggle pins from:
   pane`, `Pin` / `Unpin`).
 
 The pinned section renders the same workspace tree rows as the root outline,
-preserving insertion order. Stale ids are dropped on restore. Drag-to-pin and
-manual reordering remain intentionally unshipped.
+preserving insertion order. Nodes remain pinned while they are in Trash and are
+shown with a line-through label; ids are dropped only when they no longer exist
+in the projection. Drag-to-pin and manual reordering remain intentionally
+unshipped.
 
 ## Resolved questions
 
@@ -127,6 +129,6 @@ state + callback); `outliner/NodeContextMenu.tsx` (Pin/Unpin item). No
 - [x] `NodeContextMenu` Pin/Unpin item (outliner rows).
 - [x] Sidebar row right-click → context menu with Pin/Unpin.
 - [x] Drag-to-pin explicitly left unshipped; empty state points to context menu.
-- [x] Persist across restart; dead-id sanitization verified.
+- [x] Persist across restart; Trash retention and dead-id sanitization verified.
 - [x] `bun run typecheck`, `bun run test:renderer`, and
       `bun run test:e2e -- tests/e2e/workspace-layout.spec.ts`.

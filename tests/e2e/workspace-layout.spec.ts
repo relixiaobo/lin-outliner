@@ -526,11 +526,29 @@ test.describe('workspace layout resizing', () => {
     await expect(pinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' })).toBeVisible();
     await expect(page.locator('.sidebar-empty-row')).toHaveCount(0);
 
+    await rowBody(page, ids.alpha).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Unpin', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+
     await page.reload();
     const restoredPinnedTree = page.getByLabel('Pinned nodes');
-    await expect(restoredPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' })).toBeVisible();
+    const restoredAlphaPinnedRow = restoredPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' });
+    await expect(restoredAlphaPinnedRow).toBeVisible();
 
-    await restoredPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' }).click({ button: 'right' });
+    await page.evaluate(async ({ alphaId }) => {
+      const win = window as Window & { lin?: { invoke?: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } };
+      await win.lin?.invoke?.('trash_node', { nodeId: alphaId });
+    }, { alphaId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+    await expect(restoredAlphaPinnedRow).toBeVisible();
+    await expect(restoredAlphaPinnedRow.locator('.workspace-tree-label-text')).toHaveCSS('text-decoration-line', 'line-through');
+
+    await restoredAlphaPinnedRow.click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Unpin', exact: true }).click();
 
     await expect(page.getByLabel('Pinned nodes')).toHaveCount(0);
@@ -541,6 +559,8 @@ test.describe('workspace layout resizing', () => {
 
     const rootPinnedTree = page.getByLabel('Pinned nodes');
     await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Root' })).toBeVisible();
+    await rootPinnedTree.getByRole('button', { name: 'Expand Root' }).click();
+    await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Library' })).toBeVisible();
   });
 
   test('sidebar pinned nodes drop stale ids on restore', async ({ page }) => {
