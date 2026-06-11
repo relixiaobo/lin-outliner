@@ -139,6 +139,7 @@ import {
   type DreamMemoryExtractionSpan,
   type DreamMemoryExtractionSourceRange,
 } from './agentDreamExtraction';
+import { dreamFailureBackoffMs } from './dreamBackoff';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
 import { commandBriefText, liveCommandNodeIds, selectDueCommands, type DueCommand } from './commandScheduler';
@@ -519,6 +520,13 @@ export class AgentRuntime {
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
   /** Pools with a Dream in flight, keyed by `principalKey` — one Dream per pool at a time. */
   private readonly dreamingPools = new Set<string>();
+  /**
+   * Per-pool scheduled-Dream failure backoff, keyed by `principalKey` (sibling to
+   * `dreamingPools`). A scheduled Dream that keeps failing must not re-fire on every 60s tick
+   * and flood the run list with `failed` records; the window grows with consecutive failures and
+   * clears on the first success. See `dreamBackoff` for why this is in-memory.
+   */
+  private readonly dreamFailureBackoff = new Map<string, { consecutiveFailures: number; nextAttemptAt: number }>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSweepTail: Promise<void> = Promise.resolve();
@@ -2933,13 +2941,39 @@ export class AgentRuntime {
         ? skippedDreamRunResult(this.agentIdentity.agentId, trigger, now, 'Dream is already running for this pool.')
         : null;
     }
+    // A scheduled Dream stuck failing backs off so it stops re-firing every tick (see
+    // dreamFailureBackoff); a manual /dream ignores the window — the user asked for it now, and
+    // its outcome still resets the backoff so a manual run can un-stick the schedule.
+    if (trigger === 'schedule') {
+      const backoff = this.dreamFailureBackoff.get(guardKey);
+      if (backoff && now.getTime() < backoff.nextAttemptAt) return null;
+    }
     this.dreamingPools.add(guardKey);
     try {
       const task = await this.createDreamMemoryExtractionTask(principal, trigger, now);
       if (!task) return null;
-      return await this.runDreamMemoryExtractionTask(task);
+      const result = await this.runDreamMemoryExtractionTask(task);
+      this.recordDreamFailureBackoff(guardKey, result, now);
+      return result;
     } finally {
       this.dreamingPools.delete(guardKey);
+    }
+  }
+
+  /**
+   * Fold a Dream outcome into the pool's failure-backoff window: clear it on success, grow it
+   * (exponential, capped) on failure. A `skipped` outcome means no attempt ran, so it leaves the
+   * window untouched.
+   */
+  private recordDreamFailureBackoff(guardKey: string, result: AgentDreamRunResult, now: Date): void {
+    if (result.status === 'completed') {
+      this.dreamFailureBackoff.delete(guardKey);
+    } else if (result.status === 'failed') {
+      const consecutiveFailures = (this.dreamFailureBackoff.get(guardKey)?.consecutiveFailures ?? 0) + 1;
+      this.dreamFailureBackoff.set(guardKey, {
+        consecutiveFailures,
+        nextAttemptAt: now.getTime() + dreamFailureBackoffMs(consecutiveFailures),
+      });
     }
   }
 
