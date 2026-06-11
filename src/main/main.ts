@@ -13,13 +13,23 @@ import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
+  LIN_SETTINGS_NAVIGATE_CHANNEL,
+  SETTINGS_AGENT_PARAM,
+  SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
+  isSettingsCategoryTarget,
   type ProviderConfigMode,
+  type SettingsOpenTarget,
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
-import { LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL } from '../core/agentTypes';
+import {
+  LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL,
+  LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL,
+  type AgentMessageContextMenuAction,
+  type AgentMessageContextMenuRequest,
+} from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
@@ -852,11 +862,37 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // window it is frameless with inset traffic lights (the lights sit over the
 // settings rail, no separate title-bar strip); the renderer draws its own top drag
 // region. It isn't persisted across launches.
-function openSettingsWindow() {
+function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
+  if (!raw || typeof raw !== 'object') return {};
+  const input = raw as { category?: unknown; agentId?: unknown };
+  const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
+  const agentId = typeof input.agentId === 'string' && input.agentId.trim()
+    ? input.agentId.trim()
+    : undefined;
+  return {
+    ...(category ? { category } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
+}
+
+function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
+  return {
+    [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
+    ...(target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
+    ...(!target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+  };
+}
+
+function settingsWindowSearch(target: SettingsOpenTarget = {}): string {
+  return new URLSearchParams(settingsWindowQuery(target)).toString();
+}
+
+function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
   if (settingsWindow) {
     if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.show();
     settingsWindow.focus();
+    settingsWindow.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
     return;
   }
   // A utilitarian Preferences window: opaque content, no OS material (unlike the
@@ -886,30 +922,30 @@ function openSettingsWindow() {
     },
   });
 
-  const target = settingsWindow;
-  hardenWebContents(target.webContents);
-  attachNativeContextMenu(target.webContents);
+  const window = settingsWindow;
+  hardenWebContents(window.webContents);
+  attachNativeContextMenu(window.webContents);
   // Match the main window's custom native corner (MAC_WINDOW_CORNER_RADIUS) so the
   // frameless settings window has the SAME rounded corners — not the smaller macOS
   // default (16pt on Tahoe). Apply before show (no default-corner flash) and again
   // on ready-to-show; reset to 0 in fullscreen where a rounded corner clips content.
-  applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
-  target.once('ready-to-show', () => {
-    applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
-    target.show();
+  applyMacWindowCorner(window, MAC_WINDOW_CORNER_RADIUS);
+  window.once('ready-to-show', () => {
+    applyMacWindowCorner(window, MAC_WINDOW_CORNER_RADIUS);
+    window.show();
   });
-  target.on('enter-full-screen', () => applyMacWindowCorner(target, 0));
-  target.on('leave-full-screen', () => applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS));
+  window.on('enter-full-screen', () => applyMacWindowCorner(window, 0));
+  window.on('leave-full-screen', () => applyMacWindowCorner(window, MAC_WINDOW_CORNER_RADIUS));
 
   if (RENDERER_DEV_URL) {
-    void target.loadURL(`${RENDERER_DEV_URL}?${WINDOW_SURFACE_QUERY_PARAM}=settings`);
+    void window.loadURL(`${RENDERER_DEV_URL}?${settingsWindowSearch(openTarget)}`);
   } else {
-    void target.loadFile(join(__dirname, '../renderer/index.html'), {
-      query: { [WINDOW_SURFACE_QUERY_PARAM]: 'settings' },
+    void window.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: settingsWindowQuery(openTarget),
     });
   }
 
-  target.on('closed', () => {
+  window.on('closed', () => {
     settingsWindow = null;
   });
 }
@@ -1024,8 +1060,48 @@ function registerIpc() {
     if (command === 'close') window.close();
   });
 
-  ipcMain.handle('lin:open-settings', () => openSettingsWindow());
+  ipcMain.handle('lin:open-settings', (_event, target?: unknown) => openSettingsWindow(sanitizeSettingsOpenTarget(target)));
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  ipcMain.handle(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, async (
+    event,
+    request?: Partial<AgentMessageContextMenuRequest>,
+  ): Promise<AgentMessageContextMenuAction | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const messages = getMessages(effectiveLocale()).agent.message;
+    let settled = false;
+    return new Promise<AgentMessageContextMenuAction | null>((resolve) => {
+      const pick = (action: AgentMessageContextMenuAction) => {
+        settled = true;
+        resolve(action);
+      };
+      const template: Electron.MenuItemConstructorOptions[] = [];
+      if (request?.canCopy) {
+        template.push({ label: messages.copy, click: () => pick('copy') });
+      }
+      if (request?.canRetry || request?.canRegenerate) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        if (request.canRetry) {
+          template.push({ label: messages.retry, click: () => pick('retry') });
+        } else if (request.canRegenerate) {
+          template.push({ label: messages.regenerate, click: () => pick('regenerate') });
+        }
+      }
+      if (request?.canShowDetails) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push({ label: messages.details, click: () => pick('details') });
+      }
+      if (template.length === 0) {
+        resolve(null);
+        return;
+      }
+      Menu.buildFromTemplate(template).popup({
+        ...(window ? { window } : {}),
+        callback: () => {
+          if (!settled) resolve(null);
+        },
+      });
+    });
+  });
   // Launcher window IPC (the prewarmed global launcher).
   ipcMain.handle('launcher:hide', () => {
     dismissLauncher();

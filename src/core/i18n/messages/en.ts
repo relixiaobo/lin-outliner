@@ -847,7 +847,7 @@ commandPalette: {
       deleteConfirmMessage: ({ title }: { title: string }) =>
         `"${title}" will be permanently deleted. This cannot be undone.`,
     },
-    // The composer: editor, toolbar, model menu, attachment + approval flows.
+    // The composer: editor, toolbar, model chip, attachment + approval flows.
     composer: {
       editorAriaLabel: 'Agent message',
       askPlaceholder: 'Ask anything...',
@@ -855,14 +855,10 @@ commandPalette: {
       appendSteerPlaceholder: 'Append another steer...',
       dropFilesToAttach: 'Drop files to attach',
       addAttachment: 'Add attachment',
-      selectModel: 'Select model',
       noModelConfigured: 'No model configured',
-      moreModels: 'More models',
-      thinking: 'Thinking',
+      openModelSettings: 'Open model settings',
       thinkingLevel: 'Thinking level',
-      thinkingLevels: 'Thinking levels',
-      modelAndReasoningSettings: 'Model and reasoning settings',
-      // Reasoning effort levels shown on the model menu + reasoning chip.
+      // Reasoning effort levels shown on the model/settings chip and provider config.
       reasoningLevels: {
         off: 'Off',
         minimal: 'Minimal',
@@ -949,6 +945,20 @@ commandPalette: {
       retryResponse: 'Retry response',
       regenerate: 'Regenerate',
       regenerateResponse: 'Regenerate response',
+      details: 'Details',
+      you: 'You',
+      roleAssistant: 'Assistant',
+      timestamp: 'Time',
+      model: 'Model',
+      tokens: 'Tokens',
+      tokenLabels: {
+        input: 'input',
+        output: 'output',
+        cacheRead: 'cache read',
+        cacheWrite: 'cache write',
+        total: 'total',
+      },
+      timeSeparatorToday: ({ time }: { time: string }) => `Today ${time}`,
     },
     // The collapsible thinking/tool process block + compaction boundary.
     process: {

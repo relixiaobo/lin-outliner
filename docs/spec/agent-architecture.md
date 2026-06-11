@@ -111,6 +111,11 @@ clean-cut, no migration).
     reader-neutral). POV applies whenever the transcript contains another
     agent's records — keyed on content, not the live roster — and mention
     tokens are collision-checked at create/add time.
+  - **Renderer identity/metadata:** speaker attribution is a projection of the
+    persisted message `actor` plus member/definition metadata. Channel assistant
+    rows name every speaker, including the coordinator. Time separators and the
+    right-click Details popover expose timestamp, model/provider, and usage on
+    demand; they do not add stored conversation primitives.
 
 ## User ↔ Agent (concept direction, not yet built)
 
@@ -187,7 +192,8 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Typed sub-agent identity + per-agent memory line (#164) | ✅ built | the groundwork multi-agent builds on |
 | `addressedTo`, `member.added/removed`, `<principal>` render hook | ✅ built | connected in M3-A (#179): `addressedTo` written on user messages + read by routing; membership events applied on replay + folded into the conversation index |
 | Create a >1-agent conversation (Channel) | ✅ built | `agent_create_conversation` takes `{agentIds, goal, seedText}`; add/remove member commands + header "+" member menu in the UI; "add agent to DM" spawns a seeded Channel (DM itself never converts); mention-token collisions rejected at create/add |
-| Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery + queue-all rounds; UI: composer member typeahead, header/list member display, actor badges, typing indicator + run drill-in |
+| Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery + queue-all rounds; UI: composer member typeahead, header/list member display, actor badges/avatars, typing indicator + run drill-in |
+| Conversation metadata UX | ✅ built | DM header identity subtitle; timestamp gap separators; native message context menu with Details for speaker, timestamp, model/provider, and token usage |
 | Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |
 | Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |
 | Memory source binding under compaction (#164) | ✅ built | Realignment PR-2 records fact sources as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over conversation/run ledgers. `recall include_evidence` zooms fact → episode gist → raw span; PR #178's compaction evidence invariant remains pinned in `agent-data-model` §13.17. |

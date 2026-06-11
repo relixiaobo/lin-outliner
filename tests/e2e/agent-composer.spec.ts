@@ -8,6 +8,7 @@ import {
   ids,
   openMockedApp,
   rowEditor,
+  setAgentMessageContextMenuAction,
 } from './outlinerMock';
 
 async function waitForAgentConversation(page: import('@playwright/test').Page) {
@@ -1570,81 +1571,140 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Continue implementing the compact UI boundary.')).toBeVisible();
   });
 
-  test('uses shared menu semantics for model and reasoning controls', async ({ page }) => {
-    const modelButton = page.getByRole('button', { name: 'Select model' });
-    await expect(modelButton).toHaveAttribute('aria-expanded', 'false');
-    await modelButton.click();
-    await expect(modelButton).toHaveAttribute('aria-expanded', 'true');
+  test('shows channel speaker identity, time separators, and message details', async ({ page }) => {
+    const usage = {
+      input: 1200,
+      output: 34,
+      cacheRead: 10,
+      cacheWrite: 0,
+      totalTokens: 1244,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    };
 
-    const menu = page.getByRole('menu', { name: 'Model and reasoning settings' });
-    await expect(menu).toBeVisible();
-    await expect(menu).toHaveCSS('border-top-width', '0px');
-    await expect(menu.getByRole('menuitem', { name: 'GPT-5.4', exact: true })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Claude Sonnet 4.5', exact: true })).toHaveCount(0);
-    const thinkingSwitch = menu.getByRole('switch', { name: 'Thinking' });
-    const thinkingSwitchMark = thinkingSwitch.locator('.switch-mark');
-    await expect(thinkingSwitch).toHaveAttribute('aria-checked', 'true');
-    await expect(thinkingSwitchMark).toHaveClass(/checked/);
-    await expect(thinkingSwitchMark).toHaveCSS('width', '30px');
-    await expect(thinkingSwitchMark).toHaveCSS('height', '18px');
-    await expect(thinkingSwitch.locator('.switch-mark-thumb')).toHaveCSS('width', '14px');
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Planning Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          mention: 'assistant',
+          displayName: 'Agent System',
+          coordinator: true,
+        },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:general' },
+          mention: 'general',
+          displayName: 'general',
+        },
+      ],
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [
+        {
+          nodeId: 'agent-user-meta',
+          actor: { type: 'user', userId: 'local-user' },
+          message: {
+            role: 'user',
+            timestamp: 1_800_000_000_000,
+            content: [{ type: 'text', text: 'Start the UX review.' }],
+          },
+        },
+        {
+          nodeId: 'assistant-coordinator-meta',
+          actor: { type: 'agent', agentId: 'built-in:core:assistant' },
+          message: {
+            role: 'assistant',
+            timestamp: 1_800_000_000_100,
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage,
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'Coordinator result.' }],
+          },
+        },
+        {
+          nodeId: 'assistant-peer-meta',
+          actor: { type: 'agent', agentId: 'built-in:tenon:general' },
+          message: {
+            role: 'assistant',
+            timestamp: 1_800_000_000_100 + 2 * 60 * 60 * 1000,
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage,
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'General result.' }],
+          },
+        },
+      ],
+    });
 
-    await menu.getByRole('menuitem', { name: 'GPT-5.4 Mini', exact: true }).click();
+    await expect(page.locator('.agent-message-time-separator')).toHaveCount(1);
+    const coordinatorRow = page.locator('.agent-message-row.assistant', { hasText: 'Coordinator result.' });
+    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('Agent System');
+    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('@assistant');
+    await expect(coordinatorRow.locator('.agent-identity-avatar')).toBeVisible();
+
+    const peerRow = page.locator('.agent-message-row.assistant', { hasText: 'General result.' });
+    await expect(peerRow.locator('.agent-message-actor')).toContainText('general');
+    await expect(peerRow.locator('.agent-message-actor')).toContainText('@general');
+
+    await setAgentMessageContextMenuAction(page, 'details');
+    await peerRow.click({ button: 'right' });
+
+    const details = page.getByRole('dialog', { name: 'Details' });
+    await expect(details).toBeVisible();
+    await expect(details).toContainText('general');
+    await expect(details).toContainText('@general');
+    await expect(details).toContainText('openai/gpt-5.4');
+    await expect(details).toContainText('input 1,200');
+    await expect(details).toContainText('output 34');
+    await expect(details).toContainText('cache read 10');
+    await expect(details).toContainText('total 1,244');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.some((call) => (
-        call.cmd === 'agent_upsert_provider_config'
-        && call.args.provider
-        && typeof call.args.provider === 'object'
-        && 'modelId' in call.args.provider
-        && call.args.provider.modelId === 'gpt-5.4-mini'
-      ));
-    }).toBe(true);
-
-    await modelButton.click();
-    await page.getByRole('button', { name: 'Thinking level' }).click();
-    const thinkingLevels = page.getByRole('menu', { name: 'Thinking levels' });
-    await expect(thinkingLevels).toHaveCSS('border-top-width', '0px');
-    await expect(thinkingLevels.getByRole('menuitemradio', { name: 'Medium' })).toHaveAttribute('aria-checked', 'true');
-    await thinkingLevels.getByRole('menuitemradio', { name: 'High' }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.some((call) => (
-        call.cmd === 'agent_upsert_provider_config'
-        && call.args.provider
-        && typeof call.args.provider === 'object'
-        && 'reasoningLevel' in call.args.provider
-        && call.args.provider.reasoningLevel === 'high'
-      ));
-    }).toBe(true);
+      return calls.findLast((call) => call.cmd === 'agent_message_context_menu')?.args;
+    }).toMatchObject({
+      canCopy: true,
+      canRegenerate: true,
+      canShowDetails: true,
+    });
   });
 
-  test('keeps the model menu thinking row a stable height across the toggle', async ({ page }) => {
-    await page.getByRole('button', { name: 'Select model' }).click();
-    const menu = page.getByRole('menu', { name: 'Model and reasoning settings' });
-    await expect(menu).toBeVisible();
+  test('opens provider config from the model chip without mutating model settings inline', async ({ page }) => {
+    const modelButton = page.getByRole('button', { name: 'Open model settings' });
+    await expect(modelButton).toContainText('GPT-5.4');
+    await expect(modelButton).toContainText('Medium');
 
-    const rowHeight = () => page.locator('.agent-composer-thinking-row').evaluate((row) => (
-      Math.round(row.getBoundingClientRect().height * 100) / 100
-    ));
-    const menuHeight = () => page.locator('.agent-composer-model-menu').evaluate((el) => (
-      Math.round(el.getBoundingClientRect().height * 100) / 100
-    ));
+    await modelButton.click();
 
-    // Thinking starts enabled (the level button is present). Toggling it OFF unmounts
-    // the reasoning-level button, but the row reserves --control-size-xl so neither the
-    // row nor the menu changes height — otherwise the menu jumps on every toggle.
-    const onRow = await rowHeight();
-    const onMenu = await menuHeight();
-    await menu.getByRole('switch', { name: 'Thinking' }).click();
-    await expect(page.locator('.agent-composer-thinking-level')).toHaveCount(0);
-    expect(await rowHeight()).toBe(onRow);
-    expect(await menuHeight()).toBe(onMenu);
-    await menu.getByRole('switch', { name: 'Thinking' }).click();
-    await expect(page.locator('.agent-composer-thinking-level')).toHaveCount(1);
-    expect(await rowHeight()).toBe(onRow);
-    expect(await menuHeight()).toBe(onMenu);
+    await expect(page.getByRole('menu', { name: 'Model and reasoning settings' })).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_provider_config')?.args;
+    }).toMatchObject({ providerId: 'openai', mode: 'configure' });
+    expect((await commandCalls(page)).some((call) => call.cmd === 'agent_upsert_provider_config')).toBe(false);
+  });
+
+  test('keeps the model chip a stable display control', async ({ page }) => {
+    const modelButton = page.getByRole('button', { name: 'Open model settings' });
+    const before = await modelButton.boundingBox();
+    expect(before).not.toBeNull();
+
+    await modelButton.hover();
+    const after = await modelButton.boundingBox();
+
+    expect(after).not.toBeNull();
+    expect(after!.width).toBeCloseTo(before!.width, 1);
+    expect(after!.height).toBeCloseTo(before!.height, 1);
+    await expect(page.locator('.agent-composer-thinking-row')).toHaveCount(0);
+    await expect(page.locator('.agent-composer-model-menu')).toHaveCount(0);
   });
 
   test('keeps settings in the sidebar, never duplicated in the agent surface', async ({ page }) => {
@@ -1657,7 +1717,7 @@ test.describe('agent composer controls', () => {
       page.locator('.sidebar-bottom').getByRole('button', { name: 'Settings' }),
     ).toBeVisible();
 
-    await page.getByRole('button', { name: 'Select model' }).click();
+    await page.getByRole('button', { name: 'Open model settings' }).click();
     await expect(page.getByRole('menuitem', { name: 'API Settings' })).toHaveCount(0);
   });
 
@@ -1854,6 +1914,8 @@ test.describe('agent composer controls', () => {
     const metrics = await page.locator('.agent-dock-header').evaluate((header) => {
       const titleButton = header.querySelector('.agent-dock-title-button');
       const title = header.querySelector('.agent-dock-title');
+      const titleStack = header.querySelector('.agent-dock-title-stack');
+      const avatar = header.querySelector('.agent-identity-avatar');
       const chevron = header.querySelector('.agent-title-chevron');
       const actions = header.querySelector('.agent-dock-actions');
       if (
@@ -1868,6 +1930,8 @@ test.describe('agent composer controls', () => {
 
       const titleButtonBox = titleButton.getBoundingClientRect();
       const titleBox = title.getBoundingClientRect();
+      const titleStackBox = titleStack instanceof HTMLElement ? titleStack.getBoundingClientRect() : titleBox;
+      const avatarBox = avatar instanceof HTMLElement ? avatar.getBoundingClientRect() : null;
       const chevronBox = chevron.getBoundingClientRect();
       const actionsBox = actions.getBoundingClientRect();
       const titleStyle = getComputedStyle(titleButton);
@@ -1887,10 +1951,11 @@ test.describe('agent composer controls', () => {
       return {
         actionColor: actionStyle?.color ?? null,
         buttonBackground: titleStyle.backgroundColor,
-        buttonExtraWidth: titleButtonBox.width - titleBox.width - chevronBox.width,
+        buttonExtraWidth: titleButtonBox.width - titleStackBox.width - (avatarBox?.width ?? 0) - chevronBox.width,
         buttonPaddingLeft: Number.parseFloat(titleStyle.paddingLeft),
         chevronOpacity: getComputedStyle(chevron).opacity,
         gapToActions: actionsBox.left - titleButtonBox.right,
+        identityAvatarCount: header.querySelectorAll('.agent-identity-avatar').length,
         textFaint: computedTokenColor(rootStyle.getPropertyValue('--text-faint').trim()),
         textSecondary: computedTokenColor(rootStyle.getPropertyValue('--text-secondary').trim()),
         textSoft: computedTokenColor(rootStyle.getPropertyValue('--text-soft').trim()),
@@ -1903,6 +1968,7 @@ test.describe('agent composer controls', () => {
 
     expect(metrics).not.toBeNull();
     expect(metrics!.statusDotCount).toBe(0);
+    expect(metrics!.identityAvatarCount).toBe(1);
     expect(metrics!.titleText.startsWith('#')).toBe(false);
     expect(metrics!.buttonBackground).toBe('rgba(0, 0, 0, 0)');
     expect(metrics!.titleColor).toBe(metrics!.textSoft);

@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { AgentModelOption, AgentReasoningLevel } from '../../api/types';
 import { HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { SelectControl } from '../primitives/SelectControl';
 import { TextInputControl } from '../primitives/TextInputControl';
+import { coerceReasoningLevel } from './settingsReasoning';
 
 // The draft committed by Save. `apiKey` empty means "leave the saved key
-// unchanged"; a non-empty value replaces it. `modelId` is only entered for custom
-// providers (a catalog provider's model is chosen in the composer, not here); the
-// host supplies a sensible default on commit for catalog providers.
+// unchanged"; a non-empty value replaces it. The provider-config surface owns
+// model/reasoning for the built-in assistant's global provider; user/project
+// agents keep their overrides in Agent Profile settings.
 export interface ProviderConfigDraft {
   providerId: string;
   modelId: string;
+  reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   apiKey: string;
 }
@@ -33,7 +37,8 @@ interface ProviderConfigFormProps {
   avatar: ReactNode;
   defaultBaseUrl?: string;
   baseUrlPlaceholder: string;
-  initial: { providerId: string; modelId: string; baseUrl: string };
+  initial: { providerId: string; modelId: string; reasoningLevel: AgentReasoningLevel; baseUrl: string };
+  modelOptions?: AgentModelOption[];
   hasSavedKey: boolean;
   isActive: boolean;
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
@@ -52,12 +57,11 @@ type FormStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
 
 // The per-provider connection form. Rendered as the whole content of the native
 // provider-config window (a modal child of Settings — the macOS idiom where a list
-// row opens a real dialog, not an in-renderer overlay). It hosts only the
-// CONNECTION: the credential (API key / managed note) and the base URL, in a single
-// inset card — model & reasoning are chosen in the composer, so it stays minimal.
-// Custom providers also enter a provider id + model id (no catalog to default
-// from). Selection / focus stay neutral (B3/B4); Save is a single neutral-strong
-// primary, never a system-blue accent (B4); validation uses status colour only (B4).
+// row opens a real dialog, not an in-renderer overlay). It hosts the connection
+// plus model/reasoning ownership for the built-in assistant's global provider.
+// Custom providers enter a provider id + model id (no catalog to default from).
+// Selection / focus stay neutral (B3/B4); Save is a single neutral-strong primary,
+// never a system-blue accent (B4); validation uses status colour only (B4).
 export function ProviderConfigForm({
   mode,
   providerName,
@@ -66,6 +70,7 @@ export function ProviderConfigForm({
   defaultBaseUrl,
   baseUrlPlaceholder,
   initial,
+  modelOptions = [],
   hasSavedKey,
   isActive,
   authNote,
@@ -85,6 +90,7 @@ export function ProviderConfigForm({
 
   const [providerId, setProviderId] = useState(initial.providerId);
   const [modelId, setModelId] = useState(initial.modelId);
+  const [reasoningLevel, setReasoningLevel] = useState<AgentReasoningLevel>(initial.reasoningLevel);
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
@@ -106,15 +112,20 @@ export function ProviderConfigForm({
   const draft: ProviderConfigDraft = {
     providerId: isCustom ? trimmedProviderId : initial.providerId,
     modelId: modelId.trim(),
+    reasoningLevel,
     baseUrl: baseUrl.trim(),
     apiKey: apiKey.trim(),
   };
+  const selectedModel = modelOptions.find((model) => model.id === draft.modelId);
+  const reasoningOptions = selectedModel?.supportedThinkingLevels.length
+    ? selectedModel.supportedThinkingLevels
+    : [reasoningLevel];
   // A managed provider (authNote) persists a row with nothing to fill in; an
   // api-key / custom provider needs a credential or a base URL, or the saved row is
   // a keyless no-op the startup reconcile prunes — a confusing "saved, then gone".
   const hasConnection = Boolean(draft.apiKey) || hasSavedKey || Boolean(draft.baseUrl);
   const canSave = Boolean(draft.providerId)
-    && (isCustom ? Boolean(draft.modelId) : true)
+    && Boolean(draft.modelId)
     && (authNote ? true : hasConnection)
     && !busy;
   const canValidate = Boolean(draft.providerId) && !busy;
@@ -148,6 +159,16 @@ export function ProviderConfigForm({
     validationToken.current += 1;
     setStatus('idle');
     setMessage('');
+  }
+
+  function selectCatalogModel(nextModelId: string) {
+    const nextModel = modelOptions.find((model) => model.id === nextModelId);
+    const supportedLevels = nextModel?.supportedThinkingLevels.length
+      ? nextModel.supportedThinkingLevels
+      : [reasoningLevel];
+    setModelId(nextModelId);
+    setReasoningLevel(coerceReasoningLevel(reasoningLevel, supportedLevels));
+    clearResult();
   }
 
   async function runSave() {
@@ -192,78 +213,106 @@ export function ProviderConfigForm({
               </button>
             ) : null}
           </div>
-        ) : (
-          <>
-            <div className="inset-card" role="group">
-              {isCustom ? (
-                <label className="settings-sheet-row">
-                  <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
-                  <TextInputControl
-                    className="settings-sheet-row-input"
-                    label={t.providerConfig.providerIdLabel}
-                    onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
-                    placeholder={t.providerConfig.providerIdPlaceholder}
-                    ref={firstFieldRef}
-                    value={providerId}
-                  />
-                </label>
-              ) : null}
-              {showKeyField ? (
-                <div className="settings-sheet-row">
-                  <div className="settings-sheet-key">
-                    <PasswordIcon size={ICON_SIZE.menu} />
-                    <TextInputControl
-                      className="settings-sheet-row-input"
-                      label={t.providerConfig.apiKeyLabel}
-                      onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
-                      placeholder={hasSavedKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
-                      ref={isCustom ? undefined : firstFieldRef}
-                      type={reveal ? 'text' : 'password'}
-                      value={apiKey}
-                    />
-                    <button
-                      aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
-                      aria-pressed={reveal}
-                      className="settings-sheet-reveal"
-                      onClick={() => setReveal((current) => !current)}
-                      type="button"
-                    >
-                      {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              {isCustom ? (
-                <label className="settings-sheet-row">
-                  <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
-                  <TextInputControl
-                    className="settings-sheet-row-input"
-                    label={t.providerConfig.modelLabel}
-                    onChange={(event) => { setModelId(event.target.value); clearResult(); }}
-                    placeholder={t.providerConfig.modelPlaceholder}
-                    value={modelId}
-                  />
-                </label>
-              ) : null}
-              <label className="settings-sheet-row">
-                <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
+        ) : null}
+        <div className="inset-card" role="group">
+          {isCustom ? (
+            <label className="settings-sheet-row">
+              <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
+              <TextInputControl
+                className="settings-sheet-row-input"
+                label={t.providerConfig.providerIdLabel}
+                onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
+                placeholder={t.providerConfig.providerIdPlaceholder}
+                ref={firstFieldRef}
+                value={providerId}
+              />
+            </label>
+          ) : null}
+          {showKeyField ? (
+            <div className="settings-sheet-row">
+              <div className="settings-sheet-key">
+                <PasswordIcon size={ICON_SIZE.menu} />
                 <TextInputControl
                   className="settings-sheet-row-input"
-                  label={t.providerConfig.baseUrlLabel}
-                  onChange={(event) => { setBaseUrl(event.target.value); clearResult(); }}
-                  placeholder={defaultBaseUrl || baseUrlPlaceholder}
-                  value={baseUrl}
+                  label={t.providerConfig.apiKeyLabel}
+                  onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
+                  placeholder={hasSavedKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
+                  ref={isCustom ? undefined : firstFieldRef}
+                  type={reveal ? 'text' : 'password'}
+                  value={apiKey}
                 />
-              </label>
+                <button
+                  aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
+                  aria-pressed={reveal}
+                  className="settings-sheet-reveal"
+                  onClick={() => setReveal((current) => !current)}
+                  type="button"
+                >
+                  {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
+                </button>
+              </div>
             </div>
-            {!hasSavedKey && docsUrl ? (
-              <button className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)} type="button">
-                <span>{t.providerConfig.getApiKey}</span>
-                <OpenIcon size={ICON_SIZE.tiny} />
-              </button>
-            ) : null}
-          </>
-        )}
+          ) : null}
+          {isCustom ? (
+            <label className="settings-sheet-row">
+              <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
+              <TextInputControl
+                className="settings-sheet-row-input"
+                label={t.providerConfig.modelLabel}
+                onChange={(event) => { setModelId(event.target.value); clearResult(); }}
+                placeholder={t.providerConfig.modelPlaceholder}
+                value={modelId}
+              />
+            </label>
+          ) : modelOptions.length > 0 ? (
+            <>
+              <label className="settings-sheet-row">
+                <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
+                <SelectControl
+                  className="settings-sheet-row-input"
+                  label={t.providerConfig.modelLabel}
+                  onChange={(event) => selectCatalogModel(event.target.value)}
+                  value={modelId}
+                  variant="popup"
+                >
+                  {modelOptions.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name || model.id}</option>
+                  ))}
+                </SelectControl>
+              </label>
+              <label className="settings-sheet-row">
+                <span className="settings-sheet-row-label">{t.agent.composer.thinkingLevel}</span>
+                <SelectControl
+                  className="settings-sheet-row-input"
+                  label={t.agent.composer.thinkingLevel}
+                  onChange={(event) => { setReasoningLevel(event.target.value as AgentReasoningLevel); clearResult(); }}
+                  value={reasoningOptions.includes(reasoningLevel) ? reasoningLevel : reasoningOptions[0]}
+                  variant="popup"
+                >
+                  {reasoningOptions.map((level) => (
+                    <option key={level} value={level}>{t.agent.composer.reasoningLevels[level === 'xhigh' ? 'max' : level]}</option>
+                  ))}
+                </SelectControl>
+              </label>
+            </>
+          ) : null}
+          <label className="settings-sheet-row">
+            <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
+            <TextInputControl
+              className="settings-sheet-row-input"
+              label={t.providerConfig.baseUrlLabel}
+              onChange={(event) => { setBaseUrl(event.target.value); clearResult(); }}
+              placeholder={defaultBaseUrl || baseUrlPlaceholder}
+              value={baseUrl}
+            />
+          </label>
+        </div>
+        {!authNote && !hasSavedKey && docsUrl ? (
+          <button className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)} type="button">
+            <span>{t.providerConfig.getApiKey}</span>
+            <OpenIcon size={ICON_SIZE.tiny} />
+          </button>
+        ) : null}
 
         {status !== 'idle' && status !== 'saving' ? (
           <div className={`settings-sheet-result is-${status}`} role="status">

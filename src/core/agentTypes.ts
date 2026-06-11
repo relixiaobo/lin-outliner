@@ -25,6 +25,16 @@ export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
  * the click lands on the originating conversation, not whatever was last active.
  */
 export const LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL = 'lin:agent-navigate-conversation';
+export const LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL = 'lin:agent-message-context-menu';
+
+export type AgentMessageContextMenuAction = 'copy' | 'retry' | 'regenerate' | 'details';
+
+export interface AgentMessageContextMenuRequest {
+  canCopy: boolean;
+  canRetry: boolean;
+  canRegenerate: boolean;
+  canShowDetails: boolean;
+}
 
 export type {
   AssistantMessage,

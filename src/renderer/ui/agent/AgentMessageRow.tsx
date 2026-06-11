@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
@@ -49,12 +49,13 @@ import {
   type AgentInlineFileReference,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 import {
   inlineFilePreviewAttrs,
   localFileReferenceHref,
 } from '../editor/inlineFilePreviewData';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
@@ -62,6 +63,7 @@ const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 interface AgentMessageRowProps {
   /** Speaker name for Channel attribution; null/undefined renders no badge (DM, user, coordinator). */
   actorLabel?: string | null;
+  actorId?: string | null;
   /** The speaker's `@` token, shown as the badge tooltip. */
   actorMention?: string;
   busy?: boolean;
@@ -83,6 +85,9 @@ interface AgentMessageRowProps {
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnEnded?: boolean;
   turnPhase?: AgentTurnPhase;
+  speakerLabel?: string | null;
+  speakerMention?: string | null;
+  speakerId?: string | null;
 }
 
 interface UserDisplayContent {
@@ -274,6 +279,117 @@ function textFromAssistant(message: AssistantMessage): string {
     .map((block) => block.text)
     .join('\n\n')
     .trim();
+}
+
+function hasAssistantError(message: UserMessage | AssistantMessage): message is AssistantMessage {
+  return message.role === 'assistant' && !!message.errorMessage && message.stopReason !== 'aborted';
+}
+
+function formatAbsoluteTimestamp(timestamp: number, locale: string): string {
+  return new Date(timestamp).toLocaleString(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatTokenCount(value: number | undefined): string | null {
+  if (!Number.isFinite(value) || !value || value <= 0) return null;
+  return new Intl.NumberFormat().format(value);
+}
+
+function usageSummary(message: AssistantMessage, labels: {
+  input: string;
+  output: string;
+  cacheRead: string;
+  cacheWrite: string;
+  total: string;
+}): string | null {
+  const usage = message.usage;
+  const parts = [
+    [labels.input, formatTokenCount(usage.input)],
+    [labels.output, formatTokenCount(usage.output)],
+    [labels.cacheRead, formatTokenCount(usage.cacheRead)],
+    [labels.cacheWrite, formatTokenCount(usage.cacheWrite)],
+    [labels.total, formatTokenCount(usage.totalTokens)],
+  ].flatMap(([label, value]) => (value ? [`${label} ${value}`] : []));
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+function providerModelSummary(message: AssistantMessage): string | null {
+  const provider = message.provider?.trim();
+  const model = message.model?.trim();
+  if (provider && model) return `${provider}/${model}`;
+  return model || provider || null;
+}
+
+function AgentMessageDetailsPopover({
+  message,
+  locale,
+  onClose,
+  speakerId,
+  speakerLabel,
+  speakerMention,
+}: {
+  message: UserMessage | AssistantMessage;
+  locale: string;
+  onClose: () => void;
+  speakerId: string;
+  speakerLabel: string;
+  speakerMention?: string | null;
+}) {
+  const t = useT();
+  const detailsRef = useRef<HTMLDivElement | null>(null);
+  const providerModel = message.role === 'assistant' ? providerModelSummary(message) : null;
+  const tokens = message.role === 'assistant' ? usageSummary(message, t.agent.message.tokenLabels) : null;
+
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && detailsRef.current?.contains(target)) return;
+      onClose();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="agent-message-details-popover" ref={detailsRef} role="dialog" aria-label={t.agent.message.details}>
+      <div className="agent-message-details-speaker">
+        <AgentIdentityAvatar id={speakerId} label={speakerLabel} mention={speakerMention} />
+        <span>{speakerLabel}</span>
+        {speakerMention ? <small>{`@${speakerMention}`}</small> : null}
+      </div>
+      <dl className="agent-message-details-list">
+        <div>
+          <dt>{t.agent.message.timestamp}</dt>
+          <dd>{formatAbsoluteTimestamp(message.timestamp, locale)}</dd>
+        </div>
+        {providerModel ? (
+          <div>
+            <dt>{t.agent.message.model}</dt>
+            <dd>{providerModel}</dd>
+          </div>
+        ) : null}
+        {tokens ? (
+          <div>
+            <dt>{t.agent.message.tokens}</dt>
+            <dd>{tokens}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  );
 }
 
 function AgentUserCollapsibleContent({
@@ -472,6 +588,7 @@ function renderAssistantBlocks(
 
 export function AgentMessageRow({
   actorLabel = null,
+  actorId = null,
   actorMention,
   busy = false,
   contentKey,
@@ -492,11 +609,16 @@ export function AgentMessageRow({
   toolResults,
   turnEnded = false,
   turnPhase = 'idle',
+  speakerLabel = null,
+  speakerMention = null,
+  speakerId = null,
 }: AgentMessageRowProps) {
   const t = useT();
+  const { locale } = useI18n();
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
   const expandState = useMemo<AgentExpandState>(() => ({
     isExpanded: (id, defaultExpanded = false) => expandOverrides[id] ?? defaultExpanded,
@@ -536,6 +658,33 @@ export function AgentMessageRow({
   const streaming = streamingOverride ?? entry.streaming;
   const turnActive = turnPhase !== 'idle';
   const actionsDisabled = busy || turnActive;
+  const nodeId = entry.nodeId;
+  const resolvedSpeakerLabel = speakerLabel
+    ?? (message.role === 'user' ? t.agent.message.you : t.agent.message.roleAssistant);
+  const resolvedSpeakerId = speakerId
+    ?? (message.role === 'user' ? 'user' : actorId ?? actorMention ?? 'assistant');
+
+  async function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const isUserMessage = message.role === 'user';
+    const text = isUserMessage ? textFromContent(message.content) : textFromAssistant(message);
+    const action = await window.lin?.showAgentMessageContextMenu?.({
+      canCopy: Boolean(text.trim()) || (!isUserMessage && Boolean(onCopy)),
+      canRetry: Boolean(!isUserMessage && nodeId && hasAssistantError(message) && onRetry && !actionsDisabled),
+      canRegenerate: Boolean(!isUserMessage && nodeId && !hasAssistantError(message) && onRegenerate && !actionsDisabled && isLastInTurn),
+      canShowDetails: true,
+    });
+    if (action === 'copy') {
+      if (isUserMessage) await copyMessage(text);
+      else await copyAssistantMessage(text);
+    } else if (action === 'retry' && !isUserMessage && nodeId) {
+      await onRetry?.(nodeId);
+    } else if (action === 'regenerate' && !isUserMessage && nodeId) {
+      await onRegenerate?.(nodeId);
+    } else if (action === 'details') {
+      setDetailsOpen(true);
+    }
+  }
   if (message.role === 'user') {
     const userContent = displayContentFromUser(message.content);
     const text = userContent.text;
@@ -545,7 +694,6 @@ export function AgentMessageRow({
     const hasVisibleContent = listedAttachments.length > 0 || userContent.images.length > 0 || text.trim().length > 0;
     const contentMeasureKey = `${entry.id}:${message.timestamp}:${text}:${listedAttachments.length}:${userContent.images.length}`;
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
-    const nodeId = entry.nodeId;
     if (editing && nodeId) {
       return (
         <AgentMessageFrame role="user">
@@ -585,7 +733,7 @@ export function AgentMessageRow({
       );
     }
     return (
-      <AgentMessageFrame role="user">
+      <AgentMessageFrame role="user" onContextMenu={handleContextMenu}>
         <div className="agent-user-content">
           {hasVisibleContent ? (
             <AgentUserCollapsibleContent measureKey={contentMeasureKey}>
@@ -651,6 +799,16 @@ export function AgentMessageRow({
               />
             </AgentMessageActions>
           ) : null}
+          {detailsOpen ? (
+            <AgentMessageDetailsPopover
+              locale={locale}
+              message={message}
+              onClose={() => setDetailsOpen(false)}
+              speakerId={resolvedSpeakerId}
+              speakerLabel={resolvedSpeakerLabel}
+              speakerMention={speakerMention}
+            />
+          ) : null}
         </div>
       </AgentMessageFrame>
     );
@@ -660,7 +818,6 @@ export function AgentMessageRow({
   const displayError = hasError ? parseAgentErrorMessage(message.errorMessage ?? '') : '';
   const copyText = textFromAssistant(message);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
-  const nodeId = entry.nodeId;
   const assistantContentKey = contentKey ?? nodeId ?? entry.id;
   const assistantBlocks = renderAssistantBlocks(
     message,
@@ -685,14 +842,22 @@ export function AgentMessageRow({
   if (assistantBlocks.length === 0 && !hasError && !turnActive) return null;
 
   return (
-    <AgentMessageFrame role="assistant">
+    <AgentMessageFrame role="assistant" onContextMenu={handleContextMenu}>
+      {actorLabel ? (
+        <AgentIdentityAvatar
+          id={actorId ?? actorMention ?? actorLabel}
+          label={actorLabel}
+          mention={actorMention}
+        />
+      ) : null}
       <AgentAssistantContent>
         {actorLabel ? (
           <div
             className="agent-message-actor"
             title={actorMention ? `@${actorMention}` : undefined}
           >
-            {actorLabel}
+            <span>{actorLabel}</span>
+            {actorMention ? <small>{`@${actorMention}`}</small> : null}
           </div>
         ) : null}
         {hasError ? <AgentMessageError message={displayError} /> : null}
@@ -726,6 +891,16 @@ export function AgentMessageRow({
               onSwitchBranch={onSwitchBranch}
             />
           </AgentMessageActions>
+        ) : null}
+        {detailsOpen ? (
+          <AgentMessageDetailsPopover
+            locale={locale}
+            message={message}
+            onClose={() => setDetailsOpen(false)}
+            speakerId={resolvedSpeakerId}
+            speakerLabel={resolvedSpeakerLabel}
+            speakerMention={speakerMention}
+          />
         ) : null}
       </AgentAssistantContent>
     </AgentMessageFrame>

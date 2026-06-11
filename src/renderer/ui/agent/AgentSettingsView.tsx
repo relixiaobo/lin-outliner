@@ -33,6 +33,7 @@ import {
 } from '../icons';
 import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
+import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -58,13 +59,15 @@ interface AgentSettingsViewProps {
   onClose: () => void;
   onApplied: () => Promise<void>;
   conversationId?: string;
+  initialTarget?: SettingsOpenTarget;
 }
 
-type SettingsCategory = 'general' | 'providers' | 'permissions' | 'memory' | 'skills' | 'agents';
+type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute =
   | { type: 'category'; category: SettingsCategory }
   | { type: 'agent-detail'; agentId: string }
   | { type: 'agent-create' };
+type RequestScope = 'settings' | 'section' | 'mutation';
 
 interface DraftConfig {
   providerId: string;
@@ -215,6 +218,16 @@ const COMMON_PERMISSION_RULES: Array<{
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
 
+function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
+  if (target?.agentId?.trim()) return { type: 'agent-detail', agentId: target.agentId.trim() };
+  if (target?.category) return { type: 'category', category: target.category };
+  return { type: 'category', category: 'providers' };
+}
+
+function navFromOpenTarget(target: SettingsOpenTarget | undefined): { stack: SettingsRoute[]; index: number } {
+  return { stack: [routeFromOpenTarget(target)], index: 0 };
+}
+
 function routeCategory(route: SettingsRoute): SettingsCategory {
   return route.type === 'category' ? route.category : 'agents';
 }
@@ -230,7 +243,7 @@ function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
   return true;
 }
 
-export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentSettingsViewProps) {
+export function AgentSettingsView({ onApplied, onClose, conversationId, initialTarget }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [permissionSettings, setPermissionSettings] = useState<AgentToolPermissionSettingsView | null>(null);
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
@@ -240,7 +253,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   // the same stack; Agent Profiles details are a child route, not flat content on
   // the category page.
   const [nav, setNav] = useState<{ stack: SettingsRoute[]; index: number }>({
-    stack: [{ type: 'category', category: 'providers' }],
+    stack: [routeFromOpenTarget(initialTarget)],
     index: 0,
   });
   const route = nav.stack[nav.index];
@@ -253,7 +266,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const mountedRef = useRef(false);
-  const requestRef = useRef(0);
+  const settingsRequestRef = useRef(0);
+  const sectionRequestRef = useRef(0);
+  const mutationRequestRef = useRef(0);
 
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
@@ -303,9 +318,19 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      requestRef.current += 1;
+      settingsRequestRef.current += 1;
+      sectionRequestRef.current += 1;
+      mutationRequestRef.current += 1;
     };
   }, []);
+
+  useEffect(() => window.lin?.onSettingsNavigate?.((target) => {
+    setNav(navFromOpenTarget(target));
+    setCreatingCustom(false);
+    setOpenRowMenu(null);
+    setError(null);
+    setNotice(null);
+  }), []);
 
   // Load the current appearance preference once so the General pane's segmented
   // control reflects the active theme. Best-effort: if the bridge is unavailable
@@ -384,13 +409,20 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     }
   }
 
-  function beginRequest() {
-    requestRef.current += 1;
-    return requestRef.current;
+  function requestRefFor(scope: RequestScope) {
+    if (scope === 'settings') return settingsRequestRef;
+    if (scope === 'section') return sectionRequestRef;
+    return mutationRequestRef;
   }
 
-  function isCurrentRequest(requestId: number) {
-    return mountedRef.current && requestId === requestRef.current;
+  function beginRequest(scope: RequestScope) {
+    const ref = requestRefFor(scope);
+    ref.current += 1;
+    return ref.current;
+  }
+
+  function isCurrentRequest(scope: RequestScope, requestId: number) {
+    return mountedRef.current && requestId === requestRefFor(scope).current;
   }
 
   // Navigate to a route, recording history for back / forward. Re-selecting the
@@ -426,11 +458,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   }
 
   useEffect(() => {
-    const requestId = beginRequest();
+    const requestId = beginRequest('settings');
     setLoading(true);
     setError(null);
     setNotice(null);
-    setNav({ stack: [{ type: 'category', category: 'providers' }], index: 0 });
+    setNav(navFromOpenTarget(initialTarget));
     setCreatingCustom(false);
 
     void Promise.all([
@@ -438,17 +470,17 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
       api.agentGetToolPermissionSettings(),
     ])
       .then(([next, nextPermissions]) => {
-        if (!isCurrentRequest(requestId)) return;
+        if (!isCurrentRequest('settings', requestId)) return;
         setSettings(next);
         setPermissionSettings(nextPermissions);
         setPermissionDraft(nextPermissions);
         setDraft(resolveInitialDraft(next));
       })
       .catch((caught) => {
-        if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+        if (isCurrentRequest('settings', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
       })
       .finally(() => {
-        if (isCurrentRequest(requestId)) setLoading(false);
+        if (isCurrentRequest('settings', requestId)) setLoading(false);
       });
   }, []);
 
@@ -457,10 +489,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   // new connection (active provider, "Connected" grouping) without a manual reopen.
   useEffect(() => {
     const off = window.lin?.onSettingsChanged?.(() => {
-      const requestId = beginRequest();
+      const requestId = beginRequest('settings');
       void api.agentGetProviderSettings()
         .then((next) => {
-          if (!isCurrentRequest(requestId)) return;
+          if (!isCurrentRequest('settings', requestId)) return;
           setSettings(next);
           setDraft(resolveInitialDraft(next));
         })
@@ -471,53 +503,53 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
 
   useEffect(() => {
     if (category === 'permissions' || category === 'skills') {
-      const id = beginRequest();
+      const id = beginRequest('section');
       setLoadingSkills(true);
       setError(null);
       setNotice(null);
       api.agentListAllSkills(conversationId || 'workspace')
         .then((skills) => {
-          if (isCurrentRequest(id)) setAllSkills(skills);
+          if (isCurrentRequest('section', id)) setAllSkills(skills);
         })
         .catch((caught) => {
-          if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
+          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
         })
         .finally(() => {
-          if (isCurrentRequest(id)) setLoadingSkills(false);
+          if (isCurrentRequest('section', id)) setLoadingSkills(false);
         });
     } else if (category === 'memory') {
-      const id = beginRequest();
+      const id = beginRequest('section');
       setLoadingMemory(true);
       setError(null);
       setNotice(null);
       api.agentListMemory({ includeInvalidated: true, limit: 200 })
         .then((entries) => {
-          if (isCurrentRequest(id)) setMemoryEntries(entries);
+          if (isCurrentRequest('section', id)) setMemoryEntries(entries);
         })
         .catch((caught) => {
-          if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
+          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
         })
         .finally(() => {
-          if (isCurrentRequest(id)) setLoadingMemory(false);
+          if (isCurrentRequest('section', id)) setLoadingMemory(false);
         });
     } else if (category === 'agents') {
-      const id = beginRequest();
+      const id = beginRequest('section');
       setLoadingAgents(true);
       setError(null);
       setNotice(null);
       // The editor's Skills toggle list needs the installed skills, so load both.
       void api.agentListAllSkills(conversationId || 'workspace')
-        .then((skills) => { if (isCurrentRequest(id)) setAllSkills(skills); })
+        .then((skills) => { if (isCurrentRequest('section', id)) setAllSkills(skills); })
         .catch(() => { /* the editor degrades to no skill list */ });
       api.agentListAllDefinitions(conversationId || 'workspace')
         .then((agents) => {
-          if (isCurrentRequest(id)) setAllAgents(agents);
+          if (isCurrentRequest('section', id)) setAllAgents(agents);
         })
         .catch((caught) => {
-          if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
+          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
         })
         .finally(() => {
-          if (isCurrentRequest(id)) setLoadingAgents(false);
+          if (isCurrentRequest('section', id)) setLoadingAgents(false);
         });
     }
   }, [category]);
@@ -605,7 +637,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   // provider the draft happened to default to was the root of the "Add key" yet
   // "Remove provider" contradiction.
   async function save() {
-    const requestId = beginRequest();
+    const requestId = beginRequest('mutation');
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -625,7 +657,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
         : null;
 
       const next = await api.agentGetProviderSettings();
-      if (isCurrentRequest(requestId)) {
+      if (isCurrentRequest('mutation', requestId)) {
         setSettings(next);
         if (nextPermissions) {
           setPermissionSettings(nextPermissions);
@@ -637,9 +669,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
       }
       await onApplied();
     } catch (caught) {
-      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      if (isCurrentRequest(requestId)) setSaving(false);
+      if (isCurrentRequest('mutation', requestId)) setSaving(false);
     }
   }
 
@@ -650,13 +682,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     successNotice: string,
     resetToInitial = false,
   ) {
-    const requestId = beginRequest();
+    const requestId = beginRequest('mutation');
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
       const next = await action();
-      if (isCurrentRequest(requestId)) {
+      if (isCurrentRequest('mutation', requestId)) {
         setSettings(next);
         setDraft(resetToInitial ? resolveInitialDraft(next) : resolveDraftForProvider(next, draft.providerId));
         if (resetToInitial) setCreatingCustom(false);
@@ -664,9 +696,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
       }
       await onApplied();
     } catch (caught) {
-      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      if (isCurrentRequest(requestId)) setSaving(false);
+      if (isCurrentRequest('mutation', requestId)) setSaving(false);
     }
   }
 
@@ -715,14 +747,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
     successNotice: string,
     onSuccess?: (agents: AgentDefinitionView[], priorIds: Set<string>) => void,
   ) {
-    const requestId = beginRequest();
+    const requestId = beginRequest('mutation');
     const priorIds = new Set(allAgents.map((agent) => agent.agentId));
     setAgentBusy(true);
     setError(null);
     setNotice(null);
     try {
       const agents = await action();
-      if (isCurrentRequest(requestId)) {
+      if (isCurrentRequest('mutation', requestId)) {
         setAllAgents(agents);
         onSuccess?.(agents, priorIds);
         setNotice(successNotice);
@@ -732,9 +764,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
       // gone) without a restart. Mirrors runProviderMutation.
       await onApplied();
     } catch (caught) {
-      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      if (isCurrentRequest(requestId)) setAgentBusy(false);
+      if (isCurrentRequest('mutation', requestId)) setAgentBusy(false);
     }
   }
 

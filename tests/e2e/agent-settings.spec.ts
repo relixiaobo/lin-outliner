@@ -227,6 +227,13 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.agent-editor')).toBeVisible();
   });
 
+  test('opens directly to an agent profile from the settings deep link', async ({ page }) => {
+    const settings = await openSettings(page, '&agent=built-in%3Atenon%3Ageneral');
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
+    await expect(settings.locator('.agent-editor')).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
+  });
+
   test('lets users view, edit, and forget agent memory entries', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Memory/ }).click();
@@ -326,17 +333,16 @@ test.describe('agent settings window', () => {
 });
 
 // The per-provider config window (?surface=provider-config) — a standalone surface
-// (in the app, a modal child window). It hosts only the CONNECTION: the credential
-// (key / managed note) and base URL, plus an async validate. Model & reasoning are
-// chosen in the composer, not here.
+// (in the app, a modal child window). It hosts the connection plus the built-in
+// assistant's global model/reasoning choice; the composer chip only navigates here.
 test.describe('provider config window', () => {
-  test('renders the saved connection (masked key + base URL), without model or reasoning', async ({ page }) => {
+  test('renders the saved connection with model and reasoning controls', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
     await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', /Saved \(encrypted\)/);
     await expect(config.getByLabel('Base URL')).toBeVisible();
-    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
-    await expect(config.getByLabel('Reasoning')).toHaveCount(0);
+    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveValue('gpt-5.4');
+    await expect(config.getByRole('combobox', { name: 'Thinking level' })).toHaveValue('medium');
     // A configured provider can be removed from its window.
     await expect(config.getByRole('button', { name: 'Remove provider' })).toBeVisible();
   });
@@ -356,7 +362,14 @@ test.describe('provider config window', () => {
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
-    }).toMatchObject({ provider: { providerId: 'anthropic', enabled: true } });
+    }).toMatchObject({
+      provider: {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-5',
+        reasoningLevel: 'off',
+        enabled: true,
+      },
+    });
   });
 
   test('validates a key asynchronously and never saves on validate', async ({ page }) => {
@@ -378,6 +391,8 @@ test.describe('provider config window', () => {
     await expect(config.getByLabel('API key')).toHaveCount(0);
     await expect(config.getByText(/uses your AWS credentials/i)).toBeVisible();
     await expect(config.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
+    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveValue('amazon.nova-lite-v1:0');
+    await expect(config.getByLabel('Base URL')).toBeVisible();
   });
 
   test('exposes the base URL inline, not behind an Advanced disclosure', async ({ page }) => {
@@ -413,10 +428,10 @@ test.describe('provider config window', () => {
     });
   });
 
-  test('saves the connection and preserves the configured model', async ({ page }) => {
+  test('saves the connection with selected model and reasoning', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
-    // The window only edits the connection; saving must keep the existing model
-    // (the composer owns model choice) rather than clearing it.
+    await config.getByRole('combobox', { name: 'Model' }).selectOption('gpt-5.4-mini');
+    await config.getByRole('combobox', { name: 'Thinking level' }).selectOption('high');
     await config.getByLabel('Base URL').fill('https://proxy.example.com/v1');
     await config.getByRole('button', { name: 'Save', exact: true }).click();
 
@@ -426,7 +441,8 @@ test.describe('provider config window', () => {
     }).toMatchObject({
       provider: {
         providerId: 'openai',
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.4-mini',
+        reasoningLevel: 'high',
         baseUrl: 'https://proxy.example.com/v1',
         enabled: true,
       },
@@ -434,9 +450,9 @@ test.describe('provider config window', () => {
   });
 });
 
-async function openSettings(page: Page): Promise<Locator> {
+async function openSettings(page: Page, extraQuery = ''): Promise<Locator> {
   await installElectronMock(page);
-  await page.goto('/?surface=settings');
+  await page.goto(`/?surface=settings${extraQuery}`);
   const settings = page.locator('.settings-window');
   await expect(settings).toBeVisible();
   // The window shows a "Loading..." state until the async provider fetch

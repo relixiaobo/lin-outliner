@@ -97,6 +97,27 @@ The current main branch implements this architecture through these modules:
 
 The old mutable chat snapshot store is no longer part of the runtime.
 
+## Renderer Projection UX
+
+`AgentRenderProjection` is also the authority for the current conversation UI:
+
+- `entities.messages[*].actor` identifies who produced each message. The
+  renderer resolves it through `members[]` and the agent-definition registry for
+  display names, `@` mentions, and the deterministic circular identity chip.
+  Channel rows show this attribution for every assistant message, including the
+  coordinator; a departed member falls back to the recorded id/mention rather
+  than erasing historical identity.
+- Message `createdAt`/`updatedAt`, `providerId`, `modelId`, and `usage` are quiet
+  metadata. The transcript renders gap-based time separators, and the native
+  message context menu's Details action opens an anchored popover with speaker,
+  timestamp, model/provider, and token usage. These details are derived from the
+  event log; no separate metadata store is introduced.
+- The composer model chip is a display-and-navigation affordance. It shows the
+  active provider/model and reasoning level from the projection/settings state.
+  Clicking it opens the owning settings surface (agent profile for authored
+  agents, provider config for the built-in assistant/global provider). The chat
+  surface does not mutate provider/model settings inline.
+
 ## Reference Analysis
 
 ### Previous lin-outliner snapshot store

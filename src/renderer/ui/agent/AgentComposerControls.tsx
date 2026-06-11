@@ -2,17 +2,30 @@ import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import type { AgentReasoningLevel } from '../../api/types';
 import {
   AttachmentIcon,
-  ChevronDownIcon,
   ICON_SIZE,
   PencilIcon,
   SendIcon,
+  SettingsIcon,
   StopIcon,
   TrashIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
-import { reasoningLabels } from './AgentComposerModelMenu';
 import { useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
+
+export function reasoningLabels(
+  labels: Messages['agent']['composer']['reasoningLevels'],
+): Record<AgentReasoningLevel, string> {
+  return {
+    off: labels.off,
+    minimal: labels.minimal,
+    low: labels.low,
+    medium: labels.medium,
+    high: labels.high,
+    xhigh: labels.max,
+  };
+}
 
 export function AgentQueuedSteer({
   note,
@@ -74,8 +87,7 @@ export function AgentComposerModelButton({
   disabled,
   modelLabel,
   modelTitle,
-  onToggle,
-  open,
+  onOpenSettings,
   reasoningEnabled,
   selectedReasoning,
   supportsReasoning,
@@ -83,8 +95,7 @@ export function AgentComposerModelButton({
   disabled: boolean;
   modelLabel: string;
   modelTitle: string;
-  onToggle: () => void;
-  open: boolean;
+  onOpenSettings: () => void;
   reasoningEnabled: boolean;
   selectedReasoning: AgentReasoningLevel;
   supportsReasoning: boolean;
@@ -92,19 +103,17 @@ export function AgentComposerModelButton({
   const t = useT();
   return (
     <ButtonControl
-      aria-expanded={open}
-      aria-haspopup="menu"
-      aria-label={t.agent.composer.selectModel}
+      aria-label={t.agent.composer.openModelSettings}
       className="agent-composer-model-button"
       disabled={disabled}
-      onClick={onToggle}
+      onClick={onOpenSettings}
       title={modelTitle}
     >
       <span className="agent-composer-model-name">{modelLabel}</span>
       {supportsReasoning && reasoningEnabled ? (
         <span className="agent-composer-reasoning-chip">{reasoningLabels(t.agent.composer.reasoningLevels)[selectedReasoning]}</span>
       ) : null}
-      <ChevronDownIcon size={ICON_SIZE.tiny} />
+      <SettingsIcon size={ICON_SIZE.tiny} />
     </ButtonControl>
   );
 }

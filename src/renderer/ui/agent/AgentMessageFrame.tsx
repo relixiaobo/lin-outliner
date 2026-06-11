@@ -1,15 +1,17 @@
-import type { ReactNode } from 'react';
+import type { MouseEventHandler, ReactNode } from 'react';
 import { ICON_SIZE, WarningIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 
 export function AgentMessageFrame({
   children,
+  onContextMenu,
   role,
 }: {
   children: ReactNode;
+  onContextMenu?: MouseEventHandler<HTMLDivElement>;
   role: 'assistant' | 'user';
 }) {
-  return <div className={`agent-message-row ${role}`}>{children}</div>;
+  return <div className={`agent-message-row ${role}`} onContextMenu={onContextMenu}>{children}</div>;
 }
 
 export function AgentMessageActions({

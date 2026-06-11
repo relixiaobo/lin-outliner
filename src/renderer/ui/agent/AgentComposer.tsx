@@ -34,10 +34,6 @@ import {
   AgentComposerToolbar,
   AgentQueuedSteer,
 } from './AgentComposerControls';
-import {
-  AgentComposerModelMenu,
-  type ComposerModelChoice,
-} from './AgentComposerModelMenu';
 import { isProviderUsable, resolveUsableActiveProvider } from './providerCatalog';
 import {
   AgentComposerEditor,
@@ -81,8 +77,7 @@ interface AgentComposerProps {
     scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
   onResolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
-  onModelChange: (providerId: string, modelId: string) => Promise<void>;
-  onReasoningChange: (reasoningLevel: AgentReasoningLevel) => Promise<void>;
+  onOpenModelSettings: () => void;
   pendingApproval: AgentApprovalRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   settings: AgentProviderSettingsView | null;
@@ -156,6 +151,10 @@ type ComposerAttachment = AgentMessageAttachmentInput & {
   thumbnailDataUrl?: string;
 };
 
+interface ComposerModelChoice extends AgentModelOption {
+  providerId: string;
+}
+
 interface PreparedPathlessAttachmentBytes {
   bytes: ArrayBuffer;
   sha256: string;
@@ -187,9 +186,8 @@ export function AgentComposer({
   isStreaming,
   members,
   queueSends = false,
-  onModelChange,
   onNodeReferenceOpen,
-  onReasoningChange,
+  onOpenModelSettings,
   onCancelSteer,
   onResolveApproval,
   onResolveUserQuestion,
@@ -205,11 +203,7 @@ export function AgentComposer({
   const t = useT();
   const [draft, setDraft] = useState<AgentComposerDraft>(EMPTY_DRAFT);
   const [sending, setSending] = useState(false);
-  const [configSubmitting, setConfigSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [moreModelsOpen, setMoreModelsOpen] = useState(false);
-  const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
   const [recentLocalFiles, setRecentLocalFiles] = useState<AgentComposerLocalFileCandidate[]>([]);
   const editorRef = useRef<AgentComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -217,7 +211,6 @@ export function AgentComposer({
   const dragDepthRef = useRef(0);
   const handledFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
   const {
     attachments,
     attachmentsRef,
@@ -272,13 +265,6 @@ export function AgentComposer({
     : reasoningOptions[0] ?? 'off';
   const supportsReasoning = !!selectedModel?.reasoning || reasoningOptions.some((level) => level !== 'off');
   const reasoningEnabled = selectedReasoning !== 'off';
-  const configDisabled = isStreaming || !!pendingApproval || !!pendingUserQuestion || configSubmitting || modelOptions.length === 0;
-
-  useEffect(() => {
-    if (!modelMenuOpen) {
-      setReasoningMenuOpen(false);
-    }
-  }, [modelMenuOpen]);
 
   useEffect(() => {
     let canceled = false;
@@ -379,43 +365,11 @@ export function AgentComposer({
     editorRef.current?.setPlainText(steeringNote);
   }
 
-  async function changeModel(model: ComposerModelChoice) {
-    if (
-      configDisabled
-      || (model.providerId === activeProvider?.providerId && model.id === activeProvider?.modelId)
-    ) {
-      setModelMenuOpen(false);
-      return;
-    }
-    setConfigSubmitting(true);
-    try {
-      await onModelChange(model.providerId, model.id);
-      setModelMenuOpen(false);
-    } finally {
-      setConfigSubmitting(false);
-    }
-  }
-
-  async function changeReasoning(reasoningLevel: AgentReasoningLevel) {
-    if (configDisabled || reasoningLevel === selectedReasoning) return;
-    setConfigSubmitting(true);
-    try {
-      await onReasoningChange(reasoningLevel);
-    } finally {
-      setConfigSubmitting(false);
-    }
-  }
-
-  function defaultEnabledReasoning(): AgentReasoningLevel {
-    if (reasoningOptions.includes('medium')) return 'medium';
-    return reasoningOptions.find((level) => level !== 'off') ?? selectedReasoning;
-  }
-
   const modelLabel = selectedModel
     ? shortenModelName(selectedModel.name || selectedModel.id)
     : activeProvider?.modelId
       ? shortenModelName(activeProvider.modelId)
-      : t.agent.composer.selectModel;
+      : t.agent.composer.noModelConfigured;
 
   function handleDraftChange(nextDraft: AgentComposerDraft) {
     if (!sendingRef.current) pruneUnreferencedAttachments(nextDraft);
@@ -501,41 +455,16 @@ export function AgentComposer({
               onAttachmentClick={() => void handleAttachmentClick()}
               onFileInputChange={handleFileInputChange}
               modelControl={(
-                <div className="agent-composer-model" ref={modelMenuRef}>
+                <div className="agent-composer-model">
                   <AgentComposerModelButton
-                    disabled={configDisabled || modelOptions.length === 0}
+                    disabled={false}
                     modelLabel={modelLabel}
                     modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : t.agent.composer.noModelConfigured}
-                    onToggle={() => setModelMenuOpen((open) => !open)}
-                    open={modelMenuOpen}
+                    onOpenSettings={onOpenModelSettings}
                     reasoningEnabled={reasoningEnabled}
                     selectedReasoning={selectedReasoning}
                     supportsReasoning={supportsReasoning}
                   />
-
-                  {modelMenuOpen ? (
-                    <AgentComposerModelMenu
-                      activeProvider={activeProvider}
-                      anchorRef={modelMenuRef}
-                      configDisabled={configDisabled}
-                      models={modelOptions}
-                      moreModelsOpen={moreModelsOpen}
-                      onClose={() => setModelMenuOpen(false)}
-                      onModelSelect={(model) => void changeModel(model)}
-                      onMoreModelsOpenChange={setMoreModelsOpen}
-                      onReasoningLevelSelect={(reasoningLevel) => {
-                        setReasoningMenuOpen(false);
-                        void changeReasoning(reasoningLevel);
-                      }}
-                      onReasoningMenuOpenChange={setReasoningMenuOpen}
-                      onReasoningToggle={() => void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning())}
-                      reasoningEnabled={reasoningEnabled}
-                      reasoningMenuOpen={reasoningMenuOpen}
-                      reasoningOptions={reasoningOptions}
-                      selectedReasoning={selectedReasoning}
-                      supportsReasoning={supportsReasoning}
-                    />
-                  ) : null}
                 </div>
               )}
               primaryAction={(
