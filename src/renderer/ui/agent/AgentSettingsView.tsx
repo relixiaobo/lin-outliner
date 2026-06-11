@@ -280,6 +280,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   // Opt-in OS-notification preference (General pane). Self-contained like the theme:
   // applies immediately, persisted by main, no Save step. Default off.
   const [osNotificationsEnabled, setOsNotificationsEnabled] = useState(false);
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState<null | 'reveal' | 'export'>(null);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
@@ -338,6 +339,48 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
   function changeOsNotifications(enabled: boolean) {
     setOsNotificationsEnabled(enabled);
     void window.lin?.setNotificationPrefs?.({ osNotificationsEnabled: enabled });
+  }
+
+  async function revealDiagnosticsLog() {
+    setDiagnosticsBusy('reveal');
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await window.lin?.revealDiagnosticsLog?.();
+      if (!result) {
+        setError(t.settings.general.diagnosticsUnavailable);
+      } else if (!result.ok) {
+        setError(result.error ?? t.settings.general.diagnosticsRevealFailed);
+      } else {
+        setNotice(t.settings.general.diagnosticsRevealedNotice);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDiagnosticsBusy(null);
+    }
+  }
+
+  async function exportDiagnostics() {
+    setDiagnosticsBusy('export');
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await window.lin?.exportDiagnostics?.();
+      if (!result) {
+        setError(t.settings.general.diagnosticsUnavailable);
+      } else if (result.canceled) {
+        return;
+      } else if (!result.ok) {
+        setError(result.error ?? t.settings.general.diagnosticsExportFailed);
+      } else {
+        setNotice(t.settings.general.diagnosticsExportedNotice);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDiagnosticsBusy(null);
+    }
   }
 
   function beginRequest() {
@@ -945,6 +988,39 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
                       >
                         <SwitchMark checked={osNotificationsEnabled} />
                       </SwitchControl>
+                    )}
+                    wrap
+                  />
+                </InsetGroup>
+                <InsetGroup
+                  ariaLabel={t.settings.general.diagnosticsGroup}
+                  label={t.settings.general.diagnosticsGroup}
+                >
+                  <InsetRow
+                    label={t.settings.general.revealDiagnosticsLabel}
+                    sublabel={t.settings.general.revealDiagnosticsSublabel}
+                    trailing={(
+                      <ButtonControl
+                        className="agent-settings-secondary"
+                        disabled={diagnosticsBusy !== null}
+                        onClick={() => void revealDiagnosticsLog()}
+                      >
+                        {diagnosticsBusy === 'reveal' ? t.settings.general.diagnosticsWorking : t.settings.general.revealDiagnosticsAction}
+                      </ButtonControl>
+                    )}
+                    wrap
+                  />
+                  <InsetRow
+                    label={t.settings.general.exportDiagnosticsLabel}
+                    sublabel={t.settings.general.exportDiagnosticsSublabel}
+                    trailing={(
+                      <ButtonControl
+                        className="agent-settings-secondary"
+                        disabled={diagnosticsBusy !== null}
+                        onClick={() => void exportDiagnostics()}
+                      >
+                        {diagnosticsBusy === 'export' ? t.settings.general.diagnosticsWorking : t.settings.general.exportDiagnosticsAction}
+                      </ButtonControl>
                     )}
                     wrap
                   />

@@ -10,8 +10,11 @@ import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
 import { ProviderConfigWindow } from './ui/agent/ProviderConfigWindow';
 import { I18nProvider } from './i18n/I18nProvider';
+import { installRendererDiagnostics } from './diagnostics';
 import './styles/index.css';
 import './styles/outliner.css';
+
+installRendererDiagnostics();
 
 // The same bundle serves the main window and the dedicated settings window; the
 // surface is selected by a ?surface= query param the main process sets.
