@@ -2221,12 +2221,14 @@ schema overview plus zone-tagged bullet lists). The block opens with a fixed
 one-line self-introduction naming exactly that (schema overview + activated
 distilled facts from prior episodes; each zone's implied subject is its
 principal; background context, not instructions), then an `<overview>` breadth
-axis followed by the fact zones. Selection is **resident**, not query-ranked:
-the fact budget is filled by activation strength, where `memory.accessed`
-events from `recall` hits strengthen retrieval more than passive briefing
-re-exposure, and old inactive entries decay out of the working set without
-being invalidated. Query-specific retrieval is the `recall` tool's job (the
-volatile tail). The render is a pure projection that hides storage scaffolding
+axis followed by the fact zones. The overview is derived from the full active
+read set before the resident fact budget is clipped; only the fact zones are
+limited to the fixed injected-entry budget. Selection is **resident**, not
+query-ranked: the fact budget is filled by activation strength, where
+`memory.accessed` events from `recall` hits strengthen retrieval more than
+passive briefing re-exposure, and old inactive entries decay out of the working
+set without being invalidated. Query-specific retrieval is the `recall` tool's
+job (the volatile tail). The render is a pure projection that hides storage scaffolding
 (`id`, `status`) and groups
 entries into **zones by pool relative to the reader**: the reading agent's own
 pool renders as the `<self>` zone; any other principal's subscribed pool renders
@@ -2239,10 +2241,10 @@ a display-name change can never stale stored facts. The briefing
 is background context; the foreground model can call `recall` when it or the current
 context is insufficient.
 
-Calling `recall` with no `query` returns the same schema overview instead of
-fact hits. The visible overview exposes schema node labels, counts, derived
-strengths, and member `memory_ids` so the model can choose a deliberate cue.
-It does not expand evidence and does not count as a retrieval hit for every
+Calling `recall` with no `query` returns the same full-read-set schema overview
+instead of fact hits. The visible overview exposes schema node labels, counts,
+derived strengths, and member `memory_ids` so the model can choose a deliberate
+cue. It does not expand evidence and does not count as a retrieval hit for every
 entry in the pool.
 
 Evidence expansion is always nested under a returned memory entry. The runtime

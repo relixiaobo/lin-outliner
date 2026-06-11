@@ -1,5 +1,11 @@
 import type { AgentMemoryEntry } from './agentEventLog';
-import { normalizeSearchText } from './textSearchAnalyzer';
+import {
+  isTextSearchGramTerm,
+  normalizeSearchText,
+  textSearchTextHasCjk,
+  tokenizeSearchText,
+  uniqueTextSearchTerms,
+} from './textSearchAnalyzer';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const INITIAL_RETRIEVAL_HALF_LIFE_DAYS = 14;
@@ -178,12 +184,7 @@ export function buildMemoryOverview(
   }
 
   const schema = [...nodes.values()]
-    .sort((left, right) => (
-      right.retrievalStrength - left.retrievalStrength
-      || right.entryCount - left.entryCount
-      || right.storageStrength - left.storageStrength
-      || left.label.localeCompare(right.label)
-    ))
+    .sort(compareSchemaNodes)
     .slice(0, options.maxSchemaNodes ?? MAX_SCHEMA_NODES);
 
   return {
@@ -193,12 +194,60 @@ export function buildMemoryOverview(
   };
 }
 
+export function mergeMemoryOverviews(
+  overviews: readonly (AgentMemoryOverview | null | undefined)[],
+  options: { generatedAt?: number; maxSchemaNodes?: number; totalEntries?: number } = {},
+): AgentMemoryOverview {
+  const nodes = new Map<string, AgentMemorySchemaNode>();
+  let generatedAt = 0;
+  let totalEntries = 0;
+
+  for (const overview of overviews) {
+    if (!overview) continue;
+    generatedAt = Math.max(generatedAt, overview.generatedAt);
+    totalEntries += overview.totalEntries;
+    for (const node of overview.schema) {
+      const current = nodes.get(node.id);
+      if (!current) {
+        nodes.set(node.id, {
+          ...node,
+          memoryIds: [...node.memoryIds],
+        });
+        continue;
+      }
+      for (const memoryId of node.memoryIds) {
+        if (!current.memoryIds.includes(memoryId)) current.memoryIds.push(memoryId);
+      }
+      current.entryCount += node.entryCount;
+      current.storageStrength = roundStrength(current.storageStrength + node.storageStrength);
+      current.retrievalStrength = roundStrength(current.retrievalStrength + node.retrievalStrength);
+    }
+  }
+
+  return {
+    generatedAt: options.generatedAt ?? generatedAt,
+    totalEntries: options.totalEntries ?? totalEntries,
+    schema: [...nodes.values()]
+      .sort(compareSchemaNodes)
+      .slice(0, options.maxSchemaNodes ?? MAX_SCHEMA_NODES),
+  };
+}
+
 function compareRankedMemoryEntries(left: AgentMemoryRankedEntry, right: AgentMemoryRankedEntry): number {
   return (
     right.strength.retrievalStrength - left.strength.retrievalStrength
     || right.strength.storageStrength - left.strength.storageStrength
     || right.entry.createdAt - left.entry.createdAt
     || right.entry.id.localeCompare(left.entry.id)
+  );
+}
+
+function compareSchemaNodes(left: AgentMemorySchemaNode, right: AgentMemorySchemaNode): number {
+  return (
+    right.retrievalStrength - left.retrievalStrength
+    || right.entryCount - left.entryCount
+    || right.storageStrength - left.storageStrength
+    || left.label.localeCompare(right.label)
   );
 }
 
@@ -222,16 +271,20 @@ function schemaLabelsForEntry(entry: AgentMemoryEntry, globalTerms: readonly str
 }
 
 function schemaTerms(text: string): string[] {
-  const normalized = normalizeSearchText(text);
-  const terms = normalized
-    .split(/\s+/)
-    .map((term) => term.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''))
-    .filter((term) => term.length >= 4 && !MEMORY_SCHEMA_STOP_WORDS.has(term));
-  return [...new Set(terms)];
+  return uniqueTextSearchTerms(tokenizeSearchText(text)
+    .filter((term) => !isTextSearchGramTerm(term))
+    .map((term) => term.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter(isSchemaTerm));
+}
+
+function isSchemaTerm(term: string): boolean {
+  if (!term || MEMORY_SCHEMA_STOP_WORDS.has(term)) return false;
+  if (textSearchTextHasCjk(term)) return true;
+  return [...term].length >= 3;
 }
 
 function schemaNodeId(label: string): string {
-  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const slug = normalizeSearchText(label).replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
   return `memory-schema:${slug || 'general'}`;
 }
 

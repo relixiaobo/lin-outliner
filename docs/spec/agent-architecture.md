@@ -140,8 +140,8 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
 - **Processes:** consolidation (Dream — offline replay distilling into the
   semantic store; evidence-preserving under compaction; ONE phrasing rule:
   third-person-singular subject-elided facts in every pool) · retrieval (three
-  modes: chronic activation = the resident briefing's schema overview +
-  strength-selected facts · deliberate cued retrieval = `recall` + provenance
+  modes: chronic activation = the resident briefing's full-read-set schema
+  overview + strength-selected fact budget · deliberate cued retrieval = `recall` + provenance
   zoom down the ladder schema → fact → episode gist → raw span · automatic
   association = deferred on a data gate) · forgetting (two-strength projection:
   storage strength never decays, retrieval strength governs injection — never

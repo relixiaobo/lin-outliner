@@ -170,7 +170,7 @@ import {
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
-import { buildMemoryOverview } from '../core/agentMemoryActivation';
+import { mergeMemoryOverviews } from '../core/agentMemoryActivation';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
@@ -4086,19 +4086,23 @@ export class AgentRuntime {
         const limit = clampRecallLimit(options.limit);
         const query = options.query?.trim();
         if (!query) {
+          const now = Date.now();
           const [ownActivation, userActivation] = await Promise.all([
-            this.getEventStore().activateMemoryEntries(reader, { limit: 200 }),
+            this.getEventStore().activateMemoryEntries(reader, { limit: 200, now }),
             this.conversationIncludesUser(conversation)
-              ? this.getEventStore().activateMemoryEntries(this.userPrincipal(), { limit: 200 })
+              ? this.getEventStore().activateMemoryEntries(this.userPrincipal(), { limit: 200, now })
               : Promise.resolve(null),
           ]);
           return {
             entries: [],
             totalEntries: ownActivation.totalEntries + (userActivation?.totalEntries ?? 0),
-            overview: buildMemoryOverview([
-              ...ownActivation.entries,
-              ...(userActivation?.entries ?? []),
-            ], { totalEntries: ownActivation.totalEntries + (userActivation?.totalEntries ?? 0) }),
+            overview: mergeMemoryOverviews(
+              [ownActivation.overview, userActivation?.overview],
+              {
+                generatedAt: now,
+                totalEntries: ownActivation.totalEntries + (userActivation?.totalEntries ?? 0),
+              },
+            ),
           };
         }
         // Cross-principal read by membership ([[agent-data-model]] §4): the reader searches its
@@ -4547,10 +4551,11 @@ export class AgentRuntime {
       // the co-member user pool (`<principal>`) when the user is a member of its conversation.
       // Each pool is one undivided self-model — like a person, a principal never partitions its
       // own memory by where it works. Agent↔agent co-member pools are deferred (fork 1).
+      const now = Date.now();
       const [selfActivation, userActivation] = await Promise.all([
-        this.getEventStore().activateMemoryEntries(reader, { limit: 200 }),
+        this.getEventStore().activateMemoryEntries(reader, { limit: 200, now }),
         this.conversationIncludesUser(conversation)
-          ? this.getEventStore().activateMemoryEntries(this.userPrincipal(), { limit: 200 })
+          ? this.getEventStore().activateMemoryEntries(this.userPrincipal(), { limit: 200, now })
           : Promise.resolve(null),
       ]);
       // Interleave so the shared user pool gets a fair share of the resident budget — a self-first
@@ -4561,10 +4566,13 @@ export class AgentRuntime {
         MEMORY_BRIEFING_MAX_ENTRIES,
       );
       await this.recordMemoryAccessForEntries(selected, 'briefing');
-      const overview = buildMemoryOverview([
-        ...selfActivation.entries,
-        ...(userActivation?.entries ?? []),
-      ], { totalEntries: selfActivation.totalEntries + (userActivation?.totalEntries ?? 0) });
+      const overview = mergeMemoryOverviews(
+        [selfActivation.overview, userActivation?.overview],
+        {
+          generatedAt: now,
+          totalEntries: selfActivation.totalEntries + (userActivation?.totalEntries ?? 0),
+        },
+      );
       return renderAgentMemoryBriefing(selected, { reader, overview });
     } catch (error) {
       this.reportWarn(
