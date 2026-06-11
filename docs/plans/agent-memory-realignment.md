@@ -17,7 +17,8 @@ drafting agent needs no out-of-band context. cc-2's one-pager duties
 (trio reconciliation · usage-modes × zoom-ladder table · associative-mode
 data-gate threshold · per-PR collision checks) are **discharged and
 PM-ratified** — see *Program one-pager* below. Claimed by cc-2 2026-06-10;
-first unit in build: Step 0 + PR-1 (one branch).
+**Step 0 + PR-1 shipped (#183)**. Next runnable unit: PR-2, queued behind
+run-unification.
 
 ## Goal
 
@@ -137,8 +138,8 @@ facts".
 
 | Unit | Scope | Prereqs |
 |---|---|---|
-| **Step 0** | Rewrite `agent-memory-foundations` + `agent-data-model` canonical table + `agent-architecture` § memory per D-1/D-4/D-6 | none (with PR-1) |
-| **PR-1** | Person rule (D-2) + recall read surface (D-3) + Dream prompt guidance (D-9). No schema change; wipe old-format facts | none — **immediate**; zero overlap with #179 / run-unification |
+| **Step 0** | Rewrite `agent-memory-foundations` + `agent-data-model` canonical table + `agent-architecture` § memory per D-1/D-4/D-6 | **shipped #183** (with PR-1) |
+| **PR-1** | Person rule (D-2) + recall read surface (D-3, reader-relative `subject`) + Dream prompt guidance (D-9). No schema change; old-format facts handled by manual dev-userData wipe | **shipped #183** |
 | **PR-2** | Episodic layer (D-4) + sources union (D-5) + provenance-zoom storage side. Subsumes `agent-memory-episodic-index` | run-unification |
 | **PR-3** | Two-strength forgetting (`agent-memory-forgetting`) + retrieval-event append on recall hits (D-7) | PR-2 |
 | **PR-5** | Schema/overview layer (D-6) + briefing recomposition + no-query `recall` returns overview | PR-2 (machinery), pairs with PR-3 |

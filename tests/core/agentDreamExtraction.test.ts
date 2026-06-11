@@ -148,9 +148,15 @@ describe('agent dream extraction', () => {
     expect(text).not.toContain('renders as "You <fact>"');
     expect(text).toContain('an inference reads "has noticed that…"');
     expect(text).not.toContain('have noticed that…');
-    // D-9: cross-pool duplication is prompt guidance — user preferences stay out of this pool.
-    expect(text).toContain('do\n  not duplicate them here');
+    // D-9: cross-pool duplication is prompt guidance — user preferences stay out of this pool,
+    // EXCEPT when the evidence is visible only to this writer (run-log-only), which would
+    // otherwise be dropped by both Dreams (gate round, #183 finding 3).
+    expect(text).toContain('do\n  not duplicate them here unless the evidence exists only in this run log');
     expect(text).toContain('user pool, not this one');
+    // Authority examples are agent-workflow-shaped and carry no hardcoded person name; a
+    // stated-authority example must not model re-importing user directives (#183 finding 2).
+    expect(text).toContain('a stated preference reads\n  "follows an explicit project rule to…"');
+    expect(text).not.toContain('lixiaobo');
   });
 
   test('the user-subject prompt writes the user pool under the same phrasing rule', () => {
@@ -162,7 +168,9 @@ describe('agent dream extraction', () => {
     const text = promptText(request);
     expect(text).toContain('the person it works with (the user)');
     expect(text).toContain('THIRD-PERSON SINGULAR');
-    expect(text).toContain("zone tagged with the\n  user's name");
+    // The prompt promises only what the runtime performs: the live call site passes no
+    // name resolver, so the zone identifies the user generically (gate round, #183 finding 2).
+    expect(text).toContain('zone identifying the\n  user');
     expect(text).not.toContain('renders as "The user <fact>"');
     // The user profile must not absorb the agent's own working habits.
     expect(text).toContain("the agent's separate self-model");

@@ -382,7 +382,7 @@ describe('agent runtime past chats integration', () => {
     await seedPastConversation(dataRoot);
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-focus-ring',
-      fact: 'Cobalt blue was chosen for focus rings.',
+      fact: 'uses cobalt blue for focus rings',
       sources: [{
         conversationId: 'past-conversation-focus',
         messageRange: ['past-user-focus', 'past-assistant-focus'],
@@ -493,7 +493,7 @@ describe('agent runtime past chats integration', () => {
     // Agent-pool fact → own pool, evidence dereferences. User-pool fact → cross-principal, distilled only.
     await store.addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-focus-ring',
-      fact: 'Cobalt blue was chosen for focus rings.',
+      fact: 'uses cobalt blue for focus rings',
       sources: [{
         conversationId: 'past-conversation-focus',
         messageRange: ['past-user-focus', 'past-assistant-focus'],
@@ -561,7 +561,7 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     // Both pools are reachable: the agent's own fact and the co-member user fact appear.
-    expect(contextText).toContain('Cobalt blue was chosen for focus rings.');
+    expect(contextText).toContain('- uses cobalt blue for focus rings');
     expect(contextText).toContain('prefers terse code reviews');
     // Own-pool evidence dereferences to raw transcript…
     expect(contextText).toContain('We chose cobalt blue for focus rings in the agent UI.');
@@ -921,7 +921,7 @@ describe('agent runtime past chats integration', () => {
           dreamRequests.push(textFromContext(context));
           return normalizeAssistantMessage(
             fauxAssistantMessage(JSON.stringify({
-              actions: [{ type: 'add', fact: 'User prefers concise engineering answers.' }],
+              actions: [{ type: 'add', fact: 'prefers concise engineering answers' }],
             })),
             model as Model<Api>,
           );
@@ -941,7 +941,7 @@ describe('agent runtime past chats integration', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(entries.map((entry) => entry.fact)).toEqual(['User prefers concise engineering answers.']);
+    expect(entries.map((entry) => entry.fact)).toEqual(['prefers concise engineering answers']);
     expect(entries[0]?.originWorkspace).toBe(memoryOriginWorkspace(localRoot));
     expect(source?.conversationId).toBe(created.conversationId);
     expect(typeof source?.eventId).toBe('string');
@@ -1072,7 +1072,7 @@ describe('agent runtime past chats integration', () => {
           dreamCalls += 1;
           return normalizeAssistantMessage(
             fauxAssistantMessage(JSON.stringify({
-              actions: [{ type: 'add', fact: 'User prefers compact acknowledgements.' }],
+              actions: [{ type: 'add', fact: 'prefers compact acknowledgements' }],
             })),
             model as Model<Api>,
           );
@@ -1095,7 +1095,7 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(dreamCalls).toBe(1);
-    expect(entries.map((entry) => entry.fact)).toEqual(['User prefers compact acknowledgements.']);
+    expect(entries.map((entry) => entry.fact)).toEqual(['prefers compact acknowledgements']);
     expect(dreamState.lastCompleted?.trigger).toBe('manual');
   });
 
@@ -1196,7 +1196,7 @@ describe('agent runtime past chats integration', () => {
     roots.push(localRoot, dataRoot);
     await new AgentEventStore(dataRoot).addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-stable',
-      fact: 'User prefers stable concise memory.',
+      fact: 'prefers stable concise memory',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'old-conversation' }],
       createdAt: 30,
@@ -1241,7 +1241,7 @@ describe('agent runtime past chats integration', () => {
             fauxAssistantMessage(JSON.stringify({
               actions: dreamCall === 1
                 ? []
-                : [{ type: 'update', memory_id: 'memory-stable', fact: 'User prefers stable, concise memory.' }],
+                : [{ type: 'update', memory_id: 'memory-stable', fact: 'prefers stable, concise memory' }],
             })),
             model as Model<Api>,
           );
@@ -1260,7 +1260,7 @@ describe('agent runtime past chats integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(dreamRequests).toHaveLength(2);
-    expect(updated?.fact).toBe('User prefers stable, concise memory.');
+    expect(updated?.fact).toBe('prefers stable, concise memory');
     expect(secondRequest).toContain('(no new raw evidence)');
     expect(secondRequest).not.toContain('Stable concise memory is preferred.');
   });
@@ -1362,7 +1362,7 @@ describe('agent runtime past chats integration', () => {
     const store = new AgentEventStore(dataRoot);
     await store.addMemoryEntry(USER_PRINCIPAL, {
       id: 'memory-style',
-      fact: 'User prefers concise engineering answers.',
+      fact: 'prefers concise engineering answers',
       originWorkspace: memoryOriginWorkspace(localRoot),
       sources: [{ conversationId: 'old-conversation' }],
       createdAt: 30,
@@ -1403,7 +1403,7 @@ describe('agent runtime past chats integration', () => {
             actions: [{
               type: 'update',
               memory_id: 'memory-style',
-              fact: 'User prefers concise engineering answers.',
+              fact: 'prefers concise engineering answers',
             }],
           })),
           model as Model<Api>,

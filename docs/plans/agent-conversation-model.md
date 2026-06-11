@@ -534,11 +534,10 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   interpretation of a model's interpretation, amplifying omissions, softened
   user corrections, and topic bleed. A `MemoryEntry` can cite a summary as an
   index hint, but durable facts need raw `conversationId` / `messageRange` /
-  `runId` / `eventId` provenance. *(Restated 2026-06-10,
-  [[agent-memory-realignment]] R2: this rule binds context-management
-  artifacts. The episodic layer's memory-owned episode gist — PR-2, written to
-  remember — is a different product and IS the consolidated evidence carrier;
-  the #178 compaction-summary-as-evidence stopgap is deleted there.)*
+  `runId` / `eventId` provenance. *(Restated 2026-06-10: this rule binds
+  context-management artifacts; memory-owned episode gist is a different
+  product and IS the consolidated evidence carrier — authority:
+  [[agent-memory-foundations]] §2, lands in realignment PR-2.)*
 
 ### Skills (capability) — owned by agent-skills-authoring
 

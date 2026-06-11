@@ -29,7 +29,7 @@ import { escapeXml } from './agentReminderXml';
 export const MEMORY_BRIEFING_MAX_ENTRIES = 12;
 
 // The briefing presents itself as what it is in the academic frame ([[agent-memory-foundations]]
-// §5.3): the working-memory slice of the semantic store — distilled facts consolidated offline
+// §6.3): the working-memory slice of the semantic store — distilled facts consolidated offline
 // from the episodic record, injected as background context. One fixed line, ahead of the zones.
 // Exported so tests build their expectations from the single source instead of hand-synced copies.
 export const MEMORY_BRIEFING_INTRO =
@@ -89,7 +89,9 @@ export function renderAgentMemoryBriefing(
   return ['<memory>', MEMORY_BRIEFING_INTRO, ...zones, '</memory>'].join('\n');
 }
 
-function defaultPrincipalName(principal: AgentPrincipal): string {
+// The fallback display name for a pool. Exported as the single name source shared with the
+// `recall` tool's reader-relative `subject`, so the two read surfaces speak one vocabulary.
+export function defaultPrincipalName(principal: AgentPrincipal): string {
   return principal.type === 'user' ? 'The user' : principal.agentId;
 }
 
@@ -99,7 +101,11 @@ function renderZone(kind: 'self' | 'principal', facts: readonly string[], name: 
     .filter(Boolean)
     .join('\n');
   if (!bullets) return null;
-  const open = kind === 'self' ? '<self>' : `<principal name="${escapeXml(name ?? '')}">`;
+  // Names get the same whitespace collapse as facts: the block is line-oriented now, so a name
+  // containing a newline must not be able to inject a line (defense-in-depth; names come from
+  // trusted resolvers today).
+  const safeName = (name ?? '').replace(/\s+/g, ' ').trim();
+  const open = kind === 'self' ? '<self>' : `<principal name="${escapeXml(safeName)}">`;
   const close = kind === 'self' ? '</self>' : '</principal>';
   return `${open}\n${bullets}\n${close}`;
 }

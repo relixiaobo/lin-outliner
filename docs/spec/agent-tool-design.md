@@ -2071,10 +2071,15 @@ Parameters:
   expand bounded raw evidence.
 - `max_chars`: total evidence character budget, default 4000, max 12000.
 
-Each visible entry carries its `principal` (as a `principalKey` string) — the
-pool the fact lives in, and therefore its implied subject. Without it,
+Each visible entry carries `subject` — the pool the fact lives in, named
+**reader-relatively in the briefing's own vocabulary** (`"self"` for the
+reader's pool; otherwise the same display name the briefing's
+`<principal name>` zone uses, from the shared single name source). Without it,
 cross-pool results in one ranked list are distinguishable only by accidental
-wording ([[agent-memory-realignment]] D-3).
+wording ([[agent-memory-realignment]] D-3); raw internal principal keys are
+deliberately NOT exposed (the model could echo them into user-visible prose).
+The structured envelope (`details.data`) keeps the typed `principal` for
+UI/diagnostics.
 
 Memory is keyed **per-principal** — the pool's *owner/believer* (whose
 self-model the pool is), which is also the elided subject of the facts in it;
@@ -2242,7 +2247,8 @@ projection:
     "entries": [
       {
         "memory_id": "memory-1",
-        "fact": "User prefers direct answers.",
+        "subject": "The user",
+        "fact": "prefers direct answers",
         "status": "active",
         "created_at": 1800000000000,
         "sources": [

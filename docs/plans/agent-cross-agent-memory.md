@@ -121,9 +121,9 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
 
 ## Acceptance
 
-- [ ] In a 2-agent Channel, agent A's briefing contains a `<principal>` zone
-      with B's distilled facts (third person) and vice versa; a non-member
-      agent's pool never appears.
+- [ ] In a 2-agent Channel, agent A's briefing contains a named `<principal>`
+      zone with B's distilled facts (verbatim bullets, PR-1 phrasing rule) and
+      vice versa; a non-member agent's pool never appears.
 - [ ] Gate negative tests: cross-principal `recall(include_evidence:true)`
       returns the distilled fact + a typed refusal for evidence; the refusal
       holds at the evidence-service choke point (unit test calls the service

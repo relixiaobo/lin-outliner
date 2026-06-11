@@ -30,7 +30,7 @@ describe('renderAgentMemoryBriefing', () => {
     expect(briefing).not.toBeNull();
     expect(briefing).toContain('<memory>');
     // The briefing introduces itself as the working-memory slice of the semantic store
-    // ([[agent-memory-foundations]] §5.3).
+    // ([[agent-memory-foundations]] §6.3).
     expect(briefing).toContain(MEMORY_BRIEFING_INTRO);
     expect(briefing).toContain('<self>');
     // Facts render verbatim as bullets — no subject prepending, no conjugation (D-2).

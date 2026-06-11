@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { AgentMemoryEntry, AgentMemorySource, AgentPrincipal } from '../core/agentEventLog';
-import { principalKey } from '../core/agentEventLog';
+import { samePrincipal } from '../core/agentEventLog';
+import { defaultPrincipalName } from './agentMemoryBriefing';
 import {
   agentToolResult,
   errorEnvelope,
@@ -16,13 +17,14 @@ const MAX_RECALL_MAX_CHARS = 12_000;
 const RECALL_TOOL_DESCRIPTION = `Cued retrieval over the Tenon agent's semantic store — the durable facts distilled from past episodes.
 
 This is the only model-visible long-term retrieval surface. It reads active semantic memory
-entries only. It does not search the raw episodic record (conversation history) directly and it
-cannot write, update, or invalidate memory. Each entry carries the principal whose pool it lives
-in — that principal is the fact's implied subject.
+entries only. It does not search the raw record (conversation history) directly and it
+cannot write, update, or invalidate memory. Each entry carries "subject" — whose self-model the
+fact belongs to and therefore the fact's implied subject ("self" = your own pool; otherwise the
+same name the memory briefing's zone uses).
 
 Use include_evidence only when a fact's provenance matters: it is source access — descending the
-memory index from the matching entry to its recorded episodic sources — and the bounded raw
-evidence is nested under that entry.`;
+memory index from the matching entry to its recorded sources in the raw record — and the bounded
+raw evidence is nested under that entry.`;
 
 const RECALL_TOOL_PARAMETERS = {
   type: 'object',
@@ -42,7 +44,7 @@ const RECALL_TOOL_PARAMETERS = {
     },
     include_evidence: {
       type: 'boolean',
-      description: "When true, descend the memory index to each entry's recorded episodic sources and expand bounded raw evidence. Default false.",
+      description: "When true, descend the memory index to each entry's recorded raw-record sources and expand bounded raw evidence. Default false.",
     },
     max_chars: {
       type: 'integer',
@@ -54,6 +56,8 @@ const RECALL_TOOL_PARAMETERS = {
 };
 
 export interface AgentRecallToolRuntime {
+  /** The principal whose context the tool runs in — its own pool surfaces as subject "self". */
+  reader: AgentPrincipal;
   recall(options: {
     query?: string;
     limit?: number;
@@ -128,7 +132,7 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
           totalEntries: result.totalEntries,
           truncated: result.totalEntries > entries.length,
           evidenceTruncated: entries.some((entry) => entry.evidenceTruncated),
-        }, elapsed(started));
+        }, elapsed(started), runtime.reader);
       } catch (error) {
         return recallToolError('FAILED', error instanceof Error ? error.message : String(error), started);
       }
@@ -139,8 +143,9 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
 function recallToolResult(
   data: AgentRecallToolData,
   durationMs: number,
+  reader: AgentPrincipal,
 ): AgentToolResult<ToolEnvelope<AgentRecallToolData>> {
-  const visible = visibleRecallToolData(data);
+  const visible = visibleRecallToolData(data, reader);
   return agentToolResult(successEnvelope<AgentRecallToolData>('recall', data, {
     instructions: recallInstructions(data),
     metrics: {
@@ -161,13 +166,15 @@ function recallToolError(
   }));
 }
 
-function visibleRecallToolData(data: AgentRecallToolData): unknown {
+function visibleRecallToolData(data: AgentRecallToolData, reader: AgentPrincipal): unknown {
   return {
     entries: data.entries.map((entry) => ({
       memory_id: entry.memoryId,
-      // The fact's pool (= its elided subject): without it, cross-pool results are
-      // distinguishable only by accidental wording ([[agent-memory-realignment]] D-3).
-      principal: principalKey(entry.principal),
+      // The fact's pool, named reader-relatively (= its elided subject): without it, cross-pool
+      // results are distinguishable only by accidental wording ([[agent-memory-realignment]]
+      // D-3). Speaks the briefing's vocabulary — "self" / the same zone name — never a raw
+      // internal principal key the model might echo into prose (gate round, #183).
+      subject: recallSubject(entry.principal, reader),
       fact: entry.fact,
       status: entry.status,
       created_at: entry.createdAt,
@@ -209,12 +216,19 @@ function visibleEvidence(evidence: AgentRecallEvidence): unknown {
   };
 }
 
+// The reader-relative subject of a pool — the SAME vocabulary the briefing's zones use
+// (`self` ↔ `<self>`, a friendly name ↔ `<principal name="…">`), so recall results ground
+// against the briefing instead of leaking internal principal keys.
+function recallSubject(principal: AgentPrincipal, reader: AgentPrincipal): string {
+  return samePrincipal(principal, reader) ? 'self' : defaultPrincipalName(principal);
+}
+
 function recallInstructions(data: AgentRecallToolData): string | undefined {
   if (data.entries.length === 0) {
-    return "No active semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers only the semantic store's active entries (distilled facts), not invalidated entries or the raw episodic record.";
+    return "No active semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers only the semantic store's active entries (distilled facts), not invalidated entries or the raw record.";
   }
   if (data.evidenceTruncated) {
-    return 'Evidence was truncated. Treat returned evidence as supporting excerpts from the episodic record, not a complete transcript.';
+    return 'Evidence was truncated. Treat returned evidence as supporting excerpts from the raw record, not a complete transcript.';
   }
   return undefined;
 }

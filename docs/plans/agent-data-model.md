@@ -354,17 +354,14 @@ raw messages (conversation log, leaves)
   messages and relevant run events. Conversations/channels hold no memory; a
   "channel summary" becomes durable only when a participating agent's memory
   writer records a `MemoryEntry` with raw `sources` provenance.
-- **Two summary kinds — production motive decides what is memory**
-  ([[agent-memory-realignment]] R2/R6, PM-confirmed 2026-06-10). The ladder
-  above is **context management**: compaction/segment summaries are
-  working-memory artifacts written to *continue a task* — locators, never
-  evidence. The episodic layer's **episode gist** (realignment PR-2) is a
-  different product with the same node shape: memory-owned, written to
-  *remember*, and the consolidated evidence carrier. The #178 "Dream reads a
-  compaction summary as evidence" path is a stopgap with exactly the
-  interpretation-of-interpretation flaw and is deleted in PR-2; the dependency
-  may later invert (the context assembler consuming episode gist), never the
-  other way.
+- **Two summary kinds — production motive decides what is memory** (authority:
+  [[agent-memory-foundations]] §2; R2/R6 PM-confirmed 2026-06-10). The ladder
+  above is **context management** — locators, never evidence. The episodic
+  layer's memory-owned **episode gist** (realignment PR-2) is a different
+  product with the same node shape and is the consolidated evidence carrier;
+  the #178 compaction-summary-as-evidence stopgap is deleted in PR-2, and the
+  dependency may later invert (the context assembler consuming episode gist),
+  never the other way.
 - **Lossy in content, lossless in addressability.** Every summary / `MemoryEntry` keeps
   a `source(s)` down-pointer; raw is retained permanently, so any distilled claim can be
   drilled back to ground truth — the contamination guard the LoCoMo ceiling demands.
@@ -726,7 +723,7 @@ below is now built. It is **interface-first** — the `src/core/*` surface (`Mem
 landed first, then consumers. It adds **no new storage family and no parallel visibility
 system**, reuses the existing `Principal` type + `conversation.members`, and **revises shipped
 P1+P2** (PR #172) — pre-launch clean cut, no migration. The detail forks are resolved as noted
-below (defer agent↔agent reading; third-person `<principal>`; watermark-serialized user-Dream).
+below (defer agent↔agent reading; named `<principal>` zone; watermark-serialized user-Dream).
 
 ### The gap
 
@@ -918,7 +915,7 @@ These are data-model-local; the experience/sequencing OQs live in
   per-principal Dream (write side), visibility by `conversation.members` (read side), and the
   cross-principal read-path security gate — is the **"Extension — principal-keyed memory"**
   section above. Forks resolved: agent↔agent reading deferred (additive later via the same
-  membership rule); third-person `<principal>`; user-Dream scheduled + manual,
+  membership rule); named `<principal>` zone; user-Dream scheduled + manual,
   watermark-serialized.
 
 - **Memory internal format — DECIDED** — structured event-sourced store, not markdown
