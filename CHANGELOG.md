@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Dream backoff hygiene + manual-bypass coverage (PR #190)** — follow-up to #189
+  closing its two accepted gate notes: `fireDream` now prunes `dreamFailureBackoff`
+  entries for pools that are no longer dream principals (e.g. a deleted agent) at the
+  start of each scheduled pass, bounding the in-memory map to live pools (a live pool
+  with an armed window is always in the principal set, so it is never pruned); and a
+  new integration test asserts a manual `/dream` ignores an open backoff window and
+  records a `completed` run, covering the manual-bypass gate and the completed branch
+  of `recordDreamFailureBackoff`.
+
 - **A failing scheduled Dream backs off instead of re-firing every tick (PR #189)** —
   the Dream scheduler ticks every 60s and its gate only consults the pool's last
   *success* (`shouldFireDateSchedule(…, lastSuccessAt)`); a failed Dream advances

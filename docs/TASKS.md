@@ -640,6 +640,13 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **Dream backoff hygiene + manual-bypass coverage** (main, PR #190, fast-track) — PM-directed
+  follow-up to #189 closing its two accepted gate notes: `fireDream` prunes `dreamFailureBackoff`
+  entries for dead pools (e.g. a deleted agent) each scheduled pass, bounding the in-memory map to
+  live pools; and a new integration test covers a manual `/dream` ignoring an open backoff window
+  and recording a `completed` run (the manual-bypass gate + the completed branch of
+  `recordDreamFailureBackoff`). typecheck + core 850 pass / 2 skip / 0 fail.
+
 - **Dream failure backoff** (cc, PR #189, fast-track) — a persistently failing scheduled
   Dream re-fired every 60s tick (its gate only consults `lastSuccessAt`, which a failure
   never advances), flooding the run list with up to 1440 `failed` records/day/pool. Added
@@ -649,8 +656,8 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   untouched. Pure curve helper `dreamBackoff.ts`. Gate: two independent adversarial
   reviewers + mutation-tested integration guard, no real bugs; typecheck + core 849 pass
   / 2 skip / 0 fail. Two accepted non-blocking notes (benign Map entry for dead pools;
-  integration test covers the fail-path, unit tests cover the rest) — **follow-up PR
-  closes both.** Independent of #188 (different lines); textual-only overlap with #184.
+  integration test covers the fail-path, unit tests cover the rest) — **both closed by
+  PR #190.** Independent of #188 (different lines); textual-only overlap with #184.
 
 - **Dream sessionId cache-key cap** (cc, PR #188, fast-track) — the Dream batch stream
   `sessionId` was `${principalKey}:dream:${runId}:${n}` = 79 chars, overflowing the
