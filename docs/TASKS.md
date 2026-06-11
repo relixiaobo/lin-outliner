@@ -33,17 +33,15 @@ the flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 1 | codex | **M3-B** cross-agent memory + isolation gate — **merged as PR #200** (see Recently completed). Freed the `agentRuntime.ts` slot. | plan-track |
-| 2 | codex-2 | **UX B + E + C** (`agent-conversation-entry-identity-ux`) — speaker identity, time separators/Details, composer model chip → display+navigate — **merged as PR #201** (see Recently completed). Next lane: **D** (activity area + reply anchors). | plan-track |
-| 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained; main's recommendation — PM confirmation pending). Touches `core/types.ts` → shared-interface-first: land the protocol slice as its own PR before the feature. | plan-track |
+| 1 | codex | **`agent-channel-parallel-runtime`** (round 2; M3-B merged as PR #200 — see Recently completed — freed the `agentRuntime.ts` slot). Build may overlap codex-2's D, but **merge is gated behind D**, and the `agentRenderProjection.ts` activity surface is D's to define — the parallel PR re-points it at per-run state and rebases on D. | plan-track |
+| 2 | codex-2 | **UX Feature D** — Channel activity area (parallel-presence model) + automatic reply anchors (round 2; B+E+C merged as PR #201 — see Recently completed). Renderer/projection only; defines the activity-entry projection surface the parallel runtime will later feed. | plan-track |
+| 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Touches `core/types.ts` → shared-interface-first: land the protocol slice as its own PR before the feature. | plan-track |
 
-Relay: **M3-B merged (PR #200) — the `agentRuntime.ts` runtime slot is now free.**
-`agent-channel-parallel-runtime` starts once **UX D merges** (the remaining gate) —
-natural taker is codex. **Realignment PR-4** (retrieval), which collided with M3-B
-in the memory-retrieval area, is now unblocked. UX **Feature A** (roster +
-arbitrary-agent DMs) follows the
-parallel runtime in the `agentRuntime.ts` queue (one runtime-touching PR in
-flight at a time: M3-B → parallel runtime → A). M3-C follows D.
+Relay: merge order **D → parallel runtime** (main enforces). **Realignment PR-4**
+(retrieval) is unblocked by #200 — slots into the next free lane. UX **Feature A**
+(roster + arbitrary-agent DMs) follows the parallel runtime in the
+`agentRuntime.ts` queue (one runtime-touching PR in flight at a time:
+M3-B → parallel runtime → A). M3-C follows D.
 
 - `ime-composition-focus-steal` (cc-2) **merged** as PR #177 — fixes #176 (`skill` →
   `sk ill` IME tearing), both root causes: the echo focusRequest steal (global
