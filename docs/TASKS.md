@@ -22,7 +22,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (memory realignment PR-2 merged, PR #195) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (sidebar pinned nodes merged, PR #191) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (new clone, 2026-06-11) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (local error observability merged, PR #194) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -647,6 +647,35 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **local error observability** (codex-3, PR #194, plan-track) — a failure anywhere
+  (handled-but-degrading, unhandled, foreground, or background) now lands as a
+  structured, deduplicated record in one local log, legible without the terminal.
+  One main-process `reportError({domain, severity, code?, message, context?, error?})`
+  choke point backs a diagnostic log on the shared `AppendOnlySeqLog` primitive,
+  extracted verbatim out of `agentEventStore.ts` into `src/main/appendOnlySeqLog.ts`
+  (one append-only mechanism for conversation/run/memory + diagnostics). Records are
+  upload-ready and scrubbed at the write boundary (allow-listed structured context
+  keys, `source` paths → non-identifying labels, `stackHash` not raw stacks,
+  message/context caps, fingerprint dedup collapsing floods into one `count`ed
+  record; compacted to 200 fingerprints). Safety nets: main `uncaughtException`
+  (fatal + bounded flush then exit) / `unhandledRejection` (fatal, keep running);
+  renderer `error`/`unhandledrejection` captured in both the main world (renderer
+  entry) and the preload isolated-world early net over a new
+  `lin:report-renderer-error` IPC bridge, dups collapsed by fingerprint. Background
+  `console.warn` sites (Dream, scheduled commands, child-run ledger, memory reminder,
+  storage sentinel/probe) now report; `emitError` reports in addition to the
+  in-conversation error event. Only surface is passive — Settings → General →
+  Diagnostics: Reveal (Finder) + Export (JSON). Local-only, no egress, user-initiated
+  hand-off; no dashboard/badge/toast. Gate review (this main agent), two rounds:
+  round 1 flagged the renderer cross-world capture as unverified (and minor path-leak
+  / write-queue nits); round 2 resolved all — renderer handlers moved to the main
+  world, the two storage-sentinel messages dropped their path-bearing suffix,
+  `ensureLogFile` routed through the write queue, and a **real-Electron smoke test**
+  (`tests/smoke/diagnostics.smoke.ts`) added — verified by me to pass, proving
+  renderer errors/rejections reach the log under `contextIsolation` + `sandbox`.
+  Gates green: typecheck, core 862/0-fail (+4 new diagnostics tests), renderer
+  410/0-fail, smoke 1/1. Spec added (`docs/spec/error-observability.md`, registered
+  in the spec index); plan archived `done`.
 - **memory realignment PR-2: episodic memory sources** (codex, PR #195, plan-track) —
   the D-4 episodic layer + D-5 sources reshape land together. `AgentMemorySource`
   becomes a discriminated union — a raw stream span `{stream:'conversation'|'run',

@@ -12,6 +12,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Local error observability (PR #194)** — a failure anywhere in the app now
+  lands as a structured, deduplicated record in one local log, legible without
+  reading the terminal. A single main-process `reportError({domain, severity,
+  code?, message, context?, error?})` choke point backs a diagnostic log built on
+  the shared `AppendOnlySeqLog` primitive — extracted verbatim from
+  `agentEventStore.ts` into `src/main/appendOnlySeqLog.ts` so conversation/run/
+  memory and diagnostics share one append-only mechanism (#152 spirit). Records
+  are Sentry-event-shaped and upload-ready; the write boundary scrubs every report
+  before it lands: an allow-list of structured context keys only, `source` paths
+  reduced to non-identifying labels, a `stackHash` instead of raw stacks,
+  message/context length caps, and fingerprint dedup that collapses a flood into
+  one `count`ed record. The log is compacted to the most recent 200 fingerprints.
+  Safety nets: main installs `uncaughtException` (fatal record + bounded flush,
+  then exit) and `unhandledRejection` (fatal record, keep running); the renderer
+  reports `error`/`unhandledrejection` from both the main world (renderer entry)
+  and the preload isolated-world early net over a new `lin:report-renderer-error`
+  IPC bridge, duplicates collapsed by fingerprint. Background paths that
+  previously only `console.warn`-ed (Dream extraction, scheduled command failures,
+  child-run ledger appends, memory reminder, storage sentinel/probe) now report
+  through the same path, and `emitError` foreground sites report in addition to
+  the existing in-conversation error event. The only user-facing surface is
+  passive: Settings → General → Diagnostics exposes Reveal (open the log in
+  Finder) and Export (a JSON artifact with minimal environment) — no dashboard,
+  badge, or toast. Local-only, no egress; the hand-off to us is user-initiated. A
+  real-Electron smoke test verifies renderer errors/rejections reach the log under
+  `contextIsolation` + `sandbox`. Spec: `docs/spec/error-observability.md`.
 - **Sidebar pinned nodes (PR #191)** — the sidebar's Pinned section is now real:
   pin/unpin any node from the outliner row context menu or from a new reduced
   sidebar row context menu (Open / Open in split pane / Pin–Unpin). Pins are
