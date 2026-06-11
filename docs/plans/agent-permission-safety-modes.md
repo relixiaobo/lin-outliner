@@ -577,16 +577,22 @@ This is one complete feature PR after PM/main ratification.
 - The local-root boundary may be unsafe in packaged builds. Mitigation: verify
   and fix before implementation.
 
-## Open Questions for PM
+## Ratified Decisions (PM, 2026-06-11)
 
-1. Ship three trust levels now, or keep Read Only as a fourth global level despite
-   it being a task posture?
-2. Should "Hand everything to Lin, stop asking" appear on every approval card or
-   only after repeated prompts?
-3. Should Full Access include all GitHub CLI mutations, or only git push and PR
-   creation/update classes?
-4. Should the ledger projection preserve the old Permissions page URL/route as an
-   Advanced subroute for continuity?
+1. **Three trust levels.** Ship Ask First / Balanced / Full Access. Read Only is
+   a task posture, not a trust posture; it stays out of the global ladder and may
+   return later as a per-conversation toggle.
+2. **Escalation exit on every card.** "Hand everything to Lin, stop asking"
+   appears on every approval card as a visually tertiary exit; the Full Access
+   confirmation sheet is the brake. Predictable placement beats an
+   appears-sometimes heuristic.
+3. **GitHub mutations follow the existing action class.** Full Access allows the
+   engine's current git push / GitHub mutation category as one unit; no finer
+   classification is invented for this plan. Finer control remains available via
+   Advanced rules.
+4. **No legacy Permissions route.** The old Permissions page is not preserved as
+   a separate route; Advanced lives inside the Security page. Pre-release, no
+   continuity obligation. (Main-gate call: reversible local.)
 
 ## Collision Check
 
