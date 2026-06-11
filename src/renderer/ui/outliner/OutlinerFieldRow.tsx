@@ -14,11 +14,13 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
 import type { DocumentIndex, UiState } from '../../state/document';
+import { buildSelectableRows } from '../../state/selectableRows';
 import {
   clearFocusState,
   clearFocusRequestState,
   clearPendingInputState,
   cursorEnd,
+  cursorStart,
   cursorOffset as cursorAtOffset,
   focusTarget,
   focusTargetMatches,
@@ -33,6 +35,8 @@ import {
 } from '../focus/textControlFocus';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
+import { runSelectionDelete, selectableRowMap } from '../interactions/selectionBatchActions';
+import { selectVisibleRowsState } from '../interactions/selectionActions';
 import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent } from '../shared';
@@ -138,6 +142,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const [nameDraft, setNameDraft] = useState(field?.content.text ?? '');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const nameSelectAllRowsReadyRef = useRef(false);
   // A command config field (Schedule / Agent) has a read-only name; its value cell
   // is the interactive surface. Focus the value button (not the inert name input)
   // when the row is navigated to, so Space summons the picker — matching the
@@ -297,6 +302,75 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     }));
   };
 
+  const selectAllVisibleRows = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    props.setUi((prev) => selectVisibleRowsState(prev, {
+      byId: props.index.byId,
+      selectionRootId: props.selectionRootId,
+    }));
+  };
+
+  const deleteFieldRowFromNameStart = async () => {
+    await commitDrafts();
+    const selectableRows = buildSelectableRows(props.selectionRootId, props.index.byId, {
+      expanded: props.uiRef.current.expanded,
+      expandedHiddenFields: props.uiRef.current.expandedHiddenFields,
+    });
+    const rows = selectableRows.map((selectableRow) => selectableRow.id);
+    const rowsById = selectableRowMap(selectableRows);
+    const currentIndex = rows.indexOf(props.entryId);
+    const deletedWithEntry = (id: NodeId) => {
+      if (id === props.entryId) return true;
+      let parentId = props.index.byId.get(id)?.parentId ?? null;
+      while (parentId) {
+        if (parentId === props.entryId) return true;
+        parentId = props.index.byId.get(parentId)?.parentId ?? null;
+      }
+      return false;
+    };
+    const previous = currentIndex > 0
+      ? [...rows.slice(0, currentIndex)].reverse().find((id) => !deletedWithEntry(id)) ?? null
+      : null;
+    const next = currentIndex >= 0
+      ? rows.slice(currentIndex + 1).find((id) => !deletedWithEntry(id)) ?? null
+      : null;
+    const rowTargetForId = (id: NodeId) => {
+      const parentId = rowsById.get(id)?.parentId ?? props.index.byId.get(id)?.parentId ?? null;
+      return props.index.byId.get(id)?.type === 'fieldEntry'
+        ? focusTarget(id, parentId, props.panelId, 'field-name')
+        : rowFocusTarget(id, parentId, props.panelId);
+    };
+    await props.run(() => runSelectionDelete({
+      ids: [props.entryId],
+      panelRootId: props.selectionRootId,
+      byId: props.index.byId,
+      rowMap: rowsById,
+    }));
+    props.setUi((prev) => {
+      if (previous) {
+        return requestFocusState(
+          prev,
+          rowTargetForId(previous),
+          cursorEnd(),
+        );
+      }
+      if (next) {
+        return requestFocusState(
+          prev,
+          rowTargetForId(next),
+          cursorStart(),
+        );
+      }
+      return requestFocusState(
+        prev,
+        focusTarget(props.selectionRootId, props.selectionRootId, props.panelId, 'trailing'),
+        cursorEnd(),
+      );
+    });
+  };
+
   const shiftDepth = async (shiftKey: boolean, cursorOffset: number) => {
     await commitDrafts();
     const fieldNameTargetAfterStructureChange = focusTarget(props.entryId, null, props.panelId, 'field-name');
@@ -368,6 +442,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLElement>, column: 'name' | 'value') => {
     if (isImeComposingEvent(event)) return;
     const mod = event.metaKey || event.ctrlKey;
+    const nameSelectAllShortcut = column === 'name' && mod && event.key.toLowerCase() === 'a';
+    const modifierOnlyKey = event.key === 'Meta' || event.key === 'Control' || event.key === 'Alt' || event.key === 'Shift';
+    if (!nameSelectAllShortcut && !modifierOnlyKey) nameSelectAllRowsReadyRef.current = false;
     // Space on an empty field name summons the reuse picker (showing every
     // candidate) instead of inserting a leading space — mirrors the field-value
     // pickers' "Space to open" affordance. Once the name has text, Space types.
@@ -411,6 +488,22 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       void props.run(() => api.redo());
       return;
     }
+    if (mod && event.key.toLowerCase() === 'a') {
+      const target = event.currentTarget;
+      if (
+        target instanceof HTMLInputElement
+        && (target.selectionStart ?? 0) <= 0
+        && (target.selectionEnd ?? 0) >= target.value.length
+        && (nameSelectAllRowsReadyRef.current || target.value.length === 0)
+      ) {
+        event.preventDefault();
+        nameSelectAllRowsReadyRef.current = false;
+        selectAllVisibleRows();
+        return;
+      }
+      nameSelectAllRowsReadyRef.current = true;
+      return;
+    }
     if (mod && event.key === 'Enter') {
       event.preventDefault();
       void commitDrafts().then(() => props.run(() => api.cycleDoneState(props.entryId)));
@@ -420,6 +513,24 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       event.preventDefault();
       void exitToSelection();
       return;
+    }
+    if (
+      column === 'name'
+      && event.key === 'Backspace'
+      && !mod
+      && !event.altKey
+      && !event.shiftKey
+    ) {
+      const target = event.currentTarget;
+      if (
+        target instanceof HTMLInputElement
+        && (target.selectionStart ?? 0) === 0
+        && (target.selectionEnd ?? 0) === 0
+      ) {
+        event.preventDefault();
+        void deleteFieldRowFromNameStart();
+        return;
+      }
     }
     if (event.key === 'Tab') {
       event.preventDefault();
@@ -476,6 +587,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         ? tf.systemFieldTitle({ name: systemFieldLabel })
         : tf.fieldNameTitle({ name: nameDraft || tf.fieldNameLabel, type: fieldTypeLabel(fieldType) })}
       onFocus={() => {
+        nameSelectAllRowsReadyRef.current = false;
         reuse.onFocus();
         props.setUi((prev) => selectFocusState(prev, fieldNameFocusTarget));
       }}
@@ -484,6 +596,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         reuse.onChange();
       }}
       onBlur={() => {
+        nameSelectAllRowsReadyRef.current = false;
         reuse.onBlur();
         void commitName();
       }}

@@ -82,6 +82,7 @@ interface RichTextEditorProps {
   onMove?: (direction: 'up' | 'down') => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  onSelectAllRows?: () => void;
   onDescriptionToggle?: (payload: EditorDescriptionTogglePayload) => void;
   onModEnter: (content: RichText) => void;
   onEscape: () => void;
@@ -218,6 +219,27 @@ function isEmptyRichText(content: RichText) {
   return content.text.replaceAll(TRANSIENT_TEXT_SENTINEL, '').trim().length === 0 && content.inlineRefs.length === 0;
 }
 
+function isModifierOnlyKey(event: KeyboardEvent) {
+  return event.key === 'Meta' || event.key === 'Control' || event.key === 'Alt' || event.key === 'Shift';
+}
+
+function domSelectionCoversEditorText(element: HTMLElement) {
+  const selection = window.getSelection();
+  if (
+    !selection
+    || selection.isCollapsed
+    || selection.rangeCount === 0
+    || !selection.anchorNode
+    || !selection.focusNode
+    || !element.contains(selection.anchorNode)
+    || !element.contains(selection.focusNode)
+  ) {
+    return false;
+  }
+  const text = element.textContent ?? '';
+  return selection.toString().length >= text.length;
+}
+
 export function RichTextEditor(props: RichTextEditorProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -226,6 +248,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const lastContentRevisionRef = useRef(props.contentRevision ?? 0);
   const fieldTriggerFiredRef = useRef(false);
   const codeFenceFiredRef = useRef(false);
+  const selectAllRowsReadyRef = useRef(false);
   const composingRef = useRef(false);
   const compositionDocChangedRef = useRef(false);
   // Cross-editor composition gate state (issue #176): this editor's gate token,
@@ -467,6 +490,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
         return true;
       },
       handleDOMEvents: {
+        mousedown() {
+          selectAllRowsReadyRef.current = false;
+          return false;
+        },
         keydown(_viewInstance, event) {
           if (isImeComposingEvent(event as KeyboardEvent)) {
             markComposing();
@@ -625,6 +652,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return false;
         },
         blur() {
+          selectAllRowsReadyRef.current = false;
           if (composingRef.current || compositionDocChangedRef.current) {
             imeTrace('blur-during-composition', propsRef.current.nodeId,
               'buffered:', compositionDocChangedRef.current,
@@ -687,6 +715,11 @@ export function RichTextEditor(props: RichTextEditorProps) {
       handleKeyDown(viewInstance, event) {
         if (isImeComposingEvent(event) || composingRef.current) return false;
         const mod = event.metaKey || event.ctrlKey;
+        const selectAllRowsShortcut = Boolean(
+          propsRef.current.onSelectAllRows
+          && matchesShortcutEvent(event, 'selection.select_all'),
+        );
+        if (!selectAllRowsShortcut && !isModifierOnlyKey(event)) selectAllRowsReadyRef.current = false;
         const selectedRefPos = selectedInlineReferencePosition(viewInstance);
         if (selectedRefPos !== null) {
           const action = resolveSelectedReferenceShortcut(event);
@@ -743,6 +776,29 @@ export function RichTextEditor(props: RichTextEditorProps) {
           event.preventDefault();
           propsRef.current.onUndo?.();
           return true;
+        }
+
+        if (
+          propsRef.current.onSelectAllRows
+          && selectAllRowsShortcut
+        ) {
+          const selection = viewInstance.state.selection;
+          const contentStart = 1;
+          const contentEnd = Math.max(contentStart, viewInstance.state.doc.content.size - 1);
+          const from = Math.min(selection.from, selection.to);
+          const to = Math.max(selection.from, selection.to);
+          const fullTextSelected = (from <= contentStart && to >= contentEnd)
+            || (selectAllRowsReadyRef.current && domSelectionCoversEditorText(viewInstance.dom));
+          const emptyText = contentStart === contentEnd && isEmptyDoc(viewInstance.state.doc);
+          if (fullTextSelected && (selectAllRowsReadyRef.current || emptyText)) {
+            event.preventDefault();
+            selectAllRowsReadyRef.current = false;
+            viewInstance.dom.blur();
+            propsRef.current.onSelectAllRows();
+            return true;
+          }
+          selectAllRowsReadyRef.current = true;
+          return false;
         }
 
         if (

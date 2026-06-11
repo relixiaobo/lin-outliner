@@ -5,7 +5,9 @@ import {
   emitAgentProjection,
   emitAgentEvent,
   emitDocumentEvent,
+  ids,
   openMockedApp,
+  rowEditor,
 } from './outlinerMock';
 
 async function waitForAgentConversation(page: import('@playwright/test').Page) {
@@ -79,6 +81,68 @@ test.describe('agent composer controls', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
     await waitForAgentConversation(page);
+  });
+
+  test('opening the agent dock focuses the composer editor', async ({ page }) => {
+    const composer = page.locator('.agent-composer-editor .ProseMirror');
+
+    await page.getByTitle('Collapse agent').click();
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
+    await rowEditor(page, ids.beta).click();
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+
+    await page.getByTitle('Expand agent').click();
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
+    await expect(composer).toBeFocused();
+  });
+
+  test('resolving a pending question after dock reopen does not steal focus into the composer', async ({ page }) => {
+    const requestId = 'question-focus-e2e';
+    const composer = page.locator('.agent-composer-editor .ProseMirror');
+
+    await page.getByTitle('Collapse agent').click();
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
+    await emitAgentEvent(page, {
+      type: 'user_question_request',
+      conversationId: 'mock-agent-conversation',
+      requestId,
+      question: {
+        requestId,
+        conversationId: 'mock-agent-conversation',
+        runId: 'run-question-focus-e2e',
+        toolCallId: 'tool-question-focus-e2e',
+        request: {
+          submitLabel: 'Continue',
+          questions: [{
+            id: 'path',
+            type: 'single_choice',
+            question: 'Which path should the agent take?',
+            required: true,
+            options: [{ id: 'continue', label: 'Continue' }],
+          }],
+        },
+      },
+      timestamp: 1_800_000_002_000,
+    });
+
+    await rowEditor(page, ids.beta).click();
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await page.getByTitle('Expand agent').click();
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
+    await expect(page.locator('.agent-question-card')).toBeVisible();
+
+    await rowEditor(page, ids.beta).click();
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await emitAgentEvent(page, {
+      type: 'user_question_resolved',
+      conversationId: 'mock-agent-conversation',
+      requestId,
+      timestamp: 1_800_000_002_100,
+    });
+
+    await expect(page.locator('.agent-question-card')).toHaveCount(0);
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+    await expect(composer).not.toBeFocused();
   });
 
   test('sends from the primary action', async ({ page }) => {

@@ -568,8 +568,16 @@ export function AgentChatPanel({
   const scrollFrameRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
+  const dockOpenRef = useRef(dockOpen);
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ height: 0, top: 0 });
+  const [composerFocusToken, setComposerFocusToken] = useState(0);
+  useEffect(() => {
+    if (dockOpen && !dockOpenRef.current) {
+      setComposerFocusToken((token) => token + 1);
+    }
+    dockOpenRef.current = dockOpen;
+  }, [dockOpen]);
   // ≥2 agent members = a Channel: member strip + `@` typeahead + queue-send
   // composer + the IM delivery model (typing indicator, utterance-only thread).
   const agentMembers = useMemo(
@@ -1488,6 +1496,7 @@ export function AgentChatPanel({
 
       <AgentComposer
         currentNodeId={composerCurrentNodeId(userViewContext, index)}
+        focusToken={composerFocusToken}
         index={index}
         isStreaming={isStreaming}
         members={composerMembers}

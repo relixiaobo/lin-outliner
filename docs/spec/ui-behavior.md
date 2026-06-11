@@ -15,9 +15,17 @@ keyboard or pointer change should be checked against this matrix.
 - Breadcrumb back navigates the current panel to its previous node page. It does
   not undo document operations.
 - Page-history back/forward navigate the active panel's outliner page history via
-  `Cmd+[` / `Cmd+]` (there are no top-bar back/forward buttons; see
-  [`design-system.md`](./design-system.md) → Shell). They do not undo or redo
-  document operations.
+  `Cmd+[` / `Cmd+]` even while text is focused, or via `Alt/Option+ArrowLeft` /
+  `Alt/Option+ArrowRight` outside editable text controls (there are no top-bar
+  back/forward buttons; see [`design-system.md`](./design-system.md) → Shell).
+  They do not undo or redo document operations. In editable text, Option+Arrow
+  remains the platform word-navigation shortcut.
+- Entering a node page places edit focus at the start of the first visible body
+  row. If the page has no body rows, focus lands on that page's trailing draft so
+  the user can immediately type the first row. Navigation never auto-focuses the
+  end-of-page trailing draft on non-empty pages. Search pages (for example
+  Recents) are result views, so entering them does not place edit focus on a
+  result row.
 - Rows use a compact bullet/chevron leading control, restrained hover/focus
   states, and no right inspector.
 - Page titles are editable rich text. This includes the workspace root title
@@ -60,11 +68,12 @@ keyboard or pointer change should be checked against this matrix.
 | `Tab` on first child | No-op. |
 | `Shift+Tab` | Outdent after parent, collapse the previous parent if it becomes empty, and restore cursor offset. Rows whose parent is the current panel root are a no-op. |
 | `Backspace` at start with text | Merge into the previous visible content row when possible, then restore the cursor at the join offset. |
-| `Backspace` on empty leaf row | Trash the row and focus the previous visible row. |
+| `Backspace` on empty leaf row | Trash the row, then keep focus: previous visible row at end; if there is no previous row, next visible row at start or the panel trailing draft when the row was the only body row. |
 | `Backspace` on empty row with children | Block deletion so a subtree is not removed by accident. |
 | `ArrowUp` at text start | Focus previous visible row at end. |
 | `ArrowDown` at text end | Enter expanded child scope first, then next visible row/trailing row. |
 | `Escape` | Leave edit mode and select the current row. |
+| `Mod+A` | First press uses native text selection inside the focused editor. If the row text is already fully selected, the next press leaves edit mode and selects every visible row in the panel selection scope. |
 | `Mod+Enter` | Cycle checkbox state: no checkbox, undone checkbox, done checkbox. |
 
 ## Trailing Input Matrix
@@ -92,6 +101,8 @@ keyboard or pointer change should be checked against this matrix.
 | `ArrowDown` + `Enter` (or click) in the reuse popover | Reuse that definition: relink the entry to it (`reuse_field_definition`) and drop the throwaway draft def. |
 | `Enter` in field name | With no popover candidate highlighted, commit the typed name as a new field and create/focus a sibling row after the field entry. |
 | `Enter` in field value | Commit field and create a sibling row after the field entry. |
+| `Backspace` at start of field name | Delete the field row through the same selection-delete path used for selected rows. Focus the previous visible row at end; if there is no previous row, focus the next visible row at start or the panel trailing draft when the field row was the only body row. |
+| `Mod+A` in field name/value | First press selects the text in that control/editor. A second consecutive `Mod+A` while the editor text is fully selected leaves edit mode and selects every visible row in the panel selection scope. Empty controls have no text-selection step, so `Mod+A` can select visible rows immediately. |
 | `>` in field value content/trailing input | Create a nested field entry inside the field value scope. |
 | `Tab` / `Shift+Tab` | Same structural indentation rules as content rows. |
 | `ArrowUp` / `ArrowDown` | Move through visible outline rows. |

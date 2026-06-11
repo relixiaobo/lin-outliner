@@ -76,14 +76,14 @@ field row but still appear in the selectable-row order.
 | Cmd/Ctrl+Shift+D with no row selection | Go to today's daily note. | `global.go_to_today` ensures today's date node and navigates the active panel. With a selection, `selection.duplicate` keeps owning the same chord. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts`, `outliner-selection-keyboard.spec.ts` |
 | Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+Y | nodex overloads no-editor Cmd/Ctrl+Z for page history. | Lin keeps these as document undo/redo globally and in editors. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
 | Cmd/Ctrl+[ / Cmd/Ctrl+] | Not the nodex binding. | Navigate the active panel back/forward through page history. | `rowInteractions.test.ts` |
-| Alt+ArrowLeft / Alt+ArrowRight | Not the nodex binding. | Navigate the active panel back/forward through page history. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
+| Alt+ArrowLeft / Alt+ArrowRight | Not the nodex binding. | Navigate the active panel back/forward through page history only outside editable text; inside editors it remains platform word-navigation. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
 
 ## Row Editing
 
 | Event | nodex behavior | lin-outliner rule | Test coverage |
 | --- | --- | --- | --- |
 | Enter at row end | Create an empty sibling after current row and focus it. | `handleEnter` + `create_node`. | `outliner-row-editing.spec.ts` |
-| Backspace at start of empty row | Trash/delete row and focus previous visible row. | `resolveContentRowBackspaceAtStartIntent`. | `outliner-row-editing.spec.ts` |
+| Backspace at start of empty row | Trash/delete row and keep focus on the previous visible row, next visible row, or trailing draft if it was the only body row. | `resolveContentRowBackspaceAtStartIntent`. | `outliner-row-editing.spec.ts` |
 | Tab while editing | Indent current row under previous sibling and keep editor focus. | `indent_node` with focus offset restore. | `outliner-row-editing.spec.ts` |
 | Shift+Tab while editing | Outdent current row and keep editor focus. | `outdent_node` with focus offset restore. | `outliner-row-editing.spec.ts` |
 | ArrowUp/Down at editor boundary | Move focus to previous/next visible row. | `moveFocus`. | `outliner-row-editing.spec.ts` |
