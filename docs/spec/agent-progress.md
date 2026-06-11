@@ -100,7 +100,7 @@ truth.
   - derived conversation/search/user-message indexes with event-log rebuild
   - large-conversation regression coverage for checkpoint replay, indexes, render
     projection, and payload-bounded JSONL
-- [x] Agent skills, compaction, and subagents:
+- [x] Agent skills, compaction, and delegation (child runs):
   - immutable code-registered built-in skills, including slash-only `/skillify`
   - automatic and slash skill loading from `.agents/skills`
   - path-conditional and dynamically discovered skills with gitignore guards
@@ -110,12 +110,13 @@ truth.
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
   - same-conversation `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
-  - fresh and fork subagents with sidechain transcripts and background
+  - fresh and fork child runs, each with its OWN run ledger (run unification;
+    sidechain transcripts replay from the ledger) and background
     notifications
-  - task panel derived from the shared render task projection: subagent tasks keep
+  - task panel derived from the shared render task projection: child-run tasks keep
     open-details/stop actions, and agent-level Dream runs show as read-only
     reflective tasks with trigger, processed count, and memory-change count
-  - skill `context: fork` routed through the subagent runtime
+  - skill `context: fork` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation:
@@ -150,8 +151,8 @@ truth.
     the pool they maintain); manual `/dream` projects a chat-stream Dream
     boundary, and the foreground `dream` tool can request the same runtime-owned
     path without supplying memory facts
-  - fresh typed subagents use their own agent identity for the `<memory>` briefing,
-    `recall`, and sidechain-transcript Dream evidence; fork subagents inherit the
+  - fresh typed child agents use their own agent identity for the `<memory>` briefing,
+    `recall`, and child-ledger Dream evidence; forks inherit the
     parent agent's memory owner and use a persisted Dream evidence boundary;
     agent-run memory sources bind evidence to the recorded transcript payload id,
     and owner-anchored Dream tasks appear in the shared task projection
@@ -203,14 +204,14 @@ truth.
 
 ## Next Milestone
 
-Finish runtime polish on top of the event log and subagent foundation.
+Finish runtime polish on top of the event log and delegation foundation.
 
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
 - [x] Permission approvals wired end to end: `allow | ask | deny` policy
   computed in TypeScript, `ask` suspends the tool call and requests user
-  approval (composer card, subagent + skill-shell bubbling, pending-request
+  approval (composer card, child-run + skill-shell bubbling, pending-request
   queue), and joinable `tool.permission.*` plus `approval.*` events persisted to
   the log (PR #51, hardened after M1).
 - [ ] Emit and render the remaining schema-reserved runtime events that are not

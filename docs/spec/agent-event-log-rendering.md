@@ -209,7 +209,7 @@ Keep from the reference implementation:
 - sidecar payload/metadata files
 - write queue and flush discipline
 - resume from chain plus repair/filter passes
-- subagent/sidechain concept as future-compatible shape
+- delegation/sidechain concept as future-compatible shape
 - compaction and content replacement as persisted events
 
 Do not copy:
@@ -267,25 +267,32 @@ Derived and rebuildable:
 - `conversations/<id>/meta.json`
 - `conversations/<id>/runs.json`
 
-Clean-cut startup policy (pre-release, no migration):
+Clean-cut startup policy (pre-release, no migration) — the storage-generation
+sentinel:
 
-- On first store access, the store probes for any pre-conversation-vocabulary
-  artifact: a pre-M0 `sessions/` tree, a legacy `indexes/session-index.json`, an
-  agent pool inside the identity directory (`agents/<id>/memory/`), or a
-  conversation log whose head event still speaks `session.*` / carries
-  `sessionId`.
-- Any hit hard-deletes the WHOLE agent data root — identities, conversations,
-  runs, pools, indexes — and the layout is recreated lazily. There is no legacy
-  reader, adapter, or migration.
-- An orphaned CURRENT `conversation-index.json` (index without matching
-  `conversations/`) is not a legacy marker; it is rebuilt from the conversation
-  directories.
+- ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
+  format generation (`STORAGE_LAYOUT_VERSION`, currently `2` = run
+  unification). First store access reads this single line; a matching `v`
+  proceeds with no per-conversation probing.
+- A stale `v` or a MISSING sentinel is positive proof of another generation:
+  the WHOLE agent data root is hard-deleted (logged with the old generation) —
+  identities, conversations, runs, pools, indexes — and the layout is recreated
+  lazily with a fresh sentinel. There is no legacy reader, adapter, or
+  migration.
+- An unreadable or corrupt sentinel is AMBIGUITY, not proof: the store fails
+  open onto the current layout (warn + re-probe next launch) — a permissions or
+  I/O error can never trip a wipe.
+- Future format breaks bump the integer instead of authoring a new detector
+  (this sentinel replaced the per-artifact legacy-detector pile).
 
 The event vocabulary is `conversation` end to end: renderer IPC, the event
 schema, and storage all key the delivery log by `conversationId`.
 `AgentEventStore.readEvents(conversationId)` joins the conversation segment and
-the run logs listed in `conversations/<id>/runs.json`, then sorts by seq before
-replay.
+the JOINED run logs listed in `conversations/<id>/runs.json` (turn/background
+runs), then sorts by seq before replay. Runs the index marks `delegation` are
+EXCLUDED from this join — a delegated run's ledger is its own stream with its
+own seq space ([[agent-run-unification]]), so interleaving it would mix two seq
+spaces; the conversation carries only its slim `child_run.*` markers.
 
 ## Event Store
 
@@ -295,8 +302,11 @@ Conversation segments, run logs, and agent memory logs share one append-only
 seq-log primitive for JSONL serialization, per-key write queues, latest-seq
 caches, chunked physical-tail reads, offset-bounded replay, and file-size
 checkpoint guards. Conversation replay still joins the conversation segment with
-its indexed run logs and sorts by `seq`; memory uses the same primitive with its
-own per-principal key.
+its indexed JOINED run logs (delegation ledgers excluded) and sorts by `seq`;
+memory uses the same primitive with its own per-principal key, and delegated-run
+ledgers use it with the memory log's torn-tail policy (drop a torn FINAL line on
+read, truncate it on the next append's repair; mid-file corruption still fails
+loudly).
 
 ```ts
 interface AgentEventBase {
@@ -383,8 +393,8 @@ type AgentEventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'subagent_run.started'
-  | 'subagent_run.updated'
+  | 'child_run.started'
+  | 'child_run.updated'
   | 'compaction.completed'
   | 'dream.finished'
   | 'payload.created'
@@ -408,11 +418,11 @@ A `notification.created` is **anchored to exactly one conversation**
 (`conversationId`, mandatory — there are no conversation-less notifications) and
 carries a `kind` (`task_completed` / `task_failed`; `needs_input` and `status` are
 reserved with no emitter yet) plus an optional `source`
-(`{ type: 'run' | 'subagent'; … }`) naming the off-floor run that produced it. A
-detached subagent terminal emits one with an id keyed on the completion instant
+(`{ type: 'run'; runId }`) naming the off-floor run that produced it. A
+detached child-run terminal emits one with an id keyed on the completion instant
 (`notification-<runId>-<completedAt>`) so a *resumed* run that finishes again is
 delivered, not deduped; a **user-initiated stop** raises none (the user's own
-action); a subagent left **running when the app dies** is marked failed and raises
+action); a child run left **running when the app dies** is marked failed and raises
 its notification on the next restore. `needs_input` (reserved) would reuse the
 run-log `user_question.*` lifecycle for the actual pause/answer/resume; the
 notification only routes the attention signal to the origin conversation.
@@ -645,7 +655,6 @@ type AgentPayloadRole =
   | 'preview'
   | 'text_extract'
   | 'tool_output'
-  | 'subagent_transcript'
   | 'debug';
 
 interface AgentPayloadDisplayMetadata {
@@ -792,10 +801,10 @@ Rules:
   hidden anchor message, with status, processed counts, and memory-change counts
   in `entities.dreams`. Active manual `/dream` runs append a transient
   `activeDream` row until the marker is written.
-- `subagent_run.*` events become dedicated **subagent boundary rows** in
-  `transcriptRows` (kind `'subagent'`, keyed by run id, backed by
-  `entities.subagents`). They are the conversation's permanent record of a run —
-  every subagent's final result lands inline in its own DM/channel as an
+- `child_run.*` events become dedicated **child-run boundary rows** in
+  `transcriptRows` (kind `'child-run'`, keyed by run id, backed by
+  `entities.childRuns`). They are the conversation's permanent record of a run —
+  every child run's final result lands inline in its own DM/channel as an
   expandable summary with a "View full run" link into the full transcript. A
   parented run (a main-agent spawn, `parentToolCallId` set) anchors right after
   its tool-result row, else after the assistant message that issued the call, and

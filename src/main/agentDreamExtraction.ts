@@ -10,13 +10,9 @@ import {
   getAgentEventRuntimeTranscriptPath,
   replayAgentEvents,
 } from '../core/agentEventLog';
-import type { AgentMessage, UserMessage } from '../core/agentTypes';
-import { extractCompactSummaryFromReminder } from './agentCompaction';
+import type { UserMessage } from '../core/agentTypes';
+import { compactedSpanEvidenceText } from './agentCompaction';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
-import {
-  agentRunMessageId,
-  isRecordableRuntimeMessage,
-} from './agentSubagentTranscript';
 
 const DREAM_TRANSCRIPT_CHAR_BUDGET = 60_000;
 const DREAM_MESSAGE_CONTENT_CHAR_BUDGET = 12_000;
@@ -74,15 +70,19 @@ export interface DreamMemoryExtractionConversationInput {
   fromSeqExclusive: number;
 }
 
-export interface DreamMemoryExtractionAgentRunInput {
+/**
+ * A delegated run's own ledger as a Dream evidence stream ([[agent-run-unification]]
+ * Design 3): the SAME shape as a conversation stream — events + a `{seq}` frontier —
+ * with the run's identity for source construction. `fromSeqExclusive` already folds
+ * in the structural fork boundary (the ledger's first `run.started` seq).
+ */
+export interface DreamMemoryExtractionRunInput {
   conversationId: string;
   agentId: string;
-  subagentRunId: string;
-  parentToolCallId?: string;
-  transcriptPayloadId?: string | null;
+  runId: string;
   originWorkspace?: string;
-  transcriptMessages: readonly AgentMessage[];
-  fromMessageCountExclusive: number;
+  events: readonly AgentEvent[];
+  fromSeqExclusive: number;
 }
 
 export function buildDreamMemoryExtractionSpan(
@@ -134,7 +134,7 @@ export function buildDreamMemoryExtractionSpanFromEvents(
 ): DreamMemoryExtractionSpan | null {
   return buildDreamMemoryExtractionSpanFromEvidence(runId, {
     conversations: inputs,
-    agentRuns: [],
+    runs: [],
   });
 }
 
@@ -142,81 +142,38 @@ export function buildDreamMemoryExtractionSpanFromEvidence(
   runId: string,
   inputs: {
     conversations: readonly DreamMemoryExtractionConversationInput[];
-    agentRuns: readonly DreamMemoryExtractionAgentRunInput[];
+    runs: readonly DreamMemoryExtractionRunInput[];
   },
 ): DreamMemoryExtractionSpan | null {
   const ranges: DreamMemoryExtractionSourceRange[] = [];
   const renderedSections: string[] = [];
 
   for (const input of inputs.conversations) {
-    const sortedEvents = [...input.events].sort((left, right) => left.seq - right.seq);
-    const evidenceEvents = sortedEvents.filter((event) => event.seq > input.fromSeqExclusive && isDreamEvidenceEvent(event));
-    if (evidenceEvents.length === 0) continue;
-
-    const state = replayAgentEvents(sortedEvents);
-    const activePath = getAgentEventRuntimeTranscriptPath(state);
-    const evidenceMessageIds = new Set(evidenceEvents.flatMap(messageIdsFromEvidenceEvent));
-    const messages = activePath.filter((message) => evidenceMessageIds.has(message.id));
-    if (messages.length === 0) continue;
-
-    const transcript = renderDreamTranscript(messages);
-    if (!transcript.trim()) continue;
-
-    const throughEvent = evidenceEvents.at(-1)!;
-    const from = messages[0]!;
-    const through = messages.at(-1)!;
-    const source: AgentMemorySource = {
+    const range = evidenceRangeFromEvents(input.events, input.fromSeqExclusive, (from, through, throughEvent) => ({
       conversationId: input.conversationId,
       messageRange: [from.id, through.id],
       eventId: throughEvent.eventId,
-    };
-    const runIds = uniqueStrings(messages.map((message) => message.runId).filter((value): value is string => !!value));
-    if (runIds.length === 1) source.runId = runIds[0];
-
-    ranges.push({
-      source,
-      fromSeqExclusive: input.fromSeqExclusive,
-      throughSeq: throughEvent.seq,
-      throughEventId: throughEvent.eventId,
-      messageCount: messages.length,
-      charCount: transcript.length,
-    });
-    renderedSections.push(`## Conversation ${input.conversationId}\n${transcript}`);
+    }));
+    if (!range) continue;
+    const runIds = uniqueStrings(range.messages.map((message) => message.runId).filter((value): value is string => !!value));
+    if (runIds.length === 1) range.range.source.runId = runIds[0];
+    ranges.push(range.range);
+    renderedSections.push(`## Conversation ${input.conversationId}\n${range.transcript}`);
   }
 
-  for (const input of inputs.agentRuns) {
-    const messages = input.transcriptMessages
-      .filter(isRecordableRuntimeMessage)
-      .slice(input.fromMessageCountExclusive);
-    if (messages.length === 0) continue;
-
-    const transcript = renderDreamRuntimeTranscript(input.subagentRunId, messages, input.fromMessageCountExclusive);
-    if (!transcript.trim()) continue;
-
-    const throughMessageCount = input.fromMessageCountExclusive + messages.length;
-    const source: AgentMemorySource = {
-      kind: 'agent_run',
+  // A delegated run's ledger digests EXACTLY like a conversation stream — the
+  // unification's point: one evidence scheme, one watermark shape, one replay.
+  for (const input of inputs.runs) {
+    const range = evidenceRangeFromEvents(input.events, input.fromSeqExclusive, (from, through, throughEvent) => ({
       conversationId: input.conversationId,
-      runId: input.subagentRunId,
-      subagentRunId: input.subagentRunId,
-      agentId: input.agentId,
-      messageRange: [
-        agentRunMessageId(input.subagentRunId, input.fromMessageCountExclusive),
-        agentRunMessageId(input.subagentRunId, throughMessageCount - 1),
-      ],
-      eventId: input.transcriptPayloadId ?? undefined,
-      parentToolCallId: input.parentToolCallId,
-    };
-
-    ranges.push({
-      source,
-      fromSeqExclusive: input.fromMessageCountExclusive,
-      throughSeq: throughMessageCount,
-      throughEventId: input.transcriptPayloadId ?? null,
-      messageCount: messages.length,
-      charCount: transcript.length,
-    });
-    renderedSections.push(`## Agent Run ${input.subagentRunId} (${input.agentId}) in Conversation ${input.conversationId}\n${transcript}`);
+      kind: 'run',
+      runId: input.runId,
+      messageRange: [from.id, through.id],
+      eventId: throughEvent.eventId,
+    }));
+    if (!range) continue;
+    ranges.push(range.range);
+    renderedSections.push(`## Agent Run ${input.runId} (${input.agentId}) in Conversation ${input.conversationId}\n${range.transcript}`);
   }
 
   if (ranges.length === 0) return null;
@@ -425,17 +382,83 @@ export function memoryFactKey(fact: string): string {
   return fact.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+/**
+ * The one extraction path for an event stream (conversation or run ledger):
+ * filter evidence events past the frontier, replay, window the active path,
+ * render the raw transcript, and build the source via the caller's shape.
+ */
+function evidenceRangeFromEvents(
+  events: readonly AgentEvent[],
+  fromSeqExclusive: number,
+  makeSource: (
+    from: AgentEventMessageRecord,
+    through: AgentEventMessageRecord,
+    throughEvent: AgentEvent,
+  ) => AgentMemorySource,
+): { range: DreamMemoryExtractionSourceRange; messages: AgentEventMessageRecord[]; transcript: string } | null {
+  const sortedEvents = [...events].sort((left, right) => left.seq - right.seq);
+  const evidenceEvents = sortedEvents.filter((event) => event.seq > fromSeqExclusive && isDreamEvidenceEvent(event));
+  if (evidenceEvents.length === 0) return null;
+
+  const state = replayAgentEvents(sortedEvents);
+  const activePath = getAgentEventRuntimeTranscriptPath(state);
+  // A `tool_result.replaced` is a lossy slimming artifact of an EXISTING
+  // message, never new content: it must not pull a message created at-or-before
+  // the frontier back into the window. On a fork-child ledger that frontier is
+  // the structural boundary — an inherited fork-prefix tool result slimmed
+  // during the child's own turns would otherwise leak parent-context content
+  // into the child's Dream evidence. (A `user_message.edited` stays included:
+  // an edit IS new content.)
+  const createdSeqByMessageId = new Map<string, number>();
+  for (const event of sortedEvents) {
+    if (
+      (event.type === 'user_message.created'
+        || event.type === 'assistant_message.started'
+        || event.type === 'tool_result.created')
+      && typeof event.messageId === 'string'
+      && !createdSeqByMessageId.has(event.messageId)
+    ) {
+      createdSeqByMessageId.set(event.messageId, event.seq);
+    }
+  }
+  const evidenceMessageIds = new Set(
+    evidenceEvents
+      .filter((event) => (
+        event.type !== 'tool_result.replaced'
+        || (createdSeqByMessageId.get(event.messageId) ?? 0) > fromSeqExclusive
+      ))
+      .flatMap(messageIdsFromEvidenceEvent),
+  );
+  const messages = activePath.filter((message) => evidenceMessageIds.has(message.id));
+  if (messages.length === 0) return null;
+
+  const transcript = renderDreamTranscript(messages);
+  if (!transcript.trim()) return null;
+
+  // Provenance points at the last EVIDENCE event; the CURSOR records the
+  // scanned tail. They differ on purpose: a terminal run's ledger ends with a
+  // non-evidence `run.completed`, and a last-evidence cursor would sit forever
+  // below the tail — the already-digested skip would never fire and every
+  // Dream pass would re-read every historical run ledger.
+  const throughEvent = evidenceEvents.at(-1)!;
+  const scanTail = sortedEvents.at(-1)!;
+  return {
+    messages,
+    transcript,
+    range: {
+      source: makeSource(messages[0]!, messages.at(-1)!, throughEvent),
+      fromSeqExclusive,
+      throughSeq: scanTail.seq,
+      throughEventId: scanTail.eventId,
+      messageCount: messages.length,
+      charCount: transcript.length,
+    },
+  };
+}
+
 function renderDreamTranscript(messages: readonly AgentEventMessageRecord[]): string {
   const rendered = messages
     .map((message, index) => renderDreamMessage(message, index + 1))
-    .filter(Boolean)
-    .join('\n\n');
-  return truncateDreamTranscript(rendered);
-}
-
-function renderDreamRuntimeTranscript(runId: string, messages: readonly AgentMessage[], startIndex: number): string {
-  const rendered = messages
-    .map((message, index) => renderDreamRuntimeMessage(runId, message, startIndex + index))
     .filter(Boolean)
     .join('\n\n');
   return truncateDreamTranscript(rendered);
@@ -452,27 +475,17 @@ function renderDreamMessage(message: AgentEventMessageRecord, index: number): st
   return body ? `${header}\n${body}` : '';
 }
 
-function renderDreamRuntimeMessage(runId: string, message: AgentMessage, index: number): string {
-  const header = `### ${index + 1}. ${message.role} message ${agentRunMessageId(runId, index)} (agent run ${runId})`;
-  const details: string[] = [];
-  if (message.role === 'toolResult' && message.toolName) details.push(`tool: ${message.toolName}`);
-  if (message.role === 'toolResult' && message.isError) details.push('error: true');
-  const content = renderRuntimeContent(message.content);
-  const body = [...details, content].filter(Boolean).join('\n');
-  return body ? `${header}\n${body}` : '';
-}
-
 /**
  * Hidden boilerplate stays out of Dream evidence, with one exception: a compaction
- * reminder. A compaction supersedes the runtime transcript payload (or re-anchors a
- * conversation's active path at the post-compact root), so the reminder's summary is the
- * only surviving carrier of the compacted-away content — dropping it would leave that
- * content un-Dreamed and unreachable (the evidence-preserving compaction invariant,
- * [[agent-data-model]] §13.17).
+ * reminder. A compaction re-anchors a stream's active path at the post-compact root
+ * (conversation and delegated-run ledgers alike, post run-unification), so the
+ * reminder's summary is the only surviving carrier of the compacted-away content —
+ * dropping it would leave that content un-Dreamed and unreachable (the
+ * evidence-preserving compaction invariant, [[agent-data-model]] §13.17).
  */
 function renderHiddenBlockEvidence(text: string): string[] {
-  const summary = extractCompactSummaryFromReminder(text);
-  return summary ? [`[summary of compacted earlier messages]\n${summary}`] : [];
+  const evidence = compactedSpanEvidenceText(text);
+  return evidence ? [evidence] : [];
 }
 
 function renderPersistedContent(content: readonly AgentPersistedContent[]): string {
@@ -486,26 +499,6 @@ function renderPersistedContent(content: readonly AgentPersistedContent[]): stri
       if (part.type === 'toolCall') return [`tool call: ${part.name} ${JSON.stringify(part.arguments)}`];
       if (part.type === 'image') return [part.alt || part.imageRef.summary || `[image:${part.imageRef.id}]`];
       return [part.label || part.payload.summary || `[payload:${part.payload.id}]`];
-    })
-    .filter(Boolean)
-    .join('\n\n')
-    .slice(0, DREAM_MESSAGE_CONTENT_CHAR_BUDGET);
-}
-
-function renderRuntimeContent(content: AgentMessage['content']): string {
-  if (typeof content === 'string') return content.trim().slice(0, DREAM_MESSAGE_CONTENT_CHAR_BUDGET);
-  if (!Array.isArray(content)) return '';
-  return content
-    .flatMap((part) => {
-      if (!isRecord(part)) return [];
-      if (part.type === 'text' && typeof part.text === 'string') {
-        if (isHiddenAgentContextBlock(part.text)) return renderHiddenBlockEvidence(part.text);
-        return [part.text.trim()];
-      }
-      if (part.type === 'thinking') return ['[thinking omitted]'];
-      if (part.type === 'toolCall') return [`tool call: ${String(part.name ?? 'unknown')} ${JSON.stringify(part.arguments ?? {})}`];
-      if (part.type === 'image') return ['[image]'];
-      return [];
     })
     .filter(Boolean)
     .join('\n\n')

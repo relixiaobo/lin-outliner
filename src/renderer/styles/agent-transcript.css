@@ -184,10 +184,10 @@
   gap: var(--space-2);
 }
 
-/* Subagent run boundary — the inline record of a subagent run (mirrors the
+/* Child-run boundary — the inline record of a child run (mirrors the
    compaction boundary: a centered control between two rules, expanding to the
    final result). Neutral functional styling (B3/B4). */
-.agent-subagent-boundary {
+.agent-child-run-boundary {
   display: grid;
   width: 100%;
   min-width: 0;
@@ -197,19 +197,19 @@
   color: var(--text-faint);
 }
 
-.agent-subagent-line {
+.agent-child-run-line {
   min-width: 0;
   height: 1px;
   background: var(--border-subtle);
 }
 
-.agent-subagent-controls {
+.agent-child-run-controls {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.agent-subagent-toggle {
+.agent-child-run-toggle {
   display: inline-flex;
   max-width: 100%;
   height: 28px;
@@ -222,32 +222,32 @@
   padding: 0 var(--space-3);
 }
 
-.agent-subagent-toggle:hover,
-.agent-subagent-toggle:focus-visible {
+.agent-child-run-toggle:hover,
+.agent-child-run-toggle:focus-visible {
   background: var(--control-hover);
   color: var(--text-body);
 }
 
-.agent-subagent-toggle.is-active {
+.agent-child-run-toggle.is-active {
   cursor: default;
 }
 
-.agent-subagent-toggle.is-active:hover,
-.agent-subagent-toggle.is-active:focus-visible {
+.agent-child-run-toggle.is-active:hover,
+.agent-child-run-toggle.is-active:focus-visible {
   background: transparent;
   color: var(--text-muted);
 }
 
-.agent-subagent-chevron {
+.agent-child-run-chevron {
   flex: 0 0 auto;
   transition: transform var(--motion-fast);
 }
 
-.agent-subagent-chevron.is-expanded {
+.agent-child-run-chevron.is-expanded {
   transform: rotate(180deg);
 }
 
-.agent-subagent-toggle .agent-subagent-desc {
+.agent-child-run-toggle .agent-child-run-desc {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -255,16 +255,16 @@
   color: var(--text-soft);
 }
 
-.agent-subagent-toggle small {
+.agent-child-run-toggle small {
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
 }
 
-.agent-subagent-toggle small.is-error {
+.agent-child-run-toggle small.is-error {
   color: var(--danger);
 }
 
-.agent-subagent-summary {
+.agent-child-run-summary {
   grid-column: 1 / -1;
   display: flex;
   width: min(100%, 680px);
@@ -280,12 +280,12 @@
   padding: var(--space-2) 0 var(--space-2) var(--space-5);
 }
 
-.agent-subagent-empty {
+.agent-child-run-empty {
   margin: 0;
   color: var(--text-faint);
 }
 
-.agent-subagent-open {
+.agent-child-run-open {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -295,13 +295,13 @@
   padding: var(--space-1) var(--space-2);
 }
 
-.agent-subagent-open:hover,
-.agent-subagent-open:focus-visible {
+.agent-child-run-open:hover,
+.agent-child-run-open:focus-visible {
   background: var(--control-hover);
   color: var(--text-body);
 }
 
-.agent-subagent-open svg {
+.agent-child-run-open svg {
   flex: 0 0 auto;
 }
 

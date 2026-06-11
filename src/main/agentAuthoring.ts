@@ -127,7 +127,7 @@ function assertWritableSource(agent: AgentDefinition): void {
 
 function assertContainedInAgentsDir(targetDir: string, localRoot: string): void {
   // Containment must resolve symlinks, not just normalize lexically: the registry
-  // scan follows symlinks (agentSubagents.ts), so a symlink committed inside a
+  // scan follows symlinks (agentDelegation.ts), so a symlink committed inside a
   // `project` `.agents/agents/` dir (git-trackable, shippable in a hostile
   // workspace) that points elsewhere would pass a lexical `path.relative` check
   // yet redirect the write THROUGH the link to an arbitrary file. Resolve the real

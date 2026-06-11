@@ -7,11 +7,11 @@ export type LinAgentSystemPromptSectionId =
   | 'web'
   | 'communication-and-safety';
 
-// 'shared' sections seed BOTH the main chat agent and every fresh subagent —
+// 'shared' sections seed BOTH the main chat agent and every fresh child run —
 // the capability, tool-convention, and safety guidance any Tenon agent needs.
 // 'main' sections belong only to the user-facing chat agent (its identity and
-// memory framing); a headless subagent gets its own identity + directive instead
-// and must not inherit these. See [[subagent-prompt-unification]].
+// memory framing); a headless child run gets its own identity + directive instead
+// and must not inherit these. See [[child-run-prompt-unification]].
 export type LinAgentPromptAudience = 'shared' | 'main';
 
 export interface LinAgentSystemPromptSection {
@@ -108,10 +108,10 @@ export const LIN_AGENT_SYSTEM_PROMPT = LIN_AGENT_SYSTEM_PROMPT_SECTIONS
   .map(renderSystemPromptSection)
   .join('\n\n');
 
-// The shared-core subset that seeds fresh subagents: the same capability,
+// The shared-core subset that seeds fresh childRuns: the same capability,
 // tool-convention, and safety guidance as the main agent, minus its user-facing
-// identity and memory framing (a subagent gets its own identity + directive).
-export const LIN_SUBAGENT_CORE_PROMPT = LIN_AGENT_SYSTEM_PROMPT_SECTIONS
+// identity and memory framing (a child run gets its own identity + directive).
+export const LIN_CHILD_AGENT_CORE_PROMPT = LIN_AGENT_SYSTEM_PROMPT_SECTIONS
   .filter((section) => section.audience === 'shared')
   .map(renderSystemPromptSection)
   .join('\n\n');

@@ -7,7 +7,7 @@ import type {
   TextContent,
   UserMessage,
 } from '../../../core/agentTypes';
-import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import { splitFileReferenceMarkers } from '../../../core/referenceMarkup';
 import {
   isHiddenAgentContextBlock,
@@ -74,12 +74,12 @@ interface AgentMessageRowProps {
   onRegenerate?: (nodeId: string) => void | Promise<void>;
   onRetry?: (nodeId: string) => void | Promise<void>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenSubagentTranscript?: (subagentId: string) => void;
+  onOpenChildRunTranscript?: (childRunId: string) => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
   conversationId?: string | null;
   streaming?: boolean;
-  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
+  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnEnded?: boolean;
   turnPhase?: AgentTurnPhase;
@@ -345,11 +345,11 @@ function renderAssistantBlocks(
   documentIndex: DocumentIndex,
   expandState: AgentExpandState,
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler | undefined,
-  onOpenSubagentTranscript: ((subagentId: string) => void) | undefined,
+  onOpenChildRunTranscript: ((childRunId: string) => void) | undefined,
   pendingToolCallIds: ReadonlySet<string>,
   conversationId: string | null | undefined,
   streaming: boolean,
-  subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity> | undefined,
+  childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity> | undefined,
   toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
   turnEnded: boolean,
@@ -364,10 +364,10 @@ function renderAssistantBlocks(
       if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
       return block.text.trim().length > 0 || streaming;
     }
-    // A subagent-spawn tool call is surfaced as its own inline transcript boundary
-    // (AgentSubagentBoundary) right after this turn — drop its tool-call block here
+    // A child-run-spawn tool call is surfaced as its own inline transcript boundary
+    // (AgentChildRunBoundary) right after this turn — drop its tool-call block here
     // so the run isn't shown twice (no "Used tools" header, no tool row).
-    if (block.type === 'toolCall' && subagentsByParentToolCallId?.has(block.id)) return false;
+    if (block.type === 'toolCall' && childRunsByParentToolCallId?.has(block.id)) return false;
     return true;
   });
   const turnHasProse = visibleBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0);
@@ -418,11 +418,11 @@ function renderAssistantBlocks(
             key={toolId}
             onToggle={() => expandState.toggle(toolId, expandState.isExpanded(toolId, false))}
             onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenSubagentTranscript={onOpenSubagentTranscript}
+            onOpenChildRunTranscript={onOpenChildRunTranscript}
             pendingToolCallIds={pendingToolCallIds}
             result={toolResults.get(toolCall.id)}
             conversationId={conversationId}
-            subagent={subagentsByParentToolCallId?.get(toolCall.id)}
+            childRun={childRunsByParentToolCallId?.get(toolCall.id)}
             toolCall={toolCall}
             turnActive={turnActive}
           />,
@@ -437,12 +437,12 @@ function renderAssistantBlocks(
             index={documentIndex}
             key={segmentId}
             onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenSubagentTranscript={onOpenSubagentTranscript}
+            onOpenChildRunTranscript={onOpenChildRunTranscript}
             pendingToolCallIds={pendingToolCallIds}
             results={toolResults}
             sealed={segmentSealed}
             conversationId={conversationId}
-            subagentsByParentToolCallId={subagentsByParentToolCallId}
+            childRunsByParentToolCallId={childRunsByParentToolCallId}
             turnActive={turnActive}
             turnFailedWithoutProse={turnFailedWithoutProse}
           />,
@@ -483,12 +483,12 @@ export function AgentMessageRow({
   onRegenerate,
   onRetry,
   onNodeReferenceOpen,
-  onOpenSubagentTranscript,
+  onOpenChildRunTranscript,
   onSwitchBranch,
   pendingToolCallIds,
   conversationId,
   streaming: streamingOverride,
-  subagentsByParentToolCallId,
+  childRunsByParentToolCallId,
   toolResults,
   turnEnded = false,
   turnPhase = 'idle',
@@ -668,18 +668,18 @@ export function AgentMessageRow({
     index,
     expandState,
     onNodeReferenceOpen,
-    onOpenSubagentTranscript,
+    onOpenChildRunTranscript,
     pendingToolCallIds,
     conversationId,
     streaming,
-    subagentsByParentToolCallId,
+    childRunsByParentToolCallId,
     toolResults,
     turnActive,
     turnEnded,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
 
-  // A sealed assistant turn whose only content was a subagent spawn renders no
+  // A sealed assistant turn whose only content was a child run spawn renders no
   // blocks (the run is shown as the boundary that follows) — skip the empty bubble
   // entirely rather than leave a blank frame.
   if (assistantBlocks.length === 0 && !hasError && !turnActive) return null;

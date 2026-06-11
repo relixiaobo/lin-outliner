@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { buildFreshAgentSystemPrompt } from '../../src/main/agentSubagents';
+import { buildFreshAgentSystemPrompt } from '../../src/main/agentDelegation';
 import type { AgentDefinition } from '../../src/core/types';
 
-// A fresh subagent is the SAME Tenon agent in headless mode: it reuses the
-// shared-core system prompt and layers a subagent identity + directive (and the
-// definition's persona body, if any) on top. See [[subagent-prompt-unification]].
+// A fresh child run is the SAME Tenon agent in headless mode: it reuses the
+// shared-core system prompt and layers a child run identity + directive (and the
+// definition's persona body, if any) on top. See [[child-run-prompt-unification]].
 
 function def(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -12,18 +12,18 @@ function def(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/general',
-    description: 'General-purpose focused subagent for research, analysis, and execution.',
+    description: 'General-purpose focused child run for research, analysis, and execution.',
     body: '',
     ...overrides,
   };
 }
 
 describe('buildFreshAgentSystemPrompt', () => {
-  test('reuses the shared core + a headless subagent directive', () => {
+  test('reuses the shared core + a headless child run directive', () => {
     const prompt = buildFreshAgentSystemPrompt(def());
-    // Subagent identity + directive.
-    expect(prompt).toContain('You are a Tenon subagent');
-    expect(prompt).toContain('# Subagent rules');
+    // Child run identity + directive.
+    expect(prompt).toContain('You are a Tenon child agent');
+    expect(prompt).toContain('# Child run rules');
     expect(prompt).toContain('never ask the user questions');
     expect(prompt).toContain('Agent type: general');
     // The shared base capabilities (not a stripped-down persona).

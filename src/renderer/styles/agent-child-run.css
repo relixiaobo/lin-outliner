@@ -232,14 +232,14 @@
   color: var(--danger);
 }
 
-.agent-subagent-inline {
+.agent-child-run-inline {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-5);
 }
 
-.agent-subagent-meta-grid {
+.agent-child-run-meta-grid {
   display: grid;
   min-width: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -247,19 +247,19 @@
   margin: 0;
 }
 
-.agent-subagent-meta-grid > div {
+.agent-child-run-meta-grid > div {
   min-width: 0;
 }
 
-.agent-subagent-meta-grid dt,
-.agent-subagent-metadata dt {
+.agent-child-run-meta-grid dt,
+.agent-child-run-metadata dt {
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
 
-.agent-subagent-meta-grid dd,
-.agent-subagent-metadata dd {
+.agent-child-run-meta-grid dd,
+.agent-child-run-metadata dd {
   min-width: 0;
   margin: var(--space-1) 0 0;
   overflow-wrap: anywhere;
@@ -268,15 +268,15 @@
   line-height: var(--line-meta);
 }
 
-.agent-subagent-inline-actions {
+.agent-child-run-inline-actions {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
 }
 
-.agent-subagent-transcript-button,
-.agent-subagent-small-button {
+.agent-child-run-transcript-button,
+.agent-child-run-small-button {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
@@ -288,19 +288,19 @@
   padding: 0 var(--space-3);
 }
 
-.agent-subagent-transcript-button:hover:not(:disabled),
-.agent-subagent-small-button:hover:not(:disabled) {
+.agent-child-run-transcript-button:hover:not(:disabled),
+.agent-child-run-small-button:hover:not(:disabled) {
   background: var(--control-hover);
   color: var(--text-strong);
 }
 
-.agent-subagent-transcript-button:disabled,
-.agent-subagent-small-button:disabled {
+.agent-child-run-transcript-button:disabled,
+.agent-child-run-small-button:disabled {
   cursor: default;
   opacity: 0.5;
 }
 
-.agent-subagent-details-panel {
+.agent-child-run-details-panel {
   position: absolute;
   z-index: var(--z-popover);
   top: 0;
@@ -315,7 +315,7 @@
   box-shadow: var(--agent-side-panel-shadow);
 }
 
-.agent-subagent-details-header {
+.agent-child-run-details-header {
   display: flex;
   flex: 0 0 auto;
   align-items: flex-start;
@@ -326,11 +326,11 @@
   padding: var(--chrome-height) var(--space-6) var(--space-6);
 }
 
-.agent-subagent-title-block {
+.agent-child-run-title-block {
   min-width: 0;
 }
 
-.agent-subagent-title-line {
+.agent-child-run-title-line {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -339,7 +339,7 @@
   line-height: var(--line-ui-xs);
 }
 
-.agent-subagent-title-block h3 {
+.agent-child-run-title-block h3 {
   margin: var(--space-3) 0 var(--space-2);
   overflow-wrap: anywhere;
   color: var(--text-strong);
@@ -347,14 +347,14 @@
   line-height: var(--line-ui-md);
 }
 
-.agent-subagent-title-block p {
+.agent-child-run-title-block p {
   margin: 0;
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
 
-.agent-subagent-status {
+.agent-child-run-status {
   display: inline-flex;
   min-height: 20px;
   align-items: center;
@@ -364,27 +364,27 @@
   padding: 0 var(--space-2);
 }
 
-.agent-subagent-status.is-running {
+.agent-child-run-status.is-running {
   background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
   color: var(--agent-accent);
 }
 
-.agent-subagent-status.is-completed {
+.agent-child-run-status.is-completed {
   background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
   color: var(--semantic-success-strong);
 }
 
-.agent-subagent-status.is-failed,
-.agent-subagent-status.is-stopped {
+.agent-child-run-status.is-failed,
+.agent-child-run-status.is-stopped {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
 
-.agent-subagent-close {
+.agent-child-run-close {
   flex: 0 0 auto;
 }
 
-.agent-subagent-tabs {
+.agent-child-run-tabs {
   display: flex;
   flex: 0 0 auto;
   gap: var(--space-2);
@@ -392,7 +392,7 @@
   padding: var(--space-4) var(--space-6);
 }
 
-.agent-subagent-tab {
+.agent-child-run-tab {
   min-height: 28px;
   border-radius: var(--radius-sm);
   color: var(--text-soft);
@@ -401,14 +401,14 @@
   padding: 0 var(--space-4);
 }
 
-.agent-subagent-tab:hover,
-.agent-subagent-tab:focus-visible,
-.agent-subagent-tab.is-active {
+.agent-child-run-tab:hover,
+.agent-child-run-tab:focus-visible,
+.agent-child-run-tab.is-active {
   background: var(--control-hover);
   color: var(--text-strong);
 }
 
-.agent-subagent-actions {
+.agent-child-run-actions {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
@@ -417,7 +417,7 @@
   padding: var(--space-5) var(--space-6);
 }
 
-.agent-subagent-followup {
+.agent-child-run-followup {
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -425,7 +425,7 @@
   align-items: end;
 }
 
-.agent-subagent-followup textarea {
+.agent-child-run-followup textarea {
   min-width: 0;
   resize: vertical;
   border: 1px solid var(--border-subtle);
@@ -440,24 +440,24 @@
   padding: var(--space-3) var(--space-4);
 }
 
-.agent-subagent-followup textarea:focus {
+.agent-child-run-followup textarea:focus {
   border-color: color-mix(in srgb, var(--agent-accent) 44%, var(--border-subtle));
   outline: none;
 }
 
-.agent-subagent-followup textarea:disabled {
+.agent-child-run-followup textarea:disabled {
   background: var(--surface-soft);
   color: var(--text-disabled);
 }
 
-.agent-subagent-action-buttons {
+.agent-child-run-action-buttons {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-.agent-subagent-send-button,
-.agent-subagent-stop-button {
+.agent-child-run-send-button,
+.agent-child-run-stop-button {
   min-height: 30px;
   border-radius: var(--radius-sm);
   font-size: var(--font-ui-xs);
@@ -465,28 +465,28 @@
   padding: 0 var(--space-5);
 }
 
-.agent-subagent-send-button {
+.agent-child-run-send-button {
   background: var(--text-strong);
   color: var(--surface);
 }
 
-.agent-subagent-stop-button {
+.agent-child-run-stop-button {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
 
-.agent-subagent-send-button:hover:not(:disabled),
-.agent-subagent-stop-button:hover:not(:disabled) {
+.agent-child-run-send-button:hover:not(:disabled),
+.agent-child-run-stop-button:hover:not(:disabled) {
   filter: brightness(0.96);
 }
 
-.agent-subagent-send-button:disabled,
-.agent-subagent-stop-button:disabled {
+.agent-child-run-send-button:disabled,
+.agent-child-run-stop-button:disabled {
   cursor: default;
   opacity: 0.5;
 }
 
-.agent-subagent-action-error {
+.agent-child-run-action-error {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -495,14 +495,14 @@
   line-height: var(--line-meta);
 }
 
-.agent-subagent-details-body {
+.agent-child-run-details-body {
   min-height: 0;
   flex: 1;
   overflow: auto;
   padding: var(--space-6) var(--space-6) var(--space-8);
 }
 
-.agent-subagent-empty {
+.agent-child-run-empty {
   display: flex;
   min-height: 140px;
   align-items: center;
@@ -513,40 +513,40 @@
   line-height: var(--line-meta);
 }
 
-.agent-subagent-empty.is-error {
+.agent-child-run-empty.is-error {
   color: var(--danger);
 }
 
-.agent-subagent-transcript-list {
+.agent-child-run-transcript-list {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-6);
 }
 
-.agent-subagent-transcript-message {
+.agent-child-run-transcript-message {
   min-width: 0;
   border-left: 2px solid var(--border-subtle);
   padding-left: var(--space-5);
 }
 
-.agent-subagent-transcript-message.is-user {
+.agent-child-run-transcript-message.is-user {
   border-left-color: var(--agent-accent);
 }
 
-.agent-subagent-transcript-message.is-assistant {
+.agent-child-run-transcript-message.is-assistant {
   border-left-color: var(--text-faint);
 }
 
-.agent-subagent-transcript-message.is-system {
+.agent-child-run-transcript-message.is-system {
   border-left-color: var(--border-strong);
 }
 
-.agent-subagent-transcript-message.is-tool-result {
+.agent-child-run-transcript-message.is-tool-result {
   border-left-color: var(--semantic-warning);
 }
 
-.agent-subagent-transcript-head {
+.agent-child-run-transcript-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -558,14 +558,14 @@
   text-transform: lowercase;
 }
 
-.agent-subagent-assistant-body {
+.agent-child-run-assistant-body {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-4);
 }
 
-.agent-subagent-thinking {
+.agent-child-run-thinking {
   min-width: 0;
   color: var(--text-faint);
   font-size: var(--font-meta);
@@ -573,9 +573,9 @@
 }
 
 
-.agent-subagent-thinking pre,
-.agent-subagent-transcript-message.is-tool-result pre,
-.agent-subagent-result-box pre {
+.agent-child-run-thinking pre,
+.agent-child-run-transcript-message.is-tool-result pre,
+.agent-child-run-result-box pre {
   max-height: 280px;
   overflow: auto;
   margin: var(--space-3) 0 0;
@@ -586,14 +586,14 @@
   white-space: pre-wrap;
 }
 
-.agent-subagent-image-list {
+.agent-child-run-image-list {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
   margin-top: var(--space-3);
 }
 
-.agent-subagent-image-list img {
+.agent-child-run-image-list img {
   max-width: min(240px, 100%);
   max-height: 180px;
   border: 1px solid var(--border-subtle);
@@ -601,12 +601,12 @@
   object-fit: contain;
 }
 
-.agent-subagent-result-box {
+.agent-child-run-result-box {
   position: relative;
   min-width: 0;
 }
 
-.agent-subagent-result-actions {
+.agent-child-run-result-actions {
   position: sticky;
   top: 0;
   display: flex;
@@ -614,7 +614,7 @@
   margin-bottom: var(--space-3);
 }
 
-.agent-subagent-metadata {
+.agent-child-run-metadata {
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
@@ -622,16 +622,16 @@
   margin: 0;
 }
 
-.agent-subagent-metadata > div {
+.agent-child-run-metadata > div {
   display: contents;
 }
 
 @media (max-width: 720px) {
-  .agent-subagent-followup {
+  .agent-child-run-followup {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .agent-subagent-action-buttons {
+  .agent-child-run-action-buttons {
     justify-content: flex-end;
   }
 }

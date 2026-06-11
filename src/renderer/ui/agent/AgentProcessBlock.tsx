@@ -1,5 +1,5 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
-import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import {
   BrainIcon,
@@ -40,12 +40,12 @@ interface AgentProcessBlockProps {
   id: string;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenSubagentTranscript?: (subagentId: string) => void;
+  onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   sealed: boolean;
   conversationId?: string | null;
-  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
+  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
 }
@@ -131,12 +131,12 @@ export function AgentProcessBlock({
   id,
   index,
   onNodeReferenceOpen,
-  onOpenSubagentTranscript,
+  onOpenChildRunTranscript,
   pendingToolCallIds,
   results,
   sealed,
   conversationId,
-  subagentsByParentToolCallId,
+  childRunsByParentToolCallId,
   turnActive,
   turnFailedWithoutProse,
 }: AgentProcessBlockProps) {
@@ -205,11 +205,11 @@ export function AgentProcessBlock({
           id={id}
           index={index}
           onNodeReferenceOpen={onNodeReferenceOpen}
-          onOpenSubagentTranscript={onOpenSubagentTranscript}
+          onOpenChildRunTranscript={onOpenChildRunTranscript}
           pendingToolCallIds={pendingToolCallIds}
           results={results}
           conversationId={conversationId}
-          subagentsByParentToolCallId={subagentsByParentToolCallId}
+          childRunsByParentToolCallId={childRunsByParentToolCallId}
           turnActive={turnActive}
         />
       ) : null}

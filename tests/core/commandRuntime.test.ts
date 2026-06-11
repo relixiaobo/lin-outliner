@@ -103,10 +103,10 @@ describe('command runtime — failed fires', () => {
       lastSuccessAt: null,
       commandAgent: undefined,
     };
-    // The provider-less env can't truly run a subagent, so stub the execution to a
+    // The provider-less env can't truly run a child run, so stub the execution to a
     // clean completion — this exercises fireCommand's SUCCESS branch (the run is
     // covered end-to-end by the failed-fire test above).
-    (runtime as unknown as { runCommandSubagent: () => Promise<void> }).runCommandSubagent = async () => undefined;
+    (runtime as unknown as { runCommandChildAgent: () => Promise<void> }).runCommandChildAgent = async () => undefined;
     const backoff = (runtime as unknown as { commandBackoffUntil: Map<string, number> }).commandBackoffUntil;
     const failures = (runtime as unknown as { commandFailureCounts: Map<string, number> }).commandFailureCounts;
     backoff.set('cmd-ok', Date.now() + 100_000);
@@ -182,7 +182,7 @@ describe('command runtime — at-most-once', () => {
     roots.push(dataRoot);
     const calls: HandleCall[] = [];
     const runtime = await createRuntime(dataRoot, Core.new(), calls);
-    (runtime as unknown as { runCommandSubagent: () => Promise<void> }).runCommandSubagent = async () => undefined;
+    (runtime as unknown as { runCommandChildAgent: () => Promise<void> }).runCommandChildAgent = async () => undefined;
 
     await (runtime as unknown as { fireCommand: (d: typeof due, now: Date) => Promise<void> })
       .fireCommand(due, new Date(2026, 5, 9, 10, 0));

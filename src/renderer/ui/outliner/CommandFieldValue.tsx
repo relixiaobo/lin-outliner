@@ -67,7 +67,7 @@ export function useCommandAgentOptions(): readonly CommandAgentOption[] {
 // Drives an attended "run now": 1) ensure the delivery conversation exists on
 // disk, 2) reveal + select it (loads the single in-memory conversation) and AWAIT that
 // so the run never recreates the conversation mid-flight, then 3) run it. The run
-// surfaces inline as a subagent boundary in the conversation (its permanent
+// surfaces inline as a child run boundary in the conversation (its permanent
 // record), so failures that reach the conversation show there — nothing is
 // reflected on the Run button. `running` drives ONLY the command bullet's
 // processing spinner (the running indicator lives at the bullet, per the design);

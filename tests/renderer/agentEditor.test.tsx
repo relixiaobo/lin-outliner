@@ -43,8 +43,8 @@ function builtIn(): AgentDefinitionView {
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/general',
-    description: 'General-purpose subagent',
-    body: 'You are a focused subagent.',
+    description: 'General-purpose child run',
+    body: 'You are a focused child agent.',
   };
 }
 
@@ -106,7 +106,7 @@ describe('AgentEditor', () => {
     expect(raw).toContain('name: my-agent');
     expect(raw).toContain('permission-mode: restricted');
     expect(raw).toContain('max-turns: 20');
-    expect(raw).toContain('You are a focused subagent.');
+    expect(raw).toContain('You are a focused child agent.');
     // All tools on + model inherit by default ⇒ neither key appears in Raw.
     expect(raw).not.toContain('tools:');
     expect(raw).not.toContain('model:');

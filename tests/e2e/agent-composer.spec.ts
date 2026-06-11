@@ -1814,7 +1814,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
 
-  test('opens subagent details and expands nested tool calls', async ({ page }) => {
+  test('opens child run details and expands nested tool calls', async ({ page }) => {
     const usage = {
       input: 0,
       output: 0,
@@ -1835,16 +1835,16 @@ test.describe('agent composer controls', () => {
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {
-          nodeId: 'agent-user-subagent',
+          nodeId: 'agent-user-child-run',
           message: {
             role: 'user',
             timestamp: 1_800_000_000_500,
-            content: [{ type: 'text', text: 'Use a subagent to inspect the UI.' }],
+            content: [{ type: 'text', text: 'Use a child run to inspect the UI.' }],
           },
           branches: null,
         },
         {
-          nodeId: 'agent-assistant-subagent',
+          nodeId: 'agent-assistant-child-run',
           message: {
             role: 'assistant',
             timestamp: 1_800_000_000_700,
@@ -1858,7 +1858,7 @@ test.describe('agent composer controls', () => {
               id: 'tool-agent-1',
               name: 'Agent',
               arguments: {
-                description: 'Inspect subagent UI',
+                description: 'Inspect child run UI',
                 prompt: 'Inspect the current UI.',
               },
             }],
@@ -1866,39 +1866,37 @@ test.describe('agent composer controls', () => {
           branches: null,
         },
       ],
-      subagents: [{
-        id: 'subagent-1',
-        description: 'Inspect subagent UI',
+      childRuns: [{
+        id: 'child-run-1',
+        description: 'Inspect child run UI',
         prompt: 'Inspect the current UI.',
-        subagentType: 'explorer',
+        agentType: 'explorer',
         contextMode: 'fork',
         status: 'running',
         startedAt: 1_800_000_000_800,
         updatedAt: 1_800_000_001_200,
-        transcriptPayloadId: 'subagent-transcript-1',
-        transcriptMessageCount: 4,
         parentToolCallId: 'tool-agent-1',
       }],
     });
 
-    // A main-agent-spawned subagent renders as an inline boundary in the
+    // A main-agent-spawned child run renders as an inline boundary in the
     // transcript (the conversation's permanent record of the run), not as a
     // tool-call block inside the assistant bubble. The bubble is suppressed.
-    const boundary = page.getByRole('region', { name: 'Subagent · Inspect subagent UI' });
+    const boundary = page.getByRole('region', { name: 'Agent task · Inspect child run UI' });
     await expect(boundary).toBeVisible();
     await expect(boundary.getByText('Running…')).toBeVisible();
-    await expect(page.getByText('Subagent · Inspect subagent UI', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Open task panel' }).click();
     const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
     await expect(tasks).toBeVisible();
     await expect(tasks.getByText('1 task running')).toBeVisible();
-    await expect(tasks.getByText('Inspect subagent UI')).toBeVisible();
+    await expect(tasks.getByText('Inspect child run UI')).toBeVisible();
     await tasks.getByRole('button', { name: 'Open task' }).click();
 
-    const details = page.getByRole('complementary', { name: 'Subagent details' });
+    const details = page.getByRole('complementary', { name: 'Agent task details' });
     await expect(details).toBeVisible();
-    await expect(details.getByText('Inspect subagent UI')).toBeVisible();
+    await expect(details.getByText('Inspect child run UI')).toBeVisible();
     await expect(page.getByText('fork · explorer')).toBeVisible();
 
     await expect(details).toBeVisible();
@@ -1907,35 +1905,35 @@ test.describe('agent composer controls', () => {
     await expect(details.getByText('Read node "today"')).toBeVisible();
 
     await details.getByText('Read node "today"').click();
-    await expect(details.getByText('Daily note content from subagent.')).toBeVisible();
+    await expect(details.getByText('Daily note content from child run.')).toBeVisible();
 
-    await details.getByLabel('Subagent follow-up').fill('Continue with layout risks.');
+    await details.getByLabel('Agent task follow-up').fill('Continue with layout risks.');
     await details.getByRole('button', { name: 'Send' }).click();
     await details.getByRole('button', { name: 'Stop' }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.filter((call) => call.cmd === 'agent_subagent_send' || call.cmd === 'agent_subagent_stop')
+      return calls.filter((call) => call.cmd === 'agent_child_run_send' || call.cmd === 'agent_child_run_stop')
         .map((call) => ({ cmd: call.cmd, args: call.args }));
     }).toEqual([
       {
-        cmd: 'agent_subagent_send',
+        cmd: 'agent_child_run_send',
         args: {
-          agentId: 'subagent-1',
+          agentId: 'child-run-1',
           message: 'Continue with layout risks.',
           conversationId: 'mock-agent-conversation',
         },
       },
       {
-        cmd: 'agent_subagent_stop',
+        cmd: 'agent_child_run_stop',
         args: {
-          agentId: 'subagent-1',
+          agentId: 'child-run-1',
           conversationId: 'mock-agent-conversation',
         },
       },
     ]);
 
-    await details.getByRole('button', { name: 'Close subagent details' }).click();
+    await details.getByRole('button', { name: 'Close agent task details' }).click();
     await expect(details).toHaveCount(0);
     await tasks.getByRole('button', { name: 'Close task panel' }).click();
     await expect(tasks).toHaveCount(0);

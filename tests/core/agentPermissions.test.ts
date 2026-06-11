@@ -450,7 +450,7 @@ describe('agent permissions', () => {
       args: { command: 'git push origin codex/foo' },
       policy: { workspaceRoot: '/tmp/workspace' },
     });
-    const subagent = evaluateAgentToolPermission({
+    const childRun = evaluateAgentToolPermission({
       toolName: 'agent',
       args: { description: 'Investigate' },
       policy: { workspaceRoot: '/tmp/workspace' },
@@ -458,7 +458,7 @@ describe('agent permissions', () => {
 
     expect(gitPush.behavior === 'ask' ? gitPush.request.alwaysAllowRule : undefined)
       .toBe('Action(git.publish_remote)');
-    expect(subagent.behavior === 'ask' ? subagent.request.alwaysAllowRule : undefined)
+    expect(childRun.behavior === 'ask' ? childRun.request.alwaysAllowRule : undefined)
       .toBeUndefined();
   });
 
@@ -689,7 +689,7 @@ describe('agent permissions', () => {
           'Bash(tsx:*)',
           'Bash(PowerShell:*)',
           'Action(shell.unknown)',
-          'Action(agent.subagent.spawn)',
+          'Action(agent.delegate.spawn)',
           'Capability(agent_spawn)',
           'Capability(external_messaging)',
         ],

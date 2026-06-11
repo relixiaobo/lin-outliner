@@ -1,8 +1,17 @@
-# Agent Subagent Runtime
+# Agent Delegation Runtime (child runs)
 
-This document is the design and implementation baseline for Lin's subagent
+> **Run unification (2026-06-11):** the "child run" entity is dissolved — a
+> delegated (child) run is an ordinary Run with its OWN `runs/<runId>/` ledger
+> (own seq space, replayed alone), kind `delegation`, joined to the parent by
+> `parentRunId`/`parentToolCallId`. Transcript payload snapshots, the
+> `runId:message:N` codec, the positional Dream watermark, and the
+> snapshot-rewrite compaction are deleted; child compaction is event-sourced
+> like a conversation's. Vocabulary below was rewritten accordingly; cc-2.1
+> references describe the SOURCE system's wording, not ours.
+
+This document is the design and implementation baseline for Tenon's delegation
 runtime. It records both the cc-2.1 source references used for alignment and the
-Lin-specific choices made while implementing the current same-conversation subagent
+Lin-specific choices made while implementing the current same-conversation child run
 runtime.
 
 ## Local Source References
@@ -29,50 +38,50 @@ runtime should use `.agents/*` paths and Lin-owned event store semantics.
 ## Decision
 
 Lin does not introduce Team, Swarm, or Delegate as first-class model-facing
-concepts for the same-conversation subagent runtime.
+concepts for the same-conversation child-run runtime.
 
 The model-facing concept should be the same mature concept used by cc-2.1's core
-subagent path:
+child run path:
 
 ```text
 main agent conversation
   -> Agent tool
-      -> subagent run
+      -> child run
           -> pi-mono Agent instance
           -> sidechain transcript
           -> status/progress/result notification
 ```
 
-Subagents are conversation-scoped execution units. The main agent remains the
-coordinator. Multiple subagents run in parallel when the model emits multiple
+Child runs are conversation-scoped execution units. The main agent remains the
+coordinator. Multiple child runs run in parallel when the model emits multiple
 `Agent` tool calls in the same turn.
 
-Subagent is therefore Lin's isolated cognition and task execution unit. It is not
+Child run is therefore Lin's isolated cognition and task execution unit. It is not
 a team member, a code-editing sandbox, or a cross-conversation messaging peer.
 
 ## Reference Implementation Findings
 
 cc-2.1 contains two layers:
 
-- Core subagent layer: mature and worth reproducing.
+- Core child run layer: mature and worth reproducing.
 - Team/swarm layer: useful for cc-2.1's teammate workflow, but not part of Lin's
-  initial subagent runtime.
+  initial child-run runtime.
 
 | cc-2.1 source | Behavior to study | Lin decision |
 | --- | --- | --- |
 | `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Use `Agent` as the model-facing tool. Do not introduce `delegate`. |
-| `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core Agent/subagent path. Omit teammate, team, worktree, and remote branches initially. |
-| `src/tools/AgentTool/prompt.ts` | Teaches when to use subagents, how to brief fresh agents, how to launch multiple agents in one turn, and how fork differs from fresh. | Reuse the guidance style and parallelism rules, with Lin terminology. |
-| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `subagent_type`, cache-stable fork directive, recursive fork guard. | Reuse fork behavior. Prefer cc-compatible implicit fork rather than adding a `context` parameter. |
-| `src/tools/AgentTool/runAgent.ts` | Builds isolated subagent context, system prompt, tool pool, sidechain transcript, skill preload, cleanup, and query loop. | Reuse the execution shape with pi-mono `Agent`; defer hooks and agent-specific MCP. |
+| `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core Agent/child run path. Omit teammate, team, worktree, and remote branches initially. |
+| `src/tools/AgentTool/prompt.ts` | Teaches when to use child runs, how to brief fresh agents, how to launch multiple agents in one turn, and how fork differs from fresh. | Reuse the guidance style and parallelism rules, with Lin terminology. |
+| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse fork behavior. Prefer cc-compatible implicit fork rather than adding a `context` parameter. |
+| `src/tools/AgentTool/runAgent.ts` | Builds isolated child run context, system prompt, tool pool, sidechain transcript, skill preload, cleanup, and query loop. | Reuse the execution shape with pi-mono `Agent`; defer hooks and agent-specific MCP. |
 | `src/utils/forkedAgent.ts` | Creates isolated tool-use context, cloned read state, cloned content replacement state, child abort behavior, cache-safe fork helpers. | Reuse the isolation and cache-stability ideas in Lin-owned runtime context types. |
 | `src/tools/AgentTool/loadAgentsDir.ts` | Loads agent definitions from markdown and JSON, including tools, model, effort, permission mode, max turns, skills, background, hooks, MCP, memory, isolation. | Implement `.agents/agents` definitions. Support the core fields now; defer hooks, MCP, memory, and isolation. |
-| `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and subagent runtime state. |
-| `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-conversation subagent continuation. |
+| `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and child-run runtime state. |
+| `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-conversation child run continuation. |
 | `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `AgentStatus` only for explicit status/wait checks. |
-| `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `AgentStop` for subagent ids/names. |
-| `src/tools/TeamCreateTool/*` | Creates team config, team task list, leader state, teammate workflow. | Do not copy for initial subagents. |
-| `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `AgentSend` only for same-conversation subagent continuation. Future global messaging gets separate tools. |
+| `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `AgentStop` for child run ids/names. |
+| `src/tools/TeamCreateTool/*` | Creates team config, team task list, leader state, teammate workflow. | Do not copy for initial child runs. |
+| `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `AgentSend` only for same-conversation child run continuation. Future global messaging gets separate tools. |
 
 ### Source-Level Design Anchors
 
@@ -82,14 +91,14 @@ design.
 Key anchors:
 
 - `src/tools/AgentTool/AgentTool.tsx:81-88`: the core `Agent` input schema is
-  `description`, `prompt`, `subagent_type`, `model`, and `run_in_background`.
+  `description`, `prompt`, `agent_type`, `model`, and `run_in_background`.
   Lin's `Agent` tool starts from this shape.
 - `src/tools/AgentTool/AgentTool.tsx:90-101`: `name`, `team_name`, `mode`,
   `isolation`, and `cwd` are added on top of the core schema for teammate,
   team, and isolation behavior. Lin keeps only `name` as a same-conversation alias
   and omits the rest in the first version.
 - `src/tools/AgentTool/AgentTool.tsx:318-335`: fresh/fork routing is controlled
-  by `subagent_type`. When it is set, that agent definition wins. When omitted
+  by `agent_type`. When it is set, that agent definition wins. When omitted
   and fork is enabled, the path is fork. This is why Lin does not add a separate
   model-facing `context` field.
 - `src/tools/AgentTool/AgentTool.tsx:483-540`: fork children inherit the parent
@@ -99,7 +108,7 @@ Key anchors:
   tools, parent messages, and `useExactTools` for cache-stable API prefixes.
   Lin's fork path must preserve the same cache-sensitive shape where pi-mono
   exposes the needed state.
-- `src/tools/AgentTool/AgentTool.tsx:686-765`: async/background subagents are
+- `src/tools/AgentTool/AgentTool.tsx:686-765`: async/background child runs are
   registered with an id, run detached, and return `async_launched` metadata.
   Lin's background lifecycle follows this state machine, but not the cc UI/output
   file details.
@@ -110,21 +119,21 @@ Key anchors:
   into initial messages and read-file state is cloned. Lin must preserve this
   separation between inherited context and child-local mutable state.
 - `src/tools/AgentTool/runAgent.ts:412-498`: agent permission mode, prompt
-  avoidance for async agents, allowed tools, and effort are derived per subagent.
+  avoidance for async agents, allowed tools, and effort are derived per child run.
   Lin implements a smaller policy, but the runtime must still resolve these per
-  subagent rather than relying on the parent agent's live state.
+  child run rather than relying on the parent agent's live state.
 - `src/tools/AgentTool/runAgent.ts:500-529`: `useExactTools` bypasses normal tool
   resolution and async agents get an unlinked abort controller. Lin should keep
   the same distinction between cache-sensitive fork tools and normal fresh-agent
   tool profiles.
 - `src/tools/AgentTool/runAgent.ts:577-645`: skills from agent frontmatter are
-  preloaded into the subagent's initial messages. Lin keeps `skills` as a first
+  preloaded into the child run's initial messages. Lin keeps `skills` as a first
   version agent-definition field.
-- `src/tools/AgentTool/runAgent.ts:666-714`: subagent options disable thinking
-  for regular subagents, inherit thinking for `useExactTools` fork children, and
-  create an isolated subagent tool-use context. Lin maps this to pi-mono
+- `src/tools/AgentTool/runAgent.ts:666-714`: child run options disable thinking
+  for regular child runs, inherit thinking for `useExactTools` fork children, and
+  create an isolated child run tool-use context. Lin maps this to pi-mono
   `Agent` state, `transformContext`, and tool profiles.
-- `src/tools/AgentTool/runAgent.ts:732-805`: initial and subsequent subagent
+- `src/tools/AgentTool/runAgent.ts:732-805`: initial and subsequent child run
   messages are recorded into a sidechain transcript. Lin's parent conversation must
   not inline child tool noise.
 - `src/tools/AgentTool/runAgent.ts:816-859`: cleanup tears down agent-specific
@@ -133,7 +142,7 @@ Key anchors:
 - `src/utils/forkedAgent.ts:306-461`: `createSubagentContext` clones mutable
   context, stubs mutation callbacks, preserves root task writes, isolates denial
   tracking, clones tool-output replacement state, and creates a new query chain.
-  This is the main source for Lin's subagent context isolation design.
+  This is the main source for Lin's child run context isolation design.
 - `src/tools/AgentTool/resumeAgent.ts:63-79`: resume loads sidechain transcript
   and reconstructs tool-output replacement state. `AgentSend` must do the same.
 - `src/tools/AgentTool/resumeAgent.ts:99-195`: resume restores fork vs fresh
@@ -154,7 +163,7 @@ Key anchors:
 ## External Open-Source Research
 
 These projects are secondary references. cc-2.1 remains the behavioral source of
-truth for Lin's first subagent runtime. The external research is useful for
+truth for Lin's first child-run runtime. The external research is useful for
 validating guardrails, naming boundaries, concurrency behavior, and the features
 that should stay out of the first version.
 
@@ -162,14 +171,14 @@ that should stay out of the first version.
 
 [pi-subagent](https://github.com/mjakl/pi-subagent)
 
-Problem definition: add specialized subagents to Pi with explicit context
+Problem definition: add specialized child runs to Pi with explicit context
 control.
 
-Observed approach: registers a `subagent` tool, discovers markdown agent
+Observed approach: registers a `child run` tool, discovers markdown agent
 definitions, supports `spawn` and `fork`, can run a single task or a bounded
 parallel batch, launches isolated `pi` child processes, propagates depth and
 ancestry through environment variables, prevents cycles, and returns only the
-final subagent summary to the parent. Source files reviewed: `index.ts`,
+final child run summary to the parent. Source files reviewed: `index.ts`,
 `runner.ts`, `agents.ts`, `types.ts`, `runner-events.js`, and `render.ts`.
 
 Lin decision: this is the highest-value external source because it is Pi-based.
@@ -181,10 +190,10 @@ to `pi` when Lin can preserve the same isolation contract. Keep Lin's
 
 [ECA](https://eca.dev/)
 
-Problem definition: let a primary chat use focused subagents without polluting
+Problem definition: let a primary chat use focused child runs without polluting
 the primary context.
 
-Observed approach: defines `primary` and `subagent` modes, exposes subagents
+Observed approach: defines `primary` and `child run` modes, exposes child runs
 through a `spawn_agent` tool, creates a child chat tied to the parent tool call,
 streams progress through tool metadata, stores the child transcript separately,
 replays child messages in the UI, resolves model overrides from request, agent
@@ -214,7 +223,7 @@ files reviewed: `src/orchestrator/orchestrator.ts`,
 `src/tool/executor.ts`.
 
 Lin decision: useful as a warning boundary. Team/DAG/coordinator/shared-memory
-orchestration is a higher-level workflow system, not Lin's first subagent
+orchestration is a higher-level workflow system, not Lin's first child run
 runtime. Borrow pool limits, cycle/depth/deadlock guards, and tool-output
 slimming ideas. Do not introduce first-class Team, Delegate, DAG, or shared
 memory for the first version.
@@ -224,18 +233,18 @@ memory for the first version.
 Problem definition: model multi-agent applications as role-based agencies with
 explicit communication paths.
 
-Observed approach: agents register subagents or communication flows, then use a
+Observed approach: agents register child runs or communication flows, then use a
 generated `send_message` tool whose recipient enum is scoped to allowed
 recipients. Calls are synchronous, recipient-specific, guarded against
 simultaneous messages to the same recipient, and can stream child events. Source
 files reviewed: `src/agency_swarm/agency/core.py`,
-`src/agency_swarm/agent/subagents.py`,
+`src/agency_swarm/agent/child runs.py`,
 `src/agency_swarm/tools/send_message.py`, and `src/agency_swarm/context.py`.
 
 Lin decision: good evidence that generic agent messaging needs explicit scope.
 Lin should not expose general cross-agent messaging in the first version.
 `AgentSend` should be a same-conversation continuation tool for an existing
-background subagent run, not a global routing primitive.
+background child run, not a global routing primitive.
 
 [OpenHands Agent Delegation](https://docs.openhands.dev/sdk/guides/agent-delegation)
 
@@ -251,13 +260,13 @@ should not include worktree or remote isolation.
 [LangChain DeepAgents](https://docs.langchain.com/oss/javascript/deepagents/overview)
 
 Problem definition: package primitives needed for long-running deep tasks,
-including planning, subagents, a filesystem-like workspace, and detailed
+including planning, child runs, a filesystem-like workspace, and detailed
 prompts.
 
-Observed approach: treats subagents as one primitive inside a broader deep-task
+Observed approach: treats child runs as one primitive inside a broader deep-task
 framework.
 
-Lin decision: confirms that subagents should stay a runtime capability and not
+Lin decision: confirms that child runs should stay a runtime capability and not
 become a Team concept by default. Lin can borrow planning guidance later, but
 the first version should avoid a filesystem/workflow framework.
 
@@ -275,12 +284,12 @@ Observed approach: these projects solve broader application orchestration
 problems than a single Lin conversation needs.
 
 Lin decision: keep them as future research. Do not pull
-crew/team/workflow/memory concepts into the first subagent implementation.
+crew/team/workflow/memory concepts into the first child run implementation.
 
 ### External Research Conclusions
 
 - Keep one primary model-facing tool: `Agent`. Avoid separate Team, Delegate,
-  or general Send Message tools in the first version. Multiple subagents are
+  or general Send Message tools in the first version. Multiple child runs are
   launched by multiple `Agent` tool calls in the same turn, matching cc-2.1's
   model guidance and avoiding a second orchestration abstraction.
 - `Agent` must support both `fresh` and `fork`. External Pi and ECA
@@ -301,7 +310,7 @@ crew/team/workflow/memory concepts into the first subagent implementation.
   layer. Do not silently load untrusted local agent definitions from arbitrary
   directories.
 - `AgentSend` is intentionally narrow: continue or message an existing
-  same-conversation background subagent run. Cross-conversation and global agent
+  same-conversation background child run. Cross-conversation and global agent
   messaging are future product features and should use a separate design.
 - Team/DAG/coordinator/shared-memory systems are valid future workflows, but
   they solve a different problem. Adding them now would blur the boundary
@@ -323,7 +332,7 @@ settings.additionalAgentDirectories
 
 Each agent directory should contain an `AGENT.md` file.
 
-Supported frontmatter for the first subagent version:
+Supported frontmatter for the first child run version:
 
 - `name`
 - `description`
@@ -343,64 +352,64 @@ Deferred frontmatter:
 - `memory`
 - `isolation`
 
-The markdown body is the subagent system prompt supplement.
+The markdown body is the child run system prompt supplement.
 
-### Running Subagent
+### Running child run
+
+The in-memory run record (delegation runtime). The transcript is NOT part of the
+durable record — it is the run's own ledger, replayed on demand; `messages` is
+the live continuation context, loaded lazily on resume:
 
 ```ts
-type AgentSubagentRun = {
-  id: string;
-  conversationId: string;
+type AgentRunRecord = {
+  id: string;                       // also the run ledger id (runs/<id>/)
   name?: string;
-  subagentType: string;
   description: string;
   prompt: string;
-  status: 'running' | 'completed' | 'failed' | 'stopped';
+  agentType: string;
   contextMode: 'fresh' | 'fork';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
   executingAgentId: string;
   parentAgentId: string;
+  parentRunId?: string;             // the delegating run (run tree)
+  parentToolCallId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
-  dreamEvidenceStartMessageIndex?: number;
-  transcriptPayloadId?: string;
-  model?: string;
-  effort?: string;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
-  transcriptMessageCount: number;
-  parentToolCallId?: string;
   result?: string;
   error?: string;
+  messages: AgentMessage[];         // live context; empty until resume restores it
 };
 ```
 
-### Fresh Subagent
+### Fresh Child run
 
-A fresh subagent starts from its own agent definition and prompt. It does not
+A fresh child run starts from its own agent definition and prompt. It does not
 inherit the parent transcript. The parent must brief it with complete context.
 Its execution identity and memory owner are the called agent definition, not the
 parent agent that invoked `Agent`.
 
 Selection:
 
-- `subagent_type` set: use that agent definition.
-- `subagent_type` omitted: fork from the current conversation context.
-- Callers should pass `subagent_type: "general"` when they want a fresh general
+- `agent_type` set: use that agent definition.
+- `agent_type` omitted: fork from the current conversation context.
+- Callers should pass `agent_type: "general"` when they want a fresh general
   agent.
 
 #### System prompt — one agent, headless mode (not a separate persona)
 
-A fresh subagent is the **same Tenon agent in headless mode**, not a stripped-down
+A fresh child run is the **same Tenon agent in headless mode**, not a stripped-down
 persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
 
-1. a **subagent identity + directive** ("You are a Tenon subagent… # Subagent
-   rules": complete only the task, run headless / never ask the user, keep tool
-   chatter out of the result, stay in scope, don't over-claim);
-2. the **shared core** of the main system prompt — `LIN_SUBAGENT_CORE_PROMPT`, the
+1. a **child-agent identity + directive** ("You are a Tenon child agent… # Child
+   run rules": complete only the task, run headless / never ask the user, keep
+   tool chatter out of the result, stay in scope, don't over-claim);
+2. the **shared core** of the main system prompt — `LIN_CHILD_AGENT_CORE_PROMPT`, the
    `audience: 'shared'` sections of `LIN_AGENT_SYSTEM_PROMPT_SECTIONS`
    (system-context, outliner, local-tools, web, communication-and-safety) — so a
-   subagent carries the SAME capabilities, tool conventions, and safety rules as
+   child run carries the SAME capabilities, tool conventions, and safety rules as
    the main agent. The `audience: 'main'` sections (identity, memory) are the chat
    agent's alone and are excluded;
 3. the definition's **persona body** as `# Agent instructions`, when non-empty.
@@ -408,22 +417,22 @@ persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
 So the built-in **`general`** carries an **empty body** — it is just "the base
 agent, headless, zero persona" (the default fresh worker). A **user/project**
 definition specializes by adding a body; its body is purely additive on top of the
-shared base. This is the inverse of the earlier design where a fresh subagent got
-a bespoke minimal prompt that discarded the base. (Cost: a fresh subagent's system
+shared base. This is the inverse of the earlier design where a fresh child run got
+a bespoke minimal prompt that discarded the base. (Cost: a fresh child run's system
 prompt grows from ~80 to ~1.2k tokens — normally provider-cached. Fork is
 unaffected; see below.)
 
-### Fork Subagent
+### Fork Child run
 
-A fork subagent inherits the current prepared parent context as a cache-stable
+A fork child run inherits the current prepared parent context as a cache-stable
 snapshot. It is used when the main agent needs isolated exploration or execution
 without pulling intermediate tool output into the parent context.
 Its execution identity and memory owner remain the parent agent's identity.
 
 Selection:
 
-- `subagent_type` omitted: fork.
-- `subagent_type` set: fresh.
+- `agent_type` omitted: fork.
+- `agent_type` set: fresh.
 
 This follows cc-2.1's fork path instead of adding a new `context: "fork"` field.
 The model sees fewer concepts, and the tool stays closer to the reference
@@ -436,15 +445,18 @@ Fork requirements:
 - Preserve parent thinking/runtime params that affect cache keys.
 - Include parent messages as the fork prefix.
 - Add a short fork directive message that scopes the child task.
-- Persist the fork Dream evidence start index as run metadata. Dream must not
-  rediscover the boundary by scanning transcript text, because compaction can
-  rewrite or remove the marker text.
-- Prevent recursive fork from inside a forked subagent.
-- Store the fork transcript in sidechain storage, not in the parent transcript.
+- The fork Dream-evidence boundary is STRUCTURAL: the ledger seeds
+  `[fork context messages…, run.started, directive…]` and evidence is
+  everything past the first `run.started`. Dream must not rediscover the
+  boundary by scanning transcript text or counting positions — compaction and
+  slimming can rewrite both.
+- Prevent recursive fork from inside a forked child run.
+- Store the fork transcript in the run's own ledger, not in the parent
+  transcript.
 
 ### Sidechain Transcript
 
-Every subagent writes a separate transcript. The parent conversation stores only:
+Every child run writes a separate transcript. The parent conversation stores only:
 
 - the `Agent` tool call;
 - launch metadata;
@@ -452,24 +464,24 @@ Every subagent writes a separate transcript. The parent conversation stores only
 - final result summary;
 - stable handle for status, send, and stop.
 
-This is required so subagents reduce parent-context pressure rather than moving
+This is required so child runs reduce parent-context pressure rather than moving
 tool noise into the main conversation.
 
-The sidechain transcript is still durable evidence. Fresh subagent transcripts
+The sidechain transcript is still durable evidence. Fresh child run transcripts
 are Dream evidence for the called agent's `memoryOwnerAgentId`; fork transcripts
-are Dream evidence for the parent agent. Dream skips the copied parent-context
-prefix of a fork transcript and starts from the fork directive plus child-side
-messages, so parent history is not reprocessed as new fork evidence. If a legacy
-fork transcript has no persisted boundary, Dream skips that uncertain transcript
-instead of falling back to index 0. When a fork transcript is compacted, the
-compaction prompt omits copied pre-fork parent context and the compacted summary
-becomes the new Dream evidence start.
+are Dream evidence for the parent agent. Dream reads only events past the
+structural boundary (the ledger's first `run.started`), so parent history is
+never reprocessed as fork evidence — and a `tool_result.replaced` that slims an
+INHERITED fork-prefix result never re-enters the window (replacements are lossy
+artifacts of existing messages, not new content). When a fork ledger is
+compacted, the post-compact summary message is fresh ledger content past the
+watermark and is Dreamed like any other evidence (§13.17).
 
 ## Model-Facing Tools
 
 ### `Agent`
 
-Launches one subagent.
+Launches one child run.
 
 Input:
 
@@ -477,7 +489,7 @@ Input:
 {
   "description": "string",
   "prompt": "string",
-  "subagent_type": "optional string",
+  "agent_type": "optional string",
   "model": "optional string",
   "run_in_background": "optional boolean",
   "name": "optional string"
@@ -489,7 +501,7 @@ Field behavior:
 - `description`: short three-to-five-word task summary.
 - `prompt`: complete task instruction for fresh agents, or a directive for fork
   agents.
-- `subagent_type`: agent definition name. If omitted, run a fork subagent.
+- `agent_type`: agent definition name. If omitted, run a fork child run.
 - `model`: optional model override. Agent definition model takes precedence rules
   should match Lin's model policy.
 - `run_in_background`: if true, return immediately and notify the parent conversation
@@ -519,7 +531,7 @@ Foreground completion:
   "name": "optional string",
   "description": "string",
   "prompt": "string",
-  "subagent_type": "string",
+  "agent_type": "string",
   "context_mode": "fresh | fork",
   "result": "string",
   "started_at": 0,
@@ -538,7 +550,7 @@ Background launch:
   "name": "optional string",
   "description": "string",
   "prompt": "string",
-  "subagent_type": "string",
+  "agent_type": "string",
   "context_mode": "fresh | fork",
   "started_at": 0,
   "updated_at": 0,
@@ -548,7 +560,7 @@ Background launch:
 ```
 
 When a background run reaches `completed`, `failed`, or `stopped`, Lin appends a
-hidden `<subagent-notification>` message to the parent conversation and starts a
+hidden `<agent-task-notification>` message to the parent conversation and starts a
 parent continuation when the parent agent is idle. The notification should carry
 a durable output reference that can be read with `file_read`, matching
 cc-2.1's preferred path for background task output. The parent agent should not
@@ -556,7 +568,7 @@ poll `AgentStatus` for ordinary result retrieval.
 
 ### `AgentStatus`
 
-Reads or waits for same-conversation subagent state. It is a status/wait tool, not the
+Reads or waits for same-conversation child run state. It is a status/wait tool, not the
 normal result retrieval path.
 
 Input:
@@ -572,14 +584,14 @@ Input:
 
 Behavior:
 
-- Requires `agent_id` or `name` and returns status metadata for that subagent.
-- `wait: true` waits until the selected subagent leaves `running` or timeout.
+- Requires `agent_id` or `name` and returns status metadata for that child run.
+- `wait: true` waits until the selected child run leaves `running` or timeout.
 - Completed output should be read from the notification/output reference with
   `file_read` unless a concise result is already included in the status metadata.
 
 ### `AgentSend`
 
-Continues a same-conversation subagent by appending a new user instruction to its
+Continues a same-conversation child run by appending a new user instruction to its
 sidechain transcript and resuming it in the background.
 
 Input:
@@ -598,7 +610,7 @@ Behavior:
 - Reconstructs sidechain transcript.
 - Reconstructs tool-output replacement state for cache-stable replay.
 - Appends the message.
-- Runs the subagent in background.
+- Runs the child run in background.
 - Returns launch/status metadata.
 
 This replaces the subset of cc-2.1 `SendMessage` that resumes background agents.
@@ -607,7 +619,7 @@ or cross-conversation routes.
 
 ### `AgentStop`
 
-Stops a running same-conversation subagent.
+Stops a running same-conversation child run.
 
 Input:
 
@@ -628,9 +640,9 @@ Behavior:
 
 ## Runtime Architecture
 
-### `SubagentRuntime`
+### `AgentDelegationRuntime`
 
-Owns conversation-scoped subagent state:
+Owns conversation-scoped child-run state:
 
 - active runs;
 - id/name registry;
@@ -643,7 +655,7 @@ Owns conversation-scoped subagent state:
 It should create and manage pi-mono `Agent` instances. It should not duplicate
 pi-mono's model loop.
 
-### `SubagentRun`
+### `AgentRunRecord`
 
 Owns one concrete pi-mono `Agent` instance:
 
@@ -657,7 +669,7 @@ Owns one concrete pi-mono `Agent` instance:
 - event subscription;
 - cleanup.
 
-Each subagent gets independent runtime state unless a field is intentionally
+Each child run gets independent runtime state unless a field is intentionally
 shared for metrics or parent notification.
 
 ### `AgentDefinitionRegistry`
@@ -716,7 +728,7 @@ delete:
 - **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
   (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
   authoring write `AgentRuntime` reloads **every live conversation's** registry, so a
-  new/edited/deleted agent appears in the subagent picker and settings list
+  new/edited/deleted agent appears in the child run picker and settings list
   without an app restart. A run resolves its `AgentDefinition` at spawn, so reload
   only affects future spawns — live runs are unaffected.
 - **IPC** (additive, `AGENT_COMMANDS`): `agent_create_agent_definition`,
@@ -732,7 +744,7 @@ delete:
 #### Disabling by identity
 
 `disabledAgents` stores the full **`agentId`** (`${source}:${namespace}:${name}`,
-`agentSubagentIdentity.ts`), not the bare `name`, so disabling one source's agent
+`agentDelegationIdentity.ts`), not the bare `name`, so disabling one source's agent
 no longer disables a same-named agent from another source. The spawn gate and the
 listing filter both check `agentDefinitionAgentId(definition)`. (Pre-release: the
 stored shape switched directly with no migration — see
@@ -740,13 +752,13 @@ stored shape switched directly with no migration — see
 
 ### `AgentSkillRuntime`
 
-Skill `context: fork` calls `SubagentRuntime` instead of creating pi-mono agents
+Skill `context: fork` calls `AgentDelegationRuntime` instead of creating pi-mono agents
 directly.
 
 The skill path should:
 
 - load and render skill content;
-- run the rendered content as a sidechain subagent prompt using the skill's
+- run the rendered content as a sidechain child run prompt using the skill's
   `agent` field, or the built-in `general` agent when no agent is set;
 - pass `allowed-tools` as child-run preapproval metadata;
 - return only the final result/summary to the parent conversation.
@@ -756,30 +768,25 @@ execution context, not parent-visible steering content.
 
 ## Event Store
 
-Subagent runtime persists through Lin's event store. This follows cc-2.1's
+The child-run runtime persists through Lin's event store. This follows cc-2.1's
 sidechain transcript design in `src/tools/AgentTool/runAgent.ts:732-805`, but
 uses Lin-owned parent-conversation events and payload refs rather than a separate
 task output file.
 
 Implemented parent-conversation events:
 
-- `subagent_run.started`
-- `subagent_run.updated`
+- `child_run.started`
+- `child_run.updated`
 
-Implemented payload role:
+`child_run.started` (the conversation marker) records stable run metadata: id,
+optional same-conversation name, description, prompt, agent type, fresh/fork
+context mode, execution identity, parent agent identity, parent run id, memory
+owner identity, memory origin workspace, and parent tool call id.
 
-- `subagent_transcript`
-
-`subagent_run.started` records stable run metadata: id, optional same-conversation
-name, description, prompt, subagent type, fresh/fork context mode, execution
-identity, parent agent identity, memory owner identity, memory origin workspace,
-Dream evidence start index, parent tool call id, transcript payload ref, and
-transcript message count.
-
-`subagent_run.updated` records status transitions and transcript movement:
-`running`, `completed`, `failed`, or `stopped`, plus final result/error and the
-latest transcript payload ref. It can also move the Dream evidence start index
-when compaction rewrites the sidechain transcript.
+`child_run.updated` (the conversation marker) records status transitions:
+`running`, `completed`, `failed`, or `stopped`, plus final result/error. The
+transcript itself never moves through conversation events — it lives in the
+run's own ledger.
 
 Replay must not let a late `running` transcript update downgrade an already
 terminal run. This mirrors the concurrency shape in cc-2.1, where transcript
@@ -802,23 +809,27 @@ agent/
 ```
 
 The parent conversation plus its run logs remain the product source of truth for
-user-visible conversation state. The sidechain transcript is stored as immutable
-JSON payload snapshots and referenced by the subagent run record. This keeps the
-parent model context clean while still allowing status, restore, debug, and
-continuation.
+user-visible conversation state. The sidechain transcript IS the run's own
+ledger (`runs/<run-id>/events.jsonl`, its own seq space, replayed alone); the
+conversation stream keeps only the slim `child_run.started/updated` markers.
+This keeps the parent model context clean while still allowing status, restore,
+debug, and continuation. Spawn ordering is ledger-seed first, conversation
+marker second: a crash inside the spawn window leaves an invisible orphan ledger
+directory, never an un-resumable phantom run in the conversation.
 
-Transcript payloads include the same execution and memory owner ids as the run
-record plus the Dream evidence start index. Dream memory sources record the
-specific transcript payload id as `source.eventId`; evidence expansion must read
-that recorded payload rather than the run's latest payload, so provenance remains
-stable after later compaction or transcript snapshots. The parent model only
-receives the `Agent` tool result projection.
+Dream memory sources address the run stream directly (`kind: 'run'`, stable
+message-id range, `source.eventId` = the last evidence event); evidence
+expansion replays the ledger's visible transcript, so provenance stays stable
+across later compactions. The Dream watermark cursor records the SCANNED TAIL
+seq (not the last evidence seq) so an already-digested terminal run is skipped
+on later passes from its run-meta alone, without re-reading the ledger. The
+parent model only receives the `Agent` tool result projection.
 
 ## Compaction And Resume
 
 Parent compaction should preserve:
 
-- active subagent ids/names;
+- active child run ids/names;
 - descriptions;
 - statuses;
 - latest summaries/progress;
@@ -828,43 +839,59 @@ Parent compaction should preserve:
 
 Parent compaction should not inline full sidechain transcripts.
 
-Subagent compaction should use the same model-context manager concepts as the
+Child run compaction should use the same model-context manager concepts as the
 main agent:
 
 - tool-output slimming;
 - automatic sidechain summary before a child model call crosses the context
   threshold;
 - reactive sidechain summary and retry after a child context-length error;
-- invoked skill restore if the subagent loaded skills.
+- invoked skill restore if the child run loaded skills.
 - recent full-file context restore when available in the child workspace.
 
-App restart restores:
+App restart restores **records only** — no ledger IO on the conversation-open
+path. A run's transcript is replayed from its own ledger lazily:
 
-- completed/stopped/failed subagent metadata;
-- sidechain transcripts for `AgentStatus`;
-- resumable background subagents when there is a persisted transcript.
+- on first resume (`AgentSend` to a non-live run): the host restores the ledger
+  writer and re-derives the continuation context. If the ledger is MISSING (a
+  crash between the spawn's ledger seed and nothing else — the seed lands before
+  the conversation marker, so this is a residual edge), the writer is registered
+  empty and the resume's `run.started` becomes the ledger's first event; the run
+  stays resumable instead of wedging.
+- on drill-in (`agent_child_run_transcript`): the ledger is replayed directly,
+  cached on its tail seq (one run-meta read decides freshness). The open panel
+  polls this while the run is live and refetches on entity changes.
 
-If a subagent was persisted as `running` but there is no live pi-mono `Agent`
-after restore, Lin marks it as failed with an interruption message and preserves
-the transcript. It can still be continued through `AgentSend`.
+If a child run was persisted as `running` but there is no live pi-mono `Agent`
+after restore, Lin marks it as failed with an interruption message — in BOTH
+representations: the conversation gets `child_run.updated{failed}` and the run's
+own ledger gets a mirrored `run.failed` (without it the run stream would
+self-describe as running forever). It can still be continued through `AgentSend`.
+
+A delegated-run ledger uses the memory log's torn-tail policy, not the
+conversation log's strict one: a half-written FINAL line (crash artifact of an
+interrupted append) is dropped on read and truncated by the next append's
+repair; mid-file corruption still fails loudly. Restore-time reconciliation is
+contained per run — a corrupt child ledger degrades to a warning and can never
+brick its parent conversation.
 
 ## Permission Layer
 
-Subagents should be trusted enough to be useful, but scoped by tool profile.
+Child runs should be trusted enough to be useful, but scoped by tool profile.
 
 Rules:
 
 - `Agent` launch is allowed by default.
-- Every subagent tool call still goes through Lin's permission layer.
+- Every child run tool call still goes through Lin's permission layer.
 - Agent definition `tools` and `disallowed-tools` narrow the available tool set.
 - Agent definition `permission-mode` may relax or tighten behavior within Lin's
   global safety policy.
-- Background subagents should avoid UI permission prompts; deny or bubble only
+- Background child runs should avoid UI permission prompts; deny or bubble only
   when a policy requires it.
 - Catastrophic commands and workspace-boundary violations remain hard denied.
 
 Do not copy cc-2.1's full historical permission mode matrix. Implement the
-smallest Lin-owned policy that supports useful subagents with clear boundaries.
+smallest Lin-owned policy that supports useful child runs with clear boundaries.
 
 ## Tool Profiles
 
@@ -876,18 +903,18 @@ The main agent can see:
 - `AgentSend`;
 - `AgentStop`.
 
-Fresh subagents can see:
+Fresh child runs can see:
 
 - tools allowed by their agent definition;
 - skill tool if enabled for the definition;
 - no `Agent` tool by default, to prevent uncontrolled nesting.
 
-Fork subagents can see:
+Fork child runs can see:
 
 - the parent's exact tool set when needed for cache stability;
 - a runtime guard that rejects recursive fork attempts.
 
-Background subagents can see only tools that can run without direct UI control.
+Background child runs can see only tools that can run without direct UI control.
 This should be implemented as a profile over Lin tools rather than a separate
 tool system.
 
@@ -896,18 +923,18 @@ tool system.
 The `Agent` prompt should teach:
 
 - Use `Agent` for complex, multi-step, or independent work.
-- Launch multiple subagents in one turn when the tasks are independent.
-- Use fresh subagents when a specialized agent definition is appropriate.
-- Brief fresh subagents completely; they do not see the current conversation.
-- Omit `subagent_type` to fork when intermediate tool output is not worth keeping
+- Launch multiple child runs in one turn when the tasks are independent.
+- Use fresh child runs when a specialized agent definition is appropriate.
+- Brief fresh child runs completely; they do not see the current conversation.
+- Omit `agent_type` to fork when intermediate tool output is not worth keeping
   in the main context.
 - Do not read or poll background transcripts unless asked; completion
   notifications will arrive.
 - Do not fabricate background results before notifications arrive.
-- Use `AgentSend` only to continue an existing same-conversation subagent.
+- Use `AgentSend` only to continue an existing same-conversation child run.
 - Use `AgentStatus` only for status or waiting; read completion output from the
   notification/output reference with `file_read`.
-- Use `AgentStop` to stop a running subagent.
+- Use `AgentStop` to stop a running child run.
 
 ## Explicit Non-Goals For The First Version
 
@@ -934,7 +961,7 @@ communication plane with separate tools. It must not be mixed into same-conversa
 
 ### Agent Definitions
 
-Implemented in `src/main/agentSubagents.ts`.
+Implemented in `src/main/agentDelegation.ts`.
 
 - Loads `~/.agents/agents`, `<workspace>/.agents/agents`, and configured
   additional agent directories.
@@ -947,26 +974,26 @@ Implemented in `src/main/agentSubagents.ts`.
 
 Implemented.
 
-- `Agent` with `subagent_type` creates a fresh sidechain pi-mono `Agent`.
+- `Agent` with `agent_type` creates a fresh sidechain pi-mono `Agent`.
 - The child receives its agent definition system prompt plus the supplied task.
 - The child derives `executingAgentId` and `memoryOwnerAgentId` from the called
   agent definition. Its `<memory>` briefing and `recall` tool read that
   owner id, not the parent agent id. In isolated memory mode, its memory origin
   workspace is derived from the called agent definition root, not the caller's
   workspace.
-- Explicit agent-definition `tools` remain an allow-list. Fresh subagents do not
+- Explicit agent-definition `tools` remain an allow-list. Fresh child runs do not
   receive `recall` unless the definition allows it, either directly or by using
   an unrestricted tool profile; the hidden `<memory>` briefing is still
   owner-scoped background context.
 - The parent receives only the final result or error.
-- Sidechain transcript snapshots are persisted as `subagent_transcript`
-  payloads.
+- The sidechain transcript is the run's own ledger (`runs/<run-id>/`); there
+  are no transcript snapshot payloads.
 
 ### Fork Agent
 
 Implemented.
 
-- `Agent` without `subagent_type` forks from the current parent context.
+- `Agent` without `agent_type` forks from the current parent context.
 - The fork uses the parent system prompt, parent messages, a fork directive, and
   placeholder results for unresolved tool calls.
 - Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`, and
@@ -984,20 +1011,23 @@ Implemented for same-conversation background runs.
 - `AgentStatus` reads or waits for a selected run.
 - `AgentStop` aborts a live child agent and persists stopped state.
 - Completion, failure, and stopped states are returned to the parent model
-  through hidden subagent notifications.
+  through hidden child run notifications.
 - The renderer derives current-conversation task entries from persisted
-  `subagent_run` projection state; this is a UI view, not a separate task store.
+  `child_run.*` projection state; this is a UI view, not a separate task store.
 
 ### Resume
 
 Implemented.
 
-- `AgentSend` continues an existing same-conversation subagent by id or name.
-- Continuation reconstructs the sidechain transcript from the persisted payload.
-- Tool-output replacement state is reconstructed from sidechain messages, so
+- `AgentSend` continues an existing same-conversation child run by id or name.
+- Continuation replays the run's OWN ledger into the live context (lazy: the
+  ledger is only read when a resume or drill-in actually needs it; a missing
+  ledger registers empty so the run stays resumable).
+- Tool-output replacement state is reconstructed from the restored messages, so
   prior `<persisted-output>` decisions stay stable.
-- Cold-restart status restore and continuation from persisted transcript are
-  supported.
+- Cold-restart restores child-run RECORDS only (no ledger IO on conversation
+  open); still-`running` records are marked interrupted in both the
+  conversation and the run's own ledger.
 
 ### Skill Integration
 
@@ -1005,10 +1035,10 @@ Implemented.
 
 - Skill `context: fork` routing is implemented for model and slash skill
   entrypoints.
-- Forked skill execution uses the sidechain subagent runtime, applies `agent`,
+- Forked skill execution uses the sidechain child-run runtime, applies `agent`,
   `model`, `effort`, and `allowed-tools` to the child run, and returns only the
   child result to the parent.
-- Subagent sidechain compaction restores loaded skill state, preserves recent
+- Child run sidechain compaction restores loaded skill state, preserves recent
   file context, and handles both automatic threshold compaction and reactive
   retry after context-length errors.
 
@@ -1016,23 +1046,24 @@ Implemented.
 
 Implemented for the current first-class surfaces.
 
-- `Agent` tool blocks show subagent metadata and transcript access.
+- `Agent` tool blocks show child run metadata and transcript access.
 - The agent header exposes a Tasks button. It opens a current-conversation task
-  panel derived from `subagent_run` projection data, ordered with running work
+  panel derived from `child_run.*` projection data, ordered with running work
   first, and shows status, type/mode, message count, and latest update time.
-- Task rows can open the existing subagent details panel; running task rows can
-  stop the subagent through `AgentStop`.
-- The subagent details panel loads sidechain transcripts lazily from payload
-  refs.
+- Task rows can open the existing child run details panel; running task rows can
+  stop the child run through `AgentStop`.
+- The child run details panel loads the run-ledger transcript lazily through
+  `agent_child_run_transcript` (cached on the ledger tail seq; polled while the
+  run is live).
 - Nested child tool calls inside transcripts remain expandable.
-- Running background subagents can be messaged or stopped from the details
+- Running background child runs can be messaged or stopped from the details
   panel.
-- Task and subagent side-panel controls clear the top window chrome drag zone so
+- Task and child run side-panel controls clear the top window chrome drag zone so
   close/open actions remain pointer-clickable in the agent rail.
 
 Deferred UI polish:
 
-- cross-conversation per-agent aggregation and non-subagent task adapters
+- cross-conversation per-agent aggregation and non-child run task adapters
   (Dream, scheduled routines, background shell tasks);
 - richer progress summaries for long background runs;
 - metrics and diagnostics beyond sidechain transcript replay.
@@ -1041,22 +1072,22 @@ Deferred UI polish:
 
 Review against cc-2.1 and OpenClaw leaves these follow-ups:
 
-- Add `SubagentStart` and `SubagentStop` hook events only after Lin has a
+- Add `SubagentStart` and `SubagentStop` hook events (cc-2.1 vocabulary) only after Lin has a
   first-class hook registry. They should be lifecycle events, not special cases
   inside the `Agent` tool.
 - Keep foreground fresh, fork, and background as the only first-version
   lifecycles. Do not copy team/swarm/coordinator concepts into `Agent`,
   `AgentSend`, or `AgentStatus`.
-- On app restart, stale running subagents should be marked interrupted or
+- On app restart, stale running child runs should be marked interrupted or
   recoverable from persisted sidechain transcripts. They should not silently
   remain "running" without a live process.
-- Background subagents should always provide a durable output reference and a
+- Background child runs should always provide a durable output reference and a
   completion/failure/stopped notification. The parent model should not need to
   poll repeatedly to discover completion.
-- Background subagents should fail closed when they need interactive permission
+- Background child runs should fail closed when they need interactive permission
   and no approval channel is available. If a permission prompt can be surfaced,
   the parent should receive a clear blocked/waiting notification.
-- Forked subagents should continue to preserve cache-stable parent context and
+- Forked child runs should continue to preserve cache-stable parent context and
   reject recursive fork attempts, including after compaction.
 - Agent-specific MCP servers and remote/worktree isolation remain deferred until
   Lin has diagnostics and recovery for the smaller same-conversation model.
@@ -1075,20 +1106,20 @@ Core tests:
 - `AgentStatus` list, get, wait, and timeout;
 - `AgentSend` resumes from sidechain transcript;
 - `AgentStop` aborts and stores partial result;
-- parent compact preserves subagent handles and summaries;
-- subagent compact preserves its own continuity;
+- parent compact preserves child run handles and summaries;
+- child run compact preserves its own continuity;
 - app restart can inspect/resume completed sidechain transcripts;
-- app restart marks stale running subagents as interrupted or recoverable;
-- background subagent completion creates a durable output reference and model
+- app restart marks stale running child runs as interrupted or recoverable;
+- background child run completion creates a durable output reference and model
   notification;
-- background subagent needing unavailable approval fails closed;
-- skill `context: fork` uses subagent runtime.
+- background child run needing unavailable approval fails closed;
+- skill `context: fork` uses the child-run runtime.
 
 Reference-alignment tests:
 
-- `subagent_type` set means fresh;
-- `subagent_type` omitted means fork;
-- explicit `subagent_type: "general"` means fresh general agent;
+- `agent_type` set means fresh;
+- `agent_type` omitted means fork;
+- explicit `agent_type: "general"` means fresh general agent;
 - multiple `Agent` tool calls in one turn run independently;
 - agent listing changes do not mutate the `Agent` tool schema.
 
@@ -1096,5 +1127,5 @@ Reference-alignment tests:
 
 - Should `AgentStatus` ever return sidechain transcript excerpts, or should the
   transcript stay UI/payload-only?
-- Should background subagents always run with lower output budgets by default?
+- Should background child runs always run with lower output budgets by default?
 - Which additional built-in profiles should exist besides `general`?

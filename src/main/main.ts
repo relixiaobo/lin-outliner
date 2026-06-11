@@ -1866,15 +1866,17 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.debugPayload(conversationId(), String(args.payloadId));
     case 'agent_payload_text':
       return agentRuntime.payloadText(conversationId(), String(args.payloadId));
-    case 'agent_subagent_status':
-      return agentRuntime.subagentStatus(conversationId(), String(args.agentId), {
+    case 'agent_child_run_transcript':
+      return agentRuntime.childRunTranscript(conversationId(), String(args.runId));
+    case 'agent_child_run_status':
+      return agentRuntime.childRunStatus(conversationId(), String(args.agentId), {
         wait: args.wait === true,
         timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
       });
-    case 'agent_subagent_send':
-      return agentRuntime.subagentSend(conversationId(), String(args.agentId), String(args.message ?? ''));
-    case 'agent_subagent_stop':
-      return agentRuntime.subagentStop(conversationId(), String(args.agentId));
+    case 'agent_child_run_send':
+      return agentRuntime.childRunSend(conversationId(), String(args.agentId), String(args.message ?? ''));
+    case 'agent_child_run_stop':
+      return agentRuntime.childRunStop(conversationId(), String(args.agentId));
     case 'agent_send_message':
       return agentRuntime.sendMessage(
         conversationId(),

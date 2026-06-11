@@ -30,7 +30,7 @@ import type {
   AgentRenderMemberView,
   AgentRenderMessageEntity,
   AgentRenderProjection,
-  AgentRenderSubagentEntity,
+  AgentRenderChildRunEntity,
   AgentRenderTaskEntity,
   AgentRenderTaskStatus,
 } from '../../core/agentRenderProjection';
@@ -79,24 +79,24 @@ export interface AgentActiveDreamEntry {
 
 export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
-// A subagent run surfaced inline in the transcript as a boundary — the permanent
+// A child run surfaced inline in the transcript as a boundary — the permanent
 // record of the run in its conversation (its final result lives on the entity).
-export interface AgentSubagentEntry {
+export interface AgentChildRunEntry {
   id: string;
-  kind: 'subagent';
-  subagent: AgentRenderSubagentEntity;
+  kind: 'child-run';
+  childRun: AgentRenderChildRunEntity;
 }
 
 export type AgentConversationEntry =
   | AgentMessageEntry
   | AgentCompactionEntry
   | AgentDreamEntry
-  | AgentSubagentEntry;
+  | AgentChildRunEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
 export type AgentTaskEntry =
-  | (Extract<AgentRenderTaskEntity, { kind: 'subagent' }> & { subagent: AgentRenderSubagentEntity })
+  | (Extract<AgentRenderTaskEntity, { kind: 'child-run' }> & { childRun: AgentRenderChildRunEntity })
   | Extract<AgentRenderTaskEntity, { kind: 'dream' }>;
 
 const EMPTY_PROJECTION: AgentRenderProjection = {
@@ -117,8 +117,8 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   rows: [],
   transcriptRows: [],
   taskIds: [],
-  subagentRunIds: [],
-  entities: { messages: {}, subagents: {}, compactions: {}, dreams: {}, tasks: {} },
+  childRunIds: [],
+  entities: { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
   streaming: null,
 };
 
@@ -195,9 +195,9 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       continue;
     }
 
-    if (row.kind === 'subagent') {
-      const subagent = projection.entities.subagents[row.subagentId];
-      if (subagent) entries.push({ id: row.id, kind: 'subagent', subagent });
+    if (row.kind === 'child-run') {
+      const childRun = projection.entities.childRuns[row.childRunId];
+      if (childRun) entries.push({ id: row.id, kind: 'child-run', childRun });
       continue;
     }
 
@@ -289,10 +289,10 @@ export function buildAgentTaskEntries(projection: AgentRenderProjection): AgentT
   const tasks = projection.taskIds.flatMap((id): AgentTaskEntry[] => {
     const task = projection.entities.tasks[id];
     if (!task) return [];
-    if (task.kind === 'subagent') {
-      const subagent = projection.entities.subagents[task.subagentId];
-      if (!subagent) return [];
-      return [{ ...task, subagent }];
+    if (task.kind === 'child-run') {
+      const childRun = projection.entities.childRuns[task.childRunId];
+      if (!childRun) return [];
+      return [{ ...task, childRun }];
     }
     return [{ ...task }];
   });
@@ -516,9 +516,9 @@ export interface LinAgentRuntimeView {
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
-  subagentRunIds: string[];
-  subagents: Record<string, AgentRenderSubagentEntity>;
-  subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity>;
+  childRunIds: string[];
+  childRuns: Record<string, AgentRenderChildRunEntity>;
+  childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity>;
   pendingApproval: AgentApprovalRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
@@ -1046,10 +1046,10 @@ export class AgentRuntimeStore {
   private buildView(): LinAgentRuntimeView {
     const toolResults = buildToolResultMap(this.projection);
     const { entries, turnPhase } = buildEntries(this.projection, toolResults);
-    const subagents = this.projection.entities.subagents ?? {};
-    const subagentsByParentToolCallId = new Map<string, AgentRenderSubagentEntity>();
-    for (const subagent of Object.values(subagents)) {
-      if (subagent.parentToolCallId) subagentsByParentToolCallId.set(subagent.parentToolCallId, subagent);
+    const childRuns = this.projection.entities.childRuns ?? {};
+    const childRunsByParentToolCallId = new Map<string, AgentRenderChildRunEntity>();
+    for (const childRun of Object.values(childRuns)) {
+      if (childRun.parentToolCallId) childRunsByParentToolCallId.set(childRun.parentToolCallId, childRun);
     }
     return {
       entries,
@@ -1072,9 +1072,9 @@ export class AgentRuntimeStore {
       queuedMessages: this.projection.queuedMessages ?? EMPTY_QUEUED_MESSAGES,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
-      subagentRunIds: this.projection.subagentRunIds,
-      subagents,
-      subagentsByParentToolCallId,
+      childRunIds: this.projection.childRunIds,
+      childRuns,
+      childRunsByParentToolCallId,
       pendingApproval: this.currentPendingApproval(),
       pendingUserQuestion: this.currentPendingUserQuestion(),
       toolResults,

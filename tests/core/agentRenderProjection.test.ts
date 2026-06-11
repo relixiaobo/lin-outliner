@@ -388,7 +388,7 @@ describe('agent render projection', () => {
     }]);
   });
 
-  test('surfaces a parentless subagent run (a command fire) as a transcript boundary row', () => {
+  test('surfaces a parentless child run (a command fire) as a transcript boundary row', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Command delivery' },
       {
@@ -398,34 +398,32 @@ describe('agent render projection', () => {
         content: [{ type: 'text', text: 'go' }],
       },
       {
-        ...base(3, 'subagent_run.started', agentActor),
-        subagentRunId: 'sub-1',
+        ...base(3, 'child_run.started', agentActor),
+        childRunId: 'sub-1',
         description: 'check Chengdu weather',
         prompt: 'Check the weather in Chengdu today.',
-        subagentType: 'general',
+        agentType: 'general',
         contextMode: 'fork',
-        transcriptMessageCount: 0,
       },
       {
-        ...base(4, 'subagent_run.updated', agentActor),
-        subagentRunId: 'sub-1',
+        ...base(4, 'child_run.updated', agentActor),
+        childRunId: 'sub-1',
         status: 'completed',
         completedAt: 1_700_000_000_900,
         result: 'Partly cloudy, 22–29°C.',
-        transcriptMessageCount: 1,
       },
     ]);
 
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
     // The run is placed by start time after the user message and carries its result.
-    expect(projection.transcriptRows.map((row) => row.id)).toEqual(['user:user-1', 'subagent:sub-1']);
-    const subagentRow = projection.transcriptRows.find((row) => row.kind === 'subagent');
-    expect(subagentRow).toMatchObject({ kind: 'subagent', subagentId: 'sub-1' });
-    expect(projection.entities.subagents['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
+    expect(projection.transcriptRows.map((row) => row.id)).toEqual(['user:user-1', 'child-run:sub-1']);
+    const childRunRow = projection.transcriptRows.find((row) => row.kind === 'child-run');
+    expect(childRunRow).toMatchObject({ kind: 'child-run', childRunId: 'sub-1' });
+    expect(projection.entities.childRuns['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
   });
 
-  test('places a main-agent subagent run right after the turn that spawned it', () => {
+  test('places a main-agent child run right after the turn that spawned it', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {
@@ -447,28 +445,26 @@ describe('agent render projection', () => {
         content: [{ type: 'toolCall', id: 'tc-1', name: 'Task', arguments: {} }],
       },
       {
-        ...base(5, 'subagent_run.started', agentActor),
-        subagentRunId: 'sub-1',
+        ...base(5, 'child_run.started', agentActor),
+        childRunId: 'sub-1',
         parentToolCallId: 'tc-1',
         description: 'do the subtask',
         prompt: 'Do the subtask.',
-        subagentType: 'general',
+        agentType: 'general',
         contextMode: 'fork',
-        transcriptMessageCount: 0,
       },
       {
-        ...base(6, 'subagent_run.updated', agentActor),
-        subagentRunId: 'sub-1',
+        ...base(6, 'child_run.updated', agentActor),
+        childRunId: 'sub-1',
         status: 'completed',
         completedAt: 1_700_000_000_900,
         result: 'done',
-        transcriptMessageCount: 1,
       },
     ]);
 
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
     expect(projection.transcriptRows.map((row) => row.id))
-      .toEqual(['user:user-1', 'assistant:assistant-1', 'subagent:sub-1']);
+      .toEqual(['user:user-1', 'assistant:assistant-1', 'child-run:sub-1']);
   });
 });

@@ -20,7 +20,7 @@ interface AgentTaskPanelProps {
   conversationId: string | null;
   tasks: readonly AgentTaskEntry[];
   onClose: () => void;
-  onOpenSubagent: (subagentId: string) => void;
+  onOpenChildRun: (childRunId: string) => void;
 }
 
 function formatTaskTime(timestamp: number, locale: string): string {
@@ -33,7 +33,7 @@ function taskStatusLabel(task: AgentTaskEntry, labels: Messages['agent']['task']
 
 function taskKindLabel(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
   if (task.kind === 'dream') return labels.kindDream;
-  return labels.kindSubagent;
+  return labels.kindChildRun;
 }
 
 function taskTitle(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
@@ -55,7 +55,6 @@ function taskMetaParts(task: AgentTaskEntry, labels: Messages['agent']['task'], 
   }
   return [
     task.subtitle,
-    labels.messages({ count: task.subagent.transcriptMessageCount }),
     formatTaskTime(task.updatedAt, locale),
   ];
 }
@@ -64,7 +63,7 @@ export function AgentTaskPanel({
   conversationId,
   tasks,
   onClose,
-  onOpenSubagent,
+  onOpenChildRun,
 }: AgentTaskPanelProps) {
   const { locale, t } = useI18n();
   const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
@@ -72,11 +71,11 @@ export function AgentTaskPanel({
   const runningCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
 
   async function stopTask(task: AgentTaskEntry) {
-    if (!conversationId || task.kind !== 'subagent' || task.status !== 'running' || stoppingTaskId) return;
+    if (!conversationId || task.kind !== 'child-run' || task.status !== 'running' || stoppingTaskId) return;
     setStoppingTaskId(task.id);
     setActionError(null);
     try {
-      await api.agentSubagentStop(conversationId, task.subagentId);
+      await api.agentChildRunStop(conversationId, task.childRunId);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -114,7 +113,7 @@ export function AgentTaskPanel({
       ) : (
         <div className="agent-task-list">
           {tasks.map((task) => {
-            const canStop = task.kind === 'subagent' && task.status === 'running';
+            const canStop = task.kind === 'child-run' && task.status === 'running';
             const stopping = stoppingTaskId === task.id;
             const kindIcon = task.kind === 'dream' ? BrainIcon : AgentIcon;
             const KindIcon = kindIcon;
@@ -132,10 +131,10 @@ export function AgentTaskPanel({
             );
             return (
               <article className={`agent-task-row is-${task.status}${task.kind === 'dream' ? ' is-readonly' : ''}`} key={task.id}>
-                {task.kind === 'subagent' ? (
+                {task.kind === 'child-run' ? (
                   <ButtonControl
                     className="agent-task-main"
-                    onClick={() => onOpenSubagent(task.subagentId)}
+                    onClick={() => onOpenChildRun(task.childRunId)}
                   >
                     {mainContent}
                   </ButtonControl>
@@ -145,12 +144,12 @@ export function AgentTaskPanel({
                   </div>
                 )}
                 <div className="agent-task-row-actions">
-                  {task.kind === 'subagent' ? (
+                  {task.kind === 'child-run' ? (
                     <IconButton
                       className="agent-task-icon-button"
                       icon={OpenIcon}
                       label={t.agent.task.openTask}
-                      onClick={() => onOpenSubagent(task.subagentId)}
+                      onClick={() => onOpenChildRun(task.childRunId)}
                       title={t.agent.task.openTask}
                       variant="message"
                     />

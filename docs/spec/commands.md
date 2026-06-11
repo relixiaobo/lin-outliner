@@ -12,7 +12,7 @@ The authoritative list lives in [`src/core/commands.ts`](../../src/core/commands
   persists the workspace snapshot and returns a `CommandOutcome` with the new
   `DocumentProjection` and optional `FocusHint`.
 - `AGENT_COMMANDS` — agent session lifecycle, message send/edit/regenerate,
-  follow-ups, steering, provider settings, debug snapshots, subagent control.
+  follow-ups, steering, provider settings, debug snapshots, child-run control.
 
 The renderer calls them through `window.lin.invoke(...)` via
 [`src/renderer/api/client.ts`](../../src/renderer/api/client.ts).
@@ -105,7 +105,7 @@ it run unattended on a timer. (Design history: `docs/plans/archive/agent-schedul
   value re-arms the watermark (`sysLastRunAt = now`); clearing it makes the node
   manual-only and leaves the watermark untouched.
 - `set_command_agent(nodeId, agent?)` picks which agent runs the command —
-  matches an `AgentDefinition.name` from the subagent registry
+  matches an `AgentDefinition.name` from the agent registry
   (`agent_list_all_definitions`); empty/absent = the main agent. Agent-editable
   (not part of the bright line — only arming the *schedule* is user-gated).
 - `mark_command_fired(nodeId, firedAt)` advances the system fire watermark
@@ -124,12 +124,12 @@ The anacron scheduler (main process) sweeps command nodes on a 60s tick, on app
 launch, and on `powerMonitor.resume`, firing each due node once (catch-up
 coalesces a multi-day gap). Due nodes fire **concurrently** — one slow/hung run
 never blocks the others or subsequent sweeps. A fire runs the brief as a
-**subagent** on the command's own delivery conversation, so every run is recorded
-inline in that conversation as a **subagent boundary row** (its final result
+**delegated child run** on the command's own delivery conversation, so every run is recorded
+inline in that conversation as a **child-run boundary row** (its final result
 lands in the channel as an expandable summary with a "View full run" link; see
 `agent-event-log-rendering.md`) and also surfaces as a task in its task panel.
 `commandAgent` selects the executing
-agent definition (`subagent_type`); empty forks the otherwise-empty delivery
+agent definition (`agent_type`); empty forks the otherwise-empty delivery
 conversation so the run executes under the main agent's identity and
 capabilities. The run prompt is the brief — the command's title plus its non-field
 child outline serialized as a nested bullet list (`commandBriefText`, with inline
@@ -189,7 +189,7 @@ title like the inline Done checkbox) sits at the start of the command title;
 `useCommandRun` drives the attended run: ensure the delivery conversation
 (`agent_ensure_command_conversation`), reveal the agent panel on it (no longer
 auto-opening the task panel — that was abrupt), then run it
-(`agent_run_command_now`), so the run streams in live as an inline subagent
+(`agent_run_command_now`), so the run streams in live as an inline child-run
 boundary. While the run is in flight the **command bullet glyph becomes a
 spinner** (`RowMarker` `processing` → `.is-processing`) — that is the *only*
 running indicator; the Run button never reflects running/failed state (a
@@ -246,8 +246,9 @@ serialized to the run brief by `commandBriefText`.
 `agent_clear_follow_up`, `agent_steer_conversation`, `agent_clear_steer`,
 `agent_stop_conversation`.
 
-### Agent — subagents
-`agent_subagent_status`, `agent_subagent_send`, `agent_subagent_stop`.
+### Agent — delegated child runs
+`agent_child_run_status`, `agent_child_run_send`, `agent_child_run_stop`,
+`agent_child_run_transcript` (the drill-in transcript, replayed from the run's own ledger).
 
 ### Agent — debug
 `agent_debug_snapshot`, `agent_debug_history`, `agent_debug_totals`,

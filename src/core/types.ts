@@ -514,8 +514,8 @@ export interface CommandNode extends NodeBase {
   sysLastAttemptAt?: number;
   /**
    * Which agent definition runs this command. Matches an `AgentDefinition.name`
-   * from the subagent registry (see `listAllAgentDefinitions`); a fire spawns the
-   * brief as a subagent of this type so the run shows in the delivery
+   * from the child run registry (see `listAllAgentDefinitions`); a fire spawns the
+   * brief as a child run of this type so the run shows in the delivery
    * conversation's task panel. Empty/absent = the main agent (a context fork from
    * the otherwise-empty delivery conversation). Agent-editable; not part of the
    * user-only bright line (only arming the *schedule* is user-gated).
@@ -739,19 +739,16 @@ export interface AgentConversationListMeta {
 
 export interface AgentMemorySourceView {
   conversationId: string;
-  kind?: 'conversation' | 'agent_run';
+  kind?: 'conversation' | 'run';
   summaryId?: string;
   messageRange?: [string, string];
   runId?: string;
-  subagentRunId?: string;
-  agentId?: string;
-  parentToolCallId?: string;
   eventId?: string;
 }
 
 export interface AgentMemoryEntryView {
   id: string;
-  /** The subject this fact is about — the pool it belongs to. */
+  /** The pool this fact lives in — its owner/believer (whose self-model). */
   principal: AgentPrincipal;
   fact: string;
   originWorkspace?: string;

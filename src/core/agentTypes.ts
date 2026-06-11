@@ -158,13 +158,13 @@ export type AgentToolResultWithPayloads = ToolResultMessage & {
   payloadRefs?: AgentToolResultPayloadPart[];
 };
 
-export interface AgentSubagentActionResult {
+export interface AgentChildRunActionResult {
   status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'stopped';
   agent_id: string;
   name?: string;
   description: string;
   prompt: string;
-  subagent_type: string;
+  agent_type: string;
   context_mode: 'fresh' | 'fork';
   executing_agent_id?: string;
   parent_agent_id?: string;

@@ -183,8 +183,8 @@ export const en = {
           label: 'Network write commands',
           description: 'Shell commands that send data outward or mutate network services.',
         },
-        spawnSubagents: {
-          label: 'Spawn subagents',
+        spawnChildAgents: {
+          label: 'Spawn child agents',
           description: 'Start another agent process. Global allow is intentionally unavailable.',
         },
       },
@@ -243,7 +243,7 @@ export const en = {
       detailAriaLabel: ({ name }: { name: string }) => `${name} profile details`,
       detailOptionsAriaLabel: ({ name }: { name: string }) => `${name} profile options`,
       enabledLabel: 'Enabled',
-      enabledSublabel: 'Allow this profile to be used for subagent runs.',
+      enabledSublabel: 'Allow this profile to be used for delegated agent tasks.',
       personaPromptLabel: 'Persona prompt (System instructions)',
       modelOverride: 'Model Override',
       thinkingLevel: 'Thinking Level',
@@ -258,8 +258,8 @@ export const en = {
       namePlaceholder: 'my-agent',
       descriptionLabel: 'Description',
       descriptionPlaceholder: 'What this agent is for',
-      personaPlaceholder: 'You are a focused subagent…',
-      scaffoldBody: 'You are a focused subagent.\nComplete the task and report only the result.',
+      personaPlaceholder: 'You are a focused child agent…',
+      scaffoldBody: 'You are a focused child agent.\nComplete the task and report only the result.',
       modelPlaceholder: 'inherit',
       effortDefault: 'Inherit',
       permissionInherit: 'Inherit',
@@ -786,7 +786,7 @@ commandPalette: {
   },
 
   // The agent chat surface: transcript, composer, message rows, process/tool-call
-  // blocks, subagent details, thinking blocks, and markdown rendering.
+  // blocks, child run details, thinking blocks, and markdown rendering.
   agent: {
     // The chat panel header + conversation history menu.
     chat: {
@@ -976,10 +976,10 @@ commandPalette: {
       unknownPending: ({ name }: { name: string }) => `${name}...`,
       // Verb triples per tool: base (used in "Failed to {base}"), pending, done.
       verbs: {
-        runSubagent: { base: 'run subagent', pending: 'Running subagent', done: 'Ran subagent' },
-        checkSubagent: { base: 'check subagent', pending: 'Checking subagent', done: 'Checked subagent' },
-        messageSubagent: { base: 'message subagent', pending: 'Messaging subagent', done: 'Messaged subagent' },
-        stopSubagent: { base: 'stop subagent', pending: 'Stopping subagent', done: 'Stopped subagent' },
+        runChildAgent: { base: 'run agent task', pending: 'Running agent task', done: 'Ran agent task' },
+        checkChildAgent: { base: 'check agent task', pending: 'Checking agent task', done: 'Checked agent task' },
+        messageChildAgent: { base: 'message agent task', pending: 'Messaging agent task', done: 'Messaged agent task' },
+        stopChildRun: { base: 'stop agent task', pending: 'Stopping agent task', done: 'Stopped agent task' },
         recallMemory: { base: 'recall memory', pending: 'Recalling memory', done: 'Recalled memory' },
         dreamMemory: { base: 'dream memory', pending: 'Dreaming memory', done: 'Dreamed memory' },
         createNode: { base: 'create node', pending: 'Creating node', done: 'Created node' },
@@ -993,12 +993,12 @@ commandPalette: {
         editFile: { base: 'edit file', pending: 'Editing file', done: 'Edited file' },
       },
     },
-    // The subagent details panel + inline subagent details.
-    subagent: {
-      summary: ({ description }: { description: string }) => `Subagent · ${description}`,
-      // The inline transcript divider that records a subagent run in its conversation.
+    // The agent-task (delegated child run) details panel + inline details.
+    childRun: {
+      summary: ({ description }: { description: string }) => `Agent task · ${description}`,
+      // The inline transcript divider that records a delegated agent task in its conversation.
       boundary: {
-        label: 'Subagent',
+        label: 'Agent task',
         running: 'Running…',
         ranAt: ({ time }: { time: string }) => `ran ${time}`,
         failed: 'Failed',
@@ -1006,38 +1006,35 @@ commandPalette: {
         viewFullRun: 'View full run',
         noResult: 'No result recorded.',
       },
-      heading: 'Subagent',
+      heading: 'Agent task',
       status: 'Status',
       mode: 'Mode',
-      messages: 'Messages',
       duration: 'Duration',
       name: 'Name',
       prompt: 'Prompt',
       result: 'Result',
       error: 'Error',
-      copyPrompt: 'Copy subagent prompt',
-      copyResult: 'Copy subagent result',
-      copyError: 'Copy subagent error',
-      copyId: 'Copy subagent id',
+      copyPrompt: 'Copy task prompt',
+      copyResult: 'Copy task result',
+      copyError: 'Copy task error',
+      copyId: 'Copy task id',
       viewTranscript: 'View transcript',
-      transcriptUnavailable: 'Transcript unavailable',
       noResultYet: 'No result yet.',
       roleSystem: 'system',
       roleUser: 'user',
       roleAssistant: 'assistant',
       roleToolResult: 'tool result',
       thoughtNumbered: ({ index }: { index: number }) => `Thought ${index}`,
-      transcriptNotAvailable: 'Transcript is not available for this run.',
       loadingTranscript: 'Loading transcript...',
       retry: 'Retry',
       noTranscriptMessages: 'No transcript messages captured yet.',
-      transcriptPayloadUnavailable: 'Transcript payload is unavailable.',
-      detailsAriaLabel: 'Subagent details',
-      detailTabsAriaLabel: 'Subagent detail tabs',
-      actionsAriaLabel: 'Subagent actions',
-      followUpAriaLabel: 'Subagent follow-up',
-      followUpPlaceholder: 'Send follow-up to this subagent',
-      closeDetails: 'Close subagent details',
+      transcriptPayloadUnavailable: 'Transcript is unavailable for this run.',
+      detailsAriaLabel: 'Agent task details',
+      detailTabsAriaLabel: 'Agent task detail tabs',
+      actionsAriaLabel: 'Agent task actions',
+      followUpAriaLabel: 'Agent task follow-up',
+      followUpPlaceholder: 'Send a follow-up to this agent task',
+      closeDetails: 'Close agent task details',
       close: 'Close',
       metaLine: ({ mode, type, count, duration }: { mode: string; type: string; count: number; duration: string }) =>
         `${mode} · ${type} · ${count} messages · ${duration}`,
@@ -1051,7 +1048,7 @@ commandPalette: {
       metaAgentId: 'Agent ID',
       metaType: 'Type',
       metaParentToolCall: 'Parent tool call',
-      metaTranscriptPayload: 'Transcript payload',
+      metaParentRun: 'Parent run',
       metaStarted: 'Started',
       metaUpdated: 'Updated',
       metaNone: 'none',
@@ -1067,7 +1064,7 @@ commandPalette: {
       idleSummary: 'No running tasks',
       runningSummary: ({ count }: { count: number }) => count === 1 ? '1 task running' : `${count} tasks running`,
       empty: 'No tasks yet.',
-      kindSubagent: 'Subagent',
+      kindChildRun: 'Agent task',
       kindDream: 'Dream',
       dreamTitle: 'Memory Dream',
       dreamPoolUser: 'About you',

@@ -23,7 +23,7 @@ import type {
   AgentRunStatus,
   AgentIdentityRecord,
   AgentDreamCompletedChanges,
-  AgentDreamProcessedAgentRun,
+  AgentDreamProcessedRun,
   AgentDreamProcessedConversation,
   AgentDreamTrigger,
   AgentDreamWatermark,
@@ -46,12 +46,23 @@ const RUN_EVENT_LOG_FILE = 'events.jsonl';
 const RUN_META_FILE = 'meta.json';
 const AGENT_IDENTITY_FILE = 'identity.json';
 const CONVERSATION_INDEX_FILE = 'conversation-index.json';
-// Pre-clean-cut artifact names, referenced ONLY by the old-format detector
-// (hasLegacyStorageArtifacts) — never constructed for reads or writes.
-const LEGACY_SESSIONS_DIR = 'sessions';
-const LEGACY_SESSION_INDEX_FILE = 'session-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
-const CHECKPOINT_VERSION = 4;
+// The storage-generation sentinel ([[agent-run-unification]] Design 6): ONE
+// root file `layout.json {v}` written once per on-disk format generation.
+// Startup reads this single line — current generation proceeds with no
+// per-conversation probing; a stale or missing sentinel is positive proof of
+// another generation and wipes the agent data root (pre-release clean-cut, no
+// migration); an unreadable/corrupt sentinel is AMBIGUITY and fails open to
+// the current layout (log + re-probe next launch — never wipe on error).
+// Future format breaks bump the integer instead of authoring a new detector.
+export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
+// events.jsonl`, own seq space) excluded from conversation replay; the
+// conversation stream keeps only the slim child_run.started/updated markers.
+// The pre-unification entity-grade events and transcript-snapshot payloads
+// are gone.
+export const STORAGE_LAYOUT_VERSION = 2;
+const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
@@ -135,7 +146,7 @@ export interface AgentDreamCompletedInput {
   watermark: AgentDreamWatermark;
   processed: {
     conversations: Record<string, AgentDreamProcessedConversation>;
-    agentRuns?: Record<string, AgentDreamProcessedAgentRun>;
+    runs?: Record<string, AgentDreamProcessedRun>;
     totalMessageCount: number;
     totalCharCount: number;
     consolidateOnly: boolean;
@@ -187,9 +198,16 @@ interface AgentEventCheckpointTargets {
 }
 
 interface AgentConversationRunIndex {
-  v: 1;
+  v: 2;
   runIds: string[];
   latestSeqByRunId: Record<string, number>;
+  /**
+   * Runs whose ledgers are their OWN streams (kind 'delegation'): excluded from
+   * the conversation replay join, checkpoint targets, and the conversation's
+   * latest-seq derivation — a delegated run has its own seq space and its own
+   * message tree, replayed independently (run unification).
+   */
+  delegationRunIds: string[];
 }
 
 /**
@@ -239,6 +257,15 @@ interface AgentEventSearchIndex {
 
 export class AgentEventStore {
   private readonly agentEventLog = new AppendOnlySeqLog<AgentEvent>('agent event', parseEventsJsonl);
+  // Delegated-run ledgers get the memory log's torn-tail policy, NOT the
+  // conversation log's strict one: they are high-write append-only sidecars, so
+  // a half-written FINAL line is a routine crash artifact of an interrupted
+  // child-message append (the run is marked interrupted on restore anyway). A
+  // tolerant parse keeps the transcript readable — and keeps one corrupt child
+  // ledger from bricking its whole parent conversation — and lets the
+  // before-append repair truncate the fragment so a resume can append again.
+  // Mid-file corruption still fails loudly on both logs.
+  private readonly runEventLog = new AppendOnlySeqLog<AgentEvent>('agent run event', parseRunEventsJsonl);
   private readonly memoryEventLog = new AppendOnlySeqLog<AgentMemoryEvent>('agent memory event', parseMemoryEventsJsonl);
   private indexQueue = Promise.resolve();
   private readonly memoryProjectionByPrincipal = new Map<string, AgentMemoryProjectionCache>();
@@ -342,6 +369,50 @@ export class AgentEventStore {
     return events.sort(compareAgentEventsForReplay);
   }
 
+  /**
+   * Append to a delegated run's OWN ledger (run unification): the run is its
+   * own stream with its own seq space, so events bypass the conversation
+   * write-time split and never touch the conversation indexes. Run meta + the
+   * conversation run index (which marks the run `delegation` so the join
+   * paths exclude it) are still maintained.
+   */
+  async appendRunStreamEvents(conversationId: string, runId: string, events: readonly AgentEvent[]): Promise<void> {
+    if (events.length === 0) return;
+    await this.ensureStorageLayout();
+    this.assertEventBatch(conversationId, events);
+    for (const event of events) {
+      if (event.runId !== runId) {
+        throw new Error(`Run-stream event runId mismatch: ${event.runId ?? '(none)'} != ${runId}`);
+      }
+    }
+    const runPaths = this.runPaths(runId);
+    await this.runEventLog.enqueue(runStreamLogKey(runId), async () => {
+      const latestSeq = await this.runEventLog.latestSeq(runStreamLogKey(runId), () => [runPaths.runEventsPath]);
+      const firstSeq = events[0]!.seq;
+      if (firstSeq <= latestSeq) {
+        throw new Error(`Run-stream event seq ${firstSeq} is not after existing seq ${latestSeq}`);
+      }
+      await this.runEventLog.append(runPaths.runEventsPath, events);
+      this.runEventLog.setLatestSeq(runStreamLogKey(runId), events.at(-1)!.seq);
+      const metaEvents = events.filter((event) => !isStreamingDeltaEvent(event));
+      if (metaEvents.length > 0) {
+        const meta = await this.updateRunMeta(conversationId, runId, metaEvents);
+        if (meta) await this.updateRunIndexes(meta);
+      }
+    });
+  }
+
+  /** Read a delegated run's own ledger (its independent event stream). */
+  async readRunStreamEvents(runId: string): Promise<AgentEvent[]> {
+    await this.ensureStorageLayout();
+    return this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+  }
+
+  /** Replay a delegated run's ledger into its own independent state. */
+  async replayRunStream(runId: string): Promise<AgentEventReplayState> {
+    return replayAgentEvents(await this.readRunStreamEvents(runId));
+  }
+
   async replay(conversationId: string): Promise<AgentEventReplayState> {
     await this.ensureStorageLayout();
     const checkpointed = await this.replayFromCheckpoint(conversationId);
@@ -429,11 +500,16 @@ export class AgentEventStore {
 
   async deleteConversation(conversationId: string): Promise<void> {
     await this.ensureStorageLayout();
+    const runIds = await this.listRunIdsForConversation(conversationId);
     await rm(this.paths(conversationId).conversationDir, { recursive: true, force: true });
-    await Promise.all((await this.listRunIdsForConversation(conversationId)).map((runId) => (
+    await Promise.all(runIds.map((runId) => (
       rm(this.runPaths(runId).runDir, { recursive: true, force: true })
     )));
     this.agentEventLog.deleteKey(conversationId);
+    for (const runId of runIds) {
+      this.agentEventLog.deleteKey(runStreamLogKey(runId));
+      this.runEventLog.deleteKey(runStreamLogKey(runId));
+    }
     await this.removeConversationFromIndex(conversationId);
     await this.removeConversationFromSearchIndex(conversationId);
   }
@@ -656,7 +732,7 @@ export class AgentEventStore {
         watermark: normalizeDreamWatermark(input.watermark),
         processed: {
           conversations: normalizeDreamProcessedConversations(input.processed.conversations),
-          agentRuns: normalizeDreamProcessedAgentRuns(input.processed.agentRuns),
+          runs: normalizeDreamProcessedRuns(input.processed.runs),
           totalMessageCount: Math.max(0, Math.trunc(input.processed.totalMessageCount)),
           totalCharCount: Math.max(0, Math.trunc(input.processed.totalCharCount)),
           consolidateOnly: input.processed.consolidateOnly,
@@ -714,77 +790,58 @@ export class AgentEventStore {
   }
 
   private ensureStorageLayout(): Promise<void> {
-    // Fail-open (gate #180 finding #2): a probe/wipe failure must NOT memoize a
-    // rejected promise — that would brick every store access until restart. Log,
-    // continue on the current layout, and let the next launch re-probe.
-    this.storageLayoutPromise ??= this.cleanLegacyStorageLayout().catch((error) => {
-      console.warn(`Agent storage clean-cut probe failed; continuing on the current layout: ${error instanceof Error ? error.message : String(error)}`);
+    // Fail-open (gate #180 finding #2, carried onto the sentinel): a probe/wipe
+    // failure must NOT memoize a rejected promise — that would brick every store
+    // access until restart. Log, continue on the current layout, and let the
+    // next launch re-probe.
+    this.storageLayoutPromise ??= this.ensureStorageGeneration().catch((error) => {
+      console.warn(`Agent storage generation probe failed; continuing on the current layout: ${error instanceof Error ? error.message : String(error)}`);
     });
     return this.storageLayoutPromise;
   }
 
   /**
-   * Pre-release clean-cut (no migration, no legacy reader): when any
-   * pre-conversation-vocabulary artifact is detected, the WHOLE agent data root
-   * is deleted and recreated lazily — identities, conversations, runs, pools and
-   * indexes all start fresh (M0 #150 precedent; [[agent-storage-clean-cut]]).
+   * The `layout.json {v}` storage-generation sentinel. Pre-release clean-cut
+   * (no migration, no legacy reader): a missing sentinel (pre-sentinel data or
+   * a fresh install — wiping an empty root is harmless) or a parsed sentinel
+   * from ANOTHER generation is positive proof, and the whole agent data root
+   * is deleted and recreated lazily. An unreadable/corrupt sentinel is
+   * ambiguity, not proof — fail open to operation (#180 invariants: content
+   * can never trip a wipe; probe errors never brick the store).
    */
-  private async cleanLegacyStorageLayout(): Promise<void> {
-    if (!await this.hasLegacyStorageArtifacts()) return;
+  private async ensureStorageGeneration(): Promise<void> {
+    const sentinelPath = path.join(this.rootDir, LAYOUT_SENTINEL_FILE);
+    let raw: string | null = null;
+    try {
+      raw = await readFile(sentinelPath, 'utf8');
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        // Unreadable (permissions, I/O): ambiguity — never wipe on error.
+        console.warn(`Agent storage sentinel unreadable; continuing on the current layout: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+    if (raw !== null) {
+      const sentinel = parseJsonRecord(raw.trim());
+      if (!sentinel || !Number.isInteger(sentinel.v)) {
+        // Corrupt sentinel: ambiguity — fail open, re-probe next launch.
+        console.warn('Agent storage sentinel is corrupt; continuing on the current layout.');
+        return;
+      }
+      if (sentinel.v === STORAGE_LAYOUT_VERSION) return;
+    }
+    // Positive proof of another generation (stale `v` or no sentinel at all).
+    console.warn(
+      `Agent storage layout generation changed (found ${raw === null ? 'no sentinel' : `v=${parseJsonRecord(raw.trim())?.v}`}, `
+      + `current v=${STORAGE_LAYOUT_VERSION}); wiping ${this.rootDir}`,
+    );
     await rm(this.rootDir, { recursive: true, force: true });
     this.agentEventLog.clear();
+    this.runEventLog.clear();
     this.memoryEventLog.clear();
     this.memoryProjectionByPrincipal.clear();
-  }
-
-  private async hasLegacyStorageArtifacts(): Promise<boolean> {
-    // Pre-#151 layout: a flat `sessions/` tree or its derived index.
-    if (await pathExists(path.join(this.rootDir, LEGACY_SESSIONS_DIR))) return true;
-    if (await pathExists(path.join(this.rootDir, 'indexes', LEGACY_SESSION_INDEX_FILE))) return true;
-    // Pre-clean-cut pool layout: an agent pool inside the identity directory.
-    if (await this.hasLegacyAgentPool()) return true;
-    // Pre-clean-cut event vocabulary: a conversation log written with `session.*` events.
-    return this.hasLegacyEventVocabulary();
-  }
-
-  private async hasLegacyAgentPool(): Promise<boolean> {
-    const agentsDir = this.paths('__placeholder__').agentsDir;
-    try {
-      for (const entry of await readdir(agentsDir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        if (await pathExists(path.join(agentsDir, entry.name, 'memory'))) return true;
-      }
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-    }
-    return false;
-  }
-
-  private async hasLegacyEventVocabulary(): Promise<boolean> {
-    // Every old event carried a `sessionId` FIELD (and logs opened with a
-    // `session.created` head), so one head line tells the vocabularies apart.
-    // The check is structural (parse, then inspect fields) — NEVER a substring
-    // probe: the head event carries user-controllable title/goal text that may
-    // legitimately contain '"sessionId"' (gate #180 finding #1), and a wipe must
-    // not be content-triggerable. A torn/corrupt/over-long head is ambiguity,
-    // not a legacy marker — the destructive path requires positive proof.
-    const conversationsDir = this.paths('__placeholder__').conversationsDir;
-    try {
-      for (const entry of await readdir(conversationsDir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const head = await readFirstLine(
-          path.join(conversationsDir, entry.name, 'segments', CONVERSATION_SEGMENT_FILE),
-        );
-        if (!head) continue;
-        const event = parseJsonRecord(head);
-        if (!event) continue;
-        if (typeof event.sessionId === 'string') return true;
-        if (typeof event.type === 'string' && event.type.startsWith('session.')) return true;
-      }
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-    }
-    return false;
+    await mkdir(this.rootDir, { recursive: true });
+    await atomicWriteFile(sentinelPath, `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`);
   }
 
   private async replayFromCheckpoint(conversationId: string): Promise<AgentEventReplayState | null> {
@@ -893,7 +950,7 @@ export class AgentEventStore {
     const paths = this.paths(conversationId);
     return [
       paths.conversationEventsPath,
-      ...(await this.listRunIdsForConversation(conversationId)).map((runId) => this.runPaths(runId).runEventsPath),
+      ...(await this.listJoinedRunIdsForConversation(conversationId)).map((runId) => this.runPaths(runId).runEventsPath),
     ];
   }
 
@@ -935,21 +992,34 @@ export class AgentEventStore {
 
   private async readRunEventsForConversation(conversationId: string): Promise<AgentEvent[]> {
     const events: AgentEvent[] = [];
-    for (const runId of await this.listRunIdsForConversation(conversationId)) {
+    for (const runId of await this.listJoinedRunIdsForConversation(conversationId)) {
       events.push(...await this.agentEventLog.readIfExists(this.runPaths(runId).runEventsPath));
     }
     return events;
   }
 
+  /** EVERY run anchored to the conversation, delegation runs included. */
   private async listRunIdsForConversation(conversationId: string): Promise<string[]> {
     return (await this.ensureConversationRunIndex(conversationId)).runIds;
+  }
+
+  /**
+   * The runs whose ledgers JOIN the conversation replay (turn/background/…) —
+   * delegation runs are their own streams and are excluded everywhere the
+   * conversation state is assembled (replay, checkpoints, latest-seq).
+   */
+  private async listJoinedRunIdsForConversation(conversationId: string): Promise<string[]> {
+    const index = await this.ensureConversationRunIndex(conversationId);
+    if (index.delegationRunIds.length === 0) return index.runIds;
+    const delegated = new Set(index.delegationRunIds);
+    return index.runIds.filter((runId) => !delegated.has(runId));
   }
 
   private async ensureConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex> {
     const index = await this.readConversationRunIndex(conversationId);
     if (index) return index;
     if (!await this.conversationDirExists(conversationId)) {
-      return { v: 1, runIds: [], latestSeqByRunId: {} };
+      return { v: 2, runIds: [], latestSeqByRunId: {}, delegationRunIds: [] };
     }
     return this.rebuildConversationRunIndex(conversationId);
   }
@@ -973,6 +1043,7 @@ export class AgentEventStore {
   private async rebuildConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex> {
     const paths = this.paths(conversationId);
     const latestSeqByRunId: Record<string, number> = {};
+    const delegationRunIds: string[] = [];
     try {
       const entries = await readdir(paths.runsDir, { withFileTypes: true });
       for (const entry of entries) {
@@ -982,6 +1053,7 @@ export class AgentEventStore {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
           if (!meta || conversationIdOfRun(meta) !== conversationId) continue;
           latestSeqByRunId[meta.id] = Math.max(latestSeqByRunId[meta.id] ?? 0, meta.latestSeq);
+          if (meta.kind === 'delegation') delegationRunIds.push(meta.id);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
           throw error;
@@ -994,7 +1066,7 @@ export class AgentEventStore {
     const runIds = Object.keys(latestSeqByRunId).sort((left, right) => (
       latestSeqByRunId[left]! - latestSeqByRunId[right]! || left.localeCompare(right)
     ));
-    const index: AgentConversationRunIndex = { v: 1, runIds, latestSeqByRunId };
+    const index: AgentConversationRunIndex = { v: 2, runIds, latestSeqByRunId, delegationRunIds: delegationRunIds.sort() };
     await mkdir(paths.conversationDir, { recursive: true });
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
     return index;
@@ -1043,7 +1115,7 @@ export class AgentEventStore {
         checkpoint.seq,
       ),
     ];
-    for (const runId of await this.listRunIdsForConversation(conversationId)) {
+    for (const runId of await this.listJoinedRunIdsForConversation(conversationId)) {
       events.push(...await this.agentEventLog.readFromOffsetIfExists(
         this.runPaths(runId).runEventsPath,
         checkpoint.targets.runByteOffsets[runId] ?? 0,
@@ -1056,7 +1128,7 @@ export class AgentEventStore {
   private async checkpointTargets(conversationId: string): Promise<AgentEventCheckpointTargets> {
     const paths = this.paths(conversationId);
     const runByteOffsets: Record<string, number> = {};
-    for (const runId of await this.listRunIdsForConversation(conversationId)) {
+    for (const runId of await this.listJoinedRunIdsForConversation(conversationId)) {
       runByteOffsets[runId] = await this.agentEventLog.fileSizeIfExists(this.runPaths(runId).runEventsPath);
     }
     return {
@@ -1113,47 +1185,62 @@ export class AgentEventStore {
   private async updateRunIndexes(meta: AgentRunMetaProjection) {
     const conversationId = conversationIdOfRun(meta);
     if (conversationId) {
-      await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq);
+      await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq, meta.kind);
     }
     if (meta.anchor.type === 'principal') {
       await this.updatePrincipalRunIndex(meta.anchor.principal, meta.id, meta.updatedAt);
     }
   }
 
-  private async updateConversationRunIndex(conversationId: string, runId: string, latestSeq: number) {
-    const paths = this.paths(conversationId);
-    const existing = await this.ensureConversationRunIndex(conversationId);
-    const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-    const index: AgentConversationRunIndex = {
-      v: 1,
-      runIds,
-      latestSeqByRunId: {
-        ...existing.latestSeqByRunId,
-        [runId]: Math.max(existing.latestSeqByRunId[runId] ?? 0, latestSeq),
-      },
-    };
-    await mkdir(paths.conversationDir, { recursive: true });
-    await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+  // Both run indexes are read-modify-write on a shared file reached from TWO
+  // serial queues (the per-run ledger queue and the per-conversation event
+  // queue), so the merge itself must serialize on `indexQueue` — otherwise a
+  // child-run append racing a parent conversation append writes back a stale
+  // runIds list and permanently drops a finished run from the index (cold
+  // replay then silently misses that run's events; the index only self-heals
+  // on a missing FILE, not a missing entry).
+  private async updateConversationRunIndex(conversationId: string, runId: string, latestSeq: number, kind: AgentRunKind) {
+    await this.enqueueIndexWrite(async () => {
+      const paths = this.paths(conversationId);
+      const existing = await this.ensureConversationRunIndex(conversationId);
+      const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
+      const delegationRunIds = kind === 'delegation'
+        ? (existing.delegationRunIds.includes(runId) ? existing.delegationRunIds : [...existing.delegationRunIds, runId])
+        : existing.delegationRunIds.filter((id) => id !== runId);
+      const index: AgentConversationRunIndex = {
+        v: 2,
+        runIds,
+        latestSeqByRunId: {
+          ...existing.latestSeqByRunId,
+          [runId]: Math.max(existing.latestSeqByRunId[runId] ?? 0, latestSeq),
+        },
+        delegationRunIds,
+      };
+      await mkdir(paths.conversationDir, { recursive: true });
+      await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+    });
   }
 
   private async updatePrincipalRunIndex(principal: AgentPrincipal, runId: string, updatedAt: number) {
-    const poolPaths = this.memoryPaths(principal);
-    const existing = await this.ensurePrincipalRunIndex(principal);
-    const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-    const index: AgentPrincipalRunIndex = {
-      v: 1,
-      principalKey: principalKey(principal),
-      runIds,
-      updatedAtByRunId: {
-        ...existing.updatedAtByRunId,
-        [runId]: Math.max(existing.updatedAtByRunId[runId] ?? 0, updatedAt),
-      },
-    };
-    index.runIds.sort((left, right) => (
-      index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
-    ));
-    await mkdir(poolPaths.poolDir, { recursive: true });
-    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    await this.enqueueIndexWrite(async () => {
+      const poolPaths = this.memoryPaths(principal);
+      const existing = await this.ensurePrincipalRunIndex(principal);
+      const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
+      const index: AgentPrincipalRunIndex = {
+        v: 1,
+        principalKey: principalKey(principal),
+        runIds,
+        updatedAtByRunId: {
+          ...existing.updatedAtByRunId,
+          [runId]: Math.max(existing.updatedAtByRunId[runId] ?? 0, updatedAt),
+        },
+      };
+      index.runIds.sort((left, right) => (
+        index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
+      ));
+      await mkdir(poolPaths.poolDir, { recursive: true });
+      await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    });
   }
 
   private async updateRunMeta(conversationId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
@@ -1164,15 +1251,19 @@ export class AgentEventStore {
     const started = events.find((event) => event.type === 'run.started');
     const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? (started.anchor ? agentIdOfRunAnchor(started.anchor) : undefined) : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
     const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, conversationId);
+    const trigger = existing?.trigger ?? (started?.type === 'run.started' ? started.trigger : undefined);
     const meta: AgentRunMetaProjection = {
       v: 1,
       id: runId,
       agentId,
       anchor,
-      parentRunId: existing?.parentRunId,
+      // The parent side of the run tree: a delegated run's trigger names the
+      // run that spawned it ({type:'parent-run'}), and the meta mirrors it so
+      // `runs WHERE parentRunId=X` is answerable from metas alone.
+      parentRunId: existing?.parentRunId ?? (trigger?.type === 'parent-run' ? trigger.parentRunId : undefined),
       kind: existing?.kind ?? (started?.type === 'run.started' ? started.kind : undefined) ?? 'turn',
       status: terminal ? runStatusFromTerminalEvent(terminal) : existing?.status ?? 'running',
-      trigger: existing?.trigger ?? (started?.type === 'run.started' ? started.trigger : undefined) ?? { type: 'manual' },
+      trigger: trigger ?? { type: 'manual' },
       usage: terminal?.usage ?? existing?.usage,
       fingerprint: existing?.fingerprint ?? (started?.type === 'run.started' ? started.fingerprint : undefined) ?? emptyRunFingerprint(),
       retention: existing?.retention ?? (started?.type === 'run.started' ? started.retention : undefined) ?? 'hot',
@@ -1933,45 +2024,21 @@ class AppendOnlySeqLog<TEvent extends { seq: number; eventId?: string }> {
   }
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await stat(filePath);
-    return true;
-  } catch (error) {
-    if (isNotFoundError(error)) return false;
-    throw error;
-  }
-}
-
-/** First line of a file (bounded read), or null when the file is missing or empty. */
-async function readFirstLine(filePath: string, maxBytes = 64 * 1024): Promise<string | null> {
-  let handle: Awaited<ReturnType<typeof open>>;
-  try {
-    handle = await open(filePath, 'r');
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw error;
-  }
-  try {
-    const stats = await handle.stat();
-    const size = Math.min(stats.size, maxBytes);
-    if (size === 0) return null;
-    const buffer = Buffer.alloc(size);
-    await handle.read(buffer, 0, size, 0);
-    const text = buffer.toString('utf8');
-    const newlineIndex = text.indexOf('\n');
-    return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
-  } finally {
-    await handle.close();
-  }
-}
-
 function compareAgentEventsForReplay(left: AgentEvent, right: AgentEvent): number {
   return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
 }
 
 function agentRunIdForEvent(event: AgentEvent): string | null {
   return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
+}
+
+/**
+ * Serialization/latest-seq key for a delegated run's OWN ledger stream — kept
+ * distinct from conversation log keys (a conversation id and a run id could in
+ * principle collide as raw strings).
+ */
+function runStreamLogKey(runId: string): string {
+  return `run-stream:${runId}`;
 }
 
 function isRunLogEvent(event: AgentEvent): boolean {
@@ -2063,17 +2130,18 @@ function emptyRunFingerprint(): AgentRunFingerprint {
 }
 
 function normalizeConversationRunIndex(value: unknown): AgentConversationRunIndex | null {
-  if (!isRecord(value) || value.v !== 1 || !Array.isArray(value.runIds)) return null;
+  if (!isRecord(value) || value.v !== 2 || !Array.isArray(value.runIds)) return null;
   const latestSeqByRunId = isRecord(value.latestSeqByRunId)
     ? Object.fromEntries(Object.entries(value.latestSeqByRunId).filter((entry): entry is [string, number] => (
         typeof entry[1] === 'number' && Number.isFinite(entry[1])
       )))
     : {};
-  return {
-    v: 1,
-    runIds: uniqueStrings(value.runIds.filter((runId): runId is string => typeof runId === 'string')),
-    latestSeqByRunId,
-  };
+  const runIds = uniqueStrings(value.runIds.filter((runId): runId is string => typeof runId === 'string'));
+  const delegationRunIds = Array.isArray(value.delegationRunIds)
+    ? uniqueStrings(value.delegationRunIds.filter((runId): runId is string => typeof runId === 'string'))
+        .filter((runId) => runIds.includes(runId))
+    : [];
+  return { v: 2, runIds, latestSeqByRunId, delegationRunIds };
 }
 
 function normalizePrincipalRunIndex(value: unknown, expectedPrincipalKey: string): AgentPrincipalRunIndex | null {
@@ -2202,7 +2270,7 @@ function normalizePrincipal(value: unknown): AgentPrincipal | null {
 function isAgentRunKind(value: unknown): value is AgentRunKind {
   return value === 'turn'
     || value === 'background'
-    || value === 'subagent'
+    || value === 'delegation'
     || value === 'scheduled'
     || value === 'reflective';
 }
@@ -2312,6 +2380,40 @@ function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
       events.push(JSON.parse(line) as AgentEvent);
     } catch (error) {
       throw new Error(`Invalid agent event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return events;
+}
+
+/**
+ * The delegated-run ledger parse: like {@link parseEventsJsonl} but a torn FINAL
+ * line — the crash artifact of an interrupted child-message append — is dropped
+ * with a warning instead of failing the read (same policy as the memory log:
+ * the run is marked interrupted on restore, so the lost in-flight event is
+ * accounted for). A malformed line in the middle is real corruption and still
+ * fails loudly.
+ */
+function parseRunEventsJsonl(raw: string, source: string): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  const lines = raw.split(/\r?\n/);
+  let lastContentIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]!.trim().length > 0) {
+      lastContentIndex = index;
+      break;
+    }
+  }
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!.trim();
+    if (!line) continue;
+    try {
+      events.push(JSON.parse(line) as AgentEvent);
+    } catch (error) {
+      if (index === lastContentIndex) {
+        console.warn(`Dropping torn trailing agent run event at ${source}:${index + 1}`);
+        break;
+      }
+      throw new Error(`Invalid agent run event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return events;
@@ -2510,7 +2612,7 @@ function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
 function emptyDreamState(): AgentDreamState {
   return {
     lastCompleted: null,
-    watermark: { conversations: {}, agentRuns: {} },
+    watermark: { conversations: {}, runs: {} },
     lastSuccessAt: null,
   };
 }
@@ -2532,20 +2634,21 @@ function cloneDreamState(state: AgentDreamState): AgentDreamState {
 }
 
 function normalizeDreamWatermark(value: unknown): AgentDreamWatermark {
-  if (!isRecord(value) || !isRecord(value.conversations)) return { conversations: {}, agentRuns: {} };
+  if (!isRecord(value) || !isRecord(value.conversations)) return { conversations: {}, runs: {} };
   const conversations: AgentDreamWatermark['conversations'] = {};
   for (const [conversationId, rawCursor] of Object.entries(value.conversations)) {
     const cursor = normalizeDreamWatermarkCursor(rawCursor);
     if (cursor) conversations[conversationId] = cursor;
   }
-  const agentRuns: NonNullable<AgentDreamWatermark['agentRuns']> = {};
-  if (isRecord(value.agentRuns)) {
-    for (const [runId, rawCursor] of Object.entries(value.agentRuns)) {
-      const cursor = normalizeDreamAgentRunWatermarkCursor(rawCursor);
-      if (cursor) agentRuns[runId] = cursor;
+  // ONE cursor shape for run streams too (run unification).
+  const runs: NonNullable<AgentDreamWatermark['runs']> = {};
+  if (isRecord(value.runs)) {
+    for (const [runId, rawCursor] of Object.entries(value.runs)) {
+      const cursor = normalizeDreamWatermarkCursor(rawCursor);
+      if (cursor) runs[runId] = cursor;
     }
   }
-  return { conversations, agentRuns };
+  return { conversations, runs };
 }
 
 function normalizeDreamWatermarkCursor(value: unknown): AgentDreamWatermark['conversations'][string] | null {
@@ -2556,19 +2659,11 @@ function normalizeDreamWatermarkCursor(value: unknown): AgentDreamWatermark['con
   return { seq: Math.trunc(seq), eventId };
 }
 
-function normalizeDreamAgentRunWatermarkCursor(value: unknown): NonNullable<AgentDreamWatermark['agentRuns']>[string] | null {
-  if (!isRecord(value)) return null;
-  const messageCount = numberOrNull(value.messageCount);
-  if (messageCount === null || messageCount < 0) return null;
-  const payloadId = typeof value.payloadId === 'string' || value.payloadId === null ? value.payloadId : null;
-  return { messageCount: Math.trunc(messageCount), payloadId };
-}
-
 function normalizeDreamProcessed(value: unknown): Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'] | null {
   if (!isRecord(value) || !isRecord(value.conversations)) return null;
   return {
     conversations: normalizeDreamProcessedConversations(value.conversations),
-    agentRuns: normalizeDreamProcessedAgentRuns(value.agentRuns),
+    runs: normalizeDreamProcessedRuns(value.runs),
     totalMessageCount: nonNegativeInteger(value.totalMessageCount),
     totalCharCount: nonNegativeInteger(value.totalCharCount),
     consolidateOnly: value.consolidateOnly === true,
@@ -2594,25 +2689,19 @@ function normalizeDreamProcessedConversations(value: unknown): Record<string, Ag
   return conversations;
 }
 
-function normalizeDreamProcessedAgentRuns(value: unknown): Record<string, AgentDreamProcessedAgentRun> {
+function normalizeDreamProcessedRuns(value: unknown): Record<string, AgentDreamProcessedRun> {
   if (!isRecord(value)) return {};
-  const runs: Record<string, AgentDreamProcessedAgentRun> = {};
+  const runs: Record<string, AgentDreamProcessedRun> = {};
   for (const [runId, raw] of Object.entries(value)) {
-    if (!isRecord(raw) || typeof raw.parentConversationId !== 'string' || raw.parentConversationId.length === 0) continue;
-    const fromMessageCountExclusive = numberOrNull(raw.fromMessageCountExclusive);
-    const throughMessageCount = numberOrNull(raw.throughMessageCount);
-    if (
-      fromMessageCountExclusive === null
-      || throughMessageCount === null
-      || fromMessageCountExclusive < 0
-      || throughMessageCount < fromMessageCountExclusive
-    ) continue;
+    if (!isRecord(raw) || typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) continue;
+    const fromSeqExclusive = numberOrNull(raw.fromSeqExclusive);
+    const throughSeq = numberOrNull(raw.throughSeq);
+    if (fromSeqExclusive === null || throughSeq === null || fromSeqExclusive < 0 || throughSeq < fromSeqExclusive) continue;
     runs[runId] = {
-      parentConversationId: raw.parentConversationId,
-      parentToolCallId: normalizeOptionalString(raw.parentToolCallId),
-      fromMessageCountExclusive: Math.trunc(fromMessageCountExclusive),
-      throughMessageCount: Math.trunc(throughMessageCount),
-      transcriptPayloadId: typeof raw.transcriptPayloadId === 'string' || raw.transcriptPayloadId === null ? raw.transcriptPayloadId : null,
+      conversationId: raw.conversationId,
+      fromSeqExclusive: Math.trunc(fromSeqExclusive),
+      throughSeq: Math.trunc(throughSeq),
+      throughEventId: typeof raw.throughEventId === 'string' || raw.throughEventId === null ? raw.throughEventId : null,
       messageCount: nonNegativeInteger(raw.messageCount),
       charCount: nonNegativeInteger(raw.charCount),
     };
@@ -2652,16 +2741,13 @@ function normalizeMemoryEntryPatch(value: unknown): AgentMemoryEntryPatch {
 function normalizeMemorySource(value: unknown): AgentMemorySource | null {
   if (!isRecord(value) || typeof value.conversationId !== 'string' || value.conversationId.length === 0) return null;
   const source: AgentMemorySource = { conversationId: value.conversationId };
-  if (value.kind === 'conversation' || value.kind === 'agent_run') source.kind = value.kind;
+  if (value.kind === 'conversation' || value.kind === 'run') source.kind = value.kind;
   if (typeof value.summaryId === 'string' && value.summaryId.length > 0) source.summaryId = value.summaryId;
   if (Array.isArray(value.messageRange) && value.messageRange.length === 2) {
     const [from, to] = value.messageRange;
     if (typeof from === 'string' && typeof to === 'string') source.messageRange = [from, to];
   }
   if (typeof value.runId === 'string' && value.runId.length > 0) source.runId = value.runId;
-  if (typeof value.subagentRunId === 'string' && value.subagentRunId.length > 0) source.subagentRunId = value.subagentRunId;
-  if (typeof value.agentId === 'string' && value.agentId.length > 0) source.agentId = value.agentId;
-  if (typeof value.parentToolCallId === 'string' && value.parentToolCallId.length > 0) source.parentToolCallId = value.parentToolCallId;
   if (typeof value.eventId === 'string' && value.eventId.length > 0) source.eventId = value.eventId;
   return source;
 }
@@ -2757,7 +2843,7 @@ function normalizeCheckpoint(value: unknown, conversationId: string): AgentEvent
   if (state.latestEventId !== latestEventId) return null;
   if (!isRecord(state.conversation) || state.conversation.id !== conversationId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
-  if (!isRecord(state.subagents) || !isRecord(state.compactionsByMessageId)) return null;
+  if (!isRecord(state.childRuns) || !isRecord(state.compactionsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
   if (!Array.isArray(state.rootMessageIds)) return null;
   if (!isRecord(state.childrenByParentId) || !isRecord(state.derivedPayloadsBySourceId)) return null;

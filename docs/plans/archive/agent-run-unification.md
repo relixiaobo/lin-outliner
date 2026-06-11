@@ -1,9 +1,9 @@
 ---
-status: draft
+status: done
 priority: P1
-owner: unassigned
+owner: cc-2
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 ---
 
 # Run unification: dissolve the subagent entity
@@ -100,8 +100,63 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
    another `hasLegacyX`.
 7. **Spec sync (A6):** `agent-architecture.md` (sub-agent bullet → pure
    relationship; status row), `agent-data-model.md` §3/§5 run section + §13.17
-   note ("holds structurally"), `agent-subagent-runtime-plan.md` spec doc
+   note ("holds structurally"), `agent-delegation-runtime.md` spec doc
    re-worded to delegation vocabulary.
+
+## As-built design decisions (cc-2, build time 2026-06-11 — reversible locals noted in PR)
+
+- **Child ledger = its own stream with its own seq space starting at 1**
+  (matches data-model §6 "per stream"). Turn runs keep sharing the
+  conversation's seq space (they interleave on the conversation's active
+  path); a delegated run is its own tree + path, replayed alone into its own
+  `AgentEventReplayState`. Events carry the parent `conversationId` (anchor)
+  + `runId` = child run id.
+- **Conversation replay/checkpoints EXCLUDE delegation run files.** Merging
+  child events into the parent state would clobber `latestMessageId` /
+  `selectedLeafMessageId` / `rootMessageIds` (verified in the reducer). The
+  per-conversation run index gains kind awareness; the join machinery skips
+  `kind: 'delegation'`.
+- **Ledger ordering encodes the fork boundary structurally:**
+  `[fork seed messages…, run.started, directive, child turns…]` (fresh:
+  `[run.started, skill preloads, directive, …]`). Dream evidence = events
+  with `seq > run.started.seq` — same semantics as today's
+  `dreamEvidenceStartMessageIndex` (boundary excludes the copied parent
+  prefix, includes the directive), now rename-proof and compaction-proof.
+- **Fork seed IS copied into the child ledger** (not referenced): the
+  parent's live message array is a derived runtime artifact (slimmed/
+  compacted/reminder-laden), not reconstructable from the parent log later —
+  the seed is what the child actually saw, so it belongs in its execution
+  record. Append-once; bounded by the model context budget.
+- **Slimming writes `tool_result.replaced` events** (the event type already
+  exists): the ledger faithfully records what the model saw; restore replays
+  the slimmed state.
+- **Child compaction = conversation machinery verbatim:** append
+  `compaction.completed` + a post-compact user message with
+  `parentMessageId: null` (new root; the reducer's
+  `selectedLeafMessageId = messageId` re-anchors the active path). Compacted
+  events stay in the ledger off-path; the #178 summary-as-evidence intent
+  holds structurally (`renderHiddenBlockEvidence` already reads the
+  post-compact reminder).
+- **Run-sourced memory evidence:** `AgentMemorySource` gains
+  `kind: 'run'` (`runId` + real `messageRange` ids + `eventId`); the
+  `agent_run` variant, the `runId:message:N` codec, and payload pinning are
+  deleted. Resolution replays the child ledger and windows the active path —
+  shared with the conversation path.
+- **Watermark:** `AgentDreamWatermark.agentRuns` →
+  `runs?: Record<runId, {seq, eventId}>` (one cursor type).
+- **Parent-visible projection stays event-fed:** slim `child_run.started` /
+  `child_run.updated` conversation-log events (no transcript payload, no
+  message count, no boundary index) project into `state.childRuns` for the
+  boundary row + task panel; the drill-in panel reads the child ledger
+  through a new `agent_child_run_transcript` command instead of a payload
+  blob. Descendant (grandchild) runs keep registering in the root
+  conversation log (today's behavior), with `parentRunId` forming the run
+  tree.
+- **Notifications:** `AgentTaskSource` collapses to `{type:'run', runId}` —
+  the subagent variant dies with the species.
+- **Model-visible surface:** tool names (`Agent`/`AgentStatus`/…) unchanged;
+  the `subagent_type` parameter renames to `agent_type` (schema-driven;
+  pre-release).
 
 ## Behavior contracts that must NOT change
 
@@ -122,23 +177,24 @@ this unacknowledged eighth primitive. #178 made it *correct*; this PR makes it
 
 ## Acceptance
 
-- [ ] Greps: `rg -i subagent src/` → 0 (excluding historical docs);
-      `rg "transcriptPayloadId|agentRunMessageId|messageCount" src/` → 0 in
-      live code paths.
-- [ ] A delegated run round-trips: spawn → transcript in own ledger → parent
+- [x] Greps: `rg -i subagent src/` → 0;
+      `transcriptPayloadId`/`agentRunMessageId` → 0 (remaining `messageCount`
+      hits are conversation-index counters, not positional run coordinates).
+- [x] A delegated run round-trips: spawn → transcript in own ledger → parent
       join renders sidechain → auto-compact (event-sourced) → Dream consolidates
       with the unified `{seq, eventId}` cursor → evidence resolves or fails
-      loud. One integration test covers the chain.
-- [ ] Migrated #164/#178 scenario tests green; full `test:core` +
-      `test:renderer` vs baselines; `CHECKPOINT_VERSION` bumped.
-- [ ] Sentinel fixture tests: pre-sentinel data (no `layout.json`) → wiped +
-      sentinel written; current `v` → no wipe, no per-conversation probing;
-      stale `v` → wiped; unreadable/corrupt sentinel → fail-open (no wipe,
-      store fully functional, re-probe next launch). The #180 regression
-      intents (content can never trip a wipe; probe errors don't brick the
-      store) migrate onto the sentinel read path.
-- [ ] The #180 detector pile is gone: `rg "hasLegacyEventVocabulary|LEGACY_SESSIONS_DIR|LEGACY_SESSION_INDEX_FILE" src/` → 0.
-- [ ] Spec synced per Design 7; plan archived `done`.
+      loud. Covered live by 'a fork run that auto-compacts is still Dreamed'
+      (spawn→compact→Dream→evidence) + the restore scenario (ledger round-trip).
+- [x] Migrated #164/#178 scenario tests green (intents restated structurally);
+      `test:core` 844/0 + `test:renderer` 409/0; `CHECKPOINT_VERSION` 4→5.
+- [x] Sentinel fixture tests: pre-sentinel → wiped + stamped; current `v` →
+      no wipe/probe; stale `v` → wiped; corrupt/non-integer `v` → fail-open
+      (no wipe, store functional, sentinel left for re-probe). #180 intents
+      carried onto the sentinel read path.
+- [x] The #180 detector pile is gone: `rg "hasLegacyEventVocabulary|LEGACY_SESSIONS_DIR|LEGACY_SESSION_INDEX_FILE" src/` → 0.
+- [x] Spec synced per Design 7 (architecture / data-model §13.17 / tool-design /
+      commands / event-log-rendering / skills / progress /
+      `agent-delegation-runtime.md` reworded); plan archived `done`.
 
 ## Collision self-check (2026-06-10, plan time)
 

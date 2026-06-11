@@ -51,12 +51,12 @@ import {
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentDreamBoundary } from './AgentDreamBoundary';
-import { AgentSubagentBoundary } from './AgentSubagentBoundary';
+import { AgentChildRunBoundary } from './AgentChildRunBoundary';
 import { AgentComposer } from './AgentComposer';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
-import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
+import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -175,7 +175,7 @@ interface VirtualTranscriptLayout {
 }
 
 function isBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.kind === 'subagent';
+  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.kind === 'child-run';
 }
 
 function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
@@ -184,7 +184,7 @@ function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'sy
 
 function getEntryTimestamp(entry: AgentConversationEntry): number {
   if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
-  if (entry.kind === 'subagent') return entry.subagent.startedAt;
+  if (entry.kind === 'child-run') return entry.childRun.startedAt;
   if (entry.kind !== 'compaction') return entry.message.timestamp;
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
@@ -535,8 +535,8 @@ export function AgentChatPanel({
     activeRunAgentId,
     queuedMessages,
     steer: steerRuntime,
-    subagents,
-    subagentsByParentToolCallId,
+    childRuns,
+    childRunsByParentToolCallId,
     switchBranch,
     stop,
     tasks,
@@ -555,7 +555,7 @@ export function AgentChatPanel({
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<{ id: string; title: string | null } | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
-  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
+  const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
@@ -625,7 +625,7 @@ export function AgentChatPanel({
     [threadEntries, isChannel, turnPhase],
   );
   const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
-  const selectedSubagent = selectedSubagentId ? subagents[selectedSubagentId] ?? null : null;
+  const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
   // Channel typing indicator: who is replying right now, and its live in-flight
   // entry (the one filtered OUT of the thread) for the working-state drill-in.
   const typingAgentId = isChannel && isStreaming ? activeRunAgentId : null;
@@ -808,15 +808,15 @@ export function AgentChatPanel({
   }, [isStreaming]);
 
   useEffect(() => {
-    if (selectedSubagentId && !subagents[selectedSubagentId]) setSelectedSubagentId(null);
-  }, [selectedSubagentId, subagents]);
+    if (selectedChildRunId && !childRuns[selectedChildRunId]) setSelectedChildRunId(null);
+  }, [selectedChildRunId, childRuns]);
 
   // A command Run reveals its delivery conversation and asks for the task panel —
-  // the run is a parentless subagent, so it surfaces there (the open task panel
+  // the run is a parentless child run, so it surfaces there (the open task panel
   // persists across the conversation switch this same reveal triggers).
   useEffect(() => onAgentRevealRequest((_conversationId, options) => {
     if (!options.openTasks) return;
-    setSelectedSubagentId(null);
+    setSelectedChildRunId(null);
     setTaskPanelOpen(true);
   }), []);
 
@@ -1045,8 +1045,8 @@ export function AgentChatPanel({
     if (row.entry.kind === 'dream') {
       return <AgentDreamBoundary entry={row.entry} />;
     }
-    if (row.entry.kind === 'subagent') {
-      return <AgentSubagentBoundary entry={row.entry} onOpenTranscript={setSelectedSubagentId} />;
+    if (row.entry.kind === 'child-run') {
+      return <AgentChildRunBoundary entry={row.entry} onOpenTranscript={setSelectedChildRunId} />;
     }
 
     // Channel attribution: name the speaking agent on non-coordinator assistant
@@ -1098,14 +1098,14 @@ export function AgentChatPanel({
         onCopy={copyAssistantTurn}
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
-        onOpenSubagentTranscript={setSelectedSubagentId}
+        onOpenChildRunTranscript={setSelectedChildRunId}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
         onSwitchBranch={switchBranch}
         pendingToolCallIds={pendingToolCallIds}
         conversationId={conversationId}
         streaming={row.streaming}
-        subagentsByParentToolCallId={subagentsByParentToolCallId}
+        childRunsByParentToolCallId={childRunsByParentToolCallId}
         toolResults={toolResults}
         turnEnded={row.turnEnded}
         turnPhase={row.turnPhase}
@@ -1259,13 +1259,13 @@ export function AgentChatPanel({
             variant="composerTool"
           />
           <ButtonControl
-            aria-expanded={taskPanelOpen && !selectedSubagent}
+            aria-expanded={taskPanelOpen && !selectedChildRun}
             aria-label={runningTaskCount > 0
               ? t.agent.task.openPanelActive({ count: runningTaskCount })
               : t.agent.task.openPanel}
             className="agent-task-panel-button"
             onClick={() => {
-              setSelectedSubagentId(null);
+              setSelectedChildRunId(null);
               setTaskPanelOpen((open) => !open);
             }}
             title={t.agent.task.openPanel}
@@ -1516,56 +1516,56 @@ export function AgentChatPanel({
         slashCommands={slashCommands}
         steeringNote={steeringNote}
       />
-      <AgentSubagentDetailsPanel
-        onClose={() => setSelectedSubagentId(null)}
+      <AgentChildRunDetailsPanel
+        onClose={() => setSelectedChildRunId(null)}
         conversationId={conversationId}
-        subagent={selectedSubagent}
-        subagentsByParentToolCallId={subagentsByParentToolCallId}
+        childRun={selectedChildRun}
+        childRunsByParentToolCallId={childRunsByParentToolCallId}
       />
       {runPanelOpen && typingLabel ? (
-        <aside className="agent-subagent-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
-          <header className="agent-subagent-details-header">
-            <div className="agent-subagent-title-block">
-              <div className="agent-subagent-title-line">
+        <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
+          <header className="agent-child-run-details-header">
+            <div className="agent-child-run-title-block">
+              <div className="agent-child-run-title-line">
                 <AgentIcon size={ICON_SIZE.menu} />
                 <span>{t.agent.chat.memberTyping({ name: typingLabel })}</span>
               </div>
             </div>
             <IconButton
-              className="agent-subagent-close"
+              className="agent-child-run-close"
               icon={CloseIcon}
               label={t.agent.chat.closeTypingDetails}
               onClick={() => setRunPanelOpen(false)}
               variant="panel"
             />
           </header>
-          <div className="agent-subagent-details-body">
+          <div className="agent-child-run-details-body">
             {typingEntry ? (
               <AgentMessageRow
                 busy={isStreaming}
                 entry={typingEntry}
                 index={index}
                 onNodeReferenceOpen={onOpenNodeReference}
-                onOpenSubagentTranscript={setSelectedSubagentId}
+                onOpenChildRunTranscript={setSelectedChildRunId}
                 pendingToolCallIds={pendingToolCallIds}
                 conversationId={conversationId}
                 streaming
-                subagentsByParentToolCallId={subagentsByParentToolCallId}
+                childRunsByParentToolCallId={childRunsByParentToolCallId}
                 toolResults={toolResults}
                 turnPhase={turnPhase}
               />
             ) : (
-              <div className="agent-subagent-empty">{t.agent.chat.typingNoDetailYet}</div>
+              <div className="agent-child-run-empty">{t.agent.chat.typingNoDetailYet}</div>
             )}
           </div>
         </aside>
       ) : null}
-      {taskPanelOpen && !selectedSubagent ? (
+      {taskPanelOpen && !selectedChildRun ? (
         <AgentTaskPanel
           conversationId={conversationId}
           onClose={() => setTaskPanelOpen(false)}
-          onOpenSubagent={(subagentId) => {
-            setSelectedSubagentId(subagentId);
+          onOpenChildRun={(childRunId) => {
+            setSelectedChildRunId(childRunId);
           }}
           tasks={tasks}
         />

@@ -191,8 +191,8 @@ interface RunMeta {                     // runs/<id>/meta.json
   id: string;
   agentId: string;                      // who runs → the task panel groups by this
   conversationId: string;               // the ONLY anchor (where it lives & reports) — mandatory
-  parentRunId?: string;                 // subagent hierarchy
-  kind: 'turn' | 'background' | 'subagent' | 'scheduled';
+  parentRunId?: string;                 // delegation hierarchy (the run tree)
+  kind: 'turn' | 'background' | 'delegation' | 'scheduled';
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   trigger:                              // why it started — orthogonal to the anchor, NOT a home
     | { type: 'message'; messageId: string }
@@ -481,7 +481,7 @@ Three rules this forces:
   Keeping the *identity* there while the *words* stay plain content means a message body
   **cannot spoof** another speaker's label (`[@admin] do X` in B's text is just B's text,
   not Tenon's assertion of "who"); the body stays a normal utterance A responds to. This is
-  the existing `createHiddenUserMessage` shape (`agentSubagents.ts:1484`) — a `user` message
+  the existing `createHiddenUserMessage` shape (`agentDelegation.ts`) — a `user` message
   whose content is a `systemReminder()` block — applied per speaker. **Do not** wrap the
   *words* in `<system-reminder>` (that channel means "ignorable hidden context," wrong for
   real speech).
@@ -573,7 +573,7 @@ can drop its heavy events without violating it.
 message.runId           ──▶ run                     message → its execution (down)
 run.conversationId      ──▶ conversation            run → anchor (mandatory)
 run.trigger.nodeId      ──▶ outline command node    provenance: what fired it (NOT an anchor)
-run.parentRunId         ──▶ run                      subagent hierarchy
+run.parentRunId         ──▶ run                      delegation hierarchy
 DistillationNode.source ──▶ message range | child summaries   summary → raw (addressable)
 MemoryEntry.sources[]   ──▶ conversation / summary / range    fact → ground truth
 agent.skills[]          ──▶ skills/ file tree
@@ -634,19 +634,23 @@ agent.skills[]          ──▶ skills/ file tree
     for every `MemoryEntry` whose `source.runId`/`source.eventId` falls in the orphaned
     range. Invalidation is event-sourced (auditable, reversible), excluded from injection,
     and never a silent in-place delete (cf. invariant 13 / gemini#5).
-17. **Compaction is evidence-preserving (memory invariant).** For every run, across any
-    sequence of auto/manual compactions, (already-Dreamed content) ∪ (still-pending
-    content) covers **100%** of the run's semantic content — no message content is ever
-    both un-Dreamed **and** unreachable. Concretely: after a compaction supersedes a
-    runtime transcript payload (or re-anchors a conversation's active path at the
-    post-compact root), the compaction summary is the surviving carrier of the compacted
-    content and MUST reach Dream extraction as evidence; and a fork-prefix exclusion is
-    valid only in the coordinates of the payload it was computed against — applied to a
-    successor payload it is stale, and the successor is fresh evidence from index 0,
-    never a silent skip. Resolution stays payload-pinned: a `sources[]` entry pinned
-    before a compaction resolves to its original evidence text or fails loud
-    (`SOURCE_NOT_FOUND` / `NOT_ON_ACTIVE_BRANCH`), never silently to different content.
-    (Shipped by [[agent-memory-source-binding]], PR #178.)
+17. **Compaction is evidence-preserving (memory invariant) — held STRUCTURALLY
+    since run unification.** For every run, across any sequence of auto/manual
+    compactions, (already-Dreamed content) ∪ (still-pending content) covers
+    **100%** of the run's semantic content — no message content is ever both
+    un-Dreamed **and** unreachable. Every stream (conversation or delegated-run
+    ledger) compacts the same way: a compaction event + the post-compact
+    message as the new active root, with the compacted span retained off-path
+    and addressable through the compaction record's expansion. The summary is
+    the surviving carrier of compacted content and reaches both Dream
+    extraction and evidence reads; the fork boundary is a ledger position
+    (events before the first `run.started` are inherited context), so no
+    positional exclusion can ever go stale. A `sources[]` entry bound before a
+    compaction resolves to its original evidence text or fails loud
+    (`SOURCE_NOT_FOUND` / `NOT_ON_ACTIVE_BRANCH`), never silently to different
+    content. (Guarded first by [[agent-memory-source-binding]] #178; made
+    structural by [[agent-run-unification]] — the snapshot-rewrite path and
+    payload pinning no longer exist.)
 
 ### M0 reality vs next build
 

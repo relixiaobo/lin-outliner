@@ -78,7 +78,7 @@ export interface AgentRuntimeContextConversation {
   reactiveCompactRequested: boolean;
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
-  subagentRuntime?: {
+  delegationRuntime?: {
     createAgentListingStateReminder(): UserMessage | null;
   };
   localWorkspace: AgentLocalWorkspaceContext;
@@ -258,7 +258,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         summary,
         conversation.skillRuntime.createInvokedSkillsReminder(),
         conversation.skillRuntime.createSkillListingStateReminder(),
-        conversation.subagentRuntime?.createAgentListingStateReminder() ?? null,
+        conversation.delegationRuntime?.createAgentListingStateReminder() ?? null,
         createPostCompactRestoredFilesReminder(restoredFiles),
         { recentMessagesPreserved: compactPlan.messagesToKeep.length > 0 },
       );

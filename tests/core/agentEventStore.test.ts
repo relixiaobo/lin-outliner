@@ -8,6 +8,8 @@ import {
   agentCheckpointFileName,
   agentPayloadFileName,
   agentConversationDirName,
+  LAYOUT_SENTINEL_FILE,
+  STORAGE_LAYOUT_VERSION,
 } from '../../src/main/agentEventStore';
 
 const systemActor: AgentActor = { type: 'system' };
@@ -496,72 +498,66 @@ describe('agent event store', () => {
     return { conversationId, agentPrincipal, userPrincipal };
   }
 
-  test('a legacy sessions/ tree wipes the whole agent data root on first access', async () => {
+  test('pre-sentinel data (no layout.json) is positive proof and wipes the root + writes the sentinel', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
+      // Simulate a pre-sentinel generation: data exists but the sentinel does not.
+      await rm(path.join(root, LAYOUT_SENTINEL_FILE), { force: true });
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
+      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
+      expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+    });
+  });
+
+  test('a stale sentinel generation wipes the root and re-stamps the current one', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId } = await seedCurrentLayout(store);
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION - 1 })}\n`, 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toEqual([]);
+      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
+      expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+    });
+  });
+
+  test('a current sentinel proceeds with no wipe and no per-conversation probing', async () => {
+    await withStore(async (store, root) => {
+      const { conversationId, agentPrincipal } = await seedCurrentLayout(store);
+      // Old-format artifacts are no longer probed for — the sentinel alone decides.
       await mkdir(path.join(root, 'sessions'), { recursive: true });
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
-      await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
+      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
     });
   });
 
-  test('a legacy session-index.json wipes the root', async () => {
-    await withStore(async (store, root) => {
-      const { conversationId } = await seedCurrentLayout(store);
-      await mkdir(path.join(root, 'indexes'), { recursive: true });
-      await writeFile(path.join(root, 'indexes', 'session-index.json'), '{}', 'utf8');
-
-      const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-    });
-  });
-
-  test('an agent pool inside the identity directory (agents/<id>/memory/) wipes the root', async () => {
+  test('a corrupt sentinel is ambiguity: fail OPEN — no wipe, store fully functional (#180 invariants)', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal } = await seedCurrentLayout(store);
-      const legacyPoolDir = path.join(store.agentPaths(agentPrincipal.type === 'agent' ? agentPrincipal.agentId : '').agentDir, 'memory');
-      await mkdir(legacyPoolDir, { recursive: true });
-      await writeFile(path.join(legacyPoolDir, 'events.jsonl'), '', 'utf8');
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), 'not-json {{{', 'utf8');
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
-      await expect(readdir(legacyPoolDir)).rejects.toThrow();
+      // The destructive path requires positive proof; corruption is not proof.
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
+      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
+      // The corrupt sentinel is left for the next launch to re-probe — never overwritten blindly.
+      await expect(readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8')).resolves.toContain('not-json');
     });
   });
 
-  test('a conversation log speaking the session.* vocabulary wipes the root', async () => {
+  test('a sentinel with a non-integer v is ambiguity too — fail open', async () => {
     await withStore(async (store, root) => {
-      const { conversationId, userPrincipal } = await seedCurrentLayout(store);
-      const legacyDir = path.join(root, 'conversations', agentConversationDirName('legacy-1'), 'segments');
-      await mkdir(legacyDir, { recursive: true });
-      await writeFile(
-        path.join(legacyDir, '000001.jsonl'),
-        `${JSON.stringify({
-          v: 1,
-          eventId: 'legacy-event-1',
-          seq: 1,
-          sessionId: 'legacy-1',
-          type: 'session.created',
-          createdAt: 1,
-          actor: { type: 'system' },
-          title: 'Legacy vocabulary',
-        })}\n`,
-        'utf8',
-      );
+      const { conversationId } = await seedCurrentLayout(store);
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), '{"v":"2"}\n', 'utf8');
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listConversationIndexEntries()).toEqual([]);
-      await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
-      await expect(readdir(path.join(root, 'conversations'))).rejects.toThrow();
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
     });
   });
 
@@ -1091,13 +1087,111 @@ describe('agent event store', () => {
   });
 
   test('reports malformed JSONL line numbers', async () => {
-    await withStore(async (store) => {
+    await withStore(async (store, root) => {
+      // Hand-seeded data needs the current-generation sentinel, or the store
+      // treats the root as another generation and wipes it (by design).
+      await mkdir(root, { recursive: true });
+      await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`, 'utf8');
       const conversationId = 'conversation-1';
       const eventsPath = store.paths(conversationId).conversationEventsPath;
       await mkdir(path.dirname(eventsPath), { recursive: true });
       await writeFile(eventsPath, '{"v":1}\nnot-json\n', 'utf8');
 
       await expect(store.readEvents(conversationId)).rejects.toThrow(/\.jsonl:2/);
+    });
+  });
+
+  test('a torn trailing line in a delegated-run ledger is dropped on read and truncated on the next append', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-1';
+      const runId = 'child-torn-tail';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Torn tail' },
+      ]);
+      const runEvent = (seq: number): AgentEvent => ({
+        ...base(conversationId, seq, 'user_message.created', userActor),
+        eventId: `${runId}-evt-${seq}`,
+        runId,
+        messageId: `${runId}-message-${seq}`,
+        parentMessageId: seq === 1 ? null : `${runId}-message-${seq - 1}`,
+        content: [{ type: 'text', text: `child message ${seq}` }],
+      } as AgentEvent);
+      await store.appendRunStreamEvents(conversationId, runId, [runEvent(1), runEvent(2)]);
+
+      // Crash artifact: an interrupted append leaves half a JSON object as the
+      // final line of the run's events.jsonl.
+      const runEventsPath = store.runPaths(runId).runEventsPath;
+      await writeFile(runEventsPath, `${await readFile(runEventsPath, 'utf8')}{"v":1,"eventId":"TORN-FRAGMENT`, 'utf8');
+
+      // Read: the torn FINAL line is dropped; the intact prefix stays readable
+      // (a corrupt child ledger must never brick its parent conversation).
+      const events = await store.readRunStreamEvents(runId);
+      expect(events.map((event) => event.seq)).toEqual([1, 2]);
+      expect((await store.replayRunStream(runId)).latestSeq).toBe(2);
+
+      // Append (a resume): the before-append repair truncates the fragment, the
+      // new event lands after the intact tail, and the file is whole again.
+      await store.appendRunStreamEvents(conversationId, runId, [runEvent(3)]);
+      const after = await store.readRunStreamEvents(runId);
+      expect(after.map((event) => event.seq)).toEqual([1, 2, 3]);
+      const raw = await readFile(runEventsPath, 'utf8');
+      expect(raw.includes('TORN-FRAGMENT')).toBe(false);
+      expect(raw.endsWith('\n')).toBe(true);
+
+      // A malformed line in the MIDDLE is real corruption and still fails loudly.
+      await writeFile(runEventsPath, `not-json\n${raw}`, 'utf8');
+      await expect(store.readRunStreamEvents(runId)).rejects.toThrow(/agent run event JSON/);
+    });
+  });
+
+  test('concurrent conversation and delegated-run appends never drop a run from the run index', async () => {
+    await withStore(async (store, root) => {
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Index race' },
+      ]);
+
+      // runs.json is a read-modify-write merge reached from two different
+      // serial queues (per-conversation event queue vs per-run ledger queue).
+      // Each round races one turn-run append against one delegated-run append;
+      // a lost update permanently drops the turn run from the index, and cold
+      // replay then silently misses that turn-run ledger's events.
+      const turnRunSeqs: number[] = [];
+      const jobs: Promise<unknown>[] = [];
+      let seq = 1;
+      for (let round = 0; round < 16; round += 1) {
+        const turnRunId = `turn-run-${round}`;
+        const childRunId = `child-run-${round}`;
+        const startSeq = (seq += 1);
+        const messageSeq = (seq += 1);
+        const doneSeq = (seq += 1);
+        turnRunSeqs.push(startSeq, doneSeq);
+        const childEvent = (childSeq: number): AgentEvent => ({
+          ...base(conversationId, childSeq, childSeq === 1 ? 'run.started' : 'run.completed'),
+          eventId: `${childRunId}-evt-${childSeq}`,
+          runId: childRunId,
+          ...(childSeq === 1 ? { kind: 'delegation' } : {}),
+        } as AgentEvent);
+        jobs.push(store.appendEvents(conversationId, [
+          { ...base(conversationId, startSeq, 'run.started'), runId: turnRunId },
+          {
+            ...base(conversationId, messageSeq, 'user_message.created', userActor),
+            runId: turnRunId,
+            messageId: `message-${round}`,
+            parentMessageId: null,
+            content: [{ type: 'text', text: `turn ${round}` }],
+          },
+          { ...base(conversationId, doneSeq, 'run.completed'), runId: turnRunId },
+        ]));
+        jobs.push(store.appendRunStreamEvents(conversationId, childRunId, [childEvent(1), childEvent(2)]));
+      }
+      await Promise.all(jobs);
+
+      // Cold replay: every turn run's ledger must still join the conversation
+      // (run.started/run.completed live in the run's OWN events file, so a
+      // dropped index entry makes them vanish from the join).
+      const replayedSeqs = (await new AgentEventStore(root).readEvents(conversationId)).map((event) => event.seq);
+      for (const turnRunSeq of turnRunSeqs) expect(replayedSeqs).toContain(turnRunSeq);
     });
   });
 

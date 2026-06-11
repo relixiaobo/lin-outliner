@@ -524,7 +524,7 @@ Reference local and agent tool roles:
 - task planning
 - skill invocation
 - user question
-- subagent execution
+- delegated child-run execution
 - task stop
 - plan mode
 - MCP resource listing and reading

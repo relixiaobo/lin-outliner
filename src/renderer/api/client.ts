@@ -40,7 +40,7 @@ import type {
   AgentDebugSnapshot,
   AgentDebugTotals,
   AgentMessageAttachmentInput,
-  AgentSubagentActionResult,
+  AgentChildRunActionResult,
   AgentUserViewContext,
   AskUserQuestionResult,
 } from '../../core/agentTypes';
@@ -290,12 +290,14 @@ export const api = {
     command<string | null>('agent_debug_payload', { conversationId, payloadId }),
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
-  agentSubagentStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
-    command<AgentSubagentActionResult>('agent_subagent_status', { conversationId, agentId, ...options }),
-  agentSubagentSend: (conversationId: string, agentId: string, message: string) =>
-    command<AgentSubagentActionResult>('agent_subagent_send', { conversationId, agentId, message }),
-  agentSubagentStop: (conversationId: string, agentId: string) =>
-    command<AgentSubagentActionResult>('agent_subagent_stop', { conversationId, agentId }),
+  agentChildRunTranscript: (conversationId: string, runId: string) =>
+    command<{ messages: unknown[] } | null>('agent_child_run_transcript', { conversationId, runId }),
+  agentChildRunStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
+    command<AgentChildRunActionResult>('agent_child_run_status', { conversationId, agentId, ...options }),
+  agentChildRunSend: (conversationId: string, agentId: string, message: string) =>
+    command<AgentChildRunActionResult>('agent_child_run_send', { conversationId, agentId, message }),
+  agentChildRunStop: (conversationId: string, agentId: string) =>
+    command<AgentChildRunActionResult>('agent_child_run_stop', { conversationId, agentId }),
   agentSendMessage: (
     conversationId: string,
     message: string,
