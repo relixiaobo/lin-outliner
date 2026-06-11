@@ -21,7 +21,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (M3-B cross-agent memory + isolation gate merged, PR #200) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (agent conversation UX proposal merged, PR #197) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (UX B+E+C identity/metadata/model-chip merged, PR #201); next lane UX D |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (full ask_user_question flow merged, PR #198) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -34,7 +34,7 @@ the flow; merge order owned by main.
 | Lane | Agent | Work | Track |
 |---|---|---|---|
 | 1 | codex | **M3-B** cross-agent memory + isolation gate — **merged as PR #200** (see Recently completed). Freed the `agentRuntime.ts` slot. | plan-track |
-| 2 | codex-2 | **UX B + E + C** (`agent-conversation-entry-identity-ux`) — speaker identity, time separators/Details, composer model chip → display+navigate; on merge, continue to **D** (activity area + reply anchors). | plan-track |
+| 2 | codex-2 | **UX B + E + C** (`agent-conversation-entry-identity-ux`) — speaker identity, time separators/Details, composer model chip → display+navigate — **merged as PR #201** (see Recently completed). Next lane: **D** (activity area + reply anchors). | plan-track |
 | 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained; main's recommendation — PM confirmation pending). Touches `core/types.ts` → shared-interface-first: land the protocol slice as its own PR before the feature. | plan-track |
 
 Relay: **M3-B merged (PR #200) — the `agentRuntime.ts` runtime slot is now free.**
@@ -668,6 +668,23 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **Agent conversation UX B+E+C: identity, metadata, model chip** (codex-2,
+  PR #201, plan-track) — Channel rows show a deterministic identity chip + speaker
+  name/`@mention` for every speaker (coordinator included), derived from the
+  recorded message `actor`, not the live roster; a DM header carries the chip plus
+  an `@mention · provider/model` subtitle. Gap-based time separators; native message
+  context menu → **Details** popover (speaker, timestamp, model/provider, token
+  usage). The composer model chip becomes display + navigation (opens agent profile
+  / provider config; never mutates provider/model inline); provider-config now owns
+  global model + reasoning selection (incl. managed Bedrock/Vertex), and settings
+  gained `category` / `agent` deep-links. The gate raised one blocking item — the new
+  identity-avatar CSS used raw `line-height` px (B11 typography-token guard); fixed on
+  the second head by dropping the redundant declarations (flex already centers).
+  Rebased onto post-#200 `main` (one docs-only conflict in `agent-architecture.md`,
+  resolved as the union). typecheck + test:core + test:renderer + touched e2e +
+  design-system guards green; light+dark visual verified at the gate. Specs synced
+  in-PR. Remaining UX **D** (activity area + reply anchors) is the next lane.
 
 - **M3-B: cross-agent memory sharing + the cross-principal isolation gate** (codex,
   PR #200, plan-track) — M3's one genuinely new primitive. Briefing and `recall`

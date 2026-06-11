@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent conversation identity, message metadata, and the model chip (PR #201)** —
+  Channel assistant rows now carry a deterministic circular identity chip plus a
+  speaker name + `@mention` for **every** speaker (including the coordinator),
+  derived from the recorded message `actor` and member/definition metadata rather
+  than the live roster — a departed member falls back to its saved id/mention. A DM
+  header leads with that agent's chip and a quiet `@mention · provider/model`
+  subtitle. The transcript inserts gap-based time separators, and right-clicking a
+  message opens a native context menu whose **Details** action anchors a popover
+  with speaker, timestamp, model/provider, and token usage. The composer model chip
+  stops being an inline picker and becomes a stable **display + navigation** control:
+  it shows the active provider/model + reasoning and opens the owning settings
+  surface (agent profile for authored agents, provider config for the built-in /
+  global provider) — the chat surface never mutates provider/model inline.
+  Provider-config (its own native window) now owns model + reasoning selection for
+  the global provider, including managed providers (Bedrock/Vertex), and settings
+  gained deep-link navigation (`category` / `agent`). Specs synced in-PR
+  (`agent-architecture`, `agent-event-log-rendering`, `design-system`). typecheck +
+  test:core + test:renderer + the touched e2e specs green; design-system token
+  guards green; light+dark visual verification at the gate.
+
 - **Cross-agent memory sharing + the cross-principal isolation gate (PR #200)** —
   M3's one genuinely new primitive. In a Channel, each agent member's briefing and
   `recall` now read not just its own pool and the user's but **every co-member
