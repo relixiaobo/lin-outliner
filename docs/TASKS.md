@@ -494,34 +494,8 @@ Standalone agent items (not part of the program):
   already spans the whole row text, blur the editor and trigger the existing
   select-all-rows path; same two-step in field name/value inputs.
   Sync `ui-behavior.md` for (1)(2)(4) in the same PR (A6). No collision with #179 or
-  the other boarded fast-tracks (outliner-indent-draft-fixes touches Tab/draft paths;
-  this touches Backspace/select/focus paths — if one lands first the other rebases).
-- **outliner-indent-draft-fixes** (P2, bug ×2, *fast-track, no plan file* — diagnosis
-  is the contract, PM-confirmed 2026-06-10; ONE renderer-only PR):
-  **(1) Batch indent force-expands the batch members.** `useWorkspaceKeyboard.ts:516,523`
-  feeds ALL operation ids to `expandIndentTargets` (`outlinerStructure.ts:17-28`), which
-  adds each id's previous sibling to `expanded` — for consecutive siblings [B,C,D] the
-  targets of C and D are B and C, batch members themselves, so the indented nodes get
-  force-expanded and lose their collapsed state. Core (`core.ts:1212-1234`) moves them
-  all under A (the first node's previous sibling) — only A needs expanding. Fix: skip
-  targets that are themselves in the batch.
-  **(1b) Single indent visibly jumps.** `OutlinerItem.tsx:1229-1233` runs
-  `expandTarget()` BEFORE `await api.indentNode` — a collapsed-with-children target's
-  rows pop in one frame before the projection delta moves the indented row (two-frame
-  layout). Fix direction: apply the expansion in the SAME frame as the projection
-  update (pending-expand consumed by the delta apply), not optimistically; verify the
-  two-frame hypothesis with the `lin:render-probe` flag first.
-  **(2) Draft-row Shift+Tab lands at the parent's end, not in place.**
-  `OutlinerItem.tsx:1205-1213` relocates the draft to the grandparent's TRAILING
-  surface — always the end of that parent's children; correct only when node A happens
-  to be the last child. Real-node outdent is already in-place (`core.ts:1249`,
-  `parentIndex + 1`). Constraint: the trailing-draft model only supports per-parent end
-  position (`visualRows.ts:51` `draftIdFor(parentId)`); preferred fix = extend the
-  trailing focus surface / visualRows draft placement with an `afterId` so a draft can
-  sit "in P, right after A" — keep the pinned "draft stays a draft, no stray empty
-  node" rule (`OutlinerItem.tsx:1182-1189`); do NOT materialize an empty node.
-  Sync the Trailing Input Matrix in `ui-behavior.md` in the same PR (A6). No collision
-  with #179 / agent-pipeline work.
+  the other boarded fast-tracks (outliner-indent-draft-fixes **merged as PR #182** —
+  it touched the same Tab/draft paths, so rebase this branch on current `main`).
 
 - **ime-composition-focus-steal** (P1, bug, *no plan file yet* — see issue #176) — typing
   pinyin right after Enter tears the word apart (`skill` → `sk ill`): the split
@@ -648,6 +622,25 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **outliner indent & trailing-draft placement fixes** (codex, PR #182) — the boarded
+  fast-track shipped after two gate rounds: (1) batch Tab no longer force-expands batch
+  members, and the skip-batch-members run semantics moved INTO core
+  (`batchIndentTargetParentId`, document-ordered, snapshot-anchored, unit-tested) so the
+  agent-tool `batch_indent_nodes` path is fixed too — not just the keyboard pre-filter;
+  (1b) single indent applies the target expansion inside the same flushSync as the
+  projection apply (no one-frame pop); (2) trailing-draft Shift+Tab is in-place via
+  `{parentId, afterId}` placement with ONE shared resolver
+  (`state/trailingDraftPlacement.ts`) feeding display, materialize index, Tab inversion,
+  and ArrowUp/Backspace, and Enter materializes in place on both the text and empty
+  paths. Scope extras flagged at round 1 and kept: WAAPI FLIP row-move animation
+  (duration read from the motion token, per-instance-path rect keying), panel-root
+  outdent boundary, collapse-emptied-parents after outdent. Round 1 confirmed 10 issues
+  (3 in the headline flows themselves); round 2 fixed all but 5 accepted low-severity
+  residuals recorded on the PR (OutlinerFieldRow cleanup parity, flat-view
+  draft-focus heuristic, same-frame animation re-trigger origin). Verified: typecheck ·
+  core 811/0 · renderer 409/0 · full e2e 301 pass / 2 unrelated flaky · light+dark
+  visual.
 
 - **memory academic alignment: language surfaces speak the foundations vocabulary** (cc-2,
   PR #181) — `agent-memory-academic-alignment` shipped (plan archived `done` in-PR; subsumed

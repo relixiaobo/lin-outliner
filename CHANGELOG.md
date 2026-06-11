@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Outliner indent and trailing-draft placement (PR #182)** — closes the boarded
+  fast-track `outliner-indent-draft-fixes`. Batch Tab no longer force-expands the
+  selected siblings themselves, and the skip-batch-members run rule now lives in core
+  `batchIndentNodes` so agent-driven batch indents are covered too, not just the
+  keyboard path. Single indent expands the target in the same paint as the projection
+  move instead of one frame early. A trailing draft outdented with Shift+Tab now lands
+  in the parent scope directly after its old parent — a `{parentId, afterId}` placement
+  with one shared resolver (`src/renderer/state/trailingDraftPlacement.ts`) drives
+  rendering, the materialize index, Tab inversion, and ArrowUp/Backspace, and Enter
+  materializes in place on both the text and empty paths. Structural row moves gained a
+  reduced-motion-aware FLIP animation (duration derived from the motion token ladder),
+  outdent is blocked at the panel root, and outdenting a parent's last child collapses
+  the emptied parent. Two gate rounds; five low-severity residuals recorded on the PR.
+
 - **IME composition survives the split echo and empty rows (PR #177)** — fixes #176, the
   P1 `skill` → `sk ill` mid-word tearing, with two independent root causes closed: (1) a
   split echo's focusRequest landing ~60–80 ms into a live composition force-committed the
