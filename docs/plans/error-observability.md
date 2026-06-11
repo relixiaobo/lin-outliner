@@ -12,7 +12,7 @@ updated: 2026-06-11
 error-observability subsystem together). Any "phases" below are *build order
 within that one PR* (A7 foundation-before-consumers), not separate releases. If
 the diff grows past comfortable review, the natural split seam is **Foundation
-(P1–P3)** vs **Surfacing (P4–P5)** — but the plan ships as one feature.
+(P1–P3)** vs **Surfacing (P4)** — but the plan ships as one feature.
 
 > **Who builds it.** A dev clone claims and builds this; the main agent only
 > gates it. Drafting this plan does not make it main's to implement.
@@ -49,11 +49,13 @@ artifact a dev agent can root-cause.
 
 ## Non-goals
 
-- **No cloud telemetry / crash-reporting SaaS.** Local-first + the privacy
-  posture (agent memory and conversations are sensitive; A3 keeps no spare
-  network egress) mean nothing is sent anywhere. Revisit only when there are real
-  external users — and then opt-in + content-scrubbed. Designing a remote
-  pipeline now violates A7 (building against a mechanism we will not ship).
+- **No remote platform, no egress — local-only, full stop (PM-ratified
+  2026-06-11).** No Sentry / GlitchTip / any error-tracking server, even
+  self-hosted. The hand-off to us is **user-initiated**: when something looks
+  wrong, the user finds/exports the local diagnostic log and sends it to us;
+  analysis happens on our side. This is the design, not a "revisit later" — it
+  rules out the otherwise-mature buy options (Sentry & friends are built around
+  shipping events to a server) and is *why* we keep a small local subsystem.
 - **No replacement of `emitError`.** The foreground in-conversation error channel
   stays; reporting is *additional* (and `emitError` sites also report).
 - **No automatic remediation.** Backoff/retry policy is per-subsystem (cf. the
@@ -88,57 +90,67 @@ In the renderer: `window.onerror` / `window.onunhandledrejection` → bridge to
 `reportError` over a new preload IPC channel (contextIsolation-safe; the bridge
 is the only seam — A2). Catches the unknown-unknowns the typed paths miss.
 
-### P3 — Append-only diagnostic log (reuse the shared seq-log)
+### P3 — Local diagnostic log (the substrate)
 
-A third instance of the existing `AppendOnlySeqLog<TEvent>`
-(`agentEventStore.ts:1733`) — **not** a parallel implementation (the #152
-decision: one shared append-only seq-log primitive across conversation / run /
-memory; this is its fourth consumer). Stored in `userData` beside the agent
-logs.
+A bounded, rotating, findable local log file that captures handled + unhandled
+errors from both main and renderer. **Substrate is the one real build decision**
+(settle at claim time; touches deps → infrastructure-ownership):
 
-- **Dedup/aggregation by signature.** Key on `(domain, code, message-shape)`;
-  collapse repeats into one record with `count` + `firstAt` / `lastAt`. The Dream
-  400 would be **one** entry reading "×N", not N lines — the aggregation is the
-  point.
-- **Bounded.** Cap entries (ring/compaction like the memory log's
-  `maybeCompactMemoryLog`) so a flood can't grow the file unbounded.
-- **Privacy.** `message`/`context` are length-capped and structured; a redaction
-  pass strips obvious secrets/paths before write. Pre-release we carry no
-  back-compat reader — a format change wipes `~/.lin-outliner-*` dev userData
-  (storage-format rule).
+- **Option A — adopt `electron-log` (lean).** Mature, MIT, Electron-standard:
+  main + renderer transports, size rotation, a documented log path, and built-in
+  uncaught/rejection hooks (`log.errorHandler` / `log.catchErrors`). Treats
+  diagnostics as *operational logging*, distinct from the event-sourced **domain**
+  logs — so it does not contradict the #152 "one shared seq-log" rule (that rule
+  is about the conversation/run/memory event logs, a different family). Cost: one
+  new dependency (coordinate `package.json` / `bun.lock`). **Recommended** — the
+  value here is a robust rotating file we can point a user at, which `electron-log`
+  gives for almost nothing.
+- **Option B — extend our `AppendOnlySeqLog`** (`agentEventStore.ts:1733`). No new
+  dep, structured JSONL we already parse. Cost: we re-build rotation + the
+  renderer→main transport + uncaught hooks that `electron-log` ships.
 
-### P4 — Surfacing (read path)
+Either way: structured records `(domain, severity, code?, message, context?,
+count, firstAt, lastAt)`; **signature dedup** so the Dream 400 is one line reading
+"×N", not N lines; **length-capped + redacted** message/context (strip obvious
+secrets/paths before write — the log may be sent to us); **bounded** size. No
+back-compat reader pre-release (format change → wipe dev userData).
 
-- A **diagnostics view**: either a new `?surface=diagnostics` window
-  (`src/renderer/main.tsx` surface routing) or a section under the existing
-  `settings` surface — a reverse-chronological, grouped list of diagnostic
-  records (domain, severity, count, last-seen, expandable detail) that also folds
-  in `failed` run-ledger entries. Dev-facing first; honors the design system
-  (status colors carry status meaning only — B4; neutral functional state — B3).
-- A **status signal**: a restrained indicator (rail/status area) when unseen
-  `error`/`fatal` records accumulate, cleared on view. No layout shift on state
-  change (B7); respects reduced-motion/contrast (B8).
+### P4 — Find & send (the only user-facing surface)
 
-### P5 — "Copy diagnostics" bundle
+Because analysis happens on **our** side, there is **no in-app dashboard** — just
+a way for the user to find the log and send it to us, in Settings:
 
-A user-initiated action that serializes the recent diagnostic log + environment
-(app version, provider id, OS) into a copyable bundle — the structured artifact
-the PM hands to a dev agent to root-cause. **User-initiated and user-visible
-only**; never auto-uploaded (A3). Goes through the sanitized-clipboard path
-already in the permission allow-list (`clipboard-sanitized-write`).
+- **"Reveal diagnostics log"** → `shell.showItemInFolder(logPath)` opens the log
+  in Finder so the user can attach it.
+- **"Export diagnostics…"** → a save dialog (or sanitized-clipboard copy via the
+  allow-listed `clipboard-sanitized-write`) that bundles the recent log + minimal
+  environment (app version, provider id, OS) into one artifact to send us.
+- *(Optional, can defer)* a restrained "something went wrong — Settings →
+  Diagnostics" hint when `error`/`fatal` records accumulate, so the user knows a
+  log exists to send. No layout shift (B7); status color only (B4); respects
+  reduced-motion/contrast (B8). If we skip it in v1, the fallback is simply
+  telling the user where to look when we ask for a log.
 
-## Open questions (need PM direction)
+## Decisions (PM-ratified 2026-06-11)
 
-1. **Diagnostics view home** — its own `?surface=diagnostics` window, or a tab
-   inside Settings? (Own window = cleaner separation, more chrome work; Settings
-   tab = cheaper, but Settings gets busy.)
-2. **User-facing vs dev-facing v1** — is the first cut just for us (the PM + dev
-   agents reading a log/bundle), or already polished for the eventual end user
-   (gentle, non-alarming surfacing)? Affects how much P4 UI polish v1 carries.
-3. **Severity routing** — should `fatal` (uncaught) ever interrupt the user
-   (toast/modal), or always stay passive in the diagnostics surface?
-4. **Confirm local-only-now** — assumed yes (Non-goals). Veto if you want a
-   remote hook designed-for (not built) from day one.
+- **Local-only, no remote platform / no egress.** Hand-off to us is
+  user-initiated (find/export the log and send it). Resolves the old Q4 and
+  rules out Sentry/GlitchTip.
+- **No in-app dashboard.** Analysis is on our side; the user-facing surface is
+  just find-&-send (P4). Resolves the old "view home" / "user-vs-dev v1"
+  questions.
+
+## Open questions (remaining)
+
+1. **Substrate** — adopt `electron-log` (Option A, recommended) or extend our
+   `AppendOnlySeqLog` (Option B)? A reversible call but it touches deps
+   (infrastructure-ownership); settle at build-claim time.
+2. **In-app "go look" hint** — ship the optional P4 accumulation hint in v1, or
+   skip it and just tell the user where the log is when we ask? (Leaning skip for
+   v1.)
+3. **`fatal` routing** — should an uncaught `fatal` ever surface to the user at
+   all (a quiet "an error was logged" note), or stay silent in the file until we
+   ask for it?
 
 ## Sequencing / collisions
 
@@ -156,10 +168,10 @@ already in the permission allow-list (`clipboard-sanitized-write`).
       sites also report. (Foundation.)
 - [ ] P2 global `uncaughtException` / `unhandledRejection` / `window.onerror`
       handlers → `reportError`.
-- [ ] P3 diagnostic `AppendOnlySeqLog` instance + signature dedup + bounded
-      compaction + redaction; unit tests for dedup/cap/redaction.
-- [ ] P4 diagnostics view (incl. failed-run fold-in) + status signal; visual
-      verification light + dark.
-- [ ] P5 copy-diagnostics bundle via sanitized clipboard.
+- [ ] P3 diagnostic log substrate (`electron-log` or `AppendOnlySeqLog`) +
+      signature dedup + bounded rotation + redaction; unit tests for
+      dedup/cap/redaction.
+- [ ] P4 Settings "Reveal diagnostics log" + "Export diagnostics…"; (optional)
+      accumulation hint. Visual verification light + dark.
 - [ ] Spec: add `docs/spec/error-observability.md` + register in
       `docs/spec/README.md`; fold this design in on ship.

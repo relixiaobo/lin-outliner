@@ -637,14 +637,15 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   outliner-row focus must go through the focusRequest rail (IME composition guard,
   #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
   no collision with #179/#180.
-- **error-observability** (P2, plan file, **draft — awaiting PM ratification**) — collect,
-  aggregate, and surface runtime failures so caught-but-silenced errors (the #188 Dream 400
-  flood is the motivating symptom) become visible. One `reportError` choke point + global
-  `uncaughtException`/`unhandledRejection`/`window.onerror` net + an append-only diagnostic log
-  (reuses the shared `AppendOnlySeqLog`, #152) with signature dedup, + a diagnostics view /
-  status signal / copy-bundle. Local-only, no cloud telemetry (privacy/A3). Shape (a) one PR,
-  foundation-first. **Sequence after #184** (touches the same `agentRuntime.ts` catch-sites).
-  4 open questions for the PM. See `docs/plans/error-observability.md`.
+- **error-observability** (P2, plan file, **draft — direction PM-ratified 2026-06-11**) —
+  collect + surface runtime failures so caught-but-silenced errors (the #188 Dream 400 flood is
+  the motivating symptom) become visible. One `reportError` choke point + global
+  `uncaughtException`/`unhandledRejection`/`window.onerror` net + a bounded, rotating local
+  diagnostic log with signature dedup. **Local-only, no remote platform/egress** (ruled out
+  Sentry/GlitchTip); hand-off is user-initiated — Settings "reveal/export diagnostics log" → user
+  sends it to us, analysis on our side, **no in-app dashboard**. Substrate TBD at claim time:
+  `electron-log` (recommended) vs extend `AppendOnlySeqLog`. Shape (a) one PR, foundation-first.
+  **Sequence after #184** (same `agentRuntime.ts` catch-sites). See `docs/plans/error-observability.md`.
 
 ## Recently completed
 
