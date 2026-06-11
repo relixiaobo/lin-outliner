@@ -59,7 +59,6 @@ export type AgentPayloadRole =
   | 'preview'
   | 'text_extract'
   | 'tool_output'
-  | 'subagent_transcript'
   | 'approval'
   | 'debug';
 
@@ -196,7 +195,7 @@ export type AgentConversationEvent =
       source: { fromMessageId: string; throughMessageId: string };
     });
 
-export type AgentRunKind = 'turn' | 'background' | 'subagent' | 'scheduled' | 'reflective';
+export type AgentRunKind = 'turn' | 'background' | 'delegation' | 'scheduled' | 'reflective';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
 
 export type AgentRunTrigger =
@@ -413,15 +412,22 @@ export interface AgentIdentityRecord {
   skills: string[];
 }
 
+/**
+ * Provenance down-pointer from a memory entry into the raw record. Two shapes
+ * share one evidence addressing scheme (stable message ids + `eventId`, never
+ * positional coordinates):
+ * - conversation span: `kind` absent or `'conversation'`; `runId` optionally
+ *   names the turn run the span belongs to.
+ * - run span (a delegated run's own ledger): `kind: 'run'` + `runId`; the
+ *   `messageRange` ids live in that run's ledger.
+ * (The full discriminated-union reshape is memory-realignment PR-2 / D-5.)
+ */
 export interface AgentMemorySource {
   conversationId: string;
-  kind?: 'conversation' | 'agent_run';
+  kind?: 'conversation' | 'run';
   summaryId?: string;
   messageRange?: [string, string];
   runId?: string;
-  subagentRunId?: string;
-  agentId?: string;
-  parentToolCallId?: string;
   eventId?: string;
 }
 
@@ -443,19 +449,21 @@ export interface AgentMemoryEntry {
 
 export type AgentDreamTrigger = 'schedule' | 'manual';
 
+/**
+ * ONE consolidation-frontier cursor shape for every stream (a conversation log
+ * or a delegated run's ledger): the last digested `{seq, eventId}` in that
+ * stream's own seq space. The positional `{messageCount, payloadId}` agent-run
+ * variant died with the transcript-snapshot representation (run unification).
+ */
 export interface AgentDreamWatermarkCursor {
   seq: number;
   eventId: string | null;
 }
 
-export interface AgentDreamAgentRunWatermarkCursor {
-  messageCount: number;
-  payloadId: string | null;
-}
-
 export interface AgentDreamWatermark {
   conversations: Record<string, AgentDreamWatermarkCursor>;
-  agentRuns?: Record<string, AgentDreamAgentRunWatermarkCursor>;
+  /** Delegated-run ledgers, keyed by runId. */
+  runs?: Record<string, AgentDreamWatermarkCursor>;
 }
 
 export interface AgentDreamProcessedConversation {
@@ -466,12 +474,12 @@ export interface AgentDreamProcessedConversation {
   charCount: number;
 }
 
-export interface AgentDreamProcessedAgentRun {
-  parentConversationId: string;
+export interface AgentDreamProcessedRun {
+  conversationId: string;
   parentToolCallId?: string;
-  fromMessageCountExclusive: number;
-  throughMessageCount: number;
-  transcriptPayloadId: string | null;
+  fromSeqExclusive: number;
+  throughSeq: number;
+  throughEventId: string | null;
   messageCount: number;
   charCount: number;
 }
@@ -517,7 +525,7 @@ export type AgentMemoryEvent =
       watermark: AgentDreamWatermark;
       processed: {
         conversations: Record<string, AgentDreamProcessedConversation>;
-        agentRuns?: Record<string, AgentDreamProcessedAgentRun>;
+        runs?: Record<string, AgentDreamProcessedRun>;
         totalMessageCount: number;
         totalCharCount: number;
         consolidateOnly: boolean;
@@ -534,7 +542,7 @@ export type AgentContentDelta = AgentTextDelta;
 
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentMessageStatus = 'completed' | 'streaming' | 'failed';
-export type AgentSubagentRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type AgentChildRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
 export type AgentCompactionTrigger = 'manual' | 'auto' | 'reactive';
 
 export type AgentEventType =
@@ -585,8 +593,8 @@ export type AgentEventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'subagent_run.started'
-  | 'subagent_run.updated'
+  | 'child_run.started'
+  | 'child_run.updated'
   | 'compaction.completed'
   | 'dream.finished'
   | 'payload.created'
@@ -881,8 +889,8 @@ export type AgentNotificationKind =
   | 'task_completed'
   | 'task_failed'
   // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
-  // user decision while the user is elsewhere. Subagents never ask the user
-  // mid-execution, so there is deliberately no subagent→user needs_input trigger.
+  // user decision while the user is elsewhere. Delegated child runs never ask the
+  // user mid-execution, so there is deliberately no child-run→user needs_input trigger.
   | 'needs_input'
   // Reserved (no emitter yet): a cheap no-LLM progress post for a long task.
   | 'status';
@@ -891,10 +899,9 @@ export type AgentNotificationKind =
  * Provenance for a notification: the off-floor run whose terminal state (or
  * needs-input pause) produced it. Orthogonal to the delivery anchor
  * (`conversationId`) — a run anchored to conversation X still reports there.
+ * One variant only: a delegated child run IS a run (run unification).
  */
-export type AgentTaskSource =
-  | { type: 'run'; runId: string }
-  | { type: 'subagent'; subagentRunId: string };
+export type AgentTaskSource = { type: 'run'; runId: string };
 
 /**
  * Delivered to its origin conversation: the base `conversationId` IS the
@@ -907,7 +914,7 @@ export interface NotificationCreatedEvent extends AgentEventBase {
   kind: AgentNotificationKind;
   title: string;
   body?: string;
-  /** The off-floor run/subagent that produced this notification, when any. */
+  /** The off-floor run that produced this notification, when any. */
   source?: AgentTaskSource;
 }
 
@@ -984,9 +991,19 @@ export interface RunTerminalEvent extends AgentEventBase {
   usage?: Usage;
 }
 
-export interface SubagentRunStartedEvent extends AgentEventBase {
-  type: 'subagent_run.started';
-  subagentRunId: string;
+/**
+ * Conversation-log lifecycle marker for a delegated (child) run — the slim
+ * projection feed for the boundary row + task panel. The child's transcript
+ * lives in its OWN run ledger (`runs/<childRunId>/events.jsonl`, replayed
+ * alone); there is no transcript snapshot, message count, or evidence
+ * boundary here (run unification — the boundary is `run.started`'s seq in
+ * the child ledger).
+ */
+export interface ChildRunStartedEvent extends AgentEventBase {
+  type: 'child_run.started';
+  childRunId: string;
+  /** The run that delegated this one — the parent side of the run tree. */
+  parentRunId?: string;
   parentToolCallId?: string;
   executingAgentId?: AgentId | string;
   parentAgentId?: AgentId | string;
@@ -995,23 +1012,17 @@ export interface SubagentRunStartedEvent extends AgentEventBase {
   name?: string;
   description: string;
   prompt: string;
-  subagentType: string;
+  agentType: string;
   contextMode: 'fresh' | 'fork';
-  dreamEvidenceStartMessageIndex?: number;
-  transcriptPayload?: AgentPayloadRef;
-  transcriptMessageCount: number;
 }
 
-export interface SubagentRunUpdatedEvent extends AgentEventBase {
-  type: 'subagent_run.updated';
-  subagentRunId: string;
-  status: AgentSubagentRunStatus;
+export interface ChildRunUpdatedEvent extends AgentEventBase {
+  type: 'child_run.updated';
+  childRunId: string;
+  status: AgentChildRunStatus;
   completedAt?: number;
   result?: string;
   error?: string;
-  dreamEvidenceStartMessageIndex?: number;
-  transcriptPayload?: AgentPayloadRef;
-  transcriptMessageCount: number;
 }
 
 export interface CompactionCompletedEvent extends AgentEventBase {
@@ -1103,8 +1114,8 @@ export type AgentEvent =
   | SkillAuditEvent
   | RunStartedEvent
   | RunTerminalEvent
-  | SubagentRunStartedEvent
-  | SubagentRunUpdatedEvent
+  | ChildRunStartedEvent
+  | ChildRunUpdatedEvent
   | CompactionCompletedEvent
   | DreamFinishedEvent
   | PayloadCreatedEvent
@@ -1159,26 +1170,29 @@ export interface AgentRunRecord {
   usage?: Usage;
 }
 
-export interface AgentSubagentRunRecord {
+/**
+ * Conversation-level record of a delegated (child) run — the projection the
+ * boundary row + task panel read. The transcript is NOT here: it lives in the
+ * child's own run ledger, replayed independently (run unification).
+ */
+export interface AgentChildRunRecord {
   id: string;
   name?: string;
   description: string;
   prompt: string;
-  subagentType: string;
+  agentType: string;
   contextMode: 'fresh' | 'fork';
+  parentRunId?: string;
   executingAgentId?: string;
   parentAgentId?: string;
   memoryOwnerAgentId?: string;
   memoryOriginWorkspace?: string;
-  dreamEvidenceStartMessageIndex?: number;
-  status: AgentSubagentRunStatus;
+  status: AgentChildRunStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
   result?: string;
   error?: string;
-  transcriptPayloadId?: string;
-  transcriptMessageCount: number;
   parentToolCallId?: string;
 }
 
@@ -1253,7 +1267,7 @@ export interface AgentEventReplayState {
   payloads: Record<string, AgentPayloadRef>;
   derivedPayloadsBySourceId: Record<string, AgentPayloadRef[]>;
   runs: Record<string, AgentRunRecord>;
-  subagents: Record<string, AgentSubagentRunRecord>;
+  childRuns: Record<string, AgentChildRunRecord>;
   compactionsByMessageId: Record<string, AgentCompactionRecord>;
   dreamsByMessageId: Record<string, AgentDreamRecord>;
   userQuestions: Record<string, AgentUserQuestionRecord>;
@@ -1290,7 +1304,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     payloads: {},
     derivedPayloadsBySourceId: {},
     runs: {},
-    subagents: {},
+    childRuns: {},
     compactionsByMessageId: {},
     dreamsByMessageId: {},
     userQuestions: {},
@@ -1634,32 +1648,29 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.runs[event.runId] = run;
       return;
     }
-    case 'subagent_run.started':
-      state.subagents ??= {};
-      state.subagents[event.subagentRunId] = {
-        id: event.subagentRunId,
+    case 'child_run.started':
+      state.childRuns ??= {};
+      state.childRuns[event.childRunId] = {
+        id: event.childRunId,
         name: event.name,
         description: event.description,
         prompt: event.prompt,
-        subagentType: event.subagentType,
+        agentType: event.agentType,
         contextMode: event.contextMode,
+        parentRunId: event.parentRunId,
         executingAgentId: event.executingAgentId,
         parentAgentId: event.parentAgentId,
         memoryOwnerAgentId: event.memoryOwnerAgentId,
         memoryOriginWorkspace: event.memoryOriginWorkspace,
-        dreamEvidenceStartMessageIndex: event.dreamEvidenceStartMessageIndex,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
-        transcriptPayloadId: event.transcriptPayload?.id,
-        transcriptMessageCount: event.transcriptMessageCount,
         parentToolCallId: event.parentToolCallId,
       };
-      if (event.transcriptPayload) state.payloads[event.transcriptPayload.id] = event.transcriptPayload;
       return;
-    case 'subagent_run.updated': {
-      state.subagents ??= {};
-      const run = state.subagents[event.subagentRunId];
+    case 'child_run.updated': {
+      state.childRuns ??= {};
+      const run = state.childRuns[event.childRunId];
       if (!run) return;
       const currentIsTerminal = run.status !== 'running';
       const incomingIsRunning = event.status === 'running';
@@ -1670,10 +1681,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         run.error = event.error;
       }
       run.updatedAt = event.createdAt;
-      run.dreamEvidenceStartMessageIndex = event.dreamEvidenceStartMessageIndex ?? run.dreamEvidenceStartMessageIndex;
-      run.transcriptPayloadId = event.transcriptPayload?.id ?? run.transcriptPayloadId;
-      run.transcriptMessageCount = event.transcriptMessageCount;
-      if (event.transcriptPayload) state.payloads[event.transcriptPayload.id] = event.transcriptPayload;
       return;
     }
     case 'payload.created':
