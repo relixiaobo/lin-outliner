@@ -234,6 +234,7 @@ import {
   type AgentRuntimeActiveRunState,
   type AgentRuntimeContextEventInput,
 } from './agentRuntimeContext';
+import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
 import type {
   AgentDefinition,
   AgentPermissionMode,
@@ -323,6 +324,7 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
 ]);
 
 type CompleteSimpleFn = typeof completeSimple;
+type ErrorReporter = (report: ErrorReport) => void | Promise<void>;
 
 interface AgentRuntimeOptions {
   agentDataRoot?: string;
@@ -338,6 +340,7 @@ interface AgentRuntimeOptions {
   streamFn?: StreamFn;
   permissionClassifier?: AgentPermissionClassifier;
   dreamMemoryExtractionEnabled?: boolean;
+  errorReporter?: ErrorReporter;
 }
 
 interface AgentToolApprovalInput {
@@ -1890,6 +1893,7 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
+        reportError: (report) => this.reportError(report),
         restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.persistToolOutputPayload(conversationId, toolCallId, toolName, text)
@@ -2204,7 +2208,13 @@ export class AgentRuntime {
           errorMessage: interruptedError,
         });
       } catch (error) {
-        console.warn(`Could not mirror the interruption into run ledger ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
+        this.reportWarn(
+          'persistence',
+          `Could not mirror the interruption into run ledger ${run.id}: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { conversationId, runId: run.id, operation: 'markInterrupted' },
+          'child-run-interruption-ledger-failed',
+        );
       }
     }
     await this.appendConversationEvents(conversationId, conversation, runningRuns.map((run): AgentEventInput => ({
@@ -2670,8 +2680,12 @@ export class AgentRuntime {
           await this.persistPendingChannelMessage(conversationId, conversation, entry);
         } catch (error) {
           // Best-effort on the quit path; the event-append settle below still runs.
-          console.warn(
+          this.reportWarn(
+            'persistence',
             `Failed to flush a queued Channel message for ${conversationId} at quit: ${error instanceof Error ? error.message : String(error)}`,
+            error,
+            { conversationId, operation: 'persistPendingChannelMessage' },
+            'channel-message-quit-flush-failed',
           );
         }
       }
@@ -2816,9 +2830,21 @@ export class AgentRuntime {
       // straddle the next sweep, and `now + delay` could already be in the past,
       // collapsing the 30s/1m/5m/15m/1h ladder into a 60s tight-retry loop.
       this.commandBackoffUntil.set(command.nodeId, Date.now() + delay);
+      const message = error instanceof Error ? error.message : String(error);
       this.emitError(
         this.commandConversationId(command.nodeId),
-        error instanceof Error ? error.message : String(error),
+        message,
+        {
+          domain: 'command',
+          code: 'scheduled-command-failed',
+          context: {
+            commandNodeId: command.nodeId,
+            attempt: attempt + 1,
+            delayMs: delay,
+            dueAt: command.dueAt,
+          },
+          error,
+        },
       );
     } finally {
       this.firingCommandNodeIds.delete(command.nodeId);
@@ -2997,7 +3023,13 @@ export class AgentRuntime {
       try {
         await this.fireDreamForPool(principal, trigger, now, childRunHarvest);
       } catch (error) {
-        console.warn(`Dream pass failed for ${principalKey(principal)}: ${error instanceof Error ? error.message : String(error)}`);
+        this.reportWarn(
+          'dream',
+          `Dream pass failed for ${principalKey(principal)}: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { principalKey: principalKey(principal), operation: 'fireDreamForPool' },
+          'dream-pass-failed',
+        );
       }
     }
   }
@@ -3393,7 +3425,18 @@ export class AgentRuntime {
         await this.writeDreamRunMeta(task, 'failed', modelForRunMeta).catch(() => undefined);
       }
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`Dream memory extraction skipped: ${message}`);
+      this.reportWarn(
+        'dream',
+        `Dream memory extraction skipped: ${message}`,
+        error,
+        {
+          agentId: this.agentIdentity.agentId,
+          runId: task.runId,
+          principalKey: principalKey(task.principal),
+          operation: 'extractDreamMemory',
+        },
+        'dream-memory-extraction-failed',
+      );
       return {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -3779,10 +3822,40 @@ export class AgentRuntime {
     }
   }
 
-  private emitError(conversationId: string, message: string) {
+  private emitError(conversationId: string, message: string, report?: Partial<ErrorReport>) {
+    this.reportError({
+      domain: report?.domain ?? 'provider',
+      severity: report?.severity ?? 'error',
+      ...(report?.code ? { code: report.code } : {}),
+      message,
+      context: {
+        conversationId,
+        ...(report?.context ?? {}),
+      },
+      ...(report?.error !== undefined ? { error: report.error } : {}),
+    });
     this.emitConversationRuntimeEvent(conversationId, {
       type: 'error',
       error: message,
+    });
+  }
+
+  private reportError(report: ErrorReport): void {
+    try {
+      this.options.errorReporter?.(report);
+    } catch (error) {
+      console.error('[diagnostics] runtime error reporter failed', error);
+    }
+  }
+
+  private reportWarn(domain: string, message: string, error?: unknown, context?: ErrorReportContext, code?: string): void {
+    this.reportError({
+      domain,
+      severity: 'warn',
+      ...(code ? { code } : {}),
+      message,
+      ...(context ? { context } : {}),
+      ...(error !== undefined ? { error } : {}),
     });
   }
 
@@ -3874,7 +3947,9 @@ export class AgentRuntime {
   }
 
   private getEventStore() {
-    this.eventStore ??= new AgentEventStore(this.options.agentDataRoot ?? path.join(app.getPath('userData'), 'agent'));
+    this.eventStore ??= new AgentEventStore(this.options.agentDataRoot ?? path.join(app.getPath('userData'), 'agent'), {
+      errorReporter: this.options.errorReporter,
+    });
     return this.eventStore;
   }
 
@@ -4331,7 +4406,13 @@ export class AgentRuntime {
       const selected = interleaveMemoryEntries(selfEntries, userEntries, MEMORY_BRIEFING_MAX_ENTRIES);
       return renderAgentMemoryBriefing(selected, { reader });
     } catch (error) {
-      console.warn(`Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`);
+      this.reportWarn(
+        'persistence',
+        `Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        { operation: 'buildMemoryReminder' },
+        'agent-memory-reminder-failed',
+      );
       return null;
     }
   }

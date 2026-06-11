@@ -17,6 +17,7 @@ import {
 import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, AgentChildRunStatus, AgentPayloadRef } from '../core/agentEventLog';
+import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
@@ -207,6 +208,7 @@ export interface AgentDelegationRuntimeHost {
   /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
   childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
   notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
+  reportError?(report: ErrorReport): void;
   /**
    * Re-register the run's ledger writer and re-derive its transcript from the
    * run's OWN ledger — the resume path's restore (restore-on-open is records
@@ -810,7 +812,19 @@ export class AgentDelegationRuntime {
           // silent: a persistently failing append means the drill-in transcript
           // and Dream evidence silently fall behind the live run.
           void this.host.childRunMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
-            console.warn(`Failed to append a child-run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`);
+            const message = `Failed to append a child-run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`;
+            if (this.host.reportError) {
+              this.host.reportError({
+                domain: 'persistence',
+                severity: 'warn',
+                code: 'child-run-message-ledger-failed',
+                message,
+                context: { runId: run.id, operation: 'childRunMessage' },
+                error,
+              });
+            } else {
+              console.warn(message);
+            }
           });
         }
       }
@@ -1157,6 +1171,7 @@ export class AgentDelegationRuntime {
       childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
       childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
       notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
+      reportError: (report) => this.host.reportError?.(report),
       restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
       persistToolOutputPayload: (toolCallId, toolName, text) => (
         this.host.persistToolOutputPayload(toolCallId, toolName, text)

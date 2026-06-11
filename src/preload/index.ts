@@ -22,6 +22,13 @@ import {
 } from '../core/launcher/commands';
 import type { ExternalContext } from '../core/launcher/context';
 import type { CaptureIntent } from '../core/launcher/sources';
+import {
+  LIN_EXPORT_DIAGNOSTICS_CHANNEL,
+  LIN_REPORT_RENDERER_ERROR_CHANNEL,
+  LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
+  type DiagnosticsActionResult,
+  type ErrorReport,
+} from '../core/errorObservability';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -136,6 +143,62 @@ export interface LinStageAttachmentResult {
 const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD === 'web'
   || process.env.LIN_DISABLE_NATIVE_ATTACHMENT_PICKER === '1';
 
+function reportRendererError(report: ErrorReport): void {
+  void ipcRenderer.invoke(LIN_REPORT_RENDERER_ERROR_CHANNEL, report).catch(() => undefined);
+}
+
+function serializeErrorValue(value: unknown): { name?: string; message?: string; stack?: string } {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    return {
+      ...(typeof record.name === 'string' ? { name: record.name } : {}),
+      ...(typeof record.message === 'string' ? { message: record.message } : {}),
+      ...(typeof record.stack === 'string' ? { stack: record.stack } : {}),
+    };
+  }
+  if (typeof value === 'string') return { message: value };
+  if (value === undefined) return {};
+  return { message: String(value) };
+}
+
+function rendererErrorMessage(value: unknown, fallback: string): string {
+  const serialized = serializeErrorValue(value);
+  return serialized.message || fallback;
+}
+
+window.addEventListener('error', (event) => {
+  reportRendererError({
+    domain: 'render',
+    severity: 'fatal',
+    code: 'window-error',
+    message: event.message || rendererErrorMessage(event.error, 'Renderer error'),
+    context: {
+      ...(event.filename ? { source: event.filename } : {}),
+      ...(typeof event.lineno === 'number' ? { line: event.lineno } : {}),
+      ...(typeof event.colno === 'number' ? { column: event.colno } : {}),
+    },
+    error: serializeErrorValue(event.error),
+  });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportRendererError({
+    domain: 'render',
+    severity: 'fatal',
+    code: 'window-unhandled-rejection',
+    message: rendererErrorMessage(event.reason, 'Unhandled renderer promise rejection'),
+    context: { operation: 'unhandledRejection' },
+    error: serializeErrorValue(event.reason),
+  });
+});
+
 // Read the effective UI language synchronously at preload time so the renderer's
 // I18nProvider can seed its first render before paint (no English→target flash).
 // The main process resolves it (stored pick, else OS locale); a one-time sendSync
@@ -227,6 +290,10 @@ const api = {
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
+  revealDiagnosticsLog: () =>
+    ipcRenderer.invoke(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL) as Promise<DiagnosticsActionResult>,
+  exportDiagnostics: () =>
+    ipcRenderer.invoke(LIN_EXPORT_DIAGNOSTICS_CHANNEL) as Promise<DiagnosticsActionResult>,
   onSettingsChanged: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on(LIN_SETTINGS_CHANGED_CHANNEL, handler);

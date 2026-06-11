@@ -45,6 +45,7 @@ For agent work:
 | `workspace-layout.md` | Shell, tabs, workspace canvas, tiled panels, sidebar, and agent dock layout. | Changing app frame or panel layout behavior. |
 | `design-system.md` | Visual system, density, typography, tokens, surfaces, components, and UI contracts. | Changing UI visuals, primitives, overlay styling, outliner row rhythm, or agent dock styling. |
 | `ui-behavior.md` | Compact outliner keyboard, pointer, trailing input, field row, selection, and trigger behavior. | Making everyday outliner interaction changes. |
+| `error-observability.md` | Local structured diagnostic logging, error reporting, safety nets, and Settings export/reveal actions. | Changing runtime failure reporting, diagnostic log storage, renderer/main error bridges, or diagnostics export. |
 | `outliner-parity-matrix.md` | Behavioral parity with nodex: pointer, keyboard, selection, trigger semantics, and the tests that pin them. | Checking exact nodex-style selection/editing parity. |
 | `search-query-grammar.md` | Search node query expression and operator semantics. | Changing query operators, search node persistence, or live refresh. |
 | `date-field-values.md` | Date field value model, parsing, and display rules. | Changing date fields. |

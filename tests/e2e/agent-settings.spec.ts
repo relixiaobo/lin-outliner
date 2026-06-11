@@ -93,6 +93,27 @@ test.describe('agent settings window', () => {
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {
+    test(`shows passive diagnostics actions in General settings in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      const settings = await openSettings(page);
+      await settings.getByRole('button', { name: 'General', exact: true }).click();
+      await expect(settings.getByRole('list', { name: 'Diagnostics' })).toBeVisible();
+      const revealButton = settings.getByRole('button', { name: 'Reveal' });
+      const exportButton = settings.getByRole('button', { name: 'Export…' });
+      await expect(revealButton).toBeVisible();
+      await expect(exportButton).toBeVisible();
+      for (const [button, rowText] of [[revealButton, 'Diagnostics log'], [exportButton, 'Diagnostics export']] as const) {
+        const row = settings.locator('.inset-row', { hasText: rowText });
+        const rowBox = await row.boundingBox();
+        const buttonBox = await button.boundingBox();
+        expect(rowBox).not.toBeNull();
+        expect(buttonBox).not.toBeNull();
+        expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+      }
+    });
+  }
+
+  for (const colorScheme of ['light', 'dark'] as const) {
     test(`shows workspace skill pending acceptance without overlap in ${colorScheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       const settings = await openSettings(page);

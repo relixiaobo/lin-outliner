@@ -24,6 +24,16 @@ import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTyp
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
+  LIN_EXPORT_DIAGNOSTICS_CHANNEL,
+  LIN_REPORT_RENDERER_ERROR_CHANNEL,
+  LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
+  type DiagnosticEnvironment,
+  type DiagnosticsActionResult,
+  type ErrorReport,
+  type ErrorReportContext,
+  type ErrorSeverity,
+} from '../core/errorObservability';
+import {
   deleteProviderApiKey,
   deleteProviderConfig,
   getProviderSecretStatus,
@@ -91,6 +101,7 @@ import {
   hasExplicitAgentLocalRoot,
   resolveAgentLocalFileRoot,
 } from './agentLocalRoot';
+import { DiagnosticLogStore, serializeUnknownError } from './diagnosticLog';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -102,6 +113,45 @@ if (process.env.ELECTRON_USER_DATA_DIR) {
   // isolation; this is the catch-all for runs that forget to.
   app.setPath('userData', join(app.getPath('home'), '.lin-outliner-dev'));
 }
+
+const diagnosticLog = new DiagnosticLogStore(app.getPath('userData'));
+
+function reportError(report: ErrorReport): void {
+  void diagnosticLog.reportError(report).catch((error) => {
+    console.error('[diagnostics] failed to write diagnostic error', error);
+  });
+}
+
+function installMainErrorHandlers(): void {
+  process.on('unhandledRejection', (reason) => {
+    const serialized = serializeUnknownError(reason);
+    reportError({
+      domain: 'uncaught',
+      severity: 'fatal',
+      code: 'unhandled-rejection',
+      message: serialized.message ?? 'Unhandled promise rejection',
+      context: { operation: 'unhandledRejection' },
+      error: reason,
+    });
+  });
+
+  process.on('uncaughtException', (error) => {
+    console.error(error);
+    void Promise.race([
+      diagnosticLog.reportError({
+        domain: 'uncaught',
+        severity: 'fatal',
+        code: 'uncaught-exception',
+        message: error.message || 'Uncaught exception',
+        context: { operation: 'uncaughtException' },
+        error,
+      }),
+      new Promise((resolve) => setTimeout(resolve, 750)),
+    ]).finally(() => app.exit(1));
+  });
+}
+
+installMainErrorHandlers();
 
 // Unsigned local/dev builds (`mac.identity: null`) can't present a stable code
 // signature to the macOS Keychain, so Chromium's os_crypt (cookie / network-state
@@ -164,6 +214,7 @@ if (app.isPackaged && !hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROO
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   dreamMemoryExtractionEnabled: true,
+  errorReporter: reportError,
 });
 
 documentService.onProjectionChanged((event) => {
@@ -1143,6 +1194,41 @@ function registerIpc() {
     settingsWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
   });
 
+  ipcMain.handle(LIN_REPORT_RENDERER_ERROR_CHANNEL, (_event, raw: unknown) => {
+    reportError(errorReportFromIpc(raw, 'render'));
+  });
+
+  ipcMain.handle(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL, async (): Promise<DiagnosticsActionResult> => {
+    try {
+      const logPath = await diagnosticLog.ensureLogFile();
+      shell.showItemInFolder(logPath);
+      return { ok: true, path: logPath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
+    try {
+      const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
+      const defaultPath = join(app.getPath('desktop'), `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+      const result = window
+        ? await dialog.showSaveDialog(window, {
+            defaultPath,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          })
+        : await dialog.showSaveDialog({
+            defaultPath,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          });
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+      const filePath = await diagnosticLog.writeExport(result.filePath, await diagnosticEnvironment());
+      return { ok: true, path: filePath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   ipcMain.handle('lin:pick-local-files', async (event, rawOptions?: {
     maxFiles?: unknown;
   }) => {
@@ -1361,6 +1447,80 @@ function attachmentPickerDefaultPath(): { path?: string; source: string } {
     return home ? { path: home, source: 'home' } : { source: 'system' };
   }
   return { source: 'system' };
+}
+
+function errorReportFromIpc(raw: unknown, defaultDomain: string): ErrorReport {
+  const input = isRecord(raw) ? raw : {};
+  const error = isRecord(input.error) ? {
+    ...(typeof input.error.name === 'string' ? { name: input.error.name } : {}),
+    ...(typeof input.error.message === 'string' ? { message: input.error.message } : {}),
+    ...(typeof input.error.stack === 'string' ? { stack: input.error.stack } : {}),
+  } : undefined;
+  const message = typeof input.message === 'string' && input.message.trim()
+    ? input.message
+    : error?.message ?? 'Renderer error';
+  return {
+    domain: typeof input.domain === 'string' && input.domain.trim() ? input.domain : defaultDomain,
+    severity: severityFromIpc(input.severity),
+    ...(typeof input.code === 'string' && input.code.trim() ? { code: input.code } : {}),
+    message,
+    ...(input.context ? { context: contextFromIpc(input.context) } : {}),
+    ...(error ? { error } : {}),
+  };
+}
+
+function severityFromIpc(value: unknown): ErrorSeverity {
+  return value === 'warn' || value === 'error' || value === 'fatal' ? value : 'error';
+}
+
+function contextFromIpc(value: unknown): ErrorReportContext | undefined {
+  if (!isRecord(value)) return undefined;
+  const context: ErrorReportContext = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = contextValueFromIpc(entry);
+    if (normalized !== undefined) context[key] = normalized;
+  }
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+function contextValueFromIpc(value: unknown): ErrorReportContext[string] | undefined {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (!Array.isArray(value)) return undefined;
+  const items = value.slice(0, 20);
+  if (items.every((item): item is string => typeof item === 'string')) return items;
+  if (items.every((item): item is number => typeof item === 'number' && Number.isFinite(item))) return items;
+  if (items.every((item): item is boolean => typeof item === 'boolean')) return items;
+  return undefined;
+}
+
+async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
+  let providerId: string | null = null;
+  try {
+    providerId = (await getProviderSettings()).activeProviderId ?? null;
+  } catch (error) {
+    reportError({
+      domain: 'provider',
+      severity: 'warn',
+      code: 'diagnostic-provider-read-failed',
+      message: error instanceof Error ? error.message : String(error),
+      context: { operation: 'diagnosticEnvironment' },
+      error,
+    });
+  }
+  return {
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    electron: process.versions.electron ?? 'unknown',
+    chrome: process.versions.chrome ?? 'unknown',
+    node: process.versions.node ?? 'unknown',
+    providerId,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function clampPickerLimit(value: unknown): number {
