@@ -22,6 +22,7 @@ export const DOCUMENT_COMMANDS = [
   'mark_command_fired',
   'mark_command_attempted',
   'create_image_node',
+  'create_attachment_node',
   'set_node_image',
   'set_view_toolbar_visible',
   'set_view_mode',
@@ -162,8 +163,10 @@ export const ASSET_COMMANDS = [
   'lookup_asset',
   'delete_asset',
   'pick_image_files',
+  'pick_attachment_files',
   'open_asset',
   'reveal_asset',
+  'copy_asset_file',
   'open_external_url',
 ] as const;
 

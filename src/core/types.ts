@@ -46,6 +46,7 @@ export type NodeType =
   | 'reference'
   | 'codeBlock'
   | 'image'
+  | 'attachment'
   | 'embed'
   | 'tagDef'
   | 'fieldDef'
@@ -420,6 +421,17 @@ export interface ImageNode extends NodeBase {
   imageWidth?: number;
   imageHeight?: number;
 }
+export interface AttachmentNode extends NodeBase {
+  type: 'attachment';
+  assetId?: string;
+  mimeType?: string;
+  originalFilename?: string;
+  fileSize?: number;
+  thumbnailAssetId?: string;
+  pdfPageCount?: number;
+  audioDurationMs?: number;
+  videoDurationMs?: number;
+}
 export interface EmbedNode extends NodeBase {
   type: 'embed';
   embedType?: string;
@@ -537,6 +549,7 @@ export type Node =
   | ReferenceNode
   | CodeBlockNode
   | ImageNode
+  | AttachmentNode
   | EmbedNode
   | TagDefNode
   | FieldDefNode
@@ -633,6 +646,10 @@ export interface AssetMetadata {
   createdAt: number;
   imageWidth?: number;
   imageHeight?: number;
+  thumbnailAssetId?: string;
+  pdfPageCount?: number;
+  audioDurationMs?: number;
+  videoDurationMs?: number;
 }
 
 /**
