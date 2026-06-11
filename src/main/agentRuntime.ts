@@ -1275,6 +1275,7 @@ export class AgentRuntime {
     attachmentInput: unknown = [],
     userViewContextInput: unknown = null,
   ) {
+    let startedRunId: string | null = null;
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
       const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
@@ -1362,13 +1363,16 @@ export class AgentRuntime {
       } else {
         await this.appendUserPromptEvent(conversationId, conversation, prompt);
         userViewContextReminder.commit();
-        await this.startRun(conversationId, conversation, prompt);
+        startedRunId = await this.startRun(conversationId, conversation, prompt);
         await conversation.agent.prompt(prompt);
         await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       }
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      await this.recoverFromRunError(conversationId);
+      // Scoped to the run THIS call started: the Channel path's turns recover
+      // inside runChannelTurn, and a startRun rejected by the already-active
+      // guard must never clear the healthy foreign run that owns the slot.
+      await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -1381,6 +1385,7 @@ export class AgentRuntime {
   async editMessage(conversationId: string, nodeId: string, message: string) {
     const trimmed = message.trim();
     if (!trimmed) return;
+    let startedRunId: string | null = null;
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
       if (conversation.agent.state.isStreaming) throw new Error('Cannot edit while the agent is running.');
@@ -1411,13 +1416,13 @@ export class AgentRuntime {
         conversation.pendingChannelMessages.push({ kind: 'persisted', messageId, addressedTo });
         await this.runChannelRound(conversationId, conversation);
       } else {
-        await this.startRun(conversationId, conversation);
+        startedRunId = await this.startRun(conversationId, conversation);
         await conversation.agent.continue();
         await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       }
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      await this.recoverFromRunError(conversationId);
+      await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -1442,13 +1447,16 @@ export class AgentRuntime {
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
       await this.rerunSettledTurn(conversationId, conversation, target, parentId);
-      // Messages queued while this non-round turn was live route now.
-      await this.drainChannelQueueIfIdle(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      await this.recoverFromRunError(conversationId);
+      // Run recovery happens inside rerunSettledTurn (it knows the run it
+      // started); this catch only surfaces the error.
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
+    // After the catch (mirroring the notification flush): a pre-turn throw
+    // must not strand messages queued behind this non-round turn.
+    const settled = this.conversations.get(conversationId);
+    if (settled) await this.drainChannelQueueIfIdle(conversationId, settled);
   }
 
   async retryMessage(conversationId: string, nodeId: string) {
@@ -1470,13 +1478,16 @@ export class AgentRuntime {
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
       await this.rerunSettledTurn(conversationId, conversation, target, parentId);
-      // Messages queued while this non-round turn was live route now.
-      await this.drainChannelQueueIfIdle(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      await this.recoverFromRunError(conversationId);
+      // Run recovery happens inside rerunSettledTurn (it knows the run it
+      // started); this catch only surfaces the error.
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
+    // After the catch (mirroring the notification flush): a pre-turn throw
+    // must not strand messages queued behind this non-round turn.
+    const settled = this.conversations.get(conversationId);
+    if (settled) await this.drainChannelQueueIfIdle(conversationId, settled);
   }
 
   /**
@@ -1505,9 +1516,17 @@ export class AgentRuntime {
       });
       return;
     }
-    await this.startRun(conversationId, conversation);
-    await continueFromActivePath(conversation.agent);
-    await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+    let startedRunId: string | null = null;
+    try {
+      startedRunId = await this.startRun(conversationId, conversation);
+      await continueFromActivePath(conversation.agent);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+    } catch (error) {
+      // Free the slot of the run THIS rerun started, then let the caller's
+      // catch surface the error.
+      await this.recoverFromRunError(conversationId, startedRunId);
+      throw error;
+    }
   }
 
   async switchBranch(conversationId: string, nodeId: string) {
@@ -2295,6 +2314,7 @@ export class AgentRuntime {
     if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
 
     conversation.subagentNotificationFlushInProgress = true;
+    let startedRunId: string | null = null;
     try {
       while (conversation.pendingSubagentNotifications.length > 0) {
         if (conversation.channelRound) break;
@@ -2308,13 +2328,13 @@ export class AgentRuntime {
         conversation.skillRuntime.resetRunPermissionRules();
         this.beginDebugQuery(conversation);
         await this.appendSystemPromptEvent(conversationId, conversation, prompt);
-        await this.startRun(conversationId, conversation, prompt);
+        startedRunId = await this.startRun(conversationId, conversation, prompt);
         await conversation.agent.prompt(prompt);
         await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
         await this.persistAndEmitIdle(conversationId, conversation, { flushSubagentNotifications: false });
       }
     } catch (error) {
-      await this.recoverFromRunError(conversationId);
+      await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     } finally {
       conversation.subagentNotificationFlushInProgress = false;
@@ -2577,8 +2597,11 @@ export class AgentRuntime {
       for (const entry of queued) {
         try {
           await this.persistPendingChannelMessage(conversationId, conversation, entry);
-        } catch {
+        } catch (error) {
           // Best-effort on the quit path; the event-append settle below still runs.
+          console.warn(
+            `Failed to flush a queued Channel message for ${conversationId} at quit: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
     }
@@ -4696,12 +4719,21 @@ export class AgentRuntime {
    * normal path that clears `activeRun`, so without this every later run —
    * DM or Channel — would hit the `startRun` guard until restart. Records the
    * failure on the run ledger (best-effort) and frees the slot.
+   *
+   * Scoped to the run the caller actually started (`runId`): a catch must
+   * never "recover" a HEALTHY foreign run — e.g. a send whose `startRun` hit
+   * the already-active guard while a notification flush sat between its
+   * `run.started` append and `prompt()` (activeRun set, isStreaming still
+   * false). `null` (the caller never got a run started) is a no-op, and the
+   * id match also makes a double-entered recovery idempotent: the first
+   * clears the slot, the second no-ops.
    */
-  private async recoverFromRunError(conversationId: string) {
+  private async recoverFromRunError(conversationId: string, runId: string | null) {
+    if (!runId) return;
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
     const activeRun = conversation.activeRun;
-    if (!activeRun || conversation.agent.state.isStreaming) return;
+    if (!activeRun || activeRun.id !== runId || conversation.agent.state.isStreaming) return;
     try {
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'run.failed',
@@ -4724,7 +4756,7 @@ export class AgentRuntime {
     prompt: UserMessage | null = null,
     triggerOverride: AgentRunTrigger | null = null,
     identity: { executingAgentId?: string; addressedByMessageId?: string | null } = {},
-  ) {
+  ): Promise<string> {
     // The single activeRun slot is what stamps every durable event of the turn;
     // overwriting a live run would misattribute its remaining events. All
     // legitimate transitions clear activeRun (agent_end) before the next run.
@@ -4763,6 +4795,7 @@ export class AgentRuntime {
       conversation.activeRun = null;
       throw error;
     }
+    return runId;
   }
 
   /**
@@ -4929,6 +4962,7 @@ export class AgentRuntime {
       model: agent.state.model,
       thinkingLevel: agent.state.thinkingLevel,
     };
+    let startedRunId: string | null = null;
     try {
       if (!isMainAgent) {
         const profile = await this.resolveChannelPeerProfile(conversation, targetAgentId);
@@ -4938,11 +4972,11 @@ export class AgentRuntime {
         this.applyChannelTurnToolSettings(conversation, targetAgentId, profile.definition);
         await this.getEventStore().writeAgentIdentity(profile.identity);
       }
-      await this.startRun(conversationId, conversation, null, null, {
+      const runId = await this.startRun(conversationId, conversation, null, null, {
         executingAgentId: targetAgentId,
         addressedByMessageId: request.addressedByMessageId,
       });
-      const runId = conversation.activeRun!.id;
+      startedRunId = runId;
       // With the run active, this resolves to the member's §8 POV assembly with
       // the independence cut — the same derivation every later model call re-runs.
       agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
@@ -4963,9 +4997,9 @@ export class AgentRuntime {
       };
     } catch (error) {
       // A pre-run failure (profile resolution, provider config) must not kill
-      // the round's sibling turns; surface it, free a wedged run slot, and let
-      // the loop continue.
-      await this.recoverFromRunError(conversationId);
+      // the round's sibling turns; surface it, free THIS turn's run slot if it
+      // wedged, and let the loop continue.
+      await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
       return { completed: false, cancelled: false, text: '', assistantMessageId: null };
     } finally {
