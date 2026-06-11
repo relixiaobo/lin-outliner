@@ -116,7 +116,13 @@ Sidebar dock:
 The navigation surface on the left side. It exposes global entry points such as
 Today, Library, Recents, and Schema, followed by pinned nodes and the current
 workspace root outline. Recents is a saved search node rather than bespoke
-sidebar logic; the root outline renders all real root children (Daily notes,
+sidebar logic. Pinned nodes are renderer workspace chrome, not document state:
+they are persisted in localStorage under
+`lin-outliner:workspace-layout:v3:pinned`, sanitized against the live projection
+on restore, and can be toggled from the outliner row context menu or from a
+reduced sidebar row context menu. They preserve insertion order, are not
+reorderable, and do not participate in core undo/redo. The root outline renders
+all real root children (Daily notes,
 Library, Schema, Saved searches, Trash, Settings — none hidden). The current
 workspace root itself is a clickable row with a compact avatar. Sidebar rows
 share one content axis; primary-nav entries and the workspace-root avatar sit on
@@ -202,6 +208,9 @@ replaced by the default single pane rather than booting into a rootless canvas.
 The layout does **not** include:
 
 - Sidebar visibility or navigation state.
+- Pinned node ids. They are separate renderer-local sidebar state under
+  `lin-outliner:workspace-layout:v3:pinned`, not part of the pane layout object
+  and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
 - Agent conversation state, scroll, or input.

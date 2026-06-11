@@ -1,9 +1,9 @@
 ---
-status: draft
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-06
+updated: 2026-06-11
 ---
 
 # Sidebar Pinned Nodes
@@ -88,12 +88,29 @@ drag-to-pin only if wanted (see open questions).
 - **Storage:** renderer layout state (not the core document). No protocol-surface
   change.
 
-## Open questions
+## Shipped implementation (2026-06-11)
 
-1. **Sidebar context menu scope:** full node menu vs a reduced Pin/Open menu?
-2. **Drag-to-pin:** keep the drag affordance (and fix it), or drop it in favor of
-   context-menu-only pin + reworded empty state?
-3. **Pin ordering:** insertion order only, or user-reorderable later?
+Pins ship as renderer-local workspace chrome under
+`lin-outliner:workspace-layout:v3:pinned`. The pinned id list is hydrated from
+localStorage, sanitized against the live projection, deduped, and persisted after
+hydration so restore cannot overwrite stored pins with the initial empty state.
+
+Users can toggle pins from:
+
+- the outliner row context menu (`Pin` / `Unpin`);
+- the sidebar tree row context menu, using a reduced menu (`Open`, `Open in split
+  pane`, `Pin` / `Unpin`).
+
+The pinned section renders the same workspace tree rows as the root outline,
+preserving insertion order. Stale ids are dropped on restore. Drag-to-pin and
+manual reordering remain intentionally unshipped.
+
+## Resolved questions
+
+1. **Sidebar context menu scope:** reduced menu (`Open`, `Open in split pane`,
+   `Pin` / `Unpin`).
+2. **Drag-to-pin:** not shipped; empty state points to the context-menu path.
+3. **Pin ordering:** insertion order only.
 
 ## Files (scope)
 
@@ -104,11 +121,11 @@ state + callback); `outliner/NodeContextMenu.tsx` (Pin/Unpin item). No
 
 ## Checklist
 
-- [ ] Rebase on merged Plan A (v2 layout shape, post-refactor sidebar/menu).
-- [ ] `useWorkspacePinnedNodes` hook + persistence + load-time validation.
-- [ ] Sidebar Pinned list from real state; empty-state copy.
-- [ ] `NodeContextMenu` Pin/Unpin item (outliner rows).
-- [ ] Sidebar row right-click → context menu with Pin/Unpin.
-- [ ] (Optional) drag-to-pin drop handlers.
-- [ ] Persist across restart; dead-id sanitization verified.
-- [ ] `bun run typecheck` + `test:renderer`; light + dark visual gate.
+- [x] Rebase on merged Plan A (v2 layout shape, post-refactor sidebar/menu).
+- [x] `useWorkspacePinnedNodes` hook + persistence + load-time validation.
+- [x] Sidebar Pinned list from real state; empty-state copy.
+- [x] `NodeContextMenu` Pin/Unpin item (outliner rows).
+- [x] Sidebar row right-click → context menu with Pin/Unpin.
+- [x] Drag-to-pin explicitly left unshipped; empty state points to context menu.
+- [x] Persist across restart; dead-id sanitization verified.
+- [x] `bun run typecheck` + `test:renderer`; light + dark visual gate.

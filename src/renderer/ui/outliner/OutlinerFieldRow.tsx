@@ -76,6 +76,7 @@ interface OutlinerFieldRowProps {
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
@@ -84,6 +85,7 @@ interface OutlinerFieldRowProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   isFirstInFieldGroup: boolean;
   isLastInFieldGroup: boolean;
 }
@@ -656,10 +658,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}
+        isNodePinned={props.isNodePinned}
         ui={props.ui}
         uiRef={props.uiRef}
         setUi={props.setUi}
         run={props.run}
+        onTogglePin={props.onTogglePin}
         trigger={props.trigger}
         setTrigger={props.setTrigger}
         dragId={props.dragId}
@@ -681,10 +685,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}
+        isNodePinned={props.isNodePinned}
         ui={props.ui}
         uiRef={props.uiRef}
         setUi={props.setUi}
         run={props.run}
+        onTogglePin={props.onTogglePin}
         trigger={props.trigger}
         setTrigger={props.setTrigger}
         dragId={props.dragId}
@@ -770,8 +776,10 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           openId={drillDownId}
           selectedIds={props.ui.selectedIds}
           index={props.index}
+          isNodePinned={props.isNodePinned}
           run={props.run}
           onRoot={props.onRoot}
+          onTogglePin={props.onTogglePin}
           onEditDescription={() => {
             descriptionReturnPlacementRef.current = cursorEnd();
             props.setUi((prev) => requestFocusState(

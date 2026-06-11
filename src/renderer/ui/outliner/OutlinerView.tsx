@@ -21,6 +21,7 @@ interface OutlinerViewProps {
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
@@ -29,6 +30,7 @@ interface OutlinerViewProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   rows?: OutlinerRowItem[];
   referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
@@ -137,10 +139,12 @@ export function OutlinerView(props: OutlinerViewProps) {
             onRoot={props.onRoot}
             depth={props.depth}
             index={props.index}
+            isNodePinned={props.isNodePinned}
             ui={props.ui}
             uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
+            onTogglePin={props.onTogglePin}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
             dragId={props.dragId}
@@ -159,10 +163,12 @@ export function OutlinerView(props: OutlinerViewProps) {
             onRoot={props.onRoot}
             depth={props.depth}
             index={props.index}
+            isNodePinned={props.isNodePinned}
             ui={props.ui}
             uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
+            onTogglePin={props.onTogglePin}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
             dragId={props.dragId}

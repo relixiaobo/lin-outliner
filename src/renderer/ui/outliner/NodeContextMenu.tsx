@@ -33,6 +33,7 @@ import {
   MoveToIcon,
   MoveUpIcon,
   OpenIcon,
+  PinIcon,
   RestoreIcon,
   ShowToolbarIcon,
   SortAscIcon,
@@ -58,8 +59,10 @@ interface NodeContextMenuProps {
   openId: NodeId;
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   run: CommandRunner;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   onEditDescription: () => void;
   onOpenViewSection: (nodeId: NodeId, section: ToolbarDropdownSection) => void;
   onClose: () => void;
@@ -96,6 +99,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     width: mode === 'main' ? 240 : 280,
   });
   const target = props.index.byId.get(props.targetId) ?? props.node;
+  const pinned = props.isNodePinned(props.openId);
   const view = readViewConfig(target, props.index.byId);
   const trashed = isNodeInTrash(props.index, props.node.id);
   const activeSelection = useMemo(() => resolveActiveNodeSelection({
@@ -261,6 +265,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderMain = () => (
     <>
       {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
+      {item(pinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, () => props.onTogglePin(props.openId))}
       {item(tc.duplicate({ prefix: activeLabelPrefix }), <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
         ids: activeDuplicateIds,
         panelRootId: actionPanelRootId,

@@ -16,6 +16,7 @@ interface FieldValueOutlinerProps {
   selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
@@ -24,6 +25,7 @@ interface FieldValueOutlinerProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   optionField?: NodeProjection;
   placeholder: string;
 }
@@ -130,10 +132,12 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onRoot={props.onRoot}
           depth={0}
           index={props.index}
+          isNodePinned={props.isNodePinned}
           ui={props.ui}
           uiRef={props.uiRef}
           setUi={props.setUi}
           run={props.run}
+          onTogglePin={props.onTogglePin}
           trigger={props.trigger}
           setTrigger={props.setTrigger}
           dragId={props.dragId}

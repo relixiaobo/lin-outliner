@@ -366,7 +366,7 @@ export const en = {
       collapseNode: ({ label }: { label: string }) => `Collapse ${label}`,
       expandNode: ({ label }: { label: string }) => `Expand ${label}`,
       pinnedSection: 'Pinned',
-      noPinnedHint: 'Drag to pin nodes',
+      noPinnedHint: 'Right-click a node to pin it',
       pinnedNodesAriaLabel: 'Pinned nodes',
       openRoot: ({ rootLabel }: { rootLabel: string }) => `Open ${rootLabel}`,
       workspaceRootTreeAriaLabel: 'Workspace root tree',
@@ -565,6 +565,9 @@ commandPalette: {
       editDescription: 'Edit description',
       copyText: 'Copy text',
       copyNodeId: 'Copy node id',
+      openNode: 'Open',
+      pinNode: 'Pin',
+      unpinNode: 'Unpin',
       // Tag submode + the batch tag selector.
       addTagTitle: 'Add tag',
       tagNameLabel: 'Tag name',

@@ -107,6 +107,7 @@ interface OutlinerItemProps {
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   // Always-current ui (stable ref) for handlers; see useOutlinerRowInteraction.
   uiRef: MutableRefObject<UiState>;
@@ -116,6 +117,7 @@ interface OutlinerItemProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   referencePath: readonly NodeId[];
   optionField?: NodeProjection;
   onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
@@ -1971,8 +1973,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           // need the current full set. uiRef is refreshed every NodePanel render.
           selectedIds={props.uiRef.current.selectedIds}
           index={props.index}
+          isNodePinned={props.isNodePinned}
           run={props.run}
           onRoot={props.onRoot}
+          onTogglePin={props.onTogglePin}
           onEditDescription={() => {
             descriptionReturnPlacementRef.current = cursorEnd();
             props.setUi((prev) => requestFocusState(
@@ -2001,10 +2005,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             onRoot={props.onRoot}
             depth={0}
             index={props.index}
+            isNodePinned={props.isNodePinned}
             ui={props.ui}
             uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
+            onTogglePin={props.onTogglePin}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
             dragId={props.dragId}

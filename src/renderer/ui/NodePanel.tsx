@@ -81,8 +81,10 @@ interface NodePanelProps {
   onClose: () => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   setUi: Dispatch<SetStateAction<UiState>>;
+  onTogglePin: (nodeId: NodeId) => void;
   run: CommandRunner;
   trigger: TriggerState;
   setTrigger: (trigger: TriggerState) => void;
@@ -774,8 +776,10 @@ export function NodePanel(props: NodePanelProps) {
             openId={props.rootId}
             selectedIds={props.ui.selectedIds}
             index={props.index}
+            isNodePinned={props.isNodePinned}
             run={props.run}
             onRoot={props.onRoot}
+            onTogglePin={props.onTogglePin}
             onEditDescription={() => {
               descriptionReturnPlacementRef.current = cursorEnd();
               props.setUi((prev) => requestFocusState(
@@ -812,10 +816,12 @@ export function NodePanel(props: NodePanelProps) {
                 rootId={props.rootId}
                 onRoot={props.onRoot}
                 index={props.index}
+                isNodePinned={props.isNodePinned}
                 ui={props.ui}
                 uiRef={uiRef}
                 setUi={props.setUi}
                 run={props.run}
+                onTogglePin={props.onTogglePin}
                 trigger={props.trigger}
                 setTrigger={props.setTrigger}
                 dragId={props.dragId}
@@ -832,10 +838,12 @@ export function NodePanel(props: NodePanelProps) {
                 onRoot={props.onRoot}
                 depth={0}
                 index={props.index}
+                isNodePinned={props.isNodePinned}
                 ui={props.ui}
                 uiRef={uiRef}
                 setUi={props.setUi}
                 run={props.run}
+                onTogglePin={props.onTogglePin}
                 trigger={props.trigger}
                 setTrigger={props.setTrigger}
                 dragId={props.dragId}
