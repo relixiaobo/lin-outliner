@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
@@ -25,6 +25,7 @@ import { textOf } from './shared';
 import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
 import { isNodeInTrash } from './interactions/nodeLocation';
+import { OUTLINER_NODE_DRAG_MIME, PINNED_NODE_REORDER_MIME } from './interactions/dragDrop';
 
 const primaryNavItems = [
   { key: 'today', icon: CalendarIcon },
@@ -46,6 +47,7 @@ interface SidebarProps {
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
   onTogglePin: (nodeId: NodeId) => void;
+  onReorderPin: (nodeId: NodeId, index: number) => void;
   pinnedNodeIds: NodeId[];
   projection: DocumentProjection;
   rootId: NodeId | null;
@@ -54,6 +56,64 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const t = useT();
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
+  // Pinned-list drop state. `pinDragOver` lights the empty-state dropzone; `pinDropIndex`
+  // is the insertion position (0..length) shown as a line between pinned rows. A drag is
+  // accepted if it carries an outliner node (adds a pin) OR a pinned node (reorder).
+  const [pinDragOver, setPinDragOver] = useState(false);
+  const [pinDropIndex, setPinDropIndex] = useState<number | null>(null);
+
+  const pinDragTypes = (event: ReactDragEvent<HTMLElement>) => (
+    event.dataTransfer.types.includes(OUTLINER_NODE_DRAG_MIME)
+    || event.dataTransfer.types.includes(PINNED_NODE_REORDER_MIME)
+  );
+  const pinDragNodeId = (event: ReactDragEvent<HTMLElement>) => (
+    event.dataTransfer.getData(PINNED_NODE_REORDER_MIME)
+    || event.dataTransfer.getData(OUTLINER_NODE_DRAG_MIME)
+  );
+
+  // Section-level dragover: the fallback when the cursor is over the section but not a
+  // specific pinned row (empty list, or the gap below the last row → append).
+  const handlePinDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!pinDragTypes(event)) return;
+    event.preventDefault();
+    // The drags set effectAllowed='move'; the browser only fires `drop` when dropEffect
+    // is compatible, so this must stay 'move' (a 'copy' here silently cancels the drop).
+    event.dataTransfer.dropEffect = 'move';
+    if (!pinDragOver) setPinDragOver(true);
+    if (props.pinnedNodeIds.length > 0) setPinDropIndex(props.pinnedNodeIds.length);
+  };
+  // Row-level dragover: before/after the hovered row by its vertical midpoint.
+  const handlePinRowDragOver = (event: ReactDragEvent<HTMLDivElement>, index: number) => {
+    if (!pinDragTypes(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    const rect = event.currentTarget.getBoundingClientRect();
+    const after = event.clientY - rect.top > rect.height / 2;
+    setPinDragOver(true);
+    setPinDropIndex(after ? index + 1 : index);
+  };
+  const handlePinReorderDragStart = (event: ReactDragEvent<HTMLDivElement>, nodeId: NodeId) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(PINNED_NODE_REORDER_MIME, nodeId);
+    event.dataTransfer.setData('text/plain', '');
+  };
+  const resetPinDrag = () => {
+    setPinDragOver(false);
+    setPinDropIndex(null);
+  };
+  const handlePinDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    resetPinDrag();
+  };
+  const handlePinDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    const nodeId = pinDragNodeId(event);
+    const index = pinDropIndex ?? props.pinnedNodeIds.length;
+    resetPinDrag();
+    if (!nodeId) return;
+    event.preventDefault();
+    props.onReorderPin(nodeId, index);
+  };
   const navTargets = {
     today: props.projection.todayId,
     library: props.projection.libraryId,
@@ -177,16 +237,39 @@ export function Sidebar(props: SidebarProps) {
         })}
       </nav>
 
-      <div className="sidebar-section">
+      <div
+        className={`sidebar-section ${pinDragOver ? 'pin-dragover' : ''}`}
+        onDragOver={handlePinDragOver}
+        onDragLeave={handlePinDragLeave}
+        onDrop={handlePinDrop}
+      >
         <div className="sidebar-section-title">{t.shell.sidebar.pinnedSection}</div>
         {props.pinnedNodeIds.length === 0 ? (
-          <div className="sidebar-empty-row">
+          <div className="sidebar-pin-dropzone">
             <PinIcon className="sidebar-empty-icon" size={ICON_SIZE.menu} strokeWidth={1.7} />
             <span>{t.shell.sidebar.noPinnedHint}</span>
           </div>
         ) : (
           <div className="workspace-tree" aria-label={t.shell.sidebar.pinnedNodesAriaLabel}>
-            {props.pinnedNodeIds.map((nodeId) => renderWorkspaceTree(nodeId))}
+            {props.pinnedNodeIds.map((nodeId, index) => (
+              <div
+                key={nodeId}
+                className={[
+                  'pinned-branch',
+                  // Each inter-row boundary is drawn once, by the row BELOW it
+                  // (drop-before); the trailing append position is drawn by the last
+                  // row's drop-after — so a shared boundary never doubles up.
+                  pinDropIndex === index ? 'drop-before' : '',
+                  pinDropIndex === index + 1 && index === props.pinnedNodeIds.length - 1 ? 'drop-after' : '',
+                ].filter(Boolean).join(' ')}
+                draggable
+                onDragStart={(event) => handlePinReorderDragStart(event, nodeId)}
+                onDragOver={(event) => handlePinRowDragOver(event, index)}
+                onDragEnd={resetPinDrag}
+              >
+                {renderWorkspaceTree(nodeId)}
+              </div>
+            ))}
           </div>
         )}
       </div>

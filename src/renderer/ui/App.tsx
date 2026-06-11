@@ -139,7 +139,7 @@ export function App() {
     resizeSidebarWithKeyboard,
     sidebarWidth,
   } = useResizableLayout({ panels, resizePanelPair });
-  const { isNodePinned, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
+  const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
 
   useDragSelection({ rootId, index, ui, setUi });
 
@@ -445,6 +445,7 @@ export function App() {
           onResizeStart={beginSidebarResize}
           onToggleTreeNode={toggleSidebarTreeNode}
           onTogglePin={togglePin}
+          onReorderPin={pinNodeAtIndex}
           pinnedNodeIds={pinnedNodeIds}
           projection={index.projection}
           rootId={rootId}

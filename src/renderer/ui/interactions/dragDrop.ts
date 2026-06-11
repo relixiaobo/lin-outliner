@@ -38,6 +38,10 @@ export interface ResolvedOutlinerDropBatchMove {
 
 export const OUTLINER_NODE_DRAG_MIME = 'application/x-lin-outliner-node-id';
 
+/** Set while dragging an already-pinned sidebar node to reorder it within the
+ *  pinned list (distinct from OUTLINER_NODE_DRAG_MIME, which adds a new pin). */
+export const PINNED_NODE_REORDER_MIME = 'application/x-lin-pinned-node-id';
+
 export function resolveOutlinerDropMove(input: ResolveOutlinerDropMoveInput): OutlinerDropMove | null {
   const {
     dragNodeId,

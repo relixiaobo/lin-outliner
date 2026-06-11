@@ -392,7 +392,7 @@ export const en = {
       collapseNode: ({ label }: { label: string }) => `Collapse ${label}`,
       expandNode: ({ label }: { label: string }) => `Expand ${label}`,
       pinnedSection: 'Pinned',
-      noPinnedHint: 'Right-click a node to pin it',
+      noPinnedHint: 'Drag to pin nodes',
       pinnedNodesAriaLabel: 'Pinned nodes',
       openRoot: ({ rootLabel }: { rootLabel: string }) => `Open ${rootLabel}`,
       workspaceRootTreeAriaLabel: 'Workspace root tree',
