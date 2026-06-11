@@ -1,11 +1,10 @@
 // The AGENT.md format layer: serialize an authoring input to frontmatter+body
 // and parse it back. The SERIALIZE side is shared by main's write surface
-// (`agentAuthoring.ts`) and the renderer's Form ⇄ Raw editor, so a UI-authored
-// file is written one way. NOTE: the registry loader (`agentDelegation.ts`
-// `parseAgentMarkdown` / `createAgentDefinition`) still carries its OWN parser
-// copy — it does not yet consume `parseAgentAuthoringInput` here. The two parsers
-// are byte-equivalent today but CAN drift; consolidating the loader onto this
-// module is a tracked follow-up (see [[agent-authoring]]). Pure — only `yaml`, no fs.
+// (`agentAuthoring.ts`) and the renderer's Form ⇄ Raw editor; the PARSE side is
+// the one parser everywhere — the registry loader (`agentDelegation.ts`) and
+// the skills loader (`agentSkills.ts`) consume this module's exports
+// (consolidated in [[agent-run-unification]] Design 5, closing the
+// pre-release-sweep drift finding). Pure — only `yaml`, no fs.
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { AgentAuthoringInput } from './agentTypes';

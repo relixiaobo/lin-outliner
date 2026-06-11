@@ -1,3 +1,4 @@
+import { coerceString, parseBoolean } from '../core/agentMarkdown';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -1692,18 +1693,8 @@ function normalizeSkillName(name: string): string {
   return trimmed.startsWith('/') ? trimmed.slice(1).trim() : trimmed;
 }
 
-function coerceString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
 function parseBooleanFrontmatter(value: unknown, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'true') return true;
-  if (normalized === 'false') return false;
-  return fallback;
+  return parseBoolean(value) ?? fallback;
 }
 
 function parseArgumentNames(value: unknown): string[] {

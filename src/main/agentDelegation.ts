@@ -5,7 +5,15 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import {
+  coerceString,
+  normalizeModelField,
+  parseAgentMarkdownDocument,
+  parseBoolean,
+  parsePermissionMode,
+  parsePositiveInteger,
+  parseStringList,
+} from '../core/agentMarkdown';
 import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, AgentChildRunStatus, AgentPayloadRef } from '../core/agentEventLog';
@@ -1447,7 +1455,7 @@ async function loadAgentsFromDir(agentsDir: string, source: AgentDefinition['sou
     } catch {
       continue;
     }
-    const parsed = parseAgentMarkdown(raw);
+    const parsed = parseAgentMarkdownDocument(raw);
     agents.push(createAgentDefinition({
       name: entry.name,
       rootDir,
@@ -1492,31 +1500,9 @@ export function createAgentDefinition(input: {
   };
 }
 
-export function parseAgentMarkdown(raw: string): { frontmatter: Record<string, unknown>; body: string } {
-  const normalized = raw.replace(/^\uFEFF/, '');
-  if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) {
-    return { frontmatter: {}, body: normalized };
-  }
-  const lineEnd = normalized.startsWith('---\r\n') ? '\r\n' : '\n';
-  const endMarker = `${lineEnd}---${lineEnd}`;
-  const end = normalized.indexOf(endMarker, 3);
-  if (end < 0) return { frontmatter: {}, body: normalized };
-  const frontmatterText = normalized.slice(3 + lineEnd.length, end).trim();
-  const body = normalized.slice(end + endMarker.length);
-  return {
-    frontmatter: parseFrontmatter(frontmatterText),
-    body,
-  };
-}
-
-function parseFrontmatter(text: string): Record<string, unknown> {
-  try {
-    const parsed = parseYaml(text);
-    return isPlainRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
+// The AGENT.md parser exists exactly ONCE — `core/agentMarkdown.ts` (the
+// pre-release architecture sweep's consolidation, landed with run unification).
+export { parseAgentMarkdownDocument as parseAgentMarkdown } from '../core/agentMarkdown';
 
 // A fresh child run is the SAME Tenon agent in headless mode, not a separate
 // dumbed-down persona: it reuses the shared-core system prompt (capabilities,
@@ -1875,11 +1861,6 @@ function normalizeAgentName(name: string): string {
   return normalized.replace(/\s+/g, '-');
 }
 
-function normalizeModelField(value: string | undefined): string | undefined {
-  if (!value || value === 'inherit') return undefined;
-  return value;
-}
-
 function normalizeToolRuleName(rule: string): string | null {
   const raw = rule.trim();
   if (!raw) return null;
@@ -1893,40 +1874,6 @@ function normalizeToolRuleName(rule: string): string | null {
     write: 'file_write',
   };
   return aliases[name] ?? name;
-}
-
-function parseStringList(value: unknown): string[] | undefined {
-  if (Array.isArray(value)) {
-    const items = value
-      .map((item) => typeof item === 'string' ? item.trim() : '')
-      .filter(Boolean);
-    return items.length > 0 ? [...new Set(items)] : undefined;
-  }
-  if (typeof value === 'string') {
-    const items = value.split(',').map((item) => item.trim()).filter(Boolean);
-    return items.length > 0 ? [...new Set(items)] : undefined;
-  }
-  return undefined;
-}
-
-function parsePermissionMode(value: unknown): AgentPermissionMode | undefined {
-  if (value === 'trusted' || value === 'restricted') return value;
-  return undefined;
-}
-
-function parseBoolean(value: unknown): boolean | undefined {
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (['true', 'yes', '1'].includes(normalized)) return true;
-  if (['false', 'no', '0'].includes(normalized)) return false;
-  return undefined;
-}
-
-function parsePositiveInteger(value: unknown): number | undefined {
-  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  if (!Number.isInteger(numeric) || numeric <= 0) return undefined;
-  return numeric;
 }
 
 function extractDescriptionFromMarkdown(body: string): string | undefined {
@@ -1943,10 +1890,6 @@ function compactInlineText(value: string): string {
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(0, maxChars - 3))}...`;
-}
-
-function coerceString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
