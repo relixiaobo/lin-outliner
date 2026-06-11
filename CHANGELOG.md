@@ -10,6 +10,25 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Added
+
+- **Sidebar pinned nodes (PR #191)** — the sidebar's Pinned section is now real:
+  pin/unpin any node from the outliner row context menu or from a new reduced
+  sidebar row context menu (Open / Open in split pane / Pin–Unpin). Pins are
+  renderer workspace chrome, not document state — persisted in localStorage
+  (`lin-outliner:workspace-layout:v3:pinned`, insertion order, 100-pin cap, no
+  undo/redo participation) and sanitized against the live document on restore so
+  deleted ids and duplicates are dropped. A pinned node moved to Trash stays
+  listed with a line-through label until the id disappears from the projection.
+  Pinned entries render as regular workspace tree rows (expandable, including a
+  pinned workspace root). Internals hardened at the review gate: pin state is
+  compared explicitly in the `OutlinerItem` memo comparator (stale-closure
+  Pin/Unpin inversion fixed), node liveness reads the incrementally-patched
+  `index.byId` instead of rebuilding a full id Set per keystroke, and the menu
+  dismissal effect + `isRecord` guard were extracted to shared modules
+  (`useDismissibleOverlay`, `state/persistence.ts`) replacing three duplicated
+  copies. Empty-state hint copy updated (en + zh-Hans).
+
 ### Fixed
 
 - **Dream backoff hygiene + manual-bypass coverage (PR #190)** — follow-up to #189

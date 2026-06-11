@@ -21,7 +21,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
 | Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (focus/selection polish merged, PR #186) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (sidebar pinned nodes merged, PR #191) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -525,12 +525,6 @@ Standalone agent items (not part of the program):
   diagnosis, probe log, and the CDP `Input.imeSetComposition` repro technique
   (synthetic keystrokes bypass macOS IME; e2e mock can't reproduce) are in
   issue #176. Next: a dev agent drafts the one-pager for PM ratification.
-- **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
-  implement the stubbed Pinned section: pin from right-click on BOTH outliner and
-  sidebar node rows; persist across restart. Recommended storage = renderer layout
-  state (not the core document — flag to PM if pins should be a document concept).
-  Builds on the merged v2 layout + post-refactor sidebar/menu. See
-  `docs/plans/sidebar-pinned-nodes.md`.
 - **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
@@ -652,6 +646,22 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **Sidebar pinned nodes** (codex-2, PR #191, plan-track) — implements the stubbed
+  Pinned section: renderer-local pins under localStorage key
+  `lin-outliner:workspace-layout:v3:pinned`, toggled from the outliner row context
+  menu and a reduced sidebar row context menu (Open / Open in split pane /
+  Pin–Unpin); restore sanitizes against `index.byId` (dead ids dropped, dupes
+  deduped, 100-pin cap); trashed pins stay listed with a line-through label
+  (decide-and-note, spec'd). Gate round 1 found 2 confirmed bugs (stale
+  `isNodePinned` closure through the `outlinerItemPropsEqual` memo boundary
+  inverting the Pin/Unpin action; pinned workspace root unexpandable from the
+  `parentPath` seed) — both fixed in round 2, which also extracted shared
+  `useDismissibleOverlay` + `isRecord` (3 dup copies removed), switched the hook
+  to `index.byId` (no more per-keystroke full-document Set rebuild), and made the
+  sanitize updater pure. Known low-severity edge (noted, unfixed): a pin stored
+  for a dangling-reference row strands once the target is restored. Spec synced
+  (`workspace-layout.md`), plan archived `done`. typecheck + renderer 409 +
+  workspace-layout e2e 17 green; light+dark visual gate passed.
 - **Dream backoff hygiene + manual-bypass coverage** (main, PR #190, fast-track) — PM-directed
   follow-up to #189 closing its two accepted gate notes: `fireDream` prunes `dreamFailureBackoff`
   entries for dead pools (e.g. a deleted agent) each scheduled pass, bounding the in-memory map to
