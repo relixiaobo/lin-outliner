@@ -1,10 +1,10 @@
 ---
-status: draft
+status: superseded
 priority: P2
 owner: unassigned
 phase: memory-realignment PR-2 (after run-unification, BEFORE M3-B)
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 ---
 
 # Memory D3: the episodic index — episodes as a derived view + reverse lookup
@@ -22,6 +22,11 @@ updated: 2026-06-10
 > run-unification** (needs homogeneous `{seq, eventId}`). The realignment
 > program one-pager (cc-2) rewrites this plan; the design below is the pre-
 > realignment draft kept for its reverse-lookup/episode-view substance.
+>
+> **Archived 2026-06-11:** superseded by `agent-memory-realignment` PR-2. The
+> PR-2 shape is `memory.episode_recorded` + `AgentMemorySource` union + fact →
+> episode gist → raw span provenance; this draft's UI browse scope is deferred
+> to later memory inspection work.
 
 **Shape: (a) ONE complete feature in one PR.** Makes the index layer
 bidirectional; the substrate M3-B cross-agent citing then builds on.

@@ -1,7 +1,11 @@
 import {
+  conversationIdOfRun,
   getAgentEventVisibleTranscript,
   type AgentEventMessageRecord,
+  type AgentMemoryEpisode,
   type AgentMemorySource,
+  type AgentMemoryStreamSource,
+  type AgentPrincipal,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
 import {
@@ -16,6 +20,7 @@ import type {
   AgentEventStore,
 } from './agentEventStore';
 import { compactedSpanEvidenceText } from './agentCompaction';
+import { extractMemoryStreamEvidence } from './agentDreamExtraction';
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
@@ -54,6 +59,7 @@ export interface PastChatsReadParams {
 
 export interface PastChatsEvidenceParams {
   source: AgentMemorySource;
+  principal?: AgentPrincipal;
   maxChars?: number;
 }
 
@@ -126,8 +132,9 @@ export interface PastChatsReadResult {
 export interface PastChatsEvidenceReadResult {
   mode: 'evidence';
   source: AgentMemorySource;
-  conversation: { id: string; title: string | null; createdAt: string; updatedAt: string };
-  messages: PastChatsReadMessage[];
+  episode?: AgentMemoryEpisode;
+  conversation?: { id: string; title: string | null; createdAt: string; updatedAt: string };
+  messages: PastChatsEvidenceMessage[];
   totalChars: number;
   outputTruncated: boolean;
 }
@@ -140,6 +147,12 @@ export interface PastChatsReadMessage {
   toolName?: string;
   isError?: boolean;
   messageTruncated?: boolean;
+}
+
+export interface PastChatsEvidenceMessage extends PastChatsReadMessage {
+  conversationId: string;
+  conversationTitle: string | null;
+  rawSource: AgentMemoryStreamSource;
 }
 
 export type PastChatsErrorCode =
@@ -171,11 +184,6 @@ interface ConversationIndexedEntry {
 
 export class AgentPastChatsService {
   private readonly visibleConversationCache = new Map<string, VisibleConversationCacheEntry>();
-  // The run-side mirror of visibleConversationCache: one memory entry's run
-  // commonly backs several facts, so consecutive evidence fetches replay the
-  // same (usually immutable, terminal) ledger. Keyed on the ledger tail seq via
-  // one tiny run-meta read.
-  private readonly visibleRunCache = new Map<string, { latestSeq: number; messages: AgentEventMessageRecord[] }>();
 
   constructor(private readonly eventStore: AgentEventStore) {}
 
@@ -347,122 +355,109 @@ export class AgentPastChatsService {
 
   async readMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
     const source = params.source;
-    if (source.kind === 'run') {
-      return this.readRunMemorySourceEvidence(params);
+    if ('episodeId' in source) {
+      return this.readEpisodeMemorySourceEvidence(params);
     }
-    if (!source.messageRange) {
-      return pastChatsError('SOURCE_NOT_FOUND', 'Memory source does not include an addressable message range.');
-    }
+    return this.readStreamMemorySourceEvidence(source, params.maxChars, source);
+  }
 
-    const conversations = await this.conversationMetaById();
-    const conversation = conversations.get(source.conversationId);
-    if (!conversation) {
-      return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
+  private async readEpisodeMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
+    const source = params.source;
+    if (!('episodeId' in source)) {
+      return pastChatsError('SOURCE_NOT_FOUND', 'Memory source is not an episode source.');
     }
-
-    const visible = await this.visibleConversationMessages(source.conversationId);
-    const [fromMessageId, throughMessageId] = source.messageRange;
-    const startIndex = visible.messages.findIndex((message) => message.id === fromMessageId);
-    if (startIndex < 0) {
-      return pastChatsError(
-        'NOT_ON_ACTIVE_BRANCH',
-        `The source message ${fromMessageId} was edited away or is on a non-active branch.`,
-        { nearbyMessageIds: nearbyMessageIds(visible.messages, { messageId: fromMessageId }) },
-      );
+    if (!params.principal) {
+      return pastChatsError('SOURCE_NOT_FOUND', 'Episode memory source requires the owning principal.');
     }
-
-    const throughIndex = visible.messages.findIndex((message) => message.id === throughMessageId);
-    const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
+    const episode = await this.eventStore.getMemoryEpisode(params.principal, source.episodeId);
+    if (!episode) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No memory episode was found for ${source.episodeId}.`);
+    }
     const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    const assembled = clampReadMessages(visible.messages.slice(startIndex, endIndex + 1), maxChars);
-
+    let remainingChars = Math.max(0, maxChars - episode.gist.length);
+    const messages: PastChatsEvidenceMessage[] = [];
+    let totalChars = 0;
+    let outputTruncated = remainingChars === 0 && episode.sources.length > 0;
+    for (const rawSource of episode.sources) {
+      if (remainingChars <= 0) {
+        outputTruncated = true;
+        break;
+      }
+      const evidence = await this.readStreamMemorySourceEvidence(rawSource, remainingChars, source);
+      if (evidence.mode !== 'evidence') {
+        continue;
+      }
+      messages.push(...evidence.messages);
+      totalChars += evidence.totalChars;
+      outputTruncated ||= evidence.outputTruncated;
+      remainingChars = Math.max(0, remainingChars - evidence.totalChars);
+    }
     return {
       mode: 'evidence',
       source: { ...source },
+      episode,
+      messages,
+      totalChars,
+      outputTruncated,
+    };
+  }
+
+  private async readStreamMemorySourceEvidence(
+    rawSource: AgentMemoryStreamSource,
+    maxCharsInput: number | undefined,
+    originalSource: AgentMemorySource,
+  ): Promise<PastChatsEvidenceResult> {
+    const conversations = await this.conversationMetaById();
+    const conversationId = await this.conversationIdForStreamSource(rawSource);
+    if (!conversationId) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No conversation anchor was found for ${rawSource.stream} ${rawSource.streamId}.`);
+    }
+    const conversation = conversations.get(conversationId);
+    if (!conversation) {
+      return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${conversationId}.`);
+    }
+
+    const events = rawSource.stream === 'run'
+      ? await this.eventStore.readRunStreamEvents(rawSource.streamId)
+      : await this.eventStore.readEvents(rawSource.streamId);
+    const evidence = extractMemoryStreamEvidence(events, {
+      fromSeqExclusive: rawSource.range.fromSeqExclusive,
+      throughSeq: rawSource.range.throughSeq,
+    });
+    if (!evidence) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No evidence messages were found for ${rawSource.stream} ${rawSource.streamId}.`);
+    }
+    const maxChars = clampInteger(maxCharsInput, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
+    const assembled = clampReadMessages(evidence.messages, maxChars);
+
+    return {
+      mode: 'evidence',
+      source: { ...originalSource },
       conversation: {
         id: conversation.id,
         title: conversation.title,
         createdAt: isoTime(conversation.createdAt),
         updatedAt: isoTime(conversation.updatedAt),
       },
-      messages: assembled.messages,
+      messages: assembled.messages.map((message) => ({
+        ...message,
+        conversationId: conversation.id,
+        conversationTitle: conversation.title,
+        rawSource,
+      })),
       totalChars: assembled.totalChars,
       outputTruncated: assembled.outputTruncated,
     };
   }
 
-  /**
-   * Evidence in a delegated run's OWN ledger ([[agent-run-unification]] Design 2):
-   * replay the run stream and window its active path by the source's stable
-   * message ids — the SAME resolution semantics as the conversation path
-   * (fail loud off the active path; no payload pinning, no positional codec).
-   */
-  private async readRunMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
-    const source = params.source;
-    const runId = source.runId;
-    if (!runId || !source.messageRange) {
-      return pastChatsError('SOURCE_NOT_FOUND', 'Run memory source does not include an addressable run message range.');
-    }
-
-    const conversations = await this.conversationMetaById();
-    const conversation = conversations.get(source.conversationId);
-    if (!conversation) {
-      return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for source ${source.conversationId}.`);
-    }
-
-    const visible = await this.visibleRunMessages(runId);
-    if (!visible) {
-      return pastChatsError('SOURCE_NOT_FOUND', `No run ledger was found for run ${runId}.`);
-    }
-    const [fromMessageId, throughMessageId] = source.messageRange;
-    const startIndex = visible.findIndex((message) => message.id === fromMessageId);
-    if (startIndex < 0) {
-      return pastChatsError(
-        'NOT_ON_ACTIVE_BRANCH',
-        `The source message ${fromMessageId} was edited away or is on a non-active branch of run ${runId}.`,
-        { nearbyMessageIds: nearbyMessageIds(visible, { messageId: fromMessageId }) },
-      );
-    }
-    const throughIndex = visible.findIndex((message) => message.id === throughMessageId);
-    const endIndex = throughIndex >= startIndex ? throughIndex : startIndex;
-    const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    const assembled = clampReadMessages(visible.slice(startIndex, endIndex + 1), maxChars);
-
-    return {
-      mode: 'evidence',
-      source: { ...source },
-      conversation: {
-        id: conversation.id,
-        title: conversation.title,
-        createdAt: isoTime(conversation.createdAt),
-        updatedAt: isoTime(conversation.updatedAt),
-      },
-      messages: assembled.messages,
-      totalChars: assembled.totalChars,
-      outputTruncated: assembled.outputTruncated,
-    };
+  private async conversationIdForStreamSource(source: AgentMemoryStreamSource): Promise<string | null> {
+    if (source.stream === 'conversation') return source.streamId;
+    const meta = await this.eventStore.readRunMetaProjection(source.streamId);
+    return meta ? conversationIdOfRun(meta) : null;
   }
 
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
     return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
-  }
-
-  /**
-   * The visible transcript of a delegated run's ledger (not the bare active
-   * path): a compaction re-anchors the run's path onto the post-compact root,
-   * but the compacted span stays addressable through the compaction record's
-   * expansion — §13.17 evidence preservation, held by the same machinery the
-   * conversation path uses. Null when no ledger exists.
-   */
-  private async visibleRunMessages(runId: string): Promise<AgentEventMessageRecord[] | null> {
-    const meta = await this.eventStore.readRunMetaProjection(runId);
-    const cached = this.visibleRunCache.get(runId);
-    if (meta && cached && cached.latestSeq === meta.latestSeq) return cached.messages;
-    const state = await this.eventStore.replayRunStream(runId);
-    if (state.latestSeq === 0) return null;
-    const messages = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
-    this.visibleRunCache.set(runId, { latestSeq: state.latestSeq, messages });
-    return messages;
   }
 
   private async visibleConversationMessages(conversationId: string): Promise<VisibleConversationCacheEntry> {

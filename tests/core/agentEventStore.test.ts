@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentActor, AgentEvent, AgentPrincipal } from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import {
   AgentEventStore,
   agentCheckpointFileName,
@@ -33,6 +33,22 @@ function base(conversationId: string, seq: number, type: AgentEvent['type'], act
     type,
     createdAt: 1_700_000_000_000 + seq,
     actor,
+  };
+}
+
+function conversationSource(
+  conversationId: string,
+  fromSeqExclusive = 0,
+  throughSeq = 1,
+): AgentMemoryStreamSource {
+  return {
+    stream: 'conversation',
+    streamId: conversationId,
+    range: {
+      fromSeqExclusive,
+      throughSeq,
+      throughEventId: `${conversationId}-event-${throughSeq}`,
+    },
   };
 }
 
@@ -488,12 +504,12 @@ describe('agent event store', () => {
     await store.addMemoryEntry(agentPrincipal, {
       id: 'memory-agent',
       fact: 'Current-format agent fact.',
-      sources: [{ conversationId }],
+      sources: [conversationSource(conversationId)],
     });
     await store.addMemoryEntry(userPrincipal, {
       id: 'memory-user',
       fact: 'Current-format user fact.',
-      sources: [{ conversationId }],
+      sources: [conversationSource(conversationId)],
     });
     return { conversationId, agentPrincipal, userPrincipal };
   }
@@ -1270,13 +1286,13 @@ describe('agent event store', () => {
         id: 'memory-1',
         fact: '  User prefers concise engineering answers.  ',
         originWorkspace: 'workspace:abc',
-        sources: [{ conversationId: 'conversation-1', runId: 'run-1', messageRange: ['user-1', 'user-1'] }],
+        sources: [conversationSource('conversation-1')],
         createdAt: 10,
       });
       const second = await store.addMemoryEntry(principal, {
         id: 'memory-2',
         fact: 'Project codename is Tenon.',
-        sources: [{ conversationId: 'conversation-2' }],
+        sources: [conversationSource('conversation-2')],
         createdAt: 20,
       });
 
@@ -1310,6 +1326,50 @@ describe('agent event store', () => {
     });
   });
 
+  test('projects memory episodes and their citing entries', async () => {
+    await withStore(async (store, root) => {
+      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+      const rawSource = conversationSource('conversation-episode', 2, 5);
+      const episode = await store.recordMemoryEpisode(principal, {
+        id: 'episode-1',
+        gist: 'The user prefers compact status updates.',
+        originWorkspace: 'workspace:abc',
+        sources: [rawSource],
+        createdAt: 10,
+      });
+
+      await store.addMemoryEntry(principal, {
+        id: 'memory-from-episode-a',
+        fact: 'The user prefers compact status updates.',
+        sources: [{ episodeId: episode.id }],
+        createdAt: 20,
+      });
+      await store.addMemoryEntry(principal, {
+        id: 'memory-from-episode-b',
+        fact: 'Status updates should stay concise.',
+        sources: [{ episodeId: episode.id }],
+        createdAt: 30,
+      });
+
+      expect(await store.getMemoryEpisode(principal, episode.id)).toMatchObject({
+        id: 'episode-1',
+        gist: 'The user prefers compact status updates.',
+        originWorkspace: 'workspace:abc',
+        sources: [rawSource],
+      });
+      expect(await store.listMemoryEntriesForEpisode(principal, episode.id)).toMatchObject([
+        { id: 'memory-from-episode-b' },
+        { id: 'memory-from-episode-a' },
+      ]);
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listMemoryEntriesForEpisode(principal, episode.id)).toMatchObject([
+        { id: 'memory-from-episode-b' },
+        { id: 'memory-from-episode-a' },
+      ]);
+    });
+  });
+
   test('tolerates a torn trailing memory event line but rejects mid-file corruption', async () => {
     await withStore(async (store, root) => {
       const agentId = 'built-in:tenon:assistant';
@@ -1317,13 +1377,13 @@ describe('agent event store', () => {
       await store.addMemoryEntry(principal, {
         id: 'memory-1',
         fact: 'Survives a crash-torn tail.',
-        sources: [{ conversationId: 'conversation-1' }],
+        sources: [conversationSource('conversation-1')],
         createdAt: 10,
       });
       await store.addMemoryEntry(principal, {
         id: 'memory-2',
         fact: 'Second intact entry.',
-        sources: [{ conversationId: 'conversation-2' }],
+        sources: [conversationSource('conversation-2')],
         createdAt: 20,
       });
       const eventsPath = store.memoryPaths(principal).memoryEventsPath;
@@ -1341,7 +1401,7 @@ describe('agent event store', () => {
       await new AgentEventStore(root).addMemoryEntry(principal, {
         id: 'memory-3',
         fact: 'Appended after a torn tail.',
-        sources: [{ conversationId: 'conversation-3' }],
+        sources: [conversationSource('conversation-3')],
         createdAt: 30,
       });
       const repaired = await readFile(eventsPath, 'utf8');
@@ -1358,7 +1418,7 @@ describe('agent event store', () => {
       await new AgentEventStore(root).addMemoryEntry(principal, {
         id: 'memory-4',
         fact: 'Appended after a newline-only tear.',
-        sources: [{ conversationId: 'conversation-4' }],
+        sources: [conversationSource('conversation-4')],
         createdAt: 40,
       });
       expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
@@ -1375,7 +1435,7 @@ describe('agent event store', () => {
       await expect(new AgentEventStore(root).addMemoryEntry(principal, {
         id: 'memory-5',
         fact: 'Must not be written past corruption.',
-        sources: [{ conversationId: 'conversation-5' }],
+        sources: [conversationSource('conversation-5')],
         createdAt: 50,
       })).rejects.toThrow(/Invalid agent memory event JSON/);
     });
@@ -1388,7 +1448,7 @@ describe('agent event store', () => {
       const entry = await store.addMemoryEntry(principal, {
         id: 'memory-long',
         fact: 'x'.repeat(2_100),
-        sources: [{ conversationId: 'conversation-1' }],
+        sources: [conversationSource('conversation-1')],
       });
 
       expect(entry.fact).toHaveLength(2_000);
@@ -1430,7 +1490,7 @@ describe('agent event store', () => {
       await store.addMemoryEntry(principal, {
         id: 'memory-churn',
         fact: 'Version 0.',
-        sources: [{ conversationId: 'conversation-1' }],
+        sources: [conversationSource('conversation-1')],
       });
 
       for (let index = 1; index <= 70; index += 1) {

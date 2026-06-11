@@ -2,13 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentActor, AgentEvent, AgentMemorySource } from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent, AgentMemorySource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentPastChatsService } from '../../src/main/agentPastChats';
 
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
 const agentActor: AgentActor = { type: 'agent', agentId: 'agent-1' };
+const memoryPrincipal: AgentPrincipal = { type: 'agent', agentId: 'agent-1' };
 
 async function withStore<T>(fn: (store: AgentEventStore, service: AgentPastChatsService) => Promise<T>): Promise<T> {
   const root = await mkdtemp(path.join(tmpdir(), 'lin-past-chats-'));
@@ -294,10 +295,13 @@ describe('agent past chats', () => {
       ]);
 
       const source: AgentMemorySource = {
-        conversationId: conversationId,
-        messageRange: ['user-evidence', 'assistant-evidence'],
-        runId: 'run-evidence',
-        eventId: `${conversationId}-event-4`,
+        stream: 'conversation',
+        streamId: conversationId,
+        range: {
+          fromSeqExclusive: 1,
+          throughSeq: 4,
+          throughEventId: `${conversationId}-event-4`,
+        },
       };
       const evidence = await service.readMemorySourceEvidence({ source, maxChars: 120 });
 
@@ -307,6 +311,80 @@ describe('agent past chats', () => {
       expect(evidence.source).toEqual(source);
       expect(evidence.messages.map((message) => message.messageId)).toEqual(['user-evidence', 'assistant-evidence']);
       expect(evidence.messages.map((message) => message.text).join('\n')).toContain('terse direct answers');
+    });
+  });
+
+  test('episode evidence keeps the durable gist when raw sources are gone', async () => {
+    await withStore(async (store, service) => {
+      const episode = await store.recordMemoryEpisode(memoryPrincipal, {
+        id: 'episode-missing-raw',
+        gist: 'Durable gist: the user prefers recall to survive raw transcript loss.',
+        sources: [{
+          stream: 'conversation',
+          streamId: 'missing-conversation',
+          range: {
+            fromSeqExclusive: 1,
+            throughSeq: 2,
+            throughEventId: 'missing-event-2',
+          },
+        }],
+        createdAt: 20,
+      });
+
+      const evidence = await service.readMemorySourceEvidence({
+        principal: memoryPrincipal,
+        source: { episodeId: episode.id },
+        maxChars: 200,
+      });
+
+      expect(evidence.mode).toBe('evidence');
+      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
+      expect(evidence.episode?.gist).toBe('Durable gist: the user prefers recall to survive raw transcript loss.');
+      expect(evidence.messages).toEqual([]);
+      expect(evidence.outputTruncated).toBe(false);
+    });
+  });
+
+  test('episode evidence reserves character budget for the durable gist before raw spans', async () => {
+    await withStore(async (store, service) => {
+      const conversationId = 'conversation-episode-budget';
+      const gist = 'G'.repeat(40);
+      const rawText = 'R'.repeat(100);
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Episode budget' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'user-raw-budget',
+          parentMessageId: null,
+          content: [{ type: 'text', text: rawText }],
+        },
+      ]);
+      const episode = await store.recordMemoryEpisode(memoryPrincipal, {
+        id: 'episode-budget',
+        gist,
+        sources: [{
+          stream: 'conversation',
+          streamId: conversationId,
+          range: {
+            fromSeqExclusive: 1,
+            throughSeq: 2,
+            throughEventId: `${conversationId}-event-2`,
+          },
+        }],
+        createdAt: 21,
+      });
+
+      const evidence = await service.readMemorySourceEvidence({
+        principal: memoryPrincipal,
+        source: { episodeId: episode.id },
+        maxChars: 70,
+      });
+
+      expect(evidence.mode).toBe('evidence');
+      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
+      expect(evidence.episode?.gist).toBe(gist);
+      expect(evidence.messages.map((message) => message.text)).toEqual(['R'.repeat(30)]);
+      expect(evidence.outputTruncated).toBe(true);
     });
   });
 

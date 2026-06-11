@@ -7,7 +7,7 @@ is the sequencing authority; `agent-data-model.md` owns the stored shapes;
 `agent-skills.md` owns skills). This file is the index you read first.
 
 > Status convention below: **✅ built** · **⚠ scaffolded (type exists, not exercised)** ·
-> **◻ planned (M3)**. Verified by a read-only code audit on 2026-06-10.
+> **◻ planned (M3)**. Verified by a read-only code audit on 2026-06-11.
 
 ## The 7 primitives
 
@@ -129,14 +129,14 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
 - **Ground truth (below memory):** the conversation/run ledgers — the immutable
   world record. Not a memory store; every memory structure is derived over it
   and bottoms out in it via down-pointers.
-- **Stores:** episodic (episodes + memory-owned gist, constructed over the
-  ledgers — realignment PR-2; today the acknowledged gap) · semantic
-  (`MemoryEntry` pools per Principal — a pool is one principal's self-model,
-  keyed by owner/believer) · procedural (skills — "what I can do").
+- **Stores:** episodic (`memory.episode_recorded` episodes + memory-owned gist,
+  constructed over the ledgers) · semantic (`MemoryEntry` pools per Principal —
+  a pool is one principal's self-model, keyed by owner/believer) · procedural
+  (skills — "what I can do").
 - **Index:** the hippocampal-style **pure pointer** layer binding semantic
-  facts to episodic evidence, bidirectionally (`sources[]` forward today;
-  reverse lookup PR-2). It points, never copies, never holds content — gist is
-  episodic content, not index.
+  facts to episodic evidence, bidirectionally (`MemoryEntry.sources[]` fact →
+  episode, plus the episode→facts reverse lookup). It points, never copies,
+  never holds content — gist is episodic content, not index.
 - **Processes:** consolidation (Dream — offline replay distilling into the
   semantic store; evidence-preserving under compaction; ONE phrasing rule:
   third-person-singular subject-elided facts in every pool) · retrieval (three
@@ -153,8 +153,9 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
 Definitions + binding authoring rules: `agent-memory-foundations.md` (meta).
 Work on this frame: `agent-memory-academic-alignment` (#181, language
 surfaces; subsumed D2) → the **`agent-memory-realignment`** program (PR-1
-person rule + read surfaces, shipped; PR-2 episodic layer; PR-3 forgetting;
-PR-5 schema overview; PR-4 retrieval engine; association deferred).
+person rule + read surfaces, shipped; PR-2 episodic layer, built in this change;
+PR-3 forgetting; PR-5 schema overview; PR-4 retrieval engine; association
+deferred).
 
 ## Multi-agent = rules + views + one new primitive
 
@@ -182,7 +183,7 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery + queue-all rounds; UI: composer member typeahead, header/list member display, actor badges, typing indicator + run drill-in |
 | Cross-agent memory sharing + isolation gate | ◻ missing | the one new primitive (M3-B) |
 | Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |
-| Memory source binding under compaction (#164) | ✅ built | `sources[]` were already ID-pinned + fail-loud; PR #178 closed the two residual holes: the Dream renderers now surface a compaction summary as evidence (after compaction it is the only surviving carrier of the compacted content), and the fork-prefix boundary is read in the live payload's own coordinates (envelope-first; a stale boundary beyond the payload means "Dream from 0", never a permanent skip). Invariant pinned: `agent-data-model` §13.17, *compaction is evidence-preserving*. |
+| Memory source binding under compaction (#164) | ✅ built | Realignment PR-2 records fact sources as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over conversation/run ledgers. `recall include_evidence` zooms fact → episode gist → raw span; PR #178's compaction evidence invariant remains pinned in `agent-data-model` §13.17. |
 
 Forward sequencing for the gaps above lives in `agent-program.md` § *M3 sequencing &
 readiness* (debt-first: settle the map → fix #164 → then three independent complete

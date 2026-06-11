@@ -41,7 +41,7 @@ for the short/long split; Baddeley for working memory):
 | Store | Definition | Key source | Ours |
 |---|---|---|---|
 | **Working memory** | the small-capacity active workspace holding what is currently in use; not a durable store | Baddeley & Hitch | the assembled context of one turn — the resident briefing is memory's slice of it |
-| **Episodic memory** | declarative memory for specific experienced events, bound to their context ("what happened, when, where") | Tulving (1972) | the **episodic layer**: episodes as first-class indexed units + their memory-owned gist, constructed over the raw ledgers (lands in realignment PR-2; until then the layer is the acknowledged gap) |
+| **Episodic memory** | declarative memory for specific experienced events, bound to their context ("what happened, when, where") | Tulving (1972) | the **episodic layer**: `AgentMemoryEpisode` units + their memory-owned gist, constructed over raw conversation/run ledgers |
 | **Semantic memory** | declarative memory for context-free knowledge ("what I know"), detached from the episode that taught it | Tulving (1972) | `MemoryEntry` pools per Principal — a pool is one principal's **self-model**, keyed by its owner/believer (D-1) |
 | **Procedural memory** | nondeclarative memory for skills and procedures ("what I can do"), expressed in performance rather than recollection | Squire | skills |
 
@@ -51,8 +51,8 @@ Structural models we adopt at the architecture level:
   stores an *index* binding distributed neocortical detail traces, not the
   details themselves; retrieval is pattern completion through the index. →
   our index layer is **pure bidirectional pointers** binding semantic facts to
-  episodic evidence: `sources[]` downward (today; forward-only), episode →
-  citing-facts reverse lookup upward (PR-2). The index points; it never copies
+  episodic evidence: `MemoryEntry.sources[]` fact→episode downward, episode →
+  citing-facts reverse lookup upward. The index points; it never copies
   — and it never *holds content*: summaries/gist are episodic-layer content,
   not index (the previous revision's misfiling).
 - **Autobiographical memory hierarchy / Self-Memory System** (Conway 2000):
@@ -87,15 +87,15 @@ separates them is **why they were written** (R2/R6, PM-confirmed 2026-06-10):
   to *remember* (autobiographical motive), and it is the consolidated evidence
   carrier. One node shape may serve both producers; only memory-owned
   production is part of the memory system. (The #178 "Dream reads compaction
-  summaries as evidence" path is a stopgap with exactly this flaw — deleted in
-  PR-2 when episode gist exists.)
+  summaries as evidence" path had exactly this flaw and is replaced by
+  fact → episode gist → raw span provenance.)
 
 ## 3. Processes
 
 | Process | Definition | Key source | Ours |
 |---|---|---|---|
 | **Encoding** | the formation of a trace at experience time; depth of processing and *prediction error / novelty* modulate what gets encoded | Craik & Lockhart (levels of processing); novelty/PE-modulated encoding | what Dream's extraction instructions select from the evidence span |
-| **Consolidation** | the offline (sleep-associated) process by which episodic traces are replayed and integrated into the semantic store; *systems consolidation* over time makes knowledge hippocampus-independent | CLS; sleep-replay literature | Dream: scheduled offline replay distilling into the semantic store; watermark = the consolidation frontier. Evidence today is the raw record; post-PR-2 Dream reads episode gist (memory-owned), never context-management summaries |
+| **Consolidation** | the offline (sleep-associated) process by which episodic traces are replayed and integrated into the semantic store; *systems consolidation* over time makes knowledge hippocampus-independent | CLS; sleep-replay literature | Dream: scheduled offline replay distilling into the semantic store; watermark = the consolidation frontier. Dream records memory-owned episode gist and facts cite the episode, never context-management summaries |
 | **Semanticization** | the gradual transformation of repeated episodic content into context-free semantic knowledge | Tulving lineage | repeated evidence consolidating into a stable `fact` (we keep the receipts; see §5) |
 | **Retrieval** | reactivating a trace from a cue: *cued recall* (cue → trace), *recognition*, *pattern completion* through the index; governed by **encoding specificity** (a cue works when it matches the encoding context) | Tulving & Thomson (encoding specificity) | three modes ([[agent-memory-realignment]] usage contract): chronic activation (the resident briefing), deliberate cued retrieval (`recall`, with source access down the index), automatic association (deferred — current turn as cue, runtime-surfaced) |
 | **Forgetting** | loss of *access*, not erasure: an item's **storage strength** (how well learned) never decreases; its **retrieval strength** (current accessibility) decays with disuse | Bjork & Bjork, New Theory of Disuse | PR-3: injection ranking by retrieval strength; entries fall out of the working set, never get deleted |

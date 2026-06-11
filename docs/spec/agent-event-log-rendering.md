@@ -271,9 +271,9 @@ Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
 - ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `2` = run
-  unification). First store access reads this single line; a matching `v`
-  proceeds with no per-conversation probing.
+  format generation (`STORAGE_LAYOUT_VERSION`, currently `3` = episodic memory
+  episodes + memory source union). First store access reads this single line; a
+  matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   the WHOLE agent data root is hard-deleted (logged with the old generation) —
   identities, conversations, runs, pools, indexes — and the layout is recreated

@@ -8,10 +8,13 @@ function entry(id: string, fact: string, createdAt = 10): AgentMemoryEntry {
     principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
     fact,
     sources: [{
-      conversationId: 'conversation-1',
-      messageRange: ['user-1', 'assistant-1'],
-      runId: 'run-1',
-      eventId: 'event-1',
+      stream: 'conversation',
+      streamId: 'conversation-1',
+      range: {
+        fromSeqExclusive: 1,
+        throughSeq: 4,
+        throughEventId: 'event-4',
+      },
     }],
     status: 'active',
     createdAt,
@@ -60,10 +63,13 @@ describe('agent recall tool', () => {
           status: 'active',
           created_at: 20,
           sources: [{
-            conversation_id: 'conversation-1',
-            message_range: ['user-1', 'assistant-1'],
-            run_id: 'run-1',
-            event_id: 'event-1',
+            stream: 'conversation',
+            stream_id: 'conversation-1',
+            range: {
+              from_seq_exclusive: 1,
+              through_seq: 4,
+              through_event_id: 'event-4',
+            },
           }],
         }],
         total_entries: 1,
@@ -104,8 +110,13 @@ describe('agent recall tool', () => {
 
   test('nests evidence under the matching memory entry', async () => {
     const source: AgentMemorySource = {
-      conversationId: 'conversation-1',
-      messageRange: ['user-1', 'assistant-1'],
+      stream: 'conversation',
+      streamId: 'conversation-1',
+      range: {
+        fromSeqExclusive: 1,
+        throughSeq: 4,
+        throughEventId: 'event-4',
+      },
     };
     const runtime: AgentRecallToolRuntime = {
       reader: READER,
@@ -113,7 +124,9 @@ describe('agent recall tool', () => {
         entries: [{
           entry: { ...entry('memory-1', 'uses cobalt for focus rings'), sources: [source] },
           evidence: [{
+            kind: 'raw_span',
             source,
+            rawSource: source,
             conversationId: 'conversation-1',
             messageId: 'user-1',
             role: 'user',
@@ -132,9 +145,24 @@ describe('agent recall tool', () => {
         entries: [{
           memory_id: 'memory-1',
           evidence: [{
+            kind: 'raw_span',
             source: {
-              conversation_id: 'conversation-1',
-              message_range: ['user-1', 'assistant-1'],
+              stream: 'conversation',
+              stream_id: 'conversation-1',
+              range: {
+                from_seq_exclusive: 1,
+                through_seq: 4,
+                through_event_id: 'event-4',
+              },
+            },
+            raw_source: {
+              stream: 'conversation',
+              stream_id: 'conversation-1',
+              range: {
+                from_seq_exclusive: 1,
+                through_seq: 4,
+                through_event_id: 'event-4',
+              },
             },
             message_id: 'user-1',
             text: 'We chose cobalt for focus rings.',

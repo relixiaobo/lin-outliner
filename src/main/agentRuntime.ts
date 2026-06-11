@@ -77,6 +77,7 @@ import {
   type AgentIdentityRecord,
   type AgentMemoryEntry,
   type AgentMemoryEvent,
+  type AgentMemorySource,
   type AgentNotificationKind,
   type AgentTaskSource,
   type AgentPayloadRef,
@@ -134,7 +135,7 @@ import {
   buildDreamSessionId,
   memoryFactKey,
   mergeMemorySources,
-  parseDreamMemoryActions,
+  parseDreamMemoryExtractionResponse,
   type DreamMemoryAction,
   type DreamMemoryExtractionRunInput,
   type DreamMemoryExtractionSpan,
@@ -3353,13 +3354,28 @@ export class AgentRuntime {
         if (response.stopReason === 'error' || response.stopReason === 'aborted') {
           throw new Error(response.errorMessage || 'Dream memory extraction failed.');
         }
-        const actions = parseDreamMemoryActions(assistantMessageText(response));
+        const parsed = parseDreamMemoryExtractionResponse(assistantMessageText(response));
+        let episodeSources: AgentMemorySource[] | null = null;
+        const sourcesForCommittedChange = async (): Promise<AgentMemorySource[]> => {
+          if (episodeSources) return episodeSources;
+          if (batch.span.sources.length === 0) {
+            episodeSources = [];
+            return episodeSources;
+          }
+          const episode = await this.getEventStore().recordMemoryEpisode(task.principal, {
+            gist: parsed.episodeGist ?? fallbackEpisodeGist(batch.span),
+            originWorkspace: batch.originWorkspace,
+            sources: batch.span.sources,
+          });
+          episodeSources = [{ episodeId: episode.id }];
+          return episodeSources;
+        };
         // Crash-retry dedup window: applyDreamMemoryActions matches new facts against this
         // list by fact key, so it must see as much of the pool as the store allows (200 =
         // query clamp max) or a re-run after a crash re-saves entries past the window.
         const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
-        addDreamChanges(changes, actions.length > 0
-          ? await this.applyDreamMemoryActions(task, batch, actions, currentMemories)
+        addDreamChanges(changes, parsed.actions.length > 0
+          ? await this.applyDreamMemoryActions(task, batch, parsed.actions, currentMemories, sourcesForCommittedChange)
           : emptyDreamChanges());
       }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
@@ -3480,25 +3496,27 @@ export class AgentRuntime {
     batch: AgentDreamMemoryExtractionBatch,
     actions: readonly DreamMemoryAction[],
     initialEntries: readonly AgentMemoryEntry[],
+    sourcesForCommittedChange: () => Promise<readonly AgentMemorySource[]>,
   ): Promise<AgentDreamCompletedChanges> {
     const changes = emptyDreamChanges();
     const entriesById = new Map(initialEntries.map((entry) => [entry.id, entry]));
     const activeFactKeys = new Set(initialEntries.map((entry) => memoryFactKey(entry.fact)));
     for (const action of actions) {
       if (action.type === 'add') {
-        if (batch.span.sources.length === 0) {
+        const key = memoryFactKey(action.fact);
+        if (activeFactKeys.has(key)) {
           changes.skipped += 1;
           continue;
         }
-        const key = memoryFactKey(action.fact);
-        if (activeFactKeys.has(key)) {
+        const sources = await sourcesForCommittedChange();
+        if (sources.length === 0) {
           changes.skipped += 1;
           continue;
         }
         const entry = await this.getEventStore().addMemoryEntry(task.principal, {
           fact: action.fact,
           originWorkspace: batch.originWorkspace,
-          sources: batch.span.sources,
+          sources: [...sources],
         });
         entriesById.set(entry.id, entry);
         activeFactKeys.add(memoryFactKey(entry.fact));
@@ -3529,10 +3547,15 @@ export class AgentRuntime {
         changes.skipped += 1;
         continue;
       }
+      const sources = batch.span.consolidateOnly ? [] : await sourcesForCommittedChange();
+      if (!batch.span.consolidateOnly && sources.length === 0) {
+        changes.skipped += 1;
+        continue;
+      }
       const updated = await this.getEventStore().updateMemoryEntry(task.principal, current.id, {
         fact: action.fact,
         originWorkspace: current.originWorkspace ?? batch.originWorkspace,
-        sources: mergeMemorySources(current.sources, batch.span.sources),
+        sources: mergeMemorySources(current.sources, sources),
       });
       if (!updated) {
         changes.skipped += 1;
@@ -3941,15 +3964,35 @@ export class AgentRuntime {
               break;
             }
             const sourceEvidence = await this.getPastChatsService().readMemorySourceEvidence({
+              principal: entry.principal,
               source,
               maxChars: remainingChars,
             });
             if (sourceEvidence.mode !== 'evidence') continue;
             evidenceTruncated ||= sourceEvidence.outputTruncated;
+            if (sourceEvidence.episode) {
+              const gist = clampEvidenceText(sourceEvidence.episode.gist, remainingChars);
+              evidence.push({
+                kind: 'episode_gist',
+                source,
+                episodeId: sourceEvidence.episode.id,
+                gist: gist.text,
+                createdAt: sourceEvidence.episode.createdAt,
+                rawSources: sourceEvidence.episode.sources,
+              });
+              evidenceTruncated ||= gist.truncated;
+              remainingChars = Math.max(0, remainingChars - gist.text.length);
+              if (remainingChars <= 0 || gist.truncated) {
+                evidenceTruncated = true;
+                break;
+              }
+            }
             for (const message of sourceEvidence.messages) {
               evidence.push({
+                kind: 'raw_span',
                 source,
-                conversationId: sourceEvidence.conversation.id,
+                rawSource: message.rawSource,
+                conversationId: message.conversationId,
                 messageId: message.messageId,
                 role: message.role,
                 createdAt: message.createdAt,
@@ -6338,14 +6381,11 @@ function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
     principal: entry.principal,
     fact: entry.fact,
     originWorkspace: entry.originWorkspace,
-    sources: entry.sources.map((source) => ({
-      conversationId: source.conversationId,
-      kind: source.kind,
-      summaryId: source.summaryId,
-      messageRange: source.messageRange,
-      runId: source.runId,
-      eventId: source.eventId,
-    })),
+    sources: entry.sources.map((source) => (
+      'episodeId' in source
+        ? { episodeId: source.episodeId }
+        : { stream: source.stream, streamId: source.streamId, range: { ...source.range } }
+    )),
     status: entry.status,
     createdAt: entry.createdAt,
   };
@@ -7074,6 +7114,12 @@ function parseProviderQualifiedModel(value: string): { providerId: string; model
   return { providerId: providerId.trim(), modelId: modelId.trim() };
 }
 
+function clampEvidenceText(text: string, maxChars: number): { text: string; truncated: boolean } {
+  if (text.length <= maxChars) return { text, truncated: false };
+  if (maxChars <= 0) return { text: '', truncated: true };
+  return { text: text.slice(0, maxChars), truncated: true };
+}
+
 function resolveSkillEffortOverride(
   effortInput: string,
   model: Model<Api>,
@@ -7245,6 +7291,15 @@ function dreamTaskTrigger(run: Pick<AgentRunMeta, 'trigger'>): AgentRenderDreamT
   return null;
 }
 
+function fallbackEpisodeGist(span: DreamMemoryExtractionSpan): string {
+  const normalized = span.transcript.trim().replace(/\s+/g, ' ');
+  if (!normalized) return 'Episode gist unavailable; see raw evidence pointers.';
+  const maxChars = 1_200;
+  return normalized.length <= maxChars
+    ? normalized
+    : `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
 function renderTaskStatusFromRunStatus(status: AgentRunMeta['status']): AgentRenderTaskStatus {
   return status === 'cancelled' ? 'stopped' : status;
 }
@@ -7273,21 +7328,18 @@ function dreamWatermarkFromSpan(
   const conversations = { ...previous.conversations };
   const runs = { ...(previous.runs ?? {}) };
   for (const range of ranges) {
-    if (range.source.kind === 'run') {
-      const runId = range.source.runId;
-      if (!runId) continue;
-      const current = runs[runId];
+    if (range.source.stream === 'run') {
+      const current = runs[range.source.streamId];
       if (current && current.seq > range.throughSeq) continue;
-      runs[runId] = {
+      runs[range.source.streamId] = {
         seq: range.throughSeq,
         eventId: range.throughEventId,
       };
       continue;
     }
-    const conversationId = range.source.conversationId;
-    const current = conversations[conversationId];
+    const current = conversations[range.source.streamId];
     if (current && current.seq > range.throughSeq) continue;
-    conversations[conversationId] = {
+    conversations[range.source.streamId] = {
       seq: range.throughSeq,
       eventId: range.throughEventId,
     };
@@ -7304,7 +7356,7 @@ function dreamProcessedConversations(
   messageCount: number;
   charCount: number;
 }> {
-  return Object.fromEntries(ranges.filter((range) => range.source.kind !== 'run').map((range) => [range.source.conversationId, {
+  return Object.fromEntries(ranges.filter((range) => range.source.stream === 'conversation').map((range) => [range.source.streamId, {
     fromSeqExclusive: range.fromSeqExclusive,
     throughSeq: range.throughSeq,
     throughEventId: range.throughEventId,
@@ -7324,11 +7376,9 @@ function dreamProcessedRuns(
   charCount: number;
 }> {
   return Object.fromEntries(ranges.flatMap((range) => {
-    if (range.source.kind !== 'run') return [];
-    const runId = range.source.runId;
-    if (!runId) return [];
-    return [[runId, {
-      conversationId: range.source.conversationId,
+    if (range.source.stream !== 'run') return [];
+    return [[range.source.streamId, {
+      conversationId: range.conversationId ?? '',
       fromSeqExclusive: range.fromSeqExclusive,
       throughSeq: range.throughSeq,
       throughEventId: range.throughEventId,

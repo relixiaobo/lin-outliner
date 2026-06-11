@@ -18,13 +18,23 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import type { AgentPrincipal } from '../../src/core/agentEventLog';
+import type { AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const MAIN_AGENT_ID = 'built-in:tenon:assistant';
 
 const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
+
+const conversationSource = (conversationId: string): AgentMemoryStreamSource => ({
+  stream: 'conversation',
+  streamId: conversationId,
+  range: {
+    fromSeqExclusive: 0,
+    throughSeq: 1,
+    throughEventId: `${conversationId}-event-1`,
+  },
+});
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -204,7 +214,7 @@ describe('agent channel runtime', () => {
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(reviewerAgentId), {
       id: 'memory-reviewer-own',
       fact: 'Reviewer prefers terse verdicts.',
-      sources: [{ conversationId: 'seed-reviewer' }],
+      sources: [conversationSource('seed-reviewer')],
     });
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Review work' });

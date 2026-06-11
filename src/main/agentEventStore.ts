@@ -28,6 +28,8 @@ import type {
   AgentDreamTrigger,
   AgentDreamWatermark,
   AgentMemoryEntry,
+  AgentMemoryEpisode,
+  AgentMemoryStreamSource,
   AgentMemoryEvent,
   AgentMemorySource,
   AgentRunTrigger,
@@ -56,12 +58,16 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v3 = memory realignment PR-2: memory sources are a discriminated union
+// (`{stream, streamId, range}` or `{episodeId}`) and memory-owned episode gist
+// nodes live in the principal memory log. No legacy source reader; pre-release
+// clean-cut wipes old agent data.
 // v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
 // events.jsonl`, own seq space) excluded from conversation replay; the
 // conversation stream keeps only the slim child_run.started/updated markers.
 // The pre-unification entity-grade events and transcript-snapshot payloads
 // are gone.
-export const STORAGE_LAYOUT_VERSION = 2;
+export const STORAGE_LAYOUT_VERSION = 3;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
@@ -127,6 +133,14 @@ export interface AgentMemoryEntryInput {
   fact: string;
   originWorkspace?: string;
   sources: AgentMemorySource[];
+  createdAt?: number;
+}
+
+export interface AgentMemoryEpisodeInput {
+  id?: string;
+  gist: string;
+  originWorkspace?: string;
+  sources: AgentMemoryStreamSource[];
   createdAt?: number;
 }
 
@@ -225,6 +239,8 @@ interface AgentMemoryProjectionCache {
   latestSeq: number;
   eventCount: number;
   entries: Map<string, AgentMemoryEntry>;
+  episodes: Map<string, AgentMemoryEpisode>;
+  memoryIdsByEpisodeId: Map<string, Set<string>>;
   dream: AgentDreamState;
 }
 
@@ -630,6 +646,35 @@ export class AgentEventStore {
     }
   }
 
+  async recordMemoryEpisode(principal: AgentPrincipal, input: AgentMemoryEpisodeInput): Promise<AgentMemoryEpisode> {
+    await this.ensureStorageLayout();
+    const key = principalKey(principal);
+    return this.memoryEventLog.enqueue(key, async () => {
+      const createdAt = input.createdAt ?? Date.now();
+      const episode = normalizeMemoryEpisode({
+        id: input.id ?? `episode-${randomUUID()}`,
+        principal,
+        gist: input.gist,
+        originWorkspace: input.originWorkspace,
+        sources: input.sources,
+        createdAt,
+      });
+      if (!episode) throw new Error('Invalid agent memory episode.');
+      const event = await this.nextMemoryEvent(principal, {
+        type: 'memory.episode_recorded',
+        createdAt,
+        episode,
+      });
+      const projection = await this.getMemoryProjection(principal);
+      await this.appendMemoryEvents(principal, [event]);
+      projection.episodes.set(episode.id, episode);
+      projection.latestSeq = event.seq;
+      projection.eventCount += 1;
+      await this.maybeCompactMemoryLog(principal, projection);
+      return episode;
+    });
+  }
+
   async addMemoryEntry(principal: AgentPrincipal, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
     await this.ensureStorageLayout();
     const key = principalKey(principal);
@@ -652,7 +697,7 @@ export class AgentEventStore {
       });
       const projection = await this.getMemoryProjection(principal);
       await this.appendMemoryEvents(principal, [event]);
-      projection.entries.set(entry.id, entry);
+      setMemoryProjectionEntry(projection, entry, projection.entries.get(entry.id));
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
       await this.maybeCompactMemoryLog(principal, projection);
@@ -684,7 +729,7 @@ export class AgentEventStore {
       });
       await this.appendMemoryEvents(principal, [event]);
       const next = normalizeMemoryEntry({ ...current, ...normalizedPatch }) ?? current;
-      projection.entries.set(next.id, next);
+      setMemoryProjectionEntry(projection, next, current);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
       await this.maybeCompactMemoryLog(principal, projection);
@@ -708,7 +753,7 @@ export class AgentEventStore {
       });
       await this.appendMemoryEvents(principal, [event]);
       const next: AgentMemoryEntry = { ...current, status: 'invalidated' };
-      projection.entries.set(next.id, next);
+      setMemoryProjectionEntry(projection, next, current);
       projection.latestSeq = event.seq;
       projection.eventCount += 1;
       await this.maybeCompactMemoryLog(principal, projection);
@@ -758,6 +803,22 @@ export class AgentEventStore {
     await this.ensureStorageLayout();
     const projection = await this.getMemoryProjection(principal);
     return projection.entries.get(entryId) ?? null;
+  }
+
+  async getMemoryEpisode(principal: AgentPrincipal, episodeId: string): Promise<AgentMemoryEpisode | null> {
+    await this.ensureStorageLayout();
+    const projection = await this.getMemoryProjection(principal);
+    return projection.episodes.get(episodeId) ?? null;
+  }
+
+  async listMemoryEntriesForEpisode(principal: AgentPrincipal, episodeId: string): Promise<AgentMemoryEntry[]> {
+    await this.ensureStorageLayout();
+    const projection = await this.getMemoryProjection(principal);
+    const ids = projection.memoryIdsByEpisodeId.get(episodeId) ?? new Set<string>();
+    return [...ids]
+      .map((id) => projection.entries.get(id))
+      .filter((entry): entry is AgentMemoryEntry => !!entry)
+      .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id));
   }
 
   async listMemoryEntries(
@@ -888,7 +949,8 @@ export class AgentEventStore {
 
   private async nextMemoryEvent(
     principal: AgentPrincipal,
-    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.episode_recorded' }>, 'v' | 'eventId' | 'seq' | 'principal'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'principal'>
       | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'principal'>
       | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
       | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'principal'>,
@@ -921,6 +983,8 @@ export class AgentEventStore {
       latestSeq,
       eventCount: events.length,
       entries: projected.entries,
+      episodes: projected.episodes,
+      memoryIdsByEpisodeId: projected.memoryIdsByEpisodeId,
       dream: projected.dream,
     };
     this.memoryProjectionByPrincipal.set(key, projection);
@@ -932,7 +996,7 @@ export class AgentEventStore {
     const projectedEntryCount = Math.max(1, projection.entries.size);
     if (projection.eventCount < projectedEntryCount * MEMORY_COMPACTION_CHURN_FACTOR) return;
 
-    const events = compactMemoryProjection(principal, projection.entries, projection.dream.lastCompleted);
+    const events = compactMemoryProjection(principal, projection.episodes, projection.entries, projection.dream.lastCompleted);
     const filePath = this.memoryPaths(principal).memoryEventsPath;
     await mkdir(path.dirname(filePath), { recursive: true });
     await atomicWriteFile(filePath, serializeJsonl(events));
@@ -2451,11 +2515,20 @@ function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[]
 
 function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
   entries: Map<string, AgentMemoryEntry>;
+  episodes: Map<string, AgentMemoryEpisode>;
+  memoryIdsByEpisodeId: Map<string, Set<string>>;
   dream: AgentDreamState;
 } {
   const entries = new Map<string, AgentMemoryEntry>();
+  const episodes = new Map<string, AgentMemoryEpisode>();
   let lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null = null;
   for (const event of [...events].sort(compareMemoryEventsForReplay)) {
+    if (event.type === 'memory.episode_recorded') {
+      const episode = normalizeMemoryEpisode(event.episode);
+      if (episode) episodes.set(episode.id, episode);
+      continue;
+    }
+
     if (event.type === 'memory.entry_added') {
       const entry = normalizeMemoryEntry(event.entry);
       if (entry) entries.set(entry.id, entry);
@@ -2477,29 +2550,45 @@ function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
 
     entries.set(current.id, { ...current, status: 'invalidated' });
   }
+  const memoryIdsByEpisodeId = buildMemoryEpisodeReverseIndex(entries);
   return {
     entries,
+    episodes,
+    memoryIdsByEpisodeId,
     dream: lastCompletedDream ? dreamStateFromCompleted(lastCompletedDream) : emptyDreamState(),
   };
 }
 
 function compactMemoryProjection(
   principal: AgentPrincipal,
+  episodes: ReadonlyMap<string, AgentMemoryEpisode>,
   entries: ReadonlyMap<string, AgentMemoryEntry>,
   lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
 ): AgentMemoryEvent[] {
   const createdAt = Date.now();
-  const events = [...entries.values()]
+  const episodeEvents = [...episodes.values()]
+    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    .map((episode, index): AgentMemoryEvent => ({
+      v: 1,
+      type: 'memory.episode_recorded',
+      eventId: `episode-compact-${randomUUID()}`,
+      seq: index + 1,
+      principal,
+      createdAt,
+      episode,
+    }));
+  const entryEvents = [...entries.values()]
     .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
     .map((entry, index): AgentMemoryEvent => ({
       v: 1,
       type: 'memory.entry_added',
       eventId: `memory-compact-${randomUUID()}`,
-      seq: index + 1,
+      seq: episodeEvents.length + index + 1,
       principal,
       createdAt,
       entry,
     }));
+  const events = [...episodeEvents, ...entryEvents];
   if (lastCompletedDream) {
     events.push({
       ...lastCompletedDream,
@@ -2509,6 +2598,45 @@ function compactMemoryProjection(
     });
   }
   return events;
+}
+
+function buildMemoryEpisodeReverseIndex(
+  entries: ReadonlyMap<string, AgentMemoryEntry>,
+): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const entry of entries.values()) {
+    indexMemoryEntryEpisodeSources(index, entry);
+  }
+  return index;
+}
+
+function setMemoryProjectionEntry(
+  projection: AgentMemoryProjectionCache,
+  entry: AgentMemoryEntry,
+  previous?: AgentMemoryEntry,
+): void {
+  if (previous) deindexMemoryEntryEpisodeSources(projection.memoryIdsByEpisodeId, previous);
+  projection.entries.set(entry.id, entry);
+  indexMemoryEntryEpisodeSources(projection.memoryIdsByEpisodeId, entry);
+}
+
+function indexMemoryEntryEpisodeSources(index: Map<string, Set<string>>, entry: AgentMemoryEntry): void {
+  for (const source of entry.sources) {
+    if (!('episodeId' in source)) continue;
+    const ids = index.get(source.episodeId) ?? new Set<string>();
+    ids.add(entry.id);
+    index.set(source.episodeId, ids);
+  }
+}
+
+function deindexMemoryEntryEpisodeSources(index: Map<string, Set<string>>, entry: AgentMemoryEntry): void {
+  for (const source of entry.sources) {
+    if (!('episodeId' in source)) continue;
+    const ids = index.get(source.episodeId);
+    if (!ids) continue;
+    ids.delete(entry.id);
+    if (ids.size === 0) index.delete(source.episodeId);
+  }
 }
 
 function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
@@ -2530,6 +2658,20 @@ function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
       principal,
       createdAt,
       entry,
+    };
+  }
+
+  if (value.type === 'memory.episode_recorded') {
+    const episode = normalizeMemoryEpisode(value.episode);
+    if (!episode || !samePrincipal(episode.principal, principal)) return null;
+    return {
+      v: 1,
+      type: 'memory.episode_recorded',
+      eventId: value.eventId,
+      seq,
+      principal,
+      createdAt,
+      episode,
     };
   }
 
@@ -2605,6 +2747,25 @@ function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
     originWorkspace: normalizeOptionalString(value.originWorkspace),
     sources: Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [],
     status: value.status === 'invalidated' ? 'invalidated' : 'active',
+    createdAt,
+  };
+}
+
+function normalizeMemoryEpisode(value: unknown): AgentMemoryEpisode | null {
+  if (!isRecord(value)) return null;
+  const principal = normalizePrincipal(value.principal);
+  if (typeof value.id !== 'string' || !principal) return null;
+  const gist = normalizeMemoryGist(value.gist);
+  const createdAt = numberOrNull(value.createdAt);
+  if (!gist || createdAt === null) return null;
+  const sources = Array.isArray(value.sources) ? value.sources.map(normalizeMemoryStreamSource).filter(isPresent) : [];
+  if (sources.length === 0) return null;
+  return {
+    id: value.id,
+    principal,
+    gist,
+    originWorkspace: normalizeOptionalString(value.originWorkspace),
+    sources,
     createdAt,
   };
 }
@@ -2739,17 +2900,45 @@ function normalizeMemoryEntryPatch(value: unknown): AgentMemoryEntryPatch {
 }
 
 function normalizeMemorySource(value: unknown): AgentMemorySource | null {
-  if (!isRecord(value) || typeof value.conversationId !== 'string' || value.conversationId.length === 0) return null;
-  const source: AgentMemorySource = { conversationId: value.conversationId };
-  if (value.kind === 'conversation' || value.kind === 'run') source.kind = value.kind;
-  if (typeof value.summaryId === 'string' && value.summaryId.length > 0) source.summaryId = value.summaryId;
-  if (Array.isArray(value.messageRange) && value.messageRange.length === 2) {
-    const [from, to] = value.messageRange;
-    if (typeof from === 'string' && typeof to === 'string') source.messageRange = [from, to];
+  if (!isRecord(value)) return null;
+  if (typeof value.episodeId === 'string' && value.episodeId.length > 0) {
+    return { episodeId: value.episodeId };
   }
-  if (typeof value.runId === 'string' && value.runId.length > 0) source.runId = value.runId;
-  if (typeof value.eventId === 'string' && value.eventId.length > 0) source.eventId = value.eventId;
-  return source;
+  return normalizeMemoryStreamSource(value);
+}
+
+function normalizeMemoryStreamSource(value: unknown): AgentMemoryStreamSource | null {
+  if (!isRecord(value)) return null;
+  if (value.stream !== 'conversation' && value.stream !== 'run') return null;
+  if (typeof value.streamId !== 'string' || value.streamId.length === 0) return null;
+  const range = normalizeMemorySourceRange(value.range);
+  if (!range) return null;
+  return {
+    stream: value.stream,
+    streamId: value.streamId,
+    range,
+  };
+}
+
+function normalizeMemorySourceRange(value: unknown): AgentMemoryStreamSource['range'] | null {
+  if (!isRecord(value)) return null;
+  const fromSeqExclusive = numberOrNull(value.fromSeqExclusive);
+  const throughSeq = numberOrNull(value.throughSeq);
+  if (
+    fromSeqExclusive === null
+    || throughSeq === null
+    || fromSeqExclusive < 0
+    || throughSeq < fromSeqExclusive
+  ) {
+    return null;
+  }
+  return {
+    fromSeqExclusive: Math.trunc(fromSeqExclusive),
+    throughSeq: Math.trunc(throughSeq),
+    throughEventId: typeof value.throughEventId === 'string' || value.throughEventId === null
+      ? value.throughEventId
+      : null,
+  };
 }
 
 function normalizeMemoryFact(value: unknown): string | null {
@@ -2758,6 +2947,15 @@ function normalizeMemoryFact(value: unknown): string | null {
   if (!fact) return null;
   if (fact.length <= MAX_AGENT_MEMORY_FACT_CHARS) return fact;
   return `${fact.slice(0, MAX_AGENT_MEMORY_FACT_CHARS - 3).trimEnd()}...`;
+}
+
+function normalizeMemoryGist(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const gist = normalizeDisplayText(value);
+  if (!gist) return null;
+  const maxChars = 4_000;
+  if (gist.length <= maxChars) return gist;
+  return `${gist.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

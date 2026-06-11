@@ -303,15 +303,37 @@ interface AgentIdentity {               // agents/<id>/identity.json (current-st
   skills: string[];                     // bound skill ids → skills file tree
 }
 
+interface AgentMemorySourceRange {
+  fromSeqExclusive: number;
+  throughSeq: number;
+  throughEventId: string | null;
+}
+
+type AgentMemoryStreamSource = {
+  stream: 'conversation' | 'run';
+  streamId: string;
+  range: AgentMemorySourceRange;
+};
+
+type AgentMemorySource =
+  | AgentMemoryStreamSource
+  | { episodeId: string };
+
+interface AgentMemoryEpisode {          // projection of memory.episode_recorded; memory-owned gist over raw ledgers
+  id: string;
+  principal: Principal;
+  gist: string;
+  originWorkspace?: string;
+  sources: AgentMemoryStreamSource[];
+  createdAt: number;
+}
+
 interface MemoryEntry {                 // projection of the principal's memory/events.jsonl (memory.entry_added/updated/removed)
   id: string;
   principal: Principal;                 // WHOSE self-model this fact is (pool key + elided subject) — see §4 extension
   fact: string;                         // distilled, additive
   originWorkspace?: string;             // where it was learned — PROVENANCE ONLY, never a retrieval fence (D2 revised)
-  sources: Array<{                      // ↓ down-pointer to ground truth (visible guard) — does NOT scope retrieval
-    conversationId: string; summaryId?: string; messageRange?: [string, string];
-    runId?: string; eventId?: string;   // bind to the producing run/event so it can be invalidated (gemini#5)
-  }>;
+  sources: AgentMemorySource[];         // usually {episodeId}; episode then points down to raw stream ranges
   status: 'active' | 'invalidated';     // soft-deleted when its source branch is discarded / undone (gemini#5) — excluded from injection
   createdAt: number;
 }
@@ -336,10 +358,13 @@ raw messages (conversation log, leaves)
    └─distill→ segment summary       ┐
                 └─roll up→ conversation summary ┘  ← per-conversation: the conversation's objective record, compressed
                           ═══════════════ ownership boundary ═══════════════
-                          │ Dream uses summaries/search as locators,
-                          │ then reads raw conversation/run evidence
+                          │ Dream writes a memory-owned episode gist,
+                          │ then stores facts pointing at the episode
                           ▼
-                       MemoryEntry        ← per-agent: the agent's subjective memory, across conversations
+                   AgentMemoryEpisode     ← episodic memory over raw ledgers
+                          │
+                          ▼
+                       MemoryEntry        ← semantic memory, per-principal self-model
 ```
 
 - **One operation ("summarize a span") reused at three scopes**, each rung feeding the
@@ -347,21 +372,21 @@ raw messages (conversation log, leaves)
   a `source` down-pointer range (`fromMessageId` → `throughMessageId`) over a
   **retained** raw span (`agentEventLog.ts:822-826,968-978`), non-destructive; the
   change is to recognize it as a *multi-consumer* node.
-- **The ownership boundary crosses at evidence, not at summaries.**
+- **The ownership boundary crosses at episode production, not at context summaries.**
   Segment/conversation summaries are the *conversation's* objective compression
   and are intentionally lossy. Dream may use them as a map to find candidate
-  spans, but a durable `MemoryEntry` must be extracted from raw conversation
-  messages and relevant run events. Conversations/channels hold no memory; a
-  "channel summary" becomes durable only when a participating agent's memory
-  writer records a `MemoryEntry` with raw `sources` provenance.
+  spans, but the memory-owned durable artifact is `AgentMemoryEpisode.gist`
+  plus raw conversation/run stream sources. Conversations/channels hold no
+  memory; a "channel summary" becomes durable only when a participating agent's
+  memory writer records an episode and a `MemoryEntry` that cites it.
 - **Two summary kinds — production motive decides what is memory** (authority:
   [[agent-memory-foundations]] §2; R2/R6 PM-confirmed 2026-06-10). The ladder
   above is **context management** — locators, never evidence. The episodic
-  layer's memory-owned **episode gist** (realignment PR-2) is a different
+  layer's memory-owned **episode gist** is a different
   product with the same node shape and is the consolidated evidence carrier;
-  the #178 compaction-summary-as-evidence stopgap is deleted in PR-2, and the
-  dependency may later invert (the context assembler consuming episode gist),
-  never the other way.
+  the #178 compaction-summary-as-evidence stopgap is replaced by fact → episode
+  gist → raw span provenance, and the dependency may later invert (the context
+  assembler consuming episode gist), never the other way.
 - **Lossy in content, lossless in addressability.** Every summary / `MemoryEntry` keeps
   a `source(s)` down-pointer; raw is retained permanently, so any distilled claim can be
   drilled back to ground truth — the contamination guard the LoCoMo ceiling demands.
@@ -369,11 +394,11 @@ raw messages (conversation log, leaves)
 Consumers **beyond context injection**: navigation (summary spine = thread
 table-of-contents); **single-tool recall** — model-visible `recall(query,
 include_evidence?, max_chars?)` returns active `MemoryEntry` results and may
-nest raw excerpts under each entry only by expanding that entry's `sources`; the
-raw/fine layer is an internal conversation/run evidence search service, not a
-model-visible `past_chats` tool or second recall tool; **Dream candidate
-location** (summaries/search identify spans to inspect, raw messages/run events
-supply the evidence); titling; re-entry briefs.
+nest episode gist + raw excerpts under each entry only by expanding that entry's
+`sources`; the raw/fine layer is an internal conversation/run evidence search
+service, not a model-visible `past_chats` tool or second recall tool; **Dream
+candidate location** (summaries/search identify spans to inspect, raw
+messages/run events supply the evidence); titling; re-entry briefs.
 
 ### 5. On-disk layout (target)
 
@@ -574,8 +599,9 @@ message.runId           ──▶ run                     message → its execut
 run.conversationId      ──▶ conversation            run → anchor (mandatory)
 run.trigger.nodeId      ──▶ outline command node    provenance: what fired it (NOT an anchor)
 run.parentRunId         ──▶ run                      delegation hierarchy
-DistillationNode.source ──▶ message range | child summaries   summary → raw (addressable)
-MemoryEntry.sources[]   ──▶ conversation / summary / range    fact → ground truth
+DistillationNode.source ──▶ message range | child summaries   context summary → raw (addressable)
+AgentMemoryEpisode.sources[] ─▶ conversation/run stream range episode gist → raw span
+MemoryEntry.sources[]   ──▶ episode                           fact → episode gist
 agent.skills[]          ──▶ skills/ file tree
 ```
 
@@ -631,9 +657,9 @@ agent.skills[]          ──▶ skills/ file tree
 16. **Memory invalidation has one owner and one trigger.** When a conversation branch is
     discarded or a turn is undone, the **runtime memory reconciler** (the D1 append-surface
     owner, never the agent) emits `memory.entry_updated` flipping `status` to `invalidated`
-    for every `MemoryEntry` whose `source.runId`/`source.eventId` falls in the orphaned
-    range. Invalidation is event-sourced (auditable, reversible), excluded from injection,
-    and never a silent in-place delete (cf. invariant 13 / gemini#5).
+    for every `MemoryEntry` whose episode raw stream source range falls in the orphaned
+    conversation/run range. Invalidation is event-sourced (auditable, reversible), excluded
+    from injection, and never a silent in-place delete (cf. invariant 13 / gemini#5).
 17. **Compaction is evidence-preserving (memory invariant) — held STRUCTURALLY
     since run unification.** For every run, across any sequence of auto/manual
     compactions, (already-Dreamed content) ∪ (still-pending content) covers
@@ -642,15 +668,16 @@ agent.skills[]          ──▶ skills/ file tree
     ledger) compacts the same way: a compaction event + the post-compact
     message as the new active root, with the compacted span retained off-path
     and addressable through the compaction record's expansion. The summary is
-    the surviving carrier of compacted content and reaches both Dream
-    extraction and evidence reads; the fork boundary is a ledger position
-    (events before the first `run.started` are inherited context), so no
-    positional exclusion can ever go stale. A `sources[]` entry bound before a
-    compaction resolves to its original evidence text or fails loud
-    (`SOURCE_NOT_FOUND` / `NOT_ON_ACTIVE_BRANCH`), never silently to different
-    content. (Guarded first by [[agent-memory-source-binding]] #178; made
-    structural by [[agent-run-unification]] — the snapshot-rewrite path and
-    payload pinning no longer exist.)
+    the surviving carrier of compacted content and reaches Dream extraction;
+    Dream records a memory-owned episode gist, and evidence reads zoom from fact
+    to episode gist before expanding raw stream spans. The fork boundary is a
+    ledger position (events before the first `run.started` are inherited
+    context), so no positional exclusion can ever go stale. A raw stream source
+    bound before a compaction resolves to its original evidence text or fails
+    loud (`SOURCE_NOT_FOUND` / `NOT_ON_ACTIVE_BRANCH`), never silently to
+    different content. (Guarded first by [[agent-memory-source-binding]] #178;
+    made structural by [[agent-run-unification]] and realignment PR-2 — the
+    snapshot-rewrite path and payload pinning no longer exist.)
 
 ### M0 reality vs next build
 
@@ -681,10 +708,11 @@ agent.skills[]          ──▶ skills/ file tree
   `past_chats` tool rather than preserving compatibility aliases. The target
   model-facing retrieval surface is the single read-only `recall` tool.
   `include_evidence` defaults to false; evidence is nested under memory entries,
-  never returned as sibling ranked items; raw logs expand only through
-  `MemoryEntry.sources`; retrieval excludes `status:'invalidated'` and respects
-  `max_chars`. Dream/extraction must use summaries/search only as locators and
-  must read raw conversation/run records before writing long-term memory.
+  never returned as sibling ranked items; evidence expands only through
+  `MemoryEntry.sources` into episode gist and then raw stream spans; retrieval
+  excludes `status:'invalidated'` and respects `max_chars`. Dream/extraction
+  must use context summaries/search only as locators and must read raw
+  conversation/run records before writing long-term memory.
 - **PM-ratified (2026-06-10, post-review revision):** memory is **one undivided pool
   per principal** — the 2026-06-06 `isolated` tier is removed (it had become
   write-partitioned/read-global, and a principal, like a person, does not partition
@@ -710,11 +738,14 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 - `MessageEvent.role` narrowed to `user | assistant`; `tool_result` events move to the
   run-log vocabulary; canonical `tool.permission.*` names pinned in the program M0 taxonomy.
 - `MessageEvent.forwarded` (combined-forward provenance; `actor` stays the native speaker).
-- `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources`
-  down-pointer (incl. `runId`/`eventId` for invalidation).
-- `MemoryEntry` shape: event-sourced (`memory.entry_added/updated/removed`), `originWorkspace`
-  as provenance (D2 revised — no retrieval tiers), `status: active|invalidated` (D1/gemini
-  undo-invalidation); written via the runtime memory-append API, **not** `file_write`.
+- `DistillationNode.source` (explicit both-ends range) +
+  `AgentMemoryEpisode.sources` raw stream down-pointers +
+  `MemoryEntry.sources` fact→episode down-pointers.
+- `MemoryEntry` shape: event-sourced (`memory.entry_added/updated/removed`),
+  `originWorkspace` as provenance (D2 revised — no retrieval tiers),
+  `status: active|invalidated` (D1/gemini undo-invalidation); episodic gist is
+  event-sourced via `memory.episode_recorded`. Both are written via the runtime
+  memory-append API, **not** `file_write`.
 - `RunMeta.usage` aggregate + per-turn total on the final reply; `RunMeta.fingerprint`
   (`appVersion` + prompt/tool-schema/skill/model hashes) + `retention` state.
 
@@ -809,8 +840,9 @@ need is *agent → user*.)
 
 ### Security — the read-path gate
 
-`recall(include_evidence:true)` expands `sources` to **raw transcript**. A
-cross-principal read must never dereference another principal's raw conversations:
+`recall(include_evidence:true)` expands `sources` to episode gist and then raw
+stream evidence. A cross-principal read must never dereference another
+principal's raw conversations:
 
 - **Cross-principal recall returns the distilled `fact` only**; `sources` evidence
   expansion is permitted **only** for entries whose `principal` == the reader's own
@@ -826,10 +858,11 @@ cross-principal read must never dereference another principal's raw conversation
 - `MemoryEntry.principal: Principal` **replaces** `agentId` (also on
   `AgentMemoryEventBase.principal` and the renderer-facing `AgentMemoryEntryView.principal`);
   the memory event log is keyed **per-principal** via `principalKey(principal)`
-  (`user:<userId> | agent:<agentId>`). On disk an **agent-principal pool stays in its existing
-  identity directory** (`agents/<agentId>/memory/events.jsonl` — the agent's dir *is* its pool,
-  not relocated); the **user pool** lives at `principals/user-<userId>/memory/events.jsonl`.
-  **No new event types** — the same `memory.entry_added/updated/removed` surface (D1).
+  (`user:<userId> | agent:<agentId>`). On disk an **agent-principal pool** lives
+  at `principals/agent-<agentId>/memory/events.jsonl`; the **user pool** lives
+  at `principals/user-<userId>/memory/events.jsonl`.
+  PR-2 adds `memory.episode_recorded` beside the same
+  `memory.entry_added/updated/removed` surface (D1).
 - A reserved **user-principal** pool, created by the runtime; its writer is the
   user-Dream.
 - **Per-principal Dream**: the agent-Dream over the run log; a new user-Dream over the
@@ -873,21 +906,19 @@ cross-principal read must never dereference another principal's raw conversation
 ## Canonical memory vocabulary (PM-ratified 2026-06-10)
 
 The memory subsystem is described, in every doc and plan from here on, in the
-standard cognitive-science vocabulary. This is a **framing layer over the
-structures above — zero storage change**; code identifiers (`dream`, `recall`,
-`fact`) stay, and this table is the canonical mapping. (Rewritten 2026-06-10
-per [[agent-memory-realignment]] D-1/D-4/D-6: the previous revision equated
-the episodic store with the raw ledgers and filed `DistillationNode` under
-Index — both corrected.)
+standard cognitive-science vocabulary. This table is the canonical mapping for
+the storage structures above; code identifiers (`dream`, `recall`, `fact`) stay.
+(Rewritten 2026-06-10 per [[agent-memory-realignment]] D-1/D-4/D-6; updated by
+realignment PR-2 when episodes and the memory source union became concrete.)
 
 | Term | Definition here | Implemented as |
 |---|---|---|
 | **Ground truth (below memory)** | the immutable world record of what happened — not itself a memory store; memory is constructed over it | conversation + run ledgers (§2, §3) |
-| **Episodic store** | the constructed autobiographical layer: episodes as first-class indexed units + their memory-owned gist | **target** — realignment PR-2 (upgrades `agent-memory-episodic-index`); today the layer is the acknowledged gap |
+| **Episodic store** | the constructed autobiographical layer: episodes as first-class indexed units + their memory-owned gist | `memory.episode_recorded` events projected to `AgentMemoryEpisode` |
 | **Semantic store** | distilled knowledge ("what I know"), per Principal; a pool = one principal's self-model, keyed by owner/believer (D-1) | `MemoryEntry` pools (§3 per-agent, Extension) |
 | **Procedural store** | reusable competence ("what I can do") | skills (owned by [[agent-skills-authoring]]; named here for completeness) |
-| **Index** | the hippocampal-style **pure pointer** layer binding semantic ↔ episodic, bidirectionally; points, never copies, never holds content | `sources[]` (forward, today) + episode→facts reverse lookup (PR-2). `DistillationNode` is NOT index — summary text is content, not a pointer (see §4 note on the two summary kinds) |
-| **Consolidation** | offline replay distilling experience into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17). Evidence = the raw record today; post-PR-2 Dream reads episode gist, and the #178 compaction-summary-as-evidence stopgap is deleted |
+| **Index** | the hippocampal-style **pure pointer** layer binding semantic ↔ episodic, bidirectionally; points, never copies, never holds content | `MemoryEntry.sources[]` fact→episode pointers + episode→facts reverse lookup. `DistillationNode` is NOT index — summary text is content, not a pointer (see §4 note on the two summary kinds) |
+| **Consolidation** | offline replay distilling experience into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17). Dream records episode gist and stores facts that cite it; the #178 compaction-summary-as-evidence stopgap is replaced by fact → episode gist → raw span provenance |
 | **Retrieval** | three modes: chronic activation (resident briefing) · deliberate cued retrieval (`recall` + source access) · automatic association (deferred) | §8 assembly + the single `recall` tool; the zoom ladder (schema → fact → episode gist → raw span, D-6) is the provenance axis |
 | **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | **target** — realignment PR-3 (`agent-memory-forgetting`); today only invalidate + churn compaction |
 | **Metamemory** | knowing what one knows before digging | **target** — realignment PR-5: the schema/overview layer; no-query `recall` returns the overview |

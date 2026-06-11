@@ -817,13 +817,15 @@ debug, and continuation. Spawn ordering is ledger-seed first, conversation
 marker second: a crash inside the spawn window leaves an invisible orphan ledger
 directory, never an un-resumable phantom run in the conversation.
 
-Dream memory sources address the run stream directly (`kind: 'run'`, stable
-message-id range, `source.eventId` = the last evidence event); evidence
-expansion replays the ledger's visible transcript, so provenance stays stable
-across later compactions. The Dream watermark cursor records the SCANNED TAIL
-seq (not the last evidence seq) so an already-digested terminal run is skipped
-on later passes from its run-meta alone, without re-reading the ledger. The
-parent model only receives the `Agent` tool result projection.
+Dream raw sources address the run stream directly as
+`{stream: 'run', streamId: <runId>, range: {fromSeqExclusive, throughSeq, throughEventId}}`.
+The durable memory fact cites its memory episode by `{episodeId}`; the episode
+keeps the gist and raw run/conversation stream sources. Evidence expansion
+replays the ledger's visible transcript, so provenance stays stable across
+later compactions. The Dream watermark cursor records the SCANNED TAIL seq (not
+the last evidence seq) so an already-digested terminal run is skipped on later
+passes from its run-meta alone, without re-reading the ledger. The parent model
+only receives the `Agent` tool result projection.
 
 ## Compaction And Resume
 

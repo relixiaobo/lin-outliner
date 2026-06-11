@@ -2091,21 +2091,23 @@ lives in the believer's own pool as relational facts;
 path rule — `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
 (`agents/<agentId>/` keeps only `identity.json`). The runtime
 projects entries from `memory.entry_added`, `memory.entry_updated`, and
-`memory.entry_removed` events, and projects Dream state from `dream.completed`.
+`memory.entry_removed` events, projects episodic gists from
+`memory.episode_recorded`, and projects Dream state from `dream.completed`.
 Forgetting remains idempotent through the Settings/Profile management path.
 High-churn memory logs are compacted by rewriting the log to the current
-projection; compaction preserves visible entry ids, facts, sources, status,
-`createdAt`, and the latest Dream watermark, but drops superseded intermediate
-mutation events.
+projection; compaction preserves episode ids/gists/raw sources, visible entry
+ids, facts, sources, status, `createdAt`, and the latest Dream watermark, but
+drops superseded intermediate mutation events.
 
 Each entry records `originWorkspace` when a local file root is available and
-keeps `sources` down-pointers to the conversation or agent-run evidence that
-created it. Conversation sources carry `conversationId` plus optional
-`runId`/`messageRange`/`eventId`. Agent-run sources carry
-`kind: "agent_run"`, the parent `conversationId`, `agentId`, `runId`, the
-ledger `messageRange`, and the run-ledger event id as `eventId`
-([[agent-run-unification]]). Evidence reads for agent-run sources replay the
-run's OWN ledger and address messages by their ledger event ids — there is no
+keeps `sources` down-pointers to episodic memory. An entry normally cites
+`{episodeId}`; the episode stores the memory-owned gist plus raw stream sources.
+Raw stream sources are the discriminated union branch
+`{stream: "conversation" | "run", streamId, range}` where `range` is
+`{fromSeqExclusive, throughSeq, throughEventId}` in that stream's own seq space
+([[agent-run-unification]], [[agent-memory-realignment]] PR-2). Evidence reads
+zoom fact → episode gist → raw span. Run evidence replays the run's OWN ledger;
+conversation evidence replays the conversation stream. There is no
 transcript-snapshot payload to pin.
 
 A pool is **one undivided self-model** — like a person, a principal never
@@ -2232,13 +2234,16 @@ context is insufficient.
 
 Evidence expansion is always nested under a returned memory entry. The runtime
 expands only that entry's `MemoryEntry.sources` through the internal evidence
-service. Conversation sources verify the retained active branch. Agent-run
-sources replay the referenced run's own ledger and expand only the
-synthetic transcript message range. Both paths clamp output by `max_chars`. Older
-conversations that have not been distilled into active memory entries are
-intentionally not foreground-recallable. Internal summary search and raw
-conversation/run reads remain available to runtime-owned Dream consolidation and
-diagnostics, not as public model tools.
+service. Episode sources return the memory-owned gist first, then expand their
+raw conversation/run stream sources with only the remaining character budget. If
+every raw source is gone or no longer resolves, the episode still returns as
+evidence with its durable gist and an empty raw span list. Conversation sources
+verify the retained active branch; run sources replay the referenced run's own
+ledger. Both paths clamp output by `max_chars`. Older conversations that have
+not been distilled into active memory entries are intentionally not
+foreground-recallable. Internal summary search and raw conversation/run reads
+remain available to runtime-owned Dream consolidation and diagnostics, not as
+public model tools.
 
 Tool results use the shared envelope and expose only the slim model-visible
 projection:
@@ -2256,12 +2261,28 @@ projection:
         "created_at": 1800000000000,
         "sources": [
           {
-            "conversation_id": "conversation-1",
-            "message_range": ["user-1", "assistant-1"]
+            "episode_id": "episode-1"
           }
         ],
         "evidence": [
           {
+            "kind": "episode_gist",
+            "episode_id": "episode-1",
+            "gist": "The user asked for direct answers.",
+            "raw_sources": [
+              {
+                "stream": "conversation",
+                "stream_id": "conversation-1",
+                "range": {
+                  "from_seq_exclusive": 0,
+                  "through_seq": 4,
+                  "through_event_id": "event-4"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "raw_span",
             "conversation_id": "conversation-1",
             "message_id": "user-1",
             "role": "user",
