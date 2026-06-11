@@ -210,6 +210,72 @@ button.panel-resize-handle {
   transform: rotate(180deg);
 }
 
+/* Channel member strip: passive metadata beside the title — neutral text only
+   (B3), no fills; the coordinator reads one step stronger. */
+.agent-dock-members {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.agent-dock-member {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+}
+
+.agent-dock-member.is-coordinator {
+  color: var(--text-soft);
+}
+
+/* Member-management entry: icon-only chrome control — color deepens on hover,
+   never a box (B6). */
+.agent-member-add-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--text-faint);
+  transition: color var(--motion-fast);
+}
+
+.agent-member-add-button:hover,
+.agent-member-add-button:focus-visible,
+.agent-member-add-button[aria-expanded="true"] {
+  color: var(--text-strong);
+}
+
+.agent-member-row {
+  align-items: center;
+}
+
+.agent-member-name {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-5);
+}
+
+.agent-member-name > span:first-child {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-dock-actions {
   display: flex;
   flex: 0 0 auto;
@@ -338,6 +404,16 @@ button.panel-resize-handle {
 
 .agent-conversation-row.is-current .agent-conversation-name {
   font-weight: 500;
+}
+
+/* Channel rows list their agent members (`@a @b`) between name and time meta. */
+.agent-conversation-members {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-conversation-meta {

@@ -99,6 +99,8 @@ export const AGENT_COMMANDS = [
   'agent_list_conversations',
   'agent_rename_conversation',
   'agent_delete_conversation',
+  'agent_add_conversation_member',
+  'agent_remove_conversation_member',
   'agent_list_memory',
   'agent_update_memory',
   'agent_forget_memory',

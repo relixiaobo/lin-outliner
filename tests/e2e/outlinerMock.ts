@@ -524,6 +524,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       {
         id: 'mock-agent-conversation',
         title: 'Agent System',
+        members: [
+          { type: 'user', userId: 'local-user' },
+          { type: 'agent', agentId: 'built-in:core:assistant' },
+        ],
         createdAt: now - 100_000,
         updatedAt: now - 1_000,
         messageCount: 33,
@@ -531,6 +535,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       {
         id: 'mock-agent-conversation-2',
         title: null,
+        members: [
+          { type: 'user', userId: 'local-user' },
+          { type: 'agent', agentId: 'built-in:core:assistant' },
+        ],
         createdAt: now - 200_000,
         updatedAt: now - 80_000,
         messageCount: 1,
@@ -1396,6 +1404,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       closeProviderConfig: async () => {},
       notifySettingsChanged: async () => {},
+      agentMarkConversationRead: async () => {},
       recentLocalFiles: async () => ({
         files: [{
           entryKind: 'file',
@@ -1426,7 +1435,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               conversationId: 'mock-agent-conversation',
               revision: 1,
               conversationTitle: 'Agent System',
+              members: [
+                { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+                {
+                  principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+                  mention: 'assistant',
+                  displayName: 'Agent System',
+                  coordinator: true,
+                },
+              ],
               activeRunId: null,
+              activeRunAgentId: null,
+              queuedMessages: [],
               activeCompaction: null,
               isStreaming: false,
               model: { id: 'gpt-5.4', provider: 'openai' },
@@ -2676,7 +2696,18 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       conversationId,
       revision,
       conversationTitle: state.conversationTitle ?? null,
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          mention: 'assistant',
+          displayName: 'Agent System',
+          coordinator: true,
+        },
+      ],
       activeRunId: state.isStreaming ? 'run-e2e' : null,
+      activeRunAgentId: state.isStreaming ? 'built-in:core:assistant' : null,
+      queuedMessages: [],
       activeCompaction: state.activeCompaction ?? null,
       isStreaming: !!state.isStreaming,
       model: state.model ?? {},

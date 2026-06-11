@@ -166,6 +166,39 @@ truth.
   - `runtime_status`, `config`, `doctor`, and `dream` tools with
     permission-gated config/Dream writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
+- [x] Agent M3-A multi-agent Channel (membership + routing + peer reply, #179;
+  IM group-chat semantics PM-ratified 2026-06-10):
+  - `member.added`/`member.removed` events applied on replay and folded into the
+    conversation index (membership events only — ordinary event actors never
+    resurrect a removed member); `addressedTo` persisted on user messages AND on
+    handing-off assistant replies
+  - Channel creation with a member set + goal seed; "add agent to DM" spawns a
+    seeded Channel (the canonical DM never converts); coordinator and DM members
+    are immovable; member removal blocked while a round is active;
+    mention-token collisions rejected at create/add time
+  - routing: explicit user `@`s all run, uncounted (independent answers — each
+    run's context cuts at the message that addressed it,
+    `cutChannelPathForRun`); no `@` routes to the coordinator (PM-ratified); an
+    agent reply `@`-ing members hands off, routed from the persisted record,
+    **unbounded** (user stop is the circuit breaker: kills the active run and
+    discards unstarted routing with a thread trace); one addressee's failure
+    never skips siblings
+  - delivery: Channel replies are not streamed — typing indicator while the run
+    is active (drill-in opens the run working-state panel), whole reply lands on
+    completion; the thread renders utterances only; a user message sent during
+    any active Channel run (round or non-round turn) queues (no steer in
+    Channels) and is persisted when routed — non-round turns drain the queue on
+    settle, quit flushes it unrouted — shown from the projection's
+    `queuedMessages` meanwhile; DM behavior unchanged
+  - each peer turn executes as the addressed agent (definition, model/effort,
+    skills, memory line, `actor` stamp) and reads the thread through the
+    transient per-POV flatten (own turns verbatim; other principals coalesced
+    into identity-preambled user-role blocks; selected by transcript content,
+    not the live roster); the persisted log stays reader-neutral
+  - UI: composer `@` member typeahead, member strip + "+" member menu on the
+    Channel header (add member incl. the DM-spawn path, remove member),
+    conversation-list member display, speaker badges on non-coordinator
+    assistant rows that survive member removal
 
 ## Next Milestone
 

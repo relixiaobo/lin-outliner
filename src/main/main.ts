@@ -1819,9 +1819,17 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
     case 'agent_restore_conversation':
       return agentRuntime.restoreConversation(conversationId());
     case 'agent_create_conversation':
-      return agentRuntime.createConversation();
+      return agentRuntime.createConversation({
+        agentIds: Array.isArray(args.agentIds) ? args.agentIds.map(String) : undefined,
+        goal: typeof args.goal === 'string' ? args.goal : undefined,
+        seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
+      });
     case 'agent_list_conversations':
       return agentRuntime.listConversations();
+    case 'agent_add_conversation_member':
+      return agentRuntime.addConversationMember(conversationId(), String(args.agentId));
+    case 'agent_remove_conversation_member':
+      return agentRuntime.removeConversationMember(conversationId(), String(args.agentId));
     case 'agent_rename_conversation':
       return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
     case 'agent_delete_conversation':

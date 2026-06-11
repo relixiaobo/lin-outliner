@@ -60,6 +60,10 @@ const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 
 interface AgentMessageRowProps {
+  /** Speaker name for Channel attribution; null/undefined renders no badge (DM, user, coordinator). */
+  actorLabel?: string | null;
+  /** The speaker's `@` token, shown as the badge tooltip. */
+  actorMention?: string;
   busy?: boolean;
   contentKey?: string;
   entry: AgentMessageEntry;
@@ -467,6 +471,8 @@ function renderAssistantBlocks(
 }
 
 export function AgentMessageRow({
+  actorLabel = null,
+  actorMention,
   busy = false,
   contentKey,
   entry,
@@ -681,6 +687,14 @@ export function AgentMessageRow({
   return (
     <AgentMessageFrame role="assistant">
       <AgentAssistantContent>
+        {actorLabel ? (
+          <div
+            className="agent-message-actor"
+            title={actorMention ? `@${actorMention}` : undefined}
+          >
+            {actorLabel}
+          </div>
+        ) : null}
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
         {turnActive ? <AgentStreamingIndicator /> : null}

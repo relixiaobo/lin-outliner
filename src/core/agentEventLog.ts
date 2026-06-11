@@ -119,6 +119,16 @@ export function samePrincipal(left: AgentPrincipal, right: AgentPrincipal): bool
   return principalKey(left) === principalKey(right);
 }
 
+/** Merge principal lists, deduplicated by key, preserving first-seen order. */
+export function mergeUniquePrincipals(
+  current: readonly AgentPrincipal[],
+  next: readonly AgentPrincipal[],
+): AgentPrincipal[] {
+  const byKey = new Map<string, AgentPrincipal>();
+  for (const principal of [...current, ...next]) byKey.set(principalKey(principal), principal);
+  return [...byKey.values()];
+}
+
 export type AgentConversationActor = AgentPrincipal | { type: 'system' };
 
 export interface AgentConversationMeta {
@@ -528,6 +538,8 @@ export type AgentEventType =
   | 'conversation.settings_changed'
   | 'debug.snapshot.created'
   | 'branch.selected'
+  | 'member.added'
+  | 'member.removed'
   | 'user_message.created'
   | 'user_message.edited'
   | 'assistant_message.started'
@@ -610,6 +622,16 @@ export interface ConversationSettingsChangedEvent extends AgentEventBase {
   settings: Record<string, unknown>;
 }
 
+/**
+ * Conversation membership change. Replays into `conversation.members`; idempotent by
+ * `principalKey` (adding an existing member or removing an absent one is a no-op,
+ * so a crash-retried append cannot corrupt the roster).
+ */
+export interface MemberChangedEvent extends AgentEventBase {
+  type: 'member.added' | 'member.removed';
+  member: AgentPrincipal;
+}
+
 export interface DebugSnapshotCreatedEvent extends AgentEventBase {
   type: 'debug.snapshot.created';
   debugId: string;
@@ -641,6 +663,12 @@ export interface UserMessageCreatedEvent extends AgentEventBase {
   content: AgentPersistedContent[];
   attachments?: AgentPayloadRef[];
   replacesMessageId?: string;
+  /**
+   * The principals this turn addresses ([[agent-conversation-model]] routing rule:
+   * a run is produced iff a principal is in `addressedTo`). Written by the runtime
+   * router in multi-agent Channels; absent in DMs (single implicit addressee).
+   */
+  addressedTo?: AgentPrincipal[];
 }
 
 export interface UserMessageEditedEvent extends AgentEventBase {
@@ -674,6 +702,12 @@ export interface AssistantMessageCompletedEvent extends AgentEventBase {
   stopReason: AssistantMessage['stopReason'];
   content: AgentPersistedContent[];
   usage?: Usage;
+  /**
+   * Hand-off routing record: the members this reply `@`-addressed (Channel
+   * relay). Written at completion so the routing decision is in the durable
+   * log, not only re-derivable from text.
+   */
+  addressedTo?: AgentPrincipal[];
 }
 
 export interface AssistantMessageFailedEvent extends AgentEventBase {
@@ -1029,6 +1063,7 @@ export type AgentEvent =
   | ConversationCreatedEvent
   | ConversationRenamedEvent
   | ConversationSettingsChangedEvent
+  | MemberChangedEvent
   | DebugSnapshotCreatedEvent
   | BranchSelectedEvent
   | UserMessageCreatedEvent
@@ -1106,6 +1141,7 @@ export interface AgentEventMessageRecord {
   isError?: boolean;
   outputSummary?: string;
   attachments?: AgentPayloadRef[];
+  addressedTo?: AgentPrincipal[];
 }
 
 export interface AgentRunRecord {
@@ -1444,6 +1480,24 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.conversation!.settings = { ...state.conversation!.settings, ...event.settings };
       state.conversation!.updatedAt = event.createdAt;
       return;
+    case 'member.added': {
+      requireConversation(state, event);
+      const conversation = state.conversation!;
+      const key = principalKey(event.member);
+      if (!conversation.members.some((member) => principalKey(member) === key)) {
+        conversation.members = [...conversation.members, event.member];
+      }
+      conversation.updatedAt = event.createdAt;
+      return;
+    }
+    case 'member.removed': {
+      requireConversation(state, event);
+      const conversation = state.conversation!;
+      const key = principalKey(event.member);
+      conversation.members = conversation.members.filter((member) => principalKey(member) !== key);
+      conversation.updatedAt = event.createdAt;
+      return;
+    }
     case 'debug.snapshot.created':
       return;
     case 'user_message.created':
@@ -1458,6 +1512,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         updatedAt: event.createdAt,
         status: 'completed',
         attachments: event.attachments?.slice(),
+        addressedTo: event.addressedTo?.slice(),
       });
       state.selectedLeafMessageId = event.messageId;
       return;
@@ -1499,6 +1554,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       message.status = 'completed';
       message.stopReason = event.stopReason;
       message.usage = event.usage;
+      if (event.addressedTo) message.addressedTo = event.addressedTo.slice();
       message.updatedAt = event.createdAt;
       return;
     }
