@@ -43,8 +43,6 @@
 .agent-steer-preview,
 .agent-composer-input,
 .agent-composer-editor,
-.agent-composer-model-menu,
-.agent-composer-more-model-list,
 .command-list,
 .trigger-popover,
 .node-picker-popover {
@@ -118,4 +116,3 @@ select:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-shadow);
 }
-

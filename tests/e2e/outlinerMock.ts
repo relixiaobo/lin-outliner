@@ -54,6 +54,7 @@ type E2EWindow = Window & {
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
+    setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
   };
   lin?: {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -61,9 +62,16 @@ type E2EWindow = Window & {
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
-    openSettings?: () => Promise<void>;
+    openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
+    onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
+    showAgentMessageContextMenu?: (request: {
+      canCopy: boolean;
+      canRetry: boolean;
+      canRegenerate: boolean;
+      canShowDetails: boolean;
+    }) => Promise<'copy' | 'retry' | 'regenerate' | 'details' | null>;
     openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
     previewLocalFileReference?: (options: { path: string }) => Promise<{
@@ -228,6 +236,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentListeners: Array<(event: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
+    let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
@@ -1404,7 +1413,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (pending) { oauthPending.delete(providerId); pending.resolve(clone(agentSettings)); }
     };
 
-    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent, emitOAuthEvent, resolveOAuthLogin };
+    win.__LIN_E2E__ = {
+      calls,
+      projection,
+      clipboardText: () => clipboardText,
+      emitAgentEvent,
+      emitDocumentEvent,
+      emitOAuthEvent,
+      resolveOAuthLogin,
+      setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
+    };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
     win.lin = {
       // The per-provider config opens as its own native window in the app; in tests
@@ -1415,11 +1433,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       // The Settings window opens natively; in tests just record the request so
       // the onboarding CTA can be asserted (it deep-links to Providers).
-      openSettings: async () => {
-        calls.push({ cmd: 'open_settings', args: {} });
+      openSettings: async (target?: unknown) => {
+        calls.push({ cmd: 'open_settings', args: clone(target ?? {}) });
       },
       closeProviderConfig: async () => {},
       notifySettingsChanged: async () => {},
+      onSettingsNavigate: () => () => {},
+      showAgentMessageContextMenu: async (request) => {
+        calls.push({ cmd: 'agent_message_context_menu', args: clone(request) });
+        if (!messageContextMenuAction) return null;
+        if (messageContextMenuAction === 'copy' && !request.canCopy) return null;
+        if (messageContextMenuAction === 'retry' && !request.canRetry) return null;
+        if (messageContextMenuAction === 'regenerate' && !request.canRegenerate) return null;
+        if (messageContextMenuAction === 'details' && !request.canShowDetails) return null;
+        return messageContextMenuAction;
+      },
       agentMarkConversationRead: async () => {},
       recentLocalFiles: async () => ({
         files: [{
@@ -2539,6 +2567,16 @@ export async function resolveOAuthLogin(page: Page, providerId: string) {
   }, providerId);
 }
 
+export async function setAgentMessageContextMenuAction(
+  page: Page,
+  action: 'copy' | 'retry' | 'regenerate' | 'details' | null,
+) {
+  await page.evaluate((action) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.setAgentMessageContextMenuAction(action);
+  }, action);
+}
+
 export async function emitAgentProjection(page: Page, conversationId: string, state: Record<string, any>, revision = 1) {
   const entities: Record<string, any> = {};
   const compactions: Record<string, any> = {};
@@ -2624,6 +2662,9 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
 
     const message = entry.message;
     const messageId = entry.nodeId;
+    const actor = entry.actor ?? (message.role === 'user'
+      ? { type: 'user', userId: 'local-user' }
+      : { type: 'agent', agentId: 'built-in:core:assistant' });
     rows.push({ id: `${message.role}:${messageId}`, kind: 'message', messageId });
     entities[messageId] = {
       id: messageId,
@@ -2634,6 +2675,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: message.timestamp,
       updatedAt: message.timestamp,
       branches: entry.branches ?? null,
+      actor,
       apiId: message.api,
       providerId: message.provider,
       modelId: message.model,
@@ -2657,6 +2699,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: streamingMessage.timestamp,
       updatedAt: streamingMessage.timestamp,
       branches: null,
+      actor: streamingMessage.actor ?? { type: 'agent', agentId: 'built-in:core:assistant' },
       apiId: streamingMessage.api,
       providerId: streamingMessage.provider,
       modelId: streamingMessage.model,
@@ -2687,6 +2730,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: message.timestamp,
       updatedAt: message.timestamp,
       branches: null,
+      actor: message.actor ?? { type: 'tool', toolName: message.toolName, toolCallId: message.toolCallId },
       toolCallId: message.toolCallId,
       toolName: message.toolName,
       isError: message.isError,
@@ -2738,7 +2782,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       conversationId,
       revision,
       conversationTitle: state.conversationTitle ?? null,
-      members: [
+      members: state.members ?? [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
         {
           principal: { type: 'agent', agentId: 'built-in:core:assistant' },

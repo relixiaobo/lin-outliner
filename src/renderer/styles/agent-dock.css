@@ -161,7 +161,7 @@ button.panel-resize-handle {
   display: inline-flex;
   width: fit-content;
   min-width: 0;
-  max-width: min(100%, 260px);
+  max-width: min(100%, 300px);
   height: 28px;
   flex: 0 1 auto;
   align-items: center;
@@ -189,6 +189,28 @@ button.panel-resize-handle {
   font-size: var(--font-ui-md);
   font-weight: 400;
   line-height: var(--line-ui-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-dock-title-stack {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.agent-dock-title-stack .agent-dock-title {
+  line-height: var(--line-ui-sm-tight);
+}
+
+.agent-dock-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -479,4 +501,3 @@ button.panel-resize-handle {
   outline: none;
   padding: 0 var(--space-3);
 }
-

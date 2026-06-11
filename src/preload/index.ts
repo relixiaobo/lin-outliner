@@ -1,12 +1,19 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   LIN_AGENT_EVENT_CHANNEL,
+  LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL,
   LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL,
+  type AgentMessageContextMenuAction,
+  type AgentMessageContextMenuRequest,
   type AgentRuntimeEvent,
 } from '../core/agentTypes';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent, type OAuthLoginEventEnvelope } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
-import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
+import {
+  LIN_SETTINGS_CHANGED_CHANNEL,
+  LIN_SETTINGS_NAVIGATE_CHANNEL,
+  type SettingsOpenTarget,
+} from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import type { ThemeMode } from '../core/theme';
 import { DEFAULT_LOCALE, isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, type Locale } from '../core/locale';
@@ -222,7 +229,7 @@ const api = {
     toggleMaximize: () => ipcRenderer.invoke('lin:window', 'toggle_maximize') as Promise<void>,
     close: () => ipcRenderer.invoke('lin:window', 'close') as Promise<void>,
   },
-  openSettings: () => ipcRenderer.invoke('lin:open-settings') as Promise<void>,
+  openSettings: (target?: SettingsOpenTarget) => ipcRenderer.invoke('lin:open-settings', target) as Promise<void>,
   closeSettings: () => ipcRenderer.invoke('lin:close-settings') as Promise<void>,
   // Appearance preference. setTheme applies immediately across all windows (via
   // nativeTheme.themeSource → prefers-color-scheme) and persists; getTheme returns
@@ -280,6 +287,15 @@ const api = {
       ipcRenderer.removeListener(LIN_SETTINGS_CHANGED_CHANNEL, handler);
     };
   },
+  onSettingsNavigate: (listener: (target: SettingsOpenTarget) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, target: SettingsOpenTarget) => listener(target);
+    ipcRenderer.on(LIN_SETTINGS_NAVIGATE_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_SETTINGS_NAVIGATE_CHANNEL, handler);
+    };
+  },
+  showAgentMessageContextMenu: (request: AgentMessageContextMenuRequest) =>
+    ipcRenderer.invoke(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, request) as Promise<AgentMessageContextMenuAction | null>,
   // The main process forwards the window's OS focus state so the chrome can
   // desaturate while the window is inactive (the macOS inactive-window look).
   onWindowActiveChange: (listener: (active: boolean) => void) => {

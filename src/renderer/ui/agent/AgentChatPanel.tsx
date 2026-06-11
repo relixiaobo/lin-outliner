@@ -22,7 +22,6 @@ import type {
   AgentDefinitionView,
   AgentApprovalResolutionScope,
   AgentProviderSettingsView,
-  AgentReasoningLevel,
   AgentConversationListMeta,
   AgentSlashCommandView,
   NodeId,
@@ -59,6 +58,7 @@ import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
+import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
@@ -71,6 +71,7 @@ const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
+const MESSAGE_TIME_SEPARATOR_GAP_MS = 60 * 60 * 1000;
 
 interface AgentChatPanelProps {
   index: DocumentIndex;
@@ -83,25 +84,6 @@ interface AgentChatPanelProps {
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= 56;
-}
-
-function getSupportedReasoningLevels(
-  settings: AgentProviderSettingsView,
-  providerId: string,
-  modelId: string,
-): AgentReasoningLevel[] {
-  const catalog = settings.availableProviders.find((provider) => provider.providerId === providerId);
-  const model = catalog?.models.find((candidate) => candidate.id === modelId);
-  return model?.supportedThinkingLevels.length ? model.supportedThinkingLevels : ['off'];
-}
-
-function coerceReasoningLevel(
-  reasoningLevel: AgentReasoningLevel,
-  supportedLevels: AgentReasoningLevel[],
-): AgentReasoningLevel {
-  if (supportedLevels.includes(reasoningLevel)) return reasoningLevel;
-  if (supportedLevels.includes('off')) return 'off';
-  return supportedLevels[0] ?? 'off';
 }
 
 function composerCurrentNodeId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
@@ -150,6 +132,24 @@ function formatConversationTime(timestamp: number, locale: string): string {
     return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
   return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+}
+
+function formatMessageTimeSeparator(timestamp: number, locale: string, today: (input: { time: string }) => string): string {
+  const date = new Date(timestamp);
+  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  if (date.toDateString() === new Date().toDateString()) return today({ time });
+  return `${date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+function agentDefinitionName(definition: AgentDefinitionView | undefined): string | null {
+  if (!definition) return null;
+  return definition.displayName?.trim() || definition.name.trim() || null;
+}
+
+function activeProviderModelSubtitle(settings: AgentProviderSettingsView | null): string | null {
+  const activeProvider = settings ? resolveUsableActiveProvider(settings) : null;
+  if (!activeProvider) return null;
+  return `${activeProvider.providerId}/${activeProvider.modelId}`;
 }
 
 type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
@@ -653,6 +653,19 @@ export function AgentChatPanel({
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const memberButtonRef = useRef<HTMLButtonElement>(null);
   const memberMenuRef = useRef<HTMLDivElement>(null);
+  const agentDefinitionById = useMemo(() => {
+    const map = new Map<string, AgentDefinitionView>();
+    for (const definition of agentDefinitions) map.set(definition.agentId, definition);
+    return map;
+  }, [agentDefinitions]);
+  const dmAgentMember = !isChannel && agentMembers.length === 1 ? agentMembers[0]! : null;
+  const dmAgentId = dmAgentMember?.principal.type === 'agent' ? dmAgentMember.principal.agentId : null;
+  const dmAgentDefinition = dmAgentId ? agentDefinitionById.get(dmAgentId) : undefined;
+  const dmAgentLabel = dmAgentId
+    ? agentDefinitionName(dmAgentDefinition) ?? dmAgentMember?.displayName ?? `@${agentMentionToken(dmAgentId)}`
+    : null;
+  const dmAgentMention = dmAgentMember?.mention ?? (dmAgentId ? agentMentionToken(dmAgentId) : null);
+  const activeProviderModel = activeProviderModelSubtitle(providerSettings);
   const virtualLayout = useMemo(
     () => buildVirtualTranscriptLayout(conversationRows, rowHeightsRef.current),
     [conversationRows, measureVersion],
@@ -826,6 +839,24 @@ export function AgentChatPanel({
   }, [historyOpen, loadConversations]);
 
   useEffect(() => {
+    if (!conversationId) {
+      setAgentDefinitions([]);
+      return;
+    }
+    let cancelled = false;
+    void api.agentListAllDefinitions(conversationId)
+      .then((definitions) => {
+        if (!cancelled) setAgentDefinitions(definitions);
+      })
+      .catch(() => {
+        if (!cancelled) setAgentDefinitions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
+  useEffect(() => {
     if (!historyOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
@@ -867,43 +898,6 @@ export function AgentChatPanel({
     };
   }, [memberMenuOpen, conversationId]);
 
-  async function updateProviderConfig(
-    providerId: string,
-    patch: { modelId?: string; reasoningLevel?: AgentReasoningLevel },
-  ) {
-    if (!providerSettings) return;
-    const provider = providerSettings.providers.find((candidate) => candidate.providerId === providerId);
-    const catalog = providerSettings.availableProviders.find((candidate) => candidate.providerId === providerId);
-    const modelId = patch.modelId ?? provider?.modelId ?? catalog?.models[0]?.id;
-    if (!modelId) return;
-    const supportedLevels = getSupportedReasoningLevels(providerSettings, providerId, modelId);
-    const reasoningLevel = coerceReasoningLevel(
-      patch.reasoningLevel ?? provider?.reasoningLevel ?? 'off',
-      supportedLevels,
-    );
-    const requestId = providerSettingsRequestRef.current + 1;
-    providerSettingsRequestRef.current = requestId;
-    try {
-      setSettingsError(null);
-      await api.agentUpsertProviderConfig({
-        providerId,
-        modelId,
-        reasoningLevel,
-        baseUrl: provider?.baseUrl ?? null,
-        enabled: provider?.enabled ?? true,
-      });
-      const next = await api.agentSetActiveProvider(providerId);
-      if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
-        setProviderSettings(next);
-      }
-      await reloadConversation();
-    } catch (caught) {
-      if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
-        setSettingsError(caught instanceof Error ? caught.message : String(caught));
-      }
-    }
-  }
-
   const handleResolveApproval = useCallback(async (
     requestId: string,
     approved: boolean,
@@ -914,12 +908,17 @@ export function AgentChatPanel({
     return resolved;
   }, [loadProviderSettings, resolveApproval]);
 
-  async function updateActiveProviderConfig(patch: { modelId?: string; reasoningLevel?: AgentReasoningLevel }) {
-    if (!providerSettings) return;
-    const activeProvider = resolveUsableActiveProvider(providerSettings);
-    const providerId = activeProvider?.providerId ?? providerSettings.availableProviders[0]?.providerId;
-    if (!providerId) return;
-    await updateProviderConfig(providerId, patch);
+  function openComposerModelSettings() {
+    if (dmAgentDefinition && dmAgentDefinition.source !== 'built-in') {
+      void window.lin?.openSettings?.({ agentId: dmAgentDefinition.agentId });
+      return;
+    }
+    const activeProvider = providerSettings ? resolveUsableActiveProvider(providerSettings) : null;
+    if (activeProvider?.providerId) {
+      void window.lin?.openProviderConfig?.({ providerId: activeProvider.providerId, mode: 'configure' });
+      return;
+    }
+    void window.lin?.openSettings?.({ category: 'providers' });
   }
 
   async function refreshAfterSettingsChange() {
@@ -1060,18 +1059,35 @@ export function AgentChatPanel({
       return <AgentChildRunBoundary entry={row.entry} onOpenTranscript={setSelectedChildRunId} />;
     }
 
-    // Channel attribution: name the speaking agent on non-coordinator assistant
-    // rows. Derived from the message's recorded actor vs the coordinator —
-    // NOT from the live roster — so removing a member never erases who spoke;
-    // departed members fall back to their `@` token.
+    // Channel attribution: name the speaking agent on assistant rows. Derived
+    // from the message's recorded actor — NOT from the live roster — so removing
+    // a member never erases who spoke; departed members fall back to their `@`
+    // token or saved definition name when still available.
     const actor = row.entry.actor;
-    const speakerAgentId = actor?.type === 'agent' && coordinatorAgentId && actor.agentId !== coordinatorAgentId
+    const speakerAgentId = isChannel && actor?.type === 'agent'
       ? actor.agentId
       : null;
     const actorMember = speakerAgentId ? memberByAgentId.get(speakerAgentId) : undefined;
-    const actorLabel = speakerAgentId && row.entry.message.role === 'assistant'
-      ? actorMember?.displayName ?? `@${agentMentionToken(speakerAgentId)}`
+    const actorDefinition = speakerAgentId ? agentDefinitionById.get(speakerAgentId) : undefined;
+    const actorMention = actorMember?.mention ?? (speakerAgentId ? agentMentionToken(speakerAgentId) : undefined);
+    const actorDisplayName = speakerAgentId
+      ? agentDefinitionName(actorDefinition) ?? actorMember?.displayName ?? `@${agentMentionToken(speakerAgentId)}`
       : null;
+    const actorLabel = speakerAgentId && row.entry.message.role === 'assistant'
+      ? actorDisplayName
+      : null;
+    const detailSpeakerAgentId = row.entry.message.role === 'assistant'
+      ? (actor?.type === 'agent' ? actor.agentId : dmAgentId ?? coordinatorAgentId)
+      : null;
+    const detailSpeakerDefinition = detailSpeakerAgentId ? agentDefinitionById.get(detailSpeakerAgentId) : undefined;
+    const detailSpeakerMember = detailSpeakerAgentId ? memberByAgentId.get(detailSpeakerAgentId) : undefined;
+    const detailSpeakerMention = detailSpeakerMember?.mention ?? (detailSpeakerAgentId ? agentMentionToken(detailSpeakerAgentId) : null);
+    const detailSpeakerLabel = row.entry.message.role === 'assistant'
+      ? agentDefinitionName(detailSpeakerDefinition)
+        ?? detailSpeakerMember?.displayName
+        ?? (detailSpeakerAgentId ? `@${agentMentionToken(detailSpeakerAgentId)}` : dmAgentLabel)
+        ?? t.agent.message.roleAssistant
+      : t.agent.message.you;
     // Pure-utterance thread (ratified): a delivered Channel message renders its
     // final text only — process blocks live behind the typing drill-in / M3-C.
     const displayEntry = isChannel && row.entry.message.role === 'assistant'
@@ -1100,7 +1116,7 @@ export function AgentChatPanel({
     return (
       <AgentMessageRow
         actorLabel={actorLabel}
-        actorMention={actorMember?.mention ?? (speakerAgentId ? agentMentionToken(speakerAgentId) : undefined)}
+        actorMention={actorMention}
         busy={isStreaming}
         contentKey={row.contentKey}
         entry={displayEntry}
@@ -1120,6 +1136,8 @@ export function AgentChatPanel({
         toolResults={toolResults}
         turnEnded={row.turnEnded}
         turnPhase={row.turnPhase}
+        speakerLabel={detailSpeakerLabel}
+        speakerMention={detailSpeakerMention}
       />
     );
   }
@@ -1169,7 +1187,23 @@ export function AgentChatPanel({
           onClick={() => setHistoryOpen((open) => !open)}
           title={t.agent.chat.showConversations}
         >
-          <span className="agent-dock-title">{displayTitle}</span>
+          {dmAgentId && dmAgentLabel ? (
+            <>
+              <AgentIdentityAvatar
+                label={dmAgentLabel}
+                mention={dmAgentMention}
+                size="md"
+              />
+              <span className="agent-dock-title-stack">
+                <span className="agent-dock-title">{conversationTitle ? displayTitle : dmAgentLabel}</span>
+                <span className="agent-dock-subtitle">
+                  {[dmAgentMention ? `@${dmAgentMention}` : null, activeProviderModel].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </>
+          ) : (
+            <span className="agent-dock-title">{displayTitle}</span>
+          )}
           <ChevronDownIcon
             className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
             size={ICON_SIZE.menu}
@@ -1464,6 +1498,10 @@ export function AgentChatPanel({
             {visibleConversationRows.map((row, offset) => {
               const rowIndex = virtualRange.start + offset;
               const item = virtualLayout.items[rowIndex];
+              const previousRow = rowIndex > 0 ? conversationRows[rowIndex - 1] : undefined;
+              const showTimeSeparator = previousRow
+                ? getEntryTimestamp(row.entry) - getEntryTimestamp(previousRow.entry) > MESSAGE_TIME_SEPARATOR_GAP_MS
+                : false;
               return (
                 <AgentTranscriptRowShell
                   key={row.key}
@@ -1474,6 +1512,11 @@ export function AgentChatPanel({
                     : undefined}
                   virtualized={shouldVirtualizeTranscript}
                 >
+                  {showTimeSeparator ? (
+                    <div className="agent-message-time-separator">
+                      <span>{formatMessageTimeSeparator(getEntryTimestamp(row.entry), locale, t.agent.message.timeSeparatorToday)}</span>
+                    </div>
+                  ) : null}
                   {renderConversationRow(row)}
                 </AgentTranscriptRowShell>
               );
@@ -1513,8 +1556,7 @@ export function AgentChatPanel({
         members={composerMembers}
         queueSends={isChannel}
         onNodeReferenceOpen={onOpenNodeReference}
-        onModelChange={(providerId, modelId) => updateProviderConfig(providerId, { modelId })}
-        onReasoningChange={(reasoningLevel) => updateActiveProviderConfig({ reasoningLevel })}
+        onOpenModelSettings={openComposerModelSettings}
         onCancelSteer={handleCancelSteer}
         onSend={sendMessage}
         onStop={stop}

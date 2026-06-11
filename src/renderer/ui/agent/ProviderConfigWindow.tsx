@@ -94,14 +94,17 @@ export function ProviderConfigWindow() {
     return { success: result.success, message: result.message };
   }
 
-  // Commit the connection (base URL + credential). Model & reasoning are not edited
-  // here (the composer owns them), so preserve the existing values — a new provider
-  // defaults to the catalog flagship.
+  // Commit the connection plus the built-in assistant's global model/reasoning.
+  // User/project agent model overrides live in Agent Profile settings instead.
   async function handleSubmit(draft: ProviderConfigDraft) {
     const pid = draft.providerId.trim() || providerId;
     if (!pid) return;
     const modelId = draft.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || '';
-    const reasoningLevel = existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]);
+    const model = catalog?.models.find((candidate) => candidate.id === modelId) ?? catalog?.models[0];
+    const supportedLevels = model?.supportedThinkingLevels.length ? model.supportedThinkingLevels : [draft.reasoningLevel];
+    const reasoningLevel = supportedLevels.includes(draft.reasoningLevel)
+      ? draft.reasoningLevel
+      : defaultReasoningLevel(model);
     // Store the credential BEFORE creating the row, so a crash between the two
     // writes leaves no keyless orphan row (and the row is durably credentialed the
     // moment it exists). The Save button is gated on a credential or base URL
@@ -171,10 +174,12 @@ export function ProviderConfigWindow() {
         initial={{
           providerId,
           modelId: existing?.modelId ?? catalog?.models[0]?.id ?? '',
+          reasoningLevel: existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]),
           baseUrl: existing?.baseUrl ?? '',
         }}
         isActive={isActive}
         mode={mode}
+        modelOptions={catalog?.models}
         onClose={close}
         onOpenExternal={(url) => void api.openExternalUrl(url)}
         onRemoveProvider={!isCustom && existing

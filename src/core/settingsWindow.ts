@@ -7,12 +7,41 @@
 
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
 export type WindowSurface = 'main' | 'settings' | 'provider-config';
+export type SettingsCategoryTarget = 'general' | 'providers' | 'permissions' | 'memory' | 'skills' | 'agents';
+
+export interface SettingsOpenTarget {
+  category?: SettingsCategoryTarget;
+  agentId?: string;
+}
+
+export const SETTINGS_CATEGORY_PARAM = 'category';
+export const SETTINGS_AGENT_PARAM = 'agent';
+export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
   const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
   if (surface === 'settings') return 'settings';
   if (surface === 'provider-config') return 'provider-config';
   return 'main';
+}
+
+export function isSettingsCategoryTarget(value: unknown): value is SettingsCategoryTarget {
+  return value === 'general'
+    || value === 'providers'
+    || value === 'permissions'
+    || value === 'memory'
+    || value === 'skills'
+    || value === 'agents';
+}
+
+export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget {
+  const params = new URLSearchParams(search);
+  const category = params.get(SETTINGS_CATEGORY_PARAM);
+  const agentId = params.get(SETTINGS_AGENT_PARAM)?.trim();
+  return {
+    ...(isSettingsCategoryTarget(category) ? { category } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
 }
 
 // The per-provider config opens as its OWN native window (a modal child of the
