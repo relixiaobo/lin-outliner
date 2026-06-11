@@ -235,7 +235,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentSettings = {
       activeProviderId: 'openai',
       agent: {
-        permissionMode: 'trusted',
+        safetyMode: 'balanced',
         automaticSkillsEnabled: true,
         slashSkillsEnabled: true,
         compactEnabled: true,
@@ -1523,7 +1523,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_update_runtime_settings') {
           const settings = args.settings as {
-            permissionMode?: string;
+            safetyMode?: string;
             automaticSkillsEnabled?: boolean;
             slashSkillsEnabled?: boolean;
             compactEnabled?: boolean;
@@ -1535,7 +1535,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             providerCacheRetention?: string;
           };
           agentSettings.agent = {
-            permissionMode: settings.permissionMode === 'restricted' ? 'restricted' : 'trusted',
+            safetyMode: ['ask_first', 'balanced', 'full_access'].includes(settings.safetyMode ?? '')
+              ? settings.safetyMode
+              : agentSettings.agent.safetyMode,
             automaticSkillsEnabled: settings.automaticSkillsEnabled ?? agentSettings.agent.automaticSkillsEnabled,
             slashSkillsEnabled: settings.slashSkillsEnabled ?? agentSettings.agent.slashSkillsEnabled,
             compactEnabled: settings.compactEnabled ?? agentSettings.agent.compactEnabled,

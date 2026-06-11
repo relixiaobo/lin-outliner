@@ -439,6 +439,7 @@ describe('agent runtime store', () => {
       request: {
         requestId: 'approval-1',
         conversationId: 'saved',
+        kind: 'tool_permission',
         toolCallId: 'tool-1',
         toolName: 'bash',
         title: 'Approve GitHub push?',
@@ -538,6 +539,7 @@ describe('agent runtime store', () => {
       request: {
         requestId,
         conversationId: 'saved',
+        kind: 'tool_permission',
         toolCallId: `tool-${requestId}`,
         toolName: 'bash',
         title: 'Approve command?',

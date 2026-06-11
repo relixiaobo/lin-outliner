@@ -13,7 +13,7 @@ import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermi
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
 
 describe('agent permissions', () => {
-  test('trusted mode allows read/search bash by default', () => {
+  test('balanced safety mode allows read/search bash by default', () => {
     const decision = evaluateAgentToolPermission({
       toolName: 'bash',
       args: { command: 'rg TODO src' },
@@ -25,7 +25,7 @@ describe('agent permissions', () => {
     expect(decision).toMatchObject({ behavior: 'allow', access: 'execute', preapproved: false });
   });
 
-  test('trusted mode asks for scoped cleanup commands', () => {
+  test('balanced safety mode asks for scoped cleanup commands', () => {
     const decision = evaluateAgentToolPermission({
       toolName: 'bash',
       args: { command: 'rm -rf ./dist' },
@@ -213,6 +213,65 @@ describe('agent permissions', () => {
       behavior: 'allow',
       access: 'read',
       descriptor: { actionKind: 'agent.memory.recall' },
+    });
+  });
+
+  test('safety modes reshape descriptor defaults without weakening hard floors', () => {
+    const workspaceRoot = '/tmp/workspace';
+    const askFirstEdit = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: '/tmp/workspace/a.txt', content: 'a' },
+      policy: { workspaceRoot, safetyMode: 'ask_first' },
+    });
+    const balancedEdit = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: '/tmp/workspace/a.txt', content: 'a' },
+      policy: { workspaceRoot, safetyMode: 'balanced' },
+    });
+    const fullAccessGitPush = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'git push origin codex/foo' },
+      policy: { workspaceRoot, safetyMode: 'full_access' },
+    });
+    const fullAccessDeploy = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'npm publish --dry-run' },
+      policy: { workspaceRoot, safetyMode: 'full_access' },
+    });
+    const fullAccessSandboxOverride = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'npm test', dangerouslyDisableSandbox: true },
+      policy: { workspaceRoot, safetyMode: 'full_access' },
+    });
+    const fullAccessSensitiveRead = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: `${workspaceRoot}/.env` },
+      policy: { workspaceRoot, safetyMode: 'full_access' },
+    });
+    const fullAccessUnknownShell = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: '$(cat script.sh)' },
+      policy: { workspaceRoot, safetyMode: 'full_access' },
+    });
+
+    expect(askFirstEdit).toMatchObject({
+      behavior: 'ask',
+      code: 'file.edit.allowed_file_area',
+      permissionSource: 'safety_mode_profile',
+    });
+    expect(balancedEdit).toMatchObject({ behavior: 'allow', permissionSource: 'default' });
+    expect(fullAccessGitPush).toMatchObject({
+      behavior: 'allow',
+      permissionSource: 'safety_mode_profile',
+      descriptor: { actionKind: 'git.publish_remote' },
+    });
+    expect(fullAccessDeploy).toMatchObject({ behavior: 'ask', code: 'deploy_or_publish' });
+    expect(fullAccessSandboxOverride).toMatchObject({ behavior: 'ask', code: 'sandbox_override' });
+    expect(fullAccessSensitiveRead).toMatchObject({ behavior: 'ask', code: 'sensitive_path_read' });
+    expect(fullAccessUnknownShell).toMatchObject({
+      behavior: 'deny',
+      code: 'unknown_shell',
+      redline: true,
     });
   });
 

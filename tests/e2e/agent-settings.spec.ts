@@ -37,8 +37,8 @@ test.describe('agent settings window', () => {
     // Visiting another category records history, so back becomes available. The
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
-    await settings.getByRole('button', { name: /^Permissions/ }).click();
-    await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
+    await settings.getByRole('button', { name: /^Security/ }).click();
+    await expect(settings.getByRole('list', { name: 'Advanced' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -50,7 +50,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Advanced' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -140,7 +140,7 @@ test.describe('agent settings window', () => {
 
   test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.getByRole('button', { name: /^Permissions/ }).click();
+    await settings.getByRole('button', { name: /^Security/ }).click();
     const content = settings.locator('.settings-content');
     const popups = settings.locator('.settings-permissions-section .select-popup-input');
     await expect(popups).toHaveCount(10);
@@ -159,6 +159,43 @@ test.describe('agent settings window', () => {
     expect(contentBox).not.toBeNull();
     expect(scrolledLastBox).not.toBeNull();
     expect(scrolledLastBox!.y + scrolledLastBox!.height).toBeLessThan(contentBox!.y + contentBox!.height - 6);
+  });
+
+  test('revokes action trust grants immediately from Granted Trust', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: /^Security/ }).click();
+
+    const ruleValue = 'Action(file.read.outside_allowed_file_area)';
+    await settings.locator('.settings-permissions-section .select-popup-input').first().selectOption('allow');
+    await settings.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_update_tool_permission_settings')?.args;
+    }).toMatchObject({
+      settings: {
+        permissions: {
+          allow: [ruleValue],
+        },
+      },
+    });
+
+    const grantedTrust = settings.getByRole('list', { name: 'Granted Trust' });
+    const grantedRow = grantedTrust.locator('.inset-row', { hasText: 'Read outside allowed area' });
+    await expect(grantedRow).toBeVisible();
+    await grantedRow.getByRole('button', { name: 'Revoke' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.filter((call) => call.cmd === 'agent_update_tool_permission_settings').at(-1)?.args;
+    }).toMatchObject({
+      settings: {
+        permissions: {
+          allow: [],
+          ask: [ruleValue],
+        },
+      },
+    });
+    await expect(grantedRow).toHaveCount(0);
   });
 
   test('opens agent profile details as a drill-down settings page', async ({ page }) => {

@@ -25,6 +25,7 @@ mock.module('@earendil-works/pi-ai/oauth', () => ({
 }));
 
 const {
+  getAgentRuntimeSettings,
   getProviderSettings,
   reconcileProviderConfig,
   upsertProviderConfig,
@@ -46,6 +47,7 @@ interface OnDiskProvider {
 
 async function writeProviderFileRaw(file: {
   activeProviderId?: string;
+  agent?: Record<string, unknown>;
   providers: OnDiskProvider[];
 }) {
   await writeFile(providerPath(), `${JSON.stringify(file, null, 2)}\n`);
@@ -78,6 +80,20 @@ afterEach(async () => {
 });
 
 describe('provider config startup reconcile (Part A)', () => {
+  test('normalizes legacy app-level permission modes into safety modes', async () => {
+    await writeProviderFileRaw({
+      agent: { permissionMode: 'restricted' },
+      providers: [],
+    });
+    expect(await getAgentRuntimeSettings()).toMatchObject({ safetyMode: 'ask_first' });
+
+    await writeProviderFileRaw({
+      agent: { permissionMode: 'trusted' },
+      providers: [],
+    });
+    expect(await getAgentRuntimeSettings()).toMatchObject({ safetyMode: 'balanced' });
+  });
+
   test('prunes a keyless junk row and clears the active pointer', async () => {
     // Exactly the bug shape found on disk: an uncredentialed catalog row that was
     // also set active, while it has no usable key.

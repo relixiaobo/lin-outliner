@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 owner: codex
 updated: 2026-06-11
 ---

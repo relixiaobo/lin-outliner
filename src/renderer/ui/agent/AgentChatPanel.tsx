@@ -20,6 +20,7 @@ import { agentMentionToken, channelAgentMembers } from '../../../core/agentChann
 import type { AgentRenderMemberView } from '../../../core/agentRenderProjection';
 import type {
   AgentDefinitionView,
+  AgentApprovalResolutionScope,
   AgentProviderSettingsView,
   AgentReasoningLevel,
   AgentConversationListMeta,
@@ -903,6 +904,16 @@ export function AgentChatPanel({
     }
   }
 
+  const handleResolveApproval = useCallback(async (
+    requestId: string,
+    approved: boolean,
+    scope: AgentApprovalResolutionScope = 'once',
+  ) => {
+    const resolved = await resolveApproval(requestId, approved, scope);
+    if (resolved && scope === 'full_access') void loadProviderSettings();
+    return resolved;
+  }, [loadProviderSettings, resolveApproval]);
+
   async function updateActiveProviderConfig(patch: { modelId?: string; reasoningLevel?: AgentReasoningLevel }) {
     if (!providerSettings) return;
     const activeProvider = resolveUsableActiveProvider(providerSettings);
@@ -1508,7 +1519,7 @@ export function AgentChatPanel({
         onSend={sendMessage}
         onStop={stop}
         onSteer={handleSteerMessage}
-        onResolveApproval={resolveApproval}
+        onResolveApproval={handleResolveApproval}
         onResolveUserQuestion={resolveUserQuestion}
         pendingApproval={pendingApproval}
         pendingUserQuestion={pendingUserQuestion}

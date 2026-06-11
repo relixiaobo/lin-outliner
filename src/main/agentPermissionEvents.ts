@@ -115,11 +115,19 @@ export function permissionEventSourceForDecision(
   if (decision.permissionSource === 'configured_allow' || decision.permissionSource === 'configured_ask') {
     return 'global_rule';
   }
+  if (decision.permissionSource === 'safety_mode_profile') {
+    return 'safety_mode_profile';
+  }
+  if (decision.permissionSource === 'trust_ledger') {
+    return 'trust_ledger';
+  }
   return 'action_default';
 }
 
 export function permissionResolvedByForAllowDecision(decision: AgentPermissionAllowDecision): AgentToolPermissionResolvedBy {
-  return permissionEventSourceForDecision(decision) === 'global_rule' ? 'global_rule' : 'runtime';
+  const source = permissionEventSourceForDecision(decision);
+  if (source === 'global_rule' || source === 'safety_mode_profile' || source === 'trust_ledger') return source;
+  return 'runtime';
 }
 
 export function permissionResolvedByForDeniedReason(reason: PermissionDeniedReason): AgentToolPermissionResolvedBy {

@@ -2081,7 +2081,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         conversationId(),
         String(args.requestId),
         args.approved === true,
-        args.scope === 'always' ? 'always' : 'once',
+        args.scope === 'full_access' ? 'full_access' : args.scope === 'always' ? 'always' : 'once',
       );
     case 'agent_resolve_user_question':
       return agentRuntime.resolveUserQuestion(

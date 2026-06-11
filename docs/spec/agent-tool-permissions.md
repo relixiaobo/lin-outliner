@@ -4,8 +4,8 @@ The single, runtime-owned policy that decides whether an agent tool call is
 allowed, must ask the user, or is denied. The model lives in TypeScript (the
 prompt never owns permissions). This document is the **authority** for the policy
 model; `agent-tool-design.md` defines the tools it governs, and `agent-skills.md`
-defines the skill-level inputs (permission modes, pre-approved tools) that feed
-in here.
+defines the skill-level inputs (the restricted delegation sandbox and
+pre-approved tools) that feed in here.
 
 Original design + rationale: `docs/plans/archive/agent-tool-permissions.md`
 (shipped in #60). The non-blocking hardening follow-ups shipped in M1 and are
@@ -27,6 +27,11 @@ the original broad plan.
   `capabilities`. Descriptors are the product-authored source of truth; the
   global config can only narrow/loosen within what the descriptor and the
   fail-closed rules permit.
+- One app-level **`AgentSafetyMode`** controls descriptor defaults when no
+  explicit grant applies: `ask_first`, `balanced`, or `full_access`. Legacy
+  stored app-level `permissionMode: trusted|restricted` normalizes at read time
+  to `balanced|ask_first`; agent definitions use `permission-mode: restricted`
+  only as a narrow delegation sandbox.
 
 ## Allowed file area
 
@@ -56,13 +61,40 @@ pipeline. Core evaluation is `evaluateAgentToolPermission`
 
 1. **Platform hard blocks** (descriptors with `platformHardBlock: true`) are
    caught **before** any global rule — they can never be allow-ruled away.
-2. **`deny` rules** (configured or descriptor-default).
-3. **`ask`** → routed to the ask resolver (below).
-4. **`allow`**.
+2. **Configured `deny` rules**.
+3. **Restricted delegation sandbox** — if an agent/skill run is in
+   `restricted` mode, non-base tools must match preapproved `allowed-tools`
+   rules before any default profile can allow them.
+4. **Configured `allow` / `ask` rules** from the advanced global permission
+   store.
+5. **Safety-mode profile** (`ask_first`, `balanced`, `full_access`) supplies the
+   default decision for every descriptor that no earlier rule resolved.
+6. **`ask`** decisions route to the ask resolver (below); **`allow`** runs.
 
 For a compound bash command, every segment is classified and the result is the
 **most restrictive** across segments (`deny` > `ask` > `allow`, then by risk,
 then by source).
+
+## Safety modes
+
+Safety modes are a first-class default-policy layer. They do **not** materialize
+as broad allow rules in `agent-tool-permissions.json`, and they cannot bypass any
+platform hard block.
+
+- **Ask First** — preserves passive reads/search/status, but asks for ordinary
+  local file/outliner edits and skill invocation in addition to descriptor-level
+  asks.
+- **Balanced** — the default. It preserves the pre-safety-mode practical
+  behavior: local/outliner reads and edits are allowed; execution, deletes, web
+  fetch, external mutations, skill writes, subagent spawn, config writes, Dream,
+  sensitive reads, and outside-root access ask or deny according to descriptors.
+- **Full Access** — allows classified non-redline routine automation: allowed-root
+  file/outliner edits and deletes, web fetch, local code/project script
+  execution, dependency install, network writes, git/GitHub mutation, subagent
+  spawn, Dream, skill content writes, and background processes. It still asks for
+  deploy/publish, sandbox override, config writes, sensitive local reads, and
+  outside-root reads/writes; unknown shell, sensitive writes, exfiltration, host
+  destruction, permission modification, and payment remain denied.
 
 ## Platform hard blocks
 
@@ -146,7 +178,13 @@ Evaluated first; sourced from descriptors and the bash hard-deny rules
 ## Global permission store
 
 `src/main/agentToolPermissionStore.ts` — `agent-tool-permissions.json` under
-`userData`, in the grouped form `{ permissions: { allow, ask, deny } }`.
+`userData`, in the grouped form `{ permissions: { allow, ask, deny } }`. The
+Security page projects `allow` entries as granted action trust and lets the user
+revoke them individually; revocation applies immediately and the row is also
+merged into any unsaved permission draft as `ask`. Skill content-hash trust still
+lives in the skill provenance store, but the Security page also lists accepted
+skill hashes in the same Granted Trust section and revokes them through the
+existing skill trust API.
 
 - **Fail-closed parse**: `parseGlobalToolPermissionSettings` /
   `parseGlobalToolPermissionRule` validate every rule string
@@ -165,7 +203,8 @@ Two event families are persisted today (the runtime emits both):
 - **Policy decision** — `tool.permission.checked` / `tool.permission.resolved`
   (`src/core/agentEventLog.ts`).
 - **UI surface** — `approval.requested` / `approval.resolved` plus transient
-  approval IPC.
+  approval IPC. `AgentApprovalRequestView.kind` distinguishes
+  `tool_permission`, `skill_trust`, and tell-only `permission_notice` cards.
 
 The denied tool result is `{ ok: false, error: { code: 'permission_denied',
 recoverable, details: { reason } } }`. Reasons use the canonical permission
@@ -175,21 +214,45 @@ contract strings (`configured_deny`, `policy_denied`, `classifier_blocked`,
 `platform_hard_block` are not recoverable; the other reasons are recoverable
 fallback/interaction outcomes.
 
+Permission event sources distinguish explicit and default paths:
+`global_rule`, `action_default`, `safety_mode_profile`, `trust_ledger`,
+`safe_allowlist`, classifier/runtime/user sources, and denial sources. Current
+ledger projection uses `global_rule` for action grants; `trust_ledger` is
+reserved for the unified ledger store when skill hashes and future folder grants
+move behind the same projection.
+
 ## UI surfaces
 
-- **Composer approval card** (`AgentComposer.tsx` `AgentApprovalCard`) — *Approve
-  once* (`once`), *Always allow* (`always`, only when an always-allow rule is
-  offered), *Deny once*. No "always deny", no countdown. Detail panel shows
-  action / target / why / permission-kind + the always-allow rule string.
-- **Permission center** — the **Permissions** category in `AgentSettingsView.tsx`
-  renders the common action-kind rows with allow/ask toggles
-  (`agent.delegate.spawn` is shown non-allowable), reads/writes via
-  `agentGetToolPermissionSettings`, and surfaces store diagnostics. There is no
+- **Composer card** (`AgentComposer.tsx` `AgentApprovalCard`) — one component
+  renders three interrupt forms:
+  - `tool_permission`: *Approve once* (`once`), *Always allow* (`always`, only
+    when an always-allow rule is offered), *Hand everything to Lin, stop asking*
+    (`full_access`, which sets global `safetyMode` to `full_access` and approves
+    the current request), and *Deny once*.
+  - `skill_trust`: *Accept skill* records the exact current skill content hash;
+    *Not now* resolves false and the `skill` tool returns `skill_not_ratified`.
+  - `permission_notice`: tell-only cards for hard/configured policy denials. The
+    tool result remains `permission_denied`; the card only makes the block
+    visible and dismissible. Notices are a single-slot surface per conversation:
+    a newer notice resolves and replaces any older pending notice instead of
+    queueing behind it.
+  Detail panels show action / target / why / permission-kind or skill hash facts.
+  All three card kinds listen to the active run's abort signal. Stopping the run
+  resolves the pending card as `approved: false` (`run_aborted` for blocking
+  approval waiters) and removes it from renderer pending state.
+- **Security center** — the **Security** category in `AgentSettingsView.tsx`
+  exposes the global trust level, a revocable Granted Trust projection over
+  action allow rules and accepted skill hashes, and Advanced action-kind rows with allow/ask toggles
+  (`agent.delegate.spawn` is shown non-allowable). It reads/writes via
+  `agentGetToolPermissionSettings` and surfaces store diagnostics. There is no
   in-app raw-JSON editor (advanced users edit the file directly).
+- **Agent editor** — agent definitions can only *Follow global* or enter the
+  `restricted` delegation sandbox. Legacy `permission-mode: trusted` frontmatter
+  is ignored on parse so an agent cannot widen above the global safety mode.
 
 ## Inputs from other subsystems
 
-- **Skill permission modes + pre-approved tools** (`agent-skills.md`):
+- **Skill restricted sandbox + pre-approved tools** (`agent-skills.md`):
   `restricted` mode and `preapprovedToolRules` are *inputs* to
   `evaluateAgentToolPermission`; their authoring/lifecycle is the skills domain —
   cross-reference, do not restate here.

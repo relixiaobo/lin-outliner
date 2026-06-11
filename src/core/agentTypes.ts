@@ -15,7 +15,7 @@ import type {
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
-import type { AgentDefinition, AgentPermissionMode, NodeId, NodeType } from './types';
+import type { AgentDefinition, AgentDelegationPermissionMode, NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
@@ -57,7 +57,7 @@ export interface AgentAuthoringInput {
   body: string;
   model?: string;
   effort?: string;
-  permissionMode?: AgentPermissionMode;
+  permissionMode?: AgentDelegationPermissionMode;
   maxTurns?: number;
   tools?: string[];
   disallowedTools?: string[];
@@ -324,7 +324,8 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'always';
+export type AgentApprovalResolutionScope = 'once' | 'always' | 'full_access';
+export type AgentApprovalRequestKind = 'tool_permission' | 'skill_trust' | 'permission_notice';
 
 export interface AgentApprovalRequestDetail {
   label: string;
@@ -334,6 +335,7 @@ export interface AgentApprovalRequestDetail {
 export interface AgentApprovalRequestView {
   requestId: string;
   conversationId: string;
+  kind: AgentApprovalRequestKind;
   toolCallId: string;
   toolName: string;
   title: string;
@@ -341,6 +343,12 @@ export interface AgentApprovalRequestView {
   reason: string;
   details: AgentApprovalRequestDetail[];
   alwaysAllowRule?: string;
+  skillTrust?: {
+    name: string;
+    displayName?: string;
+    source: 'user' | 'project';
+    contentHash: string;
+  };
 }
 
 export interface AgentApprovalResolvedEvent {

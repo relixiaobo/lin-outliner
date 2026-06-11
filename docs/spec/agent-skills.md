@@ -130,8 +130,12 @@ acceptance.
 An unratified skill is:
 
 - excluded from the automatic model skill listing;
-- a model-triggered (`skill` tool) invocation is refused with
-  `skill_not_ratified`;
+- a model-triggered (`skill` tool) invocation raises a `skill_trust` interrupt
+  card when the conversation has an approval channel;
+- if the user accepts, Lin records the exact content hash and the same tool call
+  re-resolves the skill before loading it;
+- if the user declines, acceptance fails, or there is no approval channel, the
+  `skill` tool returns `skill_not_ratified`;
 - slash invocation always works, with `allowed-tools` honored in full — the
   user's command is per-run consent.
 
@@ -147,18 +151,23 @@ loss (wiped userData) fails open for `user` source skills but fails closed for
 `project` skills, which have no trust fact without `acceptedHash`. Acceptance is
 a positive trust fact and a UX completion, not a new security boundary.
 
-**Acceptance UI.** The Settings → Skills tab marks unratified rows "pending
-acceptance" with an **Accept** control; unaccepted `project` rows use a
-workspace-specific chip so cloned-repo skills are discoverable. Accepted rows
-show a row-menu **Revoke acceptance** action. `agent_accept_skill` records
-`acceptedHash = contentHash`, `agent_revoke_skill_acceptance` clears it; both
-persist, hot-reload the registry, and return the refreshed skill list. Accept
-carries the `expectedHash` the renderer displayed and is refused on mismatch,
-so an agent write landing between render and click can never be accepted
-sight-unseen. A trust action also re-derives trust in every live conversation's
-registry (the Settings panel runs without a conversation; each conversation holds its own
-in-memory trust map over the same store), so an accepted skill joins running
-conversations' model listings without a restart.
+**Acceptance UI.** The primary in-flow path is the composer `skill_trust` card:
+the first automatic model invocation of an unratified mutable skill asks the user
+to accept the exact current content hash. The card is tied to the active run's
+abort signal; stopping the run resolves it as declined and the `skill` tool
+returns `skill_not_ratified` instead of leaving a stale pending approval. The
+Settings → Skills tab remains a secondary management surface; it marks
+unratified rows "pending acceptance" with an **Accept** control, and accepted
+rows expose **Revoke acceptance**. The Security page also projects accepted skill
+hashes in **Granted Trust**. Both the card and Settings path call
+`agent_accept_skill`, which records
+`acceptedHash = contentHash`; `agent_revoke_skill_acceptance` clears it. Accept
+carries the `expectedHash` the renderer/runtime displayed and is refused on
+mismatch, so an agent write landing between render and click can never be
+accepted sight-unseen. A trust action also re-derives trust in every live
+conversation's registry (the Settings panel runs without a conversation; each
+conversation holds its own in-memory trust map over the same store), so an
+accepted skill joins running conversations' model listings without a restart.
 Acceptance grants nothing beyond the skill's own frontmatter — the permission
 floor still stands above it, and a `disable-model-invocation: true` skill stays
 user-only even when accepted. Trust records are keyed by resolved file path: a
@@ -236,7 +245,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
 | `context: fork` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Forked skill bodies run in a sidechain child run and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts them (Settings → Skills). User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts the exact bytes from the in-flow `skill_trust` card or Settings. User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
@@ -321,11 +330,22 @@ Intentional omissions:
 - Partial compact around a selected transcript pivot: omitted until there is a UI workflow that needs it.
 - Legacy command directories and legacy config paths: omitted because Lin follows the agent skills standard paths only.
 
-## Permission Mode
+## Permission Inputs
 
-Agent settings expose two modes:
+The user-facing default policy is the app-level Security `safetyMode`
+(`ask_first`, `balanced`, `full_access`) described in
+`agent-tool-permissions.md`. Agent definitions and skills cannot widen above that
+global policy.
 
-- `trusted`: default. Most tool calls are allowed, with hard blocks for catastrophic filesystem/disk/power commands and workspace-boundary file access.
-- `restricted`: only a small safe base set is allowed unless a matching `allowed-tools` rule preapproves the tool call.
+Agent settings expose only a narrow delegation sandbox:
 
-Skill `allowed-tools` is preapproval metadata, not a visibility allowlist. Inline skill rules are scoped to the current parent agent run and cleared when the run ends, stops, or resets. `context: fork` skill rules are passed to the child run as preapproved tool rules.
+- **Follow global**: no sandbox; the run uses the global safety mode and normal
+  descriptor defaults.
+- **Restricted**: only a small safe base set is allowed unless a matching
+  `allowed-tools` rule preapproves the tool call.
+
+Legacy `permission-mode: trusted` frontmatter is ignored. Skill `allowed-tools`
+is preapproval metadata, not a visibility allowlist. Inline skill rules are
+scoped to the current parent agent run and cleared when the run ends, stops, or
+resets. `context: fork` skill rules are passed to the child run as preapproved
+tool rules.

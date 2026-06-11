@@ -126,6 +126,12 @@ export interface GlobalToolPermissionResolution {
   rule?: ParsedGlobalToolPermissionRule;
 }
 
+export interface ToolPermissionResolutionPriorityInput {
+  decision: GlobalToolPermissionDecision;
+  descriptor: ToolActionDescriptor;
+  sourceRank?: number;
+}
+
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] = [
   'file.read.allowed_file_area',
   'file.read.outside_allowed_file_area',
@@ -363,11 +369,19 @@ export function resolveGlobalToolPermissionDecision(
   const config = parseGlobalToolPermissionSettings(configInput);
   const descriptorResolutions = descriptors.map((descriptor) => resolveDescriptorDecision(descriptor, config.rules));
   descriptorResolutions.sort((left, right) => (
-    decisionRank(right.decision) - decisionRank(left.decision)
-    || descriptorRiskRank(right.descriptor) - descriptorRiskRank(left.descriptor)
-    || sourceRank(right.source) - sourceRank(left.source)
+    compareToolPermissionResolutionPriority(left, right, (resolution) => sourceRank(resolution.source))
   ));
   return descriptorResolutions[0] ?? null;
+}
+
+export function compareToolPermissionResolutionPriority<T extends ToolPermissionResolutionPriorityInput>(
+  left: T,
+  right: T,
+  resolveSourceRank: (source: T) => number = (source) => source.sourceRank ?? 0,
+): number {
+  return decisionRank(right.decision) - decisionRank(left.decision)
+    || descriptorRiskRank(right.descriptor) - descriptorRiskRank(left.descriptor)
+    || resolveSourceRank(right) - resolveSourceRank(left);
 }
 
 export function isSafeAutoAllowToolName(toolName: string): boolean {

@@ -1,8 +1,13 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
-import type { AgentPermissionMode } from '../core/types';
+import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
 import type { AgentApprovalResolutionScope } from '../core/agentTypes';
-import { evaluateAgentToolPermission, type AgentPermissionAskDecision, type GlobalToolPermissionConfig } from './agentPermissions';
+import {
+  evaluateAgentToolPermission,
+  type AgentPermissionAskDecision,
+  type AgentPermissionDenyDecision,
+  type GlobalToolPermissionConfig,
+} from './agentPermissions';
 import { resolveAgentPermissionAsk, type PermissionDeniedReason } from './agentPermissionAskResolver';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 import {
@@ -22,6 +27,13 @@ export interface AgentSkillShellApprovalInput {
   decision: AgentPermissionAskDecision;
 }
 
+export interface AgentSkillShellPermissionNoticeInput {
+  requestId: string;
+  toolCall: ToolCall;
+  args: { command: string };
+  decision: AgentPermissionDenyDecision;
+}
+
 export interface AgentSkillShellApprovalResolution {
   approved: boolean;
   deniedReason?: PermissionDeniedReason;
@@ -34,9 +46,11 @@ export interface AgentSkillShellCommandInput {
   command: string;
   localRoot?: string;
   permissionMode?: AgentPermissionMode;
+  safetyMode?: AgentSafetyMode;
   allowedTools?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
+  permissionNoticeHandler?: (input: AgentSkillShellPermissionNoticeInput, signal?: AbortSignal) => Promise<void> | void;
   signal?: AbortSignal;
   toolCallId?: string;
 }
@@ -64,6 +78,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     args: { command: input.command },
     policy: {
       mode: input.permissionMode,
+      safetyMode: input.safetyMode,
       workspaceRoot: input.localRoot,
       preapprovedToolRules: input.allowedTools ?? [],
       globalPermissions: input.globalPermissions,
@@ -169,6 +184,12 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   } else if (decision.behavior !== 'allow') {
     const reason = permissionDeniedReasonForDecision(decision);
     await appendDeniedPermissionEvent(reason);
+    await input.permissionNoticeHandler?.({
+      requestId: permissionRequestId,
+      toolCall,
+      args: { command: input.command },
+      decision,
+    }, input.signal);
     throw new AgentSkillShellError(
       'permission_denied',
       permissionDeniedToolResultMessage({
