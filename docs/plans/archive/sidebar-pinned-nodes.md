@@ -1,9 +1,9 @@
 ---
-status: draft
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-06
+updated: 2026-06-11
 ---
 
 # Sidebar Pinned Nodes
@@ -52,8 +52,8 @@ state (not the core document).** No `src/core/*` change.
 ### State hook
 
 New `useWorkspacePinnedNodes()` (or fold into the layout hook): `{ pinnedNodeIds,
-pinNode, unpinNode, togglePin }`, persisted on change, loaded + validated on
-init. Wire at the App root and pass `pinnedNodeIds` + `onTogglePin` down.
+togglePin }`, persisted on change, loaded + validated on init. Wire at the App
+root and pass `pinnedNodeIds` + `onTogglePin` down.
 
 ### Sidebar rendering
 
@@ -78,7 +78,7 @@ nodes" → "Right-click a node to pin it".
 The drag source already sets `OUTLINER_NODE_DRAG_MIME`
 (`useOutlinerRowInteraction`). To honor the original "Drag to pin nodes"
 affordance, add `onDragOver` (preventDefault + `dropEffect`) + `onDrop` (read the
-MIME, `pinNode(id)`) to the Pinned section. Trade-off: drag-to-pin is
+MIME, `togglePin(id)`) to the Pinned section. Trade-off: drag-to-pin is
 discoverable but adds ambiguity (add vs reorder) and risks confusion with the
 outliner's move-drag. Recommend shipping **context-menu pin first**; add
 drag-to-pin only if wanted (see open questions).
@@ -88,12 +88,31 @@ drag-to-pin only if wanted (see open questions).
 - **Storage:** renderer layout state (not the core document). No protocol-surface
   change.
 
-## Open questions
+## Shipped implementation (2026-06-11)
 
-1. **Sidebar context menu scope:** full node menu vs a reduced Pin/Open menu?
-2. **Drag-to-pin:** keep the drag affordance (and fix it), or drop it in favor of
-   context-menu-only pin + reworded empty state?
-3. **Pin ordering:** insertion order only, or user-reorderable later?
+Pins ship as renderer-local workspace chrome under
+`lin-outliner:workspace-layout:v3:pinned`. The pinned id list is hydrated from
+localStorage, sanitized against the live projection, deduped, and persisted after
+hydration so restore cannot overwrite stored pins with the initial empty state.
+
+Users can toggle pins from:
+
+- the outliner row context menu (`Pin` / `Unpin`);
+- the sidebar tree row context menu, using a reduced menu (`Open`, `Open in split
+  pane`, `Pin` / `Unpin`).
+
+The pinned section renders the same workspace tree rows as the root outline,
+preserving insertion order. Nodes remain pinned while they are in Trash and are
+shown with a line-through label; ids are dropped only when they no longer exist
+in the projection. Drag-to-pin and manual reordering remain intentionally
+unshipped.
+
+## Resolved questions
+
+1. **Sidebar context menu scope:** reduced menu (`Open`, `Open in split pane`,
+   `Pin` / `Unpin`).
+2. **Drag-to-pin:** not shipped; empty state points to the context-menu path.
+3. **Pin ordering:** insertion order only.
 
 ## Files (scope)
 
@@ -104,11 +123,12 @@ state + callback); `outliner/NodeContextMenu.tsx` (Pin/Unpin item). No
 
 ## Checklist
 
-- [ ] Rebase on merged Plan A (v2 layout shape, post-refactor sidebar/menu).
-- [ ] `useWorkspacePinnedNodes` hook + persistence + load-time validation.
-- [ ] Sidebar Pinned list from real state; empty-state copy.
-- [ ] `NodeContextMenu` Pin/Unpin item (outliner rows).
-- [ ] Sidebar row right-click → context menu with Pin/Unpin.
-- [ ] (Optional) drag-to-pin drop handlers.
-- [ ] Persist across restart; dead-id sanitization verified.
-- [ ] `bun run typecheck` + `test:renderer`; light + dark visual gate.
+- [x] Rebase on merged Plan A (v2 layout shape, post-refactor sidebar/menu).
+- [x] `useWorkspacePinnedNodes` hook + persistence + load-time validation.
+- [x] Sidebar Pinned list from real state; empty-state copy.
+- [x] `NodeContextMenu` Pin/Unpin item (outliner rows).
+- [x] Sidebar row right-click → context menu with Pin/Unpin.
+- [x] Drag-to-pin explicitly left unshipped; empty state points to context menu.
+- [x] Persist across restart; Trash retention and dead-id sanitization verified.
+- [x] `bun run typecheck`, `bun run test:renderer`, and
+      `bun run test:e2e -- tests/e2e/workspace-layout.spec.ts`.

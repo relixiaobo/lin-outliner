@@ -3,9 +3,10 @@ import {
   MAC_TRAFFIC_LIGHT_POSITION,
   MAC_TRAFFIC_LIGHT_SIZE,
 } from '../../src/core/chromeGeometry';
-import { e2eProjection, emitDocumentEvent, ids, openMockedApp, row } from './outlinerMock';
+import { e2eProjection, emitDocumentEvent, ids, openMockedApp, row, rowBody } from './outlinerMock';
 
 const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v3';
+const WORKSPACE_PINNED_NODES_STORAGE_KEY = 'lin-outliner:workspace-layout:v3:pinned';
 const OUTLINE_VIEW_STATE_STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 
 test.describe('workspace layout resizing', () => {
@@ -513,6 +514,71 @@ test.describe('workspace layout resizing', () => {
 
     expect(fixture.referenceId).toBeTruthy();
     expect(fixture.childId).toBeTruthy();
+  });
+
+  test('sidebar pinned nodes persist and can be toggled from row context menus', async ({ page }) => {
+    await expect(page.locator('.sidebar-empty-row')).toContainText('Right-click a node to pin it');
+
+    await rowBody(page, ids.alpha).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Pin', exact: true }).click();
+
+    const pinnedTree = page.getByLabel('Pinned nodes');
+    await expect(pinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' })).toBeVisible();
+    await expect(page.locator('.sidebar-empty-row')).toHaveCount(0);
+
+    await rowBody(page, ids.alpha).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Unpin', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await page.reload();
+    const restoredPinnedTree = page.getByLabel('Pinned nodes');
+    const restoredAlphaPinnedRow = restoredPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Alpha' });
+    await expect(restoredAlphaPinnedRow).toBeVisible();
+
+    await page.evaluate(async ({ alphaId }) => {
+      const win = window as Window & { lin?: { invoke?: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } };
+      await win.lin?.invoke?.('trash_node', { nodeId: alphaId });
+    }, { alphaId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+    await expect(restoredAlphaPinnedRow).toBeVisible();
+    await expect(restoredAlphaPinnedRow.locator('.workspace-tree-label-text')).toHaveCSS('text-decoration-line', 'line-through');
+
+    await restoredAlphaPinnedRow.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Unpin', exact: true }).click();
+
+    await expect(page.getByLabel('Pinned nodes')).toHaveCount(0);
+    await expect(page.locator('.sidebar-empty-row')).toContainText('Right-click a node to pin it');
+
+    await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Pin', exact: true }).click();
+
+    const rootPinnedTree = page.getByLabel('Pinned nodes');
+    await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Root' })).toBeVisible();
+    await rootPinnedTree.getByRole('button', { name: 'Expand Root' }).click();
+    await expect(rootPinnedTree.locator('.workspace-tree-row').filter({ hasText: 'Library' })).toBeVisible();
+  });
+
+  test('sidebar pinned nodes drop stale ids on restore', async ({ page }) => {
+    await page.evaluate(({ key, ids }) => {
+      window.localStorage.setItem(key, JSON.stringify({
+        version: 1,
+        nodeIds: ['missing-node', ids.beta, ids.beta],
+      }));
+    }, { key: WORKSPACE_PINNED_NODES_STORAGE_KEY, ids });
+
+    await page.reload();
+
+    const pinnedTree = page.getByLabel('Pinned nodes');
+    await expect(pinnedTree).toContainText('Beta');
+    await expect(pinnedTree.locator('.workspace-tree-row')).toHaveCount(1);
+    await expect.poll(async () => page.evaluate((key) => (
+      window.localStorage.getItem(key) ?? ''
+    ), WORKSPACE_PINNED_NODES_STORAGE_KEY)).toContain(`"nodeIds":["${ids.beta}"]`);
   });
 
   test('panes persist across reload and can be closed', async ({ page }) => {

@@ -15,6 +15,7 @@ interface WorkspaceCanvasProps {
   canvasRef: RefObject<HTMLElement | null>;
   dragId: NodeId | null;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
@@ -30,6 +31,7 @@ interface WorkspaceCanvasProps {
     rightPanelId: string,
     event: ReactKeyboardEvent<HTMLButtonElement>,
   ) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   run: CommandRunner;
   setDragId: (nodeId: NodeId | null) => void;
   setTrigger: (trigger: TriggerState) => void;
@@ -68,8 +70,10 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 onClose={() => props.onClosePanel(panel.id)}
                 onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
                 index={props.index}
+                isNodePinned={props.isNodePinned}
                 ui={props.ui}
                 setUi={props.setUi}
+                onTogglePin={props.onTogglePin}
                 run={props.run}
                 trigger={props.trigger}
                 setTrigger={props.setTrigger}

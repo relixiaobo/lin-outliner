@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
@@ -33,6 +33,7 @@ import {
   MoveToIcon,
   MoveUpIcon,
   OpenIcon,
+  PinIcon,
   RestoreIcon,
   ShowToolbarIcon,
   SortAscIcon,
@@ -44,6 +45,7 @@ import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import type { CommandRunner, NavigateRootOptions } from '../shared';
 import { textOf } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
@@ -58,8 +60,10 @@ interface NodeContextMenuProps {
   openId: NodeId;
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
+  isPinned: boolean;
   run: CommandRunner;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   onEditDescription: () => void;
   onOpenViewSection: (nodeId: NodeId, section: ToolbarDropdownSection) => void;
   onClose: () => void;
@@ -96,6 +100,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     width: mode === 'main' ? 240 : 280,
   });
   const target = props.index.byId.get(props.targetId) ?? props.node;
+  const pinned = props.isPinned;
   const view = readViewConfig(target, props.index.byId);
   const trashed = isNodeInTrash(props.index, props.node.id);
   const activeSelection = useMemo(() => resolveActiveNodeSelection({
@@ -193,21 +198,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       .slice(0, 10);
   }, [activeMoveToIds, props.index, query, t.common.untitled]);
 
-  useEffect(() => {
-    const close = (event: globalThis.MouseEvent) => {
-      if (menuRef.current?.contains(event.target as Node)) return;
-      props.onClose();
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onClose();
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [props.onClose]);
+  useDismissibleOverlay(menuRef, props.onClose);
 
   const applyExistingTag = (tagId: NodeId) => {
     if (activeTargetIds.length === 0) return;
@@ -261,6 +252,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderMain = () => (
     <>
       {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
+      {item(pinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, () => props.onTogglePin(props.openId))}
       {item(tc.duplicate({ prefix: activeLabelPrefix }), <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
         ids: activeDuplicateIds,
         panelRootId: actionPanelRootId,

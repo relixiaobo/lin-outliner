@@ -31,6 +31,7 @@ import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
 import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
 import { useWorkspaceLayout } from './useWorkspaceLayout';
+import { useWorkspacePinnedNodes } from './useWorkspacePinnedNodes';
 import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
 import {
@@ -138,6 +139,7 @@ export function App() {
     resizeSidebarWithKeyboard,
     sidebarWidth,
   } = useResizableLayout({ panels, resizePanelPair });
+  const { isNodePinned, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
 
   useDragSelection({ rootId, index, ui, setUi });
 
@@ -431,6 +433,7 @@ export function App() {
         <Sidebar
           expandedIds={sidebarExpandedIds}
           index={index}
+          isNodePinned={isNodePinned}
           onNavigateToday={navigateToday}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
@@ -441,6 +444,8 @@ export function App() {
           onResizeReset={resetSidebarWidth}
           onResizeStart={beginSidebarResize}
           onToggleTreeNode={toggleSidebarTreeNode}
+          onTogglePin={togglePin}
+          pinnedNodeIds={pinnedNodeIds}
           projection={index.projection}
           rootId={rootId}
         />
@@ -459,9 +464,11 @@ export function App() {
           onPanelResizeReset={resetPanelPair}
           onPanelResizeStart={beginPanelResize}
           run={run}
+          isNodePinned={isNodePinned}
           setDragId={setDragId}
           setTrigger={setTrigger}
           setUi={setUi}
+          onTogglePin={togglePin}
           trigger={trigger}
           ui={ui}
         />

@@ -7,6 +7,7 @@ import type {
   WorkspaceLayout,
   WorkspacePanelState,
 } from './workspaceLayoutTypes';
+import { isRecord } from '../state/persistence';
 
 let nextWorkspaceId = 0;
 const STORAGE_KEY = 'lin-outliner:workspace-layout:v3';
@@ -54,10 +55,6 @@ function navigateOutlinerPanel(panel: OutlinePanelState, rootId: NodeId): Outlin
     pageBackStack: [...panel.pageBackStack, panel.rootId].slice(-MAX_PANEL_PAGE_HISTORY),
     pageForwardStack: [],
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function sanitizeSize(value: unknown): number {

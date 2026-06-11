@@ -19,6 +19,7 @@ interface SystemReferenceValuesProps {
   selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
@@ -27,6 +28,7 @@ interface SystemReferenceValuesProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  onTogglePin: (nodeId: NodeId) => void;
 }
 
 /**
@@ -104,10 +106,12 @@ export function SystemReferenceValues(props: SystemReferenceValuesProps) {
           onRoot={props.onRoot}
           depth={0}
           index={index}
+          isNodePinned={props.isNodePinned}
           ui={props.ui}
           uiRef={props.uiRef}
           setUi={props.setUi}
           run={props.run}
+          onTogglePin={props.onTogglePin}
           trigger={props.trigger}
           setTrigger={props.setTrigger}
           dragId={props.dragId}

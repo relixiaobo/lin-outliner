@@ -1,5 +1,6 @@
 import type { NodeId, NodeProjection } from '../api/types';
 import { hiddenFieldKey } from './outlinerRows';
+import { isRecord } from './persistence';
 
 const STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 const STORE_VERSION = 1;
@@ -177,10 +178,6 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function localStorageOrNull(): Storage | null {

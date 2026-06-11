@@ -317,3 +317,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.workspace-tree-row.trashed .workspace-tree-label-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 68%, transparent);
+}

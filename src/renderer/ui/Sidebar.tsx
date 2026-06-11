@@ -1,4 +1,6 @@
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
@@ -7,16 +9,22 @@ import {
   ChevronRightIcon,
   ICON_SIZE,
   LibraryIcon,
+  OpenIcon,
   PinIcon,
   RecentsIcon,
   SettingsIcon,
   SupertagIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
+import { MenuItem } from './primitives/MenuItem';
+import { MenuSurface } from './primitives/MenuSurface';
 import { ResizeHandle } from './primitives/ResizeHandle';
+import { overlayAnchorFromPoint, useAnchoredOverlay } from './primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from './primitives/useDismissibleOverlay';
 import { textOf } from './shared';
 import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
+import { isNodeInTrash } from './interactions/nodeLocation';
 
 const primaryNavItems = [
   { key: 'today', icon: CalendarIcon },
@@ -28,6 +36,7 @@ const primaryNavItems = [
 interface SidebarProps {
   expandedIds: Set<NodeId>;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   onNavigateToday: (options?: NavigateRootOptions) => void;
   onNavigateRoot: (nodeId: NodeId) => void;
   onOpenPanel: (nodeId: NodeId) => void;
@@ -36,12 +45,15 @@ interface SidebarProps {
   onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
+  onTogglePin: (nodeId: NodeId) => void;
+  pinnedNodeIds: NodeId[];
   projection: DocumentProjection;
   rootId: NodeId | null;
 }
 
 export function Sidebar(props: SidebarProps) {
   const t = useT();
+  const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
   const navTargets = {
     today: props.projection.todayId,
     library: props.projection.libraryId,
@@ -56,11 +68,10 @@ export function Sidebar(props: SidebarProps) {
     .filter((child): child is NodeProjection => (
       Boolean(child && child.parentId === rootNode.id)
     )) ?? [];
-  const pinnedNodeIds: NodeId[] = [];
   const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
 
-  const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = [props.projection.rootId]) => {
+  const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = []) => {
     const node = props.index.byId.get(nodeId);
     if (!node) return null;
     const presentation = sidebarNodePresentation(node, props.index.byId, {
@@ -76,11 +87,27 @@ export function Sidebar(props: SidebarProps) {
     const active = props.rootId === node.id || props.rootId === presentation.navigateId;
     const label = presentation.label;
     const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
+    const trashed = presentation.navigateId !== props.projection.trashId
+      && isNodeInTrash(props.index, presentation.navigateId);
 
     return (
       <div className="workspace-tree-branch" key={node.id}>
         <div
-          className={`workspace-tree-row ${active ? 'active' : ''}`}
+          className={[
+            'workspace-tree-row',
+            active ? 'active' : '',
+            trashed ? 'trashed' : '',
+          ].filter(Boolean).join(' ')}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+              nodeId: presentation.navigateId,
+              label,
+            });
+          }}
           style={{ '--tree-depth': depth } as CSSProperties}
         >
           <ButtonControl
@@ -152,21 +179,33 @@ export function Sidebar(props: SidebarProps) {
 
       <div className="sidebar-section">
         <div className="sidebar-section-title">{t.shell.sidebar.pinnedSection}</div>
-        {pinnedNodeIds.length === 0 ? (
+        {props.pinnedNodeIds.length === 0 ? (
           <div className="sidebar-empty-row">
             <PinIcon className="sidebar-empty-icon" size={ICON_SIZE.menu} strokeWidth={1.7} />
             <span>{t.shell.sidebar.noPinnedHint}</span>
           </div>
         ) : (
           <div className="workspace-tree" aria-label={t.shell.sidebar.pinnedNodesAriaLabel}>
-            {pinnedNodeIds.map((nodeId) => renderWorkspaceTree(nodeId))}
+            {props.pinnedNodeIds.map((nodeId) => renderWorkspaceTree(nodeId))}
           </div>
         )}
       </div>
 
       {rootNode && (
         <div className="sidebar-section sidebar-root-section">
-          <div className="sidebar-root-row">
+          <div
+            className="sidebar-root-row"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setContextMenu({
+                x: event.clientX,
+                y: event.clientY,
+                nodeId: rootNode.id,
+                label: rootLabel,
+              });
+            }}
+          >
             <ButtonControl
               aria-label={t.shell.sidebar.openRoot({ rootLabel })}
               className={`sidebar-root-button ${rootActive ? 'active' : ''}`}
@@ -183,7 +222,7 @@ export function Sidebar(props: SidebarProps) {
           </div>
           <div className="workspace-tree" aria-label={t.shell.sidebar.workspaceRootTreeAriaLabel}>
             {rootChildren.map((child) => (
-              renderWorkspaceTree(child.id)
+              renderWorkspaceTree(child.id, 0, [props.projection.rootId])
             ))}
           </div>
         </div>
@@ -206,7 +245,83 @@ export function Sidebar(props: SidebarProps) {
         onPointerDown={props.onResizeStart}
         title={t.shell.sidebar.resizeTitle}
       />
+      {contextMenu && (
+        <SidebarNodeContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          isPinned={props.isNodePinned(contextMenu.nodeId)}
+          label={contextMenu.label}
+          onClose={() => setContextMenu(null)}
+          onOpen={() => props.onNavigateRoot(contextMenu.nodeId)}
+          onOpenPanel={() => props.onOpenPanel(contextMenu.nodeId)}
+          onTogglePin={() => props.onTogglePin(contextMenu.nodeId)}
+        />
+      )}
     </aside>
+  );
+}
+
+interface SidebarContextMenuState {
+  x: number;
+  y: number;
+  nodeId: NodeId;
+  label: string;
+}
+
+interface SidebarNodeContextMenuProps {
+  x: number;
+  y: number;
+  isPinned: boolean;
+  label: string;
+  onClose: () => void;
+  onOpen: () => void;
+  onOpenPanel: () => void;
+  onTogglePin: () => void;
+}
+
+function SidebarNodeContextMenu(props: SidebarNodeContextMenuProps) {
+  const t = useT();
+  const tc = t.outliner.contextMenu;
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRect: menuAnchor,
+    layoutKey: props.label,
+    maxHeight: 280,
+    placement: 'bottom-start',
+    width: 240,
+  });
+
+  useDismissibleOverlay(menuRef, props.onClose);
+
+  const item = (label: string, icon: ReactNode, onClick: () => void) => (
+    <MenuItem
+      className="node-context-item"
+      icon={icon}
+      label={label}
+      onClick={() => {
+        onClick();
+        props.onClose();
+      }}
+      role="menuitem"
+    />
+  );
+
+  return createPortal(
+    <MenuSurface
+      ref={menuRef}
+      aria-label={tc.nodeActions}
+      className="node-context-menu"
+      preserveSelection
+      role="menu"
+      style={menuStyle}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      {item(tc.openNode, <OpenIcon size={ICON_SIZE.menu} />, props.onOpen)}
+      {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, props.onOpenPanel)}
+      {item(props.isPinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, props.onTogglePin)}
+    </MenuSurface>,
+    document.body,
   );
 }
 

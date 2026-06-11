@@ -117,6 +117,7 @@ interface OutlinerFlatViewProps {
   selectionRootId?: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
+  isNodePinned: (nodeId: NodeId) => boolean;
   ui: UiState;
   uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
@@ -125,6 +126,7 @@ interface OutlinerFlatViewProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  onTogglePin: (nodeId: NodeId) => void;
   showViewToolbar?: boolean;
   trailingDraft?: 'always' | 'auto' | 'none';
   // Empty-state placeholder for the root-level trailing draft (definition
@@ -459,10 +461,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             onRoot={props.onRoot}
             depth={row.depth}
             index={index}
+            isNodePinned={props.isNodePinned}
             ui={ui}
             uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
+            onTogglePin={props.onTogglePin}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
             dragId={props.dragId}
@@ -482,10 +486,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             onRoot={props.onRoot}
             depth={row.depth}
             index={index}
+            isNodePinned={props.isNodePinned}
             ui={ui}
             uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
+            onTogglePin={props.onTogglePin}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
             dragId={props.dragId}

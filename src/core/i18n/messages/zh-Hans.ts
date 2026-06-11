@@ -328,7 +328,7 @@ export const zhHans: PartialMessages = {
       collapseNode: ({ label }) => `折叠 ${label}`,
       expandNode: ({ label }) => `展开 ${label}`,
       pinnedSection: '已固定',
-      noPinnedHint: '拖拽以固定节点',
+      noPinnedHint: '右键点击节点以固定',
       pinnedNodesAriaLabel: '已固定节点',
       openRoot: ({ rootLabel }) => `打开 ${rootLabel}`,
       workspaceRootTreeAriaLabel: '工作区根节点树',
@@ -511,6 +511,9 @@ commandPalette: {
       editDescription: '编辑描述',
       copyText: '复制文本',
       copyNodeId: '复制节点 ID',
+      openNode: '打开',
+      pinNode: '固定',
+      unpinNode: '取消固定',
       // 标签子模式 + 批量标签选择器。
       addTagTitle: '添加标签',
       tagNameLabel: '标签名称',
