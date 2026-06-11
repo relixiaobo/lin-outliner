@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import {
   createEmptyAgentEventReplayState,
@@ -8,6 +9,8 @@ import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   buildDreamMemoryExtractionRequest,
   buildDreamMemoryExtractionSpan,
+  buildDreamSessionId,
+  DREAM_SESSION_ID_MAX_CHARS,
 } from '../../src/main/agentDreamExtraction';
 
 const systemActor: AgentActor = { type: 'system' };
@@ -254,6 +257,24 @@ describe('agent dream extraction', () => {
     expect(correctionAt).toBeLessThan(fenceCloseAt);
     expect(surpriseAt).toBeGreaterThan(fenceOpenAt);
     expect(surpriseAt).toBeLessThan(fenceCloseAt);
+  });
+
+  // The Dream batch sessionId becomes the provider prompt_cache_key (via pi-ai's session-id
+  // header); Codex/OpenAI reject one longer than 64 chars (HTTP 400). The old form prefixed
+  // the principalKey, overflowing to 79 chars and failing every Dream. Guard the cap and the
+  // dropped prefix.
+  test('builds a Dream batch sessionId within the provider prompt_cache_key cap', () => {
+    // Runtime shape: runId is `dream-run-<uuid>` (see AgentRuntime.runDreamTask).
+    const runId = `dream-run-${randomUUID()}`;
+
+    expect(buildDreamSessionId(runId, 0)).toBe(`dream:${runId}:1`);
+    // No principal prefix — runId is already globally unique; the prefix only blew the cap.
+    expect(buildDreamSessionId(runId, 0).startsWith('dream:')).toBe(true);
+
+    // Every plausible batch index stays under the 64-char limit.
+    for (const batchIndex of [0, 1, 9, 99, 999]) {
+      expect(buildDreamSessionId(runId, batchIndex).length).toBeLessThanOrEqual(DREAM_SESSION_ID_MAX_CHARS);
+    }
   });
 
   test('wraps raw evidence in a randomized fence an adversarial transcript cannot close', () => {

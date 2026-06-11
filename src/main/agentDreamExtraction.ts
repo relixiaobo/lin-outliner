@@ -246,6 +246,20 @@ export function buildConsolidateOnlyDreamMemoryExtractionSpan(runId: string): Dr
   };
 }
 
+/**
+ * Codex / OpenAI providers reject a `prompt_cache_key` longer than 64 chars (HTTP 400). The
+ * provider derives that key from the request's `session-id` header, which pi-ai writes verbatim
+ * from the stream `sessionId` — so a Dream batch's session id must stay within the cap. A Dream
+ * `runId` is `dream-run-<uuid>` (46 chars), so `dream:<runId>:<n>` is 54 chars for a single-digit
+ * batch, well under the limit. No principal prefix: `runId` is already globally unique, and the
+ * prefix bought no provider cache affinity — it only overflowed the cap.
+ */
+export const DREAM_SESSION_ID_MAX_CHARS = 64;
+
+export function buildDreamSessionId(runId: string, batchIndex: number): string {
+  return `dream:${runId}:${batchIndex + 1}`;
+}
+
 export function buildDreamMemoryExtractionRequest(input: DreamMemoryExtractionRequestInput): UserMessage {
   const existing = input.existingMemories.slice(0, DREAM_EXISTING_MEMORY_LIMIT)
     .map((entry) => `- ${entry.id}: ${entry.fact}`)

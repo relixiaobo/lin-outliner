@@ -130,6 +130,7 @@ import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   buildDreamMemoryExtractionRequest,
   buildDreamMemoryExtractionSpanFromEvidence,
+  buildDreamSessionId,
   memoryFactKey,
   mergeMemorySources,
   parseDreamMemoryActions,
@@ -3222,8 +3223,9 @@ export class AgentRuntime {
           ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
           apiKey,
           maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
-          // pi-ai stream option (provider cache affinity) — the lib's own field name.
-          sessionId: `${principalKey(task.principal)}:dream:${task.runId}:${index + 1}`,
+          // pi-ai stream option (provider cache affinity) — the lib's own field name. Kept
+          // within the 64-char provider prompt_cache_key cap; see buildDreamSessionId.
+          sessionId: buildDreamSessionId(task.runId, index),
         });
         if (response.stopReason === 'error' || response.stopReason === 'aborted') {
           throw new Error(response.errorMessage || 'Dream memory extraction failed.');
