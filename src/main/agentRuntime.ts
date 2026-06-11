@@ -3764,6 +3764,7 @@ export class AgentRuntime {
   ): AgentRecallToolRuntime {
     const reader: AgentPrincipal = { type: 'agent', agentId };
     return {
+      reader,
       recall: async (options) => {
         const conversation = getConversation();
         const limit = clampRecallLimit(options.limit);

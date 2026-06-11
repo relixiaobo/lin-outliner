@@ -129,8 +129,9 @@ truth.
     expansion through `MemoryEntry.sources` gated to the reader's own pool
   - bounded `<memory>` turn briefing injection: resident newest-active selection
     over the reader's own pool + co-member user pool, rendered into reader-relative
-    `<self>` / `<principal>` zones (person-neutral storage, reader-relative render;
-    storage scaffolding hidden)
+    `<self>` / `<principal>` zones as verbatim bullet lists (one phrasing rule:
+    third-person-singular subject-elided storage, no subject prepending at render —
+    [[agent-memory-realignment]] D-2; storage scaffolding hidden)
   - runtime `memoryIsolation` modes: global and read-only-global (pause Dream
     writes); a pool is one undivided self-model — `originWorkspace` is provenance
     metadata, never a retrieval fence

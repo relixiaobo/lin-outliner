@@ -427,7 +427,12 @@ export interface AgentMemorySource {
 
 export interface AgentMemoryEntry {
   id: string;
-  /** The subject this fact is about — the pool it belongs to. */
+  /**
+   * The pool this fact lives in — its owner/believer (whose self-model), and therefore the
+   * fact's elided subject ([[agent-memory-realignment]] D-1). NOT "any subject the fact is
+   * about": a believer's knowledge of others lives in the believer's own pool as relational
+   * facts; the write paths have always been believer-keyed.
+   */
   principal: AgentPrincipal;
   fact: string;
   originWorkspace?: string;

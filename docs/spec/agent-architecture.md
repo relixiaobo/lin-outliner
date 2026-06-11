@@ -117,31 +117,41 @@ user-composite is will(human)+digestion(self-agent-LLM). The implementable bound
 escalates** (== the existing ask-gate). This is an exploratory, **not-yet-ratified**
 direction (target M3); only the `<self>`/`<principal>` render scaffold exists today.
 
-## The memory system (canonical vocabulary, PM-ratified 2026-06-10)
+## The memory system (canonical vocabulary, PM-ratified 2026-06-10; realigned per `agent-memory-realignment`)
 
-Memory is organized as a textbook system — **three stores, one index, three
-processes, one social layer** — mapped one-to-one onto existing mechanisms
-(zero storage change; the full mapping table is `agent-data-model.md`
-§ *Canonical memory vocabulary*):
+Memory is organized as a textbook system — **ground truth below it, three
+stores, one index, three processes, one social layer** (the full mapping table
+is `agent-data-model.md` § *Canonical memory vocabulary*):
 
-- **Stores:** episodic (the conversation/run ledgers — "what happened") ·
-  semantic (`MemoryEntry` pools per Principal — "what I know") · procedural
-  (skills — "what I can do").
-- **Index:** the hippocampal-style pointer layer (`sources[]` + distillation
-  summaries) binding semantic facts to episodic evidence, bidirectionally.
-- **Processes:** consolidation (Dream — offline replay distilling episodic →
-  semantic; evidence-preserving under compaction) · retrieval (working-memory
-  briefing → cued retrieval via `recall` → source access) · forgetting
-  (two-strength target: storage strength never decays, retrieval strength
-  governs injection — never deletion; D1, planned).
+- **Ground truth (below memory):** the conversation/run ledgers — the immutable
+  world record. Not a memory store; every memory structure is derived over it
+  and bottoms out in it via down-pointers.
+- **Stores:** episodic (episodes + memory-owned gist, constructed over the
+  ledgers — realignment PR-2; today the acknowledged gap) · semantic
+  (`MemoryEntry` pools per Principal — a pool is one principal's self-model,
+  keyed by owner/believer) · procedural (skills — "what I can do").
+- **Index:** the hippocampal-style **pure pointer** layer binding semantic
+  facts to episodic evidence, bidirectionally (`sources[]` forward today;
+  reverse lookup PR-2). It points, never copies, never holds content — gist is
+  episodic content, not index.
+- **Processes:** consolidation (Dream — offline replay distilling into the
+  semantic store; evidence-preserving under compaction; ONE phrasing rule:
+  third-person-singular subject-elided facts in every pool) · retrieval (three
+  modes: chronic activation = the resident briefing · deliberate cued
+  retrieval = `recall` + provenance zoom down the ladder schema → fact →
+  episode gist → raw span · automatic association = deferred on a data gate) ·
+  forgetting (two-strength target: storage strength never decays, retrieval
+  strength governs injection — never deletion; PR-3).
 - **Social layer:** transactive memory — co-members subscribe to each other's
   *semantic* stores by conversation membership; raw evidence never crosses
-  principals (user pool shipped #173; agent pools = M3-B).
+  principals (user pool shipped #173; agent pools = M3-B, gated on realignment
+  PR-1 + PR-2).
 
 Definitions + binding authoring rules: `agent-memory-foundations.md` (meta).
-Work on this frame: `agent-memory-academic-alignment` (language surfaces,
-anytime; subsumed D2) + post-M3-B deltas `agent-memory-forgetting` (D1) ·
-`agent-memory-episodic-index` (D3) · `agent-memory-retrieval-upgrade` (D4).
+Work on this frame: `agent-memory-academic-alignment` (#181, language
+surfaces; subsumed D2) → the **`agent-memory-realignment`** program (PR-1
+person rule + read surfaces, shipped; PR-2 episodic layer; PR-3 forgetting;
+PR-5 schema overview; PR-4 retrieval engine; association deferred).
 
 ## Multi-agent = rules + views + one new primitive
 
@@ -153,7 +163,7 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Routing (who replies) | — | one rule: a run iff a principal is in `addressedTo` |
 | Coordinator | Agent | the default-addressed agent (not a new type) |
 | Per-agent POV | Conversation | a derived projection (not stored) |
-| **Cross-agent memory sharing** | Memory | **★ the one genuinely new primitive**: publish/subscribe over distilled pools + a hard cross-principal isolation gate (distilled-only, never raw evidence) |
+| **Cross-agent memory sharing** | Memory | **★ the one genuinely new primitive**: membership-scoped reads over distilled pools (no publish ACL — visibility = conversation membership) + a hard cross-principal isolation gate (distilled-only, never raw evidence) |
 
 ## Verified status & known scaffolding (2026-06-10 audit)
 

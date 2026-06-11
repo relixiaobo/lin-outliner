@@ -279,12 +279,12 @@ describe('agent runtime subagents', () => {
     const researcherAgentId = projectAgentId(researcherDir, 'researcher');
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(researcherAgentId), {
       id: 'memory-researcher-own',
-      fact: 'Researcher agent prefers teal source notes.',
+      fact: 'prefers teal source notes',
       sources: [{ conversationId: 'seed-researcher' }],
     });
     await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
       id: 'memory-parent-only',
-      fact: 'Parent agent prefers amber planning notes.',
+      fact: 'prefers amber planning notes',
       sources: [{ conversationId: 'seed-parent' }],
     });
 
@@ -342,10 +342,10 @@ describe('agent runtime subagents', () => {
     // The subagent reads its own pool, rendered as a <self> briefing with the id hidden.
     expect(childContext).toContain('<self>');
     expect(childContext).not.toContain('memory-researcher-own');
-    expect(childContext).toContain('Researcher agent prefers teal source notes.');
+    expect(childContext).toContain('- prefers teal source notes');
     expect(childContext).not.toContain('"recall"');
     expect(childContext).not.toContain('memory-parent-only');
-    expect(childContext).not.toContain('Parent agent prefers amber planning notes.');
+    expect(childContext).not.toContain('prefers amber planning notes');
   });
 
   test('scheduled Dream writes fresh subagent transcript memory to the called agent owner', async () => {
@@ -409,7 +409,7 @@ describe('agent runtime subagents', () => {
           return normalizeAssistantMessage(
             fauxAssistantMessage(JSON.stringify({
               actions: request.includes('## Agent Run')
-                ? [{ type: 'add', fact: 'Researcher agent uses teal source notes for synthesis.' }]
+                ? [{ type: 'add', fact: 'uses teal source notes for synthesis' }]
                 : [],
             })),
             model as Model<Api>,
@@ -494,7 +494,7 @@ describe('agent runtime subagents', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(researcherEntries.map((entry) => entry.fact)).toEqual([
-      'Researcher agent uses teal source notes for synthesis.',
+      'uses teal source notes for synthesis',
     ]);
     expect(researcherEntries[0]?.originWorkspace).toBe(memoryOriginWorkspace(localRoot));
     expect(parentEntries).toEqual([]);

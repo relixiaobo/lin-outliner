@@ -5,7 +5,7 @@ import { createRecallTool, type AgentRecallToolRuntime } from '../../src/main/ag
 function entry(id: string, fact: string, createdAt = 10): AgentMemoryEntry {
   return {
     id,
-    agentId: 'built-in:tenon:assistant',
+    principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
     fact,
     sources: [{
       conversationId: 'conversation-1',
@@ -24,11 +24,14 @@ function visibleData(result: Awaited<ReturnType<ReturnType<typeof createRecallTo
   return JSON.parse(content.text) as unknown;
 }
 
+const READER = { type: 'agent', agentId: 'built-in:tenon:assistant' } as const;
+
 describe('agent recall tool', () => {
   test('returns slim active durable memory entries', async () => {
     const runtime: AgentRecallToolRuntime = {
+      reader: READER,
       recall: async () => ({
-        entries: [{ entry: entry('memory-1', 'User prefers concise answers.', 20) }],
+        entries: [{ entry: entry('memory-1', 'prefers concise answers', 20) }],
         totalEntries: 1,
       }),
     };
@@ -40,7 +43,8 @@ describe('agent recall tool', () => {
       data: {
         entries: [{
           memoryId: 'memory-1',
-          fact: 'User prefers concise answers.',
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          fact: 'prefers concise answers',
         }],
       },
     });
@@ -49,7 +53,10 @@ describe('agent recall tool', () => {
       data: {
         entries: [{
           memory_id: 'memory-1',
-          fact: 'User prefers concise answers.',
+          // The fact's pool named reader-relatively, so cross-pool results are
+          // distinguishable in the briefing's own vocabulary (D-3 + #183 gate round).
+          subject: 'self',
+          fact: 'prefers concise answers',
           status: 'active',
           created_at: 20,
           sources: [{
@@ -64,15 +71,47 @@ describe('agent recall tool', () => {
     });
   });
 
+  test('distinguishes cross-pool results by reader-relative subject, not by wording', async () => {
+    // The #173 membership read returns entries from more than one pool in one result list;
+    // without `subject` they are distinguishable only by accidental verb form (D-3). The
+    // subject speaks the briefing's zone vocabulary — never a raw internal principal key.
+    const runtime: AgentRecallToolRuntime = {
+      reader: READER,
+      recall: async () => ({
+        entries: [
+          { entry: entry('memory-1', 'prefers terse code reviews') },
+          { entry: { ...entry('memory-2', 'prefers terse code reviews'), principal: { type: 'user', userId: 'lixiaobo' } } },
+        ],
+        totalEntries: 2,
+      }),
+    };
+    const tool = createRecallTool(runtime);
+
+    const visible = visibleData(await tool.execute('tool-1', { query: 'reviews' }));
+    expect(visible).toMatchObject({
+      ok: true,
+      data: {
+        entries: [
+          { memory_id: 'memory-1', subject: 'self' },
+          { memory_id: 'memory-2', subject: 'The user' },
+        ],
+      },
+    });
+    // No internal principal keys reach the model.
+    expect(JSON.stringify(visible)).not.toContain('agent:built-in');
+    expect(JSON.stringify(visible)).not.toContain('user:lixiaobo');
+  });
+
   test('nests evidence under the matching memory entry', async () => {
     const source: AgentMemorySource = {
       conversationId: 'conversation-1',
       messageRange: ['user-1', 'assistant-1'],
     };
     const runtime: AgentRecallToolRuntime = {
+      reader: READER,
       recall: async () => ({
         entries: [{
-          entry: { ...entry('memory-1', 'Cobalt was chosen for focus rings.'), sources: [source] },
+          entry: { ...entry('memory-1', 'uses cobalt for focus rings'), sources: [source] },
           evidence: [{
             source,
             conversationId: 'conversation-1',
@@ -107,6 +146,7 @@ describe('agent recall tool', () => {
 
   test('reports empty recall without implying history is absent', async () => {
     const runtime: AgentRecallToolRuntime = {
+      reader: READER,
       recall: async () => ({ entries: [], totalEntries: 0 }),
     };
     const tool = createRecallTool(runtime);
@@ -117,7 +157,7 @@ describe('agent recall tool', () => {
         entries: [],
         total_entries: 0,
       },
-      instructions: "No active semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers only the semantic store's active entries (distilled facts), not invalidated entries or the raw episodic record.",
+      instructions: "No active semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers only the semantic store's active entries (distilled facts), not invalidated entries or the raw record.",
     });
   });
 });

@@ -21,9 +21,10 @@ a co-member's distilled fact inherits its provenance integrity. **M3-A**
 scheme (one addressing mode under the isolation gate, not two).
 **Memory-theory realignment PR-1 + PR-2 (added 2026-06-10, PM-ratified —
 see `docs/TASKS.md` Backlog § memory):** agents must not cross-read pools until
-the person rule is reader-independent (PR-1: uniform third-person-singular
-subject-elided facts + zone-tag render — today's base-form agent-pool facts
-misrender for any non-owner reader) and `AgentMemorySource` is the
+the person rule is reader-independent (PR-1, **shipped**: uniform
+third-person-singular subject-elided facts + zone-tagged bullet render — the
+earlier base-form agent-pool facts misrendered for any non-owner reader) and
+`AgentMemorySource` is the
 discriminated union with first-class episodes (PR-2) — so this plan builds on
 final shapes instead of re-cutting them.
 
@@ -45,9 +46,10 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
   the `isolated` tier is removed; modes are `global` and `read-only-global`;
   `originWorkspace` is provenance only, never a filter).
 - **Visibility = conversation membership — there is no publish ACL.** A reader
-  assembles: its own pool → `<self>` (second person) + **every co-member
-  principal's pool** in the current conversation → `<principal name="…">`
-  (third person). The user-pool half of this **already shipped (#173)**; this
+  assembles: its own pool → the `<self>` zone + **every co-member
+  principal's pool** in the current conversation → a named `<principal name="…">`
+  zone (verbatim bullet lists, one phrasing rule — realignment PR-1). The
+  user-pool half of this **already shipped (#173)**; this
   plan extends the same rule to agent co-members.
 - **Writes are per-principal; one writer per pool** (each principal's Dream
   writes only its own pool — shipped #173). Sharing adds **no write path**.
@@ -78,7 +80,8 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
 1. **Membership read, generalized.** The briefing's pool list becomes "the
    reader's own pool + every co-member principal's pool" (user and agent alike),
    derived from the conversation's `members`. Foreign agent pools render as
-   third-person `<principal name="…">` zones; `<self>` stays second person.
+   named `<principal name="…">` zones; the reader's own pool as `<self>` —
+   both bullet lists under the PR-1 phrasing rule, no person assignment.
 2. **The hard gate (the load-bearing piece).** Enforce *in the evidence
    service*, not in tool prompts or call-site convention: any dereference of
    `MemoryEntry.sources[]` to raw conversation/run content checks
@@ -118,9 +121,9 @@ From `agent-data-model.md` §Extension / D2 (as revised), all PM-ratified:
 
 ## Acceptance
 
-- [ ] In a 2-agent Channel, agent A's briefing contains a `<principal>` zone
-      with B's distilled facts (third person) and vice versa; a non-member
-      agent's pool never appears.
+- [ ] In a 2-agent Channel, agent A's briefing contains a named `<principal>`
+      zone with B's distilled facts (verbatim bullets, PR-1 phrasing rule) and
+      vice versa; a non-member agent's pool never appears.
 - [ ] Gate negative tests: cross-principal `recall(include_evidence:true)`
       returns the distilled fact + a typed refusal for evidence; the refusal
       holds at the evidence-service choke point (unit test calls the service
