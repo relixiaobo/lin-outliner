@@ -20,7 +20,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (M3-A multi-agent Channel merged, PR #179) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
-| Codex | `lin-outliner-codex/` | — | idle (workspace skill trust merged, PR #185) |
+| Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (registered 2026-06-11) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -244,6 +244,20 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
+- **agent-local-root-boundary** (P1, `draft`, **build-ready now** — any free dev agent) —
+  verify/fix the packaged-app agent file root: the `process.cwd()` fallback may resolve
+  to `/` from Finder, making the whole disk count as in-root (default-allow ordinary
+  file ops). Small, high-value, no dependencies; hard prerequisite for Full Access in
+  `agent-permission-safety-modes`. See `docs/plans/agent-local-root-boundary.md`.
+- **agent-permission-safety-modes** (P1, `draft`, **design ratified 2026-06-11**, PR #187) —
+  consumer trust model: four-layer abstraction (safety floor / trust ledger / 3-level
+  default policy Ask First·Balanced·Full Access / internal delegation sandbox), one
+  approval card with graduated exits + in-flow skill acceptance + tell-only denial
+  cards, one Security settings page. Implementation sequenced **after**
+  `agent-local-root-boundary` and rebases over #184 (run unification). Protocol rename
+  `AgentPermissionMode`→`AgentSafetyMode` must be recorded in `agent-program` F6 in the
+  same change. See `docs/plans/agent-permission-safety-modes.md` (incl. ratified
+  decisions).
 - **agent-conversation-model** (P1, the spine, M0–M3) — IM-native rebuild: durable Agents
   in **DMs/Channels** over the ambient outline; the per-agent **memory line**; background
   tasks + notifications; sequential multi-member Channels + **coordinator** routing;
@@ -625,6 +639,22 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Agent permission safety modes: plan ratified** (codex, PR #187, docs-only) — the
+  consumer trust-model design is PM-ratified and on `main` as a `draft` plan. Three
+  review rounds at the gate reshaped it: the original workspace-trust subsystem was
+  cut (the product has no user-visible workspace — `localFileRoot` is launch-time
+  env/cwd with zero UI), trust became global with a future folder-handoff gesture;
+  the proposal was restructured around a four-layer model (safety floor / unified
+  trust-grant ledger / 3-level mode ladder / internal delegation sandbox — `restricted`
+  leaves user vocabulary, custom agents narrow-only); one card with graduated exits
+  (single primary "Allow once"; skill acceptance moves in-flow; hard denials become
+  tell-only cards); one Security settings page with a revocable grants list. Ratified
+  decisions recorded in-doc: 3 trust levels, escalation exit on every card, GitHub
+  mutations as the existing action class, no legacy Permissions route. The review also
+  surfaced and filed `agent-local-root-boundary` (packaged cwd→`/` boundary risk) as a
+  standalone build-ready precursor, and pinned the self-amplification floor
+  (`contentHash === agentHash` ⇒ explicit acceptance in every mode).
 
 - **Workspace skill trust: `project` skills require explicit acceptance** (codex, PR #185) —
   closes the `agent-skill-acceptance` follow-up (plan `agent-skill-workspace-trust`

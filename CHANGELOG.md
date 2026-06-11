@@ -93,6 +93,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent permission safety-modes plan ratified (PR #187, docs-only)** — adds
+  `docs/plans/agent-permission-safety-modes.md` (PM-ratified consumer trust model:
+  safety floor / trust-grant ledger / Ask First·Balanced·Full Access ladder /
+  internal delegation sandbox; one approval card with graduated exits; one Security
+  settings page) and `docs/plans/agent-local-root-boundary.md` (build-ready precursor:
+  the packaged-app `process.cwd()` file-root fallback may resolve to `/`, which would
+  make the whole disk the allowed file area). Design only; no runtime behavior change.
+
 - **Agent storage clean-cut: session vocabulary dies, pools unify under `principals/` (PR #180)** —
   the pre-release format clean-cut (`agent-storage-clean-cut`, PM-ratified full scope; plan archived
   `done` in-PR). Stored `session.*` event types and the persisted `sessionId` field become
