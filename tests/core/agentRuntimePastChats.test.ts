@@ -1190,6 +1190,76 @@ describe('agent runtime past chats integration', () => {
     });
   });
 
+  test('a failing scheduled dream backs off instead of re-firing every tick', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-backoff-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-backoff-data-'));
+    roots.push(localRoot, dataRoot);
+    let dreamCalls = 0;
+    const longPreference = `Please remember this durable collaboration preference: ${'concise evidence '.repeat(90)}`;
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText(`I will remember the collaboration preference. ${'grounded reply '.repeat(90)}`))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        // Every Dream completion throws — the persistent failure that, before the backoff,
+        // re-fired on every scheduler tick and flooded the run list with `failed` records.
+        completeSimpleFn: async () => {
+          dreamCalls += 1;
+          throw new Error('provider down');
+        },
+      },
+    );
+
+    const created = await runtime.createConversation();
+    await runtime.sendMessage(created.conversationId, longPreference);
+
+    // First scheduled tick: the Dream fires for the new evidence, the provider throws, the user
+    // pool records a single `failed` run and arms its backoff window.
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
+    const callsAfterFirst = dreamCalls;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    const store = new AgentEventStore(dataRoot);
+    const failedUserRuns = async () => (await store.listPrincipalRunMetaProjections(USER_PRINCIPAL))
+      .filter((run) => run.kind === 'reflective' && run.status === 'failed');
+    expect(await failedUserRuns()).toHaveLength(1);
+    // Absent the backoff the next tick WOULD re-fire: a failed Dream advances neither
+    // lastSuccessAt nor the watermark, so the schedule and volume gates both still pass.
+    expect((await store.readDreamState(USER_PRINCIPAL)).lastSuccessAt).toBeNull();
+
+    // Second tick 30s later — inside the 5-minute backoff window: no new provider call and no
+    // second `failed` run piles up.
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:30'));
+    expect(dreamCalls).toBe(callsAfterFirst);
+    expect(await failedUserRuns()).toHaveLength(1);
+  });
+
   test('manual /dream with no new evidence consolidates memory without replaying old raw evidence', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-consolidate-data-'));
