@@ -19,9 +19,10 @@ data-gate threshold · per-PR collision checks) are **discharged and
 PM-ratified** — see *Program one-pager* below. Claimed by cc-2 2026-06-10;
 **Step 0 + PR-1 shipped (#183); PR-2 episodic layer shipped (#195)** — sources
 discriminated union, memory-owned episode gist, principal-gated reverse lookup,
-storage side of the 3-level zoom (durable gist survives raw-span loss). Next
-runnable unit: PR-3 (forgetting); PR-5 (schema layer) reuses PR-2's derived-node
-machinery.
+storage side of the 3-level zoom (durable gist survives raw-span loss). PR-3
+(forgetting) + PR-5 (schema layer) are implemented together in
+`codex/agent-memory-forgetting-schema` so chronic activation lands as one
+complete behavior. Next runnable unit after merge: PR-4.
 
 ## Goal
 
@@ -144,9 +145,9 @@ facts".
 |---|---|---|
 | **Step 0** | Rewrite `agent-memory-foundations` + `agent-data-model` canonical table + `agent-architecture` § memory per D-1/D-4/D-6 | **shipped #183** (with PR-1) |
 | **PR-1** | Person rule (D-2) + recall read surface (D-3, reader-relative `subject`) + Dream prompt guidance (D-9). No schema change; old-format facts handled by manual dev-userData wipe | **shipped #183** |
-| **PR-2** | Episodic layer (D-4) + sources union (D-5) + provenance-zoom storage side. Subsumes archived `agent-memory-episodic-index` | run-unification |
-| **PR-3** | Two-strength forgetting (`agent-memory-forgetting`) + retrieval-event append on recall hits (D-7) | PR-2 |
-| **PR-5** | Schema/overview layer (D-6) + briefing recomposition + no-query `recall` returns overview | PR-2 (machinery), pairs with PR-3 |
+| **PR-2** | Episodic layer (D-4) + sources union (D-5) + provenance-zoom storage side. Subsumes archived `agent-memory-episodic-index` | **shipped #195** |
+| **PR-3** | Two-strength forgetting (`agent-memory-forgetting`) + retrieval-event append on recall hits (D-7) | **implemented with PR-5 in `codex/agent-memory-forgetting-schema`** |
+| **PR-5** | Schema/overview layer (D-6) + briefing recomposition + no-query `recall` returns overview | **implemented with PR-3 in `codex/agent-memory-forgetting-schema`** |
 | **PR-4** | Hybrid retrieval engine for deliberate `recall` (`agent-memory-retrieval-upgrade`, rescoped) + zoom read side; embedding-provider PM gate at claim | PR-2 |
 
 ## Deferred — automatic associative retrieval
@@ -218,7 +219,7 @@ provenance zoom is the lower three; full raw replay stays runtime-internal.
 
 | Usage mode | Human analog | Surface | Ladder access | Ships |
 |---|---|---|---|---|
-| **Chronic activation** | what you "just know" without trying; + metamemory (feeling-of-knowing) | resident `[3]` briefing; no-query `recall` returns the overview | breadth: schema overview; depth: strength-selected facts; never below fact level | PR-3 (strengths) + PR-5 (schema); today = newest-12 |
+| **Chronic activation** | what you "just know" without trying; + metamemory (feeling-of-knowing) | resident `[3]` briefing; no-query `recall` returns the overview | breadth: schema overview; depth: strength-selected facts; never below fact level | PR-3 (strengths) + PR-5 (schema), implemented together |
 | **Deliberate recall + verification** | trying to remember, then checking the source | the `recall` tool (the volitional act) | query → facts; `include_evidence` zooms fact → episode gist → raw span | read surface correct in PR-1 → data in PR-2 → engine in PR-4 |
 | **Automatic association** | what springs to mind unbidden | runtime-injected `[5]` volatile tail (slot reserved by the `[3]`/`[5]` cache contract) | current turn as cue; top-k facts/gists auto-surface | **deferred** (data gate below) |
 
@@ -255,11 +256,10 @@ All three, each measurable from the live ledgers/projections:
 - **PR-2** — sources union touches `src/core/agentEventLog.ts` = protocol
   surface (A4): coordinate at claim, consider interface-first. Strictly after
   run-unification, before M3-B. D3 plan rewritten then.
-- **PR-3** — `memory.accessed`-class event = protocol surface (A4, flagged in
-  its plan). Shares the briefing path with M3-B; relative order unpinned —
-  second claimant re-checks.
-- **PR-5** — recomposes the same briefing assembly as PR-3: serialize PR-3 →
-  PR-5 or same claimant.
+- **PR-3 + PR-5** — `memory.accessed` is the protocol-surface addition; the same
+  branch recomposes briefing assembly into schema overview + strength-selected
+  facts and makes no-query `recall` return the overview. Claim-time check
+  2026-06-11: `gh pr list` returned no open claims.
 - **PR-4** — embedding-provider PM gate closes at claim.
 
 ## Open questions

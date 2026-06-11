@@ -128,11 +128,12 @@ truth.
   - single model-visible `recall` tool over active durable memory entries, reading
     the reader's own pool + co-member user pool, with optional nested evidence
     expansion through `MemoryEntry.sources` gated to the reader's own pool
-  - bounded `<memory>` turn briefing injection: resident newest-active selection
-    over the reader's own pool + co-member user pool, rendered into reader-relative
-    `<self>` / `<principal>` zones as verbatim bullet lists (one phrasing rule:
-    third-person-singular subject-elided storage, no subject prepending at render —
-    [[agent-memory-realignment]] D-2; storage scaffolding hidden)
+  - bounded `<memory>` turn briefing injection: derived schema overview +
+    activation-ranked fact selection over the reader's own pool + co-member user
+    pool, rendered into reader-relative `<self>` / `<principal>` zones as verbatim
+    bullet lists (one phrasing rule: third-person-singular subject-elided storage,
+    no subject prepending at render — [[agent-memory-realignment]] D-2; storage
+    scaffolding hidden)
   - runtime `memoryIsolation` modes: global and read-only-global (pause Dream
     writes); a pool is one undivided self-model — `originWorkspace` is provenance
     metadata, never a retrieval fence
@@ -157,7 +158,8 @@ truth.
     the child ledger's first `run.started`); run-sourced memory sources bind
     evidence to stable run-ledger ids (`{seq, eventId}` + message ids, post-#184),
     and owner-anchored Dream tasks appear in the shared task projection
-  - projected-state cache, idempotent forget, and high-churn log compaction
+  - projected-state cache, idempotent explicit forget, two-strength access
+    projection from `memory.accessed`, and high-churn log compaction
   - permission classification for read-only `agent.memory.recall` and
     trigger-only `agent.memory.dream`
   - prompt guidance that foreground memory writes are handled by Settings/Profile

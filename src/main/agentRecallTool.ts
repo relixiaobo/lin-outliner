@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { AgentMemoryEntry, AgentMemorySource, AgentMemoryStreamSource, AgentPrincipal } from '../core/agentEventLog';
+import type { AgentMemoryOverview, AgentMemorySchemaNode } from '../core/agentMemoryActivation';
 import { samePrincipal } from '../core/agentEventLog';
 import { defaultPrincipalName } from './agentMemoryBriefing';
 import {
@@ -24,7 +25,8 @@ same name the memory briefing's zone uses).
 
 Use include_evidence only when a fact's provenance matters: it is source access — descending the
 memory index from the matching entry to its recorded sources in the raw record — and the bounded
-raw evidence is nested under that entry.`;
+raw evidence is nested under that entry. If you omit query, the tool returns a schema overview
+instead of fact hits: use it as metamemory before choosing a more specific cue.`;
 
 const RECALL_TOOL_PARAMETERS = {
   type: 'object',
@@ -34,7 +36,7 @@ const RECALL_TOOL_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 500,
-      description: 'Optional retrieval cue matched against semantic memory facts. Omit to list recent active entries.',
+      description: 'Optional retrieval cue matched against semantic memory facts. Omit to return the schema overview.',
     },
     limit: {
       type: 'integer',
@@ -69,6 +71,7 @@ export interface AgentRecallToolRuntime {
 export interface AgentRecallRuntimeResult {
   entries: AgentRecallRuntimeEntry[];
   totalEntries: number;
+  overview?: AgentMemoryOverview;
 }
 
 export interface AgentRecallRuntimeEntry {
@@ -107,6 +110,7 @@ export interface AgentRecallToolData {
   totalEntries: number;
   truncated: boolean;
   evidenceTruncated: boolean;
+  overview?: AgentMemoryOverview;
 }
 
 export interface AgentRecallToolEntry {
@@ -143,8 +147,9 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
         return recallToolResult({
           entries,
           totalEntries: result.totalEntries,
-          truncated: result.totalEntries > entries.length,
+          truncated: entries.length > 0 && result.totalEntries > entries.length,
           evidenceTruncated: entries.some((entry) => entry.evidenceTruncated),
+          overview: result.overview,
         }, elapsed(started), runtime.reader);
       } catch (error) {
         return recallToolError('FAILED', error instanceof Error ? error.message : String(error), started);
@@ -196,8 +201,28 @@ function visibleRecallToolData(data: AgentRecallToolData, reader: AgentPrincipal
       ...(entry.evidenceTruncated ? { evidence_truncated: true } : {}),
     })),
     total_entries: data.totalEntries,
+    ...(data.overview ? { overview: visibleOverview(data.overview) } : {}),
     ...(data.truncated ? { truncated: true } : {}),
     ...(data.evidenceTruncated ? { evidence_truncated: true } : {}),
+  };
+}
+
+function visibleOverview(overview: AgentMemoryOverview): unknown {
+  return {
+    total_entries: overview.totalEntries,
+    generated_at: overview.generatedAt,
+    schema: overview.schema.map(visibleSchemaNode),
+  };
+}
+
+function visibleSchemaNode(node: AgentMemorySchemaNode): unknown {
+  return {
+    schema_id: node.id,
+    label: node.label,
+    entry_count: node.entryCount,
+    memory_ids: node.memoryIds,
+    storage_strength: node.storageStrength,
+    retrieval_strength: node.retrievalStrength,
   };
 }
 
@@ -250,6 +275,9 @@ function recallSubject(principal: AgentPrincipal, reader: AgentPrincipal): strin
 }
 
 function recallInstructions(data: AgentRecallToolData): string | undefined {
+  if (data.overview && data.entries.length === 0) {
+    return 'No query was provided, so this is the schema overview of active semantic memory. Use the labels as metamemory cues; call recall again with a specific query to retrieve facts.';
+  }
   if (data.entries.length === 0) {
     return "No active semantic memory entries matched this cue. Do not infer that no prior conversation exists; recall covers only the semantic store's active entries (distilled facts), not invalidated entries or the raw record.";
   }

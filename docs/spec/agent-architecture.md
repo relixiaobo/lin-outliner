@@ -140,11 +140,12 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
 - **Processes:** consolidation (Dream — offline replay distilling into the
   semantic store; evidence-preserving under compaction; ONE phrasing rule:
   third-person-singular subject-elided facts in every pool) · retrieval (three
-  modes: chronic activation = the resident briefing · deliberate cued
-  retrieval = `recall` + provenance zoom down the ladder schema → fact →
-  episode gist → raw span · automatic association = deferred on a data gate) ·
-  forgetting (two-strength target: storage strength never decays, retrieval
-  strength governs injection — never deletion; PR-3).
+  modes: chronic activation = the resident briefing's full-read-set schema
+  overview + strength-selected fact budget · deliberate cued retrieval = `recall` + provenance
+  zoom down the ladder schema → fact → episode gist → raw span · automatic
+  association = deferred on a data gate) · forgetting (two-strength projection:
+  storage strength never decays, retrieval strength governs injection — never
+  deletion).
 - **Social layer:** transactive memory — co-members subscribe to each other's
   *semantic* stores by conversation membership; raw evidence never crosses
   principals (user pool shipped #173; agent pools = M3-B, gated on realignment
@@ -153,9 +154,9 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
 Definitions + binding authoring rules: `agent-memory-foundations.md` (meta).
 Work on this frame: `agent-memory-academic-alignment` (#181, language
 surfaces; subsumed D2) → the **`agent-memory-realignment`** program (PR-1
-person rule + read surfaces, shipped; PR-2 episodic layer, built in this change;
-PR-3 forgetting; PR-5 schema overview; PR-4 retrieval engine; association
-deferred).
+person rule + read surfaces, shipped; PR-2 episodic layer, shipped; PR-3
+forgetting + PR-5 schema overview, built here; PR-4 retrieval engine;
+association deferred).
 
 ## Multi-agent = rules + views + one new primitive
 

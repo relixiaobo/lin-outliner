@@ -172,6 +172,7 @@ import {
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
+import { mergeMemoryOverviews, orderMemoryEntriesForBriefing } from '../core/agentMemoryActivation';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
@@ -4089,15 +4090,36 @@ export class AgentRuntime {
       recall: async (options) => {
         const conversation = getConversation();
         const limit = clampRecallLimit(options.limit);
+        const query = options.query?.trim();
+        if (!query) {
+          const now = Date.now();
+          const [ownActivation, userActivation] = await Promise.all([
+            this.getEventStore().activateMemoryEntries(reader, { limit: 200, now }),
+            this.conversationIncludesUser(conversation)
+              ? this.getEventStore().activateMemoryEntries(this.userPrincipal(), { limit: 200, now })
+              : Promise.resolve(null),
+          ]);
+          return {
+            entries: [],
+            totalEntries: ownActivation.totalEntries + (userActivation?.totalEntries ?? 0),
+            overview: mergeMemoryOverviews(
+              [ownActivation.overview, userActivation?.overview],
+              {
+                generatedAt: now,
+                totalEntries: ownActivation.totalEntries + (userActivation?.totalEntries ?? 0),
+              },
+            ),
+          };
+        }
         // Cross-principal read by membership ([[agent-data-model]] §4): the reader searches its
         // own pool and — only when the user is a member of its conversation — the shared user
         // pool. Each pool is one undivided self-model; `originWorkspace` is provenance on the
         // entries, never a retrieval fence.
         const ownResult = await this.getEventStore().queryMemoryEntries(reader, {
-          query: options.query, limit,
+          query, limit,
         });
         const userResult = this.conversationIncludesUser(conversation)
-          ? await this.getEventStore().queryMemoryEntries(this.userPrincipal(), { query: options.query, limit })
+          ? await this.getEventStore().queryMemoryEntries(this.userPrincipal(), { query, limit })
           : { entries: [], totalEntries: 0 };
         // Fair interleave so a large own pool never fully starves more-relevant user-pool hits.
         const mergedEntries = interleaveMemoryEntries(ownResult.entries, userResult.entries, limit);
@@ -4113,6 +4135,7 @@ export class AgentRuntime {
         const totalEntries = ownResult.totalEntries + userResult.totalEntries;
 
         if (!options.includeEvidence) {
+          await this.recordMemoryAccessForEntries(gatedEntries, 'recall');
           return {
             entries: gatedEntries.map((entry) => ({ entry })),
             totalEntries,
@@ -4187,6 +4210,7 @@ export class AgentRuntime {
           });
         }
 
+        await this.recordMemoryAccessForEntries(gatedEntries, 'recall');
         return {
           entries,
           totalEntries,
@@ -4663,26 +4687,37 @@ export class AgentRuntime {
   ): Promise<string | null> {
     try {
       const reader: AgentPrincipal = { type: 'agent', agentId };
-      // Resident selection: the briefing is the distilled-memory prefix ([[agent-memory-model]]
-      // §2), so it lists recent active entries rather than query-specific hits — those arrive
-      // on demand through the `recall` tool ([5] tail). Keeping selection query-independent
-      // keeps the briefing stable turn-over-turn (cache-friendly); a mid-conversation Dream write
-      // surfaces through recall until the next turn folds it into the briefing.
+      // Chronic activation: the briefing is the distilled-memory prefix, so it lists
+      // strength-selected active entries plus a schema overview rather than query-specific hits.
+      // Query-specific retrieval remains the `recall` tool's job ([5] tail).
       //
       // Membership read ([[agent-data-model]] §4): the reader sees its own pool (`<self>`) plus
       // the co-member user pool (`<principal>`) when the user is a member of its conversation.
       // Each pool is one undivided self-model — like a person, a principal never partitions its
       // own memory by where it works. Agent↔agent co-member pools are deferred (fork 1).
-      const [selfEntries, userEntries] = await Promise.all([
-        this.getEventStore().listMemoryEntries(reader, { limit: MEMORY_BRIEFING_MAX_ENTRIES }),
+      const now = Date.now();
+      const [selfActivation, userActivation] = await Promise.all([
+        this.getEventStore().activateMemoryEntries(reader, { limit: 200, now }),
         this.conversationIncludesUser(conversation)
-          ? this.getEventStore().listMemoryEntries(this.userPrincipal(), { limit: MEMORY_BRIEFING_MAX_ENTRIES })
-          : Promise.resolve([]),
+          ? this.getEventStore().activateMemoryEntries(this.userPrincipal(), { limit: 200, now })
+          : Promise.resolve(null),
       ]);
       // Interleave so the shared user pool gets a fair share of the resident budget — a self-first
       // concatenation would let an agent with a full self-model starve the user zone entirely.
-      const selected = interleaveMemoryEntries(selfEntries, userEntries, MEMORY_BRIEFING_MAX_ENTRIES);
-      return renderAgentMemoryBriefing(selected, { reader });
+      const selected = interleaveMemoryEntries(
+        orderMemoryEntriesForBriefing(selfActivation.entries, { now }).map((item) => item.entry),
+        orderMemoryEntriesForBriefing(userActivation?.entries ?? [], { now }).map((item) => item.entry),
+        MEMORY_BRIEFING_MAX_ENTRIES,
+      );
+      await this.recordMemoryAccessForEntries(selected, 'briefing', now);
+      const overview = mergeMemoryOverviews(
+        [selfActivation.overview, userActivation?.overview],
+        {
+          generatedAt: now,
+          totalEntries: selfActivation.totalEntries + (userActivation?.totalEntries ?? 0),
+        },
+      );
+      return renderAgentMemoryBriefing(selected, { reader, overview });
     } catch (error) {
       this.reportWarn(
         'persistence',
@@ -4699,6 +4734,28 @@ export class AgentRuntime {
     for (const conversation of this.conversations.values()) {
       conversation.delegationRuntime.clearMemoryReminderCache();
     }
+  }
+
+  private async recordMemoryAccessForEntries(
+    entries: readonly AgentMemoryEntry[],
+    via: 'briefing' | 'recall',
+    createdAt?: number,
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    const groups = new Map<string, { principal: AgentPrincipal; entryIds: string[] }>();
+    for (const entry of entries) {
+      const key = principalKey(entry.principal);
+      const group = groups.get(key) ?? { principal: entry.principal, entryIds: [] };
+      group.entryIds.push(entry.id);
+      groups.set(key, group);
+    }
+    await Promise.all([...groups.values()].map((group) => (
+      this.getEventStore().recordMemoryAccess(group.principal, {
+        via,
+        entryIds: group.entryIds,
+        ...(createdAt === undefined ? {} : { createdAt }),
+      })
+    )));
   }
 
   /** Provenance tag for new memory entries — where this runtime works; never a retrieval fence. */
@@ -7879,9 +7936,10 @@ function clampRecallLimit(limit: number | undefined): number {
  * Round-robin merge of the reader's own pool and a shared (user) pool into a single budget,
  * own-first within each round. A plain `own.concat(shared).slice(limit)` would let a reader with
  * a full self-model starve the shared zone to nothing (review #2/#3); interleaving guarantees the
- * shared pool a fair share of whatever budget remains. Each input is already newest-active-first;
- * the merge preserves that within each source. De-duplicates by entry id (an entry can only belong
- * to one pool today, but the guard keeps the merge total honest if that ever changes).
+ * shared pool a fair share of whatever budget remains. Each input is already ordered for its
+ * surface (activation-ranked for recall, resident activation + exploration for briefing); the merge
+ * preserves that within each source. De-duplicates by entry id (an entry can only belong to one pool
+ * today, but the guard keeps the merge total honest if that ever changes).
  */
 function interleaveMemoryEntries(
   own: readonly AgentMemoryEntry[],
