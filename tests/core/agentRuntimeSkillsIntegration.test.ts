@@ -576,7 +576,7 @@ describe('agent runtime skill integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
-  test('runs context-fork skills through a sidechain subagent and returns only the result to the parent', async () => {
+  test('runs context-fork skills through a sidechain child run and returns only the result to the parent', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-data-'));
     roots.push(localRoot, dataRoot);

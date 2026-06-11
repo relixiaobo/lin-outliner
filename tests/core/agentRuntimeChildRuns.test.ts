@@ -43,7 +43,7 @@ const EMPTY_USAGE: Usage = {
   },
 };
 
-const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-subagent-test-user-data');
+const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-child-run-test-user-data');
 
 mock.module('electron', () => ({
   app: {
@@ -245,7 +245,7 @@ function textFromContext(context: Context): string {
   });
 }
 
-describe('agent runtime subagents', () => {
+describe('agent runtime childRuns', () => {
   let roots: string[] = [];
 
   beforeEach(() => {
@@ -256,9 +256,9 @@ describe('agent runtime subagents', () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test('runs a fresh subagent from an AGENT.md definition and returns only the compact result to the parent', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-data-'));
+  test('runs a fresh child run from an AGENT.md definition and returns only the compact result to the parent', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-data-'));
     roots.push(localRoot, dataRoot);
 
     const researcherDir = await createAgent(localRoot, 'researcher', [
@@ -287,7 +287,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'research isolated',
             prompt: 'Find the answer.',
-            subagent_type: 'researcher',
+            agent_type: 'researcher',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -324,14 +324,14 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent for this.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run for this.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.some((text) => text.includes('RESEARCHER_AGENT_BODY'))).toBe(true);
     expect(contexts.some((text) => text.includes('Research result from child.'))).toBe(true);
     expect(contexts.some((text) => text.includes('"toolName":"Agent"'))).toBe(true);
     const childContext = contexts.find((text) => text.includes('RESEARCHER_AGENT_BODY')) ?? '';
-    // The subagent reads its own pool, rendered as a <self> briefing with the id hidden.
+    // The child run reads its own pool, rendered as a <self> briefing with the id hidden.
     expect(childContext).toContain('<self>');
     expect(childContext).not.toContain('memory-researcher-own');
     expect(childContext).toContain('- prefers teal source notes');
@@ -340,9 +340,9 @@ describe('agent runtime subagents', () => {
     expect(childContext).not.toContain('prefers amber planning notes');
   });
 
-  test('scheduled Dream writes fresh subagent transcript memory to the called agent owner', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-data-'));
+  test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-data-'));
     roots.push(localRoot, dataRoot);
 
     const researcherDir = await createAgent(localRoot, 'researcher', [
@@ -360,7 +360,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'research memory',
             prompt: 'Record whether the researcher should use teal source notes.',
-            subagent_type: 'researcher',
+            agent_type: 'researcher',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText(childEvidence)),
@@ -472,10 +472,10 @@ describe('agent runtime subagents', () => {
     ]);
   });
 
-  test('scheduled Dream batches same-owner subagent runs by origin workspace', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-workspace-root-'));
-    const otherRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-other-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-dream-workspace-data-'));
+  test('scheduled Dream batches same-owner child run runs by origin workspace', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-workspace-root-'));
+    const otherRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-other-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-workspace-data-'));
     roots.push(localRoot, otherRoot, dataRoot);
 
     const ownerAgentId = 'built-in:tenon:researcher';
@@ -647,7 +647,7 @@ describe('agent runtime subagents', () => {
     ))).toBe(false);
   });
 
-  test('omitting subagent_type creates a fork with parent context and placeholder tool results', async () => {
+  test('omitting agent_type creates a fork with parent context and placeholder tool results', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-data-'));
     roots.push(localRoot, dataRoot);
@@ -694,13 +694,13 @@ describe('agent runtime subagents', () => {
 
     const forkContext = contexts.join('\n');
     expect(forkContext).toContain('Parent context marker.');
-    expect(forkContext).toContain('lin-fork-subagent');
+    expect(forkContext).toContain('lin-fork-child');
     expect(forkContext).toContain('Fork started - processing in background.');
   });
 
-  test('slims large subagent tool outputs before the child continues', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-slim-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-slim-data-'));
+  test('slims large child run tool outputs before the child continues', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-slim-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-slim-data-'));
     roots.push(localRoot, dataRoot);
 
     const childContexts: string[] = [];
@@ -710,7 +710,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'large output',
             prompt: 'Run a large-output tool call, then continue.',
-            subagent_type: 'general',
+            agent_type: 'general',
           }, { id: 'tool-agent-large-output' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -752,16 +752,16 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent for large output.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run for large output.', sink);
 
     const slimmedContext = childContexts.find((context) => context.includes('<persisted-output>')) ?? '';
     expect(script.pendingCount()).toBe(0);
     expect(slimmedContext).toContain('Output too large');
   });
 
-  test('auto-compacts subagent sidechain before the child continues', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-compact-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-compact-data-'));
+  test('auto-compacts child run sidechain before the child continues', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-compact-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-compact-data-'));
     roots.push(localRoot, dataRoot);
 
     const childContexts: string[] = [];
@@ -772,7 +772,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'compact sidechain',
             prompt: 'Run large tool output, then continue after compaction.',
-            subagent_type: 'general',
+            agent_type: 'general',
           }, { id: 'tool-agent-compact-output' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(
@@ -790,7 +790,7 @@ describe('agent runtime subagents', () => {
       ],
       () => undefined,
     );
-    const compactModel = compactTestModel('subagent-compact-test-model', 'Subagent Compact Test Model');
+    const compactModel = compactTestModel('child run-compact-test-model', 'Child run Compact Test Model');
 
     const { AgentRuntime } = await loadRuntimeModule();
     const sink = createWindowSink();
@@ -802,7 +802,7 @@ describe('agent runtime subagents', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'subagent-compact-test-model',
+          modelId: 'child run-compact-test-model',
           reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
@@ -820,7 +820,7 @@ describe('agent runtime subagents', () => {
         completeSimpleFn: async (model, context) => {
           compactContexts.push(JSON.stringify(context.messages));
           return normalizeAssistantMessage(
-            fauxAssistantMessage('<analysis>subagent compact</analysis><summary>Subagent compact summary.</summary>'),
+            fauxAssistantMessage('<analysis>child run compact</analysis><summary>Child run compact summary.</summary>'),
             model as Model<Api>,
           );
         },
@@ -828,19 +828,19 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent that will compact.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run that will compact.', sink);
 
     const compactedChildContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
     expect(compactContexts.join('\n')).toContain('<conversation>');
     expect(compactedChildContext).toContain('Conversation compacted.');
-    expect(compactedChildContext).toContain('Subagent compact summary.');
+    expect(compactedChildContext).toContain('Child run compact summary.');
     expect(compactedChildContext).not.toContain('Print compact output block 0');
   });
 
-  test('reactively compacts and retries a subagent after a context-length error', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-reactive-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-subagent-reactive-data-'));
+  test('reactively compacts and retries a child run after a context-length error', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-reactive-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-reactive-data-'));
     roots.push(localRoot, dataRoot);
 
     const childContexts: string[] = [];
@@ -850,7 +850,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'reactive compact',
             prompt: 'Run until a context error, then recover.',
-            subagent_type: 'general',
+            agent_type: 'general',
           }, { id: 'tool-agent-reactive-compact' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([], {
@@ -891,25 +891,25 @@ describe('agent runtime subagents', () => {
         }),
         streamFn: script.streamFn,
         completeSimpleFn: async (model) => normalizeAssistantMessage(
-          fauxAssistantMessage('<analysis>reactive subagent compact</analysis><summary>Reactive subagent compact summary.</summary>'),
+          fauxAssistantMessage('<analysis>reactive child run compact</analysis><summary>Reactive child run compact summary.</summary>'),
           model as Model<Api>,
         ),
       },
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a subagent that will hit a context error.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run that will hit a context error.', sink);
 
     const retriedContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
     expect(retriedContext).toContain('Conversation compacted.');
-    expect(retriedContext).toContain('Reactive subagent compact summary.');
+    expect(retriedContext).toContain('Reactive child run compact summary.');
   });
 
   // Evidence-preserving compaction (the memory invariant, [[agent-data-model]]): for every
   // run, across any sequence of auto/manual compactions, (already-Dreamed content) ∪
   // (still-pending content) covers 100% of the run's semantic content — no content is ever
-  // both un-Dreamed AND unreachable. This drives a REAL auto-compaction in a fork subagent
+  // both un-Dreamed AND unreachable. This drives a REAL auto-compaction in a fork child run
   // (whose compacted summary becomes the only durable evidence of its work) plus a REAL
   // manual /compact on the parent conversation, then asserts one Dream pass still covers
   // both sides — and that the distilled fact's source resolves back to the summary evidence.
@@ -923,7 +923,7 @@ describe('agent runtime subagents', () => {
     let parentCalls = 0;
     const pickResponse = (context: Context): AssistantMessage => {
       const text = textFromContext(context);
-      if (text.includes('lin-fork-subagent') || text.includes('Conversation compacted.')) {
+      if (text.includes('lin-fork-child') || text.includes('Conversation compacted.')) {
         childContexts.push(text);
         if (!text.includes('Conversation compacted.')) {
           return fauxAssistantMessage(
@@ -1151,7 +1151,7 @@ describe('agent runtime subagents', () => {
         memoryOwnerAgentId: ownerAgentId,
         description: 'stale boundary fork',
         prompt: 'Verify the deployment pipeline.',
-        agentType: 'lin-fork-subagent',
+        agentType: 'lin-fork-child',
         contextMode: 'fork',
       },
       {
@@ -1273,7 +1273,7 @@ describe('agent runtime subagents', () => {
     expect(tampered.mode === 'error' ? tampered.code : null).toBe('NOT_ON_ACTIVE_BRANCH');
   });
 
-  test('tracks a background subagent through AgentStatus', async () => {
+  test('tracks a background child run through AgentStatus', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-data-'));
     roots.push(localRoot, dataRoot);
@@ -1285,7 +1285,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'background check',
             prompt: 'Run in background.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'bg-check',
           }, { id: 'tool-agent-1' }),
@@ -1326,14 +1326,14 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start and inspect a background subagent.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start and inspect a background child run.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.join('\n')).toContain('Background result.');
     expect(contexts.join('\n')).toContain('\\"status\\": \\"completed\\"');
   });
 
-  test('automatically returns completed background subagents to the parent context', async () => {
+  test('automatically returns completed background childRuns to the parent context', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-notify-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-notify-data-'));
     roots.push(localRoot, dataRoot);
@@ -1345,7 +1345,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'background notify',
             prompt: 'Run in background.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'bg-notify',
           }, { id: 'tool-agent-1' }),
@@ -1380,7 +1380,7 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a self-reporting background subagent.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a self-reporting background child run.', sink);
 
     expect(script.pendingCount()).toBe(0);
     const notificationText = notificationContexts.join('\n');
@@ -1389,7 +1389,7 @@ describe('agent runtime subagents', () => {
     expect(notificationText).toContain('Background notification result.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
 
-    // Durable per-conversation delivery: the detached-subagent terminal raises a
+    // Durable per-conversation delivery: the detached-child run terminal raises a
     // folded attention signal anchored to its origin conversation.
     const attentionEvents = sink.events.filter(
       (event): event is Extract<AgentRuntimeEvent, { type: 'conversation_attention' }> =>
@@ -1417,7 +1417,7 @@ describe('agent runtime subagents', () => {
     expect(afterOpen[afterOpen.length - 1]?.unreadCount).toBe(0);
   });
 
-  test('exposes runtime commands for subagent follow-up and status refresh', async () => {
+  test('exposes runtime commands for child run follow-up and status refresh', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-data-'));
     roots.push(localRoot, dataRoot);
@@ -1429,7 +1429,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'background command',
             prompt: 'Run in background.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'command-bg',
           }, { id: 'tool-agent-1' }),
@@ -1465,19 +1465,19 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a commandable background subagent.', sink);
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a commandable background child run.', sink);
     const restored = await runtime.restoreConversation(conversation.conversationId);
-    const subagentId = restored.renderProjection.subagentRunIds[0]!;
+    const childRunId = restored.renderProjection.childRunIds[0]!;
 
-    const queued = await runtime.subagentSend(conversation.conversationId, subagentId, 'Continue with risks.');
+    const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Continue with risks.');
     expect(queued).toMatchObject({
-      agent_id: subagentId,
+      agent_id: childRunId,
       status: 'queued',
     });
 
-    const status = await runtime.subagentStatus(conversation.conversationId, subagentId, { wait: true });
+    const status = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: subagentId,
+      agent_id: childRunId,
       result: 'Follow-up background result.',
       status: 'completed',
     });
@@ -1485,7 +1485,7 @@ describe('agent runtime subagents', () => {
     expect(contexts.join('\n')).toContain('Continue with risks.');
   });
 
-  test('resumes stopped subagents through follow-up continuation', async () => {
+  test('resumes stopped childRuns through follow-up continuation', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-stopped-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-stopped-data-'));
     roots.push(localRoot, dataRoot);
@@ -1501,7 +1501,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'stoppable background',
             prompt: 'Run until stopped.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'stoppable-bg',
           }, { id: 'tool-agent-1' }),
@@ -1541,12 +1541,12 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await runtime.createConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background subagent.', sink);
-    const subagentId = latestProjection(sink.events)?.subagentRunIds[0]!;
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background child run.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
 
-    const stopped = await runtime.subagentStop(conversation.conversationId, subagentId);
+    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
     expect(stopped).toMatchObject({
-      agent_id: subagentId,
+      agent_id: childRunId,
       status: 'stopped',
     });
     await waitFor(() => script.pendingCount() === 2);
@@ -1557,15 +1557,15 @@ describe('agent runtime subagents', () => {
     expect(afterStop.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
     expect(Object.values(afterStop.notifications)).toHaveLength(0);
 
-    const queued = await runtime.subagentSend(conversation.conversationId, subagentId, 'Resume after stop.');
+    const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Resume after stop.');
     expect(queued).toMatchObject({
-      agent_id: subagentId,
+      agent_id: childRunId,
       status: 'queued',
     });
 
-    const status = await runtime.subagentStatus(conversation.conversationId, subagentId, { wait: true });
+    const status = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: subagentId,
+      agent_id: childRunId,
       result: 'Resumed stopped result.',
       status: 'completed',
     });
@@ -1580,7 +1580,7 @@ describe('agent runtime subagents', () => {
     while (!resumeNotification && Date.now() < deadline) {
       const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
       resumeNotification = Object.values(replay.notifications).find(
-        (record) => record.source?.type === 'run' && record.source.runId === subagentId,
+        (record) => record.source?.type === 'run' && record.source.runId === childRunId,
       );
       if (!resumeNotification) await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -1590,7 +1590,7 @@ describe('agent runtime subagents', () => {
     releaseOriginalChild();
   });
 
-  test('persists subagent sidechain metadata and restores status by name', async () => {
+  test('persists child run sidechain metadata and restores status by name', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-data-'));
     roots.push(localRoot, dataRoot);
@@ -1601,7 +1601,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'background restore',
             prompt: 'Run in background.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'restored-bg',
           }, { id: 'tool-agent-1' }),
@@ -1639,7 +1639,7 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await firstRuntime.createConversation();
-    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background subagent.', firstSink);
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background child run.', firstSink);
     firstRuntime.closeConversation(conversation.conversationId);
     // The transcript is the child run's own ledger — no snapshot payloads exist.
     const childRunId = Object.keys(
@@ -1684,23 +1684,23 @@ describe('agent runtime subagents', () => {
     );
 
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
-    expect(restored.renderProjection.subagentRunIds).toHaveLength(1);
-    const subagent = restored.renderProjection.entities.subagents[restored.renderProjection.subagentRunIds[0]!];
-    expect(subagent).toMatchObject({
+    expect(restored.renderProjection.childRunIds).toHaveLength(1);
+    const childRun = restored.renderProjection.entities.childRuns[restored.renderProjection.childRunIds[0]!];
+    expect(childRun).toMatchObject({
       name: 'restored-bg',
       status: 'completed',
       result: 'Restored background result.',
     });
 
 
-    await secondRuntime.sendMessage(conversation.conversationId, 'Check the restored background subagent status.');
+    await secondRuntime.sendMessage(conversation.conversationId, 'Check the restored background child run status.');
 
     expect(secondScript.pendingCount()).toBe(0);
     expect(restoredContexts.join('\n')).toContain('Restored background result.');
     expect(restoredContexts.join('\n')).toContain('\\"status\\": \\"completed\\"');
   });
 
-  test('a background subagent interrupted by restart raises a durable failed notification', async () => {
+  test('a background child run interrupted by restart raises a durable failed notification', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-interrupt-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-interrupt-data-'));
     roots.push(localRoot, dataRoot);
@@ -1718,7 +1718,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'interruptible background',
             prompt: 'Run until the app dies.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'interrupted-bg',
           }, { id: 'tool-agent-1' }),
@@ -1752,12 +1752,12 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await firstRuntime.createConversation();
-    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start an interruptible background subagent.', firstSink);
-    const subagentId = latestProjection(firstSink.events)?.subagentRunIds[0]!;
-    expect(subagentId).toBeTruthy();
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start an interruptible background child run.', firstSink);
+    const childRunId = latestProjection(firstSink.events)?.childRunIds[0]!;
+    expect(childRunId).toBeTruthy();
     // The run is still alive (blocked) — persisted as running, no terminal yet.
     const beforeRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    expect(beforeRestart.childRuns[subagentId]?.status).toBe('running');
+    expect(beforeRestart.childRuns[childRunId]?.status).toBe('running');
     expect(beforeRestart.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
 
     // Second runtime over the same data = a restart. Restoring marks the orphaned
@@ -1782,13 +1782,13 @@ describe('agent runtime subagents', () => {
     );
 
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
-    const restoredSubagent = restored.renderProjection.entities.subagents[subagentId];
-    expect(restoredSubagent?.status).toBe('failed');
+    const restoredChildRun = restored.renderProjection.entities.childRuns[childRunId];
+    expect(restoredChildRun?.status).toBe('failed');
 
     const afterRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
     expect(afterRestart.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
     const interruptedNotification = Object.values(afterRestart.notifications).find(
-      (record) => record.source?.type === 'run' && record.source.runId === subagentId,
+      (record) => record.source?.type === 'run' && record.source.runId === childRunId,
     );
     expect(interruptedNotification?.kind).toBe('task_failed');
 
@@ -1813,7 +1813,7 @@ describe('agent runtime subagents', () => {
           fauxToolCall('Agent', {
             description: 'background seed',
             prompt: 'Run in background.',
-            subagent_type: 'general',
+            agent_type: 'general',
             run_in_background: true,
             name: 'seed-bg',
           }, { id: 'tool-agent-1' }),
@@ -1845,8 +1845,8 @@ describe('agent runtime subagents', () => {
     );
 
     const conversation = await firstRuntime.createConversation();
-    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a background subagent that completes.', firstSink);
-    // The completed background subagent left durable unread (never opened/read).
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a background child run that completes.', firstSink);
+    // The completed background child run left durable unread (never opened/read).
     const persisted = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
     expect(persisted.attentionByConversationId[conversation.conversationId]?.unreadCount).toBeGreaterThanOrEqual(1);
 

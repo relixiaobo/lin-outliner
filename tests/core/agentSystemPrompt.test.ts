@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { LIN_AGENT_SYSTEM_PROMPT, LIN_AGENT_SYSTEM_PROMPT_SECTIONS, LIN_SUBAGENT_CORE_PROMPT } from '../../src/main/agentSystemPrompt';
+import { LIN_AGENT_SYSTEM_PROMPT, LIN_AGENT_SYSTEM_PROMPT_SECTIONS, LIN_CHILD_AGENT_CORE_PROMPT } from '../../src/main/agentSystemPrompt';
 
 describe('agent system prompt', () => {
   test('is organized as stable lightweight sections', () => {
@@ -47,9 +47,9 @@ describe('agent system prompt', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Today node id');
   });
 
-  test('every section is tagged for an audience; the shared subset seeds subagents', () => {
+  test('every section is tagged for an audience; the shared subset seeds childRuns', () => {
     // identity + memory are the main chat agent's alone; the rest are shared with
-    // fresh subagents (see [[subagent-prompt-unification]]).
+    // fresh childRuns (see [[child run-prompt-unification]]).
     const byAudience = Object.fromEntries(
       LIN_AGENT_SYSTEM_PROMPT_SECTIONS.map((section) => [section.id, section.audience]),
     );
@@ -64,19 +64,19 @@ describe('agent system prompt', () => {
     });
   });
 
-  test('the subagent core reuses the shared capabilities but not the main-only framing', () => {
+  test('the child run core reuses the shared capabilities but not the main-only framing', () => {
     // Same tool-convention + safety guidance the main agent carries…
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('# Outliner');
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('# Web');
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('# Local files and shell');
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('# Communication and safety');
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('node_edit');
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('file_read');
-    expect(LIN_SUBAGENT_CORE_PROMPT).toContain('<system-reminder>');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Outliner');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Web');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Local files and shell');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Communication and safety');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('node_edit');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('file_read');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('<system-reminder>');
     // …minus the user-facing identity + memory sections.
-    expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('You are Tenon Agent');
-    expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('# Memory');
-    expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('Use recall for durable facts');
-    expect(LIN_SUBAGENT_CORE_PROMPT).not.toContain('<memory>');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('You are Tenon Agent');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('# Memory');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('Use recall for durable facts');
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('<memory>');
   });
 });

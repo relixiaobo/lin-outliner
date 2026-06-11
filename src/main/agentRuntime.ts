@@ -162,17 +162,17 @@ import {
 } from './agentSkills';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
-  AGENT_SUBAGENT_TOOL_NAME,
-  AgentSubagentRuntime,
-  type AgentSubagentCreateInput,
-  type AgentSubagentRestoredRun,
+  AGENT_DELEGATE_TOOL_NAME,
+  AgentDelegationRuntime,
+  type AgentChildAgentCreateInput,
+  type AgentRestoredChildRun,
   type AgentChildRunSnapshot,
-} from './agentSubagents';
+} from './agentDelegation';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
-  resolveSubagentMemoryOwner,
-} from './agentSubagentIdentity';
+  resolveChildRunMemoryOwner,
+} from './agentDelegationIdentity';
 import {
   createAgentDefinitionFile,
   deleteAgentDefinitionFile,
@@ -312,8 +312,8 @@ const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
 // persisted. A failed fire does not advance the watermark, so it stays due.
 const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 // How long each `status({wait})` poll blocks while waiting for a background-flagged
-// command subagent to finish (it re-polls if the run is still going).
-const COMMAND_SUBAGENT_WAIT_MS = 600_000;
+// command child run to finish (it re-polls if the run is still going).
+const COMMAND_CHILD_RUN_WAIT_MS = 600_000;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -418,17 +418,17 @@ interface AgentConversationState {
   nextDebugQueryIndex: number;
   nextDebugTurnIndex: number;
   pendingDreamFinishedMarkers: AgentDreamRunResult[];
-  pendingSubagentNotifications: string[];
+  pendingChildRunNotifications: string[];
   pendingEventAppend: Promise<void>;
   pendingProjectionLastEventType: string | null;
   pendingProjectionTimer: ReturnType<typeof setTimeout> | null;
   queuedFollowUpSkillListingReservation: SkillListingReservation | null;
   reactiveCompactRequested: boolean;
   revision: number;
-  subagentNotificationFlushInProgress: boolean;
+  childRunNotificationFlushInProgress: boolean;
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
-  subagentRuntime: AgentSubagentRuntime;
+  delegationRuntime: AgentDelegationRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
   toolResultBudgetState: ToolResultBudgetState;
   /** Display names for member agents (agentId → name), for projections + preambles. */
@@ -1088,30 +1088,30 @@ export class AgentRuntime {
     return { messages: await this.deriveRuntimePiMessages(conversationId, state) };
   }
 
-  async subagentStatus(
+  async childRunStatus(
     conversationId: string,
     agentId: string,
     options: { wait?: boolean; timeoutMs?: number } = {},
   ) {
     const conversation = await this.ensureConversationWithId(conversationId);
-    return conversation.subagentRuntime.status({
+    return conversation.delegationRuntime.status({
       agent_id: agentId,
       wait: options.wait === true,
       timeout_ms: options.timeoutMs,
     });
   }
 
-  async subagentSend(conversationId: string, agentId: string, message: string) {
+  async childRunSend(conversationId: string, agentId: string, message: string) {
     const conversation = await this.ensureConversationWithId(conversationId);
-    return conversation.subagentRuntime.send({
+    return conversation.delegationRuntime.send({
       agent_id: agentId,
       message,
     });
   }
 
-  async subagentStop(conversationId: string, agentId: string) {
+  async childRunStop(conversationId: string, agentId: string) {
     const conversation = await this.ensureConversationWithId(conversationId);
-    return conversation.subagentRuntime.stop({
+    return conversation.delegationRuntime.stop({
       agent_id: agentId,
     });
   }
@@ -1127,9 +1127,9 @@ export class AgentRuntime {
   private async listRawAgentDefinitions(conversationId: string): Promise<AgentDefinition[]> {
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
-      return conversation.subagentRuntime.listAllAgentDefinitions();
+      return conversation.delegationRuntime.listAllAgentDefinitions();
     }
-    const tempRuntime = new AgentSubagentRuntime({
+    const tempRuntime = new AgentDelegationRuntime({
       conversationId: 'temp-settings-list',
       executingAgentId: this.agentIdentity.agentId,
       memoryOwnerAgentId: this.agentIdentity.agentId,
@@ -1141,7 +1141,7 @@ export class AgentRuntime {
 
   // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
   // through main's containment-checked file surface, then every live conversation's
-  // registry cache is invalidated so the change is visible (subagent picker +
+  // registry cache is invalidated so the change is visible (child run picker +
   // settings list) without an app restart. The fresh view list is returned so
   // the renderer can re-select by agentId.
   async createAgentDefinition(
@@ -1184,7 +1184,7 @@ export class AgentRuntime {
   // Also exposed as an explicit "reload agents" action.
   async reloadAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     for (const conversation of this.conversations.values()) {
-      conversation.subagentRuntime.reloadAgentDefinitions();
+      conversation.delegationRuntime.reloadAgentDefinitions();
     }
     return this.listAllAgentDefinitions(conversationId);
   }
@@ -1385,7 +1385,7 @@ export class AgentRuntime {
         // round queue and is shown immediately from the projection; the round
         // loop persists it when it routes it, keeping the event path linear
         // past the in-flight reply. The gate covers ANY active Channel run —
-        // not just rounds: regenerate/retry and subagent-notification flushes
+        // not just rounds: regenerate/retry and agent-task-notification flushes
         // run turns with no channelRound, and starting a round under them
         // would re-point the leaf beneath the in-flight reply. Those paths
         // drain the queue when they settle.
@@ -1698,7 +1698,7 @@ export class AgentRuntime {
       conversation.autoCompactConsecutiveFailures = 0;
       conversation.activeRun = null;
       conversation.lastRun = null;
-      conversation.pendingSubagentNotifications.length = 0;
+      conversation.pendingChildRunNotifications.length = 0;
       conversation.queuedFollowUpSkillListingReservation = null;
       conversation.reactiveCompactRequested = false;
       conversation.localWorkspace.readFileState.clear();
@@ -1802,7 +1802,7 @@ export class AgentRuntime {
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
         const current = conversationRef.current;
         if (!current) throw new Error('Cannot run forked skill before the agent conversation is ready.');
-        const data = await current.subagentRuntime.invokeSkillSubagent({
+        const data = await current.delegationRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
           renderedContent,
@@ -1813,7 +1813,7 @@ export class AgentRuntime {
         }, undefined, parentToolCallId);
         return {
           agentId: data.agent_id,
-          subagentType: data.subagent_type,
+          agentType: data.agent_type,
           status: data.status,
           result: data.result,
           error: data.error,
@@ -1823,7 +1823,7 @@ export class AgentRuntime {
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
     const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, skillRuntime);
-    const subagentRuntime = new AgentSubagentRuntime({
+    const delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: this.agentIdentity.agentId,
       memoryOwnerAgentId: this.agentIdentity.agentId,
@@ -1832,7 +1832,7 @@ export class AgentRuntime {
       host: {
         createChildAgent: (input) => {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-          return this.createSubagentAgent(conversationId, conversationRef, providerConfig, input);
+          return this.createChildPiAgent(conversationId, conversationRef, providerConfig, input);
         },
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
@@ -1875,8 +1875,8 @@ export class AgentRuntime {
         ),
       },
     });
-    subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
-    subagentRuntime.restoreListedAgentsFromMessages(activePath);
+    delegationRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
+    delegationRuntime.restoreListedAgentsFromMessages(activePath);
     const agent = providerConfig
       ? createConfiguredAgent(conversationId, providerConfig, activePath, this.outlinerToolHost, {
           localFileRoot: this.options.localFileRoot,
@@ -1886,7 +1886,7 @@ export class AgentRuntime {
           runtimeSettingsLoader: () => this.getRuntimeSettings(),
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
-          subagentRuntime,
+          delegationRuntime,
           recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversationId, () => conversationRef.current),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
           selfMaintenance: this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current),
@@ -1939,17 +1939,17 @@ export class AgentRuntime {
       nextDebugQueryIndex: debugCounters.nextQueryIndex,
       nextDebugTurnIndex: debugCounters.nextTurnIndex,
       pendingDreamFinishedMarkers: [],
-      pendingSubagentNotifications: [],
+      pendingChildRunNotifications: [],
       pendingEventAppend: Promise.resolve(),
       pendingProjectionLastEventType: null,
       pendingProjectionTimer: null,
       queuedFollowUpSkillListingReservation: null,
       reactiveCompactRequested: false,
       revision: 0,
-      subagentNotificationFlushInProgress: false,
+      childRunNotificationFlushInProgress: false,
       runtimeSettings,
       skillRuntime,
-      subagentRuntime,
+      delegationRuntime,
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       memberDisplayNames: { [this.agentIdentity.agentId]: this.agentIdentity.displayName },
@@ -1959,8 +1959,8 @@ export class AgentRuntime {
     };
     conversationRef.current = conversation;
     await this.refreshMemberDisplayNames(conversation);
-    await this.markInterruptedSubagentsOnRestore(conversationId, conversation);
-    conversation.subagentRuntime.restorePersistedRuns(await this.loadPersistedSubagentRuns(conversationId, conversation.eventState));
+    await this.markInterruptedChildRunsOnRestore(conversationId, conversation);
+    conversation.delegationRuntime.restorePersistedRuns(await this.loadPersistedChildRuns(conversationId, conversation.eventState));
     agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, conversation, signal);
 
     conversation.unsubscribe = agent.subscribe(async (event) => {
@@ -2009,7 +2009,7 @@ export class AgentRuntime {
   }
 
   private async buildAgentListingReminder(conversation: AgentConversationState): Promise<string | null> {
-    return conversation.subagentRuntime.reserveAgentListingReminderText(
+    return conversation.delegationRuntime.reserveAgentListingReminderText(
       conversation.agent.state.model.contextWindow,
     );
   }
@@ -2036,7 +2036,7 @@ export class AgentRuntime {
     const agentMembers = channelAgentMembers(conversation.eventState.conversation?.members ?? []);
     if (agentMembers.some((member) => member.agentId !== this.agentIdentity.agentId)) {
       try {
-        const definitions = await conversation.subagentRuntime.listAllAgentDefinitions();
+        const definitions = await conversation.delegationRuntime.listAllAgentDefinitions();
         for (const definition of definitions) {
           names[agentDefinitionAgentId(definition)] = agentDefinitionDisplayName(definition);
         }
@@ -2052,30 +2052,30 @@ export class AgentRuntime {
     conversation.runtimeSettings = runtimeSettings;
     conversation.skillRuntime.updateAdditionalSkillDirectories(runtimeSettings.additionalSkillDirectories);
     conversation.skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    conversation.subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
+    conversation.delegationRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     this.applyRuntimeToolSettings(conversation);
     return runtimeSettings;
   }
 
   private applyRuntimeToolSettings(conversation: AgentConversationState): void {
-    conversation.subagentRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
+    conversation.delegationRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
-      subagentRuntime: conversation.subagentRuntime,
+      delegationRuntime: conversation.delegationRuntime,
       recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
     });
   }
 
-  private createSubagentAgent(
+  private createChildPiAgent(
     parentConversationId: string,
     parentConversationRef: { current: AgentConversationState | null },
     providerConfig: AgentProviderRuntimeConfig,
-    input: AgentSubagentCreateInput,
+    input: AgentChildAgentCreateInput,
   ): Agent {
     const inheritedModel = this.resolveProviderModel(providerConfig);
     const model = input.model
@@ -2093,7 +2093,7 @@ export class AgentRuntime {
       runtimeSettingsLoader: () => this.getRuntimeSettings(),
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
-      subagentRuntime: input.subagentRuntime,
+      delegationRuntime: input.delegationRuntime,
       recall: this.createRecallToolRuntime(
         input.memoryOwnerAgentId,
         () => input.conversationId,
@@ -2128,23 +2128,23 @@ export class AgentRuntime {
       try {
         await this.captureDebugPayload(input.conversationId, payload, modelForPayload);
       } catch {
-        // Subagent sidechain persistence is intentionally isolated from parent UI errors.
+        // Child run sidechain persistence is intentionally isolated from parent UI errors.
       }
       return undefined;
     }, async (response, modelForResponse) => {
       try {
         await this.captureDebugResponse(input.conversationId, response, modelForResponse);
       } catch {
-        // Subagent sidechain persistence is intentionally isolated from parent UI errors.
+        // Child run sidechain persistence is intentionally isolated from parent UI errors.
       }
     });
   }
 
-  private async loadPersistedSubagentRuns(
+  private async loadPersistedChildRuns(
     conversationId: string,
     eventState: AgentEventReplayState,
-  ): Promise<AgentSubagentRestoredRun[]> {
-    const runs: AgentSubagentRestoredRun[] = [];
+  ): Promise<AgentRestoredChildRun[]> {
+    const runs: AgentRestoredChildRun[] = [];
     for (const record of Object.values(eventState.childRuns ?? {})) {
       // The live transcript is the child run's OWN ledger, replayed alone
       // ([[agent-run-unification]] Design 1) — registering it with the ledger
@@ -2158,7 +2158,7 @@ export class AgentRuntime {
     return runs;
   }
 
-  private async markInterruptedSubagentsOnRestore(
+  private async markInterruptedChildRunsOnRestore(
     conversationId: string,
     conversation: AgentConversationState,
   ): Promise<void> {
@@ -2189,7 +2189,7 @@ export class AgentRuntime {
         body: interruptedError,
         source: { type: 'run', runId: run.id },
         actor: run.parentToolCallId
-          ? toolActor(AGENT_SUBAGENT_TOOL_NAME, run.parentToolCallId)
+          ? toolActor(AGENT_DELEGATE_TOOL_NAME, run.parentToolCallId)
           : systemActor(),
       });
     }
@@ -2197,7 +2197,7 @@ export class AgentRuntime {
 
   private childRunActor(snapshot: AgentChildRunSnapshot): AgentActor {
     return snapshot.parentToolCallId
-      ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
+      ? toolActor(AGENT_DELEGATE_TOOL_NAME, snapshot.parentToolCallId)
       : systemActor();
   }
 
@@ -2281,18 +2281,18 @@ export class AgentRuntime {
       // composed-turn layer; it is best-effort and not the durability guarantee).
       // The id keys on the completion instant so a *resumed* detached run that
       // finishes again gets a fresh notification (idempotent across replay, distinct
-      // across re-completions — see agentSubagents `send`).
+      // across re-completions — see agentDelegation `send`).
       await this.emitTaskNotification(conversationId, conversation, {
         notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
-        kind: subagentNotificationKind(snapshot.status),
-        title: subagentNotificationTitle(snapshot),
+        kind: childRunNotificationKind(snapshot.status),
+        title: childRunNotificationTitle(snapshot),
         body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
         source: { type: 'run', runId: snapshot.id },
         actor: this.childRunActor(snapshot),
       });
     }
-    conversation.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
-    void this.flushSubagentNotifications(conversationId, conversation).catch((error) => {
+    conversation.pendingChildRunNotifications.push(formatChildRunNotification(snapshot));
+    void this.flushChildRunNotifications(conversationId, conversation).catch((error) => {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     });
   }
@@ -2333,21 +2333,21 @@ export class AgentRuntime {
     this.deliverOsNotification({ title: input.title, body, conversationId });
   }
 
-  private async flushSubagentNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    if (conversation.subagentNotificationFlushInProgress) return;
-    if (conversation.pendingSubagentNotifications.length === 0) return;
-    // A notification-delivery run is the COORDINATOR's turn (its subagents);
+  private async flushChildRunNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    if (conversation.childRunNotificationFlushInProgress) return;
+    if (conversation.pendingChildRunNotifications.length === 0) return;
+    // A notification-delivery run is the COORDINATOR's turn (its childRuns);
     // never interleave it into an active Channel round between member turns.
     if (conversation.channelRound) return;
     if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) return;
 
-    conversation.subagentNotificationFlushInProgress = true;
+    conversation.childRunNotificationFlushInProgress = true;
     let startedRunId: string | null = null;
     try {
-      while (conversation.pendingSubagentNotifications.length > 0) {
+      while (conversation.pendingChildRunNotifications.length > 0) {
         if (conversation.channelRound) break;
         if (this.activeRunId(conversation) || conversation.agent.state.isStreaming) break;
-        const notifications = conversation.pendingSubagentNotifications.splice(0);
+        const notifications = conversation.pendingChildRunNotifications.splice(0);
         const prompt: UserMessage = {
           role: 'user',
           timestamp: Date.now(),
@@ -2359,13 +2359,13 @@ export class AgentRuntime {
         startedRunId = await this.startRun(conversationId, conversation, prompt);
         await conversation.agent.prompt(prompt);
         await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-        await this.persistAndEmitIdle(conversationId, conversation, { flushSubagentNotifications: false });
+        await this.persistAndEmitIdle(conversationId, conversation, { flushChildRunNotifications: false });
       }
     } catch (error) {
       await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     } finally {
-      conversation.subagentNotificationFlushInProgress = false;
+      conversation.childRunNotificationFlushInProgress = false;
     }
     // Messages queued while a notification-delivery run was live route now.
     await this.drainChannelQueueIfIdle(conversationId, conversation);
@@ -2427,7 +2427,7 @@ export class AgentRuntime {
           try {
             await this.captureDebugPayload(conversationId, payload, payloadModel);
           } catch {
-            // Subagent compact debug capture must not break the child run.
+            // Child run compact debug capture must not break the child run.
           }
           return undefined;
         },
@@ -2435,7 +2435,7 @@ export class AgentRuntime {
           try {
             await this.captureDebugResponse(conversationId, responsePayload, responseModel);
           } catch {
-            // Subagent compact debug capture must not break the child run.
+            // Child run compact debug capture must not break the child run.
           }
         },
       }), { signal });
@@ -2564,13 +2564,13 @@ export class AgentRuntime {
   private async persistAndEmitIdle(
     conversationId: string,
     conversation: AgentConversationState,
-    options: { flushSubagentNotifications?: boolean } = {},
+    options: { flushChildRunNotifications?: boolean } = {},
   ) {
     await this.flushPendingDreamFinishedEvents(conversationId, conversation);
     conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
     this.emitProjection(conversationId, 'agent_idle');
-    if (options.flushSubagentNotifications !== false) {
-      await this.flushSubagentNotifications(conversationId, conversation);
+    if (options.flushChildRunNotifications !== false) {
+      await this.flushChildRunNotifications(conversationId, conversation);
     }
   }
 
@@ -2785,14 +2785,14 @@ export class AgentRuntime {
     return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
   }
 
-  // A scheduled fire: no human turn, runs as a subagent on the delivery conversation.
+  // A scheduled fire: no human turn, runs as a child run on the delivery conversation.
   private async startTriggeredRun(command: DueCommand): Promise<void> {
     const brief = command.brief.trim();
     // Defensive: `selectDueCommands` already drops empty-brief commands, so this
     // throw is unreachable in normal operation — but it guarantees an empty
     // command can never reach the watermark advance in `fireCommand`.
     if (!brief) throw new Error('This command has no brief to run.');
-    await this.runCommandSubagent(
+    await this.runCommandChildAgent(
       this.commandConversationId(command.nodeId),
       brief,
       command.commandAgent,
@@ -2856,7 +2856,7 @@ export class AgentRuntime {
     this.firingCommandNodeIds.add(nodeId);
     this.knownCommandConversationNodeIds.add(nodeId);
     try {
-      await this.runCommandSubagent(conversationId, brief, node.commandAgent, node.sysLastRunAt ?? null);
+      await this.runCommandChildAgent(conversationId, brief, node.commandAgent, node.sysLastRunAt ?? null);
       return { conversationId: conversationId };
     } finally {
       this.firingCommandNodeIds.delete(nodeId);
@@ -2865,14 +2865,14 @@ export class AgentRuntime {
 
   // Shared no-human-turn execution for command runs (scheduled + Run-now). The
   // brief — the command title plus its non-field child outline (see
-  // `commandBriefText`) — is run as a SUBAGENT anchored to the command's own
+  // `commandBriefText`) — is run as a DELEGATED child run anchored to the command's own
   // delivery conversation, so every fire shows up as a task in that conversation's
   // task panel. `agent` picks the executing agent definition (an
   // `AgentDefinition.name`); empty forks the otherwise-empty delivery conversation
   // so the run executes under the main agent's identity and capabilities. Resolves
-  // only when the subagent reaches a terminal state; throws on failure/stop so the
+  // only when the child run reaches a terminal state; throws on failure/stop so the
   // caller leaves the watermark unadvanced and arms the failure backoff.
-  private async runCommandSubagent(
+  private async runCommandChildAgent(
     conversationId: string,
     brief: string,
     agent: string | undefined,
@@ -2880,9 +2880,9 @@ export class AgentRuntime {
   ): Promise<void> {
     const conversation = await this.ensureConversationWithId(conversationId, commandConversationTitle(brief));
     await this.refreshRuntimeSettings(conversation);
-    const subagentType = agent?.trim() ? agent.trim() : undefined;
-    let data = await conversation.subagentRuntime.invokeAgent({
-      subagent_type: subagentType,
+    const agentType = agent?.trim() ? agent.trim() : undefined;
+    let data = await conversation.delegationRuntime.invokeAgent({
+      agent_type: agentType,
       description: commandConversationTitle(brief),
       prompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
       run_in_background: false,
@@ -2895,10 +2895,10 @@ export class AgentRuntime {
     // `background: true` launches detached regardless — poll to completion so the
     // watermark only ever advances on a finished run.
     while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
-      data = await conversation.subagentRuntime.status({
+      data = await conversation.delegationRuntime.status({
         agent_id: data.agent_id,
         wait: true,
-        timeout_ms: COMMAND_SUBAGENT_WAIT_MS,
+        timeout_ms: COMMAND_CHILD_RUN_WAIT_MS,
       });
     }
     if (data.status === 'failed' || data.error) throw new Error(data.error || 'The command run failed.');
@@ -3123,9 +3123,9 @@ export class AgentRuntime {
    * Whether the user is a member of this reader's conversation — the gate for sharing the user
    * pool ([[agent-data-model]] §4 visibility = membership).
    *
-   * Reach, honestly stated: subagent recall/briefing are wired to the PARENT conversation, and every
+   * Reach, honestly stated: child run recall/briefing are wired to the PARENT conversation, and every
    * user-created conversation has the user as a member, so today this returns true on all live
-   * paths — subagents INHERIT user-pool visibility by design (they act inside the user's
+   * paths — childRuns INHERIT user-pool visibility by design (they act inside the user's
    * conversation on the user's task; sidechains are not separate conversations with their own
    * member lists in M0). The membership check is the forward rule for when non-user-member
    * conversations exist (e.g. agent↔agent channels); missing membership info defaults open
@@ -3227,7 +3227,7 @@ export class AgentRuntime {
   }
 
   private memoryOwnerAgentIdForChildRun(run: AgentChildRunRecord): string {
-    return resolveSubagentMemoryOwner(run, this.agentIdentity.agentId);
+    return resolveChildRunMemoryOwner(run, this.agentIdentity.agentId);
   }
 
   private async runDreamMemoryExtractionTask(task: AgentDreamMemoryExtractionTask): Promise<AgentDreamRunResult> {
@@ -3301,7 +3301,7 @@ export class AgentRuntime {
         changes,
       });
       await this.writeDreamRunMeta(task, 'completed', model);
-      this.clearSubagentMemoryReminderCaches();
+      this.clearChildRunMemoryReminderCaches();
       return {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -3998,7 +3998,7 @@ export class AgentRuntime {
           diagnostics.push({
             id: 'agents.disabled',
             severity: 'warning',
-            message: `${runtimeSettings.disabledAgents.length} subagents are disabled.`,
+            message: `${runtimeSettings.disabledAgents.length} childRuns are disabled.`,
           });
         }
         return {
@@ -4260,9 +4260,9 @@ export class AgentRuntime {
     }
   }
 
-  private clearSubagentMemoryReminderCaches(): void {
+  private clearChildRunMemoryReminderCaches(): void {
     for (const conversation of this.conversations.values()) {
-      conversation.subagentRuntime.clearMemoryReminderCache();
+      conversation.delegationRuntime.clearMemoryReminderCache();
     }
   }
 
@@ -5082,7 +5082,7 @@ export class AgentRuntime {
     systemPrompt: string;
     definition: AgentDefinition;
   }> {
-    const definitions = await conversation.subagentRuntime.listAllAgentDefinitions();
+    const definitions = await conversation.delegationRuntime.listAllAgentDefinitions();
     const definition = definitions.find((candidate) => agentDefinitionAgentId(candidate) === agentId);
     if (!definition) throw new Error(`Channel member agent not found: ${agentId}`);
     const providerConfig = await this.getActiveProviderConfig();
@@ -5147,7 +5147,7 @@ export class AgentRuntime {
       localWorkspace: conversation.localWorkspace,
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
-      subagentRuntime: conversation.subagentRuntime,
+      delegationRuntime: conversation.delegationRuntime,
       recall: this.createRecallToolRuntime(agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       // Self-maintenance configures THIS runtime — main-agent-first stays the
@@ -6535,7 +6535,7 @@ const CHANNEL_PEER_SKILL_PROMPT_BUDGET = 24_000;
 
 /**
  * A Channel member speaks in the shared thread as itself — this is NOT the
- * subagent prompt (a peer is a conversation participant, not a headless worker
+ * child run prompt (a peer is a conversation participant, not a headless worker
  * reporting to a parent).
  */
 function agentDefinitionDisplayName(definition: AgentDefinition): string {
@@ -6688,7 +6688,7 @@ function createConfiguredAgent(
     runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
     skillToolEnabled?: boolean;
     skillRuntime?: AgentSkillRuntime;
-    subagentRuntime?: AgentSubagentRuntime;
+    delegationRuntime?: AgentDelegationRuntime;
     recall?: AgentToolsOptions['recall'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
@@ -6735,7 +6735,7 @@ function createConfiguredAgent(
         localWorkspace: options.localWorkspace,
         skillRuntime,
         skillToolEnabled: options.skillToolEnabled,
-        subagentRuntime: options.subagentRuntime,
+        delegationRuntime: options.delegationRuntime,
         recall: options.recall,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
@@ -7035,22 +7035,22 @@ function truncateNotificationBody(body: string): string {
   return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
-function subagentNotificationKind(
+function childRunNotificationKind(
   // 'stopped' is gated out before this (a user-initiated stop raises no
-  // notification — see notifySubagentRun), so only failed/completed reach here.
+  // notification — see notifyChild runRun), so only failed/completed reach here.
   status: 'failed' | 'completed',
 ): AgentNotificationKind {
   return status === 'failed' ? 'task_failed' : 'task_completed';
 }
 
-function subagentNotificationTitle(snapshot: AgentChildRunSnapshot): string {
+function childRunNotificationTitle(snapshot: AgentChildRunSnapshot): string {
   if (snapshot.status === 'failed') return `Agent task "${snapshot.description}" failed.`;
   if (snapshot.status === 'stopped') return `Agent task "${snapshot.description}" was stopped.`;
   return `Agent task "${snapshot.description}" completed.`;
 }
 
-function formatSubagentNotification(snapshot: AgentChildRunSnapshot): string {
-  const summary = subagentNotificationTitle(snapshot);
+function formatChildRunNotification(snapshot: AgentChildRunSnapshot): string {
+  const summary = childRunNotificationTitle(snapshot);
   return [
     '<agent-task-notification>',
     `<agent_id>${escapeXml(snapshot.id)}</agent_id>`,

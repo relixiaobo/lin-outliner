@@ -15,7 +15,7 @@ import {
 } from './agentEventLog';
 import { agentMentionToken } from './agentChannel';
 
-export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'subagent';
+export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'child-run';
 
 export type AgentRenderRow =
   | {
@@ -39,13 +39,13 @@ export type AgentRenderRow =
       archived?: boolean;
     }
   | {
-      // A subagent run surfaced inline in the transcript as a boundary (its final
+      // A child run run surfaced inline in the transcript as a boundary (its final
       // result IS the conversation's record of the run). A main-agent-spawned run
       // sits right after the assistant turn that launched it; a parentless run (a
       // scheduled/Run-now command fire) is placed by start time.
       id: string;
-      kind: 'subagent';
-      subagentId: string;
+      kind: 'child-run';
+      childRunId: string;
       messageId?: string;
       archived?: boolean;
     };
@@ -94,7 +94,7 @@ export interface AgentStreamingRenderState {
   updatedAt: number;
 }
 
-export interface AgentRenderSubagentEntity {
+export interface AgentRenderChildRunEntity {
   id: string;
   name?: string;
   description: string;
@@ -152,16 +152,16 @@ export interface AgentRenderActiveDream {
 
 export type AgentRenderTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
-export interface AgentRenderSubagentTaskEntity {
+export interface AgentRenderChildRunTaskEntity {
   id: string;
-  kind: 'subagent';
+  kind: 'child-run';
   status: AgentRenderTaskStatus;
   title: string;
   subtitle: string;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
-  subagentId: string;
+  childRunId: string;
 }
 
 export interface AgentRenderDreamTaskEntity {
@@ -183,11 +183,11 @@ export interface AgentRenderDreamTaskEntity {
   changes?: AgentDreamCompletedChanges;
 }
 
-export type AgentRenderTaskEntity = AgentRenderSubagentTaskEntity | AgentRenderDreamTaskEntity;
+export type AgentRenderTaskEntity = AgentRenderChildRunTaskEntity | AgentRenderDreamTaskEntity;
 
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
-  subagents: Record<string, AgentRenderSubagentEntity>;
+  childRuns: Record<string, AgentRenderChildRunEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
   dreams: Record<string, AgentRenderDreamEntity>;
   tasks: Record<string, AgentRenderTaskEntity>;
@@ -217,7 +217,7 @@ export interface AgentRenderProjection {
   rows: AgentRenderRow[];
   transcriptRows: AgentRenderRow[];
   taskIds: string[];
-  subagentRunIds: string[];
+  childRunIds: string[];
   entities: AgentRenderEntities;
   streaming: AgentStreamingRenderState | null;
 }
@@ -249,7 +249,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {}, dreams: {}, tasks: {} };
+  const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
   const rows = buildActiveRows(state, activePath, entities);
   const transcriptRows = buildTranscriptRows(state, entities);
   let streaming: AgentStreamingRenderState | null = null;
@@ -267,11 +267,11 @@ export function buildAgentRenderProjection(
   }
 
   const taskIds: string[] = [];
-  const subagentRunIds = Object.values(state.childRuns ?? {})
+  const childRunIds = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id))
     .map((run) => {
-      entities.subagents[run.id] = toRenderSubagentEntity(run);
-      const task = toRenderSubagentTaskEntity(run);
+      entities.childRuns[run.id] = toRenderChildRunEntity(run);
+      const task = toRenderChildRunTaskEntity(run);
       entities.tasks[task.id] = task;
       taskIds.push(task.id);
       return run.id;
@@ -301,7 +301,7 @@ export function buildAgentRenderProjection(
     rows,
     transcriptRows,
     taskIds,
-    subagentRunIds,
+    childRunIds,
     entities,
     streaming,
   };
@@ -337,19 +337,19 @@ function buildTranscriptRows(
     }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
-  return insertSubagentRows(rows, entities, state);
+  return insertChildRunRows(rows, entities, state);
 }
 
 function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCallId: string): boolean {
   return entity?.content.some((block) => block.type === 'toolCall' && block.id === toolCallId) ?? false;
 }
 
-// Where a subagent boundary row belongs. A parented run anchors to the spawning
+// Where a child run boundary row belongs. A parented run anchors to the spawning
 // turn: right after the tool_result row for its call (once it completed) or, if
 // that hasn't arrived yet, right after the assistant message that issued the call.
 // A parentless run (a command fire) is ordered by start time among the messages.
 // `-1` means append at the end.
-function subagentInsertIndex(
+function childRunInsertIndex(
   rows: AgentRenderRow[],
   entities: AgentRenderEntities,
   run: AgentChildRunRecord,
@@ -375,9 +375,9 @@ function subagentInsertIndex(
   return index < 0 ? -1 : index + 1;
 }
 
-// Splice each subagent run into the transcript as a boundary row, earliest first
+// Splice each child run run into the transcript as a boundary row, earliest first
 // (the index is recomputed against the growing list each iteration).
-function insertSubagentRows(
+function insertChildRunRows(
   rows: AgentRenderRow[],
   entities: AgentRenderEntities,
   state: AgentEventReplayState,
@@ -387,8 +387,8 @@ function insertSubagentRows(
   if (runs.length === 0) return rows;
   const result = [...rows];
   for (const run of runs) {
-    const row: AgentRenderRow = { id: `subagent:${run.id}`, kind: 'subagent', subagentId: run.id };
-    const insertAt = subagentInsertIndex(result, entities, run);
+    const row: AgentRenderRow = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
+    const insertAt = childRunInsertIndex(result, entities, run);
     if (insertAt < 0) result.push(row);
     else result.splice(insertAt, 0, row);
   }
@@ -514,21 +514,21 @@ function toRenderMessageEntity(
   };
 }
 
-function toRenderSubagentEntity(run: AgentChildRunRecord): AgentRenderSubagentEntity {
+function toRenderChildRunEntity(run: AgentChildRunRecord): AgentRenderChildRunEntity {
   return { ...run };
 }
 
-function toRenderSubagentTaskEntity(run: AgentChildRunRecord): AgentRenderSubagentTaskEntity {
+function toRenderChildRunTaskEntity(run: AgentChildRunRecord): AgentRenderChildRunTaskEntity {
   return {
-    id: `subagent:${run.id}`,
-    kind: 'subagent',
+    id: `child-run:${run.id}`,
+    kind: 'child-run',
     status: run.status,
     title: run.description.trim() || run.name?.trim() || run.id,
     subtitle: `${run.contextMode} · ${run.agentType}`,
     startedAt: run.startedAt,
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
-    subagentId: run.id,
+    childRunId: run.id,
   };
 }
 

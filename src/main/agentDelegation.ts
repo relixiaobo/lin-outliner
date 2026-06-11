@@ -6,7 +6,7 @@ import { readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { AgentMessage, AgentSubagentActionResult } from '../core/agentTypes';
+import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, AgentChildRunStatus, AgentPayloadRef } from '../core/agentEventLog';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
@@ -34,15 +34,15 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
-import { LIN_SUBAGENT_CORE_PROMPT } from './agentSystemPrompt';
+import { LIN_CHILD_AGENT_CORE_PROMPT } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
-  resolveSubagentMemoryOwner,
-} from './agentSubagentIdentity';
+  resolveChildRunMemoryOwner,
+} from './agentDelegationIdentity';
 
-export const AGENT_SUBAGENT_TOOL_NAME = 'Agent';
+export const AGENT_DELEGATE_TOOL_NAME = 'Agent';
 export const AGENT_STATUS_TOOL_NAME = 'AgentStatus';
 export const AGENT_SEND_TOOL_NAME = 'AgentSend';
 export const AGENT_STOP_TOOL_NAME = 'AgentStop';
@@ -52,17 +52,17 @@ const AGENT_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_AGENT_LISTING_CHAR_BUDGET = 8_000;
 const MAX_LISTING_DESCRIPTION_CHARS = 250;
-const MAX_CONCURRENT_SUBAGENTS = 4;
-const DEFAULT_MAX_SUBAGENT_DEPTH = 3;
-const FORK_SUBAGENT_TYPE = 'fork';
-const FORK_BOILERPLATE_TAG = 'lin-fork-subagent';
+const MAX_CONCURRENT_CHILD_RUNS = 4;
+const DEFAULT_MAX_DELEGATION_DEPTH = 3;
+const FORK_AGENT_TYPE = 'fork';
+const FORK_BOILERPLATE_TAG = 'lin-fork-child';
 const FORK_PLACEHOLDER_RESULT = 'Fork started - processing in background.';
 const AGENT_LISTING_STATE_MARKER = 'The following agents have already been listed to the agent in this session:';
-const SUBAGENT_TOOL_RESULT_BUDGET_SKIP_TOOLS = new Set(['file_read']);
-const MAX_SUBAGENT_AUTO_COMPACT_FAILURES = 3;
-const SUBAGENT_POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
-const SUBAGENT_POST_COMPACT_MAX_CHARS_PER_FILE = 20_000;
-const SUBAGENT_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS = 200_000;
+const CHILD_RUN_TOOL_RESULT_BUDGET_SKIP_TOOLS = new Set(['file_read']);
+const MAX_CHILD_RUN_AUTO_COMPACT_FAILURES = 3;
+const CHILD_RUN_POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
+const CHILD_RUN_POST_COMPACT_MAX_CHARS_PER_FILE = 20_000;
+const CHILD_RUN_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS = 200_000;
 
 const AGENT_TOOL_PARAMETERS = {
   type: 'object',
@@ -80,10 +80,10 @@ const AGENT_TOOL_PARAMETERS = {
       minLength: 1,
       description: 'The task for the agent to perform.',
     },
-    subagent_type: {
+    agent_type: {
       type: 'string',
       minLength: 1,
-      description: 'Optional specialized agent type. If omitted, Tenon starts a fork subagent with the current conversation context.',
+      description: 'Optional specialized agent type. If omitted, Tenon starts a fork child run with the current conversation context.',
     },
     model: {
       type: 'string',
@@ -136,9 +136,9 @@ const AGENT_STOP_PARAMETERS = {
 
 
 
-export type AgentSubagentToolData = AgentSubagentActionResult;
+export type AgentDelegateToolData = AgentChildRunActionResult;
 
-export interface AgentSubagentCreateInput {
+export interface AgentChildAgentCreateInput {
   conversationId: string;
   messages: AgentMessage[];
   systemPrompt: string;
@@ -152,7 +152,7 @@ export interface AgentSubagentCreateInput {
   maxTurns?: number;
   skillRuntime: AgentSkillRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
-  subagentRuntime: AgentSubagentRuntime;
+  delegationRuntime: AgentDelegationRuntime;
   allowedTools?: string[];
   disallowedTools?: string[];
   preapprovedToolRules?: string[];
@@ -170,8 +170,8 @@ export interface AgentSubagentCreateInput {
   ) => Promise<AfterToolCallResult | undefined> | AfterToolCallResult | undefined;
 }
 
-export interface AgentSubagentRuntimeHost {
-  createChildAgent(input: AgentSubagentCreateInput): Agent;
+export interface AgentDelegationRuntimeHost {
+  createChildAgent(input: AgentChildAgentCreateInput): Agent;
   getParentMessages(): AgentMessage[];
   getParentSystemPrompt(): string;
   /** The parent run currently executing (the delegating side of the run tree). */
@@ -213,7 +213,7 @@ export interface AgentSubagentRuntimeHost {
   ): Promise<string>;
 }
 
-export interface AgentSubagentRuntimeOptions {
+export interface AgentDelegationRuntimeOptions {
   conversationId: string;
   executingAgentId: string;
   memoryOwnerAgentId?: string;
@@ -223,7 +223,7 @@ export interface AgentSubagentRuntimeOptions {
   depth?: number;
   ancestry?: string[];
   maxDepth?: number;
-  host: AgentSubagentRuntimeHost;
+  host: AgentDelegationRuntimeHost;
 }
 
 interface AgentRunRecord {
@@ -231,7 +231,7 @@ interface AgentRunRecord {
   name?: string;
   description: string;
   prompt: string;
-  subagentType: string;
+  agentType: string;
   contextMode: 'fresh' | 'fork';
   definition: AgentDefinition | null;
   executingAgentId: string;
@@ -291,7 +291,7 @@ export interface AgentChildRunSnapshot {
   parentToolCallId?: string;
 }
 
-export interface AgentSubagentRestoredRun {
+export interface AgentRestoredChildRun {
   record: AgentChildRunRecord;
   /** The live transcript replayed from the child run's own ledger. */
   transcriptMessages: AgentMessage[];
@@ -300,7 +300,7 @@ export interface AgentSubagentRestoredRun {
 interface AgentToolParams {
   description: string;
   prompt: string;
-  subagent_type?: string;
+  agent_type?: string;
   model?: string;
   effort?: string;
   run_in_background?: boolean;
@@ -317,7 +317,7 @@ interface AgentToolParams {
   unattended?: boolean;
 }
 
-export interface AgentSubagentSkillRunInput {
+export interface AgentChildRunSkillInput {
   skillName: string;
   description: string;
   renderedContent: string;
@@ -327,7 +327,7 @@ export interface AgentSubagentSkillRunInput {
   allowedTools?: string[];
 }
 
-export class AgentSubagentRuntime {
+export class AgentDelegationRuntime {
   private readonly registry: AgentDefinitionRegistry;
   private readonly conversationId: string;
   private readonly localRoot: string;
@@ -337,19 +337,19 @@ export class AgentSubagentRuntime {
   private readonly ancestry: string[];
   private readonly executingAgentId: string;
   private readonly memoryOwnerAgentId: string;
-  private readonly host: AgentSubagentRuntimeHost;
+  private readonly host: AgentDelegationRuntimeHost;
   private readonly runs = new Map<string, AgentRunRecord>();
   private readonly names = new Map<string, string>();
   private readonly listedAgents = new Map<string, string | null>();
   private reservedRunningSlots = 0;
   private disabledAgents: string[] = [];
 
-  constructor(options: AgentSubagentRuntimeOptions) {
+  constructor(options: AgentDelegationRuntimeOptions) {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
     this.additionalAgentDirectories = normalizeConfiguredDirectories(options.additionalAgentDirectories, this.localRoot);
     this.depth = options.depth ?? 0;
-    this.maxDepth = options.maxDepth ?? DEFAULT_MAX_SUBAGENT_DEPTH;
+    this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
     this.ancestry = options.ancestry ?? [];
     this.executingAgentId = options.executingAgentId;
     this.memoryOwnerAgentId = options.memoryOwnerAgentId ?? options.executingAgentId;
@@ -395,11 +395,11 @@ export class AgentSubagentRuntime {
     if (!listing) return null;
     for (const agent of newAgents) this.listedAgents.set(agent.name, agentListingIdentity(agent));
     return [
-      `The following agents are available for use with the ${AGENT_SUBAGENT_TOOL_NAME} tool:`,
+      `The following agents are available for use with the ${AGENT_DELEGATE_TOOL_NAME} tool:`,
       '',
       listing,
       '',
-      `To fork from the current conversation context, call ${AGENT_SUBAGENT_TOOL_NAME} without subagent_type.`,
+      `To fork from the current conversation context, call ${AGENT_DELEGATE_TOOL_NAME} without agent_type.`,
     ].join('\n');
   }
 
@@ -434,12 +434,12 @@ export class AgentSubagentRuntime {
     return current === null || current === agentListingIdentity(agent);
   }
 
-  restorePersistedRuns(restoredRuns: readonly AgentSubagentRestoredRun[]): void {
+  restorePersistedRuns(restoredRuns: readonly AgentRestoredChildRun[]): void {
     for (const { record, transcriptMessages } of restoredRuns) {
       if (this.runs.has(record.id)) continue;
       const executingAgentId = record.executingAgentId ?? this.executingAgentId;
       const parentAgentId = record.parentAgentId ?? this.executingAgentId;
-      const memoryOwnerAgentId = resolveSubagentMemoryOwner({
+      const memoryOwnerAgentId = resolveChildRunMemoryOwner({
         ...record,
         executingAgentId,
         parentAgentId,
@@ -450,7 +450,7 @@ export class AgentSubagentRuntime {
         name: record.name,
         description: record.description,
         prompt: record.prompt,
-        subagentType: record.agentType,
+        agentType: record.agentType,
         contextMode: record.contextMode,
         definition: null,
         executingAgentId,
@@ -480,7 +480,7 @@ export class AgentSubagentRuntime {
     }
   }
 
-  async invokeAgent(rawParams: unknown, signal?: AbortSignal, parentToolCallId?: string): Promise<AgentSubagentToolData> {
+  async invokeAgent(rawParams: unknown, signal?: AbortSignal, parentToolCallId?: string): Promise<AgentDelegateToolData> {
     const params = normalizeAgentToolParams(rawParams);
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
@@ -491,17 +491,17 @@ export class AgentSubagentRuntime {
     }
   }
 
-  async invokeSkillSubagent(
-    input: AgentSubagentSkillRunInput,
+  async invokeSkillChildAgent(
+    input: AgentChildRunSkillInput,
     signal?: AbortSignal,
     parentToolCallId?: string,
-  ): Promise<AgentSubagentToolData> {
+  ): Promise<AgentDelegateToolData> {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
       return await this.startAgent({
         description: compactInlineText(input.description) || `skill ${input.skillName}`,
         prompt: input.renderedContent,
-        subagent_type: await this.resolveSkillSubagentType(input.agent),
+        agent_type: await this.resolveSkillAgentType(input.agent),
         model: input.model,
         effort: input.effort,
         run_in_background: false,
@@ -513,7 +513,7 @@ export class AgentSubagentRuntime {
     }
   }
 
-  async status(rawParams: unknown): Promise<AgentSubagentToolData> {
+  async status(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeRunSelector(rawParams);
     const run = this.resolveRun(params);
     if (params.wait && run.status === 'running') {
@@ -522,7 +522,7 @@ export class AgentSubagentRuntime {
     return runToToolData(run);
   }
 
-  async send(rawParams: unknown): Promise<AgentSubagentToolData> {
+  async send(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeSendParams(rawParams);
     const run = this.resolveRun(params);
     const message = createUserMessage(params.message);
@@ -556,7 +556,7 @@ export class AgentSubagentRuntime {
     }
   }
 
-  async stop(rawParams: unknown): Promise<AgentSubagentToolData> {
+  async stop(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeRunSelector(rawParams);
     const run = this.resolveRun(params);
     if (run.status === 'running') {
@@ -576,11 +576,11 @@ export class AgentSubagentRuntime {
     releaseStartupSlot: RunningSlotReservation,
     signal?: AbortSignal,
     parentToolCallId?: string,
-  ): Promise<AgentSubagentToolData> {
-    const contextMode = params.subagent_type ? 'fresh' : 'fork';
+  ): Promise<AgentDelegateToolData> {
+    const contextMode = params.agent_type ? 'fresh' : 'fork';
     const definition = contextMode === 'fork'
       ? createForkAgentDefinition()
-      : await this.resolveFreshAgent(params.subagent_type);
+      : await this.resolveFreshAgent(params.agent_type);
 
     if (contextMode !== 'fork' && this.disabledAgents.includes(agentDefinitionAgentId(definition))) {
       throw new Error(`Agent '${definition.name}' is currently disabled in settings.`);
@@ -592,7 +592,7 @@ export class AgentSubagentRuntime {
     if (name && this.names.has(name)) throw new Error(`Agent name is already in use in this session: ${name}`);
 
     const runId = `child-${randomUUID()}`;
-    const subagentConversationId = `${this.hostConversationPrefix()}-${runId}`;
+    const childConversationId = `${this.hostConversationPrefix()}-${runId}`;
     const parentAgentId = this.executingAgentId;
     const executingAgentId = contextMode === 'fork'
       ? this.executingAgentId
@@ -601,15 +601,15 @@ export class AgentSubagentRuntime {
       ? this.memoryOwnerAgentId
       : executingAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
-    let childRuntime: AgentSubagentRuntime;
+    let childRuntime: AgentDelegationRuntime;
     const runtimeSettings = await this.host.getRuntimeSettings();
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
-      conversationId: subagentConversationId,
+      conversationId: childConversationId,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
-        const data = await childRuntime.invokeSkillSubagent({
+        const data = await childRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
           renderedContent,
@@ -620,7 +620,7 @@ export class AgentSubagentRuntime {
         }, undefined, parentToolCallId);
         return {
           agentId: data.agent_id,
-          subagentType: data.subagent_type,
+          agentType: data.agent_type,
           status: data.status,
           result: data.result,
           error: data.error,
@@ -632,8 +632,8 @@ export class AgentSubagentRuntime {
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
     let childAgent: Agent | null = null;
     let run: AgentRunRecord | null = null;
-    childRuntime = new AgentSubagentRuntime({
-      conversationId: subagentConversationId,
+    childRuntime = new AgentDelegationRuntime({
+      conversationId: childConversationId,
       executingAgentId,
       memoryOwnerAgentId,
       localRoot: this.localRoot,
@@ -680,7 +680,7 @@ export class AgentSubagentRuntime {
       ? this.host.getParentSystemPrompt()
       : buildFreshAgentSystemPrompt(definition);
     childAgent = this.host.createChildAgent({
-      conversationId: subagentConversationId,
+      conversationId: childConversationId,
       messages: [],
       systemPrompt,
       executingAgentId,
@@ -693,7 +693,7 @@ export class AgentSubagentRuntime {
       maxTurns: definition.maxTurns,
       skillRuntime,
       localWorkspace,
-      subagentRuntime: childRuntime,
+      delegationRuntime: childRuntime,
       allowedTools: definition.tools,
       disallowedTools: definition.disallowedTools,
       preapprovedToolRules: params.preapprovedToolRules,
@@ -712,7 +712,7 @@ export class AgentSubagentRuntime {
       name,
       description: params.description,
       prompt: params.prompt,
-      subagentType: definition.name,
+      agentType: definition.name,
       contextMode,
       definition,
       executingAgentId,
@@ -759,9 +759,9 @@ export class AgentSubagentRuntime {
     return runToToolData(run);
   }
 
-  private async resolveFreshAgent(subagentType: string | undefined): Promise<AgentDefinition> {
-    const normalized = normalizeAgentName(subagentType ?? '');
-    if (!normalized) throw new Error('subagent_type is required for a fresh subagent. Omit subagent_type only when you want to fork the current context.');
+  private async resolveFreshAgent(agentType: string | undefined): Promise<AgentDefinition> {
+    const normalized = normalizeAgentName(agentType ?? '');
+    if (!normalized) throw new Error('agent_type is required for a fresh child run. Omit agent_type only when you want to fork the current context.');
     const definition = await this.registry.resolve(normalized);
     if (!definition) {
       const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
@@ -883,7 +883,7 @@ export class AgentSubagentRuntime {
     if (!text || text.length <= DEFAULT_MAX_TOOL_RESULT_CHARS) return undefined;
 
     try {
-      const persisted = await this.host.persistToolOutputPayload(subagentToolOutputPayloadId(run, toolCallId), toolName, text);
+      const persisted = await this.host.persistToolOutputPayload(childRunToolOutputPayloadId(run, toolCallId), toolName, text);
       run.toolResultBudgetState.seenIds.add(toolCallId);
       run.toolResultBudgetState.replacements.set(toolCallId, persisted.label);
       return {
@@ -904,7 +904,7 @@ export class AgentSubagentRuntime {
     throwIfAborted(signal);
     const selection = collectAgentMessageToolResultBudgetSelections(source, run.toolResultBudgetState, {
       limit: MAX_TOOL_RESULTS_PER_BATCH_CHARS,
-      skipToolNames: SUBAGENT_TOOL_RESULT_BUDGET_SKIP_TOOLS,
+      skipToolNames: CHILD_RUN_TOOL_RESULT_BUDGET_SKIP_TOOLS,
     });
     if (selection.toPersist.length === 0 && selection.alreadyReplaced.length === 0) {
       return withMemoryReminder(await this.autoCompactRunIfNeeded(run, source, signal) ?? source, memoryReminder);
@@ -928,7 +928,7 @@ export class AgentSubagentRuntime {
       if (!message || message.role !== 'toolResult') continue;
       try {
         const persisted = await this.host.persistToolOutputPayload(
-          subagentToolOutputPayloadId(run, candidate.toolCallId),
+          childRunToolOutputPayloadId(run, candidate.toolCallId),
           candidate.toolName,
           candidate.contentText,
         );
@@ -953,7 +953,7 @@ export class AgentSubagentRuntime {
 
   private async runMemoryReminder(run: AgentRunRecord): Promise<string | null> {
     // The briefing is resident (query-independent), so the cache key is just the memory owner —
-    // it stays warm across a long subagent run instead of thrashing on per-turn query text.
+    // it stays warm across a long child run run instead of thrashing on per-turn query text.
     const key = run.memoryOwnerAgentId;
     if (run.memoryReminderCache?.key === key) return run.memoryReminderCache.text;
     const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId);
@@ -964,7 +964,7 @@ export class AgentSubagentRuntime {
   private async autoCompactRunIfNeeded(run: AgentRunRecord, messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[] | null> {
     throwIfAborted(signal);
     if (run.autoCompactInProgress) return null;
-    if (run.autoCompactConsecutiveFailures >= MAX_SUBAGENT_AUTO_COMPACT_FAILURES) return null;
+    if (run.autoCompactConsecutiveFailures >= MAX_CHILD_RUN_AUTO_COMPACT_FAILURES) return null;
     if (messages.length < 2) return null;
     const settings = await this.host.getRuntimeSettings();
     throwIfAborted(signal);
@@ -986,7 +986,7 @@ export class AgentSubagentRuntime {
   ): Promise<AgentMessage[] | null> {
     throwIfAborted(signal);
     if (run.autoCompactInProgress) return null;
-    if (run.autoCompactConsecutiveFailures >= MAX_SUBAGENT_AUTO_COMPACT_FAILURES) return null;
+    if (run.autoCompactConsecutiveFailures >= MAX_CHILD_RUN_AUTO_COMPACT_FAILURES) return null;
     if (messages.length < 2) return null;
     const settings = await this.host.getRuntimeSettings();
     if (!settings.compactEnabled) return null;
@@ -1001,16 +1001,16 @@ export class AgentSubagentRuntime {
         messages,
         model,
         run.contextMode === 'fork'
-          ? 'This is a fork subagent transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, subagent actions, user follow-ups, and final result.'
+          ? 'This is a fork child run transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, child run actions, user follow-ups, and final result.'
           : undefined,
         signal,
       );
       throwIfAborted(signal);
       const restoredFiles = run.localWorkspace
         ? await restorePostCompactReadFiles(run.localWorkspace, {
-            maxFiles: SUBAGENT_POST_COMPACT_MAX_FILES_TO_RESTORE,
-            maxCharsPerFile: SUBAGENT_POST_COMPACT_MAX_CHARS_PER_FILE,
-            maxTotalChars: SUBAGENT_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS,
+            maxFiles: CHILD_RUN_POST_COMPACT_MAX_FILES_TO_RESTORE,
+            maxCharsPerFile: CHILD_RUN_POST_COMPACT_MAX_CHARS_PER_FILE,
+            maxTotalChars: CHILD_RUN_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS,
             preservedFilePaths: new Set<string>(),
           })
         : [];
@@ -1049,13 +1049,13 @@ export class AgentSubagentRuntime {
   private async ensureLiveAgent(run: AgentRunRecord): Promise<void> {
     if (run.agent) return;
     const definition = await this.resolveDefinitionForRun(run);
-    let childRuntime: AgentSubagentRuntime;
+    let childRuntime: AgentDelegationRuntime;
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
       additionalSkillDirectories: (await this.host.getRuntimeSettings()).additionalSkillDirectories,
       conversationId: `${this.hostConversationPrefix()}-${run.id}`,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
-        const data = await childRuntime.invokeSkillSubagent({
+        const data = await childRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
           renderedContent,
@@ -1066,7 +1066,7 @@ export class AgentSubagentRuntime {
         }, undefined, parentToolCallId);
         return {
           agentId: data.agent_id,
-          subagentType: data.subagent_type,
+          agentType: data.agent_type,
           status: data.status,
           result: data.result,
           error: data.error,
@@ -1075,7 +1075,7 @@ export class AgentSubagentRuntime {
     });
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
     let childAgent: Agent | null = null;
-    childRuntime = new AgentSubagentRuntime({
+    childRuntime = new AgentDelegationRuntime({
       conversationId: `${this.hostConversationPrefix()}-${run.id}`,
       executingAgentId: run.executingAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
@@ -1122,7 +1122,7 @@ export class AgentSubagentRuntime {
       maxTurns: definition.maxTurns,
       skillRuntime,
       localWorkspace,
-      subagentRuntime: childRuntime,
+      delegationRuntime: childRuntime,
       allowedTools: definition.tools,
       disallowedTools: definition.disallowedTools,
       preapprovedToolRules: run.preapprovedToolRules,
@@ -1141,16 +1141,16 @@ export class AgentSubagentRuntime {
   private async resolveDefinitionForRun(run: AgentRunRecord): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
     if (run.contextMode === 'fork') return createForkAgentDefinition();
-    const definition = await this.registry.resolve(run.subagentType);
+    const definition = await this.registry.resolve(run.agentType);
     if (definition) return definition;
     return {
       ...createGeneralAgentDefinition(),
-      name: run.subagentType,
-      description: `${run.subagentType} agent definition was not found; continuing with general subagent behavior.`,
+      name: run.agentType,
+      description: `${run.agentType} agent definition was not found; continuing with general child run behavior.`,
     };
   }
 
-  private async resolveSkillSubagentType(agentName: string | undefined): Promise<string> {
+  private async resolveSkillAgentType(agentName: string | undefined): Promise<string> {
     const normalized = normalizeAgentName(agentName ?? '');
     if (!normalized) return 'general';
     const definition = await this.registry.resolve(normalized);
@@ -1160,8 +1160,8 @@ export class AgentSubagentRuntime {
   }
 
   private reserveRunningSlot(): RunningSlotReservation {
-    if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_SUBAGENTS) {
-      throw new Error(`Too many subagents are already running in this session. Limit: ${MAX_CONCURRENT_SUBAGENTS}.`);
+    if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_CHILD_RUNS) {
+      throw new Error(`Too many childRuns are already running in this session. Limit: ${MAX_CONCURRENT_CHILD_RUNS}.`);
     }
     this.reservedRunningSlots += 1;
     let released = false;
@@ -1186,15 +1186,15 @@ export class AgentSubagentRuntime {
 
   private assertCanDescend(nextAgentName: string): void {
     if (this.depth >= this.maxDepth) {
-      throw new Error(`Subagent nesting limit reached (${this.maxDepth}). Complete the task directly.`);
+      throw new Error(`Child run nesting limit reached (${this.maxDepth}). Complete the task directly.`);
     }
     if (this.ancestry.includes(nextAgentName)) {
-      throw new Error(`Recursive subagent cycle detected for '${nextAgentName}'. Complete the task directly.`);
+      throw new Error(`Recursive child run cycle detected for '${nextAgentName}'. Complete the task directly.`);
     }
   }
 
   private assertCanFork(): void {
-    if (this.ancestry.includes(FORK_SUBAGENT_TYPE) || parentMessagesContainForkTag(this.host.getParentMessages())) {
+    if (this.ancestry.includes(FORK_AGENT_TYPE) || parentMessagesContainForkTag(this.host.getParentMessages())) {
       throw new Error('Fork is not available inside a forked agent. Complete the task directly.');
     }
   }
@@ -1204,15 +1204,15 @@ export class AgentSubagentRuntime {
   }
 }
 
-export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTool<any, ToolEnvelope<AgentSubagentToolData>>[] {
+export function createAgentDelegationTools(runtime: AgentDelegationRuntime): AgentTool<any, ToolEnvelope<AgentDelegateToolData>>[] {
   return [
     {
-      name: AGENT_SUBAGENT_TOOL_NAME,
+      name: AGENT_DELEGATE_TOOL_NAME,
       label: 'Agent',
       description: [
-        'Start a focused subagent for isolated task execution.',
-        'Use subagent_type for a fresh specialized agent from the available agent listing.',
-        'Omit subagent_type to fork the current conversation context into an isolated worker.',
+        'Start a focused child run for isolated task execution.',
+        'Use agent_type for a fresh specialized agent from the available agent listing.',
+        'Omit agent_type to fork the current conversation context into an isolated worker.',
         'Launch multiple agents in the same turn when independent work can run in parallel.',
         'For long work, set run_in_background and use AgentStatus, AgentSend, or AgentStop with the returned agent_id.',
       ].join('\n'),
@@ -1220,21 +1220,21 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
       executionMode: 'parallel',
       execute: async (toolCallId, rawParams, signal) => {
         try {
-          return subagentToolResult(AGENT_SUBAGENT_TOOL_NAME, await runtime.invokeAgent(rawParams, signal, toolCallId));
+          return delegateToolResult(AGENT_DELEGATE_TOOL_NAME, await runtime.invokeAgent(rawParams, signal, toolCallId));
         } catch (error) {
-          return agentToolResult(errorEnvelope(AGENT_SUBAGENT_TOOL_NAME, 'agent_failed', errorMessage(error)));
+          return agentToolResult(errorEnvelope(AGENT_DELEGATE_TOOL_NAME, 'agent_failed', errorMessage(error)));
         }
       },
     },
     {
       name: AGENT_STATUS_TOOL_NAME,
       label: 'Agent Status',
-      description: 'Check a same-session background subagent by agent_id or name.',
+      description: 'Check a same-session background child run by agent_id or name.',
       parameters: AGENT_STATUS_PARAMETERS,
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
         try {
-          return subagentToolResult(AGENT_STATUS_TOOL_NAME, await runtime.status(rawParams));
+          return delegateToolResult(AGENT_STATUS_TOOL_NAME, await runtime.status(rawParams));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_STATUS_TOOL_NAME, 'agent_status_failed', errorMessage(error)));
         }
@@ -1243,12 +1243,12 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
     {
       name: AGENT_SEND_TOOL_NAME,
       label: 'Agent Send',
-      description: 'Send a follow-up message to an existing same-session background subagent.',
+      description: 'Send a follow-up message to an existing same-session background child run.',
       parameters: AGENT_SEND_PARAMETERS,
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
         try {
-          return subagentToolResult(AGENT_SEND_TOOL_NAME, await runtime.send(rawParams));
+          return delegateToolResult(AGENT_SEND_TOOL_NAME, await runtime.send(rawParams));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_SEND_TOOL_NAME, 'agent_send_failed', errorMessage(error)));
         }
@@ -1257,12 +1257,12 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
     {
       name: AGENT_STOP_TOOL_NAME,
       label: 'Agent Stop',
-      description: 'Stop a running same-session background subagent.',
+      description: 'Stop a running same-session background child run.',
       parameters: AGENT_STOP_PARAMETERS,
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
         try {
-          return subagentToolResult(AGENT_STOP_TOOL_NAME, await runtime.stop(rawParams));
+          return delegateToolResult(AGENT_STOP_TOOL_NAME, await runtime.stop(rawParams));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_STOP_TOOL_NAME, 'agent_stop_failed', errorMessage(error)));
         }
@@ -1293,7 +1293,7 @@ export function buildForkContextMessages(parentMessages: readonly AgentMessage[]
   return messages;
 }
 
-export function buildForkSubagentMessages(parentMessages: readonly AgentMessage[], directive: string): AgentMessage[] {
+export function buildForkChildRunMessages(parentMessages: readonly AgentMessage[], directive: string): AgentMessage[] {
   return [...buildForkContextMessages(parentMessages), createHiddenUserMessage(buildForkDirective(directive))];
 }
 
@@ -1379,22 +1379,22 @@ class AgentDefinitionRegistry {
 
 function createGeneralAgentDefinition(): AgentDefinition {
   // `general` is the zero-persona default: it adds no body of its own, so a fresh
-  // `general` run is simply the base Tenon agent in headless/subagent mode (the
+  // `general` run is simply the base Tenon agent in headless/child run mode (the
   // identity + directive + shared core that `buildFreshAgentSystemPrompt` supplies
-  // to every fresh subagent). A user agent specializes by adding a persona body.
+  // to every fresh childRun). A user agent specializes by adding a persona body.
   return {
     name: 'general',
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/general',
-    description: 'General-purpose focused subagent for research, analysis, and execution.',
+    description: 'General-purpose focused child run for research, analysis, and execution.',
     body: '',
   };
 }
 
 function createForkAgentDefinition(): AgentDefinition {
   return {
-    name: FORK_SUBAGENT_TYPE,
+    name: FORK_AGENT_TYPE,
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/fork',
@@ -1518,21 +1518,21 @@ function parseFrontmatter(text: string): Record<string, unknown> {
   }
 }
 
-// A fresh subagent is the SAME Tenon agent in headless mode, not a separate
+// A fresh child run is the SAME Tenon agent in headless mode, not a separate
 // dumbed-down persona: it reuses the shared-core system prompt (capabilities,
-// tool conventions, safety — `LIN_SUBAGENT_CORE_PROMPT`) and layers a subagent
+// tool conventions, safety — `LIN_CHILD_AGENT_CORE_PROMPT`) and layers a child run
 // identity + directive on top, then the definition's own persona body. `general`
 // carries an empty body, so it is just "the base agent, headless, zero persona";
 // a custom definition's body is the additive specialization. (Fork takes a
 // different path — it reuses the parent's full prompt + a fork directive.)
 export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
   const header = [
-    'You are a Tenon subagent — a focused worker the main Tenon agent spawned to complete one task and report back.',
+    'You are a Tenon child run — a focused worker the main Tenon agent spawned to complete one task and report back.',
     '',
     `Agent type: ${definition.name}`,
     `Agent description: ${definition.description}`,
     '',
-    '# Subagent rules',
+    '# Child run rules',
     '- Complete only the assigned task and return a concise final result to the parent agent.',
     '- You run headless: never ask the user questions. If a required decision is missing, make a reasonable assumption and state it in your result.',
     '- Use tools directly when useful. Keep intermediate reasoning and tool chatter out of the final result unless the parent asked for it.',
@@ -1541,7 +1541,7 @@ export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string
   ].join('\n');
   return [
     header,
-    LIN_SUBAGENT_CORE_PROMPT,
+    LIN_CHILD_AGENT_CORE_PROMPT,
     definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
   ].filter(Boolean).join('\n\n');
 }
@@ -1594,21 +1594,21 @@ function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessa
   return null;
 }
 
-export function subagentToolResult(toolName: string, data: AgentSubagentToolData) {
+export function delegateToolResult(toolName: string, data: AgentDelegateToolData) {
   // Next-step guidance is an envelope concern, not data: lift data.instructions
   // to the envelope's instructions field so it sits beside status/error like
   // every other tool, rather than nested inside the result payload.
   const envelope = successEnvelope(toolName, data, data.instructions ? { instructions: data.instructions } : {});
-  return agentToolResult(envelope, visibleSubagentResult(data));
+  return agentToolResult(envelope, visibleChildRunResult(data));
 }
 
-// Model-visible projection. The full AgentSubagentToolData stays on the envelope
+// Model-visible projection. The full AgentDelegateToolData stays on the envelope
 // (details); the parent agent only needs the lifecycle status, the id to address
 // follow-ups, and the produced result/error. Next-step instructions are carried
 // by the envelope's instructions field. Echoed launch arguments (prompt,
-// description, subagent_type, context_mode) and timestamps/transcript counts are
+// description, agent_type, context_mode) and timestamps/transcript counts are
 // dropped.
-export function visibleSubagentResult(data: AgentSubagentToolData): unknown {
+export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
   const visible: Record<string, unknown> = {
     status: data.status,
     agent_id: data.agent_id,
@@ -1619,14 +1619,14 @@ export function visibleSubagentResult(data: AgentSubagentToolData): unknown {
   return visible;
 }
 
-function runToToolData(run: AgentRunRecord): AgentSubagentToolData {
+function runToToolData(run: AgentRunRecord): AgentDelegateToolData {
   return {
     status: run.status,
     agent_id: run.id,
     name: run.name,
     description: run.description,
     prompt: run.prompt,
-    subagent_type: run.subagentType,
+    agent_type: run.agentType,
     context_mode: run.contextMode,
     executing_agent_id: run.executingAgentId,
     parent_agent_id: run.parentAgentId,
@@ -1646,7 +1646,7 @@ function snapshotRun(run: AgentRunRecord): AgentChildRunSnapshot {
     name: run.name,
     description: run.description,
     prompt: run.prompt,
-    agentType: run.subagentType,
+    agentType: run.agentType,
     contextMode: run.contextMode,
     executingAgentId: run.executingAgentId,
     parentAgentId: run.parentAgentId,
@@ -1663,7 +1663,7 @@ function snapshotRun(run: AgentRunRecord): AgentChildRunSnapshot {
   };
 }
 
-function subagentToolOutputPayloadId(run: AgentRunRecord, toolCallId: string): string {
+function childRunToolOutputPayloadId(run: AgentRunRecord, toolCallId: string): string {
   return `${run.id}-${toolCallId}`;
 }
 
@@ -1698,7 +1698,7 @@ function extractFinalAssistantText(messages: readonly AgentMessage[]): string {
       .trim();
     if (text) return text;
   }
-  return 'Subagent completed without a text result.';
+  return 'Child run completed without a text result.';
 }
 
 function isRecordableAgentMessage(message: unknown): message is AgentMessage {
@@ -1727,7 +1727,7 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
   return {
     description,
     prompt,
-    subagent_type: coerceString(raw.subagent_type),
+    agent_type: coerceString(raw.agent_type),
     model: coerceString(raw.model),
     run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
@@ -1801,7 +1801,7 @@ function parsePersistedAgentListingStateLine(line: string): { name: string; iden
 
 function parseLiveAgentListing(text: string): string[] {
   const body = unwrapSystemReminder(text);
-  if (!body.includes(`The following agents are available for use with the ${AGENT_SUBAGENT_TOOL_NAME} tool:`)) {
+  if (!body.includes(`The following agents are available for use with the ${AGENT_DELEGATE_TOOL_NAME} tool:`)) {
     return [];
   }
   return body
@@ -1821,7 +1821,7 @@ function unwrapSystemReminder(text: string): string {
 }
 
 function getAgentListingCharBudget(contextWindowTokens?: number): number {
-  const override = Number(process.env.AGENT_SUBAGENT_LISTING_CHAR_BUDGET);
+  const override = Number(process.env.AGENT_DELEGATE_LISTING_CHAR_BUDGET);
   if (Number.isFinite(override) && override > 0) return override;
   if (!contextWindowTokens) return DEFAULT_AGENT_LISTING_CHAR_BUDGET;
   return Math.floor(contextWindowTokens * CHARS_PER_TOKEN * AGENT_LISTING_CONTEXT_PERCENT);

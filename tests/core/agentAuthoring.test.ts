@@ -10,7 +10,7 @@ import {
   updateAgentDefinitionFile,
 } from '../../src/main/agentAuthoring';
 import { serializeAgentMarkdown } from '../../src/core/agentMarkdown';
-import { createAgentDefinition, parseAgentMarkdown } from '../../src/main/agentSubagents';
+import { createAgentDefinition, parseAgentMarkdown } from '../../src/main/agentDelegation';
 import type { AgentAuthoringInput } from '../../src/core/agentTypes';
 import type { AgentDefinition } from '../../src/core/types';
 
@@ -137,11 +137,11 @@ describe('agent authoring file operations', () => {
   test('duplicateAgentDefinitionFile copies a built-in into an editable user copy', async () => {
     const builtIn: AgentDefinition = {
       name: 'general', source: 'built-in', rootDir: 'built-in', agentFile: 'built-in/general',
-      description: 'General-purpose subagent', body: 'You are a focused subagent.',
+      description: 'General-purpose child run', body: 'You are a focused child agent.',
     };
     const { agentFile } = await duplicateAgentDefinitionFile({ source: builtIn, newName: 'general-copy', storage: 'project', localRoot: root });
     const raw = await readFile(agentFile, 'utf8');
-    expect(definitionFromRaw(raw).body).toBe('You are a focused subagent.');
+    expect(definitionFromRaw(raw).body).toBe('You are a focused child agent.');
   });
 
   test('refuses to edit or delete a built-in agent', async () => {

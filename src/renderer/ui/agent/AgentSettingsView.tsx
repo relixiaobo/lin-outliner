@@ -194,7 +194,7 @@ type PermissionRuleId =
   | 'publishGitRemotes'
   | 'deployPublish'
   | 'networkWrite'
-  | 'spawnSubagents';
+  | 'spawnChildAgents';
 
 const COMMON_PERMISSION_RULES: Array<{
   id: PermissionRuleId;
@@ -210,7 +210,7 @@ const COMMON_PERMISSION_RULES: Array<{
   { id: 'publishGitRemotes', ruleValue: 'Action(git.publish_remote)', allowable: true },
   { id: 'deployPublish', ruleValue: 'Action(deploy.publish_remote)', allowable: true },
   { id: 'networkWrite', ruleValue: 'Action(shell.network_write)', allowable: true },
-  { id: 'spawnSubagents', ruleValue: 'Action(agent.subagent.spawn)', allowable: false },
+  { id: 'spawnChildAgents', ruleValue: 'Action(agent.delegate.spawn)', allowable: false },
 ];
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
@@ -673,7 +673,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId }: AgentS
         setNotice(successNotice);
       }
       // Broadcast settings-changed so the main window's chat composer refreshes its
-      // subagent picker — a newly authored agent must be pickable (and a deleted one
+      // child run picker — a newly authored agent must be pickable (and a deleted one
       // gone) without a restart. Mirrors runProviderMutation.
       await onApplied();
     } catch (caught) {

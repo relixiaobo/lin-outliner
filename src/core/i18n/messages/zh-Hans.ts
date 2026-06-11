@@ -152,7 +152,7 @@ export const zhHans: PartialMessages = {
           label: '网络写入命令',
           description: '向外发送数据或更改网络服务的 Shell 命令。',
         },
-        spawnSubagents: {
+        spawnChildAgents: {
           label: '启动子智能体',
           description: '启动另一个智能体进程。全局允许有意不提供。',
         },
@@ -887,10 +887,10 @@ commandPalette: {
       under: ({ verb, subject }) => `在 ${subject} 下${verb}`,
       unknownPending: ({ name }) => `${name}……`,
       verbs: {
-        runSubagent: { base: '运行子智能体', pending: '正在运行子智能体', done: '已运行子智能体' },
-        checkSubagent: { base: '检查子智能体', pending: '正在检查子智能体', done: '已检查子智能体' },
-        messageSubagent: { base: '向子智能体发送消息', pending: '正在向子智能体发送消息', done: '已向子智能体发送消息' },
-        stopSubagent: { base: '停止子智能体', pending: '正在停止子智能体', done: '已停止子智能体' },
+        runChildAgent: { base: '运行子智能体', pending: '正在运行子智能体', done: '已运行子智能体' },
+        checkChildAgent: { base: '检查子智能体', pending: '正在检查子智能体', done: '已检查子智能体' },
+        messageChildAgent: { base: '向子智能体发送消息', pending: '正在向子智能体发送消息', done: '已向子智能体发送消息' },
+        stopChildRun: { base: '停止子智能体', pending: '正在停止子智能体', done: '已停止子智能体' },
         recallMemory: { base: '召回记忆', pending: '正在召回记忆', done: '已召回记忆' },
         dreamMemory: { base: 'Dream 记忆', pending: '正在 Dream 记忆', done: '已 Dream 记忆' },
         createNode: { base: '创建节点', pending: '正在创建节点', done: '已创建节点' },
@@ -904,7 +904,7 @@ commandPalette: {
         editFile: { base: '编辑文件', pending: '正在编辑文件', done: '已编辑文件' },
       },
     },
-    subagent: {
+    childRun: {
       summary: ({ description }) => `子智能体 · ${description}`,
       // 在对话流里记录一次子智能体运行的内联分割线。
       boundary: {
@@ -975,7 +975,7 @@ commandPalette: {
       idleSummary: '没有正在运行的任务',
       runningSummary: ({ count }) => `${count} 个任务正在运行`,
       empty: '暂无任务。',
-      kindSubagent: '子智能体',
+      kindChildRun: '子智能体',
       kindDream: 'Dream',
       dreamTitle: '记忆 Dream',
       dreamPoolUser: '关于你',

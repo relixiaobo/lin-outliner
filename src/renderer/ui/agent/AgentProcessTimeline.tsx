@@ -1,5 +1,5 @@
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
-import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
@@ -12,11 +12,11 @@ interface AgentProcessTimelineProps {
   id: string;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenSubagentTranscript?: (subagentId: string) => void;
+  onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   conversationId?: string | null;
-  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
+  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
 }
 
@@ -26,11 +26,11 @@ export function AgentProcessTimeline({
   id,
   index,
   onNodeReferenceOpen,
-  onOpenSubagentTranscript,
+  onOpenChildRunTranscript,
   pendingToolCallIds,
   results,
   conversationId,
-  subagentsByParentToolCallId,
+  childRunsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
   const thinkingBlocks = blocks.filter(
@@ -68,11 +68,11 @@ export function AgentProcessTimeline({
                 expandState.toggle(toolId, expandState.isExpanded(toolId, false));
               }}
               onNodeReferenceOpen={onNodeReferenceOpen}
-              onOpenSubagentTranscript={onOpenSubagentTranscript}
+              onOpenChildRunTranscript={onOpenChildRunTranscript}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(block.toolCall.id)}
               conversationId={conversationId}
-              subagent={subagentsByParentToolCallId?.get(block.toolCall.id)}
+              childRun={childRunsByParentToolCallId?.get(block.toolCall.id)}
               toolCall={block.toolCall}
               turnActive={turnActive}
             />

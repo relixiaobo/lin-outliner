@@ -567,11 +567,11 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'task_stop' || toolName === 'agent_stop') {
-    return [descriptor(toolName, toolName === 'agent_stop' ? 'agent.subagent.stop' : 'task.stop', {
+    return [descriptor(toolName, toolName === 'agent_stop' ? 'agent.delegate.stop' : 'task.stop', {
       accessScope: 'none',
-      title: toolName === 'agent_stop' ? 'subagent stop' : 'background task stop',
-      summary: toolName === 'agent_stop' ? 'Stop a background subagent.' : 'Stop a background task launched by the agent.',
-      consequence: toolName === 'agent_stop' ? 'This controls a local background subagent.' : 'This only controls a local background task.',
+      title: toolName === 'agent_stop' ? 'child run stop' : 'background task stop',
+      summary: toolName === 'agent_stop' ? 'Stop a background child run.' : 'Stop a background task launched by the agent.',
+      consequence: toolName === 'agent_stop' ? 'This controls a local background child run.' : 'This only controls a local background task.',
       defaultDecision: 'allow',
       reversible: false,
       externalEffect: false,
@@ -581,11 +581,11 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'agent_status') {
-    return [descriptor(toolName, 'agent.subagent.status', {
+    return [descriptor(toolName, 'agent.delegate.status', {
       accessScope: 'none',
-      title: 'subagent status',
-      summary: 'Read the status of a background subagent.',
-      consequence: 'This reads local subagent run state.',
+      title: 'child run status',
+      summary: 'Read the status of a background child run.',
+      consequence: 'This reads local child run run state.',
       defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
@@ -595,11 +595,11 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'agent_send') {
-    return [descriptor(toolName, 'agent.subagent.send', {
+    return [descriptor(toolName, 'agent.delegate.send', {
       accessScope: 'none',
-      title: 'subagent message',
-      summary: 'Send a follow-up message to an existing subagent.',
-      consequence: 'This can steer an already-running local subagent.',
+      title: 'child run message',
+      summary: 'Send a follow-up message to an existing child run.',
+      consequence: 'This can steer an already-running local child run.',
       defaultDecision: 'allow',
       reversible: false,
       externalEffect: false,
@@ -609,10 +609,10 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'agent') {
-    return [descriptor(toolName, 'agent.subagent.spawn', {
+    return [descriptor(toolName, 'agent.delegate.spawn', {
       accessScope: 'none',
-      title: 'subagent spawn',
-      summary: 'Start or message a subagent.',
+      title: 'child run spawn',
+      summary: 'Start or message a child run.',
       consequence: 'This can create another agent process that may take further actions.',
       defaultDecision: 'ask',
       reversible: false,
@@ -620,7 +620,7 @@ export function deriveAgentToolActionDescriptors(input: {
       highConsequence: true,
       classifierAutoAllowEligible: false,
       capabilities: ['agent_spawn'],
-      requestTitle: 'Approve subagent action?',
+      requestTitle: 'Approve child run action?',
     })];
   }
 

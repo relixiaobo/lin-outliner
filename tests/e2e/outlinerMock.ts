@@ -377,9 +377,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         source: 'built-in',
         rootDir: 'built-in',
         agentFile: 'built-in/general',
-        description: 'General-purpose focused subagent for research, analysis, and execution.',
+        description: 'General-purpose focused child run for research, analysis, and execution.',
         body: [
-          'You are a focused subagent running inside Lin.',
+          'You are a focused child run running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
         ].join('\n'),
         permissionMode: 'restricted',
@@ -399,9 +399,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       costCacheWriteUsd: 0,
     };
     const debugPayloadJson = '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}';
-    const subagentTranscriptJson = JSON.stringify({
+    const childRunTranscriptJson = JSON.stringify({
       v: 1,
-      runId: 'subagent-1',
+      runId: 'child run-1',
       messageCount: 4,
       messages: [
         {
@@ -432,15 +432,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           stopReason: 'toolUse',
           content: [
             { type: 'thinking', thinking: 'Read the visible outline before summarizing.', redacted: false },
-            { type: 'toolCall', id: 'subagent-tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
+            { type: 'toolCall', id: 'child run-tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
           ],
         },
         {
           role: 'toolResult',
-          toolCallId: 'subagent-tool-read-1',
+          toolCallId: 'child run-tool-read-1',
           toolName: 'node_read',
           timestamp: now - 300,
-          content: [{ type: 'text', text: 'Daily note content from subagent.' }],
+          content: [{ type: 'text', text: 'Daily note content from child run.' }],
           isError: false,
         },
         {
@@ -464,7 +464,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             },
           },
           stopReason: 'stop',
-          content: [{ type: 'text', text: 'The subagent finished inspecting the UI.' }],
+          content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
         },
       ],
     });
@@ -1475,8 +1475,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               rows: [],
               transcriptRows: [],
               taskIds: [],
-              subagentRunIds: [],
-              entities: { messages: {}, subagents: {}, compactions: {}, tasks: {} },
+              childRunIds: [],
+              entities: { messages: {}, childRuns: {}, compactions: {}, tasks: {} },
               streaming: null,
             },
           }) as T;
@@ -1720,29 +1720,29 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_payload_text') {
           const payloadId = String(args.payloadId);
           if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
-          if (payloadId === 'subagent-transcript-1') return clone(subagentTranscriptJson) as T;
+          if (payloadId === 'child run-transcript-1') return clone(child runTranscriptJson) as T;
           return clone(null) as T;
         }
-        if (cmd === 'agent_subagent_status') {
+        if (cmd === 'agent_child_run_status') {
           return clone({
             status: 'running',
             agent_id: String(args.agentId),
-            description: 'Inspect subagent UI',
+            description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
-            subagent_type: 'explorer',
+            agent_type: 'explorer',
             context_mode: 'fork',
             started_at: now - 500,
             updated_at: now,
             transcript_message_count: 4,
           }) as T;
         }
-        if (cmd === 'agent_subagent_send') {
+        if (cmd === 'agent_child_run_send') {
           return clone({
             status: 'queued',
             agent_id: String(args.agentId),
-            description: 'Inspect subagent UI',
+            description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
-            subagent_type: 'explorer',
+            agent_type: 'explorer',
             context_mode: 'fork',
             started_at: now - 500,
             updated_at: now,
@@ -1750,13 +1750,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             instructions: 'Message queued for the running background agent.',
           }) as T;
         }
-        if (cmd === 'agent_subagent_stop') {
+        if (cmd === 'agent_child_run_stop') {
           return clone({
             status: 'stopped',
             agent_id: String(args.agentId),
-            description: 'Inspect subagent UI',
+            description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
-            subagent_type: 'explorer',
+            agent_type: 'explorer',
             context_mode: 'fork',
             started_at: now - 500,
             updated_at: now,
@@ -2541,7 +2541,7 @@ export async function resolveOAuthLogin(page: Page, providerId: string) {
 export async function emitAgentProjection(page: Page, conversationId: string, state: Record<string, any>, revision = 1) {
   const entities: Record<string, any> = {};
   const compactions: Record<string, any> = {};
-  const rows: Array<{ id: string; kind: string; messageId?: string; compactionId?: string; subagentId?: string }> = [];
+  const rows: Array<{ id: string; kind: string; messageId?: string; compactionId?: string; childRunId?: string }> = [];
 
   const persistedContent = (message: any) => {
     const content = typeof message.content === 'string'
@@ -2572,25 +2572,25 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       return { type: 'text', text: JSON.stringify(part) };
     });
   };
-  const rawSubagents = state.subagents ?? {};
-  const subagents = Array.isArray(rawSubagents)
-    ? Object.fromEntries(rawSubagents.map((subagent: any) => [subagent.id, subagent]))
-    : rawSubagents;
-  const subagentRunIds = state.subagentRunIds
-    ?? (Array.isArray(rawSubagents) ? rawSubagents.map((subagent: any) => subagent.id) : Object.keys(subagents));
-  const subagentTasks = Object.values(subagents).map((subagent: any) => ({
-    id: `subagent:${subagent.id}`,
-    kind: 'subagent',
-    status: subagent.status,
-    title: (subagent.description ?? '').trim() || (subagent.name ?? '').trim() || subagent.id,
-    subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
-    startedAt: subagent.startedAt,
-    updatedAt: subagent.updatedAt,
-    completedAt: subagent.completedAt,
-    subagentId: subagent.id,
+  const rawChildRuns = state.childRuns ?? {};
+  const childRuns = Array.isArray(rawChildRuns)
+    ? Object.fromEntries(rawChildRuns.map((childRun: any) => [childRun.id, child run]))
+    : rawChildRuns;
+  const childRunIds = state.childRunIds
+    ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(childRuns));
+  const childRunTasks = Object.values(childRuns).map((childRun: any) => ({
+    id: `child-run:${childRun.id}`,
+    kind: 'child-run',
+    status: childRun.status,
+    title: (childRun.description ?? '').trim() || (childRun.name ?? '').trim() || childRun.id,
+    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
+    startedAt: childRun.startedAt,
+    updatedAt: childRun.updatedAt,
+    completedAt: childRun.completedAt,
+    childRunId: childRun.id,
   }));
   const tasks = {
-    ...Object.fromEntries(subagentTasks.map((task: any) => [task.id, task])),
+    ...Object.fromEntries(child runTasks.map((task: any) => [task.id, task])),
     ...(state.tasks ?? {}),
   };
   const taskIds = state.taskIds ?? Object.keys(tasks);
@@ -2692,13 +2692,13 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     };
   }
 
-  // Mirror the core projection's insertSubagentRows: the full transcript carries
-  // an inline boundary row per subagent run (the active `rows` stays clean). A
+  // Mirror the core projection's insertChildRunRows: the full transcript carries
+  // an inline boundary row per child run run (the active `rows` stays clean). A
   // parented run anchors after its tool_result row, else after the assistant
   // message that issued the call; a parentless run is ordered by start time.
   const messageHasToolCall = (entity: any, toolCallId: string) =>
     !!entity?.content?.some((block: any) => block.type === 'toolCall' && block.id === toolCallId);
-  const subagentInsertIndex = (currentRows: typeof rows, run: any) => {
+  const childRunInsertIndex = (currentRows: typeof rows, run: any) => {
     if (run.parentToolCallId) {
       const resultIndex = currentRows.findIndex(
         (row) => row.kind === 'tool_result' && entities[row.messageId ?? '']?.toolCallId === run.parentToolCallId,
@@ -2717,15 +2717,15 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     }
     return index < 0 ? -1 : index + 1;
   };
-  const subagentRows = [...rows];
-  const orderedRuns = Object.values(subagents).sort(
+  const childRunRows = [...rows];
+  const orderedRuns = Object.values(childRuns).sort(
     (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
   );
   for (const run of orderedRuns as any[]) {
-    const row = { id: `subagent:${run.id}`, kind: 'subagent', subagentId: run.id };
-    const insertAt = subagentInsertIndex(subagentRows, run);
-    if (insertAt < 0) subagentRows.push(row);
-    else subagentRows.splice(insertAt, 0, row);
+    const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
+    const insertAt = childRunInsertIndex(childRunRows, run);
+    if (insertAt < 0) childRunRows.push(row);
+    else childRunRows.splice(insertAt, 0, row);
   }
 
   await emitAgentEvent(page, {
@@ -2756,10 +2756,10 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       pendingToolCallIds: state.pendingToolCallIds ?? [],
       errorMessage: state.errorMessage ?? null,
       rows,
-      transcriptRows: state.transcriptRows ?? subagentRows,
+      transcriptRows: state.transcriptRows ?? childRunRows,
       taskIds,
-      subagentRunIds,
-      entities: { messages: entities, subagents, compactions, tasks },
+      childRunIds,
+      entities: { messages: entities, childRuns, compactions, tasks },
       streaming,
     },
     timestamp: Date.now(),

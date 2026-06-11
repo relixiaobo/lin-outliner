@@ -646,8 +646,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeForkedSkill: async ({ skill, renderedContent }) => ({
-        agentId: 'subagent-test',
-        subagentType: skill.agent ?? 'general',
+        agentId: 'child run-test',
+        agentType: skill.agent ?? 'general',
         status: 'completed',
         result: `fork result: ${renderedContent}`,
       }),
@@ -664,7 +664,7 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.execution).toBe('fork');
-    expect(invocation.forked?.agentId).toBe('subagent-test');
+    expect(invocation.forked?.agentId).toBe('child run-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
     expect(runtime.getActivePermissionRules()).toEqual([]);
     expect(runtime.consumePendingTurnEffect()).toBeNull();

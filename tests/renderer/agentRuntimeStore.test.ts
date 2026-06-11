@@ -17,7 +17,7 @@ import type {
   AgentRenderActiveDream,
   AgentRenderDreamEntity,
   AgentRenderProjection,
-  AgentRenderSubagentEntity,
+  AgentRenderChildRunEntity,
   AgentRenderTaskEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
@@ -74,8 +74,8 @@ function projection(
     activeCompaction?: AgentRenderActiveCompaction | null;
     activeDream?: AgentRenderActiveDream | null;
     dreams?: Record<string, AgentRenderDreamEntity>;
-    subagents?: Record<string, AgentRenderSubagentEntity>;
-    subagentRunIds?: string[];
+    childRuns?: Record<string, AgentRenderChildRunEntity>;
+    childRunIds?: string[];
     tasks?: Record<string, AgentRenderTaskEntity>;
     taskIds?: string[];
   } = {},
@@ -85,19 +85,19 @@ function projection(
     kind: 'message' as const,
     messageId: entry.nodeId,
   }));
-  const subagentTasks = Object.values(options.subagents ?? {}).map((subagent) => ({
-    id: `subagent:${subagent.id}`,
-    kind: 'subagent' as const,
-    status: subagent.status,
-    title: subagent.description.trim() || subagent.name?.trim() || subagent.id,
-    subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
-    startedAt: subagent.startedAt,
-    updatedAt: subagent.updatedAt,
-    completedAt: subagent.completedAt,
-    subagentId: subagent.id,
+  const childRunTasks = Object.values(options.childRuns ?? {}).map((childRun) => ({
+    id: `child-run:${childRun.id}`,
+    kind: 'child-run' as const,
+    status: childRun.status,
+    title: childRun.description.trim() || childRun.name?.trim() || childRun.id,
+    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
+    startedAt: childRun.startedAt,
+    updatedAt: childRun.updatedAt,
+    completedAt: childRun.completedAt,
+    childRunId: childRun.id,
   }));
   const tasks = {
-    ...Object.fromEntries(subagentTasks.map((task) => [task.id, task])),
+    ...Object.fromEntries(childRunTasks.map((task) => [task.id, task])),
     ...(options.tasks ?? {}),
   };
   return {
@@ -115,7 +115,7 @@ function projection(
     rows,
     transcriptRows: rows,
     taskIds: options.taskIds ?? Object.keys(tasks),
-    subagentRunIds: options.subagentRunIds ?? Object.keys(options.subagents ?? {}),
+    childRunIds: options.childRunIds ?? Object.keys(options.childRuns ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
         id: entry.nodeId,
@@ -132,7 +132,7 @@ function projection(
         stopReason: entry.message.role === 'assistant' ? entry.message.stopReason : undefined,
         usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
       }])),
-      subagents: options.subagents ?? {},
+      childRuns: options.childRuns ?? {},
       compactions: {},
       dreams: options.dreams ?? {},
       tasks,
@@ -176,21 +176,19 @@ function persistedContent(message: UserMessage | AssistantMessage): AgentPersist
   return content;
 }
 
-function subagentEntity(
-  patch: Partial<AgentRenderSubagentEntity> & Pick<AgentRenderSubagentEntity, 'id'>,
-): AgentRenderSubagentEntity {
+function childRunEntity(
+  patch: Partial<AgentRenderChildRunEntity> & Pick<AgentRenderChildRunEntity, 'id'>,
+): AgentRenderChildRunEntity {
   return {
-    description: 'Inspect subagent UI',
+    description: 'Inspect child run UI',
     prompt: 'Inspect the current UI.',
-    subagentType: 'explorer',
+    agentType: 'explorer',
     contextMode: 'fork',
     status: 'completed',
     startedAt: 100,
     updatedAt: 260,
     completedAt: 260,
     result: 'Found the relevant UI path.',
-    transcriptPayloadId: 'subagent-transcript-1',
-    transcriptMessageCount: 4,
     parentToolCallId: 'tool-agent-1',
     ...patch,
   };
@@ -347,24 +345,24 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('derives task entries from subagent runs with running work first', async () => {
-    const completed = subagentEntity({
-      id: 'subagent-completed',
+  test('derives task entries from child run runs with running work first', async () => {
+    const completed = childRunEntity({
+      id: 'child-completed',
       description: 'Finished audit',
       status: 'completed',
       updatedAt: 300,
       completedAt: 300,
     });
-    const running = subagentEntity({
-      id: 'subagent-running',
+    const running = childRunEntity({
+      id: 'child-running',
       description: 'Long research',
       status: 'running',
       updatedAt: 200,
       completedAt: undefined,
     });
     const restored = conversation('saved', projection([], {
-      subagentRunIds: [completed.id, running.id],
-      subagents: {
+      childRunIds: [completed.id, running.id],
+      childRuns: {
         [completed.id]: completed,
         [running.id]: running,
       },
@@ -380,21 +378,21 @@ describe('agent runtime store', () => {
       status: task.status,
       title: task.title,
       subtitle: task.subtitle,
-      subagentId: task.subagentId,
+      childRunId: task.childRunId,
     }))).toEqual([
       {
-        id: 'subagent:subagent-running',
+        id: 'child-run:child-running',
         status: 'running',
         title: 'Long research',
         subtitle: 'fork · explorer',
-        subagentId: 'subagent-running',
+        childRunId: 'child-running',
       },
       {
-        id: 'subagent:subagent-completed',
+        id: 'child-run:child-completed',
         status: 'completed',
         title: 'Finished audit',
         subtitle: 'fork · explorer',
-        subagentId: 'subagent-completed',
+        childRunId: 'child-completed',
       },
     ]);
     unsubscribe();
@@ -623,7 +621,7 @@ describe('agent runtime store', () => {
 
   test('filters hidden system reminder user rows from the visible conversation', async () => {
     const restored = conversation('saved', projection([
-      { nodeId: 'system-notification', message: userMessage(systemReminder('Background subagent completed.')), branches: null },
+      { nodeId: 'system-notification', message: userMessage(systemReminder('Background child run completed.')), branches: null },
       { nodeId: 'a1', message: assistantMessage('handled notification'), branches: null },
     ]));
     const fake = createFakeClient({ latestConversation: restored });
@@ -914,22 +912,21 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('indexes subagents by parent tool call id for renderer lookup', async () => {
-    const subagent = {
-      id: 'subagent-1',
-      description: 'Inspect subagent UI',
+  test('indexes childRuns by parent tool call id for renderer lookup', async () => {
+    const childRun = {
+      id: 'child-1',
+      description: 'Inspect child run UI',
       prompt: 'Inspect the current UI.',
-      subagentType: 'explorer',
+      agentType: 'explorer',
       contextMode: 'fork',
       status: 'completed',
       startedAt: 100,
       updatedAt: 250,
       completedAt: 250,
       result: 'Found the relevant UI path.',
-      transcriptPayloadId: 'subagent-transcript-1',
       transcriptMessageCount: 4,
       parentToolCallId: 'tool-agent-1',
-    } satisfies AgentRenderSubagentEntity;
+    } satisfies AgentRenderChildRunEntity;
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('inspect'), branches: null },
       {
@@ -941,7 +938,7 @@ describe('agent runtime store', () => {
             id: 'tool-agent-1',
             name: 'Agent',
             arguments: {
-              description: 'Inspect subagent UI',
+              description: 'Inspect child run UI',
               prompt: 'Inspect the current UI.',
             },
           }],
@@ -949,8 +946,8 @@ describe('agent runtime store', () => {
         branches: null,
       },
     ], {
-      subagents: { [subagent.id]: subagent },
-      subagentRunIds: [subagent.id],
+      childRuns: { [childRun.id]: childRun },
+      childRunIds: [childRun.id],
     }));
     const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
@@ -959,9 +956,9 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     const snapshot = store.getSnapshot();
-    expect(snapshot.subagentRunIds).toEqual(['subagent-1']);
-    expect(snapshot.subagents['subagent-1']).toEqual(subagent);
-    expect(snapshot.subagentsByParentToolCallId.get('tool-agent-1')).toEqual(subagent);
+    expect(snapshot.childRunIds).toEqual(['child-1']);
+    expect(snapshot.childRuns['child-1']).toEqual(childRun);
+    expect(snapshot.childRunsByParentToolCallId.get('tool-agent-1')).toEqual(childRun);
     unsubscribe();
   });
 

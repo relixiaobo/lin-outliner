@@ -33,7 +33,7 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 const REASONING_OPTIONS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
-// The common subagent tools offered as toggles (curated — the outliner/node and
+// The common child run tools offered as toggles (curated — the outliner/node and
 // helper tools are omitted as too internal). Names are the canonical lowercase
 // forms the runtime tool filter matches (agentTools.ts:filterAgentTools).
 const TOOL_CATALOG: readonly string[] = [

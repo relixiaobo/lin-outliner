@@ -514,8 +514,8 @@ export interface CommandNode extends NodeBase {
   sysLastAttemptAt?: number;
   /**
    * Which agent definition runs this command. Matches an `AgentDefinition.name`
-   * from the subagent registry (see `listAllAgentDefinitions`); a fire spawns the
-   * brief as a subagent of this type so the run shows in the delivery
+   * from the child run registry (see `listAllAgentDefinitions`); a fire spawns the
+   * brief as a child run of this type so the run shows in the delivery
    * conversation's task panel. Empty/absent = the main agent (a context fork from
    * the otherwise-empty delivery conversation). Agent-editable; not part of the
    * user-only bright line (only arming the *schedule* is user-gated).

@@ -4,10 +4,10 @@ import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { ToolCall, Usage } from '../../src/core/agentTypes';
-import type { AgentRenderSubagentEntity } from '../../src/core/agentRenderProjection';
+import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
 import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
-import { AgentSubagentDetailsPanel } from '../../src/renderer/ui/agent/AgentSubagentDetailsPanel';
+import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
 
 interface RenderedComponent {
@@ -24,25 +24,25 @@ afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
 });
 
-describe('agent subagent UI', () => {
+describe('agent child run UI', () => {
   test('renders a compact Agent tool block and opens transcript details', async () => {
-    let openedSubagentId: string | null = null;
+    let openedChildRunId: string | null = null;
     const rendered = renderComponent(
       <AgentToolCallBlock
-        onOpenSubagentTranscript={(subagentId) => {
-          openedSubagentId = subagentId;
+        onOpenChildRunTranscript={(childRunId) => {
+          openedChildRunId = childRunId;
         }}
         pendingToolCallIds={new Set()}
         conversationId="conversation-1"
-        subagent={subagentEntity()}
+        childRun={childRunEntity()}
         toolCall={agentToolCall()}
         turnActive={false}
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Subagent · Inspect subagent UI');
+    expect(rendered.container.textContent).toContain('Agent task · Inspect child run UI');
 
-    await click(rendered, textButton(rendered, 'Subagent · Inspect subagent UI'));
+    await click(rendered, textButton(rendered, 'Agent task · Inspect child run UI'));
 
     expect(rendered.container.textContent).toContain('Status');
     expect(rendered.container.textContent).toContain('completed');
@@ -51,13 +51,13 @@ describe('agent subagent UI', () => {
     expect(rendered.container.textContent).toContain('Found the relevant UI path.');
 
     await click(rendered, textButton(rendered, 'View transcript'));
-    expect(openedSubagentId).toBe('subagent-1');
+    expect(openedChildRunId).toBe('child-1');
   });
 
-  test('loads a subagent transcript and keeps nested tool calls expandable', async () => {
+  test('loads a child run transcript and keeps nested tool calls expandable', async () => {
     const payloadText = JSON.stringify({
       v: 1,
-      runId: 'subagent-1',
+      runId: 'child-1',
       messageCount: 4,
       messages: [
         {
@@ -99,13 +99,13 @@ describe('agent subagent UI', () => {
       ],
     });
     const rendered = renderComponent(
-      <AgentSubagentDetailsPanel
+      <AgentChildRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
-        subagent={subagentEntity()}
+        childRun={childRunEntity()}
       />,
       {
-        payloads: { 'subagent-1': payloadText },
+        payloads: { 'child-1': payloadText },
       },
     );
 
@@ -120,13 +120,13 @@ describe('agent subagent UI', () => {
     expect(rendered.container.textContent).toContain('Daily note content.');
   });
 
-  test('sends follow-ups and stops running subagents through runtime commands', async () => {
+  test('sends follow-ups and stops running childRuns through runtime commands', async () => {
     const rendered = renderComponent(
-      <AgentSubagentDetailsPanel
+      <AgentChildRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
-        subagent={{
-          ...subagentEntity(),
+        childRun={{
+          ...childRunEntity(),
           completedAt: undefined,
           result: undefined,
           status: 'running',
@@ -134,9 +134,9 @@ describe('agent subagent UI', () => {
       />,
       {
         payloads: {
-          'subagent-1': JSON.stringify({
+          'child-1': JSON.stringify({
             v: 1,
-            runId: 'subagent-1',
+            runId: 'child-1',
             messageCount: 1,
             messages: [{
               role: 'user',
@@ -149,37 +149,37 @@ describe('agent subagent UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    await changeTextarea(rendered, 'Subagent follow-up', 'Continue with layout risks.');
+    await changeTextarea(rendered, 'Agent task follow-up', 'Continue with layout risks.');
     await click(rendered, textButton(rendered, 'Send'));
     await click(rendered, textButton(rendered, 'Stop'));
 
-    expect(rendered.commands.filter((call) => call.cmd.startsWith('agent_subagent_'))).toEqual([
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_child_run_send' || call.cmd === 'agent_child_run_stop')).toEqual([
       {
-        cmd: 'agent_subagent_send',
+        cmd: 'agent_child_run_send',
         args: {
-          agentId: 'subagent-1',
+          agentId: 'child-1',
           message: 'Continue with layout risks.',
           conversationId: 'conversation-1',
         },
       },
       {
-        cmd: 'agent_subagent_stop',
+        cmd: 'agent_child_run_stop',
         args: {
-          agentId: 'subagent-1',
+          agentId: 'child-1',
           conversationId: 'conversation-1',
         },
       },
     ]);
   });
 
-  test('lists subagent tasks and stops a running task', async () => {
-    let openedSubagentId: string | null = null;
-    const running = subagentEntity();
+  test('lists child run tasks and stops a running task', async () => {
+    let openedChildRunId: string | null = null;
+    const running = childRunEntity();
     running.status = 'running';
     running.completedAt = undefined;
     const completed = {
-      ...subagentEntity(),
-      id: 'subagent-2',
+      ...childRunEntity(),
+      id: 'child-2',
       description: 'Summarize notes',
       status: 'completed' as const,
       updatedAt: 320,
@@ -189,8 +189,8 @@ describe('agent subagent UI', () => {
       <AgentTaskPanel
         conversationId="conversation-1"
         onClose={() => undefined}
-        onOpenSubagent={(subagentId) => {
-          openedSubagentId = subagentId;
+        onOpenChildRun={(childRunId) => {
+          openedChildRunId = childRunId;
         }}
         tasks={[taskEntry(running), taskEntry(completed)]}
       />,
@@ -199,26 +199,26 @@ describe('agent subagent UI', () => {
     expect(rendered.container.textContent).toContain('Tasks');
     expect(rendered.container.textContent).toContain('1 task running');
     expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 task running');
-    expect(rendered.container.textContent).toContain('Inspect subagent UI');
+    expect(rendered.container.textContent).toContain('Inspect child run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
 
-    await click(rendered, textButton(rendered, 'Inspect subagent UI'));
-    expect(openedSubagentId).toBe('subagent-1');
+    await click(rendered, textButton(rendered, 'Inspect child run UI'));
+    expect(openedChildRunId).toBe('child-1');
 
     await click(rendered, ariaButton(rendered, 'Stop task'));
-    await waitForCommand(rendered, 'agent_subagent_stop');
+    await waitForCommand(rendered, 'agent_child_run_stop');
 
-    expect(rendered.commands.filter((call) => call.cmd === 'agent_subagent_stop')).toEqual([{
-      cmd: 'agent_subagent_stop',
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_child_run_stop')).toEqual([{
+      cmd: 'agent_child_run_stop',
       args: {
-        agentId: 'subagent-1',
+        agentId: 'child-1',
         conversationId: 'conversation-1',
       },
       }]);
   });
 
   test('lists Dream tasks as read-only agent tasks', async () => {
-    let openedSubagentId: string | null = null;
+    let openedChildRunId: string | null = null;
     const dreamTask: AgentTaskEntry = {
       id: 'dream:dream-run-1',
       kind: 'dream',
@@ -236,8 +236,8 @@ describe('agent subagent UI', () => {
       <AgentTaskPanel
         conversationId="conversation-1"
         onClose={() => undefined}
-        onOpenSubagent={(subagentId) => {
-          openedSubagentId = subagentId;
+        onOpenChildRun={(childRunId) => {
+          openedChildRunId = childRunId;
         }}
         tasks={[dreamTask]}
       />,
@@ -253,7 +253,7 @@ describe('agent subagent UI', () => {
     expect(meta?.textContent).toContain('About you · Manual · 3 messages · 1 memory change');
     expect(meta?.childElementCount).toBe(0);
     expect(rendered.container.querySelector('[aria-label="Open task"]')).toBeNull();
-    expect(openedSubagentId).toBeNull();
+    expect(openedChildRunId).toBeNull();
   });
 });
 
@@ -327,26 +327,26 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
         if (!raw) return null as T;
         return { messages: (JSON.parse(raw) as { messages: unknown[] }).messages } as T;
       }
-      if (cmd === 'agent_subagent_send') {
+      if (cmd === 'agent_child_run_send') {
         return {
           status: 'queued',
           agent_id: args.agentId,
-          description: 'Inspect subagent UI',
+          description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
-          subagent_type: 'explorer',
+          agent_type: 'explorer',
           context_mode: 'fork',
           started_at: 100,
           updated_at: 300,
           transcript_message_count: 1,
         } as T;
       }
-      if (cmd === 'agent_subagent_stop') {
+      if (cmd === 'agent_child_run_stop') {
         return {
           status: 'stopped',
           agent_id: args.agentId,
-          description: 'Inspect subagent UI',
+          description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
-          subagent_type: 'explorer',
+          agent_type: 'explorer',
           context_mode: 'fork',
           started_at: 100,
           updated_at: 300,
@@ -419,16 +419,16 @@ function agentToolCall(): ToolCall {
     id: 'tool-agent-1',
     name: 'Agent',
     arguments: {
-      description: 'Inspect subagent UI',
+      description: 'Inspect child run UI',
       prompt: 'Inspect the current UI.',
     },
   };
 }
 
-function subagentEntity(): AgentRenderSubagentEntity {
+function childRunEntity(): AgentRenderChildRunEntity {
   return {
-    id: 'subagent-1',
-    description: 'Inspect subagent UI',
+    id: 'child-1',
+    description: 'Inspect child run UI',
     prompt: 'Inspect the current UI.',
     agentType: 'explorer',
     contextMode: 'fork',
@@ -441,18 +441,18 @@ function subagentEntity(): AgentRenderSubagentEntity {
   };
 }
 
-function taskEntry(subagent: AgentRenderSubagentEntity): AgentTaskEntry {
+function taskEntry(childRun: AgentRenderChildRunEntity): AgentTaskEntry {
   return {
-    id: `subagent:${subagent.id}`,
-    kind: 'subagent',
-    status: subagent.status,
-    title: subagent.description,
-    subtitle: `${subagent.contextMode} · ${subagent.subagentType}`,
-    startedAt: subagent.startedAt,
-    updatedAt: subagent.updatedAt,
-    completedAt: subagent.completedAt,
-    subagentId: subagent.id,
-    subagent,
+    id: `child-run:${childRun.id}`,
+    kind: 'child-run',
+    status: childRun.status,
+    title: childRun.description,
+    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
+    startedAt: childRun.startedAt,
+    updatedAt: childRun.updatedAt,
+    completedAt: childRun.completedAt,
+    childRunId: childRun.id,
+    childRun,
   };
 }
 

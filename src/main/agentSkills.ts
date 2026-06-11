@@ -166,7 +166,7 @@ export interface SkillForkExecutionInput {
 
 export interface SkillForkExecutionResult {
   agentId: string;
-  subagentType: string;
+  agentType: string;
   status: string;
   result?: string;
   error?: string;
@@ -209,7 +209,7 @@ export interface SkillToolData {
   model?: string;
   effort?: string;
   agent_id?: string;
-  subagent_type?: string;
+  agent_type?: string;
   result?: string;
   error?: string;
 }
@@ -674,7 +674,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         model: invocation.skill.model,
         effort: invocation.skill.effort,
         agent_id: invocation.forked?.agentId,
-        subagent_type: invocation.forked?.subagentType,
+        agent_type: invocation.forked?.agentType,
         result: invocation.forked?.result,
         error: invocation.forked?.error,
       };
@@ -1431,9 +1431,9 @@ function createForkedSkillResultMessage(
     : '';
   const body = [
     metadata,
-    `Skill ${skill.name} ran in an isolated subagent.`,
+    `Skill ${skill.name} ran in an isolated child run.`,
     `agent_id: ${result.agentId}`,
-    `subagent_type: ${result.subagentType}`,
+    `agent_type: ${result.agentType}`,
     '',
     '<skill-result>',
     result.result || result.error || 'Skill execution completed without a text result.',
@@ -1446,11 +1446,11 @@ function formatForkedSkillToolResult(
   skill: SkillDefinition,
   result: SkillForkExecutionResult | undefined,
 ): string {
-  if (!result) return `Skill ${skill.name} completed in an isolated subagent.`;
+  if (!result) return `Skill ${skill.name} completed in an isolated child run.`;
   return [
-    `Skill ${skill.name} completed in an isolated subagent.`,
+    `Skill ${skill.name} completed in an isolated child run.`,
     `agent_id: ${result.agentId}`,
-    `subagent_type: ${result.subagentType}`,
+    `agent_type: ${result.agentType}`,
     result.error ? `error: ${result.error}` : '',
     '',
     result.result || 'Skill execution completed without a text result.',

@@ -17,7 +17,7 @@
 @import './agent-markdown.css';
 @import './code.css';
 @import './agent-tool-rows.css';
-@import './agent-subagent.css';
+@import './agent-child-run.css';
 @import './agent-composer.css';
 @import './confirm-dialog.css';
 @import './settings-base.css';

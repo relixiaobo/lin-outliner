@@ -10,7 +10,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from '../../../core/agentTypes';
-import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import { isHiddenAgentContextBlock } from '../../../core/agentAttachments';
 import { api } from '../../api/client';
 import {
@@ -30,11 +30,11 @@ import { AgentThinkingBody } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import { useT } from '../../i18n/I18nProvider';
 
-interface AgentSubagentDetailsPanelProps {
+interface AgentChildRunDetailsPanelProps {
   onClose: () => void;
   conversationId: string | null;
-  subagent: AgentRenderSubagentEntity | null;
-  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
+  childRun: AgentRenderChildRunEntity | null;
+  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
 }
 
 function formatDuration(startedAt: number, endedAt: number): string {
@@ -162,19 +162,19 @@ function ResultText({ text }: { text: string }) {
   }
 
   return (
-    <div className="agent-subagent-result-box">
-      <div className="agent-subagent-result-actions">
+    <div className="agent-child-run-result-box">
+      <div className="agent-child-run-result-actions">
         <IconButton
           className="agent-message-action-button"
           disabled={!text}
           icon={CopyStateIcon}
-          label={t.agent.subagent.copyResult}
+          label={t.agent.childRun.copyResult}
           onClick={() => void copy()}
           title={t.agent.message.copy}
           variant="message"
         />
       </div>
-      <AgentMarkdown keyPrefix="subagent-result" text={text || t.agent.subagent.noResultYet} />
+      <AgentMarkdown keyPrefix="child run-result" text={text || t.agent.childRun.noResultYet} />
     </div>
   );
 }
@@ -183,14 +183,14 @@ function TranscriptUserMessage({ message }: { message: UserMessage }) {
   const t = useT();
   const content = textFromUserContent(message.content);
   return (
-    <article className={content.hidden ? 'agent-subagent-transcript-message is-system' : 'agent-subagent-transcript-message is-user'}>
-      <div className="agent-subagent-transcript-head">
-        <span>{content.hidden ? t.agent.subagent.roleSystem : t.agent.subagent.roleUser}</span>
+    <article className={content.hidden ? 'agent-child-run-transcript-message is-system' : 'agent-child-run-transcript-message is-user'}>
+      <div className="agent-child-run-transcript-head">
+        <span>{content.hidden ? t.agent.childRun.roleSystem : t.agent.childRun.roleUser}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
-      {content.text.trim() ? <AgentMarkdown keyPrefix={`subagent-user-${message.timestamp}`} text={content.text} /> : null}
+      {content.text.trim() ? <AgentMarkdown keyPrefix={`child run-user-${message.timestamp}`} text={content.text} /> : null}
       {content.images.length > 0 ? (
-        <div className="agent-subagent-image-list">
+        <div className="agent-child-run-image-list">
           {content.images.map((image, index) => (
             <img
               alt=""
@@ -208,8 +208,8 @@ function TranscriptThinking({ block, index }: { block: ThinkingContent; index: n
   const t = useT();
   if (block.redacted || !block.thinking.trim()) return null;
   return (
-    <details className="agent-subagent-thinking">
-      <summary>{t.agent.subagent.thoughtNumbered({ index: index + 1 })}</summary>
+    <details className="agent-child-run-thinking">
+      <summary>{t.agent.childRun.thoughtNumbered({ index: index + 1 })}</summary>
       <AgentThinkingBody streaming={false} text={block.thinking} />
     </details>
   );
@@ -219,27 +219,27 @@ function TranscriptAssistantMessage({
   message,
   pendingToolCallIds,
   conversationId,
-  subagentsByParentToolCallId,
+  childRunsByParentToolCallId,
   toolResults,
 }: {
   message: AssistantMessage;
   pendingToolCallIds: ReadonlySet<string>;
   conversationId: string | null;
-  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
+  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
   const t = useT();
   return (
-    <article className="agent-subagent-transcript-message is-assistant">
-      <div className="agent-subagent-transcript-head">
-        <span>{t.agent.subagent.roleAssistant}</span>
+    <article className="agent-child-run-transcript-message is-assistant">
+      <div className="agent-child-run-transcript-head">
+        <span>{t.agent.childRun.roleAssistant}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
-      <div className="agent-subagent-assistant-body">
+      <div className="agent-child-run-assistant-body">
         {message.content.map((block, index) => {
           if (block.type === 'text') {
             return block.text.trim()
-              ? <AgentMarkdown key={`text-${index}`} keyPrefix={`subagent-assistant-${message.timestamp}-${index}`} text={block.text} />
+              ? <AgentMarkdown key={`text-${index}`} keyPrefix={`child run-assistant-${message.timestamp}-${index}`} text={block.text} />
               : null;
           }
           if (block.type === 'thinking') {
@@ -252,7 +252,7 @@ function TranscriptAssistantMessage({
               pendingToolCallIds={pendingToolCallIds}
               result={toolResults.get(block.id)}
               conversationId={conversationId}
-              subagent={subagentsByParentToolCallId?.get(block.id)}
+              childRun={childRunsByParentToolCallId?.get(block.id)}
               toolCall={block as ToolCall}
               turnActive={pendingToolCallIds.has(block.id)}
             />
@@ -268,9 +268,9 @@ function TranscriptOrphanToolResult({ message }: { message: ToolResultMessage })
   const text = textFromToolResult(message);
   if (!text) return null;
   return (
-    <article className="agent-subagent-transcript-message is-tool-result">
-      <div className="agent-subagent-transcript-head">
-        <span>{t.agent.subagent.roleToolResult}</span>
+    <article className="agent-child-run-transcript-message is-tool-result">
+      <div className="agent-child-run-transcript-head">
+        <span>{t.agent.childRun.roleToolResult}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
       <pre>{compactText(text, 1200)}</pre>
@@ -285,8 +285,8 @@ function TranscriptTimeline({
   pendingToolCallIds,
   reload,
   conversationId,
-  subagent,
-  subagentsByParentToolCallId,
+  childRun,
+  childRunsByParentToolCallId,
   toolResults,
 }: {
   error: string | null;
@@ -295,30 +295,30 @@ function TranscriptTimeline({
   pendingToolCallIds: ReadonlySet<string>;
   reload: () => void;
   conversationId: string | null;
-  subagent: AgentRenderSubagentEntity;
-  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
+  childRun: AgentRenderChildRunEntity;
+  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
   const t = useT();
   if (loading && messages.length === 0) {
     return (
-      <div className="agent-subagent-empty">
+      <div className="agent-child-run-empty">
         <LoaderIcon className="agent-tool-call-spinner" size={ICON_SIZE.menu} />
-        <span>{t.agent.subagent.loadingTranscript}</span>
+        <span>{t.agent.childRun.loadingTranscript}</span>
       </div>
     );
   }
   if (error) {
     return (
-      <div className="agent-subagent-empty is-error">
+      <div className="agent-child-run-empty is-error">
         <WarningIcon size={ICON_SIZE.menu} />
         <span>{error}</span>
-        <ButtonControl className="agent-subagent-small-button" onClick={reload}>{t.agent.subagent.retry}</ButtonControl>
+        <ButtonControl className="agent-child-run-small-button" onClick={reload}>{t.agent.childRun.retry}</ButtonControl>
       </div>
     );
   }
   if (messages.length === 0) {
-    return <div className="agent-subagent-empty">{t.agent.subagent.noTranscriptMessages}</div>;
+    return <div className="agent-child-run-empty">{t.agent.childRun.noTranscriptMessages}</div>;
   }
 
   const assistantToolCallIds = new Set<string>();
@@ -330,7 +330,7 @@ function TranscriptTimeline({
   }
 
   return (
-    <div className="agent-subagent-transcript-list">
+    <div className="agent-child-run-transcript-list">
       {messages.map((message, index) => {
         if (message.role === 'user') return <TranscriptUserMessage key={`user-${index}`} message={message} />;
         if (message.role === 'assistant') {
@@ -340,7 +340,7 @@ function TranscriptTimeline({
               message={message}
               pendingToolCallIds={pendingToolCallIds}
               conversationId={conversationId}
-              subagentsByParentToolCallId={subagentsByParentToolCallId}
+              childRunsByParentToolCallId={childRunsByParentToolCallId}
               toolResults={toolResults}
             />
           );
@@ -352,12 +352,12 @@ function TranscriptTimeline({
   );
 }
 
-export function AgentSubagentDetailsPanel({
+export function AgentChildRunDetailsPanel({
   onClose,
   conversationId,
-  subagent,
-  subagentsByParentToolCallId,
-}: AgentSubagentDetailsPanelProps) {
+  childRun,
+  childRunsByParentToolCallId,
+}: AgentChildRunDetailsPanelProps) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<'timeline' | 'result' | 'metadata'>('timeline');
   const [followUpDraft, setFollowUpDraft] = useState('');
@@ -369,17 +369,17 @@ export function AgentSubagentDetailsPanel({
   const requestRef = useRef(0);
 
   const loadTranscript = useCallback(() => {
-    if (!conversationId || !subagent?.id) return;
+    if (!conversationId || !childRun?.id) return;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setLoading(true);
     setError(null);
-    void api.agentChildRunTranscript(conversationId, subagent.id)
+    void api.agentChildRunTranscript(conversationId, childRun.id)
       .then((result) => {
         if (requestId !== requestRef.current) return;
         if (result === null) {
           setRawTranscript(null);
-          setError(t.agent.subagent.transcriptPayloadUnavailable);
+          setError(t.agent.childRun.transcriptPayloadUnavailable);
           return;
         }
         setRawTranscript(result.messages);
@@ -392,7 +392,7 @@ export function AgentSubagentDetailsPanel({
       .finally(() => {
         if (requestId === requestRef.current) setLoading(false);
       });
-  }, [conversationId, subagent?.id, t.agent.subagent.transcriptPayloadUnavailable]);
+  }, [conversationId, childRun?.id, t.agent.childRun.transcriptPayloadUnavailable]);
 
   useEffect(() => {
     setActiveTab('timeline');
@@ -402,41 +402,41 @@ export function AgentSubagentDetailsPanel({
     setRawTranscript(null);
     setError(null);
     requestRef.current += 1;
-  }, [subagent?.id]);
+  }, [childRun?.id]);
 
   useEffect(() => {
-    if (!subagent) return undefined;
+    if (!childRun) return undefined;
     loadTranscript();
     return () => {
       requestRef.current += 1;
     };
-  }, [loadTranscript, subagent?.id]);
+  }, [loadTranscript, childRun?.id]);
 
   const messages = useMemo(() => parseTranscript(rawTranscript), [rawTranscript]);
   const toolResults = useMemo(() => buildToolResultMap(messages), [messages]);
   const pendingToolCallIds = useMemo(
-    () => collectPendingToolCallIds(messages, subagent?.status === 'running'),
-    [messages, subagent?.status],
+    () => collectPendingToolCallIds(messages, childRun?.status === 'running'),
+    [messages, childRun?.status],
   );
 
-  if (!subagent) return null;
+  if (!childRun) return null;
 
-  const endedAt = subagent.completedAt ?? subagent.updatedAt;
+  const endedAt = childRun.completedAt ?? childRun.updatedAt;
   const canSendFollowUp = true;
-  const canStop = subagent.status === 'running';
+  const canStop = childRun.status === 'running';
   const tabs = [
-    ['timeline', t.agent.subagent.tabTimeline({ count: messages.length })],
-    ['result', t.agent.subagent.tabResult],
-    ['metadata', t.agent.subagent.tabMetadata],
+    ['timeline', t.agent.childRun.tabTimeline({ count: messages.length })],
+    ['result', t.agent.childRun.tabResult],
+    ['metadata', t.agent.childRun.tabMetadata],
   ] as const;
 
   async function sendFollowUp() {
     const message = followUpDraft.trim();
-    if (!conversationId || !subagent || !message || !canSendFollowUp || actionPending) return;
+    if (!conversationId || !childRun || !message || !canSendFollowUp || actionPending) return;
     setActionPending('send');
     setActionError(null);
     try {
-      await api.agentSubagentSend(conversationId, subagent.id, message);
+      await api.agentChildRunSend(conversationId, childRun.id, message);
       setFollowUpDraft('');
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
@@ -445,12 +445,12 @@ export function AgentSubagentDetailsPanel({
     }
   }
 
-  async function stopSubagent() {
-    if (!conversationId || !subagent || !canStop || actionPending) return;
+  async function stopChildRun() {
+    if (!conversationId || !childRun || !canStop || actionPending) return;
     setActionPending('stop');
     setActionError(null);
     try {
-      await api.agentSubagentStop(conversationId, subagent.id);
+      await api.agentChildRunStop(conversationId, childRun.id);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -459,38 +459,38 @@ export function AgentSubagentDetailsPanel({
   }
 
   return (
-    <aside className="agent-subagent-details-panel" aria-label={t.agent.subagent.detailsAriaLabel}>
-      <header className="agent-subagent-details-header">
-        <div className="agent-subagent-title-block">
-          <div className="agent-subagent-title-line">
+    <aside className="agent-child-run-details-panel" aria-label={t.agent.childRun.detailsAriaLabel}>
+      <header className="agent-child-run-details-header">
+        <div className="agent-child-run-title-block">
+          <div className="agent-child-run-title-line">
             <AgentIcon size={ICON_SIZE.menu} />
-            <span>{t.agent.subagent.heading}</span>
-            <span className={`agent-subagent-status is-${subagent.status}`}>{subagent.status}</span>
+            <span>{t.agent.childRun.heading}</span>
+            <span className={`agent-child-run-status is-${childRun.status}`}>{childRun.status}</span>
           </div>
-          <h3>{subagent.description || subagent.name || subagent.id}</h3>
+          <h3>{childRun.description || childRun.name || childRun.id}</h3>
           <p>
-            {t.agent.subagent.metaLine({
-              mode: subagent.contextMode,
-              type: subagent.agentType,
+            {t.agent.childRun.metaLine({
+              mode: childRun.contextMode,
+              type: childRun.agentType,
               count: messages.length,
-              duration: formatDuration(subagent.startedAt, endedAt),
+              duration: formatDuration(childRun.startedAt, endedAt),
             })}
           </p>
         </div>
         <IconButton
-          className="agent-subagent-close"
+          className="agent-child-run-close"
           icon={CloseIcon}
-          label={t.agent.subagent.closeDetails}
+          label={t.agent.childRun.closeDetails}
           onClick={onClose}
-          title={t.agent.subagent.close}
+          title={t.agent.childRun.close}
           variant="panel"
         />
       </header>
-      <nav className="agent-subagent-tabs" aria-label={t.agent.subagent.detailTabsAriaLabel}>
+      <nav className="agent-child-run-tabs" aria-label={t.agent.childRun.detailTabsAriaLabel}>
         {tabs.map(([tab, label]) => (
           <ButtonControl
             aria-pressed={activeTab === tab}
-            className={activeTab === tab ? 'agent-subagent-tab is-active' : 'agent-subagent-tab'}
+            className={activeTab === tab ? 'agent-child-run-tab is-active' : 'agent-child-run-tab'}
             key={tab}
             onClick={() => setActiveTab(tab)}
           >
@@ -498,10 +498,10 @@ export function AgentSubagentDetailsPanel({
           </ButtonControl>
         ))}
       </nav>
-      <section className="agent-subagent-actions" aria-label={t.agent.subagent.actionsAriaLabel}>
-        <div className="agent-subagent-followup">
+      <section className="agent-child-run-actions" aria-label={t.agent.childRun.actionsAriaLabel}>
+        <div className="agent-child-run-followup">
           <textarea
-            aria-label={t.agent.subagent.followUpAriaLabel}
+            aria-label={t.agent.childRun.followUpAriaLabel}
             disabled={!canSendFollowUp || actionPending !== null}
             onChange={(event) => setFollowUpDraft(event.target.value)}
             onInput={(event) => setFollowUpDraft(event.currentTarget.value)}
@@ -511,37 +511,37 @@ export function AgentSubagentDetailsPanel({
                 void sendFollowUp();
               }
             }}
-            placeholder={t.agent.subagent.followUpPlaceholder}
+            placeholder={t.agent.childRun.followUpPlaceholder}
             rows={2}
             value={followUpDraft}
           />
-          <div className="agent-subagent-action-buttons">
+          <div className="agent-child-run-action-buttons">
             {canStop ? (
               <ButtonControl
-                className="agent-subagent-stop-button"
+                className="agent-child-run-stop-button"
                 disabled={actionPending !== null}
-                onClick={() => void stopSubagent()}
+                onClick={() => void stopChildRun()}
               >
-                {actionPending === 'stop' ? t.agent.subagent.stopping : t.agent.subagent.stop}
+                {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
               </ButtonControl>
             ) : null}
             <ButtonControl
-              className="agent-subagent-send-button"
+              className="agent-child-run-send-button"
               disabled={!canSendFollowUp || !followUpDraft.trim() || actionPending !== null}
               onClick={() => void sendFollowUp()}
             >
-              {actionPending === 'send' ? t.agent.subagent.sending : t.agent.subagent.send}
+              {actionPending === 'send' ? t.agent.childRun.sending : t.agent.childRun.send}
             </ButtonControl>
           </div>
         </div>
         {actionError ? (
-          <div className="agent-subagent-action-error" role="alert">
+          <div className="agent-child-run-action-error" role="alert">
             <WarningIcon size={ICON_SIZE.menu} />
             <span>{actionError}</span>
           </div>
         ) : null}
       </section>
-      <div className="agent-subagent-details-body">
+      <div className="agent-child-run-details-body">
         {activeTab === 'timeline' ? (
           <TranscriptTimeline
             error={error}
@@ -550,51 +550,51 @@ export function AgentSubagentDetailsPanel({
             pendingToolCallIds={pendingToolCallIds}
             reload={loadTranscript}
             conversationId={conversationId}
-            subagent={subagent}
-            subagentsByParentToolCallId={subagentsByParentToolCallId}
+            childRun={childRun}
+            childRunsByParentToolCallId={childRunsByParentToolCallId}
             toolResults={toolResults}
           />
         ) : null}
         {activeTab === 'result' ? (
-          <ResultText text={subagent.result ?? subagent.error ?? ''} />
+          <ResultText text={childRun.result ?? childRun.error ?? ''} />
         ) : null}
         {activeTab === 'metadata' ? (
-          <dl className="agent-subagent-metadata">
+          <dl className="agent-child-run-metadata">
             <div>
-              <dt>{t.agent.subagent.metaAgentId}</dt>
-              <dd>{subagent.id}</dd>
+              <dt>{t.agent.childRun.metaAgentId}</dt>
+              <dd>{childRun.id}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.name}</dt>
-              <dd>{subagent.name ?? t.agent.subagent.metaNone}</dd>
+              <dt>{t.agent.childRun.name}</dt>
+              <dd>{childRun.name ?? t.agent.childRun.metaNone}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.status}</dt>
-              <dd>{subagent.status}</dd>
+              <dt>{t.agent.childRun.status}</dt>
+              <dd>{childRun.status}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.mode}</dt>
-              <dd>{subagent.contextMode}</dd>
+              <dt>{t.agent.childRun.mode}</dt>
+              <dd>{childRun.contextMode}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.metaType}</dt>
-              <dd>{subagent.agentType}</dd>
+              <dt>{t.agent.childRun.metaType}</dt>
+              <dd>{childRun.agentType}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.metaParentToolCall}</dt>
-              <dd>{subagent.parentToolCallId ?? t.agent.subagent.metaNone}</dd>
+              <dt>{t.agent.childRun.metaParentToolCall}</dt>
+              <dd>{childRun.parentToolCallId ?? t.agent.childRun.metaNone}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.metaParentRun}</dt>
-              <dd>{subagent.parentRunId ?? t.agent.subagent.metaNone}</dd>
+              <dt>{t.agent.childRun.metaParentRun}</dt>
+              <dd>{childRun.parentRunId ?? t.agent.childRun.metaNone}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.metaStarted}</dt>
-              <dd>{new Date(subagent.startedAt).toLocaleString()}</dd>
+              <dt>{t.agent.childRun.metaStarted}</dt>
+              <dd>{new Date(childRun.startedAt).toLocaleString()}</dd>
             </div>
             <div>
-              <dt>{t.agent.subagent.metaUpdated}</dt>
-              <dd>{new Date(subagent.updatedAt).toLocaleString()}</dd>
+              <dt>{t.agent.childRun.metaUpdated}</dt>
+              <dd>{new Date(childRun.updatedAt).toLocaleString()}</dd>
             </div>
           </dl>
         ) : null}

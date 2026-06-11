@@ -388,7 +388,7 @@ describe('agent render projection', () => {
     }]);
   });
 
-  test('surfaces a parentless subagent run (a command fire) as a transcript boundary row', () => {
+  test('surfaces a parentless child run run (a command fire) as a transcript boundary row', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Command delivery' },
       {
@@ -417,13 +417,13 @@ describe('agent render projection', () => {
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
     // The run is placed by start time after the user message and carries its result.
-    expect(projection.transcriptRows.map((row) => row.id)).toEqual(['user:user-1', 'subagent:sub-1']);
-    const subagentRow = projection.transcriptRows.find((row) => row.kind === 'subagent');
-    expect(subagentRow).toMatchObject({ kind: 'subagent', subagentId: 'sub-1' });
-    expect(projection.entities.subagents['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
+    expect(projection.transcriptRows.map((row) => row.id)).toEqual(['user:user-1', 'child-run:sub-1']);
+    const childRunRow = projection.transcriptRows.find((row) => row.kind === 'child-run');
+    expect(childRunRow).toMatchObject({ kind: 'child-run', childRunId: 'sub-1' });
+    expect(projection.entities.childRuns['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
   });
 
-  test('places a main-agent subagent run right after the turn that spawned it', () => {
+  test('places a main-agent child run run right after the turn that spawned it', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {
@@ -465,6 +465,6 @@ describe('agent render projection', () => {
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
     expect(projection.transcriptRows.map((row) => row.id))
-      .toEqual(['user:user-1', 'assistant:assistant-1', 'subagent:sub-1']);
+      .toEqual(['user:user-1', 'assistant:assistant-1', 'child-run:sub-1']);
   });
 });

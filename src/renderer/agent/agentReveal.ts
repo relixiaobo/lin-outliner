@@ -10,7 +10,7 @@ import { linAgentRuntimeStore } from './runtime';
 
 export interface AgentRevealOptions {
   /** Also open the conversation's task panel (where command runs surface as
-   *  subagent tasks). A command Run spawns a parentless subagent, which lands in
+   *  child run tasks). A command Run spawns a parentless child run, which lands in
    *  the task panel rather than the main transcript, so the Run flow asks for it. */
   openTasks?: boolean;
 }

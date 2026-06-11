@@ -1,7 +1,7 @@
 // The AGENT.md format layer: serialize an authoring input to frontmatter+body
 // and parse it back. The SERIALIZE side is shared by main's write surface
 // (`agentAuthoring.ts`) and the renderer's Form ⇄ Raw editor, so a UI-authored
-// file is written one way. NOTE: the registry loader (`agentSubagents.ts`
+// file is written one way. NOTE: the registry loader (`agentDelegation.ts`
 // `parseAgentMarkdown` / `createAgentDefinition`) still carries its OWN parser
 // copy — it does not yet consume `parseAgentAuthoringInput` here. The two parsers
 // are byte-equivalent today but CAN drift; consolidating the loader onto this

@@ -57,7 +57,7 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // v2 = run unification: child runs write their own run ledgers; the
-// subagent_run.* conversation events and transcript-snapshot payloads are gone.
+// child_run.* conversation events and transcript-snapshot payloads are gone.
 export const STORAGE_LAYOUT_VERSION = 2;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;

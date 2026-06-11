@@ -34,10 +34,10 @@ export type AgentToolActionKind =
   | 'agent.doctor.run'
   | 'agent.skill.invoke'
   | 'agent.skill.write'
-  | 'agent.subagent.spawn'
-  | 'agent.subagent.status'
-  | 'agent.subagent.send'
-  | 'agent.subagent.stop'
+  | 'agent.delegate.spawn'
+  | 'agent.delegate.status'
+  | 'agent.delegate.send'
+  | 'agent.delegate.stop'
   | 'agent.permission.modify'
   | 'payment.purchase';
 
@@ -162,10 +162,10 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'agent.doctor.run',
   'agent.skill.invoke',
   'agent.skill.write',
-  'agent.subagent.spawn',
-  'agent.subagent.status',
-  'agent.subagent.send',
-  'agent.subagent.stop',
+  'agent.delegate.spawn',
+  'agent.delegate.status',
+  'agent.delegate.send',
+  'agent.delegate.stop',
   'agent.permission.modify',
   'payment.purchase',
 ];
@@ -282,7 +282,7 @@ const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
   'agent.config.write',
   'agent.memory.dream',
   'agent.skill.write',
-  'agent.subagent.spawn',
+  'agent.delegate.spawn',
   'shell.unknown',
 ]);
 
@@ -473,7 +473,7 @@ function parseGlobalToolPermissionRule(
     if (decision === 'allow' && BASH_ALLOW_FORBIDDEN_PREFIX_SET.has(prefix)) {
       return diagnostic(ruleValue, decision, 'forbidden_allow_rule', `Bash ${prefix} rules cannot be globally allowed.`);
     }
-    if (decision === 'allow' && (prefix === 'agent' || prefix === 'subagent')) {
+    if (decision === 'allow' && (prefix === 'agent' || prefix === 'child-run')) {
       return diagnostic(ruleValue, decision, 'forbidden_allow_rule', 'Agent spawn rules cannot be globally allowed.');
     }
     return { rule: { ruleValue, decision, target: { kind: 'bash', value } } };

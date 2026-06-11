@@ -191,7 +191,7 @@
   color: var(--text-tertiary);
 }
 
-/* Permission decisions include one non-allowable rule ("Spawn subagents"). Keep
+/* Permission decisions include one non-allowable rule ("Spawn childRuns"). Keep
    every decision pop-up the same width so the transparent-at-rest chrome aligns
    with the rows above even when the native select has fewer options. */
 .settings-permissions-section .select-popup-input {

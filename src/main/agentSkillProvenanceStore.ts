@@ -30,7 +30,7 @@ export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
       return entries;
     },
     async save(skillFile: string, record: AgentSkillProvenanceRecord | null): Promise<void> {
-      // load→mutate→write is racy across concurrent store instances (subagents share
+      // load→mutate→write is racy across concurrent store instances (childRuns share
       // the same userData file and tmp name). Accepted: skill writes are ask-gated and
       // approved serially, acceptance is a user-paced settings action, and a lost
       // record only narrows to the in-memory guard for that live conversation.

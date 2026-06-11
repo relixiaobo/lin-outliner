@@ -10,7 +10,7 @@ export function agentDefinitionAgentId(agent: AgentDefinition): string {
   return `${agent.source}:${namespace}:${normalizeAgentName(agent.name) || 'agent'}`;
 }
 
-export function resolveSubagentMemoryOwner(
+export function resolveChildRunMemoryOwner(
   run: Pick<AgentChildRunRecord, 'contextMode' | 'executingAgentId' | 'memoryOwnerAgentId' | 'parentAgentId'>,
   fallbackMemoryOwnerAgentId: string,
 ): string {

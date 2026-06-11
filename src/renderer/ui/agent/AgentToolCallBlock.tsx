@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
-import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
@@ -36,11 +36,11 @@ interface AgentToolCallBlockProps {
   index?: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onToggle?: () => void;
-  onOpenSubagentTranscript?: (subagentId: string) => void;
+  onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds?: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
   conversationId?: string | null;
-  subagent?: AgentRenderSubagentEntity;
+  childRun?: AgentRenderChildRunEntity;
   toolCall: ToolCall;
   turnActive?: boolean;
 }
@@ -122,12 +122,12 @@ function withSubject(verb: string, subject: string | null, labels: ToolCallLabel
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
   if (toolCall.name === 'Agent') {
-    const subject = pickSubject(toolCall.arguments, 'description', 'subagent_type');
-    return withSubject(verbByStatus(verbs.runSubagent, status, labels), subject, labels);
+    const subject = pickSubject(toolCall.arguments, 'description', 'agent_type');
+    return withSubject(verbByStatus(verbs.runChildAgent, status, labels), subject, labels);
   }
-  if (toolCall.name === 'AgentStatus') return verbByStatus(verbs.checkSubagent, status, labels);
-  if (toolCall.name === 'AgentSend') return verbByStatus(verbs.messageSubagent, status, labels);
-  if (toolCall.name === 'AgentStop') return verbByStatus(verbs.stopSubagent, status, labels);
+  if (toolCall.name === 'AgentStatus') return verbByStatus(verbs.checkChildAgent, status, labels);
+  if (toolCall.name === 'AgentSend') return verbByStatus(verbs.messageChildAgent, status, labels);
+  if (toolCall.name === 'AgentStop') return verbByStatus(verbs.stopChildRun, status, labels);
   const args = toolCall.arguments;
   if (toolCall.name === 'recall') {
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
@@ -182,19 +182,19 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   );
 }
 
-function subagentToolStatus(subagent: AgentRenderSubagentEntity): ToolStatus {
-  if (subagent.status === 'running') return 'pending';
-  if (subagent.status === 'failed' || subagent.status === 'stopped') return 'error';
+function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {
+  if (childRun.status === 'running') return 'pending';
+  if (childRun.status === 'failed' || childRun.status === 'stopped') return 'error';
   return 'done';
 }
 
-function formatSubagentMode(subagent: AgentRenderSubagentEntity): string {
-  return `${subagent.contextMode} · ${subagent.agentType}`;
+function formatChildRunMode(childRun: AgentRenderChildRunEntity): string {
+  return `${childRun.contextMode} · ${childRun.agentType}`;
 }
 
-function formatSubagentDuration(subagent: AgentRenderSubagentEntity): string {
-  const end = subagent.completedAt ?? subagent.updatedAt;
-  const elapsed = Math.max(0, end - subagent.startedAt);
+function formatChildRunDuration(childRun: AgentRenderChildRunEntity): string {
+  const end = childRun.completedAt ?? childRun.updatedAt;
+  const elapsed = Math.max(0, end - childRun.startedAt);
   if (elapsed < 1000) return '<1s';
   const seconds = Math.round(elapsed / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -206,8 +206,8 @@ function formatSubagentDuration(subagent: AgentRenderSubagentEntity): string {
   return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`;
 }
 
-function subagentSummary(subagent: AgentRenderSubagentEntity, labels: Messages['agent']['subagent']): string {
-  const description = subagent.description.trim() || subagent.name || subagent.id;
+function childRunSummary(childRun: AgentRenderChildRunEntity, labels: Messages['agent']['childRun']): string {
+  const description = childRun.description.trim() || childRun.name || childRun.id;
   return labels.summary({ description });
 }
 
@@ -216,54 +216,54 @@ function previewText(text: string | undefined, maxLength = 520): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trim()}...` : normalized;
 }
 
-function SubagentInlineDetails({
+function ChildRunInlineDetails({
   index,
   onNodeReferenceOpen,
   onOpenTranscript,
-  subagent,
+  childRun,
 }: {
   index?: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenTranscript?: (subagentId: string) => void;
-  subagent: AgentRenderSubagentEntity;
+  onOpenTranscript?: (childRunId: string) => void;
+  childRun: AgentRenderChildRunEntity;
 }) {
   const t = useT();
-  const result = previewText(subagent.result);
-  const error = previewText(subagent.error);
-  const prompt = previewText(subagent.prompt);
+  const result = previewText(childRun.result);
+  const error = previewText(childRun.error);
+  const prompt = previewText(childRun.prompt);
   const canOpenTranscript = !!onOpenTranscript;
 
   return (
-    <div className="agent-subagent-inline">
-      <dl className="agent-subagent-meta-grid">
+    <div className="agent-child-run-inline">
+      <dl className="agent-child-run-meta-grid">
         <div>
-          <dt>{t.agent.subagent.status}</dt>
-          <dd>{subagent.status}</dd>
+          <dt>{t.agent.childRun.status}</dt>
+          <dd>{childRun.status}</dd>
         </div>
         <div>
-          <dt>{t.agent.subagent.mode}</dt>
-          <dd>{formatSubagentMode(subagent)}</dd>
+          <dt>{t.agent.childRun.mode}</dt>
+          <dd>{formatChildRunMode(childRun)}</dd>
         </div>
         <div>
-          <dt>{t.agent.subagent.duration}</dt>
-          <dd>{formatSubagentDuration(subagent)}</dd>
+          <dt>{t.agent.childRun.duration}</dt>
+          <dd>{formatChildRunDuration(childRun)}</dd>
         </div>
       </dl>
-      {subagent.name ? (
+      {childRun.name ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.subagent.name}</div>
+            <div className="agent-tool-call-section-title">{t.agent.childRun.name}</div>
           </div>
           <pre>
-            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={subagent.name} />
+            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={childRun.name} />
           </pre>
         </section>
       ) : null}
       {prompt ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.subagent.prompt}</div>
-            <ToolCopyButton ariaLabel={t.agent.subagent.copyPrompt} text={subagent.prompt} />
+            <div className="agent-tool-call-section-title">{t.agent.childRun.prompt}</div>
+            <ToolCopyButton ariaLabel={t.agent.childRun.copyPrompt} text={childRun.prompt} />
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={prompt} />
@@ -273,8 +273,8 @@ function SubagentInlineDetails({
       {result ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.subagent.result}</div>
-            <ToolCopyButton ariaLabel={t.agent.subagent.copyResult} text={subagent.result ?? ''} />
+            <div className="agent-tool-call-section-title">{t.agent.childRun.result}</div>
+            <ToolCopyButton ariaLabel={t.agent.childRun.copyResult} text={childRun.result ?? ''} />
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={result} />
@@ -285,26 +285,26 @@ function SubagentInlineDetails({
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">
-              {t.agent.subagent.error}
+              {t.agent.childRun.error}
               <span>{t.agent.toolCall.errorBadge}</span>
             </div>
-            <ToolCopyButton ariaLabel={t.agent.subagent.copyError} text={subagent.error ?? ''} />
+            <ToolCopyButton ariaLabel={t.agent.childRun.copyError} text={childRun.error ?? ''} />
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={error} />
           </pre>
         </section>
       ) : null}
-      <div className="agent-subagent-inline-actions">
+      <div className="agent-child-run-inline-actions">
         <ButtonControl
-          className="agent-subagent-transcript-button"
+          className="agent-child-run-transcript-button"
           disabled={!canOpenTranscript}
-          onClick={() => onOpenTranscript?.(subagent.id)}
+          onClick={() => onOpenTranscript?.(childRun.id)}
         >
           <FileTextIcon size={ICON_SIZE.menu} />
-          <span>{t.agent.subagent.viewTranscript}</span>
+          <span>{t.agent.childRun.viewTranscript}</span>
         </ButtonControl>
-        <ToolCopyButton ariaLabel={t.agent.subagent.copyId} text={subagent.id} />
+        <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={childRun.id} />
       </div>
     </div>
   );
@@ -556,17 +556,17 @@ export function AgentToolCallBlock({
   index,
   onNodeReferenceOpen,
   onToggle,
-  onOpenSubagentTranscript,
+  onOpenChildRunTranscript,
   pendingToolCallIds,
   result,
   conversationId,
-  subagent,
+  childRun,
   toolCall,
   turnActive,
 }: AgentToolCallBlockProps) {
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const status = subagent ? subagentToolStatus(subagent) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive);
+  const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive);
   const Icon = getToolIcon(toolCall);
   const StatusIcon = status === 'pending' ? LoaderIcon : Icon;
   const isExpanded = expanded ?? internalExpanded;
@@ -574,8 +574,8 @@ export function AgentToolCallBlock({
   const outputText = useMemo(() => resultText(result), [result]);
   const images = useMemo(() => resultImages(result), [result]);
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
-  const hasSubagentDetails = Boolean(subagent);
-  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0;
+  const hasChildRunDetails = Boolean(childRun);
+  const hasDetails = hasChildRunDetails || inputText !== '{}' || outputText.length > 0;
   const hasOutputDetails = outputText.length > 0;
 
   function toggle() {
@@ -595,17 +595,17 @@ export function AgentToolCallBlock({
       status={status}
       statusIcon={StatusIcon}
       statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
-      summary={subagent ? subagentSummary(subagent, t.agent.subagent) : summarizeToolCall(toolCall, status, t.agent.toolCall)}
+      summary={childRun ? childRunSummary(childRun, t.agent.childRun) : summarizeToolCall(toolCall, status, t.agent.toolCall)}
     >
-      {subagent ? (
-        <SubagentInlineDetails
+      {childRun ? (
+        <ChildRunInlineDetails
           index={index}
           onNodeReferenceOpen={onNodeReferenceOpen}
-          onOpenTranscript={onOpenSubagentTranscript}
-          subagent={subagent}
+          onOpenTranscript={onOpenChildRunTranscript}
+          childRun={childRun}
         />
       ) : null}
-      {!hasSubagentDetails && inputText !== '{}' ? (
+      {!hasChildRunDetails && inputText !== '{}' ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.input}</div>
@@ -614,7 +614,7 @@ export function AgentToolCallBlock({
           <HighlightedJson code={inputText} />
         </section>
       ) : null}
-      {!hasSubagentDetails && result && hasOutputDetails ? (
+      {!hasChildRunDetails && result && hasOutputDetails ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">
