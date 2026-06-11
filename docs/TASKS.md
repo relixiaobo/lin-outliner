@@ -21,7 +21,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (M3-A multi-agent Channel merged, PR #179) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (realignment Step 0 + PR-1 merged, PR #183); natural next: `agent-run-unification` (dispatch-ready) |
 | Codex | `lin-outliner-codex/` | — | idle (safety-modes plan ratified + merged, PR #187) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (registered 2026-06-11) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (focus/selection polish merged, PR #186) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -639,6 +639,20 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Outliner focus/selection polish** (codex-2, PR #186, fast-track) — page entry
+  auto-focuses the first visible body row (trailing draft on empty pages; search
+  pages exempt), two-press `Cmd+A` escalation from editor/field text to visible-row
+  selection, field-name/empty-row `Backspace` deletion with prev → next-survivor →
+  trailing-draft focus retention, one-shot composer focus on dock reopen, and
+  bracket page-history shortcuts working from editors while `Option+Arrow` stays
+  word-navigation. Two gate rounds: round 1 found four blockers (Alt+Arrow hijack
+  in editables, a Cmd+A DOM heuristic that broke the inline-code e2e and was
+  misreported as pre-existing, a composer focus-steal on approval resolution, a
+  post-delete focus request targeting the deleted entry's own value child) — all
+  fixed with per-binding editable gating, a consecutive-press ready latch, a
+  handled-token ref, and subtree-aware neighbor selection, each with a new e2e.
+  Round 2 clean: full e2e 314/314, renderer 409, core 844.
 
 - **Agent permission safety modes: plan ratified** (codex, PR #187, docs-only) — the
   consumer trust-model design is PM-ratified and on `main` as a `draft` plan. Three

@@ -165,6 +165,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Outliner focus and selection shortcut polish (PR #186)** — entering a regular
+  node page now places edit focus at the start of the first visible body row (the
+  trailing draft when the page is empty; search pages such as Recents stay
+  result-views and take no edit focus). `Cmd+A` escalates from fully selected
+  editor/field text to visible-row selection on a second consecutive press (an
+  empty control escalates immediately). `Backspace` at the start of a field name
+  deletes the field row through the selection-delete path; that and empty-content-row
+  deletion keep focus on the previous visible row, the next surviving row, or the
+  panel trailing draft when it was the only body row. Reopening the collapsed agent
+  dock focuses the composer as a true one-shot (an approval/question card consumes
+  the reopen without a later focus steal). `Cmd+[` / `Cmd+]` page history now works
+  while text is focused; `Option+Arrow` stays platform word-navigation inside
+  editors. Spec synced in-PR (`ui-behavior.md`, `outliner-parity-matrix.md`,
+  `workspace-layout.md`).
+
 - **Workspace skills require explicit acceptance (PR #185)** — `project`-source skills
   (anything under the workspace's `.agents/skills`, including nested discovery and
   in-root additional directories) now fail **closed**: they stay out of the automatic
