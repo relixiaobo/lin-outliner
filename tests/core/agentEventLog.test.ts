@@ -694,12 +694,6 @@ describe('agent event log', () => {
         completedAt: 1_700_000_000_100,
         result: 'Done.',
       },
-      {
-        // A crash-retried 'running' update cannot resurrect a terminal record.
-        ...base(4, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        childRunId: 'child-1',
-        status: 'running',
-      },
     ];
 
     const state = replayAgentEvents(events);
@@ -715,6 +709,21 @@ describe('agent event log', () => {
       result: 'Done.',
       parentToolCallId: 'tool-agent-1',
     });
+
+    // Markers apply in seq order: a LATER 'running' update is the resume of a
+    // detached run, so it re-opens the terminal record (clearing the stale
+    // result/completedAt) and a second completion lands on top.
+    const resumed = replayAgentEvents([
+      ...events,
+      {
+        ...base(4, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        childRunId: 'child-1',
+        status: 'running',
+      },
+    ]);
+    expect(resumed.childRuns['child-1']).toMatchObject({ status: 'running' });
+    expect(resumed.childRuns['child-1']?.result).toBeUndefined();
+    expect(resumed.childRuns['child-1']?.completedAt).toBeUndefined();
   });
 
   test('applies tool result replacement events to replayed pi messages', () => {

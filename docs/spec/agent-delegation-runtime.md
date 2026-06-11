@@ -38,7 +38,7 @@ runtime should use `.agents/*` paths and Lin-owned event store semantics.
 ## Decision
 
 Lin does not introduce Team, Swarm, or Delegate as first-class model-facing
-concepts for the same-conversation child run runtime.
+concepts for the same-conversation child-run runtime.
 
 The model-facing concept should be the same mature concept used by cc-2.1's core
 child run path:
@@ -65,18 +65,18 @@ cc-2.1 contains two layers:
 
 - Core child run layer: mature and worth reproducing.
 - Team/swarm layer: useful for cc-2.1's teammate workflow, but not part of Lin's
-  initial child run runtime.
+  initial child-run runtime.
 
 | cc-2.1 source | Behavior to study | Lin decision |
 | --- | --- | --- |
 | `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Use `Agent` as the model-facing tool. Do not introduce `delegate`. |
 | `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core Agent/child run path. Omit teammate, team, worktree, and remote branches initially. |
 | `src/tools/AgentTool/prompt.ts` | Teaches when to use child runs, how to brief fresh agents, how to launch multiple agents in one turn, and how fork differs from fresh. | Reuse the guidance style and parallelism rules, with Lin terminology. |
-| `src/tools/AgentTool/forkChild run.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse fork behavior. Prefer cc-compatible implicit fork rather than adding a `context` parameter. |
+| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse fork behavior. Prefer cc-compatible implicit fork rather than adding a `context` parameter. |
 | `src/tools/AgentTool/runAgent.ts` | Builds isolated child run context, system prompt, tool pool, sidechain transcript, skill preload, cleanup, and query loop. | Reuse the execution shape with pi-mono `Agent`; defer hooks and agent-specific MCP. |
 | `src/utils/forkedAgent.ts` | Creates isolated tool-use context, cloned read state, cloned content replacement state, child abort behavior, cache-safe fork helpers. | Reuse the isolation and cache-stability ideas in Lin-owned runtime context types. |
 | `src/tools/AgentTool/loadAgentsDir.ts` | Loads agent definitions from markdown and JSON, including tools, model, effort, permission mode, max turns, skills, background, hooks, MCP, memory, isolation. | Implement `.agents/agents` definitions. Support the core fields now; defer hooks, MCP, memory, and isolation. |
-| `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and child run runtime state. |
+| `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and child-run runtime state. |
 | `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-conversation child run continuation. |
 | `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `AgentStatus` only for explicit status/wait checks. |
 | `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `AgentStop` for child run ids/names. |
@@ -139,7 +139,7 @@ Key anchors:
 - `src/tools/AgentTool/runAgent.ts:816-859`: cleanup tears down agent-specific
   resources, clears cloned state, and kills child-owned background shell tasks.
   Lin needs equivalent cleanup for pi-mono runs and Lin-owned tool processes.
-- `src/utils/forkedAgent.ts:306-461`: `createChild runContext` clones mutable
+- `src/utils/forkedAgent.ts:306-461`: `createSubagentContext` clones mutable
   context, stubs mutation callbacks, preserves root task writes, isolates denial
   tracking, clones tool-output replacement state, and creates a new query chain.
   This is the main source for Lin's child run context isolation design.
@@ -163,13 +163,13 @@ Key anchors:
 ## External Open-Source Research
 
 These projects are secondary references. cc-2.1 remains the behavioral source of
-truth for Lin's first child run runtime. The external research is useful for
+truth for Lin's first child-run runtime. The external research is useful for
 validating guardrails, naming boundaries, concurrency behavior, and the features
 that should stay out of the first version.
 
 ### Projects Reviewed
 
-[pi-child run](https://github.com/mjakl/pi-child run)
+[pi-subagent](https://github.com/mjakl/pi-subagent)
 
 Problem definition: add specialized child runs to Pi with explicit context
 control.
@@ -403,9 +403,9 @@ Selection:
 A fresh child run is the **same Tenon agent in headless mode**, not a stripped-down
 persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
 
-1. a **child run identity + directive** ("You are a Tenon child run… # Child run
-   rules": complete only the task, run headless / never ask the user, keep tool
-   chatter out of the result, stay in scope, don't over-claim);
+1. a **child-agent identity + directive** ("You are a Tenon child agent… # Child
+   run rules": complete only the task, run headless / never ask the user, keep
+   tool chatter out of the result, stay in scope, don't over-claim);
 2. the **shared core** of the main system prompt — `LIN_CHILD_AGENT_CORE_PROMPT`, the
    `audience: 'shared'` sections of `LIN_AGENT_SYSTEM_PROMPT_SECTIONS`
    (system-context, outliner, local-tools, web, communication-and-safety) — so a
@@ -560,7 +560,7 @@ Background launch:
 ```
 
 When a background run reaches `completed`, `failed`, or `stopped`, Lin appends a
-hidden `<child run-notification>` message to the parent conversation and starts a
+hidden `<agent-task-notification>` message to the parent conversation and starts a
 parent continuation when the parent agent is idle. The notification should carry
 a durable output reference that can be read with `file_read`, matching
 cc-2.1's preferred path for background task output. The parent agent should not
@@ -640,9 +640,9 @@ Behavior:
 
 ## Runtime Architecture
 
-### `Child runRuntime`
+### `AgentDelegationRuntime`
 
-Owns conversation-scoped child run state:
+Owns conversation-scoped child-run state:
 
 - active runs;
 - id/name registry;
@@ -655,7 +655,7 @@ Owns conversation-scoped child run state:
 It should create and manage pi-mono `Agent` instances. It should not duplicate
 pi-mono's model loop.
 
-### `Child runRun`
+### `AgentRunRecord`
 
 Owns one concrete pi-mono `Agent` instance:
 
@@ -744,7 +744,7 @@ delete:
 #### Disabling by identity
 
 `disabledAgents` stores the full **`agentId`** (`${source}:${namespace}:${name}`,
-`agentChild runIdentity.ts`), not the bare `name`, so disabling one source's agent
+`agentDelegationIdentity.ts`), not the bare `name`, so disabling one source's agent
 no longer disables a same-named agent from another source. The spawn gate and the
 listing filter both check `agentDefinitionAgentId(definition)`. (Pre-release: the
 stored shape switched directly with no migration — see
@@ -752,7 +752,7 @@ stored shape switched directly with no migration — see
 
 ### `AgentSkillRuntime`
 
-Skill `context: fork` calls `Child runRuntime` instead of creating pi-mono agents
+Skill `context: fork` calls `AgentDelegationRuntime` instead of creating pi-mono agents
 directly.
 
 The skill path should:
@@ -768,7 +768,7 @@ execution context, not parent-visible steering content.
 
 ## Event Store
 
-Child run runtime persists through Lin's event store. This follows cc-2.1's
+The child-run runtime persists through Lin's event store. This follows cc-2.1's
 sidechain transcript design in `src/tools/AgentTool/runAgent.ts:732-805`, but
 uses Lin-owned parent-conversation events and payload refs rather than a separate
 task output file.
@@ -961,7 +961,7 @@ communication plane with separate tools. It must not be mixed into same-conversa
 
 ### Agent Definitions
 
-Implemented in `src/main/agentChild runs.ts`.
+Implemented in `src/main/agentDelegation.ts`.
 
 - Loads `~/.agents/agents`, `<workspace>/.agents/agents`, and configured
   additional agent directories.
@@ -1020,11 +1020,14 @@ Implemented for same-conversation background runs.
 Implemented.
 
 - `AgentSend` continues an existing same-conversation child run by id or name.
-- Continuation reconstructs the sidechain transcript from the persisted payload.
-- Tool-output replacement state is reconstructed from sidechain messages, so
+- Continuation replays the run's OWN ledger into the live context (lazy: the
+  ledger is only read when a resume or drill-in actually needs it; a missing
+  ledger registers empty so the run stays resumable).
+- Tool-output replacement state is reconstructed from the restored messages, so
   prior `<persisted-output>` decisions stay stable.
-- Cold-restart status restore and continuation from persisted transcript are
-  supported.
+- Cold-restart restores child-run RECORDS only (no ledger IO on conversation
+  open); still-`running` records are marked interrupted in both the
+  conversation and the run's own ledger.
 
 ### Skill Integration
 
@@ -1032,7 +1035,7 @@ Implemented.
 
 - Skill `context: fork` routing is implemented for model and slash skill
   entrypoints.
-- Forked skill execution uses the sidechain child run runtime, applies `agent`,
+- Forked skill execution uses the sidechain child-run runtime, applies `agent`,
   `model`, `effort`, and `allowed-tools` to the child run, and returns only the
   child result to the parent.
 - Child run sidechain compaction restores loaded skill state, preserves recent
@@ -1049,8 +1052,9 @@ Implemented for the current first-class surfaces.
   first, and shows status, type/mode, message count, and latest update time.
 - Task rows can open the existing child run details panel; running task rows can
   stop the child run through `AgentStop`.
-- The child run details panel loads sidechain transcripts lazily from payload
-  refs.
+- The child run details panel loads the run-ledger transcript lazily through
+  `agent_child_run_transcript` (cached on the ledger tail seq; polled while the
+  run is live).
 - Nested child tool calls inside transcripts remain expandable.
 - Running background child runs can be messaged or stopped from the details
   panel.
@@ -1068,7 +1072,7 @@ Deferred UI polish:
 
 Review against cc-2.1 and OpenClaw leaves these follow-ups:
 
-- Add `Child runStart` and `Child runStop` hook events only after Lin has a
+- Add `SubagentStart` and `SubagentStop` hook events (cc-2.1 vocabulary) only after Lin has a
   first-class hook registry. They should be lifecycle events, not special cases
   inside the `Agent` tool.
 - Keep foreground fresh, fork, and background as the only first-version
@@ -1109,7 +1113,7 @@ Core tests:
 - background child run completion creates a durable output reference and model
   notification;
 - background child run needing unavailable approval fails closed;
-- skill `context: fork` uses child run runtime.
+- skill `context: fork` uses the child-run runtime.
 
 Reference-alignment tests:
 

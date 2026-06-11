@@ -236,9 +236,10 @@ own `memoryOwnerAgentId` (the called agent definition), its own durable memory l
 `recall` / `<agent-memory>`, and a per-owner scheduled Dream; forks inherit the parent owner. This
 is the first **per-agent identity for a non-foreground agent** — groundwork the map had placed in
 **M3** (per-agent POV · registry unification). M3 therefore *unifies* an already-real multi-owner
-memory model rather than introducing it: the registry/POV work builds on `agentSubagentIdentity.ts`
-(the single owner-resolution seam) + `agentSubagentTranscript.ts` (id-addressing), and must not
-redesign them. Open consequence for M3: a built-in subagent owner id is workspace-independent, so its
+memory model rather than introducing it: the registry/POV work builds on `agentDelegationIdentity.ts`
+(the single owner-resolution seam; renamed from `agentSubagentIdentity.ts`) + the run's own
+ledger for id-addressing (`{seq, eventId}` in the run stream — `agentSubagentTranscript.ts`'s
+positional codec was deleted by [[agent-run-unification]]), and must not redesign them. Open consequence for M3: a built-in subagent owner id is workspace-independent, so its
 memory line spans workspaces — `isolated`-tier scoping for such shared owners is settled for the
 single-host case (#164) but is a known design surface when multi-host/registry lands.
 

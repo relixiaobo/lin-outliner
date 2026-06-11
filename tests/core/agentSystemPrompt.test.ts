@@ -49,7 +49,7 @@ describe('agent system prompt', () => {
 
   test('every section is tagged for an audience; the shared subset seeds childRuns', () => {
     // identity + memory are the main chat agent's alone; the rest are shared with
-    // fresh childRuns (see [[child run-prompt-unification]]).
+    // fresh childRuns (see [[child-run-prompt-unification]]).
     const byAudience = Object.fromEntries(
       LIN_AGENT_SYSTEM_PROMPT_SECTIONS.map((section) => [section.id, section.audience]),
     );

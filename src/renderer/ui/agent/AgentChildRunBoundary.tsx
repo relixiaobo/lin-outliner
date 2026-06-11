@@ -84,7 +84,7 @@ export function AgentChildRunBoundary({
       {expanded ? (
         <div className="agent-child-run-summary">
           {body ? (
-            <AgentMarkdown keyPrefix={`child run-${childRun.id}`} text={body} />
+            <AgentMarkdown keyPrefix={`child-run-${childRun.id}`} text={body} />
           ) : (
             <p className="agent-child-run-empty">{labels.noResult}</p>
           )}

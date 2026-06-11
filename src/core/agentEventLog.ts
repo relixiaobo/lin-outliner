@@ -1671,14 +1671,14 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.childRuns ??= {};
       const run = state.childRuns[event.childRunId];
       if (!run) return;
-      const currentIsTerminal = run.status !== 'running';
-      const incomingIsRunning = event.status === 'running';
-      if (!currentIsTerminal || !incomingIsRunning) {
-        run.status = event.status;
-        run.completedAt = event.completedAt;
-        run.result = event.result;
-        run.error = event.error;
-      }
+      // Markers are applied in seq order, so a terminal→running transition at a
+      // later seq IS the resume of a detached run (agentDelegation `send`) —
+      // dropping it would hide the resumed run from Dream's running-skip,
+      // crash-recovery's interrupted scan, and the projection.
+      run.status = event.status;
+      run.completedAt = event.completedAt;
+      run.result = event.result;
+      run.error = event.error;
       run.updatedAt = event.createdAt;
       return;
     }

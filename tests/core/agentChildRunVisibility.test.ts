@@ -3,7 +3,7 @@ import { describe, expect, mock, test } from 'bun:test';
 // agentDelegation transitively imports modules that reach electron; mock it so the
 // pure projection under test can be imported in the bun runtime.
 mock.module('electron', () => ({
-  app: { getPath: () => '/tmp/lin-child run-visibility-test' },
+  app: { getPath: () => '/tmp/lin-child-run-visibility-test' },
   BrowserWindow: class {
     static getAllWindows() {
       return [];

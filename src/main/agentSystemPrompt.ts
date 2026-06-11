@@ -11,7 +11,7 @@ export type LinAgentSystemPromptSectionId =
 // the capability, tool-convention, and safety guidance any Tenon agent needs.
 // 'main' sections belong only to the user-facing chat agent (its identity and
 // memory framing); a headless child run gets its own identity + directive instead
-// and must not inherit these. See [[child run-prompt-unification]].
+// and must not inherit these. See [[child-run-prompt-unification]].
 export type LinAgentPromptAudience = 'shared' | 'main';
 
 export interface LinAgentSystemPromptSection {

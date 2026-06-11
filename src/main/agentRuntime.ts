@@ -56,6 +56,7 @@ import {
 import {
   AGENT_EVENT_VERSION,
   appendAgentEventToReplayState,
+  conversationIdOfRun,
   createEmptyAgentEventReplayState,
   getAgentEventActivePath,
   getAgentEventRuntimeTranscriptPath,
@@ -1092,6 +1093,10 @@ export class AgentRuntime {
    */
   async childRunTranscript(conversationId: string, runId: string): Promise<{ messages: AgentMessage[] } | null> {
     const meta = await this.getEventStore().readRunMetaProjection(runId);
+    // Ownership gate: run ids are global, so without this any renderer call
+    // could read another conversation's run ledger. Fail closed when the meta
+    // is missing (no meta ⇒ no seeded ledger to serve anyway).
+    if (!meta || conversationIdOfRun(meta) !== conversationId) return null;
     const cached = this.childRunTranscriptCache.get(runId);
     if (meta && cached && cached.latestSeq === meta.latestSeq) return { messages: cached.messages };
     const state = await this.getEventStore().replayRunStream(runId);
@@ -2673,6 +2678,10 @@ export class AgentRuntime {
     }
     const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
     for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
+    // Delegated-run ledgers append on their own per-run queues — settle them
+    // too, or a quit can keep the conversation's terminal marker while losing
+    // the ledger's own run.completed (the run stream then self-reports running).
+    pending.push(...this.runLedger.pendingWrites());
     await Promise.allSettled(pending);
   }
 
@@ -3272,7 +3281,11 @@ export class AgentRuntime {
         // `run.started` seq — so a compaction can never stale it.
         const events = await this.getEventStore().readRunStreamEvents(run.id);
         if (events.length === 0) continue;
-        const boundarySeq = events.find((event) => event.type === 'run.started')?.seq ?? 0;
+        // No `run.started` means the ledger has no evidence boundary (a partial
+        // seed/crash artifact). A 0 fallback would leak the inherited fork
+        // prefix into this run's evidence — skip rather than over-collect.
+        const boundarySeq = events.find((event) => event.type === 'run.started')?.seq;
+        if (boundarySeq === undefined) continue;
         const fromSeqExclusive = Math.max(cursorSeq, boundarySeq);
         const latestSeq = events.at(-1)?.seq ?? 0;
         if (latestSeq <= fromSeqExclusive) continue;
@@ -7087,7 +7100,7 @@ function truncateNotificationBody(body: string): string {
 
 function childRunNotificationKind(
   // 'stopped' is gated out before this (a user-initiated stop raises no
-  // notification — see notifyChild runRun), so only failed/completed reach here.
+  // notification — see notifyChildRun), so only failed/completed reach here.
   status: 'failed' | 'completed',
 ): AgentNotificationKind {
   return status === 'failed' ? 'task_failed' : 'task_completed';

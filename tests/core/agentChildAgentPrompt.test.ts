@@ -4,7 +4,7 @@ import type { AgentDefinition } from '../../src/core/types';
 
 // A fresh child run is the SAME Tenon agent in headless mode: it reuses the
 // shared-core system prompt and layers a child run identity + directive (and the
-// definition's persona body, if any) on top. See [[child run-prompt-unification]].
+// definition's persona body, if any) on top. See [[child-run-prompt-unification]].
 
 function def(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -22,7 +22,7 @@ describe('buildFreshAgentSystemPrompt', () => {
   test('reuses the shared core + a headless child run directive', () => {
     const prompt = buildFreshAgentSystemPrompt(def());
     // Child run identity + directive.
-    expect(prompt).toContain('You are a Tenon child run');
+    expect(prompt).toContain('You are a Tenon child agent');
     expect(prompt).toContain('# Child run rules');
     expect(prompt).toContain('never ask the user questions');
     expect(prompt).toContain('Agent type: general');

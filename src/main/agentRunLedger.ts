@@ -294,6 +294,17 @@ export class AgentRunLedgerWriter {
     });
   }
 
+  /**
+   * Quit-path settle: the in-flight tail of every registered run's ledger
+   * queue, so a force-exit can await them alongside the conversation appends —
+   * otherwise ⌘Q can persist the conversation-side terminal marker while the
+   * ledger's own `run.completed` is cut mid-write and the run stream
+   * self-reports running forever.
+   */
+  pendingWrites(): Promise<void>[] {
+    return [...this.runs.values()].map((run) => run.queue);
+  }
+
   private requireRun(runId: string): RunLedgerRunState {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`Unknown child-run ledger: ${runId}`);

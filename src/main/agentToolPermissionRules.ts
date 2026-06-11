@@ -473,7 +473,8 @@ function parseGlobalToolPermissionRule(
     if (decision === 'allow' && BASH_ALLOW_FORBIDDEN_PREFIX_SET.has(prefix)) {
       return diagnostic(ruleValue, decision, 'forbidden_allow_rule', `Bash ${prefix} rules cannot be globally allowed.`);
     }
-    if (decision === 'allow' && (prefix === 'agent' || prefix === 'child-run')) {
+    // `prefix` is normalized (dashes → underscores), so match the normalized spelling.
+    if (decision === 'allow' && (prefix === 'agent' || prefix === 'child_run')) {
       return diagnostic(ruleValue, decision, 'forbidden_allow_rule', 'Agent spawn rules cannot be globally allowed.');
     }
     return { rule: { ruleValue, decision, target: { kind: 'bash', value } } };

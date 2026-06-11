@@ -831,6 +831,10 @@ export class AgentEventStore {
       if (sentinel.v === STORAGE_LAYOUT_VERSION) return;
     }
     // Positive proof of another generation (stale `v` or no sentinel at all).
+    console.warn(
+      `Agent storage layout generation changed (found ${raw === null ? 'no sentinel' : `v=${parseJsonRecord(raw.trim())?.v}`}, `
+      + `current v=${STORAGE_LAYOUT_VERSION}); wiping ${this.rootDir}`,
+    );
     await rm(this.rootDir, { recursive: true, force: true });
     this.agentEventLog.clear();
     this.runEventLog.clear();
@@ -1188,44 +1192,55 @@ export class AgentEventStore {
     }
   }
 
+  // Both run indexes are read-modify-write on a shared file reached from TWO
+  // serial queues (the per-run ledger queue and the per-conversation event
+  // queue), so the merge itself must serialize on `indexQueue` — otherwise a
+  // child-run append racing a parent conversation append writes back a stale
+  // runIds list and permanently drops a finished run from the index (cold
+  // replay then silently misses that run's events; the index only self-heals
+  // on a missing FILE, not a missing entry).
   private async updateConversationRunIndex(conversationId: string, runId: string, latestSeq: number, kind: AgentRunKind) {
-    const paths = this.paths(conversationId);
-    const existing = await this.ensureConversationRunIndex(conversationId);
-    const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-    const delegationRunIds = kind === 'delegation'
-      ? (existing.delegationRunIds.includes(runId) ? existing.delegationRunIds : [...existing.delegationRunIds, runId])
-      : existing.delegationRunIds.filter((id) => id !== runId);
-    const index: AgentConversationRunIndex = {
-      v: 2,
-      runIds,
-      latestSeqByRunId: {
-        ...existing.latestSeqByRunId,
-        [runId]: Math.max(existing.latestSeqByRunId[runId] ?? 0, latestSeq),
-      },
-      delegationRunIds,
-    };
-    await mkdir(paths.conversationDir, { recursive: true });
-    await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+    await this.enqueueIndexWrite(async () => {
+      const paths = this.paths(conversationId);
+      const existing = await this.ensureConversationRunIndex(conversationId);
+      const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
+      const delegationRunIds = kind === 'delegation'
+        ? (existing.delegationRunIds.includes(runId) ? existing.delegationRunIds : [...existing.delegationRunIds, runId])
+        : existing.delegationRunIds.filter((id) => id !== runId);
+      const index: AgentConversationRunIndex = {
+        v: 2,
+        runIds,
+        latestSeqByRunId: {
+          ...existing.latestSeqByRunId,
+          [runId]: Math.max(existing.latestSeqByRunId[runId] ?? 0, latestSeq),
+        },
+        delegationRunIds,
+      };
+      await mkdir(paths.conversationDir, { recursive: true });
+      await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+    });
   }
 
   private async updatePrincipalRunIndex(principal: AgentPrincipal, runId: string, updatedAt: number) {
-    const poolPaths = this.memoryPaths(principal);
-    const existing = await this.ensurePrincipalRunIndex(principal);
-    const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-    const index: AgentPrincipalRunIndex = {
-      v: 1,
-      principalKey: principalKey(principal),
-      runIds,
-      updatedAtByRunId: {
-        ...existing.updatedAtByRunId,
-        [runId]: Math.max(existing.updatedAtByRunId[runId] ?? 0, updatedAt),
-      },
-    };
-    index.runIds.sort((left, right) => (
-      index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
-    ));
-    await mkdir(poolPaths.poolDir, { recursive: true });
-    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    await this.enqueueIndexWrite(async () => {
+      const poolPaths = this.memoryPaths(principal);
+      const existing = await this.ensurePrincipalRunIndex(principal);
+      const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
+      const index: AgentPrincipalRunIndex = {
+        v: 1,
+        principalKey: principalKey(principal),
+        runIds,
+        updatedAtByRunId: {
+          ...existing.updatedAtByRunId,
+          [runId]: Math.max(existing.updatedAtByRunId[runId] ?? 0, updatedAt),
+        },
+      };
+      index.runIds.sort((left, right) => (
+        index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
+      ));
+      await mkdir(poolPaths.poolDir, { recursive: true });
+      await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    });
   }
 
   private async updateRunMeta(conversationId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {

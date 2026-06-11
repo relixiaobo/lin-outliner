@@ -388,7 +388,7 @@ describe('agent render projection', () => {
     }]);
   });
 
-  test('surfaces a parentless child run run (a command fire) as a transcript boundary row', () => {
+  test('surfaces a parentless child run (a command fire) as a transcript boundary row', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Command delivery' },
       {
@@ -423,7 +423,7 @@ describe('agent render projection', () => {
     expect(projection.entities.childRuns['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
   });
 
-  test('places a main-agent child run run right after the turn that spawned it', () => {
+  test('places a main-agent child run right after the turn that spawned it', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {

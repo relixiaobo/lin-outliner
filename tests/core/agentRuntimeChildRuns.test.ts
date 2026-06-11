@@ -480,7 +480,7 @@ describe('agent runtime childRuns', () => {
     ]);
   });
 
-  test('scheduled Dream batches same-owner child run runs by origin workspace', async () => {
+  test('scheduled Dream batches same-owner child runs by origin workspace', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-workspace-root-'));
     const otherRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-other-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-workspace-data-'));
@@ -798,7 +798,7 @@ describe('agent runtime childRuns', () => {
       ],
       () => undefined,
     );
-    const compactModel = compactTestModel('child run-compact-test-model', 'Child run Compact Test Model');
+    const compactModel = compactTestModel('child-run-compact-test-model', 'Child Run Compact Test Model');
 
     const { AgentRuntime } = await loadRuntimeModule();
     const sink = createWindowSink();
@@ -810,7 +810,7 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'child run-compact-test-model',
+          modelId: 'child-run-compact-test-model',
           reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',

@@ -1144,6 +1144,57 @@ describe('agent event store', () => {
     });
   });
 
+  test('concurrent conversation and delegated-run appends never drop a run from the run index', async () => {
+    await withStore(async (store, root) => {
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Index race' },
+      ]);
+
+      // runs.json is a read-modify-write merge reached from two different
+      // serial queues (per-conversation event queue vs per-run ledger queue).
+      // Each round races one turn-run append against one delegated-run append;
+      // a lost update permanently drops the turn run from the index, and cold
+      // replay then silently misses that turn-run ledger's events.
+      const turnRunSeqs: number[] = [];
+      const jobs: Promise<unknown>[] = [];
+      let seq = 1;
+      for (let round = 0; round < 16; round += 1) {
+        const turnRunId = `turn-run-${round}`;
+        const childRunId = `child-run-${round}`;
+        const startSeq = (seq += 1);
+        const messageSeq = (seq += 1);
+        const doneSeq = (seq += 1);
+        turnRunSeqs.push(startSeq, doneSeq);
+        const childEvent = (childSeq: number): AgentEvent => ({
+          ...base(conversationId, childSeq, childSeq === 1 ? 'run.started' : 'run.completed'),
+          eventId: `${childRunId}-evt-${childSeq}`,
+          runId: childRunId,
+          ...(childSeq === 1 ? { kind: 'delegation' } : {}),
+        } as AgentEvent);
+        jobs.push(store.appendEvents(conversationId, [
+          { ...base(conversationId, startSeq, 'run.started'), runId: turnRunId },
+          {
+            ...base(conversationId, messageSeq, 'user_message.created', userActor),
+            runId: turnRunId,
+            messageId: `message-${round}`,
+            parentMessageId: null,
+            content: [{ type: 'text', text: `turn ${round}` }],
+          },
+          { ...base(conversationId, doneSeq, 'run.completed'), runId: turnRunId },
+        ]));
+        jobs.push(store.appendRunStreamEvents(conversationId, childRunId, [childEvent(1), childEvent(2)]));
+      }
+      await Promise.all(jobs);
+
+      // Cold replay: every turn run's ledger must still join the conversation
+      // (run.started/run.completed live in the run's OWN events file, so a
+      // dropped index entry makes them vanish from the join).
+      const replayedSeqs = (await new AgentEventStore(root).readEvents(conversationId)).map((event) => event.seq);
+      for (const turnRunSeq of turnRunSeqs) expect(replayedSeqs).toContain(turnRunSeq);
+    });
+  });
+
   test('stores payload bytes outside the JSONL event stream', async () => {
     await withStore(async (store) => {
       const conversationId = 'conversation-1';

@@ -379,7 +379,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         agentFile: 'built-in/general',
         description: 'General-purpose focused child run for research, analysis, and execution.',
         body: [
-          'You are a focused child run running inside Lin.',
+          'You are a focused child agent running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
         ].join('\n'),
         permissionMode: 'restricted',
@@ -399,11 +399,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       costCacheWriteUsd: 0,
     };
     const debugPayloadJson = '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}';
-    const childRunTranscriptJson = JSON.stringify({
-      v: 1,
-      runId: 'child run-1',
-      messageCount: 4,
-      messages: [
+    // Replayed transcript for the delegated run's own ledger — served whole by
+    // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
+    const childRunTranscriptMessages = [
         {
           role: 'user',
           timestamp: now - 500,
@@ -432,12 +430,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           stopReason: 'toolUse',
           content: [
             { type: 'thinking', thinking: 'Read the visible outline before summarizing.', redacted: false },
-            { type: 'toolCall', id: 'child run-tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
+            { type: 'toolCall', id: 'child-run-tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
           ],
         },
         {
           role: 'toolResult',
-          toolCallId: 'child run-tool-read-1',
+          toolCallId: 'child-run-tool-read-1',
           toolName: 'node_read',
           timestamp: now - 300,
           content: [{ type: 'text', text: 'Daily note content from child run.' }],
@@ -466,8 +464,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           stopReason: 'stop',
           content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
         },
-      ],
-    });
+      ];
     const debugSnapshot = {
       id: 'debug-snapshot-1',
       source: 'provider_payload',
@@ -1720,8 +1717,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_payload_text') {
           const payloadId = String(args.payloadId);
           if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
-          if (payloadId === 'child run-transcript-1') return clone(child runTranscriptJson) as T;
           return clone(null) as T;
+        }
+        if (cmd === 'agent_child_run_transcript') {
+          return clone(String(args.runId) === 'child-run-1' ? { messages: childRunTranscriptMessages } : null) as T;
         }
         if (cmd === 'agent_child_run_status') {
           return clone({
@@ -2574,7 +2573,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   };
   const rawChildRuns = state.childRuns ?? {};
   const childRuns = Array.isArray(rawChildRuns)
-    ? Object.fromEntries(rawChildRuns.map((childRun: any) => [childRun.id, child run]))
+    ? Object.fromEntries(rawChildRuns.map((childRun: any) => [childRun.id, childRun]))
     : rawChildRuns;
   const childRunIds = state.childRunIds
     ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(childRuns));
@@ -2590,7 +2589,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     childRunId: childRun.id,
   }));
   const tasks = {
-    ...Object.fromEntries(child runTasks.map((task: any) => [task.id, task])),
+    ...Object.fromEntries(childRunTasks.map((task: any) => [task.id, task])),
     ...(state.tasks ?? {}),
   };
   const taskIds = state.taskIds ?? Object.keys(tasks);
@@ -2693,7 +2692,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   }
 
   // Mirror the core projection's insertChildRunRows: the full transcript carries
-  // an inline boundary row per child run run (the active `rows` stays clean). A
+  // an inline boundary row per child run (the active `rows` stays clean). A
   // parented run anchors after its tool_result row, else after the assistant
   // message that issued the call; a parentless run is ordered by start time.
   const messageHasToolCall = (entity: any, toolCallId: string) =>

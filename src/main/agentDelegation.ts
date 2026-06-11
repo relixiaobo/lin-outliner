@@ -806,7 +806,12 @@ export class AgentDelegationRuntime {
         if (isRecordableAgentMessage(event.message)) {
           run.messages.push(cloneAgentMessage(event.message));
           run.updatedAt = Date.now();
-          void this.host.childRunMessage(snapshotRun(run), event.message as AgentMessage).catch(() => undefined);
+          // Best-effort (a ledger write must not abort the live run), but never
+          // silent: a persistently failing append means the drill-in transcript
+          // and Dream evidence silently fall behind the live run.
+          void this.host.childRunMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
+            console.warn(`Failed to append a child-run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`);
+          });
         }
       }
     });
@@ -1059,6 +1064,9 @@ export class AgentDelegationRuntime {
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
       additionalSkillDirectories: (await this.host.getRuntimeSettings()).additionalSkillDirectories,
+      // Same acceptance gate as startAgent: omitting the store would fail closed
+      // and reject every workspace skill on the resume path (#185).
+      provenanceStore: createAgentSkillProvenanceStore(),
       conversationId: `${this.hostConversationPrefix()}-${run.id}`,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
         const data = await childRuntime.invokeSkillChildAgent({
@@ -1522,7 +1530,7 @@ export { parseAgentMarkdownDocument as parseAgentMarkdown } from '../core/agentM
 // different path — it reuses the parent's full prompt + a fork directive.)
 export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
   const header = [
-    'You are a Tenon child run — a focused worker the main Tenon agent spawned to complete one task and report back.',
+    'You are a Tenon child agent — a focused worker the main Tenon agent spawned to complete one task and report back.',
     '',
     `Agent type: ${definition.name}`,
     `Agent description: ${definition.description}`,

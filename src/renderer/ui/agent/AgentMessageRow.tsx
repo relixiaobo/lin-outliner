@@ -364,7 +364,7 @@ function renderAssistantBlocks(
       if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
       return block.text.trim().length > 0 || streaming;
     }
-    // A child run-spawn tool call is surfaced as its own inline transcript boundary
+    // A child-run-spawn tool call is surfaced as its own inline transcript boundary
     // (AgentChildRunBoundary) right after this turn — drop its tool-call block here
     // so the run isn't shown twice (no "Used tools" header, no tool row).
     if (block.type === 'toolCall' && childRunsByParentToolCallId?.has(block.id)) return false;

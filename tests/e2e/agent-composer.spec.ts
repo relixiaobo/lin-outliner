@@ -1835,7 +1835,7 @@ test.describe('agent composer controls', () => {
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {
-          nodeId: 'agent-user-child run',
+          nodeId: 'agent-user-child-run',
           message: {
             role: 'user',
             timestamp: 1_800_000_000_500,
@@ -1844,7 +1844,7 @@ test.describe('agent composer controls', () => {
           branches: null,
         },
         {
-          nodeId: 'agent-assistant-child run',
+          nodeId: 'agent-assistant-child-run',
           message: {
             role: 'assistant',
             timestamp: 1_800_000_000_700,
@@ -1867,7 +1867,7 @@ test.describe('agent composer controls', () => {
         },
       ],
       childRuns: [{
-        id: 'child run-1',
+        id: 'child-run-1',
         description: 'Inspect child run UI',
         prompt: 'Inspect the current UI.',
         agentType: 'explorer',
@@ -1875,8 +1875,6 @@ test.describe('agent composer controls', () => {
         status: 'running',
         startedAt: 1_800_000_000_800,
         updatedAt: 1_800_000_001_200,
-        transcriptPayloadId: 'child run-transcript-1',
-        transcriptMessageCount: 4,
         parentToolCallId: 'tool-agent-1',
       }],
     });
@@ -1884,10 +1882,10 @@ test.describe('agent composer controls', () => {
     // A main-agent-spawned child run renders as an inline boundary in the
     // transcript (the conversation's permanent record of the run), not as a
     // tool-call block inside the assistant bubble. The bubble is suppressed.
-    const boundary = page.getByRole('region', { name: 'Child run · Inspect child run UI' });
+    const boundary = page.getByRole('region', { name: 'Agent task · Inspect child run UI' });
     await expect(boundary).toBeVisible();
     await expect(boundary.getByText('Running…')).toBeVisible();
-    await expect(page.getByText('Child run · Inspect child run UI', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Open task panel' }).click();
     const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
@@ -1896,7 +1894,7 @@ test.describe('agent composer controls', () => {
     await expect(tasks.getByText('Inspect child run UI')).toBeVisible();
     await tasks.getByRole('button', { name: 'Open task' }).click();
 
-    const details = page.getByRole('complementary', { name: 'Child run details' });
+    const details = page.getByRole('complementary', { name: 'Agent task details' });
     await expect(details).toBeVisible();
     await expect(details.getByText('Inspect child run UI')).toBeVisible();
     await expect(page.getByText('fork · explorer')).toBeVisible();
@@ -1909,7 +1907,7 @@ test.describe('agent composer controls', () => {
     await details.getByText('Read node "today"').click();
     await expect(details.getByText('Daily note content from child run.')).toBeVisible();
 
-    await details.getByLabel('Child run follow-up').fill('Continue with layout risks.');
+    await details.getByLabel('Agent task follow-up').fill('Continue with layout risks.');
     await details.getByRole('button', { name: 'Send' }).click();
     await details.getByRole('button', { name: 'Stop' }).click();
 
@@ -1921,7 +1919,7 @@ test.describe('agent composer controls', () => {
       {
         cmd: 'agent_child_run_send',
         args: {
-          agentId: 'child run-1',
+          agentId: 'child-run-1',
           message: 'Continue with layout risks.',
           conversationId: 'mock-agent-conversation',
         },
@@ -1929,13 +1927,13 @@ test.describe('agent composer controls', () => {
       {
         cmd: 'agent_child_run_stop',
         args: {
-          agentId: 'child run-1',
+          agentId: 'child-run-1',
           conversationId: 'mock-agent-conversation',
         },
       },
     ]);
 
-    await details.getByRole('button', { name: 'Close child run details' }).click();
+    await details.getByRole('button', { name: 'Close agent task details' }).click();
     await expect(details).toHaveCount(0);
     await tasks.getByRole('button', { name: 'Close task panel' }).click();
     await expect(tasks).toHaveCount(0);

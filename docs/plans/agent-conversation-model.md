@@ -989,8 +989,8 @@ registry refactor, which stays P3:
   profile (§Agent).
 
 Bounds (do not over-reach): honor **F2 no stored `kind`**; do **not** redesign the
-protected `agentSubagentIdentity.ts` / `agentSubagentTranscript.ts` seams
-([[agent-program]] M3 note); "Task" keeps meaning the off-floor `background` run
+protected owner-resolution / run-ledger-addressing seams (`agentDelegationIdentity.ts`;
+the transcript codec was deleted by [[agent-run-unification]] — [[agent-program]] M3 note); "Task" keeps meaning the off-floor `background` run
 ([[agent-data-model]] `RunMeta.kind`), not "every `Agent` call"; the model-facing
 rename is contract + UX only (storage names may stay); and any identity-string
 change (e.g. retiring `general`'s `built-in:tenon:general` owner key) is a

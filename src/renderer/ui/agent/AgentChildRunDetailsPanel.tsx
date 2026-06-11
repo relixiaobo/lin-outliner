@@ -177,7 +177,7 @@ function ResultText({ text }: { text: string }) {
           variant="message"
         />
       </div>
-      <AgentMarkdown keyPrefix="child run-result" text={text || t.agent.childRun.noResultYet} />
+      <AgentMarkdown keyPrefix="child-run-result" text={text || t.agent.childRun.noResultYet} />
     </div>
   );
 }
@@ -191,7 +191,7 @@ function TranscriptUserMessage({ message }: { message: UserMessage }) {
         <span>{content.hidden ? t.agent.childRun.roleSystem : t.agent.childRun.roleUser}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
-      {content.text.trim() ? <AgentMarkdown keyPrefix={`child run-user-${message.timestamp}`} text={content.text} /> : null}
+      {content.text.trim() ? <AgentMarkdown keyPrefix={`child-run-user-${message.timestamp}`} text={content.text} /> : null}
       {content.images.length > 0 ? (
         <div className="agent-child-run-image-list">
           {content.images.map((image, index) => (
@@ -242,7 +242,7 @@ function TranscriptAssistantMessage({
         {message.content.map((block, index) => {
           if (block.type === 'text') {
             return block.text.trim()
-              ? <AgentMarkdown key={`text-${index}`} keyPrefix={`child run-assistant-${message.timestamp}-${index}`} text={block.text} />
+              ? <AgentMarkdown key={`text-${index}`} keyPrefix={`child-run-assistant-${message.timestamp}-${index}`} text={block.text} />
               : null;
           }
           if (block.type === 'thinking') {

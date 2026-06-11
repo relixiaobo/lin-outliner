@@ -345,7 +345,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('derives task entries from child run runs with running work first', async () => {
+  test('derives task entries from child runs with running work first', async () => {
     const completed = childRunEntity({
       id: 'child-completed',
       description: 'Finished audit',
