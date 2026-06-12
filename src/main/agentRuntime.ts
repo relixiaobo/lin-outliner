@@ -1234,6 +1234,20 @@ export class AgentRuntime {
     return bytes.toString('utf8');
   }
 
+  async previewPayload(conversationId: string, payloadId: string): Promise<AgentPayloadRef | null> {
+    const conversation = this.conversations.get(conversationId);
+    const eventState = conversation?.eventState ?? await this.loadEventState(conversationId);
+    const payload = eventState.payloads[payloadId];
+    if (!payload || payload.role === 'debug') return null;
+    return payload;
+  }
+
+  async previewPayloadBytes(conversationId: string, payloadId: string): Promise<Buffer | null> {
+    const payload = await this.previewPayload(conversationId, payloadId);
+    if (!payload) return null;
+    return this.getEventStore().readPayload(conversationId, payload);
+  }
+
   /**
    * The drill-in transcript for a delegated run: its OWN ledger replayed alone
    * and derived to pi messages ([[agent-run-unification]] — replaces the

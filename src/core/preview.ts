@@ -1,4 +1,5 @@
 export type PreviewEntryKind = 'file' | 'directory';
+export type PreviewSourceKind = 'local-file' | 'asset' | 'agent-payload';
 
 export type PreviewTarget =
   | {
@@ -24,6 +25,65 @@ export type PreviewTarget =
       url: string;
       label?: string;
     };
+
+export interface PreviewFileSource {
+  kind: 'file';
+  sourceKind: PreviewSourceKind;
+  id: string;
+  target: PreviewTarget;
+  name: string;
+  ext: string;
+  mimeType: string;
+  entryKind: PreviewEntryKind;
+  sizeBytes: number;
+  lastModified?: number;
+  displayPath?: string;
+  streamUrl?: string;
+  iconDataUrl?: string;
+  thumbnailDataUrl?: string;
+}
+
+export interface PreviewUrlSource {
+  kind: 'url';
+  id: string;
+  target: Extract<PreviewTarget, { kind: 'url' }>;
+  url: string;
+  title: string;
+}
+
+export type PreviewSourceDescriptor = PreviewFileSource | PreviewUrlSource;
+
+export interface PreviewDirectoryEntry {
+  entryKind: PreviewEntryKind;
+  name: string;
+  target: PreviewTarget;
+  mimeType: string;
+  sizeBytes: number;
+  lastModified?: number;
+}
+
+export interface PreviewResolveSourceResult {
+  source: PreviewSourceDescriptor | null;
+  error?: string;
+}
+
+export interface PreviewReadTextResult {
+  text: string | null;
+  truncated?: boolean;
+  error?: string;
+}
+
+export interface PreviewReadBytesResult {
+  bytes: ArrayBuffer | null;
+  mimeType?: string;
+  error?: string;
+}
+
+export interface PreviewListDirectoryResult {
+  entries: PreviewDirectoryEntry[] | null;
+  truncated?: boolean;
+  error?: string;
+}
 
 export function previewTargetKey(target: PreviewTarget): string {
   switch (target.kind) {
