@@ -51,6 +51,8 @@ the escape hatch.
   those rows.
 - **An in-app live browser**: remote URLs are reader-mode static previews only.
   Real interactive pages belong to the browser-extension/CDP plan.
+- **Embeds**: YouTube/Twitter iframes and other live embed cards are separate
+  (`embed-strategy.md`). Reader-mode article extraction is not an embed.
 - **High-fidelity Office rendering**: docx/xlsx/pptx are best-effort
   web-native readers. No LibreOffice or external conversion binary.
 - **Back-compat migrations**: pre-release policy still applies. Do not add
@@ -67,8 +69,11 @@ Run 2026-06-12:
 - `workspace-tabs-to-single-pane` shipped as PR #85. The old blocker is gone.
   The spec now records an extensibility seam for `file-preview`, but per-panel
   history is still outliner-only (`pageBackStack: NodeId[]`). PR 1 must
-  generalize panel current view and history to a discriminated `PaneView`; do
+  generalize panel current view and history to a discriminated `PanelView`; do
   not build preview against the interim `rootId + NodeId[]` shape.
+- Generalizing panel history changes the persisted workspace-layout shape. Per
+  pre-release policy, PR 1 should wipe/bump the dev layout state and rewrite
+  `sanitizePanel` for the new shape instead of carrying a migration reader.
 - `file-attachments` shipped as PR #204 + PR #206. Attachment/image rows store
   asset ids and use `asset://`; preview must support assets directly rather than
   forcing them through original filesystem paths.
@@ -254,6 +259,9 @@ Edge cases:
   away while editing; use hover metadata and explicit picker/actions only.
 - If a target has both `path` and `payload`, prefer the identity carried by the
   visible reference: file marker path -> `local-file`; payload chip -> payload.
+- Agent dock-originated clicks need an explicit host-panel rule because the dock
+  is not itself a workspace panel. PR 1 must choose the focused panel, active
+  panel, first panel, or split-panel behavior deliberately.
 
 ## Main-Process Authority
 
@@ -321,10 +329,10 @@ paths:
 - pdf.js runs with bundled worker and no eval. If this proves too risky, isolate
   PDF rendering in a later hardening plan.
 
-## Relationship To Other Plans
+## Relationship To Plans And Specs
 
 - `workspace-tabs-to-single-pane`: shipped PR #85. Its remaining preview
-  implication is the unbuilt `PaneView` history/current-view generalization.
+  implication is the unbuilt `PanelView` history/current-view generalization.
 - `file-attachments`: shipped PR #204/#206. This plan consumes attachment/image
   assets as preview targets.
 - `outliner-local-file-references`: shipped PR #80. This plan consumes
@@ -333,13 +341,14 @@ paths:
 - `agent-conversation-model`: result routing says durable results live as nodes
   or files and replies point at them. This plan provides the file side's
   click-through destination.
-- `agent-event-log-rendering`: payload refs are authoritative large-output
-  storage. This plan adds user-facing preview for the payloads that are meant to
-  be visible in conversation UI.
+- `docs/spec/agent-event-log-rendering.md`: payload refs are authoritative
+  large-output storage. This plan adds user-facing preview for the payloads that
+  are meant to be visible in conversation UI.
 - `launcher-provider-expansion`: captures need preview/open-original for
   `OriginalResourceRef`. This plan should be the shared destination.
 - `browser-extension-integration`: remote rich capture/control is separate; URL
   reader remains static preview.
+- `embed-strategy`: live embeds stay separate from reader-mode URL preview.
 
 ## Open Questions
 
@@ -348,6 +357,8 @@ paths:
   PR 1 after checking CSP and payload scoping.
 - What is the exact export/open behavior for agent payloads: temp file, "Save
   As", or open a materialized copy under the agent local file root?
+- Which workspace panel hosts a preview opened from the agent dock: focused
+  panel, active panel, first panel, or always a split panel?
 - URL reader remote image policy: proxy, inline cached image, or strip.
 - docx renderer: mammoth (semantic) vs docx-preview (visual).
 - pptx renderer library remains unverified.
@@ -360,8 +371,15 @@ Shape (b): a set of independent complete features. Each PR must leave a usable
 preview capability, not a partial scaffold. Gate per PR: protocol/shared + UI
 requires ultra review plus light/dark visual verification.
 
+PR 1 is intentionally the first usable preview feature, but it is large. If gate
+risk is too high, split out **PR 0 - Panel view-state refactor** as a complete
+internal refactor: rename/introduce `PanelView`, update persisted layout
+sanitization with a pre-release wipe/bump, and preserve current outliner and
+agent-debug behavior with tests. The preview shell then becomes PR 1 on top of
+that settled shape.
+
 - [ ] **PR 1 - Panel shell, target model, and web-native basics.**
-  Generalize panel current view/history to `PaneView`; add `PreviewTarget` /
+  Generalize panel current view/history to `PanelView`; add `PreviewTarget` /
   `PreviewSource`; implement preview shell and registry; add local-file,
   asset, and agent-payload source resolution; wire outliner local-file refs,
   attachment/image rows, agent message file refs, and visible agent payload rows;
