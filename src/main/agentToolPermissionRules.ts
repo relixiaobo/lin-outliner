@@ -1,44 +1,14 @@
-export type AgentToolActionKind =
-  | 'file.read.allowed_file_area'
-  | 'file.read.outside_allowed_file_area'
-  | 'file.read.sensitive_local_path'
-  | 'file.edit.allowed_file_area'
-  | 'file.write.allowed_file_area'
-  | 'file.write.outside_allowed_file_area'
-  | 'file.write.sensitive_local_path'
-  | 'file.delete.allowed_file_area'
-  | 'outline.read'
-  | 'outline.edit'
-  | 'outline.delete'
-  | 'web.search'
-  | 'web.fetch'
-  | 'shell.read_search'
-  | 'shell.project_script'
-  | 'shell.local_code_execution'
-  | 'shell.dependency_install'
-  | 'shell.network_write'
-  | 'shell.destructive_cleanup'
-  | 'shell.background_process'
-  | 'shell.sandbox_override'
-  | 'shell.unknown'
-  | 'git.publish_remote'
-  | 'deploy.publish_remote'
-  | 'external.message.send'
-  | 'task.stop'
-  | 'agent.memory.recall'
-  | 'agent.memory.dream'
-  | 'agent.user_question.ask'
-  | 'agent.runtime.status'
-  | 'agent.config.read'
-  | 'agent.config.write'
-  | 'agent.doctor.run'
-  | 'agent.skill.invoke'
-  | 'agent.delegate.spawn'
-  | 'agent.delegate.status'
-  | 'agent.delegate.send'
-  | 'agent.delegate.stop'
-  | 'agent.permission.modify'
-  | 'payment.purchase';
+import {
+  SUPPORTED_AGENT_TOOL_ACTION_KINDS,
+  type AgentToolActionKind,
+  type GlobalToolPermissionDecision,
+} from '../core/agentPermissionModel';
+
+export {
+  SUPPORTED_AGENT_TOOL_ACTION_KINDS,
+  type AgentToolActionKind,
+  type GlobalToolPermissionDecision,
+} from '../core/agentPermissionModel';
 
 export type AgentToolCapability =
   | 'external_messaging'
@@ -46,7 +16,6 @@ export type AgentToolCapability =
   | 'permission_management'
   | 'payments';
 
-export type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
 export type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
 export type AskResolverOutcome = 'allow' | 'block' | 'needs_user';
 export type ToolPermissionClassifierOutcome = 'allow' | 'block';
@@ -130,49 +99,6 @@ export interface ToolPermissionResolutionPriorityInput {
   descriptor: ToolActionDescriptor;
   sourceRank?: number;
 }
-
-export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] = [
-  'file.read.allowed_file_area',
-  'file.read.outside_allowed_file_area',
-  'file.read.sensitive_local_path',
-  'file.edit.allowed_file_area',
-  'file.write.allowed_file_area',
-  'file.write.outside_allowed_file_area',
-  'file.write.sensitive_local_path',
-  'file.delete.allowed_file_area',
-  'outline.read',
-  'outline.edit',
-  'outline.delete',
-  'web.search',
-  'web.fetch',
-  'shell.read_search',
-  'shell.project_script',
-  'shell.local_code_execution',
-  'shell.dependency_install',
-  'shell.network_write',
-  'shell.destructive_cleanup',
-  'shell.background_process',
-  'shell.sandbox_override',
-  'shell.unknown',
-  'git.publish_remote',
-  'deploy.publish_remote',
-  'external.message.send',
-  'task.stop',
-  'agent.memory.recall',
-  'agent.memory.dream',
-  'agent.user_question.ask',
-  'agent.runtime.status',
-  'agent.config.read',
-  'agent.config.write',
-  'agent.doctor.run',
-  'agent.skill.invoke',
-  'agent.delegate.spawn',
-  'agent.delegate.status',
-  'agent.delegate.send',
-  'agent.delegate.stop',
-  'agent.permission.modify',
-  'payment.purchase',
-];
 
 export const SUPPORTED_AGENT_TOOL_CAPABILITIES: readonly AgentToolCapability[] = [
   'agent_spawn',

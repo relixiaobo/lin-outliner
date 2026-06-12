@@ -34,6 +34,12 @@ import {
 import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
+import {
+  effectiveActionDecision,
+  explicitActionDecision,
+  safetyModeDefaultActionDecision,
+  type GlobalToolPermissionDecision,
+} from '../../../core/agentPermissionModel';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -54,6 +60,15 @@ import {
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { defaultReasoningLevel } from './settingsReasoning';
 import { AgentEditor } from './AgentEditor';
+import {
+  COMMON_PERMISSION_RULES,
+  buildPermissionExceptionRows,
+  permissionDecisionLabel,
+  permissionRuleCopy,
+  permissionSettingsWithDecision,
+  permissionSettingsWithoutRule,
+  safetyModeLabel,
+} from './permissionSettingsModel';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -184,39 +199,8 @@ const SETTINGS_CATEGORY_ICONS = {
   agents: AgentIcon,
 } satisfies Record<SettingsCategory, AppIcon>;
 
-// The common permission rules: a stable `id` (the i18n key for label + description),
-// the `ruleValue` engine string, and whether a global "always allow" is offered.
-// Visible label/description come from t.settings.permissions.rules[id] at render.
-type PermissionRuleId =
-  | 'readOutsideArea'
-  | 'readSensitivePaths'
-  | 'fetchWeb'
-  | 'deleteFiles'
-  | 'runProjectScripts'
-  | 'installDependencies'
-  | 'publishGitRemotes'
-  | 'deployPublish'
-  | 'networkWrite'
-  | 'spawnChildAgents';
-
-const COMMON_PERMISSION_RULES: Array<{
-  id: PermissionRuleId;
-  ruleValue: string;
-  allowable: boolean;
-}> = [
-  { id: 'readOutsideArea', ruleValue: 'Action(file.read.outside_allowed_file_area)', allowable: true },
-  { id: 'readSensitivePaths', ruleValue: 'Action(file.read.sensitive_local_path)', allowable: true },
-  { id: 'fetchWeb', ruleValue: 'Action(web.fetch)', allowable: true },
-  { id: 'deleteFiles', ruleValue: 'Action(file.delete.allowed_file_area)', allowable: true },
-  { id: 'runProjectScripts', ruleValue: 'Action(shell.project_script)', allowable: true },
-  { id: 'installDependencies', ruleValue: 'Action(shell.dependency_install)', allowable: true },
-  { id: 'publishGitRemotes', ruleValue: 'Action(git.publish_remote)', allowable: true },
-  { id: 'deployPublish', ruleValue: 'Action(deploy.publish_remote)', allowable: true },
-  { id: 'networkWrite', ruleValue: 'Action(shell.network_write)', allowable: true },
-  { id: 'spawnChildAgents', ruleValue: 'Action(agent.delegate.spawn)', allowable: false },
-];
-
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
+const EMPTY_PERMISSION_RULES: AgentToolPermissionSettingsView['permissions'] = { allow: [], ask: [], deny: [] };
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   if (target?.agentId?.trim()) return { type: 'agent-detail', agentId: target.agentId.trim() };
@@ -276,7 +260,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // the refreshed skill list; one shared busy flag keeps the row controls quiet
   // while a mutation is in flight.
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
-  const [permissionTrustBusy, setPermissionTrustBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -579,7 +562,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
   const selectedAgent = routeAgent;
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
-  const actionTrustGrants = permissionSettings?.permissions.allow ?? [];
+  const permissionRules = permissionDraft?.permissions ?? EMPTY_PERMISSION_RULES;
+  const permissionExceptions = buildPermissionExceptionRows(permissionRules, draft.safetyMode);
+  const permissionModeLabel = safetyModeLabel(draft.safetyMode, t);
+  const permissionCustomCount = permissionExceptions.length;
   const acceptedSkillTrustGrants = allSkills.filter((skill) => skill.accepted);
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const permissionDraftDirty = permissionDraft !== permissionSettings;
@@ -587,41 +573,28 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     ? permissionDraftDirty || runtimeDraftDirty
     : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
 
-  function permissionDecision(ruleValue: string): 'deny' | 'allow' | 'ask' {
-    const permissions = permissionDraft?.permissions;
-    if (permissions?.deny.includes(ruleValue)) return 'deny';
-    if (permissions?.allow.includes(ruleValue)) return 'allow';
-    return 'ask';
-  }
-
-  function setPermissionDecision(ruleValue: string, decision: 'allow' | 'ask') {
+  function setPermissionDecision(ruleValue: string, decision: GlobalToolPermissionDecision | 'default') {
     setPermissionDraft((current) => {
       const base = current ?? emptyPermissionSettings();
-      return permissionSettingsWithDecision(base, ruleValue, decision);
+      return permissionSettingsWithDecision(base, ruleValue, decision, draft.safetyMode);
     });
     setNotice(null);
     setError(null);
   }
 
-  async function revokeActionTrustGrant(ruleValue: string) {
-    if (!permissionSettings) return;
-    const baseSettings = permissionSettings;
-    setPermissionTrustBusy(true);
-    setError(null);
+  function revertPermissionException(ruleValue: string) {
+    setPermissionDraft((current) => permissionSettingsWithoutRule(current ?? emptyPermissionSettings(), ruleValue));
     setNotice(null);
-    try {
-      const next = await api.agentUpdateToolPermissionSettings(permissionSettingsWithDecision(baseSettings, ruleValue, 'ask'));
-      setPermissionSettings(next);
-      setPermissionDraft((current) => {
-        if (!current || current === baseSettings) return next;
-        return permissionSettingsWithDecision(current, ruleValue, 'ask');
-      });
-      await onApplied();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setPermissionTrustBusy(false);
-    }
+    setError(null);
+  }
+
+  function resetPermissionExceptions() {
+    setPermissionDraft((current) => ({
+      ...(current ?? emptyPermissionSettings()),
+      permissions: { allow: [], ask: [], deny: [] },
+    }));
+    setNotice(null);
+    setError(null);
   }
 
   // Custom (OpenAI-compatible) providers are configured in the same native window,
@@ -1100,106 +1073,155 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
               </section>
             ) : category === 'permissions' ? (
               <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
-                <InsetGroup ariaLabel={t.settings.permissions.trustLevelAriaLabel} label={t.settings.permissions.trustLevelGroup}>
+                <InsetGroup
+                  ariaLabel={t.settings.permissions.trustLevelAriaLabel}
+                  footnote={t.settings.permissions.hardBlockNote}
+                  label={t.settings.permissions.trustLevelGroup}
+                >
                   <InsetRow
-                    label={t.settings.permissions.trustLevelLabel}
+                    label={permissionCustomCount > 0 ? (
+                      <>
+                        {t.settings.permissions.customModeLabel}
+                        <span className="settings-chip">{t.settings.permissions.basedOnMode({ mode: permissionModeLabel })}</span>
+                        <span className="settings-chip">{t.settings.permissions.changedCount({ count: permissionCustomCount })}</span>
+                      </>
+                    ) : permissionModeLabel}
                     sublabel={t.settings.permissions.trustLevelSublabel}
                     trailing={(
-                      <SegmentedControl<AgentSafetyMode>
-                        label={t.settings.permissions.trustLevelLabel}
-                        onChange={(value) => {
-                          setDraft((current) => ({ ...current, safetyMode: value }));
-                          setNotice(null);
-                          setError(null);
-                        }}
-                        options={[
-                          { value: 'ask_first', label: t.settings.permissions.askFirstMode },
-                          { value: 'balanced', label: t.settings.permissions.balancedMode },
-                          { value: 'full_access', label: t.settings.permissions.fullAccessMode },
-                        ]}
-                        value={draft.safetyMode}
-                      />
+                      <div className="settings-permission-mode-controls">
+                        <SegmentedControl<AgentSafetyMode>
+                          label={t.settings.permissions.trustLevelLabel}
+                          onChange={(value) => {
+                            setDraft((current) => ({ ...current, safetyMode: value }));
+                            setNotice(null);
+                            setError(null);
+                          }}
+                          options={[
+                            { value: 'ask_first', label: t.settings.permissions.askFirstMode },
+                            { value: 'balanced', label: t.settings.permissions.balancedMode },
+                            { value: 'full_access', label: t.settings.permissions.fullAccessMode },
+                          ]}
+                          value={draft.safetyMode}
+                        />
+                        {permissionCustomCount > 0 ? (
+                          <ButtonControl
+                            className="settings-row-button"
+                            onClick={resetPermissionExceptions}
+                          >
+                            {t.settings.permissions.resetToMode({ mode: permissionModeLabel })}
+                          </ButtonControl>
+                        ) : null}
+                      </div>
                     )}
                     wrap
                   />
                 </InsetGroup>
 
-                <InsetGroup ariaLabel={t.settings.permissions.grantedTrustAriaLabel} label={t.settings.permissions.grantedTrustGroup}>
-                  {actionTrustGrants.length > 0 || acceptedSkillTrustGrants.length > 0 ? (
-                    <>
-                      {actionTrustGrants.map((ruleValue) => {
-                        const known = COMMON_PERMISSION_RULES.find((rule) => rule.ruleValue === ruleValue);
-                        const label = known ? t.settings.permissions.rules[known.id].label : ruleValue;
-                        return (
-                          <InsetRow
-                            key={ruleValue}
-                            label={label}
-                            sublabel={known ? ruleValue : t.settings.permissions.actionGrantSublabel}
-                            trailing={(
-                              <ButtonControl
-                                className="settings-row-button"
-                                disabled={permissionTrustBusy}
-                                onClick={() => void revokeActionTrustGrant(ruleValue)}
-                              >
-                                {t.settings.permissions.revokeGrant}
-                              </ButtonControl>
-                            )}
-                            wrap
-                          />
-                        );
-                      })}
-                      {acceptedSkillTrustGrants.map((skill) => (
-                        <InsetRow
-                          key={`skill:${skill.name}:${skill.contentHash ?? ''}`}
-                          label={`/${skill.displayName || skill.name}`}
-                          sublabel={t.settings.permissions.skillGrantSublabel}
-                          trailing={(
-                            <ButtonControl
-                              className="settings-row-button"
-                              disabled={skillTrustBusy}
-                              onClick={() => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name))}
-                            >
-                              {t.settings.permissions.revokeGrant}
-                            </ButtonControl>
-                          )}
-                          wrap
-                        />
-                      ))}
-                    </>
-                  ) : (
-                    <InsetRow disabled label={t.settings.permissions.noGrantedTrust} />
-                  )}
-                </InsetGroup>
-
-                <InsetGroup ariaLabel={t.settings.permissions.commonActionsAriaLabel} label={t.settings.permissions.commonActionsGroup}>
-                  {COMMON_PERMISSION_RULES.map((rule) => {
-                    const decision = permissionDecision(rule.ruleValue);
-                    const denied = decision === 'deny';
-                    const ruleCopy = t.settings.permissions.rules[rule.id];
+                <InsetGroup
+                  ariaLabel={t.settings.permissions.exceptionsAriaLabel({ mode: permissionModeLabel })}
+                  label={t.settings.permissions.exceptionsGroup({ mode: permissionModeLabel })}
+                >
+                  {permissionExceptions.length > 0 ? permissionExceptions.map((exception) => {
+                    const ruleCopy = permissionRuleCopy(exception.ruleValue, t);
                     return (
                       <InsetRow
-                        disabled={denied}
-                        key={rule.ruleValue}
-                        label={ruleCopy.label}
-                        sublabel={ruleCopy.description}
+                        key={`${exception.decision}:${exception.ruleValue}`}
+                        label={(
+                          <>
+                            {ruleCopy.label}
+                            <span className="settings-chip">{permissionDecisionLabel(exception.decision, t)}</span>
+                            <span className="settings-chip">{t.settings.permissions.modifiedChip}</span>
+                            {exception.kind === 'raw' ? <span className="settings-chip">{t.settings.permissions.advancedRuleChip}</span> : null}
+                          </>
+                        )}
+                        sublabel={(
+                          <>
+                            <span>{ruleCopy.description}</span>
+                            <span className="inset-row-code">{exception.ruleValue}</span>
+                          </>
+                        )}
                         trailing={(
-                          <SelectControl
-                            disabled={denied}
-                            label={t.settings.permissions.decisionAriaLabel({ rule: ruleCopy.label })}
-                            onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as 'allow' | 'ask')}
-                            value={denied ? 'deny' : decision}
-                            variant="popup"
+                          <ButtonControl
+                            className="settings-row-button"
+                            onClick={() => revertPermissionException(exception.ruleValue)}
                           >
-                            <option value="ask">{t.settings.permissions.askOption}</option>
-                            {rule.allowable ? <option value="allow">{t.settings.permissions.allowOption}</option> : null}
-                            {denied ? <option value="deny">{t.settings.permissions.deniedOption}</option> : null}
-                          </SelectControl>
+                            {t.settings.permissions.revertException}
+                          </ButtonControl>
                         )}
                         wrap
                       />
                     );
-                  })}
+                  }) : (
+                    <InsetRow disabled label={t.settings.permissions.noExceptions} />
+                  )}
                 </InsetGroup>
+
+                <details className="settings-permission-add">
+                  <summary>{t.settings.permissions.addExceptionSummary}</summary>
+                  <InsetGroup ariaLabel={t.settings.permissions.commonActionsAriaLabel} label={t.settings.permissions.commonActionsGroup}>
+                    {COMMON_PERMISSION_RULES.map((rule) => {
+                      const decision = effectiveActionDecision(rule.actionKind, draft.safetyMode, permissionRules);
+                      const defaultDecision = safetyModeDefaultActionDecision(rule.actionKind, draft.safetyMode);
+                      const explicitDecision = explicitActionDecision(rule.actionKind, permissionRules);
+                      const modified = explicitDecision !== null && explicitDecision !== defaultDecision;
+                      const ruleCopy = t.settings.permissions.rules[rule.id];
+                      return (
+                        <InsetRow
+                          key={rule.ruleValue}
+                          label={(
+                            <>
+                              {ruleCopy.label}
+                              <span className="settings-chip">{permissionDecisionLabel(decision, t)}</span>
+                              {modified ? <span className="settings-chip">{t.settings.permissions.modifiedChip}</span> : null}
+                            </>
+                          )}
+                          sublabel={ruleCopy.description}
+                          trailing={(
+                            <SelectControl
+                              label={t.settings.permissions.decisionAriaLabel({ rule: ruleCopy.label })}
+                              onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as GlobalToolPermissionDecision | 'default')}
+                              value={modified ? decision : 'default'}
+                              variant="popup"
+                            >
+                              <option value="default">
+                                {t.settings.permissions.followModeOption({
+                                  mode: permissionModeLabel,
+                                  decision: permissionDecisionLabel(defaultDecision, t),
+                                })}
+                              </option>
+                              <option value="ask">{t.settings.permissions.askOption}</option>
+                              {rule.allowable ? <option value="allow">{t.settings.permissions.allowOption}</option> : null}
+                              <option value="deny">{t.settings.permissions.denyOption}</option>
+                            </SelectControl>
+                          )}
+                          wrap
+                        />
+                      );
+                    })}
+                  </InsetGroup>
+                </details>
+
+                {acceptedSkillTrustGrants.length > 0 ? (
+                  <InsetGroup ariaLabel={t.settings.permissions.acceptedSkillsAriaLabel} label={t.settings.permissions.acceptedSkillsGroup}>
+                    {acceptedSkillTrustGrants.map((skill) => (
+                      <InsetRow
+                        key={`skill:${skill.name}:${skill.contentHash ?? ''}`}
+                        label={`/${skill.displayName || skill.name}`}
+                        sublabel={t.settings.permissions.skillGrantSublabel}
+                        trailing={(
+                          <ButtonControl
+                            className="settings-row-button"
+                            disabled={skillTrustBusy}
+                            onClick={() => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name))}
+                          >
+                            {t.settings.permissions.revokeGrant}
+                          </ButtonControl>
+                        )}
+                        wrap
+                      />
+                    ))}
+                  </InsetGroup>
+                ) : null}
 
                 {permissionDiagnostics.length > 0 ? (
                   <InsetGroup ariaLabel={t.settings.permissions.ignoredRulesAriaLabel} label={t.settings.permissions.ignoredRulesGroup}>
@@ -1747,34 +1769,6 @@ function parseDirectoryListInput(value: string): string[] {
     .slice(0, 20);
 }
 
-function removeRule(rules: readonly string[], ruleValue: string): string[] {
-  return rules.filter((rule) => rule !== ruleValue);
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
-}
-
 function emptyPermissionSettings(): AgentToolPermissionSettingsView {
   return { permissions: { allow: [], ask: [], deny: [] }, diagnostics: [] };
-}
-
-function permissionSettingsWithDecision(
-  settings: AgentToolPermissionSettingsView,
-  ruleValue: string,
-  decision: 'allow' | 'ask',
-): AgentToolPermissionSettingsView {
-  const allow = removeRule(settings.permissions.allow, ruleValue);
-  const ask = removeRule(settings.permissions.ask, ruleValue);
-  const deny = [...settings.permissions.deny];
-  if (decision === 'allow') allow.push(ruleValue);
-  else ask.push(ruleValue);
-  return {
-    ...settings,
-    permissions: {
-      allow: uniqueStrings(allow),
-      ask: uniqueStrings(ask),
-      deny: uniqueStrings(deny),
-    },
-  };
 }

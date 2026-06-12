@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
 import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
+import { defaultActionDecision, effectiveActionDecision } from '../core/agentPermissionModel';
 import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
@@ -392,28 +393,6 @@ interface SafetyModeProfileResolution {
   descriptor: DerivedToolActionDescriptor;
 }
 
-const ASK_FIRST_ASK_ACTIONS = new Set<AgentToolActionKind>([
-  'file.edit.allowed_file_area',
-  'outline.edit',
-  'agent.skill.invoke',
-]);
-
-const FULL_ACCESS_ALLOW_ACTIONS = new Set<AgentToolActionKind>([
-  'file.edit.allowed_file_area',
-  'file.delete.allowed_file_area',
-  'outline.edit',
-  'outline.delete',
-  'web.fetch',
-  'shell.local_code_execution',
-  'shell.project_script',
-  'shell.dependency_install',
-  'shell.network_write',
-  'git.publish_remote',
-  'agent.delegate.spawn',
-  'agent.memory.dream',
-  'shell.background_process',
-]);
-
 function resolveSafetyModeProfileDecision(
   descriptors: readonly DerivedToolActionDescriptor[],
   safetyMode: AgentSafetyMode,
@@ -440,13 +419,12 @@ function safetyModeDecisionForDescriptor(
   descriptor: DerivedToolActionDescriptor,
   safetyMode: AgentSafetyMode,
 ): GlobalToolPermissionDecision {
-  if (descriptor.defaultDecision === 'deny') return 'deny';
-  if (safetyMode === 'balanced') return descriptor.defaultDecision;
-  if (safetyMode === 'ask_first') {
-    return ASK_FIRST_ASK_ACTIONS.has(descriptor.actionKind) ? 'ask' : descriptor.defaultDecision;
-  }
-  if (FULL_ACCESS_ALLOW_ACTIONS.has(descriptor.actionKind)) return 'allow';
-  return descriptor.defaultDecision;
+  return effectiveActionDecision(
+    descriptor.actionKind,
+    safetyMode,
+    { allow: [], ask: [], deny: [] },
+    descriptor.defaultDecision,
+  );
 }
 
 function permissionSourceRank(source: SafetyModeProfileSource): number {
@@ -495,7 +473,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'web search',
       summary: 'Search external information.',
       consequence: 'This reads public web search results.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -510,7 +487,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'web fetch',
       summary: `Fetch external content from ${url}.`,
       consequence: 'This contacts an external website and reads its response.',
-      defaultDecision: 'ask',
       reversible: true,
       externalEffect: true,
       highConsequence: false,
@@ -526,7 +502,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'agent memory recall',
       summary: "Read the local agent's active distilled memory entries (cued retrieval).",
       consequence: 'This reads local agent memory and optional cited episodic evidence without changing it.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -540,7 +515,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'agent memory dream',
       summary: 'Request runtime-owned memory consolidation (Dream) for the current agent.',
       consequence: 'This may consolidate recorded episodic evidence into local durable agent memory; the model cannot provide memory facts directly.',
-      defaultDecision: 'ask',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -556,7 +530,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'ask user question',
       summary: 'Pause the run to ask the user for structured input.',
       consequence: 'This waits for explicit user input and does not read or mutate local or external data.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -570,7 +543,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'runtime status',
       summary: 'Read redacted local agent runtime status.',
       consequence: 'This reads local runtime settings and provider status without secrets.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -584,7 +556,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'runtime doctor',
       summary: 'Run read-only local agent diagnostics.',
       consequence: 'This reads local diagnostic state without secrets or mutation.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -604,7 +575,6 @@ export function deriveAgentToolActionDescriptors(input: {
       consequence: writes
         ? 'This changes local agent runtime behavior through a whitelisted settings API.'
         : 'This reads local agent runtime configuration without secrets.',
-      defaultDecision: writes ? 'ask' : 'allow',
       reversible: writes,
       externalEffect: false,
       highConsequence: false,
@@ -620,7 +590,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'local document read',
       summary: 'Read local outliner or agent history data.',
       consequence: 'This reads local product data without changing it.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -634,7 +603,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'local document edit',
       summary: 'Edit local outliner content.',
       consequence: 'This changes local documents inside Lin.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -648,7 +616,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'local document delete',
       summary: 'Delete local outliner content.',
       consequence: 'This can remove local document content.',
-      defaultDecision: 'ask',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -663,7 +630,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: toolName === 'agent_stop' ? 'child run stop' : 'background task stop',
       summary: toolName === 'agent_stop' ? 'Stop a background child run.' : 'Stop a background task launched by the agent.',
       consequence: toolName === 'agent_stop' ? 'This controls a local background child run.' : 'This only controls a local background task.',
-      defaultDecision: 'allow',
       reversible: false,
       externalEffect: false,
       highConsequence: false,
@@ -677,7 +643,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'child run status',
       summary: 'Read the status of a background child run.',
       consequence: 'This reads local child run state.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -691,7 +656,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'child run message',
       summary: 'Send a follow-up message to an existing child run.',
       consequence: 'This can steer an already-running local child run.',
-      defaultDecision: 'allow',
       reversible: false,
       externalEffect: false,
       highConsequence: false,
@@ -705,7 +669,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'child run spawn',
       summary: 'Start or message a child run.',
       consequence: 'This can create another agent process that may take further actions.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -721,7 +684,6 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'skill invocation',
       summary: 'Invoke an installed agent skill.',
       consequence: 'This can run skill instructions and any narrowed tool permissions attached to that skill.',
-      defaultDecision: 'allow',
       reversible: false,
       externalEffect: false,
       highConsequence: false,
@@ -734,7 +696,6 @@ export function deriveAgentToolActionDescriptors(input: {
     title: 'unknown tool action',
     summary: `Use unknown tool ${toolName}.`,
     consequence: `Tool ${toolName} is outside the supported permission classification surface.`,
-    defaultDecision: 'deny',
     reversible: false,
     externalEffect: false,
     highConsequence: true,
@@ -761,7 +722,6 @@ function derivePathToolActionDescriptor(
       title: isWrite ? 'local file edit' : 'local file read',
       summary: `${isWrite ? 'Edit' : 'Read'} a path in the allowed file area.`,
       consequence: isWrite ? 'This changes local files inside the allowed file area.' : 'This reads local files inside the allowed file area.',
-      defaultDecision: 'allow',
       reversible: !isWrite,
       externalEffect: false,
       highConsequence: false,
@@ -813,7 +773,6 @@ function derivePathToolActionDescriptor(
       title: `sensitive file ${action}`,
       summary: `${action === 'write' ? 'Write' : 'Read'} sensitive local path ${resolved}.`,
       consequence: `This would ${action} a sensitive local path: ${resolved}`,
-      defaultDecision: 'ask',
       reversible: !isWrite,
       externalEffect: false,
       highConsequence: true,
@@ -835,7 +794,6 @@ function derivePathToolActionDescriptor(
       title: isWrite ? 'outside-area file write' : 'outside-area file read',
       summary: `${isWrite ? 'Write' : 'Read'} ${resolved} outside the allowed file area.`,
       consequence: `This would ${isWrite ? 'write' : 'read'} outside the allowed file area: ${resolved}`,
-      defaultDecision: 'ask',
       reversible: !isWrite,
       externalEffect: false,
       highConsequence: true,
@@ -851,7 +809,6 @@ function derivePathToolActionDescriptor(
     title: isWrite ? 'local file edit' : 'local file read',
     summary: `${isWrite ? 'Edit' : 'Read'} ${resolved}.`,
     consequence: isWrite ? 'This changes local files inside the allowed file area.' : 'This reads local files inside the allowed file area.',
-    defaultDecision: 'allow',
     reversible: !isWrite,
     externalEffect: false,
     highConsequence: false,
@@ -950,7 +907,6 @@ function deriveBashActionDescriptors(
       title: 'command execution override',
       summary: command,
       consequence: 'The command requested an execution override.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -968,7 +924,6 @@ function deriveBashActionDescriptors(
       title: 'background command',
       summary: command,
       consequence: 'This starts a process that can keep running after the current turn.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -986,7 +941,6 @@ function deriveBashActionDescriptors(
       title: 'sensitive file access',
       summary: command,
       consequence: 'This command references a path that may contain credentials or local secrets.',
-      defaultDecision: 'ask',
       reversible: true,
       externalEffect: false,
       highConsequence: true,
@@ -1022,7 +976,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'destructive cleanup',
       summary: fullCommand,
       consequence: 'This recursively deletes files outside an obviously scoped project path.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -1040,7 +993,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'local file delete',
       summary: fullCommand,
       consequence: 'This deletes local files in the allowed file area.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: false,
@@ -1058,7 +1010,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'local code execution',
       summary: fullCommand,
       consequence: 'This runs commands selected by find for matching local files.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -1076,7 +1027,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'local file delete',
       summary: fullCommand,
       consequence: 'This deletes local files matched by find.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: false,
@@ -1094,7 +1044,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'git push',
       summary: fullCommand,
       consequence: 'This changes external state on a git remote.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: true,
       highConsequence: true,
@@ -1112,7 +1061,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'GitHub CLI mutation',
       summary: fullCommand,
       consequence: 'This changes external state through the GitHub CLI.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: true,
       highConsequence: true,
@@ -1130,7 +1078,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'dependency install',
       summary: fullCommand,
       consequence: 'This can change installed dependencies or lockfiles.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: true,
       highConsequence: true,
@@ -1148,7 +1095,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'deploy or publish',
       summary: fullCommand,
       consequence: 'This can publish artifacts or update a remote environment.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: true,
       highConsequence: true,
@@ -1166,7 +1112,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'network write',
       summary: fullCommand,
       consequence: 'This appears to send data to a network endpoint or mutate an external system.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: true,
       highConsequence: true,
@@ -1184,7 +1129,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'local validation or project script',
       summary: fullCommand,
       consequence: 'This executes project code on the local machine.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: false,
@@ -1202,7 +1146,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'local code execution',
       summary: fullCommand,
       consequence: 'This executes arbitrary local code.',
-      defaultDecision: 'ask',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -1238,7 +1181,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       title: 'local read/search command',
       summary: fullCommand,
       consequence: 'This reads or searches local project data.',
-      defaultDecision: 'allow',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -1370,9 +1312,17 @@ function projectClassifierInput(
 function descriptor(
   toolName: string,
   actionKind: AgentToolActionKind,
-  values: Omit<DerivedToolActionDescriptor, 'toolName' | 'actionKind'>,
+  values: Omit<DerivedToolActionDescriptor, 'toolName' | 'actionKind' | 'defaultDecision'> & {
+    defaultDecision?: GlobalToolPermissionDecision;
+  },
 ): DerivedToolActionDescriptor {
-  return { toolName, actionKind, ...values };
+  const { defaultDecision = defaultActionDecision(actionKind), ...descriptorValues } = values;
+  return {
+    toolName,
+    actionKind,
+    defaultDecision,
+    ...descriptorValues,
+  };
 }
 
 function unknownShellDescriptor(reason: string, command = ''): DerivedToolActionDescriptor {
@@ -1381,7 +1331,6 @@ function unknownShellDescriptor(reason: string, command = ''): DerivedToolAction
     title: 'unknown shell execution',
     summary: command,
     consequence: reason,
-    defaultDecision: 'deny',
     reversible: false,
     externalEffect: false,
     highConsequence: true,

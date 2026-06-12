@@ -182,8 +182,9 @@ abort signal; stopping the run resolves it as declined and the `skill` tool
 returns `skill_not_ratified` instead of leaving a stale pending approval. The
 Settings → Skills tab remains a secondary management surface; it marks
 unratified rows "pending acceptance" with an **Accept** control, and accepted
-rows expose **Revoke acceptance**. The Security page also projects accepted skill
-hashes in **Granted Trust**. Both the card and Settings path call
+rows expose **Revoke acceptance**. The Security page also lists accepted skill
+hashes under **Accepted Skills**, separate from action-mode exceptions. Both the
+card and Settings path call
 `agent_accept_skill`, which records
 `acceptedHash = contentHash`; `agent_revoke_skill_acceptance` clears it. Accept
 carries the `expectedHash` the renderer/runtime displayed and is refused on
