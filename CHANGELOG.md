@@ -355,6 +355,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent UI glyph refresh (main, fast-track)** — the thinking indicator (thinking
+  rows + the thinking-only process-block header) now uses a dedicated `ThinkingIcon`
+  (lucide `Dices`) instead of the brain, and the skill glyph (the loaded-skill
+  affordance + the Settings → Skills category, which previously shared `BrainIcon`
+  with Memory) uses `Notebook`. `BrainIcon` stays for the memory tools
+  (recall / dream / Memory settings), so Memory and Skills are no longer drawn with
+  the same icon.
+
 - **Security Settings IA redesign — one honest trust model (PR #215, codex-3)** —
   fixes a security-surface correctness bug: the old Security page read only
   explicit overrides and otherwise showed the literal `Ask first`, so under Full
