@@ -3931,7 +3931,6 @@ export class AgentRuntime {
       })),
       activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
       activityEntries: this.channelActivityEntries(conversation),
-      queuedMessages: [],
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
       isStreaming: this.hasActiveRuns(conversation),
@@ -4473,25 +4472,10 @@ export class AgentRuntime {
       writeConfig: async (setting, value) => {
         const conversation = getConversation();
         if (!conversation) throw new Error('Agent conversation is not ready.');
-        const before = readRuntimeSetting(await this.getRuntimeSettings(), setting);
         const patch = normalizeRuntimeSettingPatch(setting, value);
         await updateAgentRuntimeSettings(patch);
         const runtimeSettings = await this.refreshRuntimeSettings(conversation);
         const after = readRuntimeSetting(runtimeSettings, setting);
-        await this.appendConversationEvents(getConversationId(), conversation, [{
-          type: 'config.change',
-          actor: this.agentActor(),
-          runId: this.activeRunId(conversation) ?? undefined,
-          changeId: `config-change-${randomUUID()}`,
-          status: 'applied',
-          change: {
-            target: 'runtime',
-            key: setting,
-            before,
-            after,
-            reason: 'config tool',
-          },
-        }]);
         return { operation: 'write', setting, value: after };
       },
       doctor: async () => {
@@ -6370,15 +6354,16 @@ export class AgentRuntime {
       ? activeRun.toolCallMessageIds.get(toolCallId) ?? latestAssistantMessageIdForRun(conversation.eventState, activeRun.id)
       : findLatestAssistantMessageId(conversation.eventState);
     if (!messageId) return;
+    const activeRunId = this.activeRunId(conversation) ?? undefined;
     const events: AgentEventInput[] = [{
       type: isError ? 'tool_call.failed' : 'tool_call.completed',
       actor: toolActor(toolName, toolCallId),
-      runId: this.activeRunId(conversation) ?? undefined,
+      runId: activeRunId,
       messageId,
       toolCallId,
       errorMessage: isError ? summarizeJson(result) : undefined,
     }];
-    const skillAuditEvent = isError ? null : skillAuditEventFromToolResult(toolName, toolCallId, result);
+    const skillAuditEvent = isError ? null : skillAuditEventFromToolResult(toolName, toolCallId, result, activeRunId);
     if (skillAuditEvent) events.push(skillAuditEvent);
     await this.appendConversationEvents(conversationId, conversation, events);
   }
@@ -7249,7 +7234,9 @@ function skillAuditEventFromToolResult(
   toolName: string,
   toolCallId: string,
   result: unknown,
+  runId: string | undefined,
 ): AgentEventInput | null {
+  if (!runId) return null;
   if (toolName !== 'file_write' && toolName !== 'file_edit') return null;
   const details = isRecord(result) && Object.hasOwn(result, 'details') ? result.details : result;
   if (!isToolEnvelope(details) || !details.ok || details.tool !== toolName || !isRecord(details.data)) return null;
@@ -7258,6 +7245,7 @@ function skillAuditEventFromToolResult(
   return {
     type: skillAuditEventType(skillWrite.changeType),
     actor: toolActor(toolName, toolCallId),
+    runId,
     skillId: skillWrite.skillName,
     source: skillWrite.source,
     summary: `${skillWrite.changeType} ${skillWrite.relativePath} (${skillWrite.previousHash ?? 'new'} -> ${skillWrite.nextHash})`,

@@ -194,10 +194,10 @@ truth.
   - delivery: Channel replies are not streamed — typing indicator while the run
     is active (drill-in opens the run working-state panel), whole reply lands on
     completion; the thread renders utterances only; a user message sent during
-    any active Channel run (round or non-round turn) queues (no steer in
-    Channels) and is persisted when routed — non-round turns drain the queue on
-    settle, quit flushes it unrouted — shown from the projection's
-    `queuedMessages` meanwhile; DM behavior unchanged
+    any active Channel run is persisted immediately and routed independently
+    with its own context cut (no steer in Channels); excess addressed turns wait
+    behind the per-conversation execution cap, not in a renderer-visible message
+    queue; DM behavior unchanged
   - each peer turn executes as the addressed agent (definition, model/effort,
     skills, memory line, `actor` stamp) and reads the thread through the
     transient per-POV flatten (own turns verbatim; other principals coalesced

@@ -84,11 +84,18 @@ clean-cut, no migration).
     (`agentChannel.ts` `cutChannelPathForRun`; fails open if compaction removed
     the boundary). Same-round co-addressees are mutually invisible; a hand-off
     target sees the reply that addressed it.
+  - **Run spine parentage:** `assistant_message.started.addressedByMessageId`
+    stores the message that addressed the run. The first segment of a run parents
+    to that addressed message, so concurrent peers fan out as siblings. Tool
+    results and later assistant continuations parent to the run's own tail
+    (`lastMessageId`), never to the conversation's shared `selectedLeafMessageId`;
+    `parentMessageId` remains the regenerate/branch anchor. Hand-off routing is
+    persisted on `assistant_message.completed.addressedTo`.
   - **Delivery (typing model):** Channel replies are not streamed — a typing
     indicator while the run is active (drill-in opens the run working-state
     panel), the whole reply lands in the thread on completion. The thread shows
     **utterances only** (final text; process blocks live behind the drill-in).
-  - **Parallel runtime (2026-06-11):** Channel execution tracks a set of
+  - **Parallel runtime (shipped in #202):** Channel execution tracks a set of
     in-flight runs per conversation, capped by a small per-conversation
     execution limit. Co-addressees dispatch immediately and independently;
     excess addressed turns wait FIFO behind the cap, not behind a serialized
@@ -199,7 +206,7 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Conversation metadata UX | ✅ built | DM header identity subtitle; timestamp gap separators; native message context menu with Details for speaker, timestamp, model/provider, and token usage |
 | Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |
 | Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |
-| Memory source binding under compaction (#164) | ✅ built | Realignment PR-2 records fact sources as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over conversation/run ledgers. `recall include_evidence` zooms fact → episode gist → raw span; PR #178's compaction evidence invariant remains pinned in `agent-data-model` §13.17. |
+| Memory source binding under compaction (#164) | ✅ built | Realignment PR-2 records fact sources as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over conversation/run ledgers. `recall include_evidence` zooms fact → episode gist → raw span; PR #178's compaction evidence invariant remains pinned in `agent-data-model` §13.18. |
 
 Forward sequencing for the remaining gap lives in `agent-program.md` § *M3 sequencing &
 readiness* (debt-first: settle the map → fix #164 → then three independent complete

@@ -221,15 +221,8 @@ export interface AgentRenderProjection {
   members: AgentRenderMemberView[];
   activeRuns: AgentRenderActiveRun[];
   activeRunId: string | null;
-  /** Compatibility subject for single-run renderers; parallel UIs should read activeRuns. */
-  activeRunAgentId: string | null;
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
-  /**
-   * Compatibility field for the removed Channel queue-all stage.
-   * Channel user messages now persist before dispatch, so this remains empty.
-   */
-  queuedMessages: string[];
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
   isStreaming: boolean;
@@ -252,7 +245,6 @@ export interface BuildAgentRenderProjectionOptions {
   activeRunAddressedByMessageId?: string | null;
   activityEntries?: readonly AgentRenderActivityEntry[];
   messageAddressedByMessageIds?: Record<string, string | null | undefined>;
-  queuedMessages?: string[];
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
   isStreaming?: boolean;
@@ -310,9 +302,6 @@ export function buildAgentRenderProjection(
   applyMessageAddressing(entities, options);
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
   const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
-  const activeRunAgentId = activeRunId
-    ? state.runs[activeRunId]?.agentId ?? options.activeRuns?.find((run) => run.runId === activeRunId)?.agentId ?? null
-    : null;
 
   return {
     conversationId: state.conversation.id,
@@ -321,11 +310,9 @@ export function buildAgentRenderProjection(
     members: state.conversation.members.map((principal) => toRenderMemberView(principal, options)),
     activeRuns: options.activeRuns ?? [],
     activeRunId,
-    activeRunAgentId,
     activityEntries: options.activityEntries
       ? options.activityEntries.map((entry) => ({ ...entry }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),
-    queuedMessages: options.queuedMessages ?? [],
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     isStreaming: options.isStreaming ?? !!streaming,

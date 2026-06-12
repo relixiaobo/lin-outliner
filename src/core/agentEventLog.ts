@@ -633,12 +633,8 @@ export type AgentEventType =
   | 'approval.resolved'
   | 'follow_up.queued'
   | 'follow_up.applied'
-  | 'task.created'
-  | 'task.completed'
   | 'notification.created'
   | 'notification.read'
-  | 'config.change'
-  | 'review_card.created'
   | 'skill.created'
   | 'skill.patched'
   | 'skill.replaced'
@@ -656,8 +652,7 @@ export type AgentEventType =
   | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
-  | 'checkpoint.created'
-  | 'metric.recorded';
+  | 'checkpoint.created';
 
 export interface AgentEventBase {
   v: typeof AGENT_EVENT_VERSION;
@@ -932,20 +927,6 @@ export interface FollowUpAppliedEvent extends AgentEventBase {
   messageId: string;
 }
 
-export interface TaskCreatedEvent extends AgentEventBase {
-  type: 'task.created';
-  taskId: string;
-  title: string;
-  assignedTo?: AgentPrincipal;
-  sourceRunId?: string;
-}
-
-export interface TaskCompletedEvent extends AgentEventBase {
-  type: 'task.completed';
-  taskId: string;
-  result?: string;
-}
-
 export type AgentNotificationKind =
   // Off-floor task terminal states — the only kinds with an emitter today.
   | 'task_completed'
@@ -990,34 +971,6 @@ export interface NotificationCreatedEvent extends AgentEventBase {
 export interface NotificationReadEvent extends AgentEventBase {
   type: 'notification.read';
   throughSeq: number;
-}
-
-export interface AgentConfigChange {
-  target: 'runtime' | 'agent' | 'skill' | 'hook';
-  key: string;
-  before?: unknown;
-  after?: unknown;
-  reason?: string;
-}
-
-export interface ConfigChangeEvent extends AgentEventBase {
-  type: 'config.change';
-  changeId: string;
-  status: 'proposed' | 'applied' | 'reverted' | 'failed';
-  change: AgentConfigChange;
-}
-
-export interface AgentReviewCard {
-  id: string;
-  title: string;
-  body: string;
-  status: 'pending' | 'approved' | 'rejected' | 'applied';
-  payloadRef?: AgentPayloadRef;
-}
-
-export interface ReviewCardCreatedEvent extends AgentEventBase {
-  type: 'review_card.created';
-  card: AgentReviewCard;
 }
 
 export interface SkillAuditEvent extends AgentEventBase {
@@ -1131,14 +1084,6 @@ export interface CheckpointCreatedEvent extends AgentEventBase {
   eventByteOffset: number;
 }
 
-export interface MetricRecordedEvent extends AgentEventBase {
-  type: 'metric.recorded';
-  name: string;
-  value: number;
-  unit?: string;
-  tags?: Record<string, string>;
-}
-
 export type AgentEvent =
   | ConversationCreatedEvent
   | ConversationRenamedEvent
@@ -1169,12 +1114,8 @@ export type AgentEvent =
   | ApprovalResolvedEvent
   | FollowUpQueuedEvent
   | FollowUpAppliedEvent
-  | TaskCreatedEvent
-  | TaskCompletedEvent
   | NotificationCreatedEvent
   | NotificationReadEvent
-  | ConfigChangeEvent
-  | ReviewCardCreatedEvent
   | SkillAuditEvent
   | RunStartedEvent
   | RunTerminalEvent
@@ -1184,8 +1125,7 @@ export type AgentEvent =
   | DreamFinishedEvent
   | PayloadCreatedEvent
   | PayloadDerivedEvent
-  | CheckpointCreatedEvent
-  | MetricRecordedEvent;
+  | CheckpointCreatedEvent;
 
 export interface AgentConversationRecord {
   id: string;
@@ -1458,12 +1398,11 @@ function getAgentEventVisibleTranscriptPath(state: AgentEventReplayState): Agent
     const replies = activeChannelReplySlotsForParent(state, message.id, activePathIds);
     for (const reply of replies) {
       // The active run's whole spine is already on the active path and renders in
-      // order via this loop, so insert only its root here. A non-active peer's
-      // spine is OFF the active path — surface its entire run (tool call → tool
-      // result → continuation), not just its first segment.
-      const spine = activePathIds.has(reply.id)
-        ? [reply]
-        : ((reply.runId ? messagesByRunId.get(reply.runId) : undefined) ?? [reply]);
+      // order via this loop. Graft only non-active peer spines here; inserting an
+      // active root as a slot would let peer replies split the active run's own
+      // tool/result continuation.
+      if (activePathIds.has(reply.id)) continue;
+      const spine = (reply.runId ? messagesByRunId.get(reply.runId) : undefined) ?? [reply];
       for (const segment of spine) {
         if (insertedChannelReplyIds.has(segment.id)) continue;
         visible.push(segment);
@@ -1890,10 +1829,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'approval.resolved':
     case 'follow_up.queued':
     case 'follow_up.applied':
-    case 'task.created':
-    case 'task.completed':
-    case 'config.change':
-    case 'review_card.created':
     case 'skill.created':
     case 'skill.patched':
     case 'skill.replaced':
@@ -1902,7 +1837,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'skill.rolled_back':
     case 'skill.curation.updated':
     case 'checkpoint.created':
-    case 'metric.recorded':
       return;
     case 'user_question.requested':
       state.userQuestions[event.requestId] = {

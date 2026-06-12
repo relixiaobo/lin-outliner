@@ -397,12 +397,8 @@ type AgentEventType =
   | 'approval.resolved'
   | 'follow_up.queued'
   | 'follow_up.applied'
-  | 'task.created'
-  | 'task.completed'
   | 'notification.created'
   | 'notification.read'
-  | 'config.change'
-  | 'review_card.created'
   | 'skill.created'
   | 'skill.patched'
   | 'skill.replaced'
@@ -420,16 +416,14 @@ type AgentEventType =
   | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
-  | 'checkpoint.created'
-  | 'metric.recorded';
+  | 'checkpoint.created';
 ```
 
-Not every schema event is emitted by the current runtime yet. Task,
-review-card, widget-state, skill enable/disable/rollback/curation,
-metric, thinking delta, tool-call delta, and derived payload events remain
-schema-reserved so these features can land without changing the event-store
-model. Events that are emitted today still go through the same append-only
-rules.
+Not every schema event is emitted by the current runtime yet. Widget-state,
+skill enable/disable/rollback/curation, thinking delta, tool-call delta, and
+derived payload events remain schema-reserved so these features can land
+without changing the event-store model. Events that are emitted today still go
+through the same append-only rules.
 
 ### Notification + attention projection
 
@@ -1119,8 +1113,9 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Mixed-resolution runtime context assembly: compacted historical ranges render
   as compaction summaries for the model path while visible transcript replay can
   still expand archived raw/tool messages.
-- Runtime consumers for `user_question.*`, `config.change`, and `skill.*`
-  events, plus file-tool skill write validation/hot reload.
+- Runtime consumers for `user_question.*` events, plus file-tool skill write
+  validation/hot reload. Skill audit events are run-scoped tool-execution audit
+  detail, not conversation replay state.
 - Notification + attention replay projection: `notification.created` /
   `notification.read` fold into per-conversation `attentionByConversationId`
   unread counts and per-notification `read` flags (the M2 off-floor delivery
@@ -1135,7 +1130,6 @@ The current renderer contract is `AgentRenderProjection`, carried by
   detail views.
 - Memory consolidation beyond explicit tool writes, including extraction from
   summaries and mixed-resolution memory retrieval.
-- Runtime consumers for the schema-reserved task and review-card event families.
 - Notification **delivery**: emitting `notification.created` on off-floor task
   terminal/needs-input states, the durable per-conversation in-stream message,
   the unread badge in the conversation list, and the opt-in OS notification

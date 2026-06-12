@@ -111,9 +111,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   members: [],
   activeRuns: [],
   activeRunId: null,
-  activeRunAgentId: null,
   activityEntries: [],
-  queuedMessages: [],
   activeCompaction: null,
   activeDream: null,
   isStreaming: false,
@@ -131,7 +129,6 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
 
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
 const EMPTY_ACTIVITY_ENTRIES: AgentRenderActivityEntry[] = [];
-const EMPTY_QUEUED_MESSAGES: string[] = [];
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -522,12 +519,8 @@ export interface LinAgentRuntimeView {
   conversationCost: number;
   /** Conversation members (user + agents); ≥2 agent members = a Channel. */
   members: AgentRenderMemberView[];
-  /** Compatibility subject for single-run renderers; parallel UIs should read projection.activeRuns. */
-  activeRunAgentId: string | null;
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
-  /** Compatibility field for the removed Channel queue-all stage. */
-  queuedMessages: string[];
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
@@ -1092,9 +1085,7 @@ export class AgentRuntimeStore {
       // The shared empty constants keep the reference stable across rebuilds so
       // member-derived memos don't recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
-      activeRunAgentId: this.projection.activeRunAgentId ?? null,
       activityEntries: this.projection.activityEntries ?? EMPTY_ACTIVITY_ENTRIES,
-      queuedMessages: this.projection.queuedMessages ?? EMPTY_QUEUED_MESSAGES,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
       childRunIds: this.projection.childRunIds,
