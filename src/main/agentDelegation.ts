@@ -183,6 +183,10 @@ export interface AgentDelegationRuntimeHost {
   createChildAgent(input: AgentChildAgentCreateInput): Agent;
   getParentMessages(): AgentMessage[];
   getParentSystemPrompt(): string;
+  /** The agent that is delegating right now. Defaults to this runtime's configured agent. */
+  getParentAgentId?(): string | null;
+  /** Memory owner for a forked child of the current parent. Defaults to the runtime memory owner. */
+  getParentMemoryOwnerAgentId?(): string | null;
   /** The parent run currently executing (the delegating side of the run tree). */
   getActiveRunId(): string | null;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
@@ -620,12 +624,13 @@ export class AgentDelegationRuntime {
 
     const runId = `child-${randomUUID()}`;
     const childConversationId = `${this.hostConversationPrefix()}-${runId}`;
-    const parentAgentId = this.executingAgentId;
+    const parentAgentId = this.host.getParentAgentId?.() ?? this.executingAgentId;
+    const parentMemoryOwnerAgentId = this.host.getParentMemoryOwnerAgentId?.() ?? this.memoryOwnerAgentId;
     const executingAgentId = contextMode === 'fork'
-      ? this.executingAgentId
+      ? parentAgentId
       : agentDefinitionAgentId(definition);
     const memoryOwnerAgentId = contextMode === 'fork'
-      ? this.memoryOwnerAgentId
+      ? parentMemoryOwnerAgentId
       : executingAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
     let childRuntime: AgentDelegationRuntime;

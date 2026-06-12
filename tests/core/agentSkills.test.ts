@@ -630,6 +630,36 @@ describe('agent skills', () => {
     expect(runtime.getActivePermissionRules()).toEqual([]);
   });
 
+  test('scopes active permission rules by run when a scope provider is configured', async () => {
+    const root = await createSkillFixture('demo', {
+      frontmatter: [
+        'description: Demo skill',
+        'allowed-tools: Bash(git diff:*), file_read',
+      ],
+      body: 'Use preapproved tools.',
+    });
+    let scope: string | null = 'run-a';
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      permissionScopeProvider: () => scope,
+    });
+    await acceptSkillForTest(runtime, 'demo');
+
+    const invocation = await runtime.invokeSkill({
+      skill: 'demo',
+      trigger: 'agent',
+    });
+
+    expect(invocation.ok).toBe(true);
+    expect(runtime.getActivePermissionRules()).toEqual(['Bash(git diff:*)', 'file_read']);
+    scope = 'run-b';
+    expect(runtime.getActivePermissionRules()).toEqual([]);
+    scope = 'run-a';
+    runtime.resetRunPermissionRules('run-a');
+    expect(runtime.getActivePermissionRules()).toEqual([]);
+  });
+
   test('lists fork-context skills and routes them through a fork executor', async () => {
     const root = await createSkillFixture('forked', {
       frontmatter: [

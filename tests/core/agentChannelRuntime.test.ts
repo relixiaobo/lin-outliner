@@ -3,6 +3,7 @@ import {
   createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxText,
+  fauxToolCall,
   type Api,
   type AssistantMessage,
   type Context,
@@ -18,7 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import type { AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
+import type { AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
@@ -164,7 +165,43 @@ function scriptedStream(
   return { streamFn, pendingCount: () => queue.length };
 }
 
-async function createRuntime(dataRoot: string, localRoot: string, streamFn: StreamFn) {
+function controlledStream(calls: RecordedCall[]) {
+  const pending = new Map<string, { stream: ReturnType<typeof createAssistantMessageEventStream>; model: Model<Api> }>();
+  const streamFn = ((model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
+    calls.push({
+      systemPrompt: context.systemPrompt ?? '',
+      serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
+    });
+    const key = (context.systemPrompt ?? '').includes('REVIEWER_AGENT_BODY') ? 'reviewer' : 'main';
+    const stream = createAssistantMessageEventStream();
+    pending.set(key, { stream, model });
+    return stream;
+  }) as StreamFn;
+  const complete = (key: string, text: string) => {
+    const entry = pending.get(key);
+    if (!entry) throw new Error(`No pending stream for ${key}`);
+    const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText(text)), entry.model);
+    entry.stream.push({ type: 'start', partial: { ...message, content: [] } });
+    entry.stream.push({ type: 'done', reason: 'stop', message });
+    entry.stream.end(message);
+  };
+  return { streamFn, complete };
+}
+
+async function createRuntime(
+  dataRoot: string,
+  localRoot: string,
+  streamFn: StreamFn,
+  options: {
+    providerConfigLoader?: () => Promise<{
+      providerId: string;
+      modelId: string;
+      reasoningLevel: 'low';
+      enabled: boolean;
+      apiKey: string;
+    }>;
+  } = {},
+) {
   const { AgentRuntime } = await loadRuntimeModule();
   const sink = createWindowSink();
   const runtime = new AgentRuntime(
@@ -173,17 +210,48 @@ async function createRuntime(dataRoot: string, localRoot: string, streamFn: Stre
     {
       agentDataRoot: dataRoot,
       localFileRoot: localRoot,
-      providerConfigLoader: async () => ({
+      providerConfigLoader: options.providerConfigLoader ?? (async () => ({
         providerId: 'openai',
         modelId: 'gpt-4.1',
         reasoningLevel: 'low',
         enabled: true,
         apiKey: 'test-key',
-      }),
+      })),
       streamFn,
     },
   );
   return { runtime, sink };
+}
+
+async function sendMessageApprovingAgent(
+  runtime: {
+    sendMessage: (conversationId: string, message: string) => Promise<unknown>;
+    resolveApproval: (conversationId: string, requestId: string, approved: boolean) => Promise<unknown>;
+  },
+  conversationId: string,
+  message: string,
+  sink: ReturnType<typeof createWindowSink>,
+) {
+  const sendPromise = runtime.sendMessage(conversationId, message);
+  const resolved = new Set<string>();
+  let settled = false;
+  sendPromise.finally(() => {
+    settled = true;
+  }).catch(() => undefined);
+
+  while (!settled) {
+    const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request' && !resolved.has(event.requestId)
+    ));
+    if (approval) {
+      resolved.add(approval.requestId);
+      await runtime.resolveApproval(conversationId, approval.requestId, true);
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  await sendPromise;
 }
 
 describe('agent channel runtime', () => {
@@ -356,6 +424,48 @@ describe('agent channel runtime', () => {
       userRecord?.id,
       userRecord?.id,
     ]);
+    const visibleMessageIds = projection.transcriptRows
+      .filter((row) => row.kind === 'message')
+      .map((row) => row.messageId);
+    expect(visibleMessageIds).toEqual([
+      userRecord?.id,
+      assistantRecords[0]?.id,
+      assistantRecords[1]?.id,
+    ]);
+  });
+
+  test('co-addressee replies land in completion order, not dispatch order', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', [
+      '---',
+      'description: Reviews drafts with a critical eye.',
+      '---',
+      'REVIEWER_AGENT_BODY: always review thoroughly.',
+    ].join('\n'));
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    const control = controlledStream(calls);
+    const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Completion order' });
+    const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently') as Promise<void>;
+    while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    control.complete('reviewer', 'REVIEWER_FAST');
+    control.complete('main', 'MAIN_SLOW');
+    await send;
+
+    const events = await new AgentEventStore(dataRoot).readEvents(channel.conversationId);
+    const completedTexts = events
+      .filter((event): event is Extract<AgentEvent, { type: 'assistant_message.completed' }> => (
+        event.type === 'assistant_message.completed'
+      ))
+      .map((event) => JSON.stringify(event.content));
+    expect(completedTexts).toEqual([
+      expect.stringContaining('REVIEWER_FAST'),
+      expect.stringContaining('MAIN_SLOW'),
+    ]);
   });
 
   test('one addressee failing leaves its trace and never skips siblings', async () => {
@@ -378,12 +488,12 @@ describe('agent channel runtime', () => {
     expect(runStatuses).toContain('completed');
   });
 
-  test('a user message during an active round queues (no steer) and routes when the round ends', async () => {
+  test('a user message during in-flight Channel runs persists and dispatches immediately', async () => {
     const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string; secondSend?: Promise<void> } = {};
     const fixture = await setupChannelFixture([
       () => {
-        // Fired mid-round, while this first turn is still streaming: must queue,
-        // never steer-inject into the live run.
+        // Fired mid-run: Channel does not steer into the live run. The new
+        // message becomes its own addressed turn immediately.
         holder.secondSend = holder.runtime!.sendMessage(holder.channelId!, 'second message please') as Promise<void>;
         return fauxAssistantMessage(fauxText('FIRST_REPLY_OK.'));
       },
@@ -398,48 +508,101 @@ describe('agent channel runtime', () => {
     await holder.secondSend;
 
     // Two separate runs — the second message produced its own coordinator turn
-    // whose context includes the settled first reply (cut at the second message).
+    // immediately. Its context cuts at the second message, so it does not see
+    // the earlier in-flight reply even though that reply finishes first here.
     expect(calls).toHaveLength(2);
     expect(calls[0]!.serialized).not.toContain('second message please');
-    expect(calls[1]!.serialized).toContain('FIRST_REPLY_OK');
+    expect(calls[1]!.serialized).not.toContain('FIRST_REPLY_OK');
     expect(calls[1]!.serialized).toContain('second message please');
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(Object.values(state.runs)).toHaveLength(2);
   });
 
-  test('stop ends the round: unstarted turns discarded with a trace; queued messages persist unrouted', async () => {
-    const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string; secondSend?: Promise<void> } = {};
-    const fixture = await setupChannelFixture([
-      () => {
-        // Queue a message mid-round, then stop: the stopped round must persist
-        // it into the thread (the user typed it) without ever routing it.
-        holder.secondSend = holder.runtime!.sendMessage(holder.channelId!, 'QUEUED_BEHIND_STOP message') as Promise<void>;
-        holder.runtime!.stopConversation(holder.channelId!);
-        return fauxAssistantMessage(fauxText('Coordinator reply racing the stop.'));
-      },
-      fauxAssistantMessage(fauxText('This sibling turn must never be requested.')),
-    ]);
-    const { runtime, calls, script, reviewerAgentId, dataRoot } = fixture;
-    holder.runtime = runtime;
+  test('conversation stop cancels in-flight Channel runs and discards capped pending turns with a trace', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const agentIds: string[] = [];
+    for (const name of ['agent1', 'agent2', 'agent3', 'agent4', 'agent5']) {
+      const dir = await createAgentDefinition(localRoot, name, `---\ndescription: ${name}\n---\n${name} body`);
+      agentIds.push(projectAgentId(dir, name));
+    }
+    let streamCalls = 0;
+    const hangingStream: StreamFn = (() => {
+      streamCalls += 1;
+      return createAssistantMessageEventStream();
+    }) as StreamFn;
+    const { runtime } = await createRuntime(dataRoot, localRoot, hangingStream);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Stop test' });
-    holder.channelId = channel.conversationId;
-    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
-    await holder.secondSend;
+    const channel = await runtime.createConversation({ agentIds, goal: 'Stop cap test' });
+    const send = runtime.sendMessage(channel.conversationId, '@agent1 @agent2 @agent3 @agent4 @agent5 all run') as Promise<void>;
+    while (streamCalls < 4) await new Promise((resolve) => setTimeout(resolve, 5));
+    runtime.stopConversation(channel.conversationId);
+    for (let i = 0; i < 100; i += 1) {
+      const snapshot = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+      const texts = Object.values(snapshot.messages).map((record) => JSON.stringify(record.content)).join('\n');
+      if (texts.includes('unstarted turn(s) were discarded')) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    void send;
 
-    expect(calls).toHaveLength(1);
-    expect(script.pendingCount()).toBe(1);
+    expect(streamCalls).toBe(4);
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
-    const runAgents = Object.values(state.runs).map((run) => run.agentId);
-    expect(runAgents).toEqual([MAIN_AGENT_ID]);
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
     expect(texts).toContain('The user stopped this round.');
     expect(texts).toContain('unstarted turn(s) were discarded');
-    expect(texts).toContain('queued message(s) were not routed');
-    expect(texts).toContain('QUEUED_BEHIND_STOP');
+    expect(Object.values(state.runs)).toHaveLength(4);
   });
 
-  test('scoped run stop cancels only that addressee and lets Channel siblings run', async () => {
+  test('conversation stop during Channel startup prevents a late run from starting', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', '---\ndescription: r\n---\nbody');
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    const script = scriptedStream([fauxAssistantMessage(fauxText('AFTER_STOP_OK'))], calls);
+    let releaseProvider!: () => void;
+    let holdProvider = true;
+    let providerRequests = 0;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const { runtime } = await createRuntime(dataRoot, localRoot, script.streamFn, {
+      providerConfigLoader: async () => {
+        providerRequests += 1;
+        if (providerRequests > 1 && holdProvider) await providerGate;
+        return {
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        };
+      },
+    });
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Stop startup test' });
+    const send = runtime.sendMessage(channel.conversationId, 'first message') as Promise<void>;
+    while (providerRequests < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    runtime.stopConversation(channel.conversationId);
+    holdProvider = false;
+    releaseProvider();
+    await send;
+
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(Object.values(state.runs)).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+
+    await runtime.sendMessage(channel.conversationId, 'after stop');
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(Object.values(state.runs)).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('AFTER_STOP_OK');
+  });
+
+  test('per-run stop cancels one Channel run without stopping siblings', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
     roots.push(localRoot, dataRoot);
@@ -451,60 +614,59 @@ describe('agent channel runtime', () => {
     ].join('\n'));
     const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
     const calls: RecordedCall[] = [];
-    let resolveStreamStarted: (() => void) | null = null;
-    const streamStarted = new Promise<void>((resolve) => {
-      resolveStreamStarted = resolve;
-    });
-    let firstSignal: AbortSignal | undefined;
-    let callCount = 0;
-    const streamFn = ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
-      callCount += 1;
-      calls.push({
-        systemPrompt: context.systemPrompt ?? '',
-        serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
-      });
-      const stream = createAssistantMessageEventStream();
-      if (callCount === 1) {
-        firstSignal = options?.signal;
-        resolveStreamStarted?.();
-        return stream;
-      }
-      queueMicrotask(() => {
-        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('REVIEWER_AFTER_SCOPED_STOP.')), model);
-        stream.push({ type: 'start', partial: { ...message, content: [] } });
-        stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
-        stream.end(message);
-      });
-      return stream;
-    }) as StreamFn;
-    const { runtime, sink } = await createRuntime(dataRoot, localRoot, streamFn);
+    const control = controlledStream(calls);
+    const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Scoped stop test' });
-    const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
-    await streamStarted;
-    const activeRunId = latestRenderProjection(sink.events).activeRunId;
-    expect(activeRunId).toBeTruthy();
-    runtime.stopRun(channel.conversationId, activeRunId!);
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Scoped stop' });
+    const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer both run') as Promise<void>;
+    while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const reviewerRun = Object.values(state.runs).find((run) => run.agentId === reviewerAgentId)!;
+    expect(runtime.stopRun(channel.conversationId, reviewerRun.id)).toEqual({ stopped: true });
+    control.complete('main', 'MAIN_STILL_COMPLETED');
     await send;
 
-    expect(firstSignal?.aborted).toBe(true);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
-    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
-    const runStatuses = Object.values(state.runs).map((run) => run.status);
-    expect(runStatuses).toEqual(['cancelled', 'completed']);
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.runs[reviewerRun.id]?.status).toBe('cancelled');
+    const mainRun = Object.values(state.runs).find((run) => run.agentId === MAIN_AGENT_ID)!;
+    expect(mainRun.status).toBe('completed');
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
-    expect(texts).toContain('REVIEWER_AFTER_SCOPED_STOP');
-    expect(texts).not.toContain('The user stopped this round.');
+    expect(texts).toContain('MAIN_STILL_COMPLETED');
   });
 
-  test('a non-round Channel run (regenerate) gates sends: the message queues and routes after it settles', async () => {
+  test('Channel peer delegation is parented to the peer run, not the coordinator', async () => {
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage([
+        fauxToolCall('Agent', {
+          description: 'fork from reviewer',
+          prompt: 'Inspect from the reviewer context.',
+        }, { id: 'tool-reviewer-fork' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('Child result.')),
+      fauxAssistantMessage(fauxText('Reviewer used child result.')),
+    ]);
+    const { runtime, sink, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Delegation parent test' });
+    await sendMessageApprovingAgent(runtime, channel.conversationId, '@reviewer fork a child', sink);
+
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const reviewerRun = Object.values(state.runs).find((run) => run.agentId === reviewerAgentId);
+    expect(reviewerRun).toBeDefined();
+    const childRun = Object.values(state.childRuns)[0];
+    expect(childRun).toBeDefined();
+    expect(childRun.parentRunId).toBe(reviewerRun!.id);
+    expect(childRun.parentAgentId).toBe(reviewerAgentId);
+    expect(childRun.executingAgentId).toBe(reviewerAgentId);
+  });
+
+  test('a message sent during a regenerate dispatches immediately with its own context cut', async () => {
     const holder: { runtime?: Awaited<ReturnType<typeof createRuntime>>['runtime']; channelId?: string; midSend?: Promise<void> } = {};
     const fixture = await setupChannelFixture([
       fauxAssistantMessage(fauxText('Reviewer original take.')),
       () => {
-        // Fired while the regenerated (non-round) turn streams: channelRound is
-        // null here — the gate must still queue, never fork the leaf.
+        // Fired while the regenerated turn streams: the new message dispatches
+        // immediately and cuts context at itself.
         holder.midSend = holder.runtime!.sendMessage(holder.channelId!, 'sent during the regenerate') as Promise<void>;
         return fauxAssistantMessage(fauxText('REVIEWER_REGEN_TAKE.'));
       },
@@ -522,23 +684,23 @@ describe('agent channel runtime', () => {
     await holder.midSend;
 
     expect(calls).toHaveLength(3);
-    // The queued message routed AFTER the regenerated turn settled, with the
-    // regenerated reply on its context path — the leaf was never forked.
-    expect(calls[2]!.serialized).toContain('REVIEWER_REGEN_TAKE');
+    // The concurrent message does not wait for the regenerated reply.
+    expect(calls[2]!.serialized).not.toContain('REVIEWER_REGEN_TAKE');
     expect(calls[2]!.serialized).toContain('sent during the regenerate');
     state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const runAgents = Object.values(state.runs).map((run) => run.agentId);
     expect(runAgents).toEqual([reviewerAgentId, reviewerAgentId, MAIN_AGENT_ID]);
   });
 
-  test('drainPendingWrites persists queued Channel messages so they survive quit mid-round', async () => {
+  test('a mid-flight Channel message is already persisted before quit flushing', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
     roots.push(localRoot, dataRoot);
     const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', '---\ndescription: r\n---\nbody');
     const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
     // The turn hangs forever (a stream that never emits), exactly the state a
-    // quit interrupts: the round is live, the queue holds an unrouted message.
+    // quit interrupts. The second message must already be in the log; there is
+    // no in-memory Channel message queue to flush anymore.
     let streamCalls = 0;
     const hangingStream: StreamFn = (() => {
       streamCalls += 1;
@@ -549,10 +711,11 @@ describe('agent channel runtime', () => {
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Quit flush test' });
     const hungSend = runtime.sendMessage(channel.conversationId, '@reviewer long task') as Promise<void>;
     while (streamCalls === 0) await new Promise((resolve) => setTimeout(resolve, 5));
-    // Round active → this queues in memory only.
-    await runtime.sendMessage(channel.conversationId, 'TYPED_BEFORE_QUIT message');
+    const secondSend = runtime.sendMessage(channel.conversationId, 'TYPED_BEFORE_QUIT message') as Promise<void>;
+    while (streamCalls < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     await runtime.drainPendingWrites();
     void hungSend; // abandoned mid-stream, as a real quit would leave it
+    void secondSend;
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');

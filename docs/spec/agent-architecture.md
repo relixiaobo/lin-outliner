@@ -88,20 +88,23 @@ clean-cut, no migration).
     indicator while the run is active (drill-in opens the run working-state
     panel), the whole reply lands in the thread on completion. The thread shows
     **utterances only** (final text; process blocks live behind the drill-in).
-  - **Queue-all:** a user message sent during ANY active Channel run — a round
-    or a non-round turn (regenerate/retry, notification flush) — queues (no
-    steer in Channels); the round loop persists it when it routes it — never
-    mid-run, which would fork the event path past the in-flight reply — and the
-    projection's `queuedMessages` keeps it visible meanwhile. Non-round turns
-    drain the queue when they settle; quit flushes any still-queued messages
-    into the log unrouted so nothing the user typed vanishes. DM behavior is
-    untouched (streaming, steer, inline process).
-  - **Execution staging (2026-06-11):** serialized rounds + queue-all are the
-    M3-A execution stage, not the product model — the independence cut makes
-    co-addressees order-free, so `docs/plans/agent-channel-parallel-runtime.md`
-    (ratified direction) replaces them with concurrent dispatch +
-    completion-order delivery; this section describes current behavior until
-    that lands.
+  - **Parallel runtime (2026-06-11):** Channel execution tracks a set of
+    in-flight runs per conversation, capped by a small per-conversation
+    execution limit. Co-addressees dispatch immediately and independently;
+    excess addressed turns wait FIFO behind the cap, not behind a serialized
+    round. A user message sent while Channel runs are active is persisted and
+    routed immediately, with that message as each addressed run's context cut.
+    Replies append when they complete, so transcript order is completion order.
+    The independence cut remains the invariant: a run sees only the log through
+    the message that addressed it, plus its own later records; same-wave
+    co-addressees remain mutually invisible even when another run completes
+    first. DM behavior is untouched (streaming, steer, inline process).
+  - **Stop scope:** Channel stop has two scopes. A per-run stop cancels exactly
+    that run and leaves siblings in flight; a conversation stop cancels every
+    active run, drops undispatched pending Channel turns, and preserves the
+    visible discarded-turns system trace. Edit/regenerate/retry gates are
+    set-based: transcript rewrites are blocked while any Channel run is active
+    in the conversation.
   - Each peer turn runs as that agent (own definition/model/skills/memory line,
     `actor` stamped on its messages) and reads the thread through the per-POV
     flatten (`agentChannel.ts` `flattenAgentPathForPov`, composed with the
@@ -192,7 +195,7 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Typed sub-agent identity + per-agent memory line (#164) | ✅ built | the groundwork multi-agent builds on |
 | `addressedTo`, `member.added/removed`, `<principal>` render hook | ✅ built | connected in M3-A (#179): `addressedTo` written on user messages + read by routing; membership events applied on replay + folded into the conversation index |
 | Create a >1-agent conversation (Channel) | ✅ built | `agent_create_conversation` takes `{agentIds, goal, seedText}`; add/remove member commands + header "+" member menu in the UI; "add agent to DM" spawns a seeded Channel (DM itself never converts); mention-token collisions rejected at create/add |
-| Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery + queue-all rounds; UI: composer member typeahead, header/list member display, actor badges/avatars, typing indicator + run drill-in |
+| Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery, per-run Channel concurrency + completion-order append; UI: composer member typeahead, header/list member display, actor badges/avatars, typing indicator + run drill-in |
 | Conversation metadata UX | ✅ built | DM header identity subtitle; timestamp gap separators; native message context menu with Details for speaker, timestamp, model/provider, and token usage |
 | Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |
 | Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |

@@ -1429,10 +1429,100 @@ export function getAgentEventVisibleTranscript(
 ): AgentEventVisibleTranscriptEntry[] {
   const entries: AgentEventVisibleTranscriptEntry[] = [];
   const expandingCompactions = new Set<string>();
-  for (const message of getAgentEventActivePath(state)) {
+  for (const message of getAgentEventVisibleTranscriptPath(state)) {
     appendVisibleTranscriptEntry(state, entries, expandingCompactions, message, false);
   }
   return entries;
+}
+
+function getAgentEventVisibleTranscriptPath(state: AgentEventReplayState): AgentEventMessageRecord[] {
+  const activePath = getAgentEventActivePath(state);
+  const activePathIds = new Set(activePath.map((message) => message.id));
+  const insertedChannelReplyIds = new Set<string>();
+  const visible: AgentEventMessageRecord[] = [];
+
+  // Each run is a linear spine (its first segment is a child of its addressing
+  // message; continuation segments + tool results chain onto the run's own tail).
+  // `state.messages` is populated in append order during replay, so grouping by
+  // runId yields each run's messages already in chronological order.
+  const messagesByRunId = new Map<string, AgentEventMessageRecord[]>();
+  for (const message of Object.values(state.messages)) {
+    if (!message.runId) continue;
+    const spine = messagesByRunId.get(message.runId);
+    if (spine) spine.push(message);
+    else messagesByRunId.set(message.runId, [message]);
+  }
+
+  for (const message of activePath) {
+    if (!insertedChannelReplyIds.has(message.id)) visible.push(message);
+    const replies = activeChannelReplySlotsForParent(state, message.id, activePathIds);
+    for (const reply of replies) {
+      // The active run's whole spine is already on the active path and renders in
+      // order via this loop, so insert only its root here. A non-active peer's
+      // spine is OFF the active path — surface its entire run (tool call → tool
+      // result → continuation), not just its first segment.
+      const spine = activePathIds.has(reply.id)
+        ? [reply]
+        : ((reply.runId ? messagesByRunId.get(reply.runId) : undefined) ?? [reply]);
+      for (const segment of spine) {
+        if (insertedChannelReplyIds.has(segment.id)) continue;
+        visible.push(segment);
+        insertedChannelReplyIds.add(segment.id);
+      }
+    }
+  }
+
+  return visible;
+}
+
+function activeChannelReplySlotsForParent(
+  state: AgentEventReplayState,
+  parentMessageId: string,
+  activePathIds: ReadonlySet<string>,
+): AgentEventMessageRecord[] {
+  const children = state.childrenByParentId[parentMessageId] ?? [];
+  const slots = new Map<string, AgentEventMessageRecord[]>();
+  for (const childId of children) {
+    const child = state.messages[childId];
+    if (!isChannelReplySlotRoot(state, child, parentMessageId)) continue;
+    const agentId = agentSlotIdForMessage(state, child);
+    if (!agentId) continue;
+    const slotId = `${parentMessageId}:${agentId}`;
+    const slot = slots.get(slotId);
+    if (slot) slot.push(child);
+    else slots.set(slotId, [child]);
+  }
+
+  return [...slots.values()]
+    .map((slot) => (
+      slot.find((candidate) => activePathIds.has(candidate.id))
+      ?? slot.reduce((latest, candidate) => (
+        candidate.updatedAt > latest.updatedAt
+        || (candidate.updatedAt === latest.updatedAt && candidate.createdAt > latest.createdAt)
+          ? candidate
+          : latest
+      ))
+    ))
+    .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+}
+
+function isChannelReplySlotRoot(
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord | undefined,
+  parentMessageId: string,
+): message is AgentEventMessageRecord {
+  if (!message || message.role !== 'assistant') return false;
+  if (message.parentMessageId !== parentMessageId) return false;
+  if (message.addressedByMessageId !== parentMessageId) return false;
+  return Boolean(agentSlotIdForMessage(state, message));
+}
+
+function agentSlotIdForMessage(state: AgentEventReplayState, message: AgentEventMessageRecord): string | null {
+  if (message.runId) {
+    const runAgentId = state.runs[message.runId]?.agentId;
+    if (runAgentId) return runAgentId;
+  }
+  return message.actor.type === 'agent' ? message.actor.agentId : null;
 }
 
 export function getAgentEventConversationPath(state: AgentEventReplayState): AgentEventMessageRecord[] {

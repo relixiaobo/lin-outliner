@@ -100,7 +100,11 @@ export type AgentRuntimeContextEventInput = {
 
 export interface AgentRuntimeContextHost<TConversation extends AgentRuntimeContextConversation> {
   refreshRuntimeSettings(conversation: TConversation): Promise<AgentRuntimeSettings>;
-  deriveRuntimePiMessages(conversationId: string, eventState: AgentEventReplayState): Promise<AgentMessage[]>;
+  deriveRuntimePiMessages(
+    conversationId: string,
+    eventState: AgentEventReplayState,
+    conversation: TConversation,
+  ): Promise<AgentMessage[]>;
   appendConversationEvents(conversationId: string, conversation: TConversation, inputs: AgentRuntimeContextEventInput[]): Promise<void>;
   appendCompactionRootEvent(
     conversationId: string,
@@ -116,6 +120,7 @@ export interface AgentRuntimeContextHost<TConversation extends AgentRuntimeConte
     toolCallId: string,
     toolName: string,
     text: string,
+    runId?: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }>;
   captureDebugPayload(conversationId: string, payload: unknown, model: Model<any>): Promise<void>;
   captureDebugResponse(conversationId: string, response: ProviderResponse, model: Model<any>): Promise<void>;
@@ -146,7 +151,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
 
     let persisted: { payload: AgentPayloadRef; label: string };
     try {
-      persisted = await this.host.persistToolOutputPayload(conversationId, toolCallId, toolName, text);
+      persisted = await this.host.persistToolOutputPayload(conversationId, toolCallId, toolName, text, conversation.activeRun?.id);
     } catch (error) {
       this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
       return undefined;
@@ -170,7 +175,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         throwIfAborted(signal);
       }
 
-      let messages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
+      let messages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState, conversation);
       throwIfAborted(signal);
       if (conversation.runtimeSettings.compactEnabled && await this.shouldAutoCompact(conversation, messages)) {
         const compacted = await this.tryAutoCompact(conversationId, conversation, signal);
@@ -187,7 +192,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
     } catch (error) {
       if (isAbortError(error, signal)) throw error;
       this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
-      return this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
+      return this.host.deriveRuntimePiMessages(conversationId, conversation.eventState, conversation);
     }
   }
 
@@ -204,7 +209,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
     let activeCompactionId: string | null = null;
     try {
       throwIfAborted(options.signal);
-      let activeMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
+      let activeMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState, conversation);
       throwIfAborted(options.signal);
       if (options.trigger === 'reactive') {
         const liveMessages = conversation.agent.state.messages as AgentMessage[];
@@ -271,7 +276,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         options.trigger,
         compactPlan.messagesToKeep,
       );
-      const postCompactMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState);
+      const postCompactMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState, conversation);
       conversation.toolResultBudgetState = restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(conversation.eventState));
       if (options.updateAgentState) conversation.agent.state.messages = postCompactMessages as never;
       this.host.finishCompaction(conversationId, conversation, activeCompactionId, 'compaction.completed');
