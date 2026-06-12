@@ -357,6 +357,97 @@ describe('agent event log', () => {
     ]);
   });
 
+  test("visible transcript surfaces a non-active Channel peer's full tool spine, not just its first segment", () => {
+    const peerActor: AgentActor = { type: 'agent', agentId: 'agent-1' };
+    const activeActor: AgentActor = { type: 'agent', agentId: 'agent-2' };
+    // Peer agent-1 runs a tool turn (3 segments: toolCall -> result -> reply);
+    // agent-2 answers with a single segment and settles last (the active leaf).
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Channel' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-channel',
+        parentMessageId: null,
+        content: [{ type: 'text', text: '@one @two compare' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-peer', agentId: 'agent-1', addressedByMessageId: 'user-channel' },
+      {
+        ...base(4, 'assistant_message.started', peerActor),
+        runId: 'run-peer',
+        messageId: 'peer-seg-1',
+        parentMessageId: 'user-channel',
+        addressedByMessageId: 'user-channel',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(5, 'assistant_message.completed', peerActor),
+        runId: 'run-peer',
+        messageId: 'peer-seg-1',
+        stopReason: 'toolUse',
+        content: [{ type: 'toolCall', id: 'tool-peer', name: 'file_read', arguments: { file_path: 'x.txt' } }],
+      },
+      {
+        ...base(6, 'tool_result.created', { type: 'tool', toolName: 'file_read', toolCallId: 'tool-peer' }),
+        runId: 'run-peer',
+        messageId: 'peer-tool-result',
+        parentMessageId: 'peer-seg-1',
+        toolCallId: 'tool-peer',
+        toolName: 'file_read',
+        content: [{ type: 'text', text: 'peer tool output' }],
+      },
+      {
+        ...base(7, 'assistant_message.started', peerActor),
+        runId: 'run-peer',
+        messageId: 'peer-seg-2',
+        // The continuation parents to the run's OWN tail (the tool result),
+        // keeping run-peer a linear spine off user-channel.
+        parentMessageId: 'peer-tool-result',
+        addressedByMessageId: 'user-channel',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(8, 'assistant_message.completed', peerActor),
+        runId: 'run-peer',
+        messageId: 'peer-seg-2',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Peer done' }],
+      },
+      { ...base(9, 'run.completed'), runId: 'run-peer' },
+      { ...base(10, 'run.started'), runId: 'run-active', agentId: 'agent-2', addressedByMessageId: 'user-channel' },
+      {
+        ...base(11, 'assistant_message.started', activeActor),
+        runId: 'run-active',
+        messageId: 'active-reply',
+        parentMessageId: 'user-channel',
+        addressedByMessageId: 'user-channel',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(12, 'assistant_message.completed', activeActor),
+        runId: 'run-active',
+        messageId: 'active-reply',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Active done' }],
+      },
+      { ...base(13, 'run.completed'), runId: 'run-active' },
+    ]);
+
+    // The active path is just the active peer's single segment...
+    expect(getAgentEventActivePath(state).map((message) => message.id)).toEqual(['user-channel', 'active-reply']);
+    // ...but the transcript still shows the non-active peer's WHOLE spine —
+    // its tool call segment, the tool result, and the continuation — in order.
+    expect(getAgentEventVisibleTranscript(state).map((entry) => entry.message.id)).toEqual([
+      'user-channel',
+      'peer-seg-1',
+      'peer-tool-result',
+      'peer-seg-2',
+      'active-reply',
+    ]);
+  });
+
   test('expands compacted active-path history for visible transcript reads', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Compaction' },

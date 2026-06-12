@@ -1441,13 +1441,34 @@ function getAgentEventVisibleTranscriptPath(state: AgentEventReplayState): Agent
   const insertedChannelReplyIds = new Set<string>();
   const visible: AgentEventMessageRecord[] = [];
 
+  // Each run is a linear spine (its first segment is a child of its addressing
+  // message; continuation segments + tool results chain onto the run's own tail).
+  // `state.messages` is populated in append order during replay, so grouping by
+  // runId yields each run's messages already in chronological order.
+  const messagesByRunId = new Map<string, AgentEventMessageRecord[]>();
+  for (const message of Object.values(state.messages)) {
+    if (!message.runId) continue;
+    const spine = messagesByRunId.get(message.runId);
+    if (spine) spine.push(message);
+    else messagesByRunId.set(message.runId, [message]);
+  }
+
   for (const message of activePath) {
     if (!insertedChannelReplyIds.has(message.id)) visible.push(message);
     const replies = activeChannelReplySlotsForParent(state, message.id, activePathIds);
     for (const reply of replies) {
-      if (insertedChannelReplyIds.has(reply.id)) continue;
-      visible.push(reply);
-      insertedChannelReplyIds.add(reply.id);
+      // The active run's whole spine is already on the active path and renders in
+      // order via this loop, so insert only its root here. A non-active peer's
+      // spine is OFF the active path — surface its entire run (tool call → tool
+      // result → continuation), not just its first segment.
+      const spine = activePathIds.has(reply.id)
+        ? [reply]
+        : ((reply.runId ? messagesByRunId.get(reply.runId) : undefined) ?? [reply]);
+      for (const segment of spine) {
+        if (insertedChannelReplyIds.has(segment.id)) continue;
+        visible.push(segment);
+        insertedChannelReplyIds.add(segment.id);
+      }
     }
   }
 

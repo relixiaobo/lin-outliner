@@ -393,6 +393,15 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   resolveSettled: () => void;
   assistantMessageId: string | null;
   assistantText: string;
+  /**
+   * This run's own tail: the id of the last message it appended (an assistant
+   * segment or a tool result). A run's continuation segments parent to their
+   * OWN tail, so each run is a linear spine off its addressing message — never
+   * a fan-out of sibling segments (which would collapse to one in the transcript)
+   * and never chained onto the shared, concurrently-moving `selectedLeafMessageId`
+   * (which would interleave parallel runs). Null until the run appends.
+   */
+  lastMessageId: string | null;
   toolCallMessageIds: Map<string, string>;
   /** The agent this run executes as (a Channel peer or the main agent). */
   executingAgentId: string;
@@ -5655,6 +5664,7 @@ export class AgentRuntime {
       resolveSettled,
       assistantMessageId: null,
       assistantText: '',
+      lastMessageId: null,
       lastSubmittedUserPrompt: prompt,
       toolOutputPayloads: new Map(),
       toolCallMessageIds: new Map(),
@@ -6102,7 +6112,11 @@ export class AgentRuntime {
     if (event.type === 'message_end') {
       if (isUserMessage(event.message)) {
         if (!isDuplicateTailUserMessage(conversation.eventState, event.message)) {
-          await this.appendUserPromptEvent(conversationId, conversation, event.message);
+          const messageId = await this.appendUserPromptEvent(conversationId, conversation, event.message);
+          // A mid-run user message (e.g. a skill's steering injection) joins this
+          // run's spine as its new tail, so the next continuation segment chains
+          // after it rather than skipping it (see `lastMessageId`).
+          if (conversation.activeRun) conversation.activeRun.lastMessageId = messageId;
         }
         conversation.queuedFollowUpSkillListingReservation = null;
         return;
@@ -6170,11 +6184,16 @@ export class AgentRuntime {
       runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
       addressedByMessageId: activeRun.addressedByMessageId,
-      parentMessageId: activeRun.addressedByMessageId ?? conversation.eventState.selectedLeafMessageId,
+      // A run's first segment parents to its addressing message (so concurrent
+      // peers fan out as siblings under it); every later segment parents to the
+      // run's own tail (`lastMessageId`) so the run stays a linear spine. Falling
+      // back to the shared `selectedLeafMessageId` would interleave parallel runs.
+      parentMessageId: activeRun.lastMessageId ?? activeRun.addressedByMessageId ?? conversation.eventState.selectedLeafMessageId,
       providerId: message.provider,
       modelId: message.model,
       apiId: message.api,
     }]);
+    activeRun.lastMessageId = messageId;
   }
 
   private async appendAssistantDelta(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
@@ -6265,6 +6284,7 @@ export class AgentRuntime {
     const outputRef = prePersisted?.payload
       ?? persisted.payloads.find((payload) => payload.role === 'tool_output')
       ?? persisted.payloads[0];
+    const toolResultMessageId = this.createMessageId('tool-result');
     await this.appendConversationEvents(conversationId, conversation, [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
@@ -6275,7 +6295,7 @@ export class AgentRuntime {
         type: 'tool_result.created',
         actor,
         runId: this.activeRunId(conversation) ?? undefined,
-        messageId: this.createMessageId('tool-result'),
+        messageId: toolResultMessageId,
         parentMessageId: activeRun.toolCallMessageIds.get(message.toolCallId)
           ?? latestAssistantMessageIdForRun(conversation.eventState, activeRun.id),
         toolCallId: message.toolCallId,
@@ -6286,6 +6306,9 @@ export class AgentRuntime {
         outputRef,
       },
     ]);
+    // The tool result is now the run's tail: the next continuation segment
+    // chains onto it, keeping this run's spine linear (see `lastMessageId`).
+    activeRun.lastMessageId = toolResultMessageId;
   }
 
   private async appendToolCallEventsFromAssistant(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
