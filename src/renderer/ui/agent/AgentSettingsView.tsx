@@ -35,12 +35,9 @@ import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
 import {
-  actionKindFromRuleValue,
-  actionKindRuleValue,
   effectiveActionDecision,
   explicitActionDecision,
   safetyModeDefaultActionDecision,
-  type AgentToolActionKind,
   type GlobalToolPermissionDecision,
 } from '../../../core/agentPermissionModel';
 import { useI18n, useT } from '../../i18n/I18nProvider';
@@ -63,6 +60,15 @@ import {
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { defaultReasoningLevel } from './settingsReasoning';
 import { AgentEditor } from './AgentEditor';
+import {
+  COMMON_PERMISSION_RULES,
+  buildPermissionExceptionRows,
+  permissionDecisionLabel,
+  permissionRuleCopy,
+  permissionSettingsWithDecision,
+  permissionSettingsWithoutRule,
+  safetyModeLabel,
+} from './permissionSettingsModel';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -192,43 +198,6 @@ const SETTINGS_CATEGORY_ICONS = {
   skills: BrainIcon,
   agents: AgentIcon,
 } satisfies Record<SettingsCategory, AppIcon>;
-
-// The common permission rules: a stable `id` (the i18n key for label + description),
-// the `ruleValue` engine string, and whether a global "always allow" is offered.
-// Visible label/description come from t.settings.permissions.rules[id] at render.
-type PermissionRuleId =
-  | 'readOutsideArea'
-  | 'readSensitivePaths'
-  | 'fetchWeb'
-  | 'deleteFiles'
-  | 'runProjectScripts'
-  | 'installDependencies'
-  | 'publishGitRemotes'
-  | 'deployPublish'
-  | 'networkWrite'
-  | 'spawnChildAgents';
-
-const COMMON_PERMISSION_RULES: Array<{
-  id: PermissionRuleId;
-  actionKind: AgentToolActionKind;
-  ruleValue: string;
-  allowable: boolean;
-}> = [
-  permissionRule('readOutsideArea', 'file.read.outside_allowed_file_area', true),
-  permissionRule('readSensitivePaths', 'file.read.sensitive_local_path', true),
-  permissionRule('fetchWeb', 'web.fetch', true),
-  permissionRule('deleteFiles', 'file.delete.allowed_file_area', true),
-  permissionRule('runProjectScripts', 'shell.project_script', true),
-  permissionRule('installDependencies', 'shell.dependency_install', true),
-  permissionRule('publishGitRemotes', 'git.publish_remote', true),
-  permissionRule('deployPublish', 'deploy.publish_remote', true),
-  permissionRule('networkWrite', 'shell.network_write', true),
-  permissionRule('spawnChildAgents', 'agent.delegate.spawn', false),
-];
-
-function permissionRule(id: PermissionRuleId, actionKind: AgentToolActionKind, allowable: boolean) {
-  return { id, actionKind, ruleValue: actionKindRuleValue(actionKind), allowable };
-}
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
 const EMPTY_PERMISSION_RULES: AgentToolPermissionSettingsView['permissions'] = { allow: [], ask: [], deny: [] };
@@ -1161,7 +1130,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                           <>
                             {ruleCopy.label}
                             <span className="settings-chip">{permissionDecisionLabel(exception.decision, t)}</span>
-                            {exception.modified ? <span className="settings-chip">{t.settings.permissions.modifiedChip}</span> : null}
+                            <span className="settings-chip">{t.settings.permissions.modifiedChip}</span>
+                            {exception.kind === 'raw' ? <span className="settings-chip">{t.settings.permissions.advancedRuleChip}</span> : null}
                           </>
                         )}
                         sublabel={(
@@ -1799,131 +1769,6 @@ function parseDirectoryListInput(value: string): string[] {
     .slice(0, 20);
 }
 
-function removeRule(rules: readonly string[], ruleValue: string): string[] {
-  return rules.filter((rule) => rule !== ruleValue);
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
-}
-
 function emptyPermissionSettings(): AgentToolPermissionSettingsView {
   return { permissions: { allow: [], ask: [], deny: [] }, diagnostics: [] };
-}
-
-interface PermissionExceptionRow {
-  ruleValue: string;
-  decision: GlobalToolPermissionDecision;
-  modified: boolean;
-}
-
-function buildPermissionExceptionRows(
-  permissions: AgentToolPermissionSettingsView['permissions'],
-  safetyMode: AgentSafetyMode,
-): PermissionExceptionRow[] {
-  return uniqueStrings([...permissions.deny, ...permissions.ask, ...permissions.allow])
-    .map((ruleValue): PermissionExceptionRow | null => {
-      const decision = explicitRuleDecision(ruleValue, permissions);
-      if (!decision) return null;
-      const actionKind = actionKindFromRuleValue(ruleValue);
-      if (!actionKind) return { ruleValue, decision, modified: true };
-      const modeDefault = safetyModeDefaultActionDecision(actionKind, safetyMode);
-      if (decision === modeDefault) return null;
-      return { ruleValue, decision, modified: true };
-    })
-    .filter((row): row is PermissionExceptionRow => row !== null)
-    .sort(comparePermissionExceptionRows);
-}
-
-function comparePermissionExceptionRows(left: PermissionExceptionRow, right: PermissionExceptionRow): number {
-  const leftIndex = commonPermissionRuleIndex(left.ruleValue);
-  const rightIndex = commonPermissionRuleIndex(right.ruleValue);
-  if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-  return left.ruleValue.localeCompare(right.ruleValue);
-}
-
-function commonPermissionRuleIndex(ruleValue: string): number {
-  const index = COMMON_PERMISSION_RULES.findIndex((rule) => rule.ruleValue === ruleValue);
-  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-}
-
-function explicitRuleDecision(
-  ruleValue: string,
-  permissions: AgentToolPermissionSettingsView['permissions'],
-): GlobalToolPermissionDecision | null {
-  if (permissions.deny.includes(ruleValue)) return 'deny';
-  if (permissions.ask.includes(ruleValue)) return 'ask';
-  if (permissions.allow.includes(ruleValue)) return 'allow';
-  return null;
-}
-
-function permissionRuleCopy(ruleValue: string, t: Messages) {
-  const known = COMMON_PERMISSION_RULES.find((rule) => rule.ruleValue === ruleValue);
-  if (known) return t.settings.permissions.rules[known.id];
-  const actionKind = actionKindFromRuleValue(ruleValue);
-  if (actionKind) {
-    return {
-      label: actionKind,
-      description: t.settings.permissions.rawActionDescription({ action: actionKind }),
-    };
-  }
-  return {
-    label: ruleValue,
-    description: t.settings.permissions.rawRuleDescription,
-  };
-}
-
-function safetyModeLabel(mode: AgentSafetyMode, t: Messages): string {
-  if (mode === 'ask_first') return t.settings.permissions.askFirstMode;
-  if (mode === 'full_access') return t.settings.permissions.fullAccessMode;
-  return t.settings.permissions.balancedMode;
-}
-
-function permissionDecisionLabel(decision: GlobalToolPermissionDecision, t: Messages): string {
-  if (decision === 'allow') return t.settings.permissions.allowOption;
-  if (decision === 'deny') return t.settings.permissions.denyOption;
-  return t.settings.permissions.askOption;
-}
-
-function permissionSettingsWithoutRule(
-  settings: AgentToolPermissionSettingsView,
-  ruleValue: string,
-): AgentToolPermissionSettingsView {
-  return {
-    ...settings,
-    permissions: {
-      allow: uniqueStrings(removeRule(settings.permissions.allow, ruleValue)),
-      ask: uniqueStrings(removeRule(settings.permissions.ask, ruleValue)),
-      deny: uniqueStrings(removeRule(settings.permissions.deny, ruleValue)),
-    },
-  };
-}
-
-function permissionSettingsWithDecision(
-  settings: AgentToolPermissionSettingsView,
-  ruleValue: string,
-  decision: GlobalToolPermissionDecision | 'default',
-  safetyMode: AgentSafetyMode,
-): AgentToolPermissionSettingsView {
-  const next = permissionSettingsWithoutRule(settings, ruleValue);
-  if (decision === 'default') return next;
-
-  const actionKind = actionKindFromRuleValue(ruleValue);
-  const modeDefault = actionKind ? safetyModeDefaultActionDecision(actionKind, safetyMode) : null;
-  if (decision === modeDefault) return next;
-
-  const allow = [...next.permissions.allow];
-  const ask = [...next.permissions.ask];
-  const deny = [...next.permissions.deny];
-  if (decision === 'allow') allow.push(ruleValue);
-  else if (decision === 'deny') deny.push(ruleValue);
-  else ask.push(ruleValue);
-  return {
-    ...next,
-    permissions: {
-      allow: uniqueStrings(allow),
-      ask: uniqueStrings(ask),
-      deny: uniqueStrings(deny),
-    },
-  };
 }

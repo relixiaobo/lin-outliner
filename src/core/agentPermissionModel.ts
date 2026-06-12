@@ -1,47 +1,5 @@
 import type { AgentSafetyMode } from './types';
 
-export type AgentToolActionKind =
-  | 'file.read.allowed_file_area'
-  | 'file.read.outside_allowed_file_area'
-  | 'file.read.sensitive_local_path'
-  | 'file.edit.allowed_file_area'
-  | 'file.write.allowed_file_area'
-  | 'file.write.outside_allowed_file_area'
-  | 'file.write.sensitive_local_path'
-  | 'file.delete.allowed_file_area'
-  | 'outline.read'
-  | 'outline.edit'
-  | 'outline.delete'
-  | 'web.search'
-  | 'web.fetch'
-  | 'shell.read_search'
-  | 'shell.project_script'
-  | 'shell.local_code_execution'
-  | 'shell.dependency_install'
-  | 'shell.network_write'
-  | 'shell.destructive_cleanup'
-  | 'shell.background_process'
-  | 'shell.sandbox_override'
-  | 'shell.unknown'
-  | 'git.publish_remote'
-  | 'deploy.publish_remote'
-  | 'external.message.send'
-  | 'task.stop'
-  | 'agent.memory.recall'
-  | 'agent.memory.dream'
-  | 'agent.user_question.ask'
-  | 'agent.runtime.status'
-  | 'agent.config.read'
-  | 'agent.config.write'
-  | 'agent.doctor.run'
-  | 'agent.skill.invoke'
-  | 'agent.delegate.spawn'
-  | 'agent.delegate.status'
-  | 'agent.delegate.send'
-  | 'agent.delegate.stop'
-  | 'agent.permission.modify'
-  | 'payment.purchase';
-
 export type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
 
 export interface AgentPermissionDecisionOverrides {
@@ -50,7 +8,7 @@ export interface AgentPermissionDecisionOverrides {
   deny: readonly string[];
 }
 
-export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] = [
+export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'file.read.allowed_file_area',
   'file.read.outside_allowed_file_area',
   'file.read.sensitive_local_path',
@@ -91,7 +49,9 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'agent.delegate.stop',
   'agent.permission.modify',
   'payment.purchase',
-];
+] as const;
+
+export type AgentToolActionKind = typeof SUPPORTED_AGENT_TOOL_ACTION_KINDS[number];
 
 const DEFAULT_ACTION_DECISIONS = {
   'file.read.allowed_file_area': 'allow',

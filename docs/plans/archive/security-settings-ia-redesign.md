@@ -112,7 +112,7 @@ Extract the pure decision tables out of `src/main/agentPermissions.ts` into a ne
 **`src/core/agentPermissionModel.ts`** (no `node:*`, no main-only imports — the
 path-classification and skill-target resolution stay in main):
 
-- the per-action-kind `defaultDecision` table,
+- the per-action-kind routine `defaultDecision` table,
 - `ASK_FIRST_ASK_ACTIONS` / `FULL_ACCESS_ALLOW_ACTIONS`,
 - a single pure function:
 
@@ -122,7 +122,8 @@ path-classification and skill-target resolution stay in main):
   function effectiveActionDecision(
     actionKind: AgentToolActionKind,
     mode: AgentSafetyMode,
-    overrides: { allow: string[]; deny: string[] },
+    overrides: { allow: string[]; ask?: string[]; deny: string[] },
+    actionDefault?: 'allow' | 'ask' | 'deny',
   ): 'allow' | 'ask' | 'deny'
   ```
 

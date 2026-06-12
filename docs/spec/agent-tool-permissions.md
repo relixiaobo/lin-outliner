@@ -23,22 +23,25 @@ the original broad plan.
 - Every governed operation maps to an **action kind** (`AgentToolActionKind`, ~34
   kinds — e.g. `file.write.workspace`, `shell.network.write`,
   `external.message.send`, `agent.permission.modify`, `payment.purchase`).
-- Each action kind resolves to a **`ToolActionDescriptor`** carrying its
-  `defaultDecision`, `reversible`, `externalEffect`, `highConsequence`,
-  `classifierAutoAllowEligible`, and optional `platformHardBlock` / `command` /
-  `capabilities`. Descriptors are the product-authored source of truth; the
-  global config can only narrow/loosen within what the descriptor and the
-  fail-closed rules permit.
+- Each action kind has one routine default in
+  `src/core/agentPermissionModel.ts`; `src/main/agentPermissions.ts` injects
+  that default into every **`ToolActionDescriptor`**. Descriptors carry the
+  resulting `defaultDecision`, `reversible`, `externalEffect`,
+  `highConsequence`, `classifierAutoAllowEligible`, and optional
+  `platformHardBlock` / `command` / `capabilities`. A descriptor writes an
+  explicit `defaultDecision` only when the runtime context is intentionally
+  stricter than the routine action default, such as path hard blocks, sensitive
+  exfiltration, or shell inline file edits.
 - One app-level **`AgentSafetyMode`** controls descriptor defaults when no
   explicit grant applies: `ask_first`, `balanced`, or `full_access`. Legacy
   stored app-level `permissionMode: trusted|restricted` normalizes at read time
   to `balanced|ask_first`; agent definitions use `permission-mode: restricted`
   only as a narrow delegation sandbox.
 - The mode-plus-exception layer is computed by one pure shared function:
-  `effectiveActionDecision(actionKind, safetyMode, overrides)` in
-  `src/core/agentPermissionModel.ts`. Runtime fallback evaluation and the
-  Settings → Security page both use this model, so a row cannot display
-  `ask` while the runtime would default the same action kind to `allow`.
+  `effectiveActionDecision(actionKind, safetyMode, overrides, actionDefault?)`
+  in `src/core/agentPermissionModel.ts`. Runtime fallback evaluation passes the
+  descriptor's possibly stricter `defaultDecision`; Settings → Security uses the
+  routine action default for its catalog rows.
 
 ## Allowed file area
 
@@ -126,13 +129,16 @@ rules create visible deltas against the selected mode, the header reads as a
 custom state based on that mode and shows the number of changed actions. Reset to
 the mode clears the permission rule lists.
 
-The Exceptions list is the visible delta layer. It shows explicit rules whose
-decision differs from the current mode default, plus raw non-Action rules from
-the JSON store without inventing provenance. Each exception row shows the rule,
-its effective decision, and a revert action that removes that rule from all
-permission lists. The collapsed Action Catalog exposes the curated common action
-kinds for manual overrides; choosing the mode default removes the override
-instead of storing a redundant rule.
+The Exceptions list is the visible delta layer. It shows explicit `Action(...)`
+rules whose decision differs from the current mode default, plus raw non-Action
+rules from the JSON store without inventing provenance. Raw `Tool(...)`,
+`Bash(...)`, and `Capability(...)` rules can match more than one runtime action,
+so they are shown as advanced exceptions rather than folded into a single Action
+Catalog row. Each exception row shows the rule, its effective decision, and a
+revert action that removes that rule from all permission lists. The collapsed
+Action Catalog exposes the curated common action kinds for manual overrides;
+choosing the mode default removes the override instead of storing a redundant
+rule.
 
 ## Platform hard blocks
 
