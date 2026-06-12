@@ -172,6 +172,7 @@ test.describe('agent composer controls', () => {
 
     await menu.getByRole('button', { name: /general/ }).click();
     await expect(page.locator('.agent-dock-title')).toHaveText('general');
+    await expect(page.locator('.agent-dock-subtitle')).toHaveText('@general · gpt-5.4-mini');
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -192,6 +193,8 @@ test.describe('agent composer controls', () => {
 
     const create = dialog.getByRole('button', { name: 'Create Channel' });
     await expect(create).toBeDisabled();
+    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'Agent System' })).toHaveCount(0);
+    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' })).toBeVisible();
     await dialog.getByLabel('Channel name').fill('Feature A launch');
     await expect(create).toBeEnabled();
     await create.click();
@@ -199,11 +202,14 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-title')).toHaveText('Feature A launch');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
-    }).toMatchObject({
-      title: 'Feature A launch',
-      agentIds: expect.arrayContaining(['built-in:core:assistant']),
-    });
+      const args = calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
+      return args
+        ? {
+            title: args.title,
+            hasInvitedAgents: Object.prototype.hasOwnProperty.call(args, 'agentIds'),
+          }
+        : null;
+    }).toEqual({ title: 'Feature A launch', hasInvitedAgents: false });
   });
 
   test('escalates a DM through a named Channel create with a system notice', async ({ page }) => {
@@ -227,7 +233,7 @@ test.describe('agent composer controls', () => {
       return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
     }).toMatchObject({
       title: 'Release blockers',
-      agentIds: expect.arrayContaining(['built-in:core:assistant', 'built-in:tenon:general']),
+      agentIds: ['built-in:tenon:general'],
       systemNotice: 'Created from your DM with general · DM history not shared',
     });
   });

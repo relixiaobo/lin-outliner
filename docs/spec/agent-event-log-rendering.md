@@ -1002,12 +1002,14 @@ Open-conversation policy:
 
 - The conversation list combines the configured agent roster with
   `conversation-index.json`: every configured agent has an immutable canonical DM
-  row, even before its log exists, and Channels are listed only when they have a
-  `goal`.
+  row, even before its log exists, and Channels are listed when they have a
+  Channel name. The current event/index storage still carries that name in the
+  legacy `goal` field.
 - Restoring a canonical DM id is find-or-create keyed by `{ user, agentId }`.
   DMs have no goal, exactly one agent member, and cannot be renamed, deleted, or
-  membership-edited. A Channel has the user, at least two agent members, and a
-  required goal.
+  membership-edited. A Channel is a named room with the user, the coordinator
+  agent as an implicit runtime participant, and optional invited agents that can
+  be added later.
 - Opening a conversation loads the latest checkpoint, reads the conversation segment
   and indexed run logs from the checkpoint target offsets, then replays only
   events after the checkpoint `seq`.

@@ -206,7 +206,7 @@ truth.
     into identity-preambled user-role blocks; selected by transcript content,
     not the live roster); the persisted log stays reader-neutral
   - UI: composer `@` member typeahead, member strip + Members popover on the
-    Channel header (add/remove members while preserving the minimum member set),
+    Channel header (add/remove invited members while preserving the coordinator),
     conversation-list member display, speaker badges on non-coordinator
     assistant rows that survive member removal
 

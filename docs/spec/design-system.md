@@ -1063,7 +1063,7 @@ category history; see "Settings window".)
 - Its header lives in the top strip: the plain conversation title, no decorative
   status dot or `#` prefix. A DM leads with that agent's circular identity chip
   and a quiet subtitle (`@mention · provider/model`), with an action to create a
-  Channel from the DM. A Channel uses the goal/title as the primary text and
+  Channel from the DM. A Channel uses the Channel name as the primary text and
   moves member management behind a compact Members popover; stacked avatars are
   a secondary cue, not the title. The title trigger has no hover background; it
   darkens text and reveals its chevron only on hover, focus, or open state. The

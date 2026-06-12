@@ -418,7 +418,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         rootDir: 'built-in',
         agentFile: 'built-in/general',
         description: 'General-purpose focused child run for research, analysis, and execution.',
-        model: 'gpt-5.4',
+        model: 'gpt-5.4-mini',
         body: [
           'You are a focused child agent running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
@@ -1651,7 +1651,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const conversationId = `mock-agent-channel-created-${++sequence}`;
           const members = [
             { type: 'user', userId: 'local-user' },
-            ...Array.from(new Set(agentIds)).map((agentId) => ({ type: 'agent', agentId })),
+            ...Array.from(new Set([MAIN_AGENT_ID, ...agentIds])).map((agentId) => ({ type: 'agent', agentId })),
           ];
           agentConversations.push({
             id: conversationId,

@@ -172,6 +172,32 @@ function agentModelSubtitle(
   return definition.model?.trim() || activeProviderModel;
 }
 
+function isCanonicalDmConversation(
+  conversationId: string | null,
+  conversation: AgentConversationListMeta | null,
+): boolean {
+  return Boolean(conversation?.canonicalDmAgentId) || (conversationId?.startsWith('lin-agent-dm-') ?? false);
+}
+
+function isRuntimeChannelConversationId(conversationId: string | null): boolean {
+  return conversationId?.startsWith('lin-agent-channel-')
+    || conversationId?.startsWith('mock-agent-channel')
+    || false;
+}
+
+function isChannelConversation(
+  conversationId: string | null,
+  conversation: AgentConversationListMeta | null,
+  agentMemberCount: number,
+): boolean {
+  if (isCanonicalDmConversation(conversationId, conversation)) return false;
+  if (isRuntimeChannelConversationId(conversationId)) return true;
+  if (conversation && !conversation.canonicalDmAgentId && conversation.goal) return true;
+  // Older e2e fixtures predate channel ids/list metadata but still model
+  // Channel speaker identity through a multi-agent roster.
+  return agentMemberCount >= 2;
+}
+
 function systemLineText(entry: AgentMessageEntry): string | null {
   if (entry.actor?.type !== 'system') return null;
   const text = textFromConversationEntry(entry).trim();
@@ -772,13 +798,7 @@ export function AgentChatPanel({
     () => conversations.find((conversation) => conversation.id === conversationId) ?? null,
     [conversations, conversationId],
   );
-  const isCanonicalDm = Boolean(activeConversationMeta?.canonicalDmAgentId)
-    || (conversationId?.startsWith('lin-agent-dm-') ?? false);
-  const isRuntimeChannelId = conversationId?.startsWith('lin-agent-channel-')
-    || conversationId?.startsWith('mock-agent-channel')
-    || false;
-  const isListedChannel = Boolean(activeConversationMeta && !activeConversationMeta.canonicalDmAgentId && activeConversationMeta.goal);
-  const isChannel = Boolean(!isCanonicalDm && (isRuntimeChannelId || isListedChannel || agentMembers.length >= 2));
+  const isChannel = isChannelConversation(conversationId, activeConversationMeta, agentMembers.length);
   const isMultiAgentChannel = isChannel && agentMembers.length >= 2;
   const memberByAgentId = useMemo(() => {
     const map = new Map<string, AgentRenderMemberView>();
@@ -866,11 +886,17 @@ export function AgentChatPanel({
     : null;
   const dmAgentMention = dmAgentMember?.mention ?? (dmAgentId ? agentMentionToken(dmAgentId) : null);
   const activeProviderModel = activeProviderModelSubtitle(providerSettings);
+  const dmAgentModelSubtitle = dmAgentId ? agentModelSubtitle(dmAgentId, agentDefinitionById, activeProviderModel) : null;
+  const isCanonicalDmView = isCanonicalDmConversation(conversationId, activeConversationMeta);
   const directMessageRows = useMemo(
     () => conversations.filter((conversation) => conversation.canonicalDmAgentId),
     [conversations],
   );
   const coordinatorRosterAgentId = directMessageRows[0]?.canonicalDmAgentId ?? null;
+  const inviteAgentRows = useMemo(
+    () => directMessageRows.filter((conversation) => conversation.canonicalDmAgentId !== coordinatorRosterAgentId),
+    [coordinatorRosterAgentId, directMessageRows],
+  );
   const channelRows = useMemo(
     () => conversations.filter((conversation) => !conversation.canonicalDmAgentId),
     [conversations],
@@ -1093,14 +1119,14 @@ export function AgentChatPanel({
   useEffect(() => {
     if (!newChannelOpen) return;
     setNewChannelAgentIds((current) => {
-      const required = [coordinatorRosterAgentId, newChannelEscalationAgentId].filter((id): id is string => !!id);
+      const required = [newChannelEscalationAgentId].filter((id): id is string => !!id);
       const next = [...current];
       for (const agentId of required) {
         if (!next.includes(agentId)) next.unshift(agentId);
       }
       return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
     });
-  }, [coordinatorRosterAgentId, newChannelEscalationAgentId, newChannelOpen]);
+  }, [newChannelEscalationAgentId, newChannelOpen]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -1273,7 +1299,7 @@ export function AgentChatPanel({
   }
 
   function toggleNewChannelAgent(agentId: string) {
-    if (agentId === newChannelEscalationAgentId || agentId === coordinatorRosterAgentId) return;
+    if (agentId === newChannelEscalationAgentId) return;
     setNewChannelAgentIds((current) => (
       current.includes(agentId)
         ? current.filter((id) => id !== agentId)
@@ -1289,14 +1315,15 @@ export function AgentChatPanel({
       newChannelNameRef.current?.focus();
       return;
     }
-    const selectedAgentIds = Array.from(new Set(newChannelAgentIds));
+    const selectedAgentIds = Array.from(new Set(newChannelAgentIds))
+      .filter((agentId) => agentId !== coordinatorRosterAgentId);
     const escalationAgentName = newChannelEscalationAgentId
       ? conversationAgentDisplayName(newChannelEscalationAgentId, agentDefinitionById, dmAgentLabel)
       : null;
     try {
       setNewChannelError(null);
       await newConversation({
-        agentIds: selectedAgentIds,
+        ...(selectedAgentIds.length > 0 ? { agentIds: selectedAgentIds } : {}),
         title,
         seedText: newChannelSeed.trim() || undefined,
         systemNotice: escalationAgentName
@@ -1524,6 +1551,7 @@ export function AgentChatPanel({
     () => agentDefinitions.filter((definition) => !memberAgentIds.has(definition.agentId)),
     [agentDefinitions, memberAgentIds],
   );
+  const dmHeaderTitle = isCanonicalDmView ? dmAgentLabel : (conversationTitle ? displayTitle : dmAgentLabel);
 
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
@@ -1544,9 +1572,9 @@ export function AgentChatPanel({
                 size="md"
               />
               <span className="agent-dock-title-stack">
-                <span className="agent-dock-title">{conversationTitle ? displayTitle : dmAgentLabel}</span>
+                <span className="agent-dock-title">{dmHeaderTitle}</span>
                 <span className="agent-dock-subtitle">
-                  {[dmAgentMention ? `@${dmAgentMention}` : null, activeProviderModel].filter(Boolean).join(' · ')}
+                  {[dmAgentMention ? `@${dmAgentMention}` : null, dmAgentModelSubtitle].filter(Boolean).join(' · ')}
                 </span>
               </span>
             </>
@@ -1914,7 +1942,9 @@ export function AgentChatPanel({
                 <div className="agent-new-channel-field">
                   <div className="agent-new-channel-label">{t.agent.chat.channelAgents}</div>
                   <div className="agent-new-channel-roster">
-                    {directMessageRows.map((conversation) => {
+                    {inviteAgentRows.length === 0 ? (
+                      <div className="agent-conversation-empty">{t.agent.chat.noAddableAgents}</div>
+                    ) : inviteAgentRows.map((conversation) => {
                       const agentId = conversation.canonicalDmAgentId!;
                       const label = conversationAgentDisplayName(
                         agentId,
@@ -1923,7 +1953,7 @@ export function AgentChatPanel({
                       );
                       const mention = agentMentionToken(agentId);
                       const checked = newChannelAgentIds.includes(agentId);
-                      const locked = agentId === newChannelEscalationAgentId || agentId === coordinatorRosterAgentId;
+                      const locked = agentId === newChannelEscalationAgentId;
                       return (
                         <label className="agent-new-channel-agent" key={agentId}>
                           <input
