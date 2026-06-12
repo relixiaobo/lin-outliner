@@ -1,4 +1,5 @@
 import type { NodeId } from '../api/types';
+import type { PreviewTarget } from '../../core/preview';
 
 export interface WorkspacePanelBase {
   id: string;
@@ -7,14 +8,26 @@ export interface WorkspacePanelBase {
   size: number;
 }
 
-export interface OutlinePanelState extends WorkspacePanelBase {
-  type: 'outliner';
+export interface OutlinerPanelView {
+  kind: 'outliner';
   rootId: NodeId;
-  // Per-pane page-navigation history (a stack of roots). Always present — the
-  // panel factory and the persistence sanitizer both seed them — so consumers
-  // never need to guard for absence.
-  pageBackStack: NodeId[];
-  pageForwardStack: NodeId[];
+}
+
+export interface FilePreviewPanelView {
+  kind: 'file-preview';
+  target: PreviewTarget;
+}
+
+export type PanelView = OutlinerPanelView | FilePreviewPanelView;
+
+export interface WorkspaceContentPanelState extends WorkspacePanelBase {
+  type: 'workspace';
+  view: PanelView;
+  // Per-pane view-navigation history. Always present — the panel factory and the
+  // persistence sanitizer both seed it — so consumers never need to guard for
+  // absence.
+  backStack: PanelView[];
+  forwardStack: PanelView[];
 }
 
 export interface AgentDebugPanelState extends WorkspacePanelBase {
@@ -22,7 +35,7 @@ export interface AgentDebugPanelState extends WorkspacePanelBase {
   conversationId: string | null;
 }
 
-export type WorkspacePanelState = OutlinePanelState | AgentDebugPanelState;
+export type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
 
 export interface WorkspaceLayout {
   activePanelId: string;

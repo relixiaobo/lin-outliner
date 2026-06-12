@@ -341,20 +341,9 @@ test.describe('agent process disclosure', () => {
     await expect(preview.locator('.inline-file-preview-image img')).toBeVisible();
 
     await ref.click();
-    await expect.poll(async () => page.evaluate(() => {
-      const win = window as typeof window & { __openedLocalFiles?: string[] };
-      return win.__openedLocalFiles ?? [];
-    })).toEqual(['/Users/test/Pictures/diagram.png']);
-
-    await page.evaluate(() => {
-      const win = window as typeof window & {
-        lin?: { openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }> };
-      };
-      if (win.lin) delete win.lin.openLocalFile;
-      window.location.hash = '';
-    });
-    await ref.click();
-    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('');
+    const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
+    await expect(panel.locator('.file-preview-title-text')).toContainText('diagram.png');
+    await expect(panel.locator('.file-preview-content')).toContainText('Mock preview text.');
   });
 
   test('keeps completed process collapsed and expands thinking and tool details on demand', async ({ page }) => {
@@ -555,6 +544,7 @@ test.describe('agent process disclosure', () => {
               byteLength: 38,
               sha256: 'payload-sha',
               role: 'tool_output',
+              scope: { type: 'run', conversationId: 'mock-agent-conversation', runId: 'run-payload-output' },
               summary: 'large.log output',
               truncated: true,
             },
@@ -581,5 +571,11 @@ test.describe('agent process disclosure', () => {
 
     await expect.poll(() => clipboardText(page)).toContain('Full persisted tool output from payload');
     expect(await clipboardText(page)).not.toContain('Preview only');
+
+    await row.locator('.agent-tool-call-toggle').click();
+    await row.getByRole('button', { name: 'Preview output' }).click();
+    const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
+    await expect(panel.locator('.file-preview-title-text')).toContainText('large.log output');
+    await expect(panel.locator('.file-preview-content')).toContainText('Full persisted tool output from payload');
   });
 });

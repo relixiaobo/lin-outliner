@@ -40,6 +40,12 @@ test.describe('file attachments', () => {
     await expect(attachmentRow.locator('.outliner-attachment-meta')).toContainText('PDF');
     await expect(attachmentRow.locator('.outliner-attachment-meta')).toContainText('1 page');
 
+    await attachmentRow.locator('.outliner-attachment-main').click();
+    const previewPanel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
+    await expect(previewPanel.locator('.file-preview-title-text')).toContainText('picked-report.pdf');
+    await previewPanel.getByRole('button', { name: 'Previous page' }).click();
+    await expect(attachmentRow.locator('.outliner-attachment')).toBeVisible();
+
     await attachmentRow.locator('.outliner-attachment').hover();
     const actions = attachmentRow.locator('.outliner-attachment-actions');
     await actions.getByRole('button', { name: 'Open' }).click();

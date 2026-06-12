@@ -102,6 +102,70 @@ async function expectRejects(fn: () => Promise<unknown>, message: string) {
 }
 
 describe('agent runtime conversations', () => {
+  test('previews run-scoped tool output payloads only with the owning run id', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const store = new AgentEventStore(dataRoot);
+    const conversationId = 'conversation-preview-payload';
+    const runId = 'run-preview-payload';
+    const payload = await store.writePayload(conversationId, {
+      runId,
+      id: 'tool-output-preview',
+      data: 'full tool output',
+      mimeType: 'text/plain',
+      role: 'tool_output',
+      summary: 'large.log output',
+      truncated: true,
+    });
+
+    await store.appendEvents(conversationId, [
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'conversation-preview-payload-created',
+        seq: 1,
+        conversationId,
+        type: 'conversation.created',
+        createdAt: 1_800_000_000_001,
+        actor: { type: 'system' },
+        title: 'Preview payload scope',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'conversation-preview-payload-run-started',
+        seq: 2,
+        conversationId,
+        type: 'run.started',
+        createdAt: 1_800_000_000_002,
+        actor: { type: 'system' },
+        runId,
+        agentId: ASSISTANT_AGENT_ID,
+        kind: 'turn',
+        retention: 'hot',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: 'conversation-preview-payload-created-payload',
+        seq: 3,
+        conversationId,
+        type: 'payload.created',
+        createdAt: 1_800_000_000_003,
+        actor: { type: 'system' },
+        runId,
+        payload,
+      },
+    ] satisfies AgentEvent[]);
+
+    await expect(runtime.previewPayload(conversationId, payload.id)).resolves.toBeNull();
+    await expect(runtime.previewPayload(conversationId, payload.id, 'other-run')).resolves.toBeNull();
+    await expect(runtime.previewPayload(conversationId, payload.id, runId)).resolves.toMatchObject({
+      id: payload.id,
+      role: 'tool_output',
+      scope: { type: 'run', conversationId, runId },
+    });
+    await expect(runtime.previewPayloadBytes(conversationId, payload.id, runId)).resolves.toEqual(Buffer.from('full tool output'));
+  });
+
   test('lists every configured agent as a deterministic canonical DM roster row', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);

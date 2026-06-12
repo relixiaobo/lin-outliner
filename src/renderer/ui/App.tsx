@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
+import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
@@ -34,6 +35,7 @@ import { useWorkspaceLayout } from './useWorkspaceLayout';
 import { useWorkspacePinnedNodes } from './useWorkspacePinnedNodes';
 import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
+import { onPreviewTargetOpen } from './preview/previewEvents';
 import {
   persistOutlineViewState,
   restoreOutlineExpansionForRoot,
@@ -107,23 +109,25 @@ export function App() {
   const {
     activeOutlinerPanel,
     activePanelId,
+    activeWorkspacePanel,
     activatePanel,
     closePanel,
     initializeLayout,
     navigatePanelBack: goPanelBack,
     navigatePanelForward: goPanelForward,
+    navigatePanelPreview: setPanelPreview,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
     openAgentDebugPanel,
     openPanel,
+    openPreview,
     panels,
     resizePanelPair,
     rootId,
   } = useWorkspaceLayout({ focusNode });
-  // Global Back/Forward (Cmd+[ / Cmd+]) act on the active pane's page history.
-  // activeOutlinerPanel is strict (null when a debug pane is active), so the
-  // keyboard handlers below no-op instead of navigating an unrelated pane.
-  const pageHistoryPanel = activeOutlinerPanel;
+  // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
+  // history. Debug panes still no-op instead of navigating an unrelated pane.
+  const pageHistoryPanel = activeWorkspacePanel;
 
   const {
     agentWidth,
@@ -181,9 +185,10 @@ export function App() {
     if (!currentIndex) return;
     const persistedRootIds = new Set<NodeId>();
     for (const panel of panels) {
-      if (panel.type !== 'outliner' || persistedRootIds.has(panel.rootId)) continue;
-      persistedRootIds.add(panel.rootId);
-      persistOutlineViewState(panel.rootId, currentIndex.byId, {
+      if (panel.type !== 'workspace' || panel.view.kind !== 'outliner') continue;
+      if (persistedRootIds.has(panel.view.rootId)) continue;
+      persistedRootIds.add(panel.view.rootId);
+      persistOutlineViewState(panel.view.rootId, currentIndex.byId, {
         expanded: ui.expanded,
         expandedHiddenFields: ui.expandedHiddenFields,
       });
@@ -273,6 +278,10 @@ export function App() {
     focusNode(nodeId as NodeId);
   }) ?? undefined, [navigateRoot, focusNode]);
 
+  useEffect(() => onPreviewTargetOpen(({ newPane, target }) => {
+    openPreview(target, { newPane });
+  }), [openPreview]);
+
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
     if (options?.newPane) {
       openPanel(nodeId);
@@ -283,14 +292,18 @@ export function App() {
     restoreNodeInOutliner(nodeId);
   }, [openPanel, restoreNodeInOutliner, setPanelRoot]);
 
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
+    setPanelPreview(panelId, target, options);
+  }, [setPanelPreview]);
+
   const navigatePanelBack = useCallback((panelId: string) => {
-    const nodeId = goPanelBack(panelId);
-    if (nodeId) restoreNodeInOutliner(nodeId);
+    const view = goPanelBack(panelId);
+    if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
   }, [goPanelBack, restoreNodeInOutliner]);
 
   const navigatePanelForward = useCallback((panelId: string) => {
-    const nodeId = goPanelForward(panelId);
-    if (nodeId) restoreNodeInOutliner(nodeId);
+    const view = goPanelForward(panelId);
+    if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
   }, [goPanelForward, restoreNodeInOutliner]);
 
   const navigateActivePanelBack = useCallback(() => {
@@ -316,7 +329,7 @@ export function App() {
     // Cmd+M opens the *active* outliner pane's root in a new pane. When a debug
     // pane is active there is no active outliner root, so this is a no-op rather
     // than reaching across to the ambient (first) outliner.
-    const activeRootId = activeOutlinerPanel?.rootId;
+    const activeRootId = activeOutlinerPanel?.view.rootId;
     if (!activeRootId) return;
     openRootInPanel(activeRootId);
   }, [activeOutlinerPanel, openRootInPanel]);
@@ -460,6 +473,7 @@ export function App() {
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
           onNavigatePanelBack={navigatePanelBack}
+          onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeReset={resetPanelPair}

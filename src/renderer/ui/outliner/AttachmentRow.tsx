@@ -8,6 +8,8 @@ import {
 } from '../editor/inlineFileIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
+import { wantsNewPaneFromClick } from '../shared';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 
 interface AttachmentRowProps {
   node: Extract<NodeProjection, { type: 'attachment' }>;
@@ -23,6 +25,7 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
     );
   }
 
+  const assetId = node.assetId;
   const kind = attachmentKind(node.mimeType);
   const typeLabel = attachmentTypeLabel(kind, node.mimeType, ta);
   const metaParts = [
@@ -34,7 +37,20 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
   ].filter((part): part is string => Boolean(part));
 
   return (
-    <div className={`outliner-attachment outliner-attachment--${kind}`} contentEditable={false}>
+    <div
+      className={`outliner-attachment outliner-attachment--${kind}`}
+      contentEditable={false}
+      onClick={(event) => {
+        dispatchPreviewTargetOpen({
+          newPane: wantsNewPaneFromClick(event),
+          target: {
+            kind: 'asset',
+            assetId,
+            label: node.originalFilename,
+          },
+        });
+      }}
+    >
       {node.thumbnailAssetId ? (
         <img
           alt=""
@@ -57,13 +73,33 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
           {metaParts.join(' · ')}
         </div>
         {kind === 'audio' && (
-          <audio className="outliner-attachment-media" controls preload="metadata" src={assetUrl(node.assetId)} />
+          <audio
+            className="outliner-attachment-media"
+            controls
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            preload="metadata"
+            src={assetUrl(assetId)}
+          />
         )}
         {kind === 'video' && (
-          <video className="outliner-attachment-media" controls preload="metadata" src={assetUrl(node.assetId)} />
+          <video
+            className="outliner-attachment-media"
+            controls
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            preload="metadata"
+            src={assetUrl(assetId)}
+          />
         )}
       </div>
-      <div className="outliner-attachment-actions" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="outliner-attachment-actions"
+        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <ButtonControl
           aria-label={ta.open}
           className="outliner-attachment-action"

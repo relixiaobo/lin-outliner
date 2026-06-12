@@ -45,6 +45,13 @@ import type {
   AgentUserViewContext,
   AskUserQuestionResult,
 } from '../../core/agentTypes';
+import type {
+  PreviewListDirectoryResult,
+  PreviewReadBytesResult,
+  PreviewReadTextResult,
+  PreviewResolveSourceResult,
+  PreviewTarget,
+} from '../../core/preview';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (window.lin) return window.lin.invoke<T>(name, args);
@@ -147,6 +154,14 @@ export const api = {
   revealAsset: (id: string) => command<{ revealed: boolean }>('reveal_asset', { id }),
   copyAssetFile: (id: string) => command<{ copied: boolean }>('copy_asset_file', { id }),
   openExternalUrl: (url: string) => command<{ opened: boolean }>('open_external_url', { url }),
+  resolvePreviewSource: (target: PreviewTarget) =>
+    command<PreviewResolveSourceResult>('preview_resolve_source', { target }),
+  readPreviewText: (target: PreviewTarget) =>
+    command<PreviewReadTextResult>('preview_read_text', { target }),
+  readPreviewBytes: (target: PreviewTarget) =>
+    command<PreviewReadBytesResult>('preview_read_bytes', { target }),
+  listPreviewDirectory: (target: PreviewTarget) =>
+    command<PreviewListDirectoryResult>('preview_list_directory', { target }),
   setViewToolbarVisible: (nodeId: string, visible: boolean) =>
     command<CommandResult>('set_view_toolbar_visible', { nodeId, visible }),
   setViewMode: (nodeId: string, mode: ViewMode) =>

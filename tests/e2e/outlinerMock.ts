@@ -2060,6 +2060,97 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'open_asset') return clone({ opened: assets.has(String(args.id)) }) as T;
         if (cmd === 'reveal_asset') return clone({ revealed: assets.has(String(args.id)) }) as T;
         if (cmd === 'copy_asset_file') return clone({ copied: assets.has(String(args.id)) }) as T;
+        if (cmd === 'preview_resolve_source') {
+          const target = args.target as {
+            kind?: string;
+            assetId?: string;
+            conversationId?: string;
+            entryKind?: 'file' | 'directory';
+            label?: string;
+            path?: string;
+            payloadId?: string;
+            runId?: string;
+            url?: string;
+          } | undefined;
+          if (target?.kind === 'asset' && target.assetId) {
+            const asset = assets.get(target.assetId);
+            return clone({
+              source: asset ? {
+                kind: 'file',
+                sourceKind: 'asset',
+                id: `asset:${target.assetId}`,
+                target,
+                name: target.label || asset.originalFilename || target.assetId,
+                ext: (asset.originalFilename || '').split('.').pop() || '',
+                mimeType: asset.mimeType,
+                entryKind: 'file',
+                sizeBytes: asset.byteSize,
+                streamUrl: `asset://${target.assetId}`,
+              } : null,
+            }) as T;
+          }
+          if (target?.kind === 'local-file' && target.path) {
+            const name = target.label || target.path.split('/').filter(Boolean).at(-1) || target.path;
+            return clone({
+              source: {
+                kind: 'file',
+                sourceKind: 'local-file',
+                id: `local-file:${target.entryKind ?? 'file'}:${target.path}`,
+                target,
+                name,
+                ext: name.split('.').pop() || '',
+                mimeType: target.entryKind === 'directory' ? 'inode/directory' : 'text/markdown',
+                entryKind: target.entryKind ?? 'file',
+                sizeBytes: target.entryKind === 'directory' ? 0 : 128,
+                displayPath: target.path,
+              },
+            }) as T;
+          }
+          if (target?.kind === 'agent-payload' && target.payloadId) {
+            if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
+              return clone({ source: null, error: 'missing' }) as T;
+            }
+            return clone({
+              source: {
+                kind: 'file',
+                sourceKind: 'agent-payload',
+                id: `agent-payload:${target.conversationId ?? ''}:${target.runId ?? ''}:${target.payloadId}`,
+                target,
+                name: target.label || `${target.payloadId}.txt`,
+                ext: 'txt',
+                mimeType: 'text/plain',
+                entryKind: 'file',
+                sizeBytes: 39,
+              },
+            }) as T;
+          }
+          return clone({ source: null, error: 'missing' }) as T;
+        }
+        if (cmd === 'preview_read_text') {
+          const target = args.target as { kind?: string; path?: string; payloadId?: string; runId?: string } | undefined;
+          if (target?.kind === 'agent-payload') {
+            if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
+              return clone({ text: null, error: 'missing' }) as T;
+            }
+            return clone({ text: 'Full persisted tool output from payload' }) as T;
+          }
+          if (target?.kind === 'local-file') return clone({ text: `# ${target.path?.split('/').pop() ?? 'file'}\n\nMock preview text.` }) as T;
+          return clone({ text: 'Mock asset preview text.' }) as T;
+        }
+        if (cmd === 'preview_read_bytes') return clone({ bytes: new ArrayBuffer(0), mimeType: 'application/octet-stream' }) as T;
+        if (cmd === 'preview_list_directory') {
+          const target = args.target as { kind?: string; path?: string } | undefined;
+          const base = target?.path ?? '/mock/local-root/tmp/agent-attachments';
+          return clone({
+            entries: [{
+              entryKind: 'file',
+              name: 'nested.md',
+              target: { kind: 'local-file', path: `${base}/nested.md`, entryKind: 'file', label: 'nested.md' },
+              mimeType: 'text/markdown',
+              sizeBytes: 42,
+            }],
+          }) as T;
+        }
         if (cmd === 'create_node') {
           const nodeId = createNode(
             String(args.parentId),

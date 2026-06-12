@@ -33,6 +33,7 @@ import {
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
+import { handlePreviewCommand } from './previewSource';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
   serializeUnknownError,
@@ -61,7 +62,15 @@ import {
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
-import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
+import {
+  isAgentCommand,
+  isAssetCommand,
+  isDocumentCommand,
+  isPreviewCommand,
+  type AgentCommand,
+  type AssetCommand,
+  type PreviewCommand,
+} from '../core/commands';
 import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
@@ -1040,6 +1049,15 @@ function registerIpc() {
     const dispatch = () => {
       if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
+      if (isPreviewCommand(command)) {
+        return handlePreviewCommand(command, args ?? {}, {
+          agentLocalFileRoot,
+          agentRuntime,
+          assetService,
+          inferMimeType,
+          localFileReferencePreview,
+        });
+      }
       if (isDocumentCommand(command)) return documentService.handle(command, args);
       throw new Error(`Unknown command: ${command}`);
     };

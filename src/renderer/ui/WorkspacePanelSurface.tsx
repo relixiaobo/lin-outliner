@@ -24,11 +24,14 @@ export function WorkspacePanelSurface({
   size,
 }: WorkspacePanelSurfaceProps) {
   const t = useT();
+  const workspaceViewClass = panel.type === 'workspace' ? `is-${panel.view.kind}` : '';
+  const closeOwnedByChild = panel.type === 'workspace' && panel.view.kind === 'outliner';
   return (
     <div
       className={[
         'outline-panel-surface',
         `is-${panel.type}`,
+        workspaceViewClass,
         active ? 'active-panel' : '',
       ].filter(Boolean).join(' ')}
       onFocusCapture={onActivate}
@@ -40,7 +43,7 @@ export function WorkspacePanelSurface({
       {/* Outliner panes render their own close INSIDE the breadcrumb (NodePanel) so it's a
           no-drag descendant of the drag region and aligns to the content inset. Only the
           breadcrumb-less agent-debug pane keeps the absolute corner close here. */}
-      {showClose && panel.type !== 'outliner' && (
+      {showClose && !closeOwnedByChild && (
         <IconButton
           className="outline-panel-close"
           icon={CloseIcon}

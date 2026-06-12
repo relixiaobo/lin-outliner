@@ -4,9 +4,11 @@ import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
 import { WorkspacePanelSurface } from './WorkspacePanelSurface';
 import { AgentDebugPanel } from './agent/AgentDebugPanel';
+import { FilePreviewPanel } from './preview/FilePreviewPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
+import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
 
 interface WorkspaceCanvasProps {
@@ -19,6 +21,7 @@ interface WorkspaceCanvasProps {
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
+  onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
   onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
   onPanelResizeStart: (
@@ -60,11 +63,11 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             showClose={activePanels.length > 1}
             size={panel.size}
           >
-            {panel.type === 'outliner' ? (
+            {panel.type === 'workspace' && panel.view.kind === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
-                rootId={panel.rootId}
-                canGoBack={Boolean(panel.pageBackStack.length)}
+                rootId={panel.view.rootId}
+                canGoBack={Boolean(panel.backStack.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 showClose={activePanels.length > 1}
                 onClose={() => props.onClosePanel(panel.id)}
@@ -80,8 +83,17 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
               />
-            ) : (
+            ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
+              <FilePreviewPanel
+                canGoBack={Boolean(panel.backStack.length)}
+                onBack={() => props.onNavigatePanelBack(panel.id)}
+                onOpenTarget={(target, options) => props.onNavigatePanelPreview(panel.id, target, options)}
+                target={panel.view.target}
+              />
+            ) : panel.type === 'agent-debug' ? (
               <AgentDebugPanel conversationId={panel.conversationId} />
+            ) : (
+              null
             )}
           </WorkspacePanelSurface>
           {panelIndex < activePanels.length - 1 && (

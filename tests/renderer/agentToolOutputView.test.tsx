@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import { PREVIEW_TARGET_OPEN_EVENT, type PreviewTargetOpenDetail } from '../../src/renderer/ui/preview/previewEvents';
 
 interface RenderedComponent {
   cleanup: () => void;
@@ -81,7 +82,72 @@ describe('agent tool output view', () => {
     expect(text).not.toContain('SENTINEL_SOURCE');
     expect(text).not.toContain('424242');
   });
+
+  test('opens persisted tool output previews with the payload run scope', () => {
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-run-scoped-output',
+      toolName: 'file_read',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: '<persisted-output>\nPreview only\n</persisted-output>' }],
+      payloadRefs: [{
+        contentIndex: 0,
+        payload: {
+          kind: 'payload_ref',
+          id: 'payload-run-scoped-output',
+          storage: 'file',
+          mimeType: 'text/plain',
+          byteLength: 38,
+          sha256: 'a'.repeat(64),
+          role: 'tool_output',
+          scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
+          summary: 'large.log output',
+          truncated: true,
+        },
+      }],
+    };
+
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-run-scoped-output', name: 'file_read', arguments: { path: 'large.log' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+    );
+    const opened: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+
+    const previewButton = textButton(rendered, 'Preview output');
+    act(() => {
+      previewButton.dispatchEvent(new rendered.window.Event('click', { bubbles: true }));
+    });
+
+    expect(opened).toEqual([{
+      target: {
+        kind: 'agent-payload',
+        conversationId: 'conversation-1',
+        runId: 'run-1',
+        payloadId: 'payload-run-scoped-output',
+        label: 'large.log output',
+      },
+    }]);
+  });
 });
+
+function textButton(rendered: RenderedComponent, text: string): HTMLButtonElement {
+  const button = Array.from(rendered.container.querySelectorAll('button'))
+    .find((candidate) => (candidate.textContent ?? '').includes(text));
+  if (!(button instanceof rendered.window.HTMLButtonElement)) {
+    throw new Error(`Button not found: ${text}`);
+  }
+  return button;
+}
 
 function renderComponent(element: ReactNode): RenderedComponent {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -110,6 +176,8 @@ function installDomGlobals(window: Window) {
     document: window.document,
     window,
     Event: window.Event,
+    CustomEvent: window.CustomEvent,
+    HTMLButtonElement: window.HTMLButtonElement,
     HTMLElement: window.HTMLElement,
     KeyboardEvent: window.KeyboardEvent,
     MouseEvent: window.MouseEvent,

@@ -16,6 +16,7 @@
 @import './agent-message.css';
 @import './agent-markdown.css';
 @import './code.css';
+@import './file-preview.css';
 @import './agent-tool-rows.css';
 @import './agent-child-run.css';
 @import './agent-composer.css';

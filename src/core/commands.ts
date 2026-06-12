@@ -171,14 +171,23 @@ export const ASSET_COMMANDS = [
   'open_external_url',
 ] as const;
 
+export const PREVIEW_COMMANDS = [
+  'preview_resolve_source',
+  'preview_read_text',
+  'preview_read_bytes',
+  'preview_list_directory',
+] as const;
+
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];
 export type AgentCommand = typeof AGENT_COMMANDS[number];
 export type AssetCommand = typeof ASSET_COMMANDS[number];
-export type LinCommand = DocumentCommand | AgentCommand | AssetCommand;
+export type PreviewCommand = typeof PREVIEW_COMMANDS[number];
+export type LinCommand = DocumentCommand | AgentCommand | AssetCommand | PreviewCommand;
 
 const documentCommands = new Set<string>(DOCUMENT_COMMANDS);
 const agentCommands = new Set<string>(AGENT_COMMANDS);
 const assetCommands = new Set<string>(ASSET_COMMANDS);
+const previewCommands = new Set<string>(PREVIEW_COMMANDS);
 
 export function isDocumentCommand(command: string): command is DocumentCommand {
   return documentCommands.has(command);
@@ -190,4 +199,8 @@ export function isAgentCommand(command: string): command is AgentCommand {
 
 export function isAssetCommand(command: string): command is AssetCommand {
   return assetCommands.has(command);
+}
+
+export function isPreviewCommand(command: string): command is PreviewCommand {
+  return previewCommands.has(command);
 }

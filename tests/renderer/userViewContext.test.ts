@@ -68,8 +68,22 @@ describe('agent user view context', () => {
     const context = buildAgentUserViewContext({
       activePanelId: 'panel-1',
       panels: [
-        { id: 'panel-1', type: 'outliner', rootId: 'today', size: 1 },
-        { id: 'panel-2', type: 'outliner', rootId: 'root', size: 1 },
+        {
+          id: 'panel-1',
+          type: 'workspace',
+          view: { kind: 'outliner', rootId: 'today' },
+          size: 1,
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-2',
+          type: 'workspace',
+          view: { kind: 'outliner', rootId: 'root' },
+          size: 1,
+          backStack: [],
+          forwardStack: [],
+        },
       ],
       index,
       ui: ui({
