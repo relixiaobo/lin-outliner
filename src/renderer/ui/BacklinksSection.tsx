@@ -19,7 +19,7 @@ import {
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { replaceRichTextRangeWithInlineRef } from './editor/richTextCodec';
 import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
-import { RowMarker } from './outliner/RowMarker';
+import { RowLeading } from './outliner/RowLeading';
 import { useT } from '../i18n/I18nProvider';
 import type { DocumentIndex } from '../state/document';
 import type { CommandRunner, NavigateRootOptions } from './shared';
@@ -59,6 +59,9 @@ export function BacklinksSection(props: BacklinksSectionProps) {
 
   const openSource = useCallback((event: MouseEvent, sourceNodeId: NodeId) => {
     onRoot(sourceNodeId, { focus: false, newPane: wantsNewPaneFromClick(event) });
+  }, [onRoot]);
+  const openSourceInCurrentPane = useCallback((sourceNodeId: NodeId) => {
+    onRoot(sourceNodeId, { focus: false });
   }, [onRoot]);
 
   const linkMention = useCallback((source: ReferenceSource) => {
@@ -110,6 +113,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
               labels={labels}
               index={index}
               onOpenSource={openSource}
+              onOpenSourceInCurrentPane={openSourceInCurrentPane}
             />
           )}
           {groups.fieldGroups.map((group) => (
@@ -120,6 +124,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
               labels={labels}
               index={index}
               onOpenSource={openSource}
+              onOpenSourceInCurrentPane={openSourceInCurrentPane}
             />
           ))}
           {groups.unlinked.length > 0 && (
@@ -129,6 +134,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
               labels={labels}
               index={index}
               onOpenSource={openSource}
+              onOpenSourceInCurrentPane={openSourceInCurrentPane}
               onLinkMention={linkMention}
               targetTitle={index.byId.get(targetId)?.content.text.trim() || labels.untitledSource}
             />
@@ -145,6 +151,7 @@ function ReferenceGroup({
   labels,
   index,
   onOpenSource,
+  onOpenSourceInCurrentPane,
   onLinkMention,
   targetTitle,
 }: {
@@ -153,6 +160,7 @@ function ReferenceGroup({
   labels: ReturnType<typeof useT>['nodePanel']['references'];
   index: DocumentIndex;
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
+  onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
   onLinkMention?: (source: ReferenceSource) => void;
   targetTitle?: string;
 }) {
@@ -167,6 +175,7 @@ function ReferenceGroup({
             labels={labels}
             index={index}
             onOpenSource={onOpenSource}
+            onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
             onLinkMention={onLinkMention}
             targetTitle={targetTitle}
           />
@@ -181,6 +190,7 @@ function ReferenceResultRow({
   labels,
   index,
   onOpenSource,
+  onOpenSourceInCurrentPane,
   onLinkMention,
   targetTitle,
 }: {
@@ -188,6 +198,7 @@ function ReferenceResultRow({
   labels: ReturnType<typeof useT>['nodePanel']['references'];
   index: DocumentIndex;
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
+  onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
   onLinkMention?: (source: ReferenceSource) => void;
   targetTitle?: string;
 }) {
@@ -210,30 +221,25 @@ function ReferenceResultRow({
         />
       )}
       <div className="backlinks-row-line">
-        <button
-          type="button"
-          className="backlinks-row-open"
-          aria-label={labels.openSource({ title })}
-          onClick={(event) => onOpenSource(event, row.node.id)}
-        >
+        <div className="backlinks-row-open">
           <span className="backlinks-row-highlight" aria-hidden />
-          <span className="backlinks-row-leading" aria-hidden>
-            <span className="backlinks-row-chevron-slot">
-              <ChevronRightIcon size={ICON_SIZE.rowGlyph} />
-            </span>
-            <span className="backlinks-row-marker">
-              <RowMarker
-                hasChildren={false}
-                expanded={false}
-                variant={markerVariant}
-              />
-            </span>
-          </span>
-          <span className="backlinks-row-main">
+          <RowLeading
+            hasChildren={false}
+            expanded={false}
+            variant={markerVariant}
+            onToggleExpand={() => onOpenSourceInCurrentPane(row.node.id)}
+            onDrillDown={() => onOpenSourceInCurrentPane(row.node.id)}
+          />
+          <button
+            type="button"
+            className="backlinks-row-main"
+            aria-label={labels.openSource({ title })}
+            onClick={(event) => onOpenSource(event, row.node.id)}
+          >
             <span className="backlinks-row-title">{title}</span>
             {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
-          </span>
-        </button>
+          </button>
+        </div>
         {onLinkMention && row.source.mention?.field === 'content' && !row.node.locked && (
           <button
             type="button"
