@@ -22,25 +22,33 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/tana-style-references` | PR #208 changes requested — B1 perf fix |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (Tana-style references merged, PR #208) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-**One PR is in flight (2026-06-12):**
+**No PR is in flight (2026-06-12).** All dev clones idle; the queue is clear for
+the next batch.
 
-- **#208 — Tana-style references experience** (codex-3, `codex-3/tana-style-references`)
-  — **gated NO-GO at the main review**: one verified perf blocker (B1 — sorting by the
-  new References field rebuilds the whole-document backlink graph per comparison and
-  bypasses the PR's own `WeakMap` summary cache; violates the plan's mitigation + A9),
-  plus four non-blocking nits. Findings posted to the PR; codex-3 to thread the cached
-  summary into `systemFields`/the sort path and re-request review. Matches the
-  `/code-review ultra` tier (large + core) — recommend a cloud pass alongside the fix.
-  *(Distinct from the held `agent-import-skill` Tana import — this is the references
-  display/interaction experience.)*
+**Just merged:** #208 Tana-style references experience (codex-3) and #213 Agent
+authoring cleanups (codex-4) — see Recently completed.
 
-**Just merged:** #213 Agent authoring cleanups (codex-4) — see Recently completed.
+**Deferred follow-ups from #208** (non-blocking, surfaced by `/code-review high`;
+file as small fast-track items when a clone is free):
+
+- **F7** — `core.backlinks()` field-hosted-ref shape change (`sourceId` = owner
+  node, kind `field`) for the agent `get_backlinks` tool is uncovered by tests;
+  add a core test pinning the agent-projection shape.
+- **F8** — search `LINKS_TO` / `WITH_REFS` now exclude config/enum-role child
+  refs via the same allowlist; confirm intended and add a search test.
+- **F2** — case-fold length edge (İ/ß can change normalized length); CJK
+  unaffected, low priority.
+- **F11** — agent `backlinks()` rebuilds the full reference summary per call
+  (main-process, not a hot path); cache if it ever shows up.
+- **caseFold/`isMentionWord` dedup** — share one normalizer/word-boundary helper
+  with the search engine's `normalizeSearchText` / `WORD_RE` instead of two
+  copies.
 
 **Carried verification TODO** (merged, needs a one-time manual check):
 
@@ -52,7 +60,7 @@ Everything from the 2026-06-05…06-12 batches has **merged** and is logged unde
 **Recently completed**: the agent-program M0–M3 spine (M3 sequence complete —
 #179/#200/#202/#212), the memory-theory realignment (all units #183/#195/#199/#211,
 plan archived `done`), the pre-release architecture sweep (structural-debt list
-closed), and the per-clone feature lanes (#201/#203/#204/#205/#206/#207/#210). Only the
+closed), and the per-clone feature lanes (#201/#203/#204/#205/#206/#207/#208/#210/#213). Only the
 explicitly **deferred** automatic associative retrieval (memory) remains gated — see
 Backlog § memory. No other change is mid-build.
 
@@ -530,6 +538,27 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **Tana-style References experience** (codex-3, PR #208, plan-track) — every
+  `NodePanel` whose root has a linked reference or unlinked mention gets a bottom
+  **References** footer (collapsed default, hidden with no linked reference). One
+  canonical derivation (`src/core/references.ts` `buildReferenceSummary`) feeds the
+  footer (`BacklinksSection.tsx` ← `state/referenceSummary.ts`), the `References`
+  system field / `sys:refCount`, the agent `get_backlinks` projection, and search
+  `LINKS_TO`/`WITH_REFS` — backlink paths stop drifting. Linked = tree + inline +
+  reference-field; unlinked = exact token-boundary Unicode-aware title matches as
+  per-occurrence rows with a `Link` action (revalidated before write). Collapsed
+  counter = linked count; expanded detail = `N references · M unlinked mentions`.
+  Perf: linked summary memoized per projection frame (`WeakMap` on `byId`); the
+  O(N×titles) unlinked scan deferred to expand and scoped to the single focused
+  target (no per-frame / per-sort scan). Gated three rounds — B1 perf blocker
+  fixed (`e359c09`), then `/code-review high` 5 high-value findings
+  F10/F3/F4/F5/F6 fixed (`b19db8f`); final gate green (typecheck · test:core
+  909 / 2 skip / 0 fail · test:renderer 420 / 0 fail · e2e references-footer 2/2),
+  no CSS change so the earlier light+dark visual check stands; spec
+  `ui-behavior.md` synced in-PR; plan archived `done`. Confirmed trade-off:
+  unlinked-only nodes show no footer. Deferred follow-ups (F7/F8/F2/F11 + caseFold
+  dedup) listed under In progress.
 
 - **Agent authoring cleanups** (codex-4, PR #213, fast-track) — closes the
   #167-review-gate residue (the agent-authoring follow-up bullet is now fully

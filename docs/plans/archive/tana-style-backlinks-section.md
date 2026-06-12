@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: codex-3
 created: 2026-06-12
@@ -7,6 +7,26 @@ updated: 2026-06-12
 ---
 
 # Tana-Style References Experience
+
+> **DONE (2026-06-12) — shipped in PR #208.** One complete feature in one PR, as
+> planned. The canonical derivation landed as `src/core/references.ts`
+> (`buildReferenceSummary` over `byId` → `byTarget` + `countsByTarget`), not the
+> tentatively-named `backlinks.ts`; the renderer footer is
+> `src/renderer/ui/BacklinksSection.tsx` driven by
+> `src/renderer/state/referenceSummary.ts`; `systemFields`, the agent
+> `get_backlinks` projection, search `LINKS_TO`/`WITH_REFS`, and the `References`
+> system field all route through the one helper. Spec folded into
+> `docs/spec/ui-behavior.md` (default footer, linked-count collapsed counter,
+> per-occurrence unlinked rows, `Link` action). Gated through three rounds
+> (B1 perf blocker → `/code-review high` 5 high-value findings F10/F3/F4/F5/F6),
+> all fixed and verified green (typecheck · test:core 909/0 · test:renderer 420/0
+> · e2e references-footer 2/2). **Confirmed product trade-off:** a node with only
+> unlinked mentions and no linked references shows no footer (visibility gated on
+> the cheap `linkedCount` to avoid a per-frame scan; Tana-consistent). **Deferred
+> follow-ups** (non-blocking, see TASKS Backlog): F7 agent `get_backlinks`
+> field-ref shape test, F8 search role-narrowing confirm, F2 case-fold length
+> edge, F11 agent `backlinks()` per-call rebuild, caseFold/`isMentionWord`
+> dedup with the search engine's normalizer.
 
 Bring backlink visibility in the outliner to the Tana/nodex model: if the
 current page node has references or textual mentions, its `NodePanel` shows a

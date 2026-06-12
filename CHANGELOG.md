@@ -12,6 +12,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Tana-style References experience (PR #208, codex-3)** — every `NodePanel`
+  whose root node has at least one linked reference or unlinked textual mention
+  now shows a bottom **References** footer (collapsed by default, hidden when
+  there is no linked reference). One canonical derivation
+  (`src/core/references.ts` `buildReferenceSummary` over `byId` →
+  `byTarget` + `countsByTarget`) feeds the footer
+  (`src/renderer/ui/BacklinksSection.tsx` via
+  `src/renderer/state/referenceSummary.ts`), the `References` system field /
+  `sys:refCount`, the agent `get_backlinks` projection, and search
+  `LINKS_TO` / `WITH_REFS`, so those backlink paths stop drifting. Linked
+  references cover tree reference nodes, inline node references, and
+  reference-field values; **unlinked mentions** are exact, token-boundary,
+  Unicode-aware title matches rendered as per-occurrence rows with a `Link`
+  action that converts just that range into an inline reference through the
+  normal command path (revalidated against current content before the write).
+  The collapsed counter shows the linked count (matching `sys:refCount`); the
+  expanded detail reads `N references · M unlinked mentions`. Performance: the
+  linked summary is memoized per projection frame (`WeakMap` on `byId`) and the
+  O(N×titles) unlinked scan is deferred to expand and scoped to the single
+  focused target, so no per-frame or per-sort-comparison document scan. Spec:
+  `docs/spec/ui-behavior.md`. *(Known trade-off: a node with only unlinked
+  mentions and no linked references shows no footer.)*
 - **File preview panel (PR #210, codex-4)** — workspace panes generalize to a
   `PanelView` union so the outliner and a new `file-preview` view share one pane
   host and Back/Forward history. A shared `PreviewTarget` /
