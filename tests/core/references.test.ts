@@ -99,4 +99,41 @@ describe('buildReferenceSummary', () => {
     expect(unlinked.map((source) => source.sourceNodeId)).toEqual(['repeated-source', 'second-source']);
     expect(unlinked[0]?.mention).toMatchObject({ field: 'content', start: 0, end: 13, text: 'Project Alpha' });
   });
+
+  test('does not create unlinked mentions from a node to itself', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('Project Alpha mentions Project Alpha') }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+
+    expect(summary.byTarget.get('target')).toBeUndefined();
+    expect(summary.countsByTarget.get('target')).toBeUndefined();
+  });
+
+  test('does not match a CJK title inside a longer CJK word', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('项目集') }),
+      node({ id: 'longer-word-source', content: plainText('项目集合') }),
+      node({ id: 'separated-source', content: plainText('项目集。') }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+    const unlinked = (summary.byTarget.get('target') ?? []).filter((source) => source.kind === 'unlinked');
+
+    expect(summary.countsByTarget.get('target')).toEqual({ linked: 0, unlinked: 1, total: 1 });
+    expect(unlinked.map((source) => source.sourceNodeId)).toEqual(['separated-source']);
+  });
+
+  test('skips parentless reference nodes instead of attributing them to themselves', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('Target') }),
+      node({ id: 'orphan-ref', type: 'reference', targetId: 'target' }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId);
+
+    expect(summary.byTarget.get('target')).toBeUndefined();
+    expect(summary.countsByTarget.get('target')).toBeUndefined();
+  });
 });

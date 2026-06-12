@@ -15,6 +15,7 @@ import { buildReferenceCandidates } from '../../src/renderer/ui/interactions/ref
 import { getTreeReferenceBlockReason } from '../../src/renderer/ui/interactions/referenceRules';
 import { resolveSelectedReferenceShortcut } from '../../src/renderer/ui/interactions/selectedReferenceShortcuts';
 import { filterSlashCommands } from '../../src/renderer/ui/interactions/slashCommands';
+import type { ReferenceSummary } from '../../src/core/references';
 import {
   clampTagSelectorIndex,
   tagSelectorItemLabel,
@@ -41,7 +42,7 @@ import {
   resolveOutlinerDropMove,
 } from '../../src/renderer/ui/interactions/dragDrop';
 import { buildOutlinerRows, hiddenFieldKey } from '../../src/renderer/ui/outliner/row-model';
-import { DONE_FIELD, NAME_FIELD } from '../../src/core/systemFields';
+import { DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
@@ -250,6 +251,35 @@ describe('row interaction resolvers', () => {
 	      { id: 'c', type: 'content' },
 	    ]);
 	  });
+
+  test('sorts References through the shared system field summary context', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['view', 'empty', 'referenced'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: ['sort'],
+      })],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: REF_COUNT_FIELD,
+        sortDirection: 'desc',
+      })],
+      ['empty', makeNode('empty', 'Empty', { parentId: 'parent' })],
+      ['referenced', makeNode('referenced', 'Referenced', { parentId: 'parent' })],
+    ]);
+    const referenceSummary: ReferenceSummary = {
+      byTarget: new Map(),
+      countsByTarget: new Map([['referenced', { linked: 1, unlinked: 0, total: 1 }]]),
+    };
+
+    expect(buildOutlinerRows(parent as any, byId, { systemFieldContext: { referenceSummary } })).toEqual([
+      { id: 'referenced', type: 'content' },
+      { id: 'empty', type: 'content' },
+    ]);
+  });
 
 	  test('filters a custom date field by after using parsed dates, not string compare', () => {
 	    const parent = makeNode('parent', 'Parent', { children: ['view', 'early', 'late'] });

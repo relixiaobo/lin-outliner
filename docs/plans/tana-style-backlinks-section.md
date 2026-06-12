@@ -117,7 +117,9 @@ Rules:
   - internal/config/search-result nodes;
   - empty or too-short target titles that would create noisy matches.
 - Mention matching must be deterministic and testable. Prefer a small tokenizer
-  / boundary helper over ad-hoc substring checks.
+  / boundary helper over ad-hoc substring checks, and treat adjacent Unicode
+  letters/numbers as part of the same token so CJK titles do not match inside
+  longer CJK words.
 - Unlinked mention ranges must be stable enough to patch: if a source row changes
   before the user clicks `Link`, revalidate the range against current content
   before writing. If it no longer matches, refresh the source set and do not
@@ -278,9 +280,10 @@ Expected touch set:
   `Link`; never patch by stale offsets.
 - **Performance on every keystroke.** The current `References` system field can
   already scan `byId`; adding unlinked mentions and footer counts raises the
-  cost. The implementation must memoize by projection revision / `byId`, and it
-  should build a per-target count map once per projection frame rather than
-  scanning the document per row.
+  cost. The implementation memoizes by projection frame / `byId`, builds a
+  per-target count map once, and passes or primes that cached summary into the
+  `References` system field so sort/filter/render paths do not scan the document
+  per row or per comparison.
 - **Visual noise.** Tana's footer is useful because it is quiet and collapsible.
   Default-collapsed behavior plus no-zero-state rendering keeps empty pages clean;
   the footer count must stay visually secondary and row chrome must remain clean.

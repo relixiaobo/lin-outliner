@@ -89,6 +89,7 @@ export function buildReferenceSummary(
     if (isDeleted(node.id)) continue;
     if (node.type === 'reference' && node.targetId && refRoleCountsAsBacklink(node)) {
       const source = referenceSourceForNode(byId, node);
+      if (!source) continue;
       addReferenceSource(byTarget, {
         targetId: node.targetId,
         sourceNodeId: source.sourceNodeId,
@@ -135,8 +136,9 @@ export function referencesForTarget(
 function referenceSourceForNode(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   reference: ReferenceNodeLike,
-): Pick<ReferenceSource, 'sourceNodeId' | 'kind' | 'fieldEntryId' | 'fieldDefId'> {
+): Pick<ReferenceSource, 'sourceNodeId' | 'kind' | 'fieldEntryId' | 'fieldDefId'> | null {
   const parent = reference.parentId ? byId.get(reference.parentId) : undefined;
+  if (!parent) return null;
   if (parent?.type === 'fieldEntry') {
     return {
       sourceNodeId: parent.parentId ?? parent.id,
@@ -318,11 +320,11 @@ function hasMentionBoundary(text: string, start: number, end: number): boolean {
   const last = text[end - 1];
   const before = start > 0 ? text[start - 1] : '';
   const after = end < text.length ? text[end] : '';
-  return (!isAsciiWord(first) || !isAsciiWord(before)) && (!isAsciiWord(last) || !isAsciiWord(after));
+  return (!isMentionWord(first) || !isMentionWord(before)) && (!isMentionWord(last) || !isMentionWord(after));
 }
 
-function isAsciiWord(value: string | undefined): boolean {
-  return Boolean(value && /[A-Za-z0-9_]/.test(value));
+function isMentionWord(value: string | undefined): boolean {
+  return Boolean(value && /[\p{L}\p{N}_]/u.test(value));
 }
 
 function caseFold(value: string): string {

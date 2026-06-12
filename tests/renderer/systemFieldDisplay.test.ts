@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { buildReferenceSummary } from '../../src/core/references';
 import type { NodeId, NodeProjection } from '../../src/renderer/api/types';
 import { nodeReferenceTarget } from '../../src/renderer/api/types';
 import {
@@ -163,5 +164,19 @@ describe('systemFieldValues (sort/group/filter adapter)', () => {
     expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['1']);
     const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
     expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'active-source', label: 'Active' }]);
+  });
+
+  test('References can resolve from a shared summary context', () => {
+    const map = byId(
+      node({ id: 'target' }),
+      node({ id: 'source', children: ['ref'], content: { text: 'Source', marks: [], inlineRefs: [] } }),
+      node({ id: 'ref', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+    );
+    const referenceSummary = buildReferenceSummary(map);
+    const context = { referenceSummary };
+
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map, context)).toEqual(['1']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map, context);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'source', label: 'Source' }]);
   });
 });

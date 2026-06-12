@@ -7,7 +7,7 @@
 // drifting, and living in `core/` lets both the renderer and the main process use
 // it (it reads a structural node shape that `Node` and `NodeProjection` satisfy).
 
-import { buildReferenceSummary } from './references';
+import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { nodeIsInSubtree } from './treeUtils';
 import { TRASH_ID, type NodeId, type NodeType, type RefRole, type RichText } from './types';
 
@@ -46,6 +46,12 @@ export interface SysFieldNode {
   commandAgent?: string;
 }
 export type SysFieldNodeMap = ReadonlyMap<NodeId, SysFieldNode>;
+
+export interface SystemFieldContext {
+  referenceSummary?: ReferenceSummary;
+}
+
+const referenceSummaryCache = new WeakMap<SysFieldNodeMap, ReferenceSummary>();
 
 export function isSystemFieldId(fieldId: string | undefined): fieldId is string {
   return typeof fieldId === 'string' && fieldId.startsWith('sys:');
@@ -114,10 +120,27 @@ function nearestDayNode(node: SysFieldNode, byId: SysFieldNodeMap): SysFieldNode
 // Backlinks: the references whose target is `node`. `count` is every such reference
 // (what sort/group reports); `sources` are the deduped containing nodes, each
 // navigable (what the value renders).
-function resolveBacklinks(node: SysFieldNode, byId: SysFieldNodeMap): { sources: SystemFieldRef[]; count: number } {
+function referenceSummaryForSystemFields(byId: SysFieldNodeMap, context?: SystemFieldContext): ReferenceSummary {
+  if (context?.referenceSummary) {
+    referenceSummaryCache.set(byId, context.referenceSummary);
+    return context.referenceSummary;
+  }
+  const cached = referenceSummaryCache.get(byId);
+  if (cached) return cached;
+
   const summary = buildReferenceSummary(byId, {
     isDeleted: (nodeId) => nodeIsInSubtree(byId, nodeId, TRASH_ID),
   });
+  referenceSummaryCache.set(byId, summary);
+  return summary;
+}
+
+function resolveBacklinks(
+  node: SysFieldNode,
+  byId: SysFieldNodeMap,
+  context?: SystemFieldContext,
+): { sources: SystemFieldRef[]; count: number } {
+  const summary = referenceSummaryForSystemFields(byId, context);
   const backlinks = summary.byTarget.get(node.id) ?? [];
   const count = summary.countsByTarget.get(node.id)?.linked ?? 0;
   const sources: SystemFieldRef[] = [];
@@ -153,7 +176,12 @@ export type ResolvedSystemField =
   | { kind: 'commandAgent'; agent: string | null }
   | { kind: 'text'; values: string[] };
 
-export function resolveSystemField(owner: SysFieldNode, fieldId: string, byId: SysFieldNodeMap): ResolvedSystemField {
+export function resolveSystemField(
+  owner: SysFieldNode,
+  fieldId: string,
+  byId: SysFieldNodeMap,
+  context?: SystemFieldContext,
+): ResolvedSystemField {
   const node = displayNode(owner, byId);
   if (fieldId === DONE_FIELD) return { kind: 'done', done: Boolean(node.completedAt) };
   if (fieldId === COMMAND_SCHEDULE_FIELD_ID) return { kind: 'commandSchedule', schedule: node.commandSchedule ?? null };
@@ -171,7 +199,7 @@ export function resolveSystemField(owner: SysFieldNode, fieldId: string, byId: S
     return { kind: 'dayRef', nodeId: day?.id ?? null, text: day ? day.content.text.trim() : '' };
   }
   if (fieldId === REF_COUNT_FIELD) {
-    const { sources, count } = resolveBacklinks(node, byId);
+    const { sources, count } = resolveBacklinks(node, byId, context);
     return { kind: 'nodeRefs', refs: sources, count };
   }
   return { kind: 'text', values: [] };
@@ -182,8 +210,13 @@ export function resolveSystemField(owner: SysFieldNode, fieldId: string, byId: S
  * date-filter parser expects that); References reports its raw count; Owner/Day/Tags
  * report their text. `NAME_FIELD` is handled by the caller (it reads node text).
  */
-export function systemFieldValues(owner: SysFieldNode, fieldId: string, byId: SysFieldNodeMap): string[] {
-  const resolved = resolveSystemField(owner, fieldId, byId);
+export function systemFieldValues(
+  owner: SysFieldNode,
+  fieldId: string,
+  byId: SysFieldNodeMap,
+  context?: SystemFieldContext,
+): string[] {
+  const resolved = resolveSystemField(owner, fieldId, byId, context);
   switch (resolved.kind) {
     case 'done':
       return [resolved.done ? 'true' : 'false'];
@@ -236,8 +269,13 @@ export type SystemFieldDisplay =
   | { kind: 'commandAgent'; agent: string | null }
   | { kind: 'text'; text: string };
 
-export function systemFieldDisplay(owner: SysFieldNode, fieldId: string, byId: SysFieldNodeMap): SystemFieldDisplay {
-  const resolved = resolveSystemField(owner, fieldId, byId);
+export function systemFieldDisplay(
+  owner: SysFieldNode,
+  fieldId: string,
+  byId: SysFieldNodeMap,
+  context?: SystemFieldContext,
+): SystemFieldDisplay {
+  const resolved = resolveSystemField(owner, fieldId, byId, context);
   switch (resolved.kind) {
     case 'done':
       return { kind: 'done', checked: resolved.done };

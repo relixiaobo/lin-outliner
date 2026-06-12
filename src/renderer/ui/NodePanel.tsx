@@ -194,10 +194,12 @@ export function NodePanel(props: NodePanelProps) {
   const titleEditorFocused = props.ui.focusedId === resolvedRootId
     && props.ui.focusSurface === 'panel-title'
     && props.ui.focusedPanelId === props.panelId;
+  const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
+  const systemFieldContext = useMemo(() => ({ referenceSummary }), [referenceSummary]);
   const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
-  }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
-  const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
+    systemFieldContext,
+  }), [props.index.byId, props.ui.expandedHiddenFields, rootNode, systemFieldContext]);
 
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId) return;

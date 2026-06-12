@@ -38,7 +38,7 @@ export function OutlinerPreviewRow({
   children,
 }: OutlinerPreviewRowProps) {
   const wrapStyle = {
-    '--outliner-preview-indent': `${depth * 28}px`,
+    '--outliner-preview-indent': `calc(${depth} * var(--row-depth))`,
   } as CSSProperties;
   const wrapProps = {
     'data-node-id': nodeId,

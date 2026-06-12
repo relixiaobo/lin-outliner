@@ -11,6 +11,7 @@ import {
   isSystemFieldId,
   systemFieldLabel,
   systemFieldValues,
+  type SystemFieldContext,
 } from '../../core/systemFields';
 
 const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
@@ -38,6 +39,7 @@ export type OutlinerRowItem =
 
 export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
+  systemFieldContext?: SystemFieldContext;
 }
 
 export interface ViewSortRule {
@@ -161,12 +163,17 @@ function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProje
     .join(' ');
 }
 
-function fieldValuesFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): string[] {
+function fieldValuesFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): string[] {
   const displayed = displayNode(rowNode, byId);
   // Name reads the node's own (possibly nested) text; every other system field is
   // a computed projection resolved by the shared `systemFields` module.
   if (fieldId === NAME_FIELD) return [childText(displayed, byId)].filter(Boolean);
-  if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId);
+  if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId, systemFieldContext);
 
   const fieldEntry = displayed.children
     .map((childId) => byId.get(childId))
@@ -179,12 +186,22 @@ function fieldValuesFor(rowNode: NodeProjection, fieldId: string, byId: Map<Node
   return values.length > 0 ? values : [childText(fieldEntry, byId)].filter(Boolean);
 }
 
-function fieldTextFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): string {
-  return fieldValuesFor(rowNode, fieldId, byId).join(' ');
+function fieldTextFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): string {
+  return fieldValuesFor(rowNode, fieldId, byId, systemFieldContext).join(' ');
 }
 
-function fieldNumberFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): number | null {
-  const value = fieldValuesFor(rowNode, fieldId, byId)[0];
+function fieldNumberFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): number | null {
+  const value = fieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
   if (value === undefined) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -218,6 +235,7 @@ function compareRowsByField(
   right: OutlinerRowItem,
   byId: Map<NodeId, NodeProjection>,
   fieldId: string,
+  systemFieldContext?: SystemFieldContext,
 ): number {
   if (left.type !== 'content' && left.type !== 'field') return 1;
   if (right.type !== 'content' && right.type !== 'field') return -1;
@@ -226,8 +244,8 @@ function compareRowsByField(
   if (!leftNode || !rightNode) return 0;
 
   if ([CREATED_FIELD, UPDATED_FIELD, DONE_AT_FIELD, REF_COUNT_FIELD].includes(fieldId)) {
-    const leftNumber = fieldNumberFor(leftNode, fieldId, byId) ?? Number.POSITIVE_INFINITY;
-    const rightNumber = fieldNumberFor(rightNode, fieldId, byId) ?? Number.POSITIVE_INFINITY;
+    const leftNumber = fieldNumberFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    const rightNumber = fieldNumberFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
     return leftNumber - rightNumber;
   }
   if (fieldId === DONE_FIELD) {
@@ -236,8 +254,8 @@ function compareRowsByField(
     return leftDone - rightDone;
   }
 
-  const leftText = fieldTextFor(leftNode, fieldId, byId).toLocaleLowerCase();
-  const rightText = fieldTextFor(rightNode, fieldId, byId).toLocaleLowerCase();
+  const leftText = fieldTextFor(leftNode, fieldId, byId, systemFieldContext).toLocaleLowerCase();
+  const rightText = fieldTextFor(rightNode, fieldId, byId, systemFieldContext).toLocaleLowerCase();
   return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
@@ -245,13 +263,14 @@ function filterRows(
   view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
 ): OutlinerRowItem[] {
   if (view.filterRules.length === 0) return rows;
   return rows.filter((row) => {
     if (row.type !== 'content' && row.type !== 'field') return true;
     const node = byId.get(row.id);
     if (!node) return false;
-    return view.filterRules.every((rule) => rowMatchesFilter(node, rule, byId));
+    return view.filterRules.every((rule) => rowMatchesFilter(node, rule, byId, systemFieldContext));
   });
 }
 
@@ -287,8 +306,13 @@ function rowMatchesDateFilter(rule: ViewFilterRule, values: string[], expected: 
   return rule.valueLogic === 'all' ? expected.every(matchOne) : expected.some(matchOne);
 }
 
-function rowMatchesFilter(node: NodeProjection, rule: ViewFilterRule, byId: Map<NodeId, NodeProjection>): boolean {
-  const values = fieldValuesFor(node, rule.field, byId);
+function rowMatchesFilter(
+  node: NodeProjection,
+  rule: ViewFilterRule,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): boolean {
+  const values = fieldValuesFor(node, rule.field, byId, systemFieldContext);
   const normalizedValues = values.map((value) => value.toLocaleLowerCase());
   const expected = rule.values.map((value) => value.trim().toLocaleLowerCase()).filter(Boolean);
 
@@ -321,12 +345,13 @@ function sortRows(
   view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
 ): OutlinerRowItem[] {
   if (view.sortRules.length === 0) return rows;
   const sortedRows = [...rows];
   sortedRows.sort((left, right) => {
     for (const rule of view.sortRules) {
-      const result = compareRowsByField(left, right, byId, rule.field);
+      const result = compareRowsByField(left, right, byId, rule.field, systemFieldContext);
       if (result !== 0) return rule.direction === 'desc' ? -result : result;
     }
     return 0;
@@ -389,6 +414,7 @@ function groupRows(
   view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
 ): OutlinerRowItem[] {
   const fieldId = view.groupField;
   if (!fieldId) return rows;
@@ -401,7 +427,7 @@ function groupRows(
       continue;
     }
     const node = byId.get(row.id);
-    const values = node ? fieldValuesFor(node, fieldId, byId) : [];
+    const values = node ? fieldValuesFor(node, fieldId, byId, systemFieldContext) : [];
     const bucket = groupBucket(fieldId, values, byId);
     const group = groups.get(bucket.key) ?? { label: bucket.label, sortKey: bucket.sortKey, rows: [] };
     group.rows.push(row);
@@ -459,9 +485,17 @@ function applyViewSettings(
   parent: NodeProjection,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
+  options: RowBuildOptions,
 ): OutlinerRowItem[] {
   const view = readViewConfig(parent, byId);
-  return groupRows(parent, view, sortRows(view, filterRows(view, rows, byId), byId), byId);
+  const systemFieldContext = options.systemFieldContext;
+  return groupRows(
+    parent,
+    view,
+    sortRows(view, filterRows(view, rows, byId, systemFieldContext), byId, systemFieldContext),
+    byId,
+    systemFieldContext,
+  );
 }
 
 export function buildOutlinerRows(
@@ -470,7 +504,7 @@ export function buildOutlinerRows(
   options: RowBuildOptions = {},
 ): OutlinerRowItem[] {
   if (!parent) return [];
-  return applyViewSettings(parent, buildChildRows(parent, byId, options), byId);
+  return applyViewSettings(parent, buildChildRows(parent, byId, options), byId, options);
 }
 
 // A field's display label: a fixed system-field label, else the def node's title.
