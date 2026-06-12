@@ -27,8 +27,8 @@ export function mediaSource(
 }
 
 /**
- * Node types whose body is a non-text block (an image today; attachments,
- * embeds, and media players later). They share one interaction contract:
+ * Node types whose body is a non-text block (images and attachments today;
+ * embeds later). They share one interaction contract:
  * a focusable, caret-less row whose caption is the node's `description`, with
  * arrow / Enter / Backspace navigation. `BlockNodeRow` owns that contract;
  * each type only contributes a presentational body in `renderBlockBody`.

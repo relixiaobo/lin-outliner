@@ -258,9 +258,9 @@ serialized to the run brief by `commandBriefText`.
 `ingest_asset` stores bytes under the workspace asset directory and returns
 `AssetMetadata`. It derives image dimensions, PDF page count, audio/video
 duration when the format is locally parseable, and a best-effort first-page PDF
-thumbnail when the platform thumbnail tool is available. MIME type is first
-taken from a trusted renderer hint when present, then from file signatures, then
-from filename extension, falling back to `application/octet-stream`.
+thumbnail when the platform thumbnail tool is available. MIME type is resolved
+from file signatures or filename extension first, then from a renderer hint when
+present, falling back to `application/octet-stream`.
 
 `pick_image_files` and `pick_attachment_files` open native file pickers in the
 main process and ingest selected regular files before returning metadata to the
