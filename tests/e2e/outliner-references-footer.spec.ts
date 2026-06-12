@@ -79,6 +79,9 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
     const sourceMarker = linkRow?.querySelector('.row-bullet-button');
     const sourceTitle = linkRow?.querySelector('.backlinks-row-title');
     if (!link || !linkRowOpen || !sourceMarker || !sourceTitle) throw new Error('missing unlinked row alignment target');
+    const linkRect = link.getBoundingClientRect();
+    const rowRect = linkRowOpen.getBoundingClientRect();
+    const linkStyle = getComputedStyle(link);
     const left = (selector: string) => {
       const element = document.querySelector(selector);
       if (!element) throw new Error(`missing alignment target: ${selector}`);
@@ -87,9 +90,11 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
     return {
       bodyBulletLeft: left(`[data-trailing-parent-id="${alphaId}"] .row-bullet-button`),
       bodyTextLeft: left(`[data-trailing-parent-id="${alphaId}"] .ProseMirror`),
-      rowRight: linkRowOpen.getBoundingClientRect().right,
-      linkLeft: link.getBoundingClientRect().left,
-      linkRight: link.getBoundingClientRect().right,
+      rowRight: rowRect.right,
+      linkLeft: linkRect.left,
+      linkRight: linkRect.right,
+      linkHeight: linkRect.height,
+      linkBackgroundColor: linkStyle.backgroundColor,
       sourceMarkerLeft: sourceMarker.getBoundingClientRect().left,
       sourceTitleLeft: sourceTitle.getBoundingClientRect().left,
       sourceTitleRight: sourceTitle.getBoundingClientRect().right,
@@ -100,6 +105,9 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleLeft);
   expect(alignment.linkLeft).toBeLessThan(alignment.sourceTitleRight);
   expect(alignment.linkRight).toBeLessThanOrEqual(alignment.rowRight + 1);
+  expect(alignment.rowRight - alignment.linkRight).toBeLessThanOrEqual(10);
+  expect(alignment.linkHeight).toBeGreaterThan(18);
+  expect(alignment.linkBackgroundColor).not.toBe('rgba(0, 0, 0, 0)');
 
   const linkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Mentioned in...' }).first();
   const linkedRow = linkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
