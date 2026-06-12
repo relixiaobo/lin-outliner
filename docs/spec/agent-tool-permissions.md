@@ -86,15 +86,20 @@ platform hard block.
   asks.
 - **Balanced** — the default. It preserves the pre-safety-mode practical
   behavior: local/outliner reads and edits are allowed; execution, deletes, web
-  fetch, external mutations, skill writes, subagent spawn, config writes, Dream,
-  sensitive reads, and outside-root access ask or deny according to descriptors.
+  fetch, external mutations, subagent spawn, config writes, Dream, sensitive
+  reads, and outside-root access ask or deny according to descriptors.
 - **Full Access** — allows classified non-redline routine automation: allowed-root
   file/outliner edits and deletes, web fetch, local code/project script
   execution, dependency install, network writes, git/GitHub mutation, subagent
-  spawn, Dream, skill content writes, and background processes. It still asks for
-  deploy/publish, sandbox override, config writes, sensitive local reads, and
-  outside-root reads/writes; unknown shell, sensitive writes, exfiltration, host
-  destruction, permission modification, and payment remain denied.
+  spawn, Dream, and background processes. It still asks for deploy/publish,
+  sandbox override, config writes, sensitive local reads, and outside-root
+  reads/writes; unknown shell, sensitive writes, exfiltration, host destruction,
+  permission modification, and payment remain denied.
+
+Skill files follow the ordinary `file_write` / `file_edit` permission decision.
+After that decision, the file-tool gateway still validates skill content, records
+provenance and rollback metadata, emits skill audit events, and hot-reloads the
+registry.
 
 ## Platform hard blocks
 

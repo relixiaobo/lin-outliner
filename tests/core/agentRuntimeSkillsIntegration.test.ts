@@ -644,19 +644,10 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Create the audited skill.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-    ));
-    if (!approvalEvent) throw new Error('Expected skill write approval request.');
-    expect(approvalEvent.request.toolName).toBe('file_write');
-    expect(approvalEvent.request.title).toBe('Approve skill content write?');
-
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
-    await sendPromise;
+    await runtime.sendMessage(created.conversationId, 'Create the audited skill.');
 
     expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
     expect(await readFile(path.join(localRoot, '.agents', 'skills', 'audited-skill', 'SKILL.md'), 'utf8'))
       .toBe(skillContent);
 

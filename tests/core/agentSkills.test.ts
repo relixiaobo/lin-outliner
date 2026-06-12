@@ -36,8 +36,8 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
   });
 
   test('recognizes an additional dir OUTSIDE root (the closed governance hole)', () => {
-    // Before convergence this path bypassed agent.skill.write classification entirely
-    // because the detector hardcoded .agents/skills paths and ignored configured dirs.
+    // The loader and file-tool gateway share this resolver so configured skill dirs
+    // get the same validation, provenance, and hot-reload handling as defaults.
     const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
     const target = resolveSkillContentTarget(
       path.join(teamSkills, 'shared', 'SKILL.md'),
@@ -571,8 +571,39 @@ describe('agent skills', () => {
       ratified: true,
     });
     const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
+    expect(text).not.toContain('Base directory for this skill:');
+    expect(text).not.toContain('built-in/skillify/SKILL.md');
     expect(text).toContain('Skill authoring workflow');
     expect(text).toContain('start unratified');
+  });
+
+  test('records built-in skill invocations without surfacing pseudo file paths', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const invocation = await runtime.invokeSkill({ skill: 'skillify', trigger: 'agent' });
+
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain('Skill authoring workflow');
+    expect(invocation.renderedContent).not.toContain('Base directory for this skill:');
+    expect(invocation.renderedContent).not.toContain('built-in/skillify/SKILL.md');
+
+    const reminder = runtime.createInvokedSkillsReminder();
+    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+
+    expect(text).toContain('### Skill: skillify');
+    expect(text).toContain('Path: built-in:skillify');
+    expect(text).not.toContain('built-in/skillify/SKILL.md');
+  });
+
+  test('persists built-in skill listing state without pseudo file paths', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+
+    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('- skillify:');
+    const reminder = runtime.createSkillListingStateReminder();
+    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+
+    expect(text).toContain('- skillify [skill-file: built-in:skillify]');
+    expect(text).not.toContain('built-in/skillify/SKILL.md');
   });
 
   test('records model and effort effects for slash and agent-invoked skills', async () => {
@@ -702,6 +733,33 @@ describe('agent skills', () => {
       ? invocation.message.content[0].text
       : '';
     expect(messageText).toContain('fork result:');
+  });
+
+  test('does not restore slash fork skill results as reusable skill guidance', async () => {
+    const root = await createSkillFixture('forked', {
+      frontmatter: [
+        'description: Forked skill',
+        'context: fork',
+      ],
+      body: 'Requires isolated execution.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeForkedSkill: async ({ skill }) => ({
+        agentId: 'child-run-test',
+        agentType: skill.agent ?? 'general',
+        status: 'completed',
+        result: 'one-shot fork result',
+      }),
+    });
+    await acceptSkillForTest(runtime, 'forked');
+
+    const prompt = await createSlashSkillPrompt(runtime, '/forked demo', null);
+    const restored = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    if (prompt) restored.restoreInvokedSkillsFromMessages([prompt]);
+
+    expect(restored.createInvokedSkillsReminder()).toBeNull();
   });
 
   test('rejects fork-context skills when no fork executor is available', async () => {
