@@ -959,11 +959,8 @@ function nodeLinksTo(index: SearchIndex, node: SearchNode, targetId: NodeId): bo
     if (child.type !== 'fieldEntry') return false;
     return child.children.some((valueId) => {
       const value = index.nodes.get(valueId);
-      return Boolean(value)
-        && !isInTrash(index, value!.id)
-        && value!.type === 'reference'
-        && refRoleCountsAsBacklink(value!)
-        && value!.targetId === targetId;
+      if (!value || isInTrash(index, value.id) || value.type !== 'reference') return false;
+      return refRoleCountsAsBacklink(value) && value.targetId === targetId;
     });
   });
 }

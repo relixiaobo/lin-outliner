@@ -71,6 +71,12 @@ const NON_MENTION_NODE_TYPES = new Set<NodeType>([
   'queryCondition',
 ]);
 
+interface MentionTarget {
+  nodeId: NodeId;
+  text: string;
+  lowerText: string;
+}
+
 export function buildReferenceSummary(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   options: ReferenceSummaryOptions = {},
@@ -193,18 +199,28 @@ function addUnlinkedMentions(
 ): void {
   const targetTitles = mentionTargetTitles(byId, isDeleted, options.minMentionLength ?? MIN_MENTION_LENGTH);
   if (targetTitles.length === 0) return;
+  const targetsByFirstChar = mentionTargetsByFirstChar(targetTitles);
 
   const scanDescriptions = options.includeDescriptions ?? true;
   for (const source of byId.values()) {
     if (!nodeCanSourceUnlinkedMention(source, isDeleted)) continue;
-    for (const target of targetTitles) {
-      if (source.id === target.nodeId) continue;
-      if (linkedSourceIdsByTarget.get(target.nodeId)?.has(source.id)) continue;
-
-      addUnlinkedMentionsFromText(byTarget, source, target, 'content', source.content.text);
-      if (scanDescriptions && source.description) {
-        addUnlinkedMentionsFromText(byTarget, source, target, 'description', source.description);
-      }
+    addUnlinkedMentionsFromText(
+      byTarget,
+      source,
+      targetsByFirstChar,
+      linkedSourceIdsByTarget,
+      'content',
+      source.content.text,
+    );
+    if (scanDescriptions && source.description) {
+      addUnlinkedMentionsFromText(
+        byTarget,
+        source,
+        targetsByFirstChar,
+        linkedSourceIdsByTarget,
+        'description',
+        source.description,
+      );
     }
   }
 }
@@ -213,14 +229,14 @@ function mentionTargetTitles(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   isDeleted: (nodeId: NodeId) => boolean,
   minMentionLength: number,
-): Array<{ nodeId: NodeId; text: string; lowerText: string }> {
-  const targets: Array<{ nodeId: NodeId; text: string; lowerText: string }> = [];
+): MentionTarget[] {
+  const targets: MentionTarget[] = [];
   const seenTitlesByNode = new Set<string>();
   for (const node of byId.values()) {
     if (isDeleted(node.id) || !nodeCanBeMentionTarget(node)) continue;
     const text = node.content.text.trim();
     if (text.length < minMentionLength) continue;
-    const lowerText = text.toLocaleLowerCase();
+    const lowerText = caseFold(text);
     const key = `${node.id}\u0000${lowerText}`;
     if (seenTitlesByNode.has(key)) continue;
     seenTitlesByNode.add(key);
@@ -228,6 +244,21 @@ function mentionTargetTitles(
   }
   targets.sort((a, b) => b.text.length - a.text.length || a.text.localeCompare(b.text));
   return targets;
+}
+
+function mentionTargetsByFirstChar(targets: readonly MentionTarget[]): ReadonlyMap<string, readonly MentionTarget[]> {
+  const byFirstChar = new Map<string, MentionTarget[]>();
+  for (const target of targets) {
+    const key = firstCaseFoldedChar(target.text);
+    if (!key) continue;
+    const bucket = byFirstChar.get(key);
+    if (bucket) {
+      bucket.push(target);
+      continue;
+    }
+    byFirstChar.set(key, [target]);
+  }
+  return byFirstChar;
 }
 
 function nodeCanBeMentionTarget(node: ReferenceNodeLike): boolean {
@@ -243,47 +274,41 @@ function nodeCanSourceUnlinkedMention(node: ReferenceNodeLike, isDeleted: (nodeI
 function addUnlinkedMentionsFromText(
   byTarget: Map<NodeId, ReferenceSource[]>,
   source: ReferenceNodeLike,
-  target: { nodeId: NodeId; text: string; lowerText: string },
+  targetsByFirstChar: ReadonlyMap<string, readonly MentionTarget[]>,
+  linkedSourceIdsByTarget: ReadonlyMap<NodeId, ReadonlySet<NodeId>>,
   field: ReferenceMentionField,
   text: string,
 ): void {
   if (!text) return;
-  const lowerText = text.toLocaleLowerCase();
-  const ranges = findMentionRanges(text, lowerText, target.lowerText);
-  for (const range of ranges) {
-    addReferenceSource(byTarget, {
-      targetId: target.nodeId,
-      sourceNodeId: source.id,
-      referenceNodeId: source.id,
-      kind: 'unlinked',
-      mention: {
-        field,
-        start: range.start,
-        end: range.end,
-        text: text.slice(range.start, range.end) || target.text,
-      },
-    });
-  }
-}
-
-function findMentionRanges(
-  originalText: string,
-  lowerText: string,
-  lowerNeedle: string,
-): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  if (!lowerNeedle) return ranges;
-  let start = 0;
-  while (start < lowerText.length) {
-    const index = lowerText.indexOf(lowerNeedle, start);
-    if (index === -1) break;
-    const end = index + lowerNeedle.length;
-    if (hasMentionBoundary(originalText, index, end)) {
-      ranges.push({ start: index, end });
+  const addedRanges = new Set<string>();
+  for (let start = 0; start < text.length; start += 1) {
+    const candidates = targetsByFirstChar.get(firstCaseFoldedChar(text[start] ?? ''));
+    if (!candidates) continue;
+    for (const target of candidates) {
+      if (source.id === target.nodeId) continue;
+      if (linkedSourceIdsByTarget.get(target.nodeId)?.has(source.id)) continue;
+      const end = start + target.text.length;
+      if (end > text.length) continue;
+      const matchedText = text.slice(start, end);
+      if (caseFold(matchedText) !== target.lowerText) continue;
+      if (!hasMentionBoundary(text, start, end)) continue;
+      const rangeKey = `${target.nodeId}:${field}:${start}:${end}`;
+      if (addedRanges.has(rangeKey)) continue;
+      addedRanges.add(rangeKey);
+      addReferenceSource(byTarget, {
+        targetId: target.nodeId,
+        sourceNodeId: source.id,
+        referenceNodeId: source.id,
+        kind: 'unlinked',
+        mention: {
+          field,
+          start,
+          end,
+          text: matchedText || target.text,
+        },
+      });
     }
-    start = Math.max(end, index + 1);
   }
-  return ranges;
 }
 
 function hasMentionBoundary(text: string, start: number, end: number): boolean {
@@ -296,4 +321,12 @@ function hasMentionBoundary(text: string, start: number, end: number): boolean {
 
 function isAsciiWord(value: string | undefined): boolean {
   return Boolean(value && /[A-Za-z0-9_]/.test(value));
+}
+
+function caseFold(value: string): string {
+  return value.toLocaleLowerCase();
+}
+
+function firstCaseFoldedChar(value: string): string {
+  return caseFold(value).slice(0, 1);
 }

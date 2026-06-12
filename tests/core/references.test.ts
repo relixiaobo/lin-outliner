@@ -64,4 +64,20 @@ describe('buildReferenceSummary', () => {
       mention: { field: 'content', start: 7, end: 20, text: 'Project Alpha' },
     });
   });
+
+  test('keeps unlinked mention ranges in original text offsets when case folding expands characters', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('İstanbul') }),
+      node({ id: 'source', content: plainText('Visit İstanbul soon') }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+    const unlinked = (summary.byTarget.get('target') ?? []).filter((source) => source.kind === 'unlinked');
+
+    expect(unlinked).toHaveLength(1);
+    expect(unlinked[0]).toMatchObject({
+      sourceNodeId: 'source',
+      mention: { field: 'content', start: 6, end: 14, text: 'İstanbul' },
+    });
+  });
 });

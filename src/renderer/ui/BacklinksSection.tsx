@@ -42,7 +42,8 @@ interface ReferenceRow {
 }
 
 export function BacklinksSection(props: BacklinksSectionProps) {
-  const labels = useT().nodePanel.references;
+  const t = useT();
+  const labels = t.nodePanel.references;
   const { index, onOpenRequestConsumed, onRoot, openRequest, run, targetId } = props;
   const sectionRef = useRef<HTMLElement | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -50,7 +51,14 @@ export function BacklinksSection(props: BacklinksSectionProps) {
   const counts = props.summary.countsByTarget.get(targetId);
   const totalCount = counts?.total ?? 0;
 
-  const groups = useMemo(() => groupReferenceRows(sources, index), [sources, index]);
+  const groups = useMemo(
+    () => groupReferenceRows(sources, index, t.outliner.viewToolbar.fieldFallback),
+    [sources, index, t.outliner.viewToolbar.fieldFallback],
+  );
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [targetId]);
 
   useEffect(() => {
     const request = openRequest;
@@ -205,7 +213,7 @@ function ReferenceGroup({
   );
 }
 
-function groupReferenceRows(sources: readonly ReferenceSource[], index: DocumentIndex): {
+function groupReferenceRows(sources: readonly ReferenceSource[], index: DocumentIndex, fieldFallback: string): {
   linked: ReferenceRow[];
   fieldGroups: Array<{ fieldKey: string; fieldLabel: string; rows: ReferenceRow[] }>;
   unlinked: ReferenceRow[];
@@ -222,7 +230,7 @@ function groupReferenceRows(sources: readonly ReferenceSource[], index: Document
     }
     fieldGroupsByKey.set(fieldKey, {
       fieldKey,
-      fieldLabel: fieldLabel(row.source, index),
+      fieldLabel: fieldLabel(row.source, index, fieldFallback),
       rows: [row],
     });
   }
@@ -250,11 +258,11 @@ function dedupeRows(
   return rows;
 }
 
-function fieldLabel(source: ReferenceSource, index: DocumentIndex): string {
+function fieldLabel(source: ReferenceSource, index: DocumentIndex, fieldFallback: string): string {
   const fieldDef = source.fieldDefId ? index.byId.get(source.fieldDefId) : undefined;
   if (fieldDef?.content.text.trim()) return fieldDef.content.text.trim();
   const fieldEntry = source.fieldEntryId ? index.byId.get(source.fieldEntryId) : undefined;
-  return fieldEntry?.content.text.trim() || 'Field';
+  return fieldEntry?.content.text.trim() || fieldFallback;
 }
 
 function nodeTitle(node: NodeProjection, fallback: string): string {

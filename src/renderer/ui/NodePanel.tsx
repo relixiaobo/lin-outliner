@@ -25,7 +25,6 @@ import {
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel, definitionOutlinerPlaceholder } from './definition/definitionConfig';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
-import { buildReferenceSummary } from '../../core/references';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
 import {
@@ -70,7 +69,7 @@ import { BacklinksSection } from './BacklinksSection';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { useT } from '../i18n/I18nProvider';
-import { isNodeInTrash } from './interactions/nodeLocation';
+import { referenceSummaryForIndex } from '../state/referenceSummary';
 
 const PANEL_HEADER_ICON_SIZE = 20;
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
@@ -194,10 +193,7 @@ export function NodePanel(props: NodePanelProps) {
   const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
-  const referenceSummary = useMemo(() => buildReferenceSummary(props.index.byId, {
-    includeUnlinked: true,
-    isDeleted: (nodeId) => isNodeInTrash(props.index, nodeId),
-  }), [props.index]);
+  const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
   const referenceCounts = useMemo(() => {
     const counts = new Map<NodeId, number>();
     for (const [nodeId, count] of referenceSummary.countsByTarget) {
