@@ -1073,6 +1073,7 @@ export class AgentRuntime {
     const principal = await this.resolveMemoryPrincipal(memoryId);
     if (!principal) return null;
     const entry = await this.getEventStore().updateMemoryEntry(principal, memoryId, { fact: normalizedFact });
+    this.queuePovInspectorMemoryRefreshForPrincipal(principal);
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -1080,6 +1081,7 @@ export class AgentRuntime {
     const principal = await this.resolveMemoryPrincipal(memoryId);
     if (!principal) return null;
     const entry = await this.getEventStore().removeMemoryEntry(principal, memoryId, 'user');
+    this.queuePovInspectorMemoryRefreshForPrincipal(principal);
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -2411,6 +2413,15 @@ export class AgentRuntime {
     return next;
   }
 
+  private queuePovInspectorMemoryRefreshForPrincipal(principal: AgentPrincipal): void {
+    for (const [conversationId, conversation] of this.conversations) {
+      const members = conversation.eventState.conversation?.members ?? [];
+      if (members.some((member) => samePrincipal(member, principal))) {
+        this.queuePovInspectorMemoryRefresh(conversationId, conversation);
+      }
+    }
+  }
+
   private async refreshRuntimeSettings(conversation: AgentConversationState): Promise<AgentRuntimeSettings> {
     const runtimeSettings = await this.getRuntimeSettings();
     conversation.runtimeSettings = runtimeSettings;
@@ -3731,6 +3742,9 @@ export class AgentRuntime {
       });
       await this.writeDreamRunMeta(task, 'completed', model);
       this.clearChildRunMemoryReminderCaches();
+      if (changes.added > 0 || changes.updated > 0 || changes.forgotten > 0) {
+        this.queuePovInspectorMemoryRefreshForPrincipal(task.principal);
+      }
       return {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -5257,7 +5271,6 @@ export class AgentRuntime {
     const operation = conversation.pendingEventAppend.then(writeEvents, writeEvents);
     conversation.pendingEventAppend = operation.then(() => undefined, () => undefined);
     await operation;
-    if (events.length > 0) this.queuePovInspectorMemoryRefresh(conversationId, conversation);
     return events;
   }
 

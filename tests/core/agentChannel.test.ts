@@ -192,7 +192,10 @@ describe('member events replay', () => {
         runId: 'run-peer',
         messageId: 'assistant-peer',
         stopReason: 'stop',
-        content: [{ type: 'text', text: 'Reviewer answer.' }],
+        content: [
+          { type: 'text', text: 'Reviewer answer.' },
+          { type: 'toolCall', id: 'tool-review', name: 'node_read', arguments: { nodeId: 'node-1' } },
+        ],
       },
       { ...base(10, 'run.completed'), runId: 'run-peer' },
     ] as AgentEvent[]);
@@ -227,7 +230,7 @@ describe('member events replay', () => {
           sourceMessageIds: [step.record.id],
           parts: [{
             preamble: undefined,
-            text: step.record.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n').trim(),
+            text: 'Reviewer answer.\n[tool call: node_read]',
           }],
         };
       }
@@ -469,6 +472,25 @@ describe('independence cut', () => {
         ? [step.record.id]
         : step.parts.map((part) => part.record.id)
     ))).toEqual(['user-1', 'assistant-writer']);
+  });
+
+  test('explicit null boundary means full path instead of inspector latest-run fallback', () => {
+    const state = roundState();
+    const explicitFullPath = deriveAgentPovProjection(state, OTHER_AGENT_ID, {
+      addressedByMessageId: null,
+      mainAgentId: MAIN_AGENT_ID,
+    });
+    const inspectorFallback = deriveAgentPovProjection(state, OTHER_AGENT_ID, {
+      mainAgentId: MAIN_AGENT_ID,
+    });
+
+    expect(explicitFullPath.addressedByMessageId).toBeNull();
+    expect(explicitFullPath.steps.flatMap((step) => (
+      step.kind === 'verbatim'
+        ? [step.record.id]
+        : step.parts.map((part) => part.record.id)
+    ))).toEqual(['user-1', 'assistant-peer', 'assistant-writer']);
+    expect(inspectorFallback.addressedByMessageId).toBe('user-1');
   });
 
   test('a hand-off target addressed by a reply sees that reply and everything before it', () => {

@@ -177,8 +177,9 @@ export function deriveAgentPovProjection(
   agentId: string,
   options: AgentPovProjectionOptions,
 ): AgentPovProjection {
-  const addressedByMessageId = options.addressedByMessageId
-    ?? latestAddressingMessageIdForAgent(state.runs, agentId);
+  const addressedByMessageId = Object.hasOwn(options, 'addressedByMessageId')
+    ? options.addressedByMessageId ?? null
+    : latestAddressingMessageIdForAgent(state.runs, agentId);
   const path = cutChannelPathForRun(
     getAgentEventRuntimeTranscriptPath(state),
     state.runs,

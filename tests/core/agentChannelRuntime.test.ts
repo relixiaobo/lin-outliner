@@ -382,6 +382,16 @@ describe('agent channel runtime', () => {
     expect(inspector.messages[1]?.sourceMessageIds).toEqual([assistantRecord?.id]);
     expect(await memoryAccessEventCount(store, agentPrincipal(reviewerAgentId))).toBe(reviewerAccessCount);
     expect(await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID))).toBe(mainAccessCount);
+
+    await runtime.updateMemory('memory-main-co-member', 'Assistant tracks refreshed architecture seams.');
+    const refreshed = await waitForPovInspectorProjection(
+      sink.events,
+      reviewerAgentId,
+      'Assistant tracks refreshed architecture seams.',
+    );
+    expect(refreshed.povInspectors[reviewerAgentId]?.memoryBriefing).toContain('Assistant tracks refreshed architecture seams.');
+    expect(await memoryAccessEventCount(store, agentPrincipal(reviewerAgentId))).toBe(reviewerAccessCount);
+    expect(await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID))).toBe(mainAccessCount);
   });
 
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {

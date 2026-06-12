@@ -772,10 +772,13 @@ function dreamForMessage(
 }
 
 function textFromContent(content: AgentPersistedContent[]): string {
-  return content
-    .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
+  return content.map((part) => {
+    if (part.type === 'text') return part.text;
+    if (part.type === 'thinking') return part.redacted ? '[redacted thinking]' : `[thinking] ${part.thinking}`;
+    if (part.type === 'toolCall') return `[tool call: ${part.name}]`;
+    if (part.type === 'image') return part.alt || part.imageRef.summary || `[image: ${part.imageRef.id}]`;
+    return part.label || part.payload.summary || `[payload: ${part.payload.id}]`;
+  }).join('\n');
 }
 
 function cloneContent(content: AgentPersistedContent[]): AgentPersistedContent[] {
