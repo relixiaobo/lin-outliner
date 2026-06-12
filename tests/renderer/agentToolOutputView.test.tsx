@@ -180,6 +180,9 @@ describe('agent tool output view', () => {
     expect(text).not.toContain('Input');
     expect(text).not.toContain('Output');
     expect(text).not.toContain('Launching skill: review-pr');
+    // Truncated name/args stay inspectable via a hover tooltip.
+    expect(rendered.container.querySelector('.agent-loaded-skill-name')?.getAttribute('title')).toBe('/review-pr');
+    expect(rendered.container.querySelector('.agent-loaded-skill-args')?.getAttribute('title')).toBe('123 --diff');
   });
 
   test('keeps forked skill calls on the standard input and output disclosure path', () => {

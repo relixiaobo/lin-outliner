@@ -15,6 +15,7 @@ import {
   NodeEditToolIcon,
   RestoreIcon,
   SearchIcon,
+  SkillIcon,
   TerminalIcon,
   TrashIcon,
   UrlIcon,
@@ -432,10 +433,10 @@ function LoadedSkillAffordance({ details }: { details: LoadedSkillDetails }) {
   return (
     <div className="agent-tool-call is-done">
       <div className="agent-loaded-skill">
-        <BrainIcon aria-hidden="true" className="agent-loaded-skill-icon" size={ICON_SIZE.menu} />
-        <span className="agent-loaded-skill-name">/{details.skill}</span>
+        <SkillIcon aria-hidden="true" className="agent-loaded-skill-icon" size={ICON_SIZE.menu} />
+        <span className="agent-loaded-skill-name" title={`/${details.skill}`}>/{details.skill}</span>
         {details.args ? (
-          <span className="agent-loaded-skill-args">{details.args}</span>
+          <span className="agent-loaded-skill-args" title={details.args}>{details.args}</span>
         ) : null}
       </div>
     </div>

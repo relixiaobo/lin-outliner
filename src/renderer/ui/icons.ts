@@ -86,6 +86,7 @@ export {
   Search as SearchIcon,
   Settings as SettingsIcon,
   Bot as AgentIcon,
+  Sparkles as SkillIcon,
   Sigma as FormulaIcon,
   Square as StopIcon,
   Strikethrough as StrikeIcon,

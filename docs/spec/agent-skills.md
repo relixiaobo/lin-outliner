@@ -83,10 +83,10 @@ When the model calls the `skill` tool for an inline skill:
 8. `prepareNextTurn` applies the model/effort override for that next provider request only.
 
 The renderer treats that inline `loaded` result as a compact loaded-skill line:
-skill glyph, slash-prefixed skill name, and dimmed invocation args. It does not
-show the generic Input/Output disclosure card because the real work is the
-steering message injected into the next model turn, not a user-inspectable tool
-output.
+skill glyph, slash-prefixed skill name, and dimmed invocation args (name and args
+ellipsis-truncate, with the full value available on hover). It does not show the
+generic Input/Output disclosure card because the real work is the steering message
+injected into the next model turn, not a user-inspectable tool output.
 
 When the model calls the `skill` tool for a `context: fork` skill:
 
