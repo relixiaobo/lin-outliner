@@ -378,14 +378,14 @@ sanitization with a pre-release wipe/bump, and preserve current outliner and
 agent-debug behavior with tests. The preview shell then becomes PR 1 on top of
 that settled shape.
 
-- [ ] **PR 1 - Panel shell, target model, and web-native basics.**
-  Generalize panel current view/history to `PanelView`; add `PreviewTarget` /
-  `PreviewSource`; implement preview shell and registry; add local-file,
-  asset, and agent-payload source resolution; wire outliner local-file refs,
-  attachment/image rows, agent message file refs, and visible agent payload rows;
-  ship directory, text/code, markdown, image, CSV/TSV, and fallback metadata
-  renderers. Outcome: every file-shaped source opens the same panel, and common
-  formats render.
+- [x] **PR 1 - Panel shell, target model, and web-native basics** — **merged #210**
+  (absorbed the optional PR 0 `PanelView` refactor). Generalized panel current
+  view/history to `PanelView`; added `PreviewTarget` / `PreviewSource`; implemented
+  the preview shell and registry; added local-file, asset, and agent-payload source
+  resolution; wired outliner local-file refs, attachment/image rows, agent message
+  file refs, and persisted tool-output rows; shipped directory, text/code, markdown,
+  image, CSV/TSV, and fallback metadata renderers. Outcome: every file-shaped source
+  opens the same panel, and common formats render.
 - [ ] **PR 2 - PDF.** Add pdf.js canvas renderer over local-file, asset, and
   agent-payload sources; bundle the worker; add page/zoom toolbar; preserve
   fallback for parse failures.

@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: cc-2
 created: 2026-06-10
-updated: 2026-06-11
+updated: 2026-06-12
 ---
 
 # Memory-theory realignment program
@@ -11,18 +11,22 @@ updated: 2026-06-11
 **Shape: (b) a SET of independent complete features** — Step 0 + PR-1…PR-5,
 dependency-ordered, each shippable alone — plus one explicitly deferred mode.
 
+**DONE (2026-06-12).** Every shippable unit landed: **Step 0 + PR-1 (#183)** ·
+**PR-2 episodic layer (#195)** · **PR-3 forgetting + PR-5 schema/overview
+(#199, together)** · **PR-4 hybrid retrieval (#211)**. The ratified design
+(D-1…D-9) is folded into the authority docs (`agent-memory-foundations`,
+`agent-data-model` canonical table, `agent-architecture` § memory) — this plan
+remains as the decision record. The **only** outstanding item is the explicitly
+**deferred automatic associative retrieval** (data gate, see *Deferred* below),
+tracked in `docs/TASKS.md` Backlog § memory; it is NOT part of this program's
+scope and does not hold it open.
+
 This file is the **ratified-decision record and program charter**, written by
 the main agent from the PM design session of 2026-06-10 (post-#181) so the
 drafting agent needs no out-of-band context. cc-2's one-pager duties
 (trio reconciliation · usage-modes × zoom-ladder table · associative-mode
-data-gate threshold · per-PR collision checks) are **discharged and
-PM-ratified** — see *Program one-pager* below. Claimed by cc-2 2026-06-10;
-**Step 0 + PR-1 shipped (#183); PR-2 episodic layer shipped (#195)** — sources
-discriminated union, memory-owned episode gist, principal-gated reverse lookup,
-storage side of the 3-level zoom (durable gist survives raw-span loss). PR-3
-(forgetting) + PR-5 (schema layer) are implemented together in
-`codex/agent-memory-forgetting-schema` so chronic activation lands as one
-complete behavior. Next runnable unit after merge: PR-4.
+data-gate threshold · per-PR collision checks) were **discharged and
+PM-ratified** — see *Program one-pager* below.
 
 ## Goal
 

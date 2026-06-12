@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-09
+updated: 2026-06-12
 ---
 
 # Agent Skills — Structure & Governed Self-Authoring
@@ -16,22 +16,27 @@ the workflow/policy) so the **same capability lives in one place** instead of tw
 Sits on the **M0 foundation** defined in [[agent-program]]; the program doc owns the
 cross-plan event taxonomy and the protocol-surface change list this plan depends on.
 
-**Status (2026-06-09).** Structure (unified library, by-name binding, the `built-in` floor)
+**Status (2026-06-12).** Structure (unified library, by-name binding, the `built-in` floor)
 and self-authoring v1 (`/skillify`, governed `.agents/skills` writes, hot-reload,
-no-escalation guard) **landed in M1 (#153)** — design in `docs/spec/agent-skills.md`.
-**Remaining:** natural-language "save as skill", diff/preview, snapshot UI, and curation
-dry-run (curation deferred alongside M2 self-mod per PM 2026-06-09).
+no-escalation guard) **landed in M1 (#153)** — design in `docs/spec/agent-skills.md`. The
+**convergence pass shipped as #174** (source taxonomy collapsed to `AgentSourceKind`, single
+skill-path resolver, ratification gate re-layered onto invocation) and **skill acceptance
+shipped as #175** (the ratification loop + single-step undo — the former "snapshot UI"). The
+separate **workspace-trust gate for cloned-repo `project` skills shipped as #185**.
+**Remaining (creative-UX, the real next unit):** natural-language "save / update as a skill"
+and diff/`SKILL.md` preview + confirmation. **Deferred:** executable-script support-file
+ratify+sandbox and opt-in curation dry-run (alongside M2 self-mod per PM 2026-06-09).
 
-**Convergence pass (PM-ratified 2026-06-09).** A design review found the shipped M1
-has three seams worth fixing pre-launch (see *Governance layering & single-source
-identity* below): a redundant `dynamic` `source` value, two disagreeing definitions of
-"what is a skill" (a real governance hole), and write-time governance that is heavier
-than it needs to be. The fix is **one convergence PR** that collapses the `source`
-taxonomy, gives skill-path identity a single source of truth, and re-layers governance
-along the cc-2.1 split (validation→load, no-escalation→invocation, model-invocability→
-listing). The `types.ts` interface change rides **in the same PR** (PM call — not carved
-out). This PR is a prerequisite for the remaining creative-UX work (`save as skill` +
-preview/confirm), which sits cleanly on top.
+**Convergence pass (PM-ratified 2026-06-09; SHIPPED as #174).** A design review found the
+M1 shipped in #153 had three seams worth fixing pre-launch (see *Governance layering &
+single-source identity* below): a redundant `dynamic` `source` value, two disagreeing
+definitions of "what is a skill" (a real governance hole), and write-time governance heavier
+than it needed to be. The fix landed as **one convergence PR (#174)** that collapsed the
+`source` taxonomy, gave skill-path identity a single source of truth, and re-layered
+governance along the cc-2.1 split (validation→load, no-escalation→invocation,
+model-invocability→listing). The `types.ts` interface change rode **in the same PR** (PM
+call — not carved out). It was the prerequisite for the remaining creative-UX work
+(`save as skill` + preview/confirm), which now sits cleanly on top.
 
 ## Goal
 
@@ -399,10 +404,11 @@ deliberately conservative (self-modification §8):
 - [ ] Diff / full-`SKILL.md` preview + confirmation; draft-default for agent-initiated.
 - [x] Provenance metadata in tool details + `skill.created` / `skill.patched` /
       `skill.replaced` events.
-- [ ] **PR A — skill acceptance** (close the ratification loop): explicit accept/revoke
-      + positive trust record + `skillify` model-invocable + single-step undo. Carved into
-      its own focused plan: [[agent-skill-acceptance]] (`docs/plans/agent-skill-acceptance.md`,
-      PM-ratified boundary 2026-06-10). Preview/confirm stays instruction-layer (already shipped).
+- [x] **PR A — skill acceptance** (close the ratification loop) — **merged #175**: explicit
+      accept/revoke + positive trust record + `skillify` model-invocable + single-step undo.
+      Carved into its own focused plan, archived `done`: [[agent-skill-acceptance]]
+      (`docs/plans/archive/agent-skill-acceptance.md`, PM-ratified boundary 2026-06-10).
+      Preview/confirm stays instruction-layer (already shipped).
 - [x] ~~Snapshot storage + rollback UI~~ — **slimmed (PM 2026-06-10):** cc's "PR B"
       collapses to a **single-step undo** reusing the gateway's recorded `previousContent`,
       folded into PR A's Skills tab; deep history is git's job for `project` skills. No

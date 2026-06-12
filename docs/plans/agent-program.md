@@ -3,7 +3,7 @@ status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-11
+updated: 2026-06-12
 ---
 
 # Agent Program — Foundation, Dependency Graph, Release Milestones
@@ -29,7 +29,7 @@ mostly the *same* set of seams every agent plan was independently planning to cu
 | [[agent-memory-model]] | The **render** projection of distilled memory + **Dream** consolidation semantics + the **user-as-agent** proposal (a thin layer atop data-model) | M1–M3 |
 | [[agent-skills-authoring]] | Skill **structure** (unified library + binding + `built-in` floor) and **governed self-authoring** | M0–M2 |
 | [[agent-self-modification]] | Self-observation, the `config` tool, **hooks**, config recovery, curation policy | M1–M3 |
-| [[agent-ask-user-question-tool]] | The `ask_user_question` tool (structured pause/resume) | M1 — **v1 landed #153**; full version (refs/attachments/clarification) pending |
+| [[agent-ask-user-question-tool]] | The `ask_user_question` tool (structured pause/resume) | M1 — **done**: v1 #153, full version (refs/attachments + discuss action) **#198** |
 | [[agent-import-skill]] | Data import from other products (consumer of skills + ask_user_question) | M1–M2 |
 | [[agent-scheduled-routines]] | `command` NodeType + anacron scheduler + triggered runs | **done (#165)** |
 | [[agent-generative-ui]] | Inline HTML/SVG widgets in chat | M1–M2 (P3 priority) |
@@ -88,11 +88,14 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   definitions (Form⇄Raw editor, hot-reload, disable-by-identity) + subagent system-prompt
   unification (#167).
 
-**Not shipped (the remaining build surface, as of #169 / 2026-06-09):** prompt-only hook
-policy/execution; config recovery/rollback; skill curation; durable multi-agent
-registry/coordinator + per-agent POV; the user-as-agent / cross-agent memory sharing
-extension ([[agent-memory-model]] §4). Mid-run **`needs-input` is deferred by decision** —
-subagents surface clarifications via their terminal result, not a mid-run ask.
+**Not shipped (the remaining build surface, as of 2026-06-12):** prompt-only hook
+policy/execution; config recovery/rollback; skill curation; **main-agent registry
+unification** (the multi-agent coordinator #179 and per-agent POV #212 shipped — only
+registry unification remains); the **user-as-agent** exploration ([[agent-memory-model]]
+§4 — cross-agent memory sharing itself shipped #200). The one *active* build lane is the
+skills creative-UX (NL save-as-skill + diff/preview); the data-gated automatic associative
+retrieval stays deferred. Mid-run **`needs-input` is deferred by decision** — subagents
+surface clarifications via their terminal result, not a mid-run ask.
 
 ## Execution policy — pre-release clean cut
 
@@ -228,7 +231,7 @@ mostly independent).
 | **M0.5 — Clean cut** · ✅ #151 | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
 | **M1 — Single-agent "self"** · ✅ #152–#156 | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
 | **M2 — Off-floor + extension** · ▣ mostly landed #157–#167 (remaining: prompt-only hooks · config recovery · skill curation) | background task panel + notifications + needs-input · prompt-only hooks · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · single read-only `recall` tool over active memory entries with optional nested evidence expansion · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals; old conversations not distilled into memory are intentionally not foreground-recallable |
-| **M3 — Multi-agent** · ◻ not started | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
+| **M3 — Multi-agent** · ▣ core sequence landed (#179 M3-A Channel + coordinator · #200 M3-B cross-agent memory + isolation gate · #202 parallel execution · #212 M3-C per-agent POV) — **the M3 multi-agent sequence is complete** | sequential→parallel Channels + coordinator ✅ · per-agent POV ✅ · cross-agent memory ✅ · **remaining (deferred/follow-up): cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification** | **IM-native multi-agent** collaboration |
 
 **Cross-milestone note — per-agent identity started early (2026-06-07, #164).** Agent-owned
 subagent memory (an M2 slice on top of the Dream milestone) gives every fresh typed subagent its
@@ -244,6 +247,14 @@ memory line spans workspaces — `isolated`-tier scoping for such shared owners 
 single-host case (#164) but is a known design surface when multi-host/registry lands.
 
 ## M3 sequencing & readiness (verified 2026-06-10 read-only audit; debt-first)
+
+> **STATUS 2026-06-12 — the M3 sequence is COMPLETE.** This section is the
+> 2026-06-10 debt-first audit snapshot, kept as the design/sequencing record. All
+> of it shipped: Phase 1 (#178) · Phase 1.5 clean-cut (#180) · run unification
+> (#184) · realignment PR-1/PR-2/PR-3/PR-5/PR-4 (#183/#195/#199/#211, plan archived
+> `done`) · **M3-A #179 · M3-B #200 · parallel execution #202 · M3-C #212**. The
+> `◻`/"in build" markers below are historical (as-of-2026-06-10) — do not read them
+> as open work. Only **automatic associative retrieval** stays deferred (data gate).
 
 A read-only code audit (storage / membership / multi-agent readiness) settled what M3
 actually builds on and re-sequenced it **debt-first** (PM-ratified 2026-06-10). The map
@@ -281,7 +292,7 @@ reinvent.
   reconciliation + ratify the peer model. ~no code.
 - **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding —
   ratified plan: `agent-memory-source-binding`. **Merged #178.**
-- **Phase 1.5 — storage clean-cut (PM-ratified 2026-06-10, full scope; in build,
+- **Phase 1.5 — storage clean-cut (PM-ratified 2026-06-10, full scope; merged #180,
   cc-2).** The "optional cheap clean-cut" is now a real plan:
   `agent-storage-clean-cut` — stored event types `session.*` → `conversation.*`,
   `sessionId` field → `conversationId`, ALL code identifiers renamed (the #151
@@ -295,7 +306,7 @@ reinvent.
   - **M3-A — working multi-agent Channel** (ONE PR): membership + routing
     (`addressedTo`, coordinator) + peer-agent reply (`actor` = agent principal) +
     the §8 POV flatten at assembly. Membership-without-reply would be a scaffold
-    slice, so these ship together. Plan: `agent-channel-peers`. In build (cc).
+    slice, so these ship together. Plan: `agent-channel-peers`. **Merged #179.**
   - **Run unification (PM-ratified 2026-06-10) — between M3-A and M3-B.** Dissolve
     the subagent entity: child runs become ordinary `runs/<runId>/` ledgers
     (`parentRunId` relationship), one evidence scheme + one watermark shape +
@@ -310,9 +321,9 @@ reinvent.
     discriminated union, 3-level zoom) → PR-3 forgetting (D1) + PR-5 schema
     overview → PR-4 retrieval engine (D4, rescoped to deliberate recall);
     automatic associative retrieval deferred on a data gate) is chartered in
-    **`docs/plans/agent-memory-realignment.md`** (ratified decisions D-1…D-9 +
-    rationale; cc-2 claims with the one-pager). PR-1 + PR-2 are **hard
-    prerequisites for M3-B**.
+    **`docs/plans/archive/agent-memory-realignment.md`** (ratified decisions D-1…D-9 +
+    rationale; **all units shipped #183/#195/#199/#211, plan archived `done`**). PR-1 +
+    PR-2 were **hard prerequisites for M3-B**.
   - **M3-B — cross-agent memory sharing + the cross-principal isolation hard gate — built**
     (the one new primitive; depends on Phase 1 + M3-A + the clean-cut + run
     unification — its citing rides the unified evidence scheme — **+ realignment
@@ -320,7 +331,7 @@ reinvent.
     the final `sources` union, so M3-B builds on final shapes). Plan archived:
     `archive/agent-cross-agent-memory`.
   - **M3-C — per-agent POV inspector** (derived view over M3-A's assembly
-    derivation). Plan: `agent-pov-projection`.
+    derivation) — **merged #212**. Plan archived `done`: `archive/agent-pov-projection`.
   - Open PM gates carried inside the plans: `who-configures-whom` stays deferred
     (main-agent-first default, untouched by M3); `doc snapshot+delta` belongs to
     the memory-prefix/cache work, not M3.

@@ -26,11 +26,16 @@ Foundation work (AGENTS.md A7): settle the mechanism before layering features.
 against the real runtime (see *Adversarial review*), and several were wrong. The
 design below is the post-stress-test version.
 
-**Status (2026-06-09).** The M0 seams + the M1 spine **landed** (#150–#153: identity /
+**Status (2026-06-12).** The M0 seams + the M1 spine **landed** (#150–#153: identity /
 `actor` / conversation↔run split, canonical DM + Channels, the memory line, mixed-resolution
 assembly); M2 background visibility **landed** (task panel #160, notifications #166) — design
-folded into `docs/spec/`. **Remaining:** mid-run `needs-input` (deferred by decision) and the
-**M3** multi-agent spine (sequential Channels + coordinator routing + per-agent POV).
+folded into `docs/spec/`. **The M3 multi-agent spine also landed** — working Channel +
+coordinator routing (#179 M3-A), cross-agent memory + isolation gate (#200 M3-B), per-agent
+POV inspector (#212 M3-C), plus the parallel-execution upgrade (#202); the M3 sequence is
+**complete** (see `agent-program` § *M3 sequencing & readiness* and `agent-architecture`).
+**The one remaining item — mid-run `needs-input` — is deferred by decision** (tracked in
+`agent-program` M2). With M0–M3 all shipped and folded into spec, this plan is effectively
+complete; it is kept `in-progress` as the live design authority for that deferred tail.
 
 ## Goal
 

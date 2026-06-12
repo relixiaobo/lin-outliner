@@ -22,110 +22,36 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (file-attachments feature merged, PR #206) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (file preview panel merged, PR #210) |
+| Codex 3 | `lin-outliner-codex-3/` | `codex-3/tana-style-references` | PR #208 ready — awaiting main gate |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-authoring-cleanups` | PR #213 ready — awaiting main gate |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-**2026-06-12 batch (round 3, PM-dispatched)** — all three Codex lanes **merged**:
-Feature A (codex, PR #207), `agent-ledger-hygiene` (codex-2, PR #205), and
-file-attachments (codex-3, PR #206) — see Recently completed. cc / cc-2 / anti
-were deliberately unscheduled.
+**Two PRs are awaiting the main gate** — the only work in flight (2026-06-12):
 
-Relay: **Realignment PR-4** (retrieval) **merged as PR #211** (codex) — see
-Recently completed; the realignment program's shippable units are now all landed
-(automatic associative retrieval stays deferred on the data gate). **M3-C**
-(per-agent POV inspector) **merged as PR #212** (codex-2) — see Recently
-completed; plan archived `done` in-PR, follow-up review cleanup landed direct to
-`main`. The
-`agent-conversation-entry-identity-ux` plan is **complete and archived `done`** —
-all features shipped: B/C/E (#201, including the model-chip/global-provider-trap
-fix), D (#203), A (#207).
-`agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently
-completed.
+- **#208 — Tana-style references experience** (codex-3, `codex-3/tana-style-references`),
+  marked ready. *(Distinct from the held `agent-import-skill` Tana import — this is the
+  references display/interaction experience.)*
+- **#213 — Agent authoring cleanups** (codex-4, `codex-4/agent-authoring-cleanups`),
+  marked ready: the #167-review-gate cleanups (b) agents from `additionalAgentDirectories`
+  render read-only · (c) out-of-catalog `effort` coercion · (d) a compile-time
+  `TOOL_CATALOG` ↔ `filterAgentTools` guard. (Cleanup (a), the AGENT.md parser
+  consolidation, already shipped in #184.)
 
-Relay: **File preview panel** **merged as PR #210** (codex-4) — see Recently
-completed; the `file-preview` plan stays `in-progress` (PDF / media / Office /
-URL renderers remain open).
+**Carried verification TODO** (merged, needs a one-time manual check):
 
-- `ime-composition-focus-steal` (cc-2) **merged** as PR #177 — fixes #176 (`skill` →
-  `sk ill` IME tearing), both root causes: the echo focusRequest steal (global
-  composition gate + compositionend handoff through the pendingInput rail) and the
-  empty-row paragraph redraw (zero-width composition anchor). Renderer-only; spec
-  synced in-PR (`ui-behavior.md`); plan archived `done`. Live-IME verified by the PM;
-  CDP probe `scripts/probe-ime-split.ts` pins leg 1.
+- `launcher-native-nspanel` (#171) — a one-time packaged `.dmg` eyeball (⌘Tab lists
+  Tenon · floats over another app's fullscreen · summon doesn't steal focus · dock
+  icon · light+dark).
 
-- `launcher-native-nspanel` (cc) **merged** as PR #171 — see Recently completed.
-  Remaining: a one-time packaged `.dmg` eyeball (⌘Tab lists Tenon · floats over
-  another app's fullscreen · summon doesn't steal focus · dock icon · light+dark).
-- `agent-memory-model` (cc-2) **complete and archived**: P1+P2 merged as PR #172,
-  Phase 3 (principal-keyed memory + per-principal Dream + membership read) merged
-  as PR #173 — see Recently completed. The §4 principal/membership foundation the
-  M3 multi-agent spine was gated on is now on `main`.
-- `agent-skills-authoring` convergence (cc) **merged** as PR #174 — see Recently
-  completed.
-  - `agent-skill-acceptance` (cc) **merged** as PR #175 — see Recently completed.
-    Plan archived `done` inside the PR itself (PR A + slimmed PR B, single-step undo).
-  - **Separate named follow-up:** workspace-trust gate for cloned-repo `project` skills
-    (codex) **merged** as PR #185 — see Recently completed; plan archived `done` in-PR.
-    Executable-script support-file ratify+sandbox and M2 curation dry-run stay deferred.
-- **Multi-agent (M3) — debt-first sequencing ratified 2026-06-10.** A read-only audit
-  verified the storage foundation is clean (three-ledger migration done; §4 principal/
-  membership on `main` via #173) and the load-bearing debt is small + contained. New
-  subsystem map: `docs/spec/agent-architecture.md`; sequencing reconciled into
-  `docs/plans/agent-program.md` § *M3 sequencing & readiness*. Order: **Phase 0** settle
-  the map (done) → **Phase 1** harden #164 memory-source binding (the one load-bearing
-  debt, must precede cross-agent citing) **merged as PR #178** (cc) — see Recently
-  completed; plan archived `done` in the PR →
-  **Phase 1.5** storage clean-cut (`agent-storage-clean-cut`) **merged as PR #180** (cc-2)
-  — see Recently completed; plan archived `done` in-PR. The gate ran two rounds (round-1
-  NO-GO on a content-triggerable wipe + a sticky probe rejection; both hardened in
-  `8fff92e` and re-verified). M3-A and `agent-memory-academic-alignment` were unblocked
-  (the latter merged as PR #181 — see Recently completed) →
-  **Phase 2** three independent complete features, **each with a drafted plan file**:
-  **M3-A** working multi-agent Channel (`agent-channel-peers`) **merged as PR #179**
-  (cc) — see Recently completed; plan archived `done` in-PR. The gate ran FOUR rounds
-  (10 findings → IM group-chat semantics PM-re-ratified mid-PR → 4 required → 1
-  scoping defect; visual light+dark passed in round 3). Unblocks
-  `agent-run-unification` (dispatch-ready) and `agent-avatar-v1` (the `actor`
-  render-projection field is on `main`) →
-  **run unification** (`agent-run-unification`, **merged as PR #184** — see Recently
-  completed; dissolved the subagent entity: child runs are ordinary run ledgers, one
-  evidence scheme, one watermark shape, event-sourced compaction; the #164/#178
-  guards became structural; the coordinate foundation for the memory-realignment
-  episodic layer is in place) →
-  **memory-theory realignment PR-1 + PR-2** (person rule + episodic layer — see
-  Backlog § memory for the PM-ratified program; **Step 0 + PR-1 merged as PR #183**,
-  **PR-2 episodic layer merged as PR #195** — both prerequisites for M3-B now on
-  `main`) →
-  **M3-B** cross-agent memory + isolation gate (`agent-cross-agent-memory`;
-  the one new primitive; depends on Phase 1 + M3-A + clean-cut + run unification +
-  **realignment PR-1/PR-2** — PM-ratified 2026-06-10: agents must not cross-read
-  pools until the person rule is reader-independent and `sources` is the
-  discriminated union, so M3-B builds on final shapes instead of re-cutting) →
-  **M3-C** per-agent POV inspector (`agent-pov-projection`) **merged as PR #212**
-  (codex-2); plan archived `done`. With M3-A/M3-B/M3-C all landed, the M3
-  multi-agent sequence is complete.
-  `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
-
-- **Systematic pre-release architecture sweep (main, 2026-06-10) — done; dispositions
-  PM-ratified.** Four parallel audits (core document model · main-process services +
-  userData layout · renderer state · protocol surface + duplication) with one lens set
-  (format residue / unacknowledged entities / one-concept-two-mechanisms / false
-  authorities / surface hygiene). **Core document format verified clean** (zero findings:
-  all node types/scalar keys canonical, no command bypass of A4, all indexes are explicit
-  rebuilds, single `workspace.loro.json` artifact) and the **protocol surface verified
-  clean** (no dead commands, no naming drift, `session` vocabulary gone outside the
-  in-flight clean-cut). Four ratified dispositions: **(A)** `main-json-store-unification`
-  (new plan, Backlog § Storage & platform hygiene) · **(B)** delete the
-  `MODEL_ID_REPLACEMENTS` silent migration layer — **landed as a main fast-track right
-  after the #180 merge** (the scope-extension comment wasn't picked up in the fix round) ·
-  **(C)** renderer-state-hygiene fast-track (same section) · **(D)**
-  frontmatter-parser consolidation folded into `agent-run-unification` Design 5.
-  Cosmetic-only findings (IPC name casing, sync `lin:get-language-sync`, launcher
-  placeholder commands, shiki failure cache) recorded as accepted, no action. With the
-  in-flight clean-cut + run-unification, the pre-release structural-debt list is closed.
+Everything from the 2026-06-05…06-12 batches has **merged** and is logged under
+**Recently completed**: the agent-program M0–M3 spine (M3 sequence complete —
+#179/#200/#202/#212), the memory-theory realignment (all units #183/#195/#199/#211,
+plan archived `done`), the pre-release architecture sweep (structural-debt list
+closed), and the per-clone feature lanes (#201/#203/#204/#205/#206/#207/#210). Only the
+explicitly **deferred** automatic associative retrieval (memory) remains gated — see
+Backlog § memory. No other change is mid-build.
 
 ## Backlog
 
@@ -255,16 +181,18 @@ foundation (**M0**, interface-first), the cross-plan **event taxonomy**, the con
 protocol-surface change list, the dependency graph, and the milestones **M0 foundation →
 M1 single-agent self → M2 off-floor+extension → M3 multi-agent**. Members below reference
 it; standalone agent items (not in the program) follow at the end. **The program is
-PM-ratified; M0 + M0.5 landed (#150/#151), M1 landed its core (memory v1 #152, plus
-#153/#155/#156), and M2 is underway** — recall clean-cut (#158), Dream extraction (#159 →
-reflective Dream #161/#162/#163), task panel (#160), **agent-owned subagent memory +
-the `dream` trigger tool + Dream chat feedback (#164)**, **off-floor notifications +
-attention delivery (#166)**, and **scheduled command nodes + anacron scheduler (#165)**. **Next M2
-direction — DECIDED (PM, 2026-06-09):** defer the remaining self-mod M2 (prompt-only hooks ·
-config recovery · skill curation; mid-run needs-input stays deferred) and **prioritize
-memory/render** ([[agent-memory-model]] Phase 1) + single-agent polish. Separately,
-**user-as-agent / cross-agent memory sharing is greenlit to pursue now** — draft the §4
-extension into `agent-data-model` for ratification (see `agent-memory-model` §4).**
+PM-ratified and M0–M3 have all landed.** M0 + M0.5 (#150/#151) · M1 core (memory v1 #152,
+plus #153/#155/#156) · M2 off-floor (recall clean-cut #158 · reflective Dream
+#159/#161/#162/#163 · task panel #160 · agent-owned subagent memory + `dream` tool + Dream
+chat feedback #164 · off-floor notifications + attention #166 · scheduled command nodes +
+anacron #165) · and the **M3 multi-agent sequence — Channel + coordinator #179 · cross-agent
+memory + isolation gate #200 · parallel execution #202 · per-agent POV #212 — is complete**
+(plus the memory-theory realignment, all units shipped, plan archived `done`). **Remaining,
+deferred by PM (2026-06-09):** the rest of self-mod M2 — prompt-only hooks · config recovery ·
+skill curation — plus mid-run `needs-input`; escalate the capability boundary before building.
+The one un-started future item is the **deferred automatic associative retrieval** (memory,
+data-gated — see § memory above). The remaining *active* build work is the skills creative-UX
+(`agent-skills-authoring`: NL save-as-skill + diff/preview) and the standalone draft items below.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
@@ -273,13 +201,14 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
   notice), Full Access escalation, and the Security settings page shipped; the
   `AgentPermissionMode`→`AgentSafetyMode` rename is recorded in `agent-program` F6.
-- **agent-conversation-model** (P1, the spine, M0–M3) — IM-native rebuild: durable Agents
-  in **DMs/Channels** over the ambient outline; the per-agent **memory line**; background
-  tasks + notifications; sequential multi-member Channels + **coordinator** routing;
-  "session" dissolves into per-turn assembly. Code-grounded (stress-tested against the real
-  runtime). Owns the detailed design of the M0 seams it analyzed (identity, `actor`,
-  session→conversation, `AgentSessionState` split). See
-  `docs/plans/agent-conversation-model.md`.
+- **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
+  `in-progress` only as the live design authority for the one deferred tail, mid-run
+  `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
+  outline; the per-agent **memory line**; background tasks + notifications; multi-member
+  Channels + **coordinator** routing; "session" dissolves into per-turn assembly.
+  Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
+  M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
+  split). See `docs/plans/agent-conversation-model.md`.
 - **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
   durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
   daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
@@ -307,86 +236,28 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   completed; plan archived `done` in-PR (subsumed the former D2
   `agent-memory-encoding-signal`, archived `superseded`).
 
-  **Memory-theory realignment program (PM-ratified 2026-06-10, post-#181)** — realign
-  production/storage/use to the theoretical layering. Triggered by three confirmed
-  mismatches: (1) the canonical table equates the episodic store with the raw ledgers,
-  but raw is ground truth *below* memory — the real episodic layer (episodes as
-  first-class indexed units + reverse lookup) is missing and is D3's true identity;
-  (2) `DistillationNode` is misfiled under Index — it is episodic *gist content*, not a
-  pointer; the index today is `sources[]` only and unidirectional; (3) the person rule
-  bakes today's single reader into storage (base-form vs 3rd-sing divergence; recall
-  output lacks `principal`; the two Dream prompts' own examples instruct cross-pool
-  duplication). Substrate (event-sourcing, principal pools, one-writer, invalidate,
-  down-pointers, isolation gate) is theory-correct and **stays**; realign by clean cuts,
-  never a parallel rewrite. **Charter: `docs/plans/agent-memory-realignment.md`** —
-  the full ratified-decision record (D-1…D-9 with rationale + the rejected
-  alternative), self-sufficient for the drafting agent. **Next step: cc-2 claims it
-  with the program one-pager** (reconcile vs the trio · usage×zoom table ·
-  associative data-gate threshold · per-PR collision checks). Summary:
-  - **Step 0 — authority docs REWRITTEN, not patched** (`agent-memory-foundations` +
-    `agent-data-model` canonical table + `agent-architecture` § memory): 源 = ground
-    truth below memory · episodic layer = episodes + gist (noted as D3-pending) ·
-    index = pure bidirectional pointers · `principal` redefined as **pool owner /
-    believer (whose self-model)**, not "subject the fact is about".
-  - **PR-1 person rule + read surfaces** — **merged as PR #183 (with Step 0)**, see
-    Recently completed (**the M3-B hard prerequisite is half-cleared; PR-2 remains**):
-    ONE Dream phrasing rule — third-person-singular, subject-elided facts in ALL pools
-    (subject stays normalized in the pool key; rename-safe); briefing render becomes
-    zone-tagged bullet lists (no subject prepending, no prose conjugation — the
-    conjugation trap came from the prose render, not from elision); recall visible
-    output gains `principal`; cross-pool duplication handled by Dream prompt guidance.
-    Replaces the agent-memory-model §2 prose person rule. No schema change; old-format
-    facts wiped per pre-release policy.
-  - **PR-2 episodic layer** — **merged as PR #195** (see Recently completed; archived
-    `agent-memory-episodic-index` `superseded`) (subsumes + upgrades D3
-    `agent-memory-episodic-index`;
-    **after run unification** — needs homogeneous `{seq, eventId}`): episode = first-
-    class derived view with **memory-owned gist production** (compaction summaries are
-    working-memory artifacts, a DIFFERENT product — the #178 "Dream reads compaction
-    summaries as evidence" path is a stopgap and is **deleted** here, Dream reads
-    episode gist; the context assembler may later consume episode gist, inverting the
-    dependency); `AgentMemorySource` 9-optional-field grab-bag → **discriminated union**
-    (`{stream, streamId, range} | {episodeId}`, same taste as the #161 anchor union);
-    principal-gated reverse lookup (episodic → citing facts); storage side of the
-    3-level zoom (fact → episode gist → raw span).
-  - **PR-3 forgetting** (was D1 `agent-memory-forgetting`) **merged as PR #199** (codex,
-    with PR-5) — see Recently completed; plan archived `done` in-PR. Bjork two-strength →
-    briefing ranking; strengths are projections, never stored fields. Deliberate
-    `recall` hits append retrieval events (the use-strengthens half of the loop —
-    data the deferred associative mode will need).
-  - **PR-5 semantic overview / schema layer (PM-ratified 2026-06-10, with PR-3 =
-    "chronic activation") merged as PR #199** (codex, with PR-3) — see Recently
-    completed. The breadth zoom axis — derived schema nodes
-    (topic gist over fact clusters, same derived-node machinery as episode gist,
-    members = fact ids, rebuildable) extend the down-pointer ladder upward:
-    schema → fact → episode gist → raw. Briefing becomes overview + strength-
-    selected detail (replacing bare newest-12); `recall` with no query returns the
-    overview, not "recent 8". Doubles as **metamemory** (feeling-of-knowing: the
-    model knows what it knows before deciding to dig). PR-2 must build episode-gist
-    machinery schema nodes can reuse (A7).
-  - **PR-4 retrieval engine** (was D4 `agent-memory-retrieval-upgrade`,
-    **rescoped 2026-06-10**) **merged as PR #211** (codex) — see Recently
-    completed; plan archived `done` in-PR. Lexical → hybrid (BM25-class × D1
-    retrieval strength + query-time `sources[]` co-citation association) for
-    deliberate `recall`; briefing gains cue-less co-citation support. **PM
-    embedding gate closed as option (c): no embeddings** (local/API embeddings
-    remain separately ratifiable later upgrades).
+  **Memory-theory realignment program (PM-ratified 2026-06-10, post-#181) — SHIPPED;
+  plan archived `done`.** Realigned memory production/storage/use to the theoretical
+  layering (raw ledgers below memory; constructed episodic layer; pure-pointer index;
+  per-principal semantic store; usage = chronic activation · deliberate recall ·
+  automatic association). All shippable units landed: **Step 0 + PR-1 person rule /
+  read surfaces (#183)** · **PR-2 episodic layer + `sources` discriminated union (#195)**
+  · **PR-3 two-strength forgetting + PR-5 schema/overview = "chronic activation" (#199)**
+  · **PR-4 hybrid retrieval engine (#211; PM embedding gate closed as "no embeddings")**.
+  Design (D-1…D-9) folded into `agent-memory-foundations` + `agent-data-model` canonical
+  table + `agent-architecture` § memory; decision record at
+  `docs/plans/archive/agent-memory-realignment.md`. One item remains, explicitly deferred:
+
   - **DEFERRED — automatic associative retrieval** (PM call 2026-06-10: wait for
     data): the runtime-owned per-turn background faculty — current turn as cue,
     top-k relevant facts/gists auto-surface in the `[5]` volatile tail
     (will+digestion: association is a digestion-side faculty, the tool call is the
     volitional act; the `[3]`/`[5]` cache contract already reserves the slot).
-    **Activation gate:** enough data to associate well — pool density + accumulated
-    retrieval events from PR-3/PR-4 usage; the program one-pager pins the
-    measurable threshold, PM closes the gate at claim.
-
-  **Usage contract (one-pager requirement):** define the three human-memory usage
-  modes × the zoom ladder in one table — chronic activation (briefing =
-  schema + strongest facts, always resident) · deliberate recall + verification
-  (the `recall` tool, provenance zoom) · automatic association (deferred, above).
-  PM-ratified order: deliberate recall correct first (PR-1) → data built (PR-2)
-  → chronic activation (PR-3 + PR-5) → deliberate engine (PR-4) → association
-  when the data supports it.
+    Reuses the #211 hybrid engine — no second retrieval stack. **Activation gate (PM
+    closes at claim):** pool density ≥100 active facts · ≥200 accumulated retrieval
+    events (≥50 deliberate `recall` hits) from the PR-3/PR-4 instrumentation · PR-4
+    engine shipped (✓). The strength/usage signal must separate from pure recency
+    before association is selection rather than wholesale injection.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -419,13 +290,12 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
 - **agent-authoring follow-ups** (P2, *fast-track*) — the plan itself is **done** (core shipped
-  in #167; archived at `docs/plans/archive/agent-authoring.md`). Only four small #167-review-gate
-  cleanups remain as independent fast-track items: (a) **consolidate the two AGENT.md parsers** —
-  `core/agentMarkdown.ts` vs the registry loader's own copy in `agentSubagents.ts` (byte-equal
-  today, drift risk); (b) agents from `additionalAgentDirectories` show Save/Delete but every
-  write rejects on containment → render them **read-only** like built-ins; (c) an `effort` value
-  outside the 6 catalog options renders as `off` in the form `<select>`; (d) `TOOL_CATALOG` has
-  no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
+  in #167; archived at `docs/plans/archive/agent-authoring.md`). Of the four #167-review-gate
+  cleanups: **(a) consolidate the two AGENT.md parsers** (`core/agentMarkdown.ts` vs the registry
+  loader's copy) **shipped in #184** (run unification — the parser is now single-source); **(b)
+  additionalAgentDirectories agents render read-only · (c) out-of-catalog `effort` coercion · (d)
+  `TOOL_CATALOG` ↔ `filterAgentTools` guard** are **in flight as PR #213** (codex-4, ready —
+  awaiting the main gate). Bullet closes when #213 merges.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
