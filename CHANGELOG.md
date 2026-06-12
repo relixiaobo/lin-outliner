@@ -12,6 +12,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Channels: per-agent POV inspector (PR #212, M3-C)** — a read-only,
+  derived view of *what a given agent member actually sees* in a Channel,
+  reachable from the Channel members popover. It renders that member's §8 POV
+  flatten (own turns verbatim, the user and other agents coalesced into
+  identity-preambled user-role blocks) plus its read-only memory briefing
+  (`<self>` + co-member `<principal>` zones). The runtime turn assembly and the
+  inspector now consume **one shared derivation**
+  (`deriveAgentPovProjection(state, agentId, …)` in `src/core/agentChannel.ts`),
+  so the inspector can never drift from the real model input; runtime calls pass
+  an explicit `addressedByMessageId` (incl. `null`) while the inspector falls
+  back to the latest addressing boundary. The inspector **stores nothing, emits
+  no events, and never records memory access** (a dedicated read-only briefing
+  path with `recordAccess: false`, refreshed only on member/memory/dream changes
+  and coalesced); cross-principal isolation reuses the existing membership gate.
+  Specs synced in-PR (`agent-architecture` POV row ✅, `agent-data-model` §8
+  "one derivation, two consumers"); the `agent-pov-projection` plan is archived
+  `done`. Follow-up cleanup (direct to `main`): the streaming-preview
+  `textFromContent` helper is restored to text-only and the inspector gets its
+  own `inspectorTextFromContent` (thinking/tool-call/image/payload placeholders),
+  and the inspect button is gated on `povInspectors[agentId]` so it no longer
+  renders as a no-op in single-agent Channels. Gate (main): typecheck +
+  test:core (917 pass / 2 skip / 0 fail) + test:renderer (418 pass / 0 fail) +
+  POV inspector e2e (light + dark) green; visual verification done in both
+  themes.
+
 - **Agent memory: hybrid retrieval for `recall` + briefing co-citation (PR #211)** —
   the last unit of the `agent-memory-realignment` program (PR-4). The deliberate
   `recall` path graduates from the old private lexical top-N scorer to a

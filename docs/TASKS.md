@@ -21,7 +21,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (agent-ledger-hygiene merged, PR #205) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (file-attachments feature merged, PR #206) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -35,7 +35,9 @@ were deliberately unscheduled.
 Relay: **Realignment PR-4** (retrieval) **merged as PR #211** (codex) — see
 Recently completed; the realignment program's shippable units are now all landed
 (automatic associative retrieval stays deferred on the data gate). **M3-C**
-(per-agent POV inspector) follows Feature A. The
+(per-agent POV inspector) **merged as PR #212** (codex-2) — see Recently
+completed; plan archived `done` in-PR, follow-up review cleanup landed direct to
+`main`. The
 `agent-conversation-entry-identity-ux` plan is **complete and archived `done`** —
 all features shipped: B/C/E (#201, including the model-chip/global-provider-trap
 fix), D (#203), A (#207).
@@ -97,7 +99,9 @@ completed.
   **realignment PR-1/PR-2** — PM-ratified 2026-06-10: agents must not cross-read
   pools until the person rule is reader-independent and `sources` is the
   discriminated union, so M3-B builds on final shapes instead of re-cutting) →
-  **M3-C** per-agent POV inspector (`agent-pov-projection`).
+  **M3-C** per-agent POV inspector (`agent-pov-projection`) **merged as PR #212**
+  (codex-2); plan archived `done`. With M3-A/M3-B/M3-C all landed, the M3
+  multi-agent sequence is complete.
   `agent-skill-acceptance` (PR A) ran in parallel and is **merged** (PR #175).
 
 - **Systematic pre-release architecture sweep (main, 2026-06-10) — done; dispositions
@@ -649,6 +653,26 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **M3-C per-agent POV inspector** (codex-2, PR #212, plan-track) — a read-only,
+  derived view of *what a given agent member actually sees* in a Channel, opened
+  from the members popover: that member's §8 POV flatten (own turns verbatim,
+  user + other agents coalesced into identity-preambled user-role blocks) plus
+  its read-only memory briefing (`<self>` + co-member `<principal>` zones).
+  Runtime turn assembly and the inspector now share **one derivation**
+  (`deriveAgentPovProjection` in `agentChannel.ts`) so the inspector cannot drift
+  from the real model input; runtime passes an explicit `addressedByMessageId`
+  (incl. `null`), the inspector falls back to the latest boundary. The inspector
+  **stores nothing, emits no events, and never records memory access**
+  (`recordAccess: false`, coalesced refresh on member/memory/dream changes only);
+  cross-principal isolation reuses the existing membership gate. Specs synced
+  in-PR (`agent-architecture` POV row ✅, `agent-data-model` §8 one-derivation
+  note); plan archived `done`. Review follow-up landed direct to `main`
+  (`textFromContent` restored to text-only + dedicated `inspectorTextFromContent`;
+  inspect button gated on `povInspectors[agentId]`). Gate (main): typecheck +
+  test:core (917 pass / 2 skip / 0 fail) + test:renderer (418 pass / 0 fail) +
+  POV inspector e2e (light + dark) green; visual verification both themes. With
+  M3-A/M3-B/M3-C all landed, the M3 multi-agent sequence is complete.
 
 - **memory realignment PR-4: hybrid retrieval upgrade** (codex, PR #211,
   plan-track) — the last shippable unit of `agent-memory-realignment`. Deliberate
