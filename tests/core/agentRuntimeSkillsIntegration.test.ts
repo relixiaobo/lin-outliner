@@ -666,6 +666,7 @@ describe('agent runtime skill integration', () => {
       && event.toolCallId === 'tool-skill-write-audit'
     ));
     const skillCreated = events.find((event) => event.type === 'skill.created');
+    expect(skillCreated?.runId).toBe(toolCompleted?.runId);
     expect(skillCreated).toMatchObject({
       actor: { type: 'tool', toolName: 'file_write', toolCallId: 'tool-skill-write-audit' },
       skillId: 'audited-skill',
@@ -673,6 +674,12 @@ describe('agent runtime skill integration', () => {
     });
     expect(skillCreated?.summary).toContain('create SKILL.md');
     expect(skillCreated?.seq).toBe((toolCompleted?.seq ?? 0) + 1);
+    if (!skillCreated?.runId) throw new Error('Expected skill audit event to be run-scoped.');
+    const store = new AgentEventStore(dataRoot);
+    const conversationRaw = await readFile(store.paths(created.conversationId).conversationEventsPath, 'utf8');
+    const runRaw = await readFile(store.runPaths(skillCreated.runId).runEventsPath, 'utf8');
+    expect(conversationRaw).not.toContain('skill.created');
+    expect(runRaw).toContain('skill.created');
   });
 
   test('projects manual compact as active while the summary request is running', async () => {

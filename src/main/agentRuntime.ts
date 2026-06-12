@@ -6363,7 +6363,9 @@ export class AgentRuntime {
       toolCallId,
       errorMessage: isError ? summarizeJson(result) : undefined,
     }];
-    const skillAuditEvent = isError ? null : skillAuditEventFromToolResult(toolName, toolCallId, result, activeRunId);
+    const skillAuditEvent = !isError && activeRunId
+      ? skillAuditEventFromToolResult(toolName, toolCallId, result, activeRunId)
+      : null;
     if (skillAuditEvent) events.push(skillAuditEvent);
     await this.appendConversationEvents(conversationId, conversation, events);
   }
@@ -7234,9 +7236,8 @@ function skillAuditEventFromToolResult(
   toolName: string,
   toolCallId: string,
   result: unknown,
-  runId: string | undefined,
+  runId: string,
 ): AgentEventInput | null {
-  if (!runId) return null;
   if (toolName !== 'file_write' && toolName !== 'file_edit') return null;
   const details = isRecord(result) && Object.hasOwn(result, 'details') ? result.details : result;
   if (!isToolEnvelope(details) || !details.ok || details.tool !== toolName || !isRecord(details.data)) return null;
