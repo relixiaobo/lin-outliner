@@ -1694,7 +1694,6 @@ test.describe('agent composer controls', () => {
         { principal: { type: 'agent', agentId: 'agent-delta' }, mention: 'delta', displayName: 'Delta' },
       ],
       activeRunId: 'run-alpha',
-      activeRunAgentId: null,
       isStreaming: true,
       streamingMessage: {
         role: 'assistant',

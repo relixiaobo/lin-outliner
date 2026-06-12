@@ -105,7 +105,6 @@ function projection(
     revision: options.revision ?? 1,
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
-    activeRunAgentId: options.isStreaming ? 'built-in:core:assistant' : null,
     activityEntries: [],
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,

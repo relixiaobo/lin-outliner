@@ -683,7 +683,6 @@ export function AgentChatPanel({
     conversationTitle,
     members,
     activityEntries,
-    queuedMessages,
     steer: steerRuntime,
     childRuns,
     childRunsByParentToolCallId,
@@ -1727,16 +1726,6 @@ export function AgentChatPanel({
             })}
           </div>
         )}
-        {queuedMessages.map((queuedText, queuedIndex) => (
-          // Sent while a round is active: not yet in the event log (the round
-          // loop persists it when it routes it) — shown here so the user's
-          // message never disappears between send and routing.
-          <div className="agent-message-row user agent-channel-queued" key={`queued:${queuedIndex}`}>
-            <div className="agent-user-content-shell">
-              <div className="agent-user-bubble">{queuedText}</div>
-            </div>
-          </div>
-        ))}
       </div>
 
       {isChannel ? (

@@ -165,12 +165,17 @@ type MessageEvent =
       source: { fromMessageId: string; throughMessageId: string } });
 ```
 
-**The conversation log per turn ≈ 2 events:** the `user` message + the **final**
-`assistant` reply. The intermediate assistant messages (the ones carrying `tool_call`s),
-the `tool_result`s, thinking, and deltas are all *execution* — they live in the run log,
-never the conversation log. This is what keeps the conversation log low-volume and
-keeps `tool_call ↔ tool_result` pairs off the shared channel record (so a flattened
-multi-agent transcript stays a valid pi-agent-core transcript — §8).
+**The conversation log write path stays low-volume:** the stream records communication
+and conversation markers (user turns, membership/branch state, compaction/Dream/debug
+markers). Run-scoped assistant/tool/thinking/permission/detail events are routed by
+`appendSplitEvents` / `isRunLogEvent` into the run log when they carry `runId`, so the
+conversation stream does not absorb execution volume. Read paths that need a full
+runtime or visible transcript intentionally join the run logs back in (mixed-resolution
+replay, PM-ratified), which is why a joined replay can show more detail than the
+conversation file itself stores. This is what keeps the conversation log near the
+communication rate and keeps `tool_call ↔ tool_result` pairs off the shared channel
+record (so a flattened multi-agent transcript stays a valid pi-agent-core transcript
+— §8).
 
 > **Note — persisted role vs assembled role.** The *persisted* `MessageEvent.role` is
 > only `user | assistant`. pi-agent-core's transcript still has three roles
@@ -224,10 +229,12 @@ type RunEvent =
   | (RunEventBase & { type: 'run.failed'; error: { code: string; message: string } })
   | (RunEventBase & { type: 'run.cancelled'; reason?: string })
   // ── assistant message (incl. intermediate tool-calling turns; deltas stream, completed is the durable one) ──
-  | (RunEventBase & { type: 'assistant_message.started'; messageId: string })
+  | (RunEventBase & { type: 'assistant_message.started'; messageId: string;
+      addressedByMessageId?: string | null })                                      // Channel source message that addressed this run
   | (RunEventBase & { type: 'assistant_message.delta'; messageId: string; delta: AgentPersistedContent })
   | (RunEventBase & { type: 'assistant_message.completed';
-      messageId: string; content: AgentPersistedContent[]; usage: Usage })          // per-message token + cost (§9)
+      messageId: string; content: AgentPersistedContent[]; usage: Usage;
+      addressedTo?: Principal[] })                                                  // hand-off routing record for Channel replies
   | (RunEventBase & { type: 'thinking.delta'; messageId: string; delta: string })
   // ── tool call / result (the pair BOTH live here — §8 tool-pair safety) ──
   | (RunEventBase & { type: 'tool_call.started'; toolCallId: string; messageId: string; name: string; input: unknown })
@@ -614,53 +621,58 @@ agent.skills[]          ──▶ skills/ file tree
 3. `session` → `{conversation, run}`: **communication → conversation log; execution
    (incl. `tool_result`) → run log only.** Persisted `MessageEvent.role` is
    `user | assistant`; the three-role pi-ai transcript is reconstructed at assembly.
-4. A run anchors to **exactly one conversation**; `trigger` is provenance, not a home.
+4. Channel run parentage is **bipartite**: a run's first assistant segment parents to
+   its `addressedByMessageId` (concurrent peers addressed by the same user message are
+   siblings); every later segment parents to that run's own tail (`lastMessageId`), never
+   the shared `selectedLeafMessageId`. `parentMessageId` remains the regenerate/branch
+   anchor.
+5. A run anchors to **exactly one conversation**; `trigger` is provenance, not a home.
    No conversation-less runs.
-5. A conversation owns the **objective record** (messages + summaries); an agent owns
+6. A conversation owns the **objective record** (messages + summaries); an agent owns
    its **subjective memory**. The distillation ladder's top rung crosses this boundary.
-6. Distillation is **lossy in content, lossless in addressability** — every summary /
+7. Distillation is **lossy in content, lossless in addressability** — every summary /
    `MemoryEntry` carries a down-pointer; raw is retained.
-7. The per-turn assembly is **append-only prefix, ordered by volatility, single volatile
+8. The per-turn assembly is **append-only prefix, ordered by volatility, single volatile
    tail**; mixed-resolution; compaction at segment boundaries.
-8. Only conversation + memory grow monotonically and both are low-volume; runs follow a
+9. Only conversation + memory grow monotonically and both are low-volume; runs follow a
    retention state machine (`hot → cold-archived → summarized-only → deleted`).
-9. All agent state is single-writer jsonl event logs; **it never touches Loro**. Loro is
+10. All agent state is single-writer jsonl event logs; **it never touches Loro**. Loro is
    the user-owned outline document the agent reads/writes as environment.
-10. Speaker attribution is stored **once** as each message's `actor`; the POV-flattened
+11. Speaker attribution is stored **once** as each message's `actor`; the POV-flattened
     `user`-message labels are **derived at assembly**, never persisted as a second copy.
     Identity rides a trusted `<system-reminder>` preamble (anti-spoof); the speaker's words
     stay plain content.
-11. Token usage + cost is **execution** data: per assistant message in the run log,
+12. Token usage + cost is **execution** data: per assistant message in the run log,
     aggregated on `RunMeta.usage`; the conversation log keeps only a lightweight per-turn
     total on the final reply. Wire payloads are replayable within a version boundary
     (`RunMeta.fingerprint`), not archived verbatim.
-12. Memory is written by a **runtime-owned append surface** (event-sourced), never generic
+13. Memory is written by a **runtime-owned append surface** (event-sourced), never generic
     `file_write` — append-only (no lost-update), schema-checked, prompt-free.
-13. Memory is **one undivided pool per principal** — never partitioned by workspace
+14. Memory is **one undivided pool per principal** — never partitioned by workspace
     (D2 revised 2026-06-10; `read-only-global` remains as a pause-writes mode);
     `originWorkspace` is on every entry as provenance only; a `MemoryEntry` whose source
     branch is discarded/undone is **invalidated**, not silently kept.
-14. **The event-log stream is the sole authority; everything else is a rebuildable
+15. **The event-log stream is the sole authority; everything else is a rebuildable
     projection.** `meta.json`, the checkpoint/snapshot, `index.json`, the render
     projection, and the in-memory pending-interaction/widget state are all caches derived
     from `(conversation segments ∪ run events ∪ memory events)` — discardable and
     rebuildable from the log. A consumer never treats a projection as truth, and a writer
     never mutates a projection without an event behind it. `cursors` are per-principal UI
     state, outside the objective record entirely (not even a projection of it).
-15. **Replay fidelity is gated on `RunMeta.retention`; never promised unconditionally.**
+16. **Replay fidelity is gated on `RunMeta.retention`; never promised unconditionally.**
     A run is byte-faithfully replayable (within its `fingerprint` version boundary) **only
     while `hot` or `cold-archived`**; once `summarized-only` or `deleted` the verbatim
     request is gone *by design* and only the distillation summary survives. Any consumer
     claiming "replay" or "full audit" MUST read `retention` first and degrade to the
     summary otherwise — §9's fidelity and §10's self-clean are reconciled by this gate,
     not in tension.
-16. **Memory invalidation has one owner and one trigger.** When a conversation branch is
+17. **Memory invalidation has one owner and one trigger.** When a conversation branch is
     discarded or a turn is undone, the **runtime memory reconciler** (the D1 append-surface
     owner, never the agent) emits `memory.entry_updated` flipping `status` to `invalidated`
     for every `MemoryEntry` whose episode raw stream source range falls in the orphaned
     conversation/run range. Invalidation is event-sourced (auditable, reversible), excluded
     from injection, and never a silent in-place delete (cf. invariant 13 / gemini#5).
-17. **Compaction is evidence-preserving (memory invariant) — held STRUCTURALLY
+18. **Compaction is evidence-preserving (memory invariant) — held STRUCTURALLY
     since run unification.** For every run, across any sequence of auto/manual
     compactions, (already-Dreamed content) ∪ (still-pending content) covers
     **100%** of the run's semantic content — no message content is ever both
@@ -926,7 +938,7 @@ concrete.)
 | **Semantic store** | distilled knowledge ("what I know"), per Principal; a pool = one principal's self-model, keyed by owner/believer (D-1) | `MemoryEntry` pools (§3 per-agent, Extension) |
 | **Procedural store** | reusable competence ("what I can do") | skills (owned by [[agent-skills-authoring]]; named here for completeness) |
 | **Index** | the hippocampal-style **pure pointer** layer binding semantic ↔ episodic, bidirectionally; points, never copies, never holds content | `MemoryEntry.sources[]` fact→episode pointers + episode→facts reverse lookup. `DistillationNode` is NOT index — summary text is content, not a pointer (see §4 note on the two summary kinds) |
-| **Consolidation** | offline replay distilling experience into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.17). Dream records episode gist and stores facts that cite it; the #178 compaction-summary-as-evidence stopgap is replaced by fact → episode gist → raw span provenance |
+| **Consolidation** | offline replay distilling experience into the semantic store | Dream (one writer per pool, watermark cursors; evidence-preserving under compaction, §13.18). Dream records episode gist and stores facts that cite it; the #178 compaction-summary-as-evidence stopgap is replaced by fact → episode gist → raw span provenance |
 | **Retrieval** | three modes: chronic activation (resident briefing) · deliberate cued retrieval (`recall` + source access) · automatic association (deferred) | §8 assembly + the single `recall` tool; chronic activation renders a schema overview + strength-selected facts; the zoom ladder (schema → fact → episode gist → raw span, D-6) is the provenance axis |
 | **Forgetting** | two-strength model: storage strength (never decays; `invalidate` is explicit) × retrieval strength (decays; governs injection ranking). Never deletion. | `memory.accessed` events (`via: briefing | recall`) projected into storage/retrieval strengths; recall hits strengthen more than briefing exposure; invalidated entries are excluded regardless of strength |
 | **Metamemory** | knowing what one knows before digging | derived schema/overview nodes over active memory entries; no-query `recall` returns the overview |

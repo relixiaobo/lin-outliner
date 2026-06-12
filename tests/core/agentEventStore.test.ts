@@ -1083,21 +1083,22 @@ describe('agent event store', () => {
         { ...base(conversationId, 1, 'conversation.created'), title: 'Run scoped' },
         { ...base(conversationId, 2, 'run.started'), runId },
         {
-          ...base(conversationId, 3, 'task.created'),
+          ...base(conversationId, 3, 'skill.created'),
           runId,
-          taskId: 'task-1',
-          title: 'Run-local task',
+          skillId: 'skill-1',
+          source: 'project',
+          summary: 'Run-local skill audit',
         },
       ]);
 
       const conversationRaw = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
       const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
-      expect(conversationRaw).not.toContain('task.created');
-      expect(runRaw).toContain('task.created');
+      expect(conversationRaw).not.toContain('skill.created');
+      expect(runRaw).toContain('skill.created');
       expect((await store.readEvents(conversationId)).map((event) => event.type)).toEqual([
         'conversation.created',
         'run.started',
-        'task.created',
+        'skill.created',
       ]);
     });
   });

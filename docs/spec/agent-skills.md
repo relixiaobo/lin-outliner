@@ -195,11 +195,13 @@ undo. The restored bytes are written LF-normalized (the canonical hash domain;
 line endings of a CRLF/BOM-authored skill are not preserved — accepted,
 pre-release).
 
-Successful skill writes also append a skill audit event beside the completed
-tool call: `skill.created` for a new `SKILL.md`, `skill.replaced` for a whole-file
-replacement, and `skill.patched` for focused edits or support-file writes. The
-event records the skill id, source, tool actor, and hash transition summary; the
-full previous content stays in the file-tool result details for rollback tooling.
+Successful skill writes also append a run-scoped skill audit event beside the
+completed tool call: `skill.created` for a new `SKILL.md`, `skill.replaced` for a
+whole-file replacement, and `skill.patched` for focused edits or support-file
+writes. The event records the skill id, source, tool actor, and hash transition
+summary; the full previous content stays in the file-tool result details for
+rollback tooling. This is execution audit detail, so it lives in the producing
+run ledger rather than the conversation log.
 
 ## Reference Alignment
 

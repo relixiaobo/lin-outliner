@@ -448,6 +448,195 @@ describe('agent event log', () => {
     ]);
   });
 
+  test('visible transcript oracle keeps Channel run spines unique, contiguous, and stable', () => {
+    const alphaActor: AgentActor = { type: 'agent', agentId: 'agent-alpha' };
+    const betaActor: AgentActor = { type: 'agent', agentId: 'agent-beta' };
+    const betaPrincipal = { type: 'agent' as const, agentId: 'agent-beta' };
+    const text = (value: string) => [{ type: 'text' as const, text: value }];
+    const toolResultActor: AgentActor = { type: 'tool', toolName: 'search', toolCallId: 'tool-alpha' };
+
+    function createScenario(order: 'peer-first' | 'peer-between' | 'regenerate') {
+      let seq = 0;
+      const next = (type: AgentEvent['type'], actor: AgentActor = systemActor) => base(++seq, type, actor);
+      const events: AgentEvent[] = [
+        { ...next('conversation.created'), title: 'Channel oracle' },
+        {
+          ...next('user_message.created', userActor),
+          messageId: 'user-channel',
+          parentMessageId: null,
+          content: text('@alpha @beta compare'),
+        },
+      ];
+
+      const addBetaPeer = (runId = 'run-beta-peer', messageId = 'beta-peer') => {
+        events.push(
+          { ...next('run.started'), runId, agentId: 'agent-beta', addressedByMessageId: 'user-channel' },
+          {
+            ...next('assistant_message.started', betaActor),
+            runId,
+            messageId,
+            parentMessageId: 'user-channel',
+            addressedByMessageId: 'user-channel',
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...next('assistant_message.completed', betaActor),
+            messageId,
+            stopReason: 'stop',
+            content: text(`${messageId} done`),
+          },
+          { ...next('run.completed'), runId },
+        );
+      };
+
+      const addAlphaToolSpine = () => {
+        events.push(
+          { ...next('run.started'), runId: 'run-alpha', agentId: 'agent-alpha', addressedByMessageId: 'user-channel' },
+          {
+            ...next('assistant_message.started', alphaActor),
+            runId: 'run-alpha',
+            messageId: 'alpha-tool-call',
+            parentMessageId: 'user-channel',
+            addressedByMessageId: 'user-channel',
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...next('assistant_message.completed', alphaActor),
+            messageId: 'alpha-tool-call',
+            stopReason: 'toolUse',
+            content: [{ type: 'toolCall', id: 'tool-alpha', name: 'search', arguments: { query: 'ledger' } }],
+          },
+          {
+            ...next('tool_result.created', toolResultActor),
+            runId: 'run-alpha',
+            messageId: 'alpha-tool-result',
+            parentMessageId: 'alpha-tool-call',
+            toolCallId: 'tool-alpha',
+            toolName: 'search',
+            isError: false,
+            content: text('search output'),
+            outputSummary: 'search output',
+          },
+          {
+            ...next('assistant_message.started', alphaActor),
+            runId: 'run-alpha',
+            messageId: 'alpha-final',
+            parentMessageId: 'alpha-tool-result',
+            addressedByMessageId: 'user-channel',
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...next('assistant_message.completed', alphaActor),
+            messageId: 'alpha-final',
+            stopReason: 'stop',
+            content: text('@beta continue'),
+            addressedTo: [betaPrincipal],
+          },
+          { ...next('run.completed'), runId: 'run-alpha' },
+        );
+      };
+
+      const addBetaHandOff = () => {
+        events.push(
+          { ...next('run.started'), runId: 'run-beta-handoff', agentId: 'agent-beta', addressedByMessageId: 'alpha-final' },
+          {
+            ...next('assistant_message.started', betaActor),
+            runId: 'run-beta-handoff',
+            messageId: 'beta-handoff',
+            parentMessageId: 'alpha-final',
+            addressedByMessageId: 'alpha-final',
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...next('assistant_message.completed', betaActor),
+            messageId: 'beta-handoff',
+            stopReason: 'stop',
+            content: text('handoff done'),
+          },
+          { ...next('run.completed'), runId: 'run-beta-handoff' },
+        );
+      };
+
+      const addAlphaRegenerate = () => {
+        events.push(
+          { ...next('branch.selected'), leafMessageId: 'user-channel' },
+          { ...next('run.started'), runId: 'run-alpha-regen', agentId: 'agent-alpha', addressedByMessageId: 'user-channel' },
+          {
+            ...next('assistant_message.started', alphaActor),
+            runId: 'run-alpha-regen',
+            messageId: 'alpha-regen',
+            parentMessageId: 'user-channel',
+            addressedByMessageId: 'user-channel',
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...next('assistant_message.completed', alphaActor),
+            messageId: 'alpha-regen',
+            stopReason: 'stop',
+            content: text('alpha regenerated'),
+          },
+          { ...next('run.completed'), runId: 'run-alpha-regen' },
+        );
+      };
+
+      if (order === 'peer-first') {
+        addBetaPeer();
+        addAlphaToolSpine();
+        addBetaHandOff();
+        return { events, visibleRunIds: ['run-beta-peer', 'run-alpha', 'run-beta-handoff'], hiddenMessageIds: [] };
+      }
+      if (order === 'peer-between') {
+        addAlphaToolSpine();
+        addBetaPeer();
+        addBetaHandOff();
+        return { events, visibleRunIds: ['run-beta-peer', 'run-alpha', 'run-beta-handoff'], hiddenMessageIds: [] };
+      }
+
+      addAlphaToolSpine();
+      addBetaPeer();
+      addAlphaRegenerate();
+      return {
+        events,
+        visibleRunIds: ['run-beta-peer', 'run-alpha-regen'],
+        hiddenMessageIds: ['alpha-tool-call', 'alpha-tool-result', 'alpha-final'],
+      };
+    }
+
+    for (const order of ['peer-first', 'peer-between', 'regenerate'] as const) {
+      const scenario = createScenario(order);
+      const state = replayAgentEvents(scenario.events);
+      const visibleIds = getAgentEventVisibleTranscript(state).map((entry) => entry.message.id);
+      const visibleIdsFromReplay = getAgentEventVisibleTranscript(replayAgentEvents(scenario.events)).map((entry) => entry.message.id);
+
+      expect(visibleIds).toEqual(visibleIdsFromReplay);
+      expect(new Set(visibleIds).size).toBe(visibleIds.length);
+      for (const activeMessage of getAgentEventActivePath(state)) {
+        expect(visibleIds).toContain(activeMessage.id);
+      }
+      for (const hiddenId of scenario.hiddenMessageIds) {
+        expect(visibleIds).not.toContain(hiddenId);
+      }
+
+      for (const runId of scenario.visibleRunIds) {
+        const runMessages = Object.values(state.messages)
+          .filter((message) => message.runId === runId)
+          .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+        const indexes = runMessages.map((message) => visibleIds.indexOf(message.id));
+        expect(indexes.every((index) => index >= 0)).toBe(true);
+        expect(new Set(indexes).size).toBe(indexes.length);
+        const first = Math.min(...indexes);
+        const last = Math.max(...indexes);
+        expect(last - first + 1).toBe(runMessages.length);
+        expect(visibleIds.slice(first, last + 1)).toEqual(runMessages.map((message) => message.id));
+      }
+    }
+  });
+
   test('expands compacted active-path history for visible transcript reads', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Compaction' },

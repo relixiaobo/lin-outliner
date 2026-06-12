@@ -791,7 +791,6 @@ Schema-reserved categories for the next runtime passes:
 - `compaction.completed`
 - `payload.derived`
 - `checkpoint.created`
-- `metric.recorded`
 
 The raw pi-mono event can be kept as a payload ref for debugging, but UI
 components should render from Tenon's normalized render projection.

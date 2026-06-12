@@ -475,7 +475,7 @@ never reprocessed as fork evidence — and a `tool_result.replaced` that slims a
 INHERITED fork-prefix result never re-enters the window (replacements are lossy
 artifacts of existing messages, not new content). When a fork ledger is
 compacted, the post-compact summary message is fresh ledger content past the
-watermark and is Dreamed like any other evidence (§13.17).
+watermark and is Dreamed like any other evidence (§13.18).
 
 ## Model-Facing Tools
 
