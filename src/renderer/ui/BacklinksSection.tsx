@@ -2,7 +2,6 @@ import {
   useCallback,
   useMemo,
   useState,
-  type CSSProperties,
   type MouseEvent,
 } from 'react';
 import { api } from '../api/client';
@@ -19,7 +18,7 @@ import {
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { replaceRichTextRangeWithInlineRef } from './editor/richTextCodec';
 import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
-import { RowLeading } from './outliner/RowLeading';
+import { OutlinerPreviewRow } from './outliner/OutlinerPreviewRow';
 import { useT } from '../i18n/I18nProvider';
 import { outlinerChildParentId, resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import type { CommandRunner, NavigateRootOptions } from './shared';
@@ -310,74 +309,51 @@ function ReferenceOutlineRow({
   const childIds = !childParentId || cycle ? [] : index.byId.get(childParentId)?.children ?? [];
   const expanded = expandedSourceIds.has(node.id);
   const childPath = childParentId ? [...path, childParentId] : path;
-  const hasLinkAction = Boolean(linkAction);
-  const style = depth > 0 ? {
-    '--backlinks-row-indent': `${depth * 28}px`,
-  } as CSSProperties : undefined;
 
   return (
-    <>
-      <div className="backlinks-row-line" style={style}>
-        <div className="backlinks-row-open">
-          <span className="backlinks-row-highlight" aria-hidden />
-          <RowLeading
-            hasChildren={childIds.length > 0}
-            expanded={expanded}
-            variant={markerVariant}
-            onToggleExpand={() => {
-              if (childIds.length > 0) onToggleSourceExpansion(node.id);
-            }}
-            onDrillDown={() => onOpenSourceInCurrentPane(openId)}
-          />
-          <span className={hasLinkAction ? 'backlinks-row-main has-link-action' : 'backlinks-row-main'}>
-            <button
-              type="button"
-              className="backlinks-row-title-button"
-              aria-label={labels.openSource({ title })}
-              onClick={(event) => onOpenSource(event, openId)}
-            >
-              <span className="backlinks-row-title-line">
-                <span className="backlinks-row-title">{title}</span>
-                {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
-              </span>
-              {description && <span className="backlinks-row-description">{description}</span>}
-            </button>
-            {linkAction && (
-              <button
-                type="button"
-                className="backlinks-link-action"
-                title={labels.linkMentionTitle({ title: linkAction.targetTitle ?? labels.untitledSource })}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  linkAction.onLinkMention(linkAction.source);
-                }}
-              >
-                {labels.linkMention}
-              </button>
-            )}
-          </span>
-        </div>
-      </div>
-      {expanded && childIds.length > 0 && (
-        <div className="backlinks-row-children">
-          {childIds.map((childId) => (
-            <ReferenceChildOutlineRow
-              key={childId}
-              nodeId={childId}
-              depth={depth + 1}
-              path={childPath}
-              labels={labels}
-              index={index}
-              onOpenSource={onOpenSource}
-              onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
-              expandedSourceIds={expandedSourceIds}
-              onToggleSourceExpansion={onToggleSourceExpansion}
-            />
-          ))}
-        </div>
+    <OutlinerPreviewRow
+      nodeId={node.id}
+      depth={depth}
+      hasChildren={childIds.length > 0}
+      expanded={expanded}
+      markerVariant={markerVariant}
+      openLabel={labels.openSource({ title })}
+      title={title}
+      meta={mentionLabel}
+      description={description}
+      action={linkAction && (
+        <button
+          type="button"
+          className="backlinks-link-action"
+          title={labels.linkMentionTitle({ title: linkAction.targetTitle ?? labels.untitledSource })}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            linkAction.onLinkMention(linkAction.source);
+          }}
+        >
+          {labels.linkMention}
+        </button>
       )}
-    </>
+      onOpen={(event) => onOpenSource(event, openId)}
+      onToggleExpand={() => onToggleSourceExpansion(node.id)}
+      onDrillDown={() => onOpenSourceInCurrentPane(openId)}
+    >
+      {childIds.map((childId) => (
+        <ReferenceChildOutlineRow
+          key={childId}
+          nodeId={childId}
+          depth={depth + 1}
+          path={childPath}
+          labels={labels}
+          index={index}
+          onOpenSource={onOpenSource}
+          onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
+          expandedSourceIds={expandedSourceIds}
+          onToggleSourceExpansion={onToggleSourceExpansion}
+        />
+      ))}
+    </OutlinerPreviewRow>
   );
 }
 

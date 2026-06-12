@@ -4,6 +4,7 @@ interface OutlinerRowShellProps {
   hasChildren: boolean;
   expanded: boolean;
   wrapProps: HTMLAttributes<HTMLDivElement>;
+  wrapClassName?: string;
   rowClassName: string;
   onSelectFromPointer: MouseEventHandler<HTMLDivElement>;
   onContextMenu: MouseEventHandler<HTMLDivElement>;
@@ -15,6 +16,7 @@ export function OutlinerRowShell({
   hasChildren,
   expanded,
   wrapProps,
+  wrapClassName,
   rowClassName,
   onSelectFromPointer,
   onContextMenu,
@@ -23,7 +25,7 @@ export function OutlinerRowShell({
 }: OutlinerRowShellProps) {
   return (
     <div
-      className={`row-wrap ${hasChildren ? 'has-children' : ''} ${expanded ? 'expanded' : ''}`}
+      className={`row-wrap ${hasChildren ? 'has-children' : ''} ${expanded ? 'expanded' : ''} ${wrapClassName ?? ''}`.trim()}
       {...wrapProps}
     >
       <div

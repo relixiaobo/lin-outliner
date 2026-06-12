@@ -81,15 +81,15 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   const alignment = await page.evaluate((alphaId) => {
     const link = document.querySelector('.backlinks-link-action');
     const linkRow = link?.closest('.backlinks-row');
-    const linkRowOpen = linkRow?.querySelector('.backlinks-row-open');
+    const previewRow = linkRow?.querySelector('.outliner-preview-row');
     const sourceMarker = linkRow?.querySelector('.row-bullet-button');
-    const sourceTitle = linkRow?.querySelector('.backlinks-row-title');
-    const sourceDescription = linkRow?.querySelector('.backlinks-row-description');
-    if (!link || !linkRowOpen || !sourceMarker || !sourceTitle || !sourceDescription) {
+    const sourceTitle = linkRow?.querySelector('.outliner-preview-title');
+    const sourceDescription = linkRow?.querySelector('.outliner-preview-description');
+    if (!link || !previewRow || !sourceMarker || !sourceTitle || !sourceDescription) {
       throw new Error('missing unlinked row alignment target');
     }
     const linkRect = link.getBoundingClientRect();
-    const rowRect = linkRowOpen.getBoundingClientRect();
+    const rowRect = previewRow.getBoundingClientRect();
     const linkStyle = getComputedStyle(link);
     const titleRect = sourceTitle.getBoundingClientRect();
     const titleStyle = getComputedStyle(sourceTitle);
@@ -130,14 +130,14 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
 
   const linkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Mentioned in...' }).first();
   const linkedRow = linkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
-  await linkedRow.locator('.backlinks-row-open').hover();
+  await linkedRow.locator('.outliner-preview-row').hover();
   await linkedRow.locator('.row-chevron-button').click();
-  await expect(linkedRow.locator('.backlinks-row-children')).toContainText('Alpha');
+  await expect(linkedRow.locator('.outliner-preview-children')).toContainText('Alpha');
   await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
 
   const unlinkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Unlinked mention' }).first();
   const unlinkedRow = unlinkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
-  await unlinkedRow.locator('.backlinks-row-open').hover();
+  await unlinkedRow.locator('.outliner-preview-row').hover();
   await unlinkedRow.locator('.row-chevron-button').click();
   await expect(unlinkedRow).toContainText('Beta child');
   await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');

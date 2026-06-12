@@ -184,10 +184,12 @@ displayed on the node.
 
 The footer is outliner-native, not a card list: its collapsed affordance is a
 small `N references` row aligned with the page content column, and expansion
-reveals counted group labels plus source rows that reuse the outliner leading
-geometry (chevron slot, bullet/reference marker, title text, and row hover
-frame). Source breadcrumbs align with group labels; source row markers and
-titles align with normal node body rows. Source breadcrumbs are navigable.
+reveals counted group labels plus source rows rendered through the shared
+read-only outliner preview row primitive. Source rows therefore reuse the normal
+outliner row shell, indentation, chevron slot, bullet/reference marker, title
+text, description text, and trailing action slot. Source breadcrumbs align with
+group labels; source row markers and titles align with normal node body rows.
+Source breadcrumbs are navigable.
 Reference field-value sources use the reference marker; ordinary linked and
 unlinked source rows use the normal content bullet.
 
