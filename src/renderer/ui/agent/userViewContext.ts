@@ -45,12 +45,13 @@ function buildPanelContexts(
 ): AgentUserViewPanelContext[] {
   if (panels.length === 0) return [];
   return panels.flatMap((panel, panelIndex) => {
-    if (panel.type !== 'outliner') return [];
-    const rootNode = index.byId.get(panel.rootId);
-    const visibleOutline = buildVisibleOutline(panel.rootId, index, ui);
+    if (panel.type !== 'workspace' || panel.view.kind !== 'outliner') return [];
+    const rootId = panel.view.rootId;
+    const rootNode = index.byId.get(rootId);
+    const visibleOutline = buildVisibleOutline(rootId, index, ui);
     return [{
       panelId: panel.id,
-      rootNodeId: panel.rootId,
+      rootNodeId: rootId,
       rootTitle: titleForNode(rootNode),
       rootType: rootNode?.type ?? 'outline',
       active: panel.id === activePanelId,

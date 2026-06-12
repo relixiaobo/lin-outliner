@@ -60,11 +60,11 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             showClose={activePanels.length > 1}
             size={panel.size}
           >
-            {panel.type === 'outliner' ? (
+            {panel.type === 'workspace' && panel.view.kind === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
-                rootId={panel.rootId}
-                canGoBack={Boolean(panel.pageBackStack.length)}
+                rootId={panel.view.rootId}
+                canGoBack={Boolean(panel.backStack.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 showClose={activePanels.length > 1}
                 onClose={() => props.onClosePanel(panel.id)}
@@ -80,8 +80,10 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
               />
-            ) : (
+            ) : panel.type === 'agent-debug' ? (
               <AgentDebugPanel conversationId={panel.conversationId} />
+            ) : (
+              <div className="main-panel panel-empty-state" />
             )}
           </WorkspacePanelSurface>
           {panelIndex < activePanels.length - 1 && (

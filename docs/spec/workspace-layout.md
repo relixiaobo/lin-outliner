@@ -177,11 +177,21 @@ interface WorkspacePanelBase {
   size: number; // tile flex ratio
 }
 
-interface OutlinePanelState extends WorkspacePanelBase {
-  type: 'outliner';
-  rootId: NodeId;
-  pageBackStack: NodeId[]; // always seeded; never absent
-  pageForwardStack: NodeId[];
+type PreviewTarget =
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory'; label?: string }
+  | { kind: 'asset'; assetId: string; label?: string }
+  | { kind: 'agent-payload'; conversationId: string; runId?: string; payloadId: string; label?: string }
+  | { kind: 'url'; url: string; label?: string };
+
+type PanelView =
+  | { kind: 'outliner'; rootId: NodeId }
+  | { kind: 'file-preview'; target: PreviewTarget };
+
+interface WorkspaceContentPanelState extends WorkspacePanelBase {
+  type: 'workspace';
+  view: PanelView;
+  backStack: PanelView[]; // always seeded; never absent
+  forwardStack: PanelView[];
 }
 
 interface AgentDebugPanelState extends WorkspacePanelBase {
@@ -189,7 +199,7 @@ interface AgentDebugPanelState extends WorkspacePanelBase {
   conversationId: string | null;
 }
 
-type WorkspacePanelState = OutlinePanelState | AgentDebugPanelState;
+type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
 
 interface WorkspaceLayout {
   activePanelId: string;
@@ -197,16 +207,43 @@ interface WorkspaceLayout {
 }
 ```
 
+Outliner content is a panel view, not the panel's top-level discriminator:
+
+```ts
+{
+  type: 'workspace',
+  view: { kind: 'outliner', rootId: NodeId },
+  backStack: [],
+  forwardStack: [],
+}
+```
+
+File preview uses the same workspace panel host and the same history stack:
+
+```ts
+{
+  type: 'workspace',
+  view: {
+    kind: 'file-preview',
+    target: { kind: 'local-file', path: '/tmp/example.md', entryKind: 'file' },
+  },
+  backStack: [{ kind: 'outliner', rootId: NodeId }],
+  forwardStack: [],
+}
+```
+
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
-(`lin-outliner:workspace-layout:v3`). It is UI state; document content remains in
-the TypeScript-backed document model.
+(`lin-outliner:workspace-layout:v4`). It is UI state; document content remains in
+the TypeScript-backed document model. Pre-release layout shape changes do not
+ship migrations or legacy readers; old dev userData can be wiped.
 
-The canvas is always anchored by at least one outliner pane — it carries the
-ambient `rootId` and the focus target. A restored layout that sanitizes down to
-only agent-debug panes has nothing to anchor, so it is treated as corrupt and
-replaced by the default single pane rather than booting into a rootless canvas.
+The canvas is anchored by at least one outliner view (current or in a workspace
+pane's view history) so startup can restore focus. A restored layout that
+sanitizes down to only agent-debug panes has nothing to anchor, so it is treated
+as corrupt and replaced by the default single pane rather than booting into a
+rootless canvas.
 
 The layout does **not** include:
 
@@ -217,48 +254,38 @@ The layout does **not** include:
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
 - Agent conversation state, scroll, or input.
-- Document operation undo/redo state. Per-pane page history is navigation history
-  only and must not change document history.
+- Document operation undo/redo state. Per-pane view history is navigation
+  history only and must not change document history.
 
-**Default layout:** a single outliner pane on Today. The user opens additional
-panes on demand (see Interaction Examples). There is no saved/named multi-pane
-layout feature — that capability went away with tabs and is not replaced by pins
-(pins park individual nodes for quick access, a different and smaller thing).
-The ephemeral pane layout is restored only within the same local calendar day;
-on a later day, startup ignores the stale pane roots and returns to the current
-Today node.
-When a same-day layout restores multiple outliner panes, startup replays outline
-view state for every outliner pane root. That replay belongs to the separate
-outline view-state store and merges into the shared renderer expansion set; it
-does not live in the pane layout record.
+**Default layout:** a single workspace pane on Today's outliner view. The user
+opens additional panes on demand (see Interaction Examples). There is no
+saved/named multi-pane layout feature — that capability went away with tabs and
+is not replaced by pins (pins park individual nodes for quick access, a
+different and smaller thing). The ephemeral pane layout is restored only within
+the same local calendar day; on a later day, startup ignores stale pane views and
+returns to the current Today node.
+When a same-day layout restores multiple outliner views, startup replays outline
+view state for every outliner root found in current views and view history. That
+replay belongs to the separate outline view-state store and merges into the
+shared renderer expansion set; it does not live in the pane layout record.
 
 ### Extensibility seam (preview, etc.)
 
 `WorkspacePanelState` is an **extensible discriminated union** (`type`
-discriminant over a shared `WorkspacePanelBase`). New pane kinds are added as a
-union member + a `WorkspaceCanvas` render branch + a `sanitizePanel` branch,
-without reshaping existing panes. The planned consumer is a `file-preview` pane
-for `local-file` references (Cmd/Ctrl+click on such a reference → new preview
-pane).
+discriminant over a shared `WorkspacePanelBase`). The reusable document-content
+host is `type: 'workspace'`; its `view` decides whether `WorkspaceCanvas` renders
+the outliner or the file preview. New non-document chrome panels, such as
+`agent-debug`, are still added as union members.
 
-Per-pane history is currently **outliner-only** (`pageBackStack: NodeId[]` —
-a stack of roots). Previewing a file *in the current pane* (plain click, with
-"back" returning to the node view) needs a history entry that is not a node;
-when that feature lands, generalize the root stack into a **view-state stack** so
-a pane's current view and its history are both a `PaneView`:
-
-```ts
-type PaneView =
-  | { kind: 'outliner'; rootId: NodeId }
-  | { kind: 'file-preview'; path: string; entryKind: 'file' | 'directory' };
-```
-
-This is a deliberate, documented seam — not yet built: today history is
-`NodeId[]` and a pane's current view is its `type` + `rootId`.
+Per-pane history is a **view-state stack** (`backStack: PanelView[]`,
+`forwardStack: PanelView[]`). Opening a node in the current pane pushes the
+previous view, whether that previous view was an outliner or a file preview.
+Opening a file preview in the current pane does the same, so Back can return to
+the originating node view.
 
 ## Panel Semantics
 
-An outline pane is a view into document data. Multiple panes can show different
+An outline view is a view into document data. Multiple panes can show different
 roots, or different views into the same underlying document graph.
 
 Pane order is array order. There is no `panelZOrder`.
@@ -456,8 +483,8 @@ Open node in a split pane:
 ```txt
 User Cmd/Ctrl-clicks a reference, or picks "Open in split pane" from the
 node context menu
-  -> append an OutlinePanelState to layout.panels (or, at the 4-pane cap,
-     replace the rightmost pane's root)
+  -> append a workspace panel with an outliner view to layout.panels (or, at the
+     4-pane cap, replace the rightmost workspace pane's view)
   -> set activePanelId to that pane
   -> layout recalculates tiled widths from each pane's size
 ```
