@@ -571,8 +571,28 @@ describe('agent skills', () => {
       ratified: true,
     });
     const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
+    expect(text).not.toContain('Base directory for this skill:');
+    expect(text).not.toContain('built-in/skillify/SKILL.md');
     expect(text).toContain('Skill authoring workflow');
     expect(text).toContain('start unratified');
+  });
+
+  test('records built-in skill invocations without surfacing pseudo file paths', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const invocation = await runtime.invokeSkill({ skill: 'skillify', trigger: 'agent' });
+
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain('Skill authoring workflow');
+    expect(invocation.renderedContent).not.toContain('Base directory for this skill:');
+    expect(invocation.renderedContent).not.toContain('built-in/skillify/SKILL.md');
+
+    const reminder = runtime.createInvokedSkillsReminder();
+    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+
+    expect(text).toContain('### Skill: skillify');
+    expect(text).toContain('Path: built-in:skillify');
+    expect(text).not.toContain('built-in/skillify/SKILL.md');
   });
 
   test('records model and effort effects for slash and agent-invoked skills', async () => {

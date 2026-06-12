@@ -623,7 +623,7 @@ export class AgentSkillRuntime {
   private recordInvokedSkill(skill: SkillDefinition, renderedContent: string): void {
     this.invokedSkills.set(skill.name, {
       skillName: skill.name,
-      skillPath: normalizePathForPrompt(skill.skillFile),
+      skillPath: skillPathForPrompt(skill),
       content: renderedContent,
       invokedAt: Date.now(),
     });
@@ -1396,11 +1396,28 @@ async function renderSkillContent(
   executeSkillShell?: SkillShellExecutor,
   signal?: AbortSignal,
 ): Promise<string> {
-  let content = `Base directory for this skill: ${normalizePathForPrompt(skill.rootDir)}\n\n${skill.body}`;
+  const skillDir = skillDirectoryForPrompt(skill);
+  let content = skillDir
+    ? `Base directory for this skill: ${skillDir}\n\n${skill.body}`
+    : skill.body;
   content = substituteArguments(content, args, true, skill.argumentNames);
-  content = content.replace(/\$\{AGENT_SKILL_DIR\}/g, normalizePathForPrompt(skill.rootDir));
+  if (skillDir) {
+    content = content.replace(/\$\{AGENT_SKILL_DIR\}/g, skillDir);
+  }
   content = content.replace(/\$\{AGENT_CONVERSATION_ID\}/g, conversationId);
   return executeShellCommandsInSkillContent(content, skill, executeSkillShell, signal);
+}
+
+function skillDirectoryForPrompt(skill: SkillDefinition): string | null {
+  return skill.source === 'built-in'
+    ? null
+    : normalizePathForPrompt(skill.rootDir);
+}
+
+function skillPathForPrompt(skill: SkillDefinition): string {
+  return skill.source === 'built-in'
+    ? `built-in:${skill.name}`
+    : normalizePathForPrompt(skill.skillFile);
 }
 
 async function executeShellCommandsInSkillContent(
@@ -1600,10 +1617,10 @@ function parseLiveSkillListing(body: string): string[] {
 
 function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
   const body = unwrapSystemReminder(text);
-  if (!body.includes('Base directory for this skill:')) return null;
   const explicitName = /<skill-name>([^<]+)<\/skill-name>/.exec(body)?.[1]?.trim();
   const baseDir = /^Base directory for this skill:\s*(.+)$/m.exec(body)?.[1]?.trim();
-  const skillName = explicitName || (baseDir ? path.basename(baseDir) : '');
+  if (!explicitName && !baseDir) return null;
+  const skillName = normalizeSkillName(explicitName || (baseDir ? path.basename(baseDir) : ''));
   if (!skillName) return null;
   return {
     skillName,

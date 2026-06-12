@@ -10,6 +10,11 @@ current built-in skill is `/skillify`, a user- and model-invocable workflow for
 creating or updating local skills through normal file tools; its `when_to_use`
 gates it to explicit user save/update requests, so a conversational "save this
 as a skill" routes through the curated guidance instead of ad-hoc file writes.
+Built-ins are code-registered instructions, not local `SKILL.md` files. Like
+cc-2.1 bundled skills, they only receive a `Base directory` prefix when they have
+real extracted reference files. Current built-ins have no extracted files, so
+their prompts contain only the skill body; post-compact bookkeeping records them
+as `built-in:<name>` rather than a readable file path.
 
 Default mutable skill directories are always enabled:
 
@@ -38,7 +43,7 @@ Supported frontmatter fields:
 - `agent`: optional agent definition for `context: fork` skills. If omitted, Lin uses the built-in `general` agent. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
 - `paths`: path-conditional activation patterns.
 
-The skill body is loaded with:
+Mutable skill bodies are loaded with:
 
 ```text
 Base directory for this skill: <skill-directory>
@@ -46,11 +51,21 @@ Base directory for this skill: <skill-directory>
 <SKILL.md body>
 ```
 
+Built-in skill bodies with no extracted reference files are loaded without a
+directory prefix:
+
+```text
+<skill body>
+```
+
 Argument placeholders are `$ARGUMENTS`, `$ARGUMENTS[n]`, `$0`, `$name`, `${AGENT_SKILL_DIR}`, and `${AGENT_CONVERSATION_ID}`.
+For mutable skills, `${AGENT_SKILL_DIR}` resolves to the skill directory. For
+built-in skills without extracted reference files, `${AGENT_SKILL_DIR}` is not
+substituted because there is no real directory to read from.
 
 Skill bodies may include embedded shell commands using fenced blocks that start with ```` ```! ```` or inline `!` command spans. Commands are expanded only when the skill is invoked, after argument and environment placeholder substitution. They execute through the same local bash runner and permission policy used by normal agent tool calls; in `restricted` mode the skill must grant a matching `allowed-tools` rule such as `Bash(git status:*)`.
 
-Additional files inside the skill directory are not inserted automatically. Skills should refer to them with `${AGENT_SKILL_DIR}` and ask the agent to read or execute only the specific files needed for the task. This keeps the default context small while still supporting progressive disclosure for reference Markdown files, scripts, and assets.
+Additional files inside a mutable skill directory are not inserted automatically. Skills should refer to them with `${AGENT_SKILL_DIR}` and ask the agent to read or execute only the specific files needed for the task. This keeps the default context small while still supporting progressive disclosure for reference Markdown files, scripts, and assets. Built-in skills without extracted reference files have no adjacent files to read.
 
 ## Runtime Flow
 
