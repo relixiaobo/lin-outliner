@@ -238,22 +238,29 @@ function ReferenceResultRow({
           >
             <span className="backlinks-row-title">{title}</span>
             {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
+            {onLinkMention && row.source.mention?.field === 'content' && !row.node.locked && (
+              <span
+                role="button"
+                tabIndex={0}
+                className="backlinks-link-action"
+                title={labels.linkMentionTitle({ title: targetTitle ?? labels.untitledSource })}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onLinkMention(row.source);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onLinkMention(row.source);
+                }}
+              >
+                {labels.linkMention}
+              </span>
+            )}
           </button>
         </div>
-        {onLinkMention && row.source.mention?.field === 'content' && !row.node.locked && (
-          <button
-            type="button"
-            className="backlinks-link-action"
-            title={labels.linkMentionTitle({ title: targetTitle ?? labels.untitledSource })}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onLinkMention(row.source);
-            }}
-          >
-            {labels.linkMention}
-          </button>
-        )}
       </div>
     </article>
   );

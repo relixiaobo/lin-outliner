@@ -73,12 +73,17 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
     return {
       bodyBulletLeft: left(`[data-trailing-parent-id="${alphaId}"] .row-bullet-button`),
       bodyTextLeft: left(`[data-trailing-parent-id="${alphaId}"] .ProseMirror`),
+      rowRight: document.querySelector('.backlinks-row-open')?.getBoundingClientRect().right ?? 0,
+      linkLeft: document.querySelector('.backlinks-link-action')?.getBoundingClientRect().left ?? 0,
       sourceMarkerLeft: left('.backlinks-row-open .row-bullet-button'),
       sourceTitleLeft: left('.backlinks-row-title'),
+      sourceTitleRight: document.querySelector('.backlinks-row-title')?.getBoundingClientRect().right ?? 0,
     };
   }, ids.alpha);
   expect(Math.abs(alignment.sourceMarkerLeft - alignment.bodyBulletLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(alignment.sourceTitleLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
+  expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleRight);
+  expect(alignment.linkLeft).toBeLessThan(alignment.rowRight);
   await expect(section.locator('.backlinks-row-open .row-chevron-shell')).toHaveCount(3);
   await expect(section.locator('.backlinks-row-chevron-slot')).toHaveCount(0);
 
