@@ -41,12 +41,15 @@ import {
   cloneMemoryAccessStats,
   computeMemoryStrength,
   emptyMemoryAccessStats,
-  rankMemoryEntriesByActivation,
   type AgentMemoryAccessStats,
   type AgentMemoryOverview,
   type AgentMemoryRankedEntry,
   type AgentMemoryStrength,
 } from '../core/agentMemoryActivation';
+import {
+  rankMemoryEntriesForBriefing,
+  rankMemoryEntriesForRecall,
+} from '../core/agentMemoryRetrieval';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -899,10 +902,12 @@ export class AgentEventStore {
   ): Promise<{ entries: AgentMemoryEntry[]; totalEntries: number }> {
     await this.ensureStorageLayout();
     const projection = await this.getMemoryProjection(principal);
-    const entries = rankMemoryEntries([...projection.entries.values()]
-      .filter((entry) => options.includeInvalidated || entry.status === 'active'),
-      options.query,
-      projection.accessStatsByEntryId);
+    const poolEntries = [...projection.entries.values()]
+      .filter((entry) => options.includeInvalidated || entry.status === 'active');
+    const entries = rankMemoryEntriesForRecall(poolEntries, {
+      query: options.query,
+      accessStatsByEntryId: projection.accessStatsByEntryId,
+    }).map((item) => item.entry);
     return {
       entries: entries.slice(0, clampMemoryLimit(options.limit)),
       totalEntries: entries.length,
@@ -925,7 +930,7 @@ export class AgentEventStore {
         totalEntries: cached.ranked.length,
       };
     }
-    const ranked = rankMemoryEntriesByActivation(
+    const ranked = rankMemoryEntriesForBriefing(
       [...projection.entries.values()].filter((entry) => entry.status === 'active'),
       projection.accessStatsByEntryId,
       now,
@@ -3108,50 +3113,6 @@ function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const normalized = value.trim();
   return normalized || undefined;
-}
-
-function rankMemoryEntries(
-  entries: readonly AgentMemoryEntry[],
-  query: string | undefined,
-  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
-): AgentMemoryEntry[] {
-  const fallbackSort = (left: AgentMemoryEntry, right: AgentMemoryEntry) => (
-    right.createdAt - left.createdAt || right.id.localeCompare(left.id)
-  );
-  if (!query || normalizeSearchText(query).length === 0) return [...entries].sort(fallbackSort);
-  const analysis = analyzeTextSearchQuery(query);
-  const terms = normalizeSearchTerms(query);
-  if (analysis.normalized.length === 0 || terms.length === 0) return [...entries].sort(fallbackSort);
-  return entries
-    .map((entry) => {
-      const lexicalScore = memoryEntrySearchScore(entry, analysis.normalized, terms);
-      const strength = computeMemoryStrength(entry, accessStatsByEntryId.get(entry.id));
-      return {
-        entry,
-        lexicalScore,
-        strength,
-        score: lexicalScore * (1 + Math.min(4, strength.retrievalStrength) * 0.12),
-      };
-    })
-    .filter((ranked) => ranked.score > 0)
-    .sort((left, right) => (
-      right.score - left.score
-      || right.strength.storageStrength - left.strength.storageStrength
-      || fallbackSort(left.entry, right.entry)
-    ))
-    .map((ranked) => ranked.entry);
-}
-
-function memoryEntrySearchScore(entry: AgentMemoryEntry, normalizedQuery: string, terms: readonly string[]): number {
-  const fact = normalizeSearchText(entry.fact);
-  const id = normalizeSearchText(entry.id);
-  let score = 0;
-  if (fact.includes(normalizedQuery)) score += 100;
-  for (const term of terms) {
-    if (fact.includes(term)) score += 10;
-    if (id.includes(term)) score += 4;
-  }
-  return score;
 }
 
 function clampMemoryLimit(limit: number | undefined): number {

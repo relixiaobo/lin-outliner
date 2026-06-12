@@ -146,8 +146,8 @@ facts".
 | **Step 0** | Rewrite `agent-memory-foundations` + `agent-data-model` canonical table + `agent-architecture` § memory per D-1/D-4/D-6 | **shipped #183** (with PR-1) |
 | **PR-1** | Person rule (D-2) + recall read surface (D-3, reader-relative `subject`) + Dream prompt guidance (D-9). No schema change; old-format facts handled by manual dev-userData wipe | **shipped #183** |
 | **PR-2** | Episodic layer (D-4) + sources union (D-5) + provenance-zoom storage side. Subsumes archived `agent-memory-episodic-index` | **shipped #195** |
-| **PR-3** | Two-strength forgetting (`agent-memory-forgetting`) + retrieval-event append on recall hits (D-7) | **implemented with PR-5 in `codex/agent-memory-forgetting-schema`** |
-| **PR-5** | Schema/overview layer (D-6) + briefing recomposition + no-query `recall` returns overview | **implemented with PR-3 in `codex/agent-memory-forgetting-schema`** |
+| **PR-3** | Two-strength forgetting (`agent-memory-forgetting`) + retrieval-event append on recall hits (D-7) | **shipped with PR-5 in #199** |
+| **PR-5** | Schema/overview layer (D-6) + briefing recomposition + no-query `recall` returns overview | **shipped with PR-3 in #199** |
 | **PR-4** | Hybrid retrieval engine for deliberate `recall` (`agent-memory-retrieval-upgrade`, rescoped) + zoom read side; embedding-provider PM gate at claim | PR-2 |
 
 ## Deferred — automatic associative retrieval
