@@ -4,14 +4,26 @@ import { useT } from '../../i18n/I18nProvider';
 
 export function AgentMessageFrame({
   children,
+  highlighted = false,
+  messageId,
   onContextMenu,
   role,
 }: {
   children: ReactNode;
+  highlighted?: boolean;
+  messageId?: string | null;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
   role: 'assistant' | 'user';
 }) {
-  return <div className={`agent-message-row ${role}`} onContextMenu={onContextMenu}>{children}</div>;
+  return (
+    <div
+      className={`agent-message-row ${role}${highlighted ? ' is-highlighted' : ''}`}
+      data-agent-message-id={messageId ?? undefined}
+      onContextMenu={onContextMenu}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function AgentMessageActions({

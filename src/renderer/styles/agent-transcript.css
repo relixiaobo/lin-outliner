@@ -88,6 +88,12 @@
   width: 100%;
   min-width: 0;
   gap: var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background var(--motion-slow);
+}
+
+.agent-message-row.is-highlighted {
+  background: var(--fill-1);
 }
 
 .agent-message-row.user {

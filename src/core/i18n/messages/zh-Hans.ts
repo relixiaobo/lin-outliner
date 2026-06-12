@@ -758,7 +758,14 @@ commandPalette: {
       conversations: '频道',
       noConversations: '暂无频道',
       channelMembers: '频道成员',
-      memberTyping: ({ name }: { name: string }) => `${name} 正在回复……`,
+      channelActivity: '频道活动',
+      activityOverflow: ({ count }) => `+${count}`,
+      activityStates: {
+        thinking: '思考中',
+        usingTools: '使用工具',
+        received: '已收到',
+      },
+      stopActivityEntry: ({ name }) => `停止 ${name}`,
       openTypingDetails: '查看工作状态',
       closeTypingDetails: '关闭工作状态',
       typingNoDetailYet: '暂无活动。',
@@ -869,6 +876,7 @@ commandPalette: {
       timestamp: '时间',
       model: '模型',
       tokens: 'Token',
+      replyAnchorTitle: '跳转到被回应的消息',
       tokenLabels: {
         input: '输入',
         output: '输出',

@@ -25,6 +25,7 @@ import type { AgentConversation } from '../../core/types';
 import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
+  AgentRenderActivityEntry,
   AgentRenderCompactionEntity,
   AgentRenderDreamEntity,
   AgentRenderMemberView,
@@ -45,6 +46,10 @@ export interface AgentMessageEntry {
   streaming: boolean;
   /** Who produced this message (Channel attribution); null for the streaming placeholder. */
   actor: AgentActor | null;
+  /** Run that produced this message, when known. */
+  runId: string | null;
+  /** The message that addressed this reply, when the projection can derive it. */
+  addressedByMessageId: string | null;
 }
 
 export interface AgentCompletedCompactionEntry {
@@ -106,6 +111,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   members: [],
   activeRunId: null,
   activeRunAgentId: null,
+  activityEntries: [],
   queuedMessages: [],
   activeCompaction: null,
   activeDream: null,
@@ -123,6 +129,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
 };
 
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
+const EMPTY_ACTIVITY_ENTRIES: AgentRenderActivityEntry[] = [];
 const EMPTY_QUEUED_MESSAGES: string[] = [];
 
 const EMPTY_USAGE: Usage = {
@@ -214,6 +221,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       branches: row.archived ? null : entity.branches,
       streaming,
       actor: entity.actor,
+      runId: entity.runId ?? null,
+      addressedByMessageId: entity.addressedByMessageId ?? null,
     });
   }
 
@@ -272,6 +281,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       branches: null,
       streaming: true,
       actor: null,
+      runId: null,
+      addressedByMessageId: null,
     });
   }
 
@@ -492,6 +503,7 @@ export interface AgentRuntimeClient {
     result: AskUserQuestionResult,
   ) => Promise<{ resolved: boolean }>;
   stopConversation: (conversationId: string) => Promise<void>;
+  stopRun: (conversationId: string, runId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
 }
 
@@ -511,6 +523,8 @@ export interface LinAgentRuntimeView {
   members: AgentRenderMemberView[];
   /** The active run's executing agent (Channel typing indicator subject). */
   activeRunAgentId: string | null;
+  /** Channel activity entries: one addressed agent per unfinished addressing message. */
+  activityEntries: AgentRenderActivityEntry[];
   /** Channel user messages queued behind the active round (not yet in the log). */
   queuedMessages: string[];
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
@@ -546,6 +560,7 @@ export interface LinAgentRuntimeView {
   ) => Promise<boolean>;
   resolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
   stop: () => void;
+  stopRun: (runId: string) => void;
   reset: () => void;
   reloadConversation: () => Promise<void>;
   seedUserMessage: (message: string) => UserMessage;
@@ -573,6 +588,7 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   resolveUserQuestion: (conversationId, requestId, result) =>
     api.agentResolveUserQuestion(conversationId, requestId, result),
   stopConversation: (conversationId) => api.agentStopConversation(conversationId),
+  stopRun: (conversationId, runId) => api.agentStopRun(conversationId, runId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
 
@@ -813,6 +829,13 @@ export class AgentRuntimeStore {
   stop = () => {
     if (!this.conversationId) return;
     void this.client.stopConversation(this.conversationId).catch((caught) => {
+      this.reportError(caught);
+    });
+  };
+
+  stopRun = (runId: string) => {
+    if (!this.conversationId) return;
+    void this.client.stopRun(this.conversationId, runId).catch((caught) => {
       this.reportError(caught);
     });
   };
@@ -1069,6 +1092,7 @@ export class AgentRuntimeStore {
       // member-derived memos don't recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
       activeRunAgentId: this.projection.activeRunAgentId ?? null,
+      activityEntries: this.projection.activityEntries ?? EMPTY_ACTIVITY_ENTRIES,
       queuedMessages: this.projection.queuedMessages ?? EMPTY_QUEUED_MESSAGES,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
@@ -1094,6 +1118,7 @@ export class AgentRuntimeStore {
       resolveApproval: this.resolveApproval,
       resolveUserQuestion: this.resolveUserQuestion,
       stop: this.stop,
+      stopRun: this.stopRun,
       reset: this.reset,
       reloadConversation: this.reloadConversation,
       seedUserMessage: this.seedUserMessage,

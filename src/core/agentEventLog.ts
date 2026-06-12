@@ -751,6 +751,11 @@ export interface AssistantMessageStartedEvent extends AgentEventBase {
   type: 'assistant_message.started';
   messageId: string;
   parentMessageId: string | null;
+  /**
+   * Channel reply anchor source: the user/assistant message that addressed this
+   * run. Optional for legacy records and non-Channel runs.
+   */
+  addressedByMessageId?: string | null;
   runId: string;
   providerId: string;
   modelId: string;
@@ -1034,6 +1039,8 @@ export interface RunStartedEvent extends AgentEventBase {
   type: 'run.started';
   runId: string;
   agentId?: AgentId;
+  /** Channel source message that addressed this run; absent outside Channel routing. */
+  addressedByMessageId?: string | null;
   anchor?: AgentRunAnchor;
   kind?: AgentRunKind;
   trigger?: AgentRunTrigger;
@@ -1203,6 +1210,7 @@ export interface AgentEventMessageRecord {
   updatedAt: number;
   status: AgentMessageStatus;
   runId?: string;
+  addressedByMessageId?: string | null;
   providerId?: string;
   modelId?: string;
   apiId?: string;
@@ -1220,6 +1228,7 @@ export interface AgentEventMessageRecord {
 export interface AgentRunRecord {
   id: string;
   agentId?: string;
+  addressedByMessageId?: string | null;
   status: AgentRunStatus;
   startedAt: number;
   updatedAt: number;
@@ -1610,6 +1619,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         updatedAt: event.createdAt,
         status: 'streaming',
         runId: event.runId,
+        addressedByMessageId: event.addressedByMessageId ?? null,
         providerId: event.providerId,
         modelId: event.modelId,
         apiId: event.apiId,
@@ -1680,6 +1690,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.runs[event.runId] = {
         id: event.runId,
         agentId: event.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
+        addressedByMessageId: event.addressedByMessageId ?? null,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,

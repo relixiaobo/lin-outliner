@@ -1677,6 +1677,192 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('shows fixed Channel activity with overflow and entry stop affordance', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          mention: 'assistant',
+          displayName: 'Agent System',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+        { principal: { type: 'agent', agentId: 'agent-beta' }, mention: 'beta', displayName: 'Beta' },
+        { principal: { type: 'agent', agentId: 'agent-gamma' }, mention: 'gamma', displayName: 'Gamma' },
+        { principal: { type: 'agent', agentId: 'agent-delta' }, mention: 'delta', displayName: 'Delta' },
+      ],
+      activeRunId: 'run-alpha',
+      activeRunAgentId: null,
+      isStreaming: true,
+      streamingMessage: {
+        role: 'assistant',
+        actor: { type: 'agent', agentId: 'agent-alpha' },
+        runId: 'run-alpha',
+        timestamp: 1_800_000_000_300,
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: 'toolUse',
+        content: [{ type: 'toolCall', id: 'tool-alpha', name: 'node_read', arguments: { nodeId: 'node-alpha' } }],
+      },
+      pendingToolCallIds: ['tool-alpha'],
+      activityEntries: [
+        { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: 'assistant-streaming', addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300 },
+        { id: 'user-activity:agent-beta', agentId: 'agent-beta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+        { id: 'user-activity:agent-gamma', agentId: 'agent-gamma', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+        { id: 'user-activity:agent-delta', agentId: 'agent-delta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+      ],
+    });
+
+    const activity = page.locator('.agent-channel-activity');
+    await expect(activity).toBeVisible();
+    await expect(activity).toHaveCSS('height', '44px');
+    await expect(activity).toContainText('Alpha');
+    await expect(activity).toContainText('using tools');
+    await expect(activity).toContainText('Beta');
+    await expect(activity).not.toContainText('Gamma');
+    await expect(activity).toContainText('+2');
+
+    const geometryBefore = await page.locator('.agent-chat-panel').evaluate((panel) => {
+      const activity = panel.querySelector('.agent-channel-activity');
+      const composer = panel.querySelector('.agent-composer');
+      if (!(activity instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
+      return {
+        activityHeight: activity.getBoundingClientRect().height,
+        composerTop: composer.getBoundingClientRect().top,
+      };
+    });
+    expect(geometryBefore).not.toBeNull();
+
+    const alphaShell = activity.locator('.agent-channel-activity-item-shell', { hasText: 'Alpha' });
+    await alphaShell.hover();
+    const stopAlpha = alphaShell.getByRole('button', { name: 'Stop Alpha' });
+    await expect(stopAlpha).toHaveCSS('opacity', '1');
+    await stopAlpha.click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.some((call) => (
+        call.cmd === 'agent_stop_run'
+        && call.args.conversationId === 'mock-agent-conversation'
+        && call.args.runId === 'run-alpha'
+      ));
+    }).toBe(true);
+
+    await activity.getByRole('button', { name: 'Alpha using tools' }).click();
+    const details = page.getByRole('complementary', { name: 'View working state' });
+    await expect(details).toBeVisible();
+    await expect(details).toContainText('Alpha · using tools');
+
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          mention: 'assistant',
+          displayName: 'Agent System',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+        { principal: { type: 'agent', agentId: 'agent-beta' }, mention: 'beta', displayName: 'Beta' },
+      ],
+      activityEntries: [
+        { id: 'user-activity:agent-beta', agentId: 'agent-beta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+      ],
+    }, 2);
+
+    const geometryAfter = await page.locator('.agent-chat-panel').evaluate((panel) => {
+      const activity = panel.querySelector('.agent-channel-activity');
+      const composer = panel.querySelector('.agent-composer');
+      if (!(activity instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
+      return {
+        activityHeight: activity.getBoundingClientRect().height,
+        composerTop: composer.getBoundingClientRect().top,
+      };
+    });
+    expect(geometryAfter).not.toBeNull();
+    expect(geometryAfter!.activityHeight).toBeCloseTo(geometryBefore!.activityHeight, 1);
+    expect(geometryAfter!.composerTop).toBeCloseTo(geometryBefore!.composerTop, 1);
+  });
+
+  test('renders reply anchors only for non-adjacent addressed replies', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          mention: 'assistant',
+          displayName: 'Agent System',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+      ],
+      conversation: [
+        {
+          nodeId: 'user-anchor-original',
+          actor: { type: 'user', userId: 'local-user' },
+          message: {
+            role: 'user',
+            timestamp: 1_800_000_000_000,
+            content: [{ type: 'text', text: 'Original question with enough detail to become the quiet anchor quote.' }],
+          },
+        },
+        {
+          nodeId: 'user-anchor-latest',
+          actor: { type: 'user', userId: 'local-user' },
+          message: {
+            role: 'user',
+            timestamp: 1_800_000_000_100,
+            content: [{ type: 'text', text: 'Newest adjacent question.' }],
+          },
+        },
+        {
+          nodeId: 'assistant-anchor-latest',
+          actor: { type: 'agent', agentId: 'agent-alpha' },
+          addressedByMessageId: 'user-anchor-latest',
+          message: {
+            role: 'assistant',
+            timestamp: 1_800_000_000_200,
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'Adjacent answer has no anchor.' }],
+          },
+        },
+        {
+          nodeId: 'assistant-anchor-late',
+          actor: { type: 'agent', agentId: 'agent-alpha' },
+          addressedByMessageId: 'user-anchor-original',
+          message: {
+            role: 'assistant',
+            timestamp: 1_800_000_000_300,
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'Late answer points back to the first question.' }],
+          },
+        },
+      ],
+    });
+
+    await expect(page.locator('.agent-reply-anchor')).toHaveCount(1);
+    const anchor = page.locator('.agent-message-row.assistant', { hasText: 'Late answer points back' }).locator('.agent-reply-anchor');
+    await expect(anchor).toContainText('↩');
+    await expect(anchor).toContainText('"Original question with enough detail');
+
+    await anchor.click();
+    await expect(page.locator('[data-agent-message-id="user-anchor-original"]')).toHaveClass(/is-highlighted/);
+    await expect(page.locator('.agent-message-row.assistant', { hasText: 'Adjacent answer has no anchor.' }).locator('.agent-reply-anchor')).toHaveCount(0);
+  });
+
   test('opens provider config from the model chip without mutating model settings inline', async ({ page }) => {
     const modelButton = page.getByRole('button', { name: 'Open model settings' });
     await expect(modelButton).toContainText('GPT-5.4');

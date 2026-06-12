@@ -105,6 +105,8 @@ function projection(
     revision: options.revision ?? 1,
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
+    activeRunAgentId: options.isStreaming ? 'built-in:core:assistant' : null,
+    activityEntries: [],
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     isStreaming: !!options.isStreaming,
@@ -236,6 +238,7 @@ function createFakeClient(options: {
       message: string;
       userViewContext?: AgentUserViewContext | null;
     }>,
+    stopRun: [] as Array<{ conversationId: string; runId: string }>,
   };
 
   const client: AgentRuntimeClient = {
@@ -283,6 +286,9 @@ function createFakeClient(options: {
       return { resolved: true };
     },
     stopConversation: async () => {},
+    stopRun: async (conversationId, runId) => {
+      calls.stopRun.push({ conversationId, runId });
+    },
     onEvent: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
