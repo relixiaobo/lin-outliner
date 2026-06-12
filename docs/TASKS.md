@@ -414,16 +414,6 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
-- **agent-channel-parallel-runtime** (P2, plan file, draft) — repay the M3-A
-  execution debt: co-addressees run concurrently, replies land in completion order.
-  Pure execution-layer upgrade of already-committed semantics (context cuts at the
-  addressing message — parallelizing changes no agent's words, only timing; PM-confirmed
-  2026-06-11, no product re-ratification needed). Scope: per-run active state set ·
-  immediate dispatch (queue-all dies) · completion-order append · scoped stop
-  (per-run + conversation-wide) · set-based transcript-mutation gates · concurrency
-  cap. **After** the UX plan's Feature D (the activity area + reply anchors must
-  exist before replies interleave). See `docs/plans/agent-channel-parallel-runtime.md`.
-
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
