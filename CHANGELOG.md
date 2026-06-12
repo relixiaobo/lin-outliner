@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **File attachments (PR #206)** — completes the `file-attachments` feature on
+  top of the #204 protocol slice. `create_attachment_node` is wired end-to-end
+  (core command + Loro persistence → document service → renderer API → `/attachment`
+  slash command and external file drop). Non-image files land as a compact
+  attachment row showing a file-type icon (or PDF thumbnail), filename, and a
+  metadata line (type · size · PDF page count / media duration), with hover
+  actions to open, reveal in Finder, and copy the file. `AssetService` ingest now
+  reads regular files by path under a `realpath` jail, sniffs MIME from magic
+  bytes (audio/video/zip/text added), derives PDF page count + WAV/MP4 duration
+  from the bytes, and renders PDF thumbnails via poppler's `pdftoppm` (optional;
+  degrades to the file icon when absent). Asset serving and the open/reveal/copy
+  system actions resolve the stored file with `realpath` and reject anything that
+  escapes the asset root (covered by a symlink-escape test). Gate: typecheck +
+  test:core (906) + test:renderer (418) + the `file-attachments` e2e green, plus
+  light/dark visual verification; `/security-review`-class surface reviewed (no
+  shell, escaped clipboard plist, jailed paths). Range/streaming media serving
+  stays a noted follow-up (whole-file reads today).
+
 - **Parallel Channel runtime (PR #202)** — Channel turns now run concurrently:
   each addressed agent executes as its own `Agent` instance held in
   `conversation.activeRuns`, scoped through an `AsyncLocalStorage` run context (a
@@ -439,6 +457,29 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   `.dmg`. ([#170](https://github.com/relixiaobo/lin-outliner/pull/170))
 
 ### Internal
+
+- **Agent ledger hygiene (PR #205)** — drops dead conversation-ledger event
+  families that had no replay handler and no real reader (`task.created` /
+  `task.completed`, `config.change`, `review_card.created`, `metric.recorded`),
+  removes the now-empty render-projection compatibility fields `queuedMessages`
+  and `activeRunAgentId` (and their renderer plumbing + e2e mocks), and stops the
+  config tool from writing `config.change` audit records (writes still apply and
+  return the refreshed setting). Successful `skill.created` / `skill.patched` /
+  `skill.replaced` audit events now carry the active `runId` so they land in the
+  run ledger instead of the conversation log. Also fixes visible-transcript
+  grafting so an active run's multi-segment spine renders contiguously (a
+  non-active peer reply can no longer split the active run's tool/result
+  continuation), backed by a new oracle test over concurrent multi-segment
+  Channel runs (uniqueness, contiguity, active-branch completeness, replay
+  stability). Specs synced; no persisted shape changed (no `userData` wipe).
+  Gate: typecheck + test:core (900) + test:renderer (418) green.
+  ([#205](https://github.com/relixiaobo/lin-outliner/pull/205))
+
+- **Post-merge cleanup for #205/#206 (main agent)** — removes the orphaned
+  `.agent-channel-queued` CSS rule left dead by #205, documents the optional
+  `pdftoppm` dependency for PDF thumbnails in the architecture spec, and drops an
+  always-true `file.size >= 0` filter in `dataTransferFiles`. Typecheck +
+  test:renderer green.
 
 - **Agent conversation UX plan ratified (PR #197, docs-only)** — adds
   `docs/plans/agent-conversation-entry-identity-ux.md` (drafted by codex-2, then

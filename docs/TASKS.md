@@ -21,8 +21,8 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (M3-B cross-agent memory + isolation gate merged, PR #200) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (UX Feature D — Channel activity + reply anchors — merged, PR #203) |
-| Codex 3 | `lin-outliner-codex-3/` | — | building file-attachments feature PR (protocol slice merged, PR #204) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (agent-ledger-hygiene merged, PR #205) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (file-attachments feature merged, PR #206) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -33,9 +33,11 @@ flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 1 | codex | **UX Feature A** — roster-as-DM-list + New Channel flow + DM→Channel escalation verb (`agent-conversation-entry-identity-ux` Feature A; UI + arbitrary-agent canonical-DM runtime in ONE PR). Takes the `agentRuntime.ts` slot after #202. Coordinate: lane 2's hygiene PR is small, merges FIRST, A rebases over its append-site deletions. | plan-track |
-| 2 | codex-2 | **`agent-ledger-hygiene`** — dead platform events out of the conversation ledger · `queuedMessages`/`activeRunAgentId` compat fields die · spec sync (volumetrics wording, bipartite-parentage invariant, #202 fields, execution-staging note) · visible-transcript spine oracle test. From the 2026-06-12 post-parallel audit; see `docs/plans/agent-ledger-hygiene.md`. | plan-track (small) |
-| 3 | codex-3 | **file-attachments** (P1; protocol slice merged as PR #204 — see Recently completed) — continuing the complete feature PR (core handler, persistence, ingest, renderer rows, system actions); gate adds `/security-review`. | plan-track |
+| 1 | codex | **UX Feature A** — roster-as-DM-list + New Channel flow + DM→Channel escalation verb (`agent-conversation-entry-identity-ux` Feature A; UI + arbitrary-agent canonical-DM runtime in ONE PR). Takes the `agentRuntime.ts` slot after #202. The lane-2 hygiene PR (#205) has merged — rebase over its append-site deletions before continuing. | plan-track |
+
+Lanes 2 (`agent-ledger-hygiene`, codex-2) and 3 (file-attachments, codex-3) of
+the 2026-06-12 round-3 batch **merged** as PR #205 and PR #206 — see Recently
+completed.
 
 Relay: **Realignment PR-4** (retrieval, unblocked by #200) slots into the next
 free lane. **M3-C** (per-agent POV inspector) follows Feature A. UX plan
@@ -490,14 +492,14 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **file-attachments** (P1, **unblocked**) — `attachment` node type for arbitrary
-  local files (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`).
-  Depends on `asset-subsystem` (done) + `image-rendering` (done) — both shipped in
-  PR #8. Coordinate with `media-types` to avoid double-building the audio/video
-  player + PDF thumbnail. See `docs/plans/file-attachments.md`.
+- **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
+  (feature); see Recently completed. Plan archived `done`
+  (`docs/plans/archive/file-attachments.md`).
 - **media-types** (P2, *no plan file*) — audio/video players + PDF thumbnail on the
-  `BlockNodeRow` shell; `serve()` needs a streaming/range response for large
-  media (current whole-file read is image-only).
+  `BlockNodeRow` shell **shipped with #206** (inline `<audio>`/`<video controls>`
+  + `pdftoppm` thumbnail). Remaining: `serve()` needs a streaming/range response
+  for large media (today's whole-file read works but is memory-heavy and breaks
+  seeking on big files).
 - **file-preview** (P2, depends on **workspace-tabs-to-single-pane** — landed
   PR #85) — in-app file/URL preview as a new per-pane *view-state* (generalizes
   per-pane history from a `NodeId[]` stack to a discriminated view-state stack so
@@ -666,6 +668,37 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **file-attachments** (codex-3, PR #206, plan-track) — Completes the feature on
+  the #204 protocol slice: `create_attachment_node` end-to-end (core + Loro
+  persistence → document service → renderer API → `/attachment` slash command +
+  external file drop), a compact attachment row (file-type icon or PDF thumbnail,
+  filename, type · size · page-count/duration metadata, open/reveal/copy actions),
+  and `AssetService` ingest hardening — path reads under a `realpath` jail, magic-
+  byte MIME sniffing (audio/video/zip/text), PDF page count + WAV/MP4 duration from
+  bytes, and PDF thumbnails via optional poppler `pdftoppm` (degrades to the file
+  icon). Asset serving + system actions reject paths escaping the asset root.
+  `AttachmentNode` + the three command names were the pre-landed #204 interface
+  slice. Gate (main): typecheck + test:core (906) + test:renderer (418) +
+  `file-attachments` e2e green, light/dark visual verified, security surface
+  reviewed (no shell in `pdftoppm` spawn, escaped clipboard plist, jailed paths;
+  symlink-escape unit test). Range/streaming media serving is a noted follow-up
+  (whole-file reads today). Plan archived `done` in-PR.
+
+- **agent-ledger-hygiene** (codex-2, PR #205, plan-track small) — Post-parallel
+  ledger cleanup: removes dead conversation-ledger event families with no replay
+  handler/reader (`task.created/completed`, `config.change`, `review_card.created`,
+  `metric.recorded`) and the now-empty render-projection compat fields
+  (`queuedMessages`, `activeRunAgentId`); successful skill-audit events now carry
+  the active `runId` so they route to the run ledger. Also fixes visible-transcript
+  grafting so an active run's multi-segment spine stays contiguous (a non-active
+  peer reply can no longer split its tool/result continuation), backed by a new
+  oracle test (uniqueness, contiguity, active-branch completeness, replay
+  stability across orderings). Specs synced; no persisted shape changed (no
+  `userData` wipe). Gate (main): typecheck + test:core (900) + test:renderer (418)
+  green; verified zero dangling refs to the removed symbols. Plan archived `done`
+  in-PR. Main-agent follow-up swept three leftovers (orphaned `.agent-channel-queued`
+  CSS, `pdftoppm` spec note, an inert `dataTransferFiles` filter).
 
 - **agent-channel-parallel-runtime** (codex, PR #202, plan-track) — Per-run
   parallel Channel execution: each addressed turn runs as its own `Agent` instance

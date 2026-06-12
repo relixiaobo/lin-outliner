@@ -48,7 +48,7 @@ reader-mode preview with an "open original" escape hatch.
   this PR and **not** a stage here. The renderer contract is kept minimal and
   does *not* pre-bake annotation fields — see "Forward-compat" for how it extends
   cleanly later.
-- **The `attachment` node type** ([`file-attachments.md`](file-attachments.md))
+- **The `attachment` node type** ([`file-attachments.md`](archive/file-attachments.md))
   and **block-node inline rendering** ([`image-rendering.md`](image-rendering.md),
   `BlockNodeRow`/`ImageRow`). Those render a file *as a block inside the outline*.
   This plan is the *destination pane* you open *from* such things. They compose:

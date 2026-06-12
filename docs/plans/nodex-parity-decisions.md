@@ -72,8 +72,8 @@ Things lin has that nodex does not, kept here so the asymmetry is visible:
 - Scoped `UndoManager` separating `user:` / `agent:` / `system:` origins.
 - Agent runtime with pi-mono, skills, subagents, event-sourced sessions.
 - Operation journal (`src/core/operationJournal.ts`).
-- Generic file attachments (see [`file-attachments.md`](file-attachments.md)) —
-  not yet shipped, but planned, and out of reach for a browser extension.
+- Generic file attachments (see [`file-attachments.md`](archive/file-attachments.md)) —
+  **shipped** (PR #204 + #206); out of reach for a browser extension.
 
 ## Maintenance
 

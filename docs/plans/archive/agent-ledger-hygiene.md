@@ -1,9 +1,10 @@
 ---
-status: draft
+status: done
 priority: P2
 owner: main
 created: 2026-06-12
 updated: 2026-06-12
+shipped: PR #205
 ---
 
 # Agent Ledger Hygiene: Dead Events, Compat Fields, Spec Sync, Spine Oracle

@@ -1,9 +1,10 @@
 ---
-status: draft
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-06-12
+shipped: PR #204 (protocol slice) + PR #206 (feature)
 ---
 
 # File Attachments
