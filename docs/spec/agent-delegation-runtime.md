@@ -717,10 +717,12 @@ delete:
   the curated catalog is preserved so Form editing never drops it. **Raw** = the
   full `AGENT.md` text. The toggle converts losslessly through the format layer
   (`serializeAgentMarkdown` Form→Raw, `parseAgentAuthoringInput` Raw→Form). A
-  **built-in** renders through this same editor but **read-only** (every control
-  disabled; the mode toggle stays live so Raw is viewable; the only action is
-  "Duplicate to my agents") — so opening `general` and opening a user agent look
-  identical, the difference is only editability. A **new** agent seeds a
+  **non-writable** definition (built-in, or an agent loaded from outside the
+  writable authoring roots such as `additionalAgentDirectories`) renders through
+  this same editor but **read-only** (every control disabled; the mode toggle
+  stays live so Raw is viewable; the only action is "Duplicate to my agents") —
+  so opening `general`, an external-directory agent, and opening a writable user
+  agent look identical, the difference is only editability. A **new** agent seeds a
   **scaffold** (real defaults — `permission-mode: restricted`, `effort: medium`,
   `max-turns: 20`, a starter persona — plus all tools on and model inherit), so
   the Form starts populated and the Raw is a fill-in template rather than a bare

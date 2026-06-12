@@ -234,6 +234,21 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
   });
 
+  test('renders additional-directory agent profiles as read-only', async ({ page }) => {
+    const settings = await openSettings(page, '', { additionalAgentDirectoryAgent: true });
+    await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
+    await settings.getByRole('button', { name: 'external-reviewer', exact: true }).click();
+
+    const editor = settings.locator('.agent-editor');
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('external-reviewer');
+    await expect(editor.getByLabel('Name')).not.toBeEditable();
+    await expect(editor.getByLabel('Thinking Level')).toBeDisabled();
+    await expect(editor.getByRole('switch', { name: 'Toggle file_read' })).toBeDisabled();
+    await expect(editor.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    await expect(editor.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+    await expect(editor.getByRole('button', { name: 'Duplicate to my agents' })).toBeVisible();
+  });
+
   test('lets users view, edit, and forget agent memory entries', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Memory/ }).click();
@@ -450,8 +465,8 @@ test.describe('provider config window', () => {
   });
 });
 
-async function openSettings(page: Page, extraQuery = ''): Promise<Locator> {
-  await installElectronMock(page);
+async function openSettings(page: Page, extraQuery = '', options: Parameters<typeof installElectronMock>[1] = {}): Promise<Locator> {
+  await installElectronMock(page, options);
   await page.goto(`/?surface=settings${extraQuery}`);
   const settings = page.locator('.settings-window');
   await expect(settings).toBeVisible();

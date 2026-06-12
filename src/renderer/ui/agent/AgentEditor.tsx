@@ -8,6 +8,7 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { parseAgentAuthoringInput, serializeAgentMarkdown } from '../../../core/agentMarkdown';
+import { TOOL_CATALOG } from '../../../core/agentToolCatalog';
 import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { FormField } from '../primitives/FormField';
@@ -23,23 +24,16 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 // every agent: two modes that convert on toggle (the form decision in
 // [[agent-authoring]]) — a structured **Form** and a raw **AGENT.md** editor.
 // Switching Form→Raw serializes the current fields, Raw→Form re-parses, so the
-// two views are always the same data. A built-in is rendered through the SAME
-// editor, just **read-only** (every control disabled, the only action is
-// "Duplicate to my agents") — so opening `general` and opening a user agent look
-// the same; the difference is only whether you can change it. A new agent seeds
-// a useful **scaffold** (sensible defaults + a starter persona) so neither mode
-// starts blank. The component owns its form state and is reset by the parent via
-// `key`.
+// two views are always the same data. Non-writable definitions render through
+// the SAME editor, just **read-only** (every control disabled, the only action is
+// "Duplicate to my agents") — so opening `general`, an extra-directory agent,
+// and opening a user agent look the same; the difference is only whether you can
+// change it. A new agent seeds a useful **scaffold** (sensible defaults + a
+// starter persona) so neither mode starts blank. The component owns its form
+// state and is reset by the parent via `key`.
 
 const REASONING_OPTIONS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-
-// The common child run tools offered as toggles (curated — the outliner/node and
-// helper tools are omitted as too internal). Names are the canonical lowercase
-// forms the runtime tool filter matches (agentTools.ts:filterAgentTools).
-const TOOL_CATALOG: readonly string[] = [
-  'file_read', 'file_glob', 'file_grep', 'file_edit', 'file_write',
-  'bash', 'web_search', 'web_fetch', 'agent',
-];
+type CatalogToolName = (typeof TOOL_CATALOG)[number];
 
 type EditorMode = 'form' | 'raw';
 
@@ -81,9 +75,10 @@ interface AgentFormState {
 export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, onDelete, onDuplicate }: AgentEditorProps) {
   const t = useT().settings.agents;
   const isBuiltIn = agent?.source === 'built-in';
-  // Built-ins render through the SAME editor, just read-only — same abstraction
-  // as a user agent, so the only difference a user sees is "can I change it".
-  const readOnly = isBuiltIn;
+  // Non-writable definitions render through the SAME editor, just read-only —
+  // same abstraction as a writable agent, so the only difference a user sees is
+  // "can I change it".
+  const readOnly = agent ? !isWritableAgentDefinition(agent) : false;
   const skillNames = useMemo(() => availableSkills.map((skill) => skill.name), [availableSkills]);
   const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames, newAgentScaffold(t)));
   const [mode, setMode] = useState<EditorMode>('form');
@@ -123,7 +118,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
 
   const toolsAll = TOOL_CATALOG.every((name) => form.tools.includes(name)) && form.extraTools.length === 0;
   const headerTitle = agent
-    ? (isBuiltIn ? (agent.displayName || agent.name) : t.editTitle({ name: agent.displayName || agent.name }))
+    ? (readOnly ? (agent.displayName || agent.name) : t.editTitle({ name: agent.displayName || agent.name }))
     : t.createTitle;
 
   return (
@@ -244,7 +239,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
       {localError ? <div className="agent-settings-alert" role="alert"><span>{localError}</span></div> : null}
 
       <div className="agent-editor-actions">
-        {isBuiltIn && agent ? (
+        {readOnly && agent ? (
           <>
             <span />
             <ButtonControl className="agent-settings-primary" disabled={busy} onClick={() => onDuplicate(agent)}>
@@ -353,14 +348,14 @@ function inputToForm(input: AgentAuthoringInput, skillNames: string[]): AgentFor
   const rawTools = input.tools ?? [];
   const unrestricted = rawTools.length === 0 || rawTools.some((tool) => tool === '*');
   const tools = unrestricted ? [...TOOL_CATALOG] : TOOL_CATALOG.filter((name) => rawTools.some((tool) => tool.toLowerCase() === name));
-  const extraTools = unrestricted ? [] : rawTools.filter((tool) => tool !== '*' && !TOOL_CATALOG.includes(tool.toLowerCase()));
+  const extraTools = unrestricted ? [] : rawTools.filter((tool) => tool !== '*' && !isCatalogToolName(tool.toLowerCase()));
   const rawSkills = input.skills ?? [];
   return {
     name: input.name,
     description: input.description,
     body: input.body,
     model: input.model ?? '',
-    effort: input.effort ?? '',
+    effort: normalizeReasoningEffort(input.effort),
     permissionMode: input.permissionMode ?? '',
     maxTurns: input.maxTurns ? String(input.maxTurns) : '',
     background: input.background ?? false,
@@ -370,6 +365,38 @@ function inputToForm(input: AgentAuthoringInput, skillNames: string[]): AgentFor
     extraSkills: rawSkills.filter((skill) => !skillNames.includes(skill)),
     disallowedTools: input.disallowedTools ?? [],
   };
+}
+
+function normalizeReasoningEffort(value: string | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return '';
+  return isReasoningOption(normalized) ? normalized : '';
+}
+
+function isReasoningOption(value: string): value is AgentReasoningLevel {
+  return (REASONING_OPTIONS as readonly string[]).includes(value);
+}
+
+function isCatalogToolName(value: string): value is CatalogToolName {
+  return (TOOL_CATALOG as readonly string[]).includes(value);
+}
+
+function isWritableAgentDefinition(agent: AgentDefinitionView): boolean {
+  if (typeof agent.writable === 'boolean') return agent.writable;
+  if (agent.source === 'built-in' || agent.rootDir === 'built-in') return false;
+  const rootDir = normalizeAgentPath(agent.rootDir);
+  const agentFile = normalizeAgentPath(agent.agentFile);
+  const agentFileName = '/AGENT.md';
+  if (!rootDir || agentFile !== `${rootDir}${agentFileName}`) return false;
+  const marker = '/.agents/agents/';
+  const markerIndex = rootDir.indexOf(marker);
+  if (markerIndex < 0) return false;
+  const slug = rootDir.slice(markerIndex + marker.length);
+  return slug.length > 0 && !slug.includes('/');
+}
+
+function normalizeAgentPath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/\/+$/g, '');
 }
 
 function buildInput(form: AgentFormState): AgentAuthoringInput {

@@ -43,6 +43,7 @@ function builtIn(): AgentDefinitionView {
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/general',
+    writable: false,
     description: 'General-purpose child run',
     body: 'You are a focused child agent.',
   };
@@ -56,9 +57,25 @@ function userAgent(): AgentDefinitionView {
     source: 'user',
     rootDir: '/home/u/.agents/agents/my-helper',
     agentFile: '/home/u/.agents/agents/my-helper/AGENT.md',
+    writable: true,
     description: 'Helps with research',
     body: 'You help with research.',
     model: 'claude-opus-4-8',
+  };
+}
+
+function additionalDirectoryAgent(): AgentDefinitionView {
+  return {
+    agentId: 'user:external123:external-reviewer',
+    name: 'external-reviewer',
+    displayName: 'external-reviewer',
+    source: 'user',
+    rootDir: '/opt/shared-agents/external-reviewer',
+    agentFile: '/opt/shared-agents/external-reviewer/AGENT.md',
+    writable: false,
+    description: 'Reviews work from a shared directory',
+    body: 'You review work.',
+    effort: 'high',
   };
 }
 
@@ -123,6 +140,41 @@ describe('AgentEditor', () => {
     expect((updated as unknown as { agentId: string } | null)?.agentId).toBe('user:abc123:my-helper');
     await click(rendered, textButton(rendered, 'Delete'));
     expect(deleted).not.toBeNull();
+  });
+
+  test('non-writable additional-directory agents render read-only with Duplicate only', async () => {
+    let duplicated: AgentDefinitionView | null = null;
+    const rendered = renderComponent(
+      <AgentEditor agent={additionalDirectoryAgent()} availableSkills={[]} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
+    );
+    const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
+    expect(nameInput?.value).toBe('external-reviewer');
+    expect(nameInput?.hasAttribute('readOnly')).toBe(true);
+    expect((rendered.document.querySelector('select[aria-label="Thinking Level"]') as HTMLSelectElement | null)?.hasAttribute('disabled')).toBe(true);
+    expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
+    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(false);
+    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Delete'))).toBe(false);
+
+    await click(rendered, textButton(rendered, 'Duplicate to my agents'));
+    expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('user:external123:external-reviewer');
+  });
+
+  test('out-of-catalog effort values render as inherit and are dropped on save', async () => {
+    let updated: { agentId: string; input: AgentAuthoringInput } | null = null;
+    const rendered = renderComponent(
+      <AgentEditor
+        agent={{ ...userAgent(), effort: 'turbo' }}
+        availableSkills={[]}
+        busy={false}
+        {...NOOP}
+        onUpdate={(agentId, input) => { updated = { agentId, input }; }}
+      />,
+    );
+    const effortSelect = rendered.document.querySelector('select[aria-label="Thinking Level"]') as HTMLSelectElement | null;
+    expect(effortSelect?.value).toBe('');
+
+    await click(rendered, textButton(rendered, 'Save'));
+    expect((updated as unknown as { input: AgentAuthoringInput } | null)?.input.effort).toBeUndefined();
   });
 
   test('tools default to all-on; unchecking one is reflected when switching to Raw', async () => {
