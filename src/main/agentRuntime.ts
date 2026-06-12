@@ -1234,16 +1234,17 @@ export class AgentRuntime {
     return bytes.toString('utf8');
   }
 
-  async previewPayload(conversationId: string, payloadId: string): Promise<AgentPayloadRef | null> {
+  async previewPayload(conversationId: string, payloadId: string, runId?: string): Promise<AgentPayloadRef | null> {
     const conversation = this.conversations.get(conversationId);
     const eventState = conversation?.eventState ?? await this.loadEventState(conversationId);
     const payload = eventState.payloads[payloadId];
-    if (!payload || payload.role === 'debug') return null;
+    if (!payload || !isPreviewPayloadRole(payload.role)) return null;
+    if (!payloadScopeMatchesPreviewTarget(payload, conversationId, runId)) return null;
     return payload;
   }
 
-  async previewPayloadBytes(conversationId: string, payloadId: string): Promise<Buffer | null> {
-    const payload = await this.previewPayload(conversationId, payloadId);
+  async previewPayloadBytes(conversationId: string, payloadId: string, runId?: string): Promise<Buffer | null> {
+    const payload = await this.previewPayload(conversationId, payloadId, runId);
     if (!payload) return null;
     return this.getEventStore().readPayload(conversationId, payload);
   }
@@ -7397,6 +7398,26 @@ function isTextPayloadRole(role: AgentPayloadRef['role']): boolean {
   return role === 'tool_output'
     || role === 'text_extract'
     || role === 'preview';
+}
+
+function isPreviewPayloadRole(role: AgentPayloadRef['role']): boolean {
+  return role === undefined
+    || role === 'source'
+    || role === 'thumbnail'
+    || role === 'preview'
+    || role === 'text_extract'
+    || role === 'tool_output';
+}
+
+function payloadScopeMatchesPreviewTarget(
+  payload: AgentPayloadRef,
+  conversationId: string,
+  runId: string | undefined,
+): boolean {
+  if (!payload.scope) return true;
+  if (payload.scope.conversationId !== conversationId) return false;
+  if (payload.scope.type === 'run') return payload.scope.runId === runId;
+  return true;
 }
 
 function summarizeJson(value: unknown): string {

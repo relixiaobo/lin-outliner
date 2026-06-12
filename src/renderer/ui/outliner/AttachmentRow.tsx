@@ -72,10 +72,26 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
           {metaParts.join(' · ')}
         </div>
         {kind === 'audio' && (
-          <audio className="outliner-attachment-media" controls preload="metadata" src={assetUrl(node.assetId)} />
+          <audio
+            className="outliner-attachment-media"
+            controls
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            preload="metadata"
+            src={assetUrl(node.assetId)}
+          />
         )}
         {kind === 'video' && (
-          <video className="outliner-attachment-media" controls preload="metadata" src={assetUrl(node.assetId)} />
+          <video
+            className="outliner-attachment-media"
+            controls
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            preload="metadata"
+            src={assetUrl(node.assetId)}
+          />
         )}
       </div>
       <div

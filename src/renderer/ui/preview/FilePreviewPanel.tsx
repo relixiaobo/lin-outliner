@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {
@@ -15,6 +15,7 @@ import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shi
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
+import { wantsNewPaneFromClick } from '../shared';
 
 interface FilePreviewPanelProps {
   canGoBack: boolean;
@@ -36,6 +37,26 @@ type TextState =
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
 const MAX_TABLE_ROWS = 100;
 const MAX_TABLE_COLUMNS = 24;
+
+interface PreviewRendererProps {
+  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  source: PreviewFileSource;
+}
+
+interface PreviewRendererEntry {
+  id: string;
+  match: (source: PreviewFileSource) => boolean;
+  component: (props: PreviewRendererProps) => ReactElement;
+}
+
+const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
+  { id: 'directory', match: (source) => source.entryKind === 'directory', component: DirectoryPreview },
+  { id: 'image', match: isImageSource, component: ImagePreview },
+  { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
+  { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
+  { id: 'text', match: isTextSource, component: TextPreview },
+  { id: 'metadata', match: () => true, component: MetadataPreview },
+];
 
 export function FilePreviewPanel({
   canGoBack,
@@ -127,23 +148,11 @@ function PreviewRenderer({
   if (source.kind === 'url') {
     return <PreviewMessage>{labels.unsupported}</PreviewMessage>;
   }
-  if (source.entryKind === 'directory') {
-    return <DirectoryPreview onOpenTarget={onOpenTarget} source={source} />;
-  }
-  if (isImageSource(source)) return <ImagePreview source={source} />;
-  if (isMarkdownSource(source)) return <MarkdownPreview source={source} />;
-  if (isDelimitedSource(source)) return <DelimitedPreview source={source} />;
-  if (isTextSource(source)) return <TextPreview source={source} />;
-  return <MetadataPreview source={source} />;
+  const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
+  return <Renderer onOpenTarget={onOpenTarget} source={source} />;
 }
 
-function DirectoryPreview({
-  onOpenTarget,
-  source,
-}: {
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
-  source: PreviewFileSource;
-}) {
+function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<
     | { status: 'loading' }
@@ -185,7 +194,7 @@ function DirectoryPreview({
           <button
             className="file-preview-directory-row"
             key={`${entry.entryKind}:${entry.name}:${entry.lastModified ?? ''}`}
-            onClick={() => onOpenTarget(entry.target)}
+            onClick={(event) => onOpenTarget(entry.target, { newPane: wantsNewPaneFromClick(event) })}
             type="button"
           >
             <span
@@ -208,7 +217,7 @@ function DirectoryPreview({
   );
 }
 
-function ImagePreview({ source }: { source: PreviewFileSource }) {
+function ImagePreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const initialSrc = source.streamUrl ?? source.thumbnailDataUrl ?? null;
   const [state, setState] = useState<
@@ -257,7 +266,7 @@ function ImagePreview({ source }: { source: PreviewFileSource }) {
   );
 }
 
-function MarkdownPreview({ source }: { source: PreviewFileSource }) {
+function MarkdownPreview({ source }: PreviewRendererProps) {
   const textState = usePreviewText(source.target);
   const labels = useT().shell.filePreview;
   if (textState.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
@@ -269,7 +278,7 @@ function MarkdownPreview({ source }: { source: PreviewFileSource }) {
   );
 }
 
-function DelimitedPreview({ source }: { source: PreviewFileSource }) {
+function DelimitedPreview({ source }: PreviewRendererProps) {
   const textState = usePreviewText(source.target);
   const labels = useT().shell.filePreview;
   const delimiter = source.ext === 'tsv' || source.mimeType === 'text/tab-separated-values' ? '\t' : ',';
@@ -296,7 +305,7 @@ function DelimitedPreview({ source }: { source: PreviewFileSource }) {
   );
 }
 
-function TextPreview({ source }: { source: PreviewFileSource }) {
+function TextPreview({ source }: PreviewRendererProps) {
   const textState = usePreviewText(source.target);
   const labels = useT().shell.filePreview;
   const [html, setHtml] = useState(() => plainCodeHtml(''));
@@ -310,6 +319,7 @@ function TextPreview({ source }: { source: PreviewFileSource }) {
         cancelled = true;
       };
     }
+    setHtml(plainCodeHtml(textState.text));
     void highlightCode(textState.text, language).then((next) => {
       if (!cancelled) setHtml(next);
     });
@@ -323,7 +333,7 @@ function TextPreview({ source }: { source: PreviewFileSource }) {
   return <div className="file-preview-code" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function MetadataPreview({ source }: { source: PreviewFileSource }) {
+function MetadataPreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   return (
     <div className="file-preview-metadata">
