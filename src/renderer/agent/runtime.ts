@@ -469,7 +469,7 @@ export interface AgentRuntimeClient {
   restoreConversation: (conversationId: string) => Promise<AgentConversation>;
   /** Durably mark a conversation read (genuine user open / active+focused view). */
   markConversationRead: (conversationId: string) => Promise<void>;
-  createConversation: () => Promise<AgentConversation>;
+  createConversation: (options?: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string }) => Promise<AgentConversation>;
   closeConversation: (conversationId: string) => Promise<void>;
   sendMessage: (
     conversationId: string,
@@ -517,7 +517,7 @@ export interface LinAgentRuntimeView {
   conversationId: string | null;
   conversationTitle: string | null;
   conversationCost: number;
-  /** Conversation members (user + agents); ≥2 agent members = a Channel. */
+  /** Conversation members (user + agents); Channel rows are goal rooms, DMs are canonical one-agent rows. */
   members: AgentRenderMemberView[];
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
@@ -532,7 +532,7 @@ export interface LinAgentRuntimeView {
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
   selectConversation: (targetConversationId: string) => Promise<void>;
-  newConversation: () => Promise<void>;
+  newConversation: (options?: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string }) => Promise<void>;
   openDefaultConversation: () => Promise<void>;
   sendMessage: (
     prompt: string,
@@ -564,7 +564,7 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   restoreLatestConversation: () => api.agentRestoreLatestConversation(),
   restoreConversation: (conversationId) => api.agentRestoreConversation(conversationId),
   markConversationRead: (conversationId) => api.agentMarkConversationRead(conversationId),
-  createConversation: () => api.agentCreateConversation(),
+  createConversation: (options = {}) => api.agentCreateConversation(options),
   closeConversation: (conversationId) => api.agentCloseConversation(conversationId),
   sendMessage: (conversationId, message, attachments = [], userViewContext = null) =>
     api.agentSendMessage(conversationId, message, attachments, userViewContext),
@@ -642,7 +642,7 @@ export class AgentRuntimeStore {
     }
   };
 
-  newConversation = async () => {
+  newConversation = async (options: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string } = {}) => {
     const previousConversationId = this.conversationId;
     const requestVersion = this.beginConversationRequest();
     this.conversationId = null;
@@ -651,7 +651,7 @@ export class AgentRuntimeStore {
     this.clearPendingApprovalState();
     this.publish();
     try {
-      const conversation = await this.client.createConversation();
+      const conversation = await this.client.createConversation(options);
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
       await this.closePreviousConversation(previousConversationId, conversation.conversationId);
@@ -835,7 +835,7 @@ export class AgentRuntimeStore {
   };
 
   reset = () => {
-    void this.newConversation();
+    void this.openDefaultConversation();
   };
 
   reloadConversation = async () => {

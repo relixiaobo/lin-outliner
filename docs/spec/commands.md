@@ -279,6 +279,15 @@ where supported, a native file URL/file-list flavor to the clipboard.
 `agent_rename_conversation`, `agent_delete_conversation`,
 `agent_close_conversation`, `agent_reset_conversation`.
 
+The conversation surface is product-shaped around DMs and Channels:
+`agent_list_conversations` returns one immutable canonical DM row for every
+configured agent, plus goal-backed Channels. Restoring a canonical DM id is
+find-or-create; DMs are never user-created, renamed, deleted, or membership-edited.
+`agent_create_conversation` is the user-facing New Channel command: it requires a
+goal and at least two agent members (user + two agents minimum), with an optional
+seed note. DM to Channel escalation creates a new Channel with an explicit system
+notice; it never shares or mutates the source DM transcript.
+
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,
 `agent_retry_message`, `agent_switch_branch`, `agent_queue_follow_up`,

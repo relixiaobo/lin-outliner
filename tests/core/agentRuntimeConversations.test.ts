@@ -37,6 +37,8 @@ async function loadRuntimeModule() {
 }
 
 const roots: string[] = [];
+const ASSISTANT_AGENT_ID = 'built-in:tenon:assistant';
+const GENERAL_AGENT_ID = 'built-in:tenon:general';
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -100,7 +102,7 @@ async function expectRejects(fn: () => Promise<unknown>, message: string) {
 }
 
 describe('agent runtime conversations', () => {
-  test('restores a deterministic canonical DM and keeps it out of the channel list', async () => {
+  test('lists every configured agent as a deterministic canonical DM roster row', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
     const { runtime } = await createRuntime(dataRoot);
@@ -109,15 +111,30 @@ describe('agent runtime conversations', () => {
     const secondRuntime = await createRuntime(dataRoot);
     const second = await secondRuntime.runtime.restoreLatestConversation();
     const state = await new AgentEventStore(dataRoot).replay(first.conversationId);
+    const roster = await runtime.listConversations();
+    const assistantRow = roster.find((entry) => entry.canonicalDmAgentId === ASSISTANT_AGENT_ID);
+    const generalRow = roster.find((entry) => entry.canonicalDmAgentId === GENERAL_AGENT_ID);
 
     expect(first.conversationId).toMatch(/^lin-agent-dm-/);
     expect(second.conversationId).toBe(first.conversationId);
-    expect(await runtime.listConversations()).toEqual([]);
+    expect(roster.filter((entry) => !entry.canonicalDmAgentId)).toEqual([]);
+    expect(assistantRow?.id).toBe(first.conversationId);
+    expect(generalRow?.id).toMatch(/^lin-agent-dm-/);
+    expect(generalRow?.messageCount).toBe(0);
     expect(state.conversation?.title).toBe('Tenon Assistant');
     expect(state.conversation?.goal).toBeUndefined();
     expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
-      { type: 'agent', agentId: 'built-in:tenon:assistant' },
+      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+    ]);
+
+    const general = await runtime.restoreConversation(generalRow!.id);
+    const generalState = await new AgentEventStore(dataRoot).replay(general.conversationId);
+    expect(general.conversationId).toBe(generalRow!.id);
+    expect(generalState.conversation?.goal).toBeUndefined();
+    expect(generalState.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: GENERAL_AGENT_ID },
     ]);
   });
 
@@ -128,7 +145,7 @@ describe('agent runtime conversations', () => {
 
     const dm = await runtime.restoreLatestConversation();
     const channel = await runtime.createConversation();
-    let channels = await runtime.listConversations();
+    let channels = (await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId);
 
     expect(channel.conversationId).toMatch(/^lin-agent-channel-/);
     expect(channels).toHaveLength(1);
@@ -138,12 +155,12 @@ describe('agent runtime conversations', () => {
       goal: 'Untitled',
       members: [
         { type: 'user', userId: 'local-user' },
-        { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        { type: 'agent', agentId: ASSISTANT_AGENT_ID },
       ],
     });
 
     const renamed = await runtime.renameConversation(channel.conversationId, 'Project Alpha');
-    channels = await runtime.listConversations();
+    channels = (await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId);
 
     expect(renamed).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
     expect(channels[0]).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
@@ -151,8 +168,38 @@ describe('agent runtime conversations', () => {
     await expectRejects(() => runtime.deleteConversation(dm.conversationId), 'cannot be deleted');
 
     await runtime.deleteConversation(channel.conversationId);
-    expect(await runtime.listConversations()).toEqual([]);
+    expect((await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId)).toEqual([]);
     expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).conversation?.title).toBe('Tenon Assistant');
+  });
+
+  test('user-reachable Channel creation requires at least two agents', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+
+    await expectRejects(
+      () => runtime.createConversation({ goal: 'Solo goal', requireAtLeastTwoAgents: true }),
+      'requires at least two agents',
+    );
+    await expectRejects(
+      () => runtime.createConversation({ agentIds: [GENERAL_AGENT_ID], requireAtLeastTwoAgents: true, requireGoal: true }),
+      'requires a goal',
+    );
+
+    const channel = await runtime.createConversation({
+      agentIds: [GENERAL_AGENT_ID],
+      goal: 'Shared goal',
+      requireAtLeastTwoAgents: true,
+      requireGoal: true,
+    });
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+
+    expect(state.conversation?.goal).toBe('Shared goal');
+    expect(state.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+      { type: 'agent', agentId: GENERAL_AGENT_ID },
+    ]);
   });
 
   test('restores and resolves durable pending user questions', async () => {

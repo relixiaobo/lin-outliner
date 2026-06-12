@@ -168,7 +168,8 @@ truth.
   - prompt guidance that foreground memory writes are handled by Settings/Profile
     UI and runtime-owned consolidation (Dream), not by a model-visible CRUD tool
 - [x] Agent M1 self-maintenance and structured input:
-  - canonical DM restore plus user-created single-agent Channels
+  - one canonical DM per configured agent, restored by find-or-create; user-created
+    Channels require at least two agents plus a goal
   - `ask_user_question` tool with pending question persistence and renderer
     resolution
   - `runtime_status`, `config`, `doctor`, and `dream` tools with
@@ -180,9 +181,10 @@ truth.
     conversation index (membership events only — ordinary event actors never
     resurrect a removed member); `addressedTo` persisted on user messages AND on
     handing-off assistant replies
-  - Channel creation with a member set + goal seed; "add agent to DM" spawns a
-    seeded Channel (the canonical DM never converts); coordinator and DM members
-    are immovable; member removal blocked while a round is active;
+  - Channel creation with a member set + goal seed; DM escalation opens New
+    Channel with the source DM agent preselected and records a system provenance
+    line without sharing DM history; coordinator and DM members are immovable;
+    member removal blocked while a round is active;
     mention-token collisions rejected at create/add time
   - routing: explicit user `@`s all run, uncounted (independent answers — each
     run's context cuts at the message that addressed it,

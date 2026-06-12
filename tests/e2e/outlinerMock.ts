@@ -244,6 +244,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // separately (reduceProjection.test.ts).
     let revision = 0;
     let clipboardText = '';
+    const MAIN_AGENT_ID = 'built-in:core:assistant';
+    const GENERAL_AGENT_ID = 'built-in:tenon:general';
+    const ASSISTANT_DM_ID = 'mock-agent-conversation';
+    const GENERAL_DM_ID = 'mock-agent-dm-general';
+    const PLANNING_CHANNEL_ID = 'mock-agent-channel-planning';
     const assets = new Map<string, {
       id: string;
       mimeType: string;
@@ -406,12 +411,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     }];
     const agentDefinitions = [
       {
-        agentId: 'built-in:tenon:general',
+        agentId: GENERAL_AGENT_ID,
         name: 'general',
+        displayName: 'general',
         source: 'built-in',
         rootDir: 'built-in',
         agentFile: 'built-in/general',
         description: 'General-purpose focused child run for research, analysis, and execution.',
+        model: 'gpt-5.4',
         body: [
           'You are a focused child agent running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
@@ -572,26 +579,50 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const agentConversations = [
       {
-        id: 'mock-agent-conversation',
+        id: ASSISTANT_DM_ID,
         title: 'Agent System',
         members: [
           { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: 'built-in:core:assistant' },
+          { type: 'agent', agentId: MAIN_AGENT_ID },
         ],
+        canonicalDmAgentId: MAIN_AGENT_ID,
         createdAt: now - 100_000,
         updatedAt: now - 1_000,
         messageCount: 33,
+        lastMessageSnippet: 'Current outline focuses on UI work.',
+        lastMessageAt: now - 1_000,
+        unreadCount: 0,
       },
       {
-        id: 'mock-agent-conversation-2',
-        title: null,
+        id: GENERAL_DM_ID,
+        title: 'general',
         members: [
           { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: 'built-in:core:assistant' },
+          { type: 'agent', agentId: GENERAL_AGENT_ID },
         ],
+        canonicalDmAgentId: GENERAL_AGENT_ID,
         createdAt: now - 200_000,
         updatedAt: now - 80_000,
+        messageCount: 0,
+        lastMessageSnippet: null,
+        lastMessageAt: null,
+        unreadCount: 0,
+      },
+      {
+        id: PLANNING_CHANNEL_ID,
+        title: 'Planning Channel',
+        members: [
+          { type: 'user', userId: 'local-user' },
+          { type: 'agent', agentId: MAIN_AGENT_ID },
+          { type: 'agent', agentId: GENERAL_AGENT_ID },
+        ],
+        goal: 'Planning Channel',
+        createdAt: now - 180_000,
+        updatedAt: now - 60_000,
         messageCount: 1,
+        lastMessageSnippet: 'Coordinate the launch plan.',
+        lastMessageAt: now - 60_000,
+        unreadCount: 0,
       },
     ];
     // Memory entries are principal-keyed (the pool they belong to); the Settings pane
@@ -1479,6 +1510,86 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
+
+    const agentLabel = (agentId: string) => agentId === MAIN_AGENT_ID ? 'Agent System' : 'general';
+    const agentMention = (agentId: string) => agentId === MAIN_AGENT_ID ? 'assistant' : 'general';
+    const renderMembers = (agentIds: string[]) => [
+      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+      ...agentIds.map((agentId) => ({
+        principal: { type: 'agent', agentId },
+        mention: agentMention(agentId),
+        displayName: agentLabel(agentId),
+        ...(agentId === MAIN_AGENT_ID ? { coordinator: true } : {}),
+      })),
+    ];
+    const agentIdsForConversation = (conversationId: string, fallback: string[] = [MAIN_AGENT_ID]) => {
+      if (conversationId === GENERAL_DM_ID) return [GENERAL_AGENT_ID];
+      const entry = agentConversations.find((conversation) => conversation.id === conversationId);
+      const ids = entry?.members
+        .filter((member): member is { type: 'agent'; agentId: string } => member.type === 'agent')
+        .map((member) => member.agentId);
+      return ids && ids.length > 0 ? ids : fallback;
+    };
+    const agentProjection = (
+      conversationId: string,
+      options: {
+        title?: string | null;
+        agentIds?: string[];
+        systemNotice?: string;
+        seedText?: string;
+      } = {},
+    ) => {
+      const agentIds = options.agentIds ?? agentIdsForConversation(conversationId);
+      const title = options.title ?? (
+        conversationId === GENERAL_DM_ID ? 'general'
+          : conversationId === PLANNING_CHANNEL_ID ? 'Planning Channel'
+            : 'Agent System'
+      );
+      const rows: Array<{ id: string; kind: 'message'; messageId: string }> = [];
+      const messages: Record<string, unknown> = {};
+      const addMessage = (id: string, text: string, actor: unknown, timestamp: number) => {
+        rows.push({ id: `user:${id}`, kind: 'message', messageId: id });
+        messages[id] = {
+          id,
+          role: 'user',
+          status: 'completed',
+          parentMessageId: null,
+          content: [{ type: 'text', text }],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          branches: null,
+          actor,
+        };
+      };
+      if (options.systemNotice) addMessage('system-notice-e2e', options.systemNotice, { type: 'system' }, now - 20);
+      if (options.seedText) addMessage('seed-note-e2e', options.seedText, { type: 'user', userId: 'local-user' }, now - 10);
+      return {
+        conversationId,
+        revision: 1,
+        conversationTitle: title,
+        members: renderMembers(agentIds),
+        activeRunId: null,
+        activeRuns: [],
+        activityEntries: [],
+        activeCompaction: null,
+        activeDream: null,
+        isStreaming: false,
+        model: { id: 'gpt-5.4', provider: 'openai' },
+        thinkingLevel: 'medium',
+        pendingToolCallIds: [],
+        errorMessage: null,
+        rows,
+        transcriptRows: rows,
+        taskIds: [],
+        childRunIds: [],
+        entities: { messages, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
+        streaming: null,
+      };
+    };
+    const restoreAgentConversation = (conversationId: string) => ({
+      conversationId,
+      renderProjection: agentProjection(conversationId),
+    });
     win.lin = {
       // The per-provider config opens as its own native window in the app; in tests
       // it is reached by navigating to ?surface=provider-config directly, so this
@@ -1527,37 +1638,46 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
-        if (cmd === 'agent_create_conversation' || cmd === 'agent_restore_latest_conversation' || cmd === 'agent_restore_conversation') {
+        if (cmd === 'agent_restore_latest_conversation') {
+          return clone(restoreAgentConversation(ASSISTANT_DM_ID)) as T;
+        }
+        if (cmd === 'agent_restore_conversation') {
+          return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
+        }
+        if (cmd === 'agent_create_conversation') {
+          const agentIds = Array.isArray(args.agentIds) ? args.agentIds.map(String) : [];
+          const goal = String(args.goal ?? '').trim();
+          if (!goal) throw new Error('A Channel requires a goal.');
+          if (new Set(agentIds).size < 2) throw new Error('A Channel requires at least two agents.');
+          const conversationId = `mock-agent-channel-created-${++sequence}`;
+          const members = [
+            { type: 'user', userId: 'local-user' },
+            ...Array.from(new Set(agentIds)).map((agentId) => ({ type: 'agent', agentId })),
+          ];
+          agentConversations.push({
+            id: conversationId,
+            title: goal,
+            members,
+            goal,
+            createdAt: now,
+            updatedAt: now += 1,
+            messageCount: (typeof args.systemNotice === 'string' ? 1 : 0) + (typeof args.seedText === 'string' ? 1 : 0),
+            lastMessageSnippet: typeof args.seedText === 'string'
+              ? args.seedText
+              : typeof args.systemNotice === 'string'
+                ? args.systemNotice
+                : null,
+            lastMessageAt: now,
+            unreadCount: 0,
+          });
           return clone({
-            conversationId: 'mock-agent-conversation',
-            renderProjection: {
-              conversationId: 'mock-agent-conversation',
-              revision: 1,
-              conversationTitle: 'Agent System',
-              members: [
-                { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-                {
-                  principal: { type: 'agent', agentId: 'built-in:core:assistant' },
-                  mention: 'assistant',
-                  displayName: 'Agent System',
-                  coordinator: true,
-                },
-              ],
-              activeRunId: null,
-              activityEntries: [],
-              activeCompaction: null,
-              isStreaming: false,
-              model: { id: 'gpt-5.4', provider: 'openai' },
-              thinkingLevel: 'medium',
-              pendingToolCallIds: [],
-              errorMessage: null,
-              rows: [],
-              transcriptRows: [],
-              taskIds: [],
-              childRunIds: [],
-              entities: { messages: {}, childRuns: {}, compactions: {}, tasks: {} },
-              streaming: null,
-            },
+            conversationId,
+            renderProjection: agentProjection(conversationId, {
+              title: goal,
+              agentIds: Array.from(new Set(agentIds)),
+              systemNotice: typeof args.systemNotice === 'string' ? args.systemNotice : undefined,
+              seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
+            }),
           }) as T;
         }
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;

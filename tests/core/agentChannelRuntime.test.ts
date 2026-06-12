@@ -858,7 +858,7 @@ describe('agent channel runtime', () => {
     expect(run?.agentId).toBe(MAIN_AGENT_ID);
   });
 
-  test('membership changes are real events: add/remove replay and survive restart; DM add spawns a seeded Channel', async () => {
+  test('membership changes are real events: add/remove replay and survive restart; DMs stay immutable', async () => {
     const fixture = await setupChannelFixture([]);
     const { runtime, reviewerAgentId, dataRoot } = fixture;
     const reviewer = agentPrincipal(reviewerAgentId);
@@ -885,16 +885,9 @@ describe('agent channel runtime', () => {
     const entry = listed.find((candidate) => candidate.id === channel.conversationId);
     expect(entry?.members).not.toContainEqual(reviewer);
 
-    // DM never converts: adding an agent spawns a NEW seeded Channel.
+    // DM never converts: Channel escalation is a separate goal-bearing create action.
     const dm = await runtime.restoreLatestConversation();
-    const spawned = await runtime.addConversationMember(dm.conversationId, reviewerAgentId);
-    expect(spawned.conversationId).not.toBe(dm.conversationId);
-    expect(spawned.conversationId).toMatch(/^lin-agent-channel-/);
-    const spawnedState = await new AgentEventStore(dataRoot).replay(spawned.conversationId);
-    expect(spawnedState.conversation?.members).toContainEqual(reviewer);
-    expect(spawnedState.conversation?.members).toContainEqual(agentPrincipal(MAIN_AGENT_ID));
-    const seed = Object.values(spawnedState.messages).find((record) => record.role === 'user');
-    expect(JSON.stringify(seed?.content ?? '')).toContain('spawned from');
+    await expect(runtime.addConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('requires a goal');
     const dmState = await new AgentEventStore(dataRoot).replay(dm.conversationId);
     expect(dmState.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },

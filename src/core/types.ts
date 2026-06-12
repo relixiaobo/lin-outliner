@@ -749,9 +749,13 @@ export interface AgentConversationListMeta {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
+  canonicalDmAgentId?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  lastMessageSnippet?: string | null;
+  lastMessageAt?: number | null;
+  unreadCount?: number;
 }
 
 export type AgentMemorySourceView =

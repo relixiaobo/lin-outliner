@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-09
+updated: 2026-06-12
 ---
 
 # Agent Conversation Model — Agents, Conversations, Memory
@@ -37,9 +37,9 @@ folded into `docs/spec/`. **Remaining:** mid-run `needs-input` (deferred by deci
 - **Agents are first-class, durable identities** carrying their own memory. An
   agent is the same identity across every conversation it is in.
 - **Conversations are one primitive (members + optional goal), not a stored kind.**
-  "DM" (1:1, identity = the relationship) vs "Channel" (a goal, 1..N members, identity =
-  the goal) is a **rendering** derived from the member set + `goal` presence (§Data
-  structure) — not a `kind` enum.
+  "DM" (1:1, identity = the relationship) vs "Channel" (a goal, at least two
+  agent members, identity = the goal) is a **rendering** derived from the member
+  set + `goal` presence (§Data structure) — not a `kind` enum.
 - **Memory belongs to the agent**, lives in runtime storage (not the document,
   not the read-only agent config), and is **visible/editable** (inspect, correct,
   forget).
@@ -144,7 +144,7 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
 | **Principal** | A participant: `user` or `agent`. The one type used as member = actor = addressee. | — |
 | **Conversation** | One primitive holding a message stream; **no stored `kind`** (§Data structure). | — |
 | **DM** *(rendering)* | A conversation rendered 1:1 (you + one agent, no goal, canonical). Identity = the relationship. | participants |
-| **Channel** *(rendering)* | A conversation rendered as a goal-room (1..N members + a `goal`). Identity = the goal. | the goal |
+| **Channel** *(rendering)* | A conversation rendered as a goal-room (the user + at least two agents + a `goal`). Identity = the goal. | the goal |
 | **Member** | A `Principal` placed in a conversation. An edge, not an entity. | — |
 | **Run** | The execution stream of one turn / task; anchored to exactly one conversation (§Data structure). | the running Agent |
 | **Memory line** | Per-agent distilled memory, unified across conversations, private, relevance-retrieved, **visible**, **addressable** to source. | Agent |
@@ -155,10 +155,9 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
 | **Per-turn assembly** | Transient context for one turn (the read seam; the former "session" read side). | nobody |
 | **Task** | An agent's **off-floor background Run** (long work); visible, stateful, posts its result back to the anchor conversation. | Agent (Run inside a conversation) |
 
-**Member count is a property of a Channel (1..N), never a kind.** "single/multi
-member" survive only as internal implementation-phase labels, never user-facing
-names. Naming by headcount repeats the people-centric mistake; kind is intrinsic
-(relationship vs goal).
+**Channel membership starts at two agents.** A user + one agent is always the
+canonical DM relationship; adding a second agent creates a Channel. "Single
+member Channel" is not a product state.
 
 **Coordinator is likewise a per-Channel role flag on a Member, not a kind nor a
 new entity.** The same Agent identity is coordinator in one Channel and a plain
@@ -312,14 +311,14 @@ is not in the channel.
   offer "add them?" — but the default rule stays clean: `@` addresses members only,
   adding is its own action.
 - **DM is intrinsically 1:1.** Adding a second agent does **not** convert it — there
-  is no "DM with two agents"; it **spawns a new Channel** (the DM persists). See
-  §Adding an agent.
+  is no "DM with two agents"; it **spawns a new Channel** with the current DM
+  agent plus the added agent (the DM persists). See §Adding an agent.
 
 ### Adding an agent — spawn, don't convert
 
 A DM never converts in place. Adding a second agent **spawns a new, seeded Channel**
-(a goal + the existing agent as a member + an optional back-link to the DM); the
-**DM persists**. Different identity kinds (relationship vs goal) don't morph into
+(a goal + the existing DM agent + the added agent + an optional back-link to the
+DM); the **DM persists**. Different identity kinds (relationship vs goal) don't morph into
 each other, and the 1:1 stream stays private. This is cheap in our model because a
 new Channel is a **warm start, not a cold one**: the agent's memory line + the
 ambient outline already carry the context — only the verbatim DM transcript stays
@@ -1180,7 +1179,7 @@ P1 — conversations + memory foundation
 - [x] **Mixed-resolution assembly** (PM-ratified): `deriveRuntimePiMessages` joins the recent window's run logs into a valid pi-agent-core transcript and renders old segments as their (compaction) summaries — the agent no longer re-sees old tool outputs verbatim.
 - [x] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
 - [x] Store `actor` on `AgentEventMessageRecord`; drop implicit `'pi-mono'` by parameterizing runtime-authored agent actors — foundation for task-notification attribution + P3 POV.
-- [x] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
+- [x] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; Channel creation requires at least two agents.
 - [x] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). The later model-facing recall surface is a single `recall` tool; summary search and raw expansion stay internal implementation details.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
 - [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, audited — *not* `file_write`); retrieval over **one undivided pool** (`isolated` tier removed 2026-06-10; `read-only-global` = pause writes), `originWorkspace` recorded as provenance; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.

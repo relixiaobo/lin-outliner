@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: main
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 ---
 
 # Agent Conversation UX: Roster, Channels, Identity, Presence
@@ -94,11 +94,11 @@ Conversation list, two sections:
   restrictions).
 - **Channels.** Title, stacked member avatars, unread badge, rename/delete.
 
-One creation verb: **New Channel** — member multi-select over the roster + a
-goal field + an optional seed note (an explicit first message shared with the
-room). Goal is required but light (single line, example placeholder): unlike a
-human group name, the goal is a functional input that steers the coordinator,
-so requiring it is load-bearing, not form ceremony.
+One creation verb: **New Channel** — member multi-select over the roster
+(minimum two agents) + a goal field + an optional seed note (an explicit first
+message shared with the room). Goal is required but light (single line, example
+placeholder): unlike a human group name, the goal is a functional input that
+steers the coordinator, so requiring it is load-bearing, not form ceremony.
 
 Channel header and member management:
 
@@ -112,10 +112,11 @@ Channel header and member management:
 
 DM → Channel escalation: the DM header action is labeled **"Create a Channel
 with <Agent>…"** (never a bare `+`). It opens the New Channel flow with that
-agent preselected and focus on the goal field. After creation, navigate to the
-new Channel; its top shows a system line: "Created from your DM with <Agent> ·
-DM history not shared." The original DM is untouched (the runtime already
-spawns, never converts — this feature makes that semantic legible).
+agent preselected, the user must add at least one more agent, and focus lands on
+the goal field. After creation, navigate to the new Channel; its top shows a
+system line: "Created from your DM with <Agent> · DM history not shared." The
+original DM is untouched (the runtime already spawns, never converts — this
+feature makes that semantic legible).
 
 Runtime scope (the hard dependency): one canonical DM per agent
 (find-or-create keyed by `{user, agentId}`), restore on startup, same

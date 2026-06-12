@@ -2118,6 +2118,9 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         agentIds: Array.isArray(args.agentIds) ? args.agentIds.map(String) : undefined,
         goal: typeof args.goal === 'string' ? args.goal : undefined,
         seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
+        systemNotice: typeof args.systemNotice === 'string' ? args.systemNotice : undefined,
+        requireAtLeastTwoAgents: true,
+        requireGoal: true,
       });
     case 'agent_list_conversations':
       return agentRuntime.listConversations();

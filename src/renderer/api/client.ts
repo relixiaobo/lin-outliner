@@ -279,7 +279,7 @@ export const api = {
   // read when the user genuinely opens/views it. No-ops without the desktop bridge.
   agentMarkConversationRead: (conversationId: string): Promise<void> =>
     window.lin?.agentMarkConversationRead(conversationId) ?? Promise.resolve(),
-  agentCreateConversation: (options: { agentIds?: string[]; goal?: string; seedText?: string } = {}) =>
+  agentCreateConversation: (options: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string } = {}) =>
     command<AgentConversation>('agent_create_conversation', options),
   agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
   agentAddConversationMember: (conversationId: string, agentId: string) =>
