@@ -26,6 +26,14 @@ flows ingest files through asset commands, then mutate the document only through
 core commands such as `create_image_node`, `set_node_image`, and
 `create_attachment_node`.
 
+Derived metadata is extracted at ingest from the bytes alone — PDF page count by
+scanning for page objects, audio/video duration parsed from WAV/MP4 container
+headers. PDF thumbnails are an exception: they shell out to poppler's `pdftoppm`
+(spawned with fixed args, no shell, a short timeout, and a scratch dir cleaned up
+after). `pdftoppm` is an **optional** system dependency — when it is missing or
+fails, ingest degrades gracefully and the attachment simply renders with its
+file-type icon instead of a thumbnail.
+
 The asset directory is treated as a local-file jail. Path-backed ingest resolves
 the source with `realpath` and accepts regular files only. Asset reads and system
 actions resolve the stored file with `realpath`, require the result to remain

@@ -9,7 +9,7 @@ export interface IngestedFiles {
 
 export function dataTransferFiles(data: DataTransfer | null | undefined): File[] {
   if (!data) return [];
-  return Array.from(data.files).filter((file) => file.size >= 0);
+  return Array.from(data.files);
 }
 
 export function hasFileTransfer(data: DataTransfer | null | undefined): boolean {
