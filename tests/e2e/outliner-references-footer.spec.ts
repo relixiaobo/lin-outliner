@@ -64,6 +64,21 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await expect(section).toContainText('1 Appears as Related in...');
   await expect(section).toContainText('1 Unlinked mention');
   await expect(section).toContainText('Discuss Alpha soon');
+  const alignment = await page.evaluate((alphaId) => {
+    const left = (selector: string) => {
+      const element = document.querySelector(selector);
+      if (!element) throw new Error(`missing alignment target: ${selector}`);
+      return element.getBoundingClientRect().left;
+    };
+    return {
+      bodyBulletLeft: left(`[data-trailing-parent-id="${alphaId}"] .row-bullet-button`),
+      bodyTextLeft: left(`[data-trailing-parent-id="${alphaId}"] .ProseMirror`),
+      sourceMarkerLeft: left('.backlinks-row-marker'),
+      sourceTitleLeft: left('.backlinks-row-title'),
+    };
+  }, ids.alpha);
+  expect(Math.abs(alignment.sourceMarkerLeft - alignment.bodyBulletLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(alignment.sourceTitleLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
 
   await section.getByRole('button', { name: 'Link', exact: true }).click();
 

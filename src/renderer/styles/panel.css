@@ -444,8 +444,10 @@
 .backlinks-row-line {
   position: relative;
   display: flex;
+  width: calc(100% + var(--row-bullet-start));
   min-width: 0;
   align-items: start;
+  transform: translateX(calc(-1 * var(--row-bullet-start)));
 }
 
 .backlinks-row-open {

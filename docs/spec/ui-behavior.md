@@ -186,9 +186,10 @@ The footer is outliner-native, not a card list: its collapsed affordance is a
 small `N references` row aligned with the page content column, and expansion
 reveals counted group labels plus source rows that reuse the outliner leading
 geometry (chevron slot, bullet/reference marker, title text, and row hover
-frame). Source breadcrumbs align with group labels above the indented row title
-and are navigable. Reference field-value sources use the reference marker;
-ordinary linked and unlinked source rows use the normal content bullet.
+frame). Source breadcrumbs align with group labels; source row markers and
+titles align with normal node body rows. Source breadcrumbs are navigable.
+Reference field-value sources use the reference marker; ordinary linked and
+unlinked source rows use the normal content bullet.
 
 Linked references include:
 
