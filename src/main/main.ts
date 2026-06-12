@@ -1,10 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
@@ -1481,15 +1482,37 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       if (result.canceled) return [];
       return Promise.all(result.filePaths.map((path) => assetService.ingest({ kind: 'path', path })));
     }
+    case 'pick_attachment_files': {
+      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const dialogStrings = getMessages(effectiveLocale()).window;
+      const options = {
+        title: dialogStrings.insertAttachmentTitle,
+        properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+      };
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled) return [];
+      return Promise.all(result.filePaths.map((path) => assetService.ingest({ kind: 'path', path })));
+    }
     case 'open_asset': {
       const path = await assetService.pathFor(String(args.id));
-      if (path) await shell.openPath(path);
-      return { opened: Boolean(path) };
+      if (!path) return { opened: false };
+      const pathStat = await stat(path);
+      if (!isSafeLocalFileOpenTarget({ entryKind: 'file', path, stats: pathStat })) return { opened: false };
+      await shell.openPath(path);
+      return { opened: true };
     }
     case 'reveal_asset': {
       const path = await assetService.pathFor(String(args.id));
       if (path) shell.showItemInFolder(path);
       return { revealed: Boolean(path) };
+    }
+    case 'copy_asset_file': {
+      const path = await assetService.pathFor(String(args.id));
+      if (!path) return { copied: false };
+      copyFilePathToClipboard(path);
+      return { copied: true };
     }
     case 'open_external_url': {
       // Opens a remote media node's source in the OS default browser. Only
@@ -1500,6 +1523,28 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
     default:
       throw new Error(`Unknown asset command: ${command}`);
   }
+}
+
+function copyFilePathToClipboard(path: string): void {
+  clipboard.writeText(path);
+  if (process.platform !== 'darwin') return;
+  const fileUrl = pathToFileURL(path).toString();
+  clipboard.writeBuffer('public.file-url', Buffer.from(fileUrl, 'utf8'));
+  clipboard.writeBuffer('NSFilenamesPboardType', Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` +
+    `<plist version="1.0"><array><string>${escapeXml(path)}</string></array></plist>`,
+    'utf8',
+  ));
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 function attachmentPickerDefaultPath(): { path?: string; source: string } {

@@ -9,6 +9,7 @@ import type { FocusRequest, FocusTarget } from '../../state/document';
 import { assetUrl } from '../../../core/assets';
 import { focusTargetMatches } from '../focus/focusModel';
 import { isCompositionLive } from '../editor/compositionRelay';
+import { AttachmentRow } from './AttachmentRow';
 import { ImageRow } from './ImageRow';
 
 /**
@@ -26,8 +27,8 @@ export function mediaSource(
 }
 
 /**
- * Node types whose body is a non-text block (an image today; attachments,
- * embeds, and media players later). They share one interaction contract:
+ * Node types whose body is a non-text block (images and attachments today;
+ * embeds later). They share one interaction contract:
  * a focusable, caret-less row whose caption is the node's `description`, with
  * arrow / Enter / Backspace navigation. `BlockNodeRow` owns that contract;
  * each type only contributes a presentational body in `renderBlockBody`.
@@ -39,6 +40,8 @@ export function isBlockNodeType(node: { type?: NodeProjection['type']; assetId?:
   switch (node.type) {
     case 'image':
       return Boolean(node.assetId || node.mediaUrl);
+    case 'attachment':
+      return Boolean(node.assetId);
     default:
       return false;
   }
@@ -88,6 +91,8 @@ function renderBlockBody(props: BlockNodeRowProps): ReactNode {
         />
       );
     }
+    case 'attachment':
+      return <AttachmentRow node={node} />;
     default:
       return null;
   }

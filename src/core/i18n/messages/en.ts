@@ -57,6 +57,7 @@ export const en = {
     providerConfigTitle: 'Configure provider',
     // The native "insert image" file-picker dialog (title + the image filter label).
     insertImageTitle: 'Insert image',
+    insertAttachmentTitle: 'Insert attachment',
     imageFilesFilter: 'Images',
   },
   // The global launcher's static chrome (placeholder + accessibility labels).
@@ -663,6 +664,7 @@ commandPalette: {
         checkbox: 'Checkbox',
         code: 'Code block',
         image: 'Image',
+        attachment: 'Attachment',
         command_palette: 'Command palette',
         command: 'Command',
       },
@@ -674,6 +676,19 @@ commandPalette: {
         expand: 'Expand image',
         openOriginal: 'Open original',
         openInBrowser: 'Open in browser',
+      },
+      // Attachment block toolbar + metadata labels.
+      attachment: {
+        unavailable: 'Attachment unavailable',
+        open: 'Open',
+        reveal: 'Reveal in Finder',
+        copy: 'Copy file',
+        pdf: 'PDF',
+        audio: 'Audio',
+        video: 'Video',
+        file: 'File',
+        pages: ({ count }: { count: number }) => count === 1 ? '1 page' : `${count} pages`,
+        duration: ({ duration }: { duration: string }) => duration,
       },
       // Code block chrome.
       code: {

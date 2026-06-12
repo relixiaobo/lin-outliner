@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AssetService, imageDimensions, sniffMimeType } from '../../src/main/assetService';
@@ -20,6 +20,34 @@ function gifBytes(width: number, height: number): Uint8Array {
   buf.writeUInt16LE(width, 6);
   buf.writeUInt16LE(height, 8);
   return new Uint8Array(buf);
+}
+
+function wavBytes(durationMs: number): Uint8Array {
+  const sampleRate = 8000;
+  const byteRate = sampleRate * 2;
+  const dataSize = Math.round(byteRate * durationMs / 1000);
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0, 'ascii');
+  buf.writeUInt32LE(36 + dataSize, 4);
+  buf.write('WAVE', 8, 'ascii');
+  buf.write('fmt ', 12, 'ascii');
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(byteRate, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36, 'ascii');
+  buf.writeUInt32LE(dataSize, 40);
+  return new Uint8Array(buf);
+}
+
+function pdfBytes(pages: number): Uint8Array {
+  const pageObjects = Array.from({ length: pages }, (_, index) => (
+    `${index + 2} 0 obj\n<< /Type /Page /Parent 1 0 R >>\nendobj\n`
+  )).join('');
+  return new TextEncoder().encode(`%PDF-1.4\n1 0 obj\n<< /Type /Pages /Count ${pages} >>\nendobj\n${pageObjects}%%EOF\n`);
 }
 
 describe('AssetService', () => {
@@ -101,6 +129,44 @@ describe('AssetService', () => {
     expect(meta.mimeType).toBe('application/octet-stream');
     expect(meta.imageWidth).toBeUndefined();
   });
+
+  test('derives PDF page count metadata', async () => {
+    const meta = await service.ingest({ kind: 'buffer', data: pdfBytes(2), originalFilename: 'report.pdf' });
+    expect(meta).toMatchObject({
+      mimeType: 'application/pdf',
+      pdfPageCount: 2,
+      originalFilename: 'report.pdf',
+    });
+  });
+
+  test('derives WAV duration metadata', async () => {
+    const meta = await service.ingest({ kind: 'buffer', data: wavBytes(1250), originalFilename: 'memo.wav' });
+    expect(meta).toMatchObject({
+      mimeType: 'audio/wav',
+      audioDurationMs: 1250,
+      originalFilename: 'memo.wav',
+    });
+  });
+
+  test('refuses to serve an asset file symlink that escapes the asset directory', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'lin-outliner-asset-outside-'));
+    try {
+      const outsideFile = join(outsideRoot, 'secret.txt');
+      await writeFile(outsideFile, 'secret');
+      await symlink(outsideFile, join(root, 'escapes.txt'));
+      await writeFile(join(root, 'escapes.meta.json'), JSON.stringify({
+        id: 'escapes',
+        mimeType: 'text/plain',
+        byteSize: 6,
+        createdAt: Date.now(),
+      }));
+
+      expect(await service.pathFor('escapes')).toBeNull();
+      expect((await service.serve('escapes')).status).toBe(404);
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('sniffMimeType', () => {
@@ -109,6 +175,8 @@ describe('sniffMimeType', () => {
     expect(sniffMimeType(gifBytes(1, 1))).toBe('image/gif');
     expect(sniffMimeType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe('image/jpeg');
     expect(sniffMimeType(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]))).toBe('application/pdf');
+    expect(sniffMimeType(wavBytes(100))).toBe('audio/wav');
+    expect(sniffMimeType(new Uint8Array([0x50, 0x4b, 0x03, 0x04]))).toBe('application/zip');
   });
 
   test('falls back to the filename extension when bytes are inconclusive', () => {

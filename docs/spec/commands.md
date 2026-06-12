@@ -13,6 +13,10 @@ The authoritative list lives in [`src/core/commands.ts`](../../src/core/commands
   `DocumentProjection` and optional `FocusHint`.
 - `AGENT_COMMANDS` — agent session lifecycle, message send/edit/regenerate,
   follow-ups, steering, provider settings, debug snapshots, child-run control.
+- `ASSET_COMMANDS` — asset ingest, lookup, native pickers, safe system file
+  actions, and external URL opening. Asset commands never mutate document state;
+  renderer flows pair them with document commands when a picked/dropped file
+  should appear in the outline.
 
 The renderer calls them through `window.lin.invoke(...)` via
 [`src/renderer/api/client.ts`](../../src/renderer/api/client.ts).
@@ -46,7 +50,19 @@ renderer can't supply the source metadata. See [`launcher.md`](launcher.md).
 `toggle_done`, `cycle_done_state`, `trash_node`, `restore_node`, `delete_node`.
 
 ### Document — node presentation
-`set_node_checkbox_visible`, `set_node_icon`, `set_node_banner`.
+`set_node_checkbox_visible`, `set_node_icon`, `set_node_banner`,
+`create_image_node`, `set_node_image`, `create_attachment_node`.
+
+`create_image_node(parentId, index, source)` creates a block image row from
+either a local `assetId` or an `http(s)` `mediaUrl` and persists optional image
+dimensions. `set_node_image(nodeId, source)` converts an existing plain content
+row into the same image node shape.
+
+`create_attachment_node(parentId, index, metadata)` creates a block attachment
+row. It requires a local `assetId`, MIME type, original filename, and byte size;
+optional `thumbnailAssetId`, `pdfPageCount`, `audioDurationMs`, and
+`videoDurationMs` are copied from asset metadata. Image MIME types are rejected
+here because they use the image-node commands.
 
 ### Document — view configuration
 `set_view_toolbar_visible`, `set_view_mode`, `add_sort_rule`, `update_sort_rule`,
@@ -233,6 +249,29 @@ serialized to the run brief by `commandBriefText`.
 
 ### Document — history
 `undo`, `redo`.
+
+### Assets
+`ingest_asset`, `lookup_asset`, `delete_asset`, `pick_image_files`,
+`pick_attachment_files`, `open_asset`, `reveal_asset`, `copy_asset_file`,
+`open_external_url`.
+
+`ingest_asset` stores bytes under the workspace asset directory and returns
+`AssetMetadata`. It derives image dimensions, PDF page count, audio/video
+duration when the format is locally parseable, and a best-effort first-page PDF
+thumbnail when the platform thumbnail tool is available. MIME type is resolved
+from file signatures or filename extension first, then from a renderer hint when
+present, falling back to `application/octet-stream`.
+
+`pick_image_files` and `pick_attachment_files` open native file pickers in the
+main process and ingest selected regular files before returning metadata to the
+renderer. The renderer decides whether each asset becomes an image node or an
+attachment node.
+
+`open_asset`, `reveal_asset`, and `copy_asset_file` operate only on files whose
+resolved real path remains inside the asset directory. `open_asset` additionally
+uses the local-file open policy before handing the file to the OS. `reveal_asset`
+reveals the asset copy in Finder; `copy_asset_file` copies both a text path and,
+where supported, a native file URL/file-list flavor to the clipboard.
 
 ### Agent — conversations and persistence
 `agent_restore_latest_conversation`, `agent_restore_conversation`,

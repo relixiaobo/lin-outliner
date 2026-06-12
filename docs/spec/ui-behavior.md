@@ -239,9 +239,26 @@ row; the rest become siblings/children. Behavior parity target is nodex
 - `@` splits between tree reference and inline reference based on trigger
   position and cycle constraints.
 - `/` opens slash commands only when the node is otherwise empty.
+- `/attachment` opens the native file picker, ingests the selected files, and
+  inserts non-image assets as attachment siblings at the row's current position.
+  Picked images keep the image-node flow.
 - `>` creates a field row only when the content is exactly the bare trigger.
 - Trigger menus must route `ArrowUp`, `ArrowDown`, `Enter`, and `Escape` before
   normal outliner navigation.
+
+## File And Attachment Matrix
+
+Binary files are not embedded in the document. The renderer ingests dropped or
+picked files through asset commands, then creates document rows through core
+commands so undo/redo and projection updates stay document-native.
+
+| Interaction | Expected behavior |
+| --- | --- |
+| Drop files on an editable content row | Prevent the browser's default navigation, ingest every regular `File`, convert images into image rows, and insert all other assets as attachment siblings after the target row in source order. |
+| `/attachment` on an empty row | Delete the slash trigger, open the native attachment picker, ingest selected files, and place image/attachment rows at that row's position. Cancel leaves the row empty. |
+| Attachment row render | Show a compact block row with a file-kind glyph or PDF thumbnail, filename, size, type label, and derived page count/duration when available. Audio and video attachments expose native media controls below the metadata. |
+| Attachment actions | Open uses the OS default app after the main process revalidates the asset path and local-file policy. Reveal shows the stored asset copy. Copy puts the stored asset path on the clipboard. |
+| Missing asset metadata | Render a non-editable unavailable placeholder; the row remains a block node and does not expose broken system actions. |
 
 ## Reference And Inline Reference Matrix
 

@@ -72,6 +72,7 @@ import {
   type FocusHint,
   type IconKind,
   type Node,
+  type AttachmentNode,
   type CodeBlockNode,
   type CommandNode,
   COMMAND_SCHEDULE_FIELD,
@@ -479,6 +480,41 @@ export class Core {
         if (options.height != null) node.imageHeight = options.height;
         const alt = options.alt?.trim();
         if (alt) node.mediaAlt = alt;
+      });
+      this.applyChildTagsDirect(parentId, id);
+      return focus(id, { parentId, placement: { kind: 'end' } });
+    });
+  }
+
+  createAttachmentNode(
+    parentId: string,
+    index: number | null | undefined,
+    options: {
+      assetId?: string | null;
+      mimeType?: string | null;
+      originalFilename?: string | null;
+      fileSize?: number | null;
+      thumbnailAssetId?: string | null;
+      pdfPageCount?: number | null;
+      audioDurationMs?: number | null;
+      videoDurationMs?: number | null;
+    },
+  ): CommandOutcome {
+    const attachment = normalizeAttachmentOptions(options);
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const id = freshId('attachment');
+      this.loro.createNodeWithId<AttachmentNode>(id, parentId, index, 'attachment', (node) => {
+        node.content = plainText('');
+        node.assetId = attachment.assetId;
+        node.mimeType = attachment.mimeType;
+        node.originalFilename = attachment.originalFilename;
+        node.fileSize = attachment.fileSize;
+        if (attachment.thumbnailAssetId) node.thumbnailAssetId = attachment.thumbnailAssetId;
+        if (attachment.pdfPageCount !== undefined) node.pdfPageCount = attachment.pdfPageCount;
+        if (attachment.audioDurationMs !== undefined) node.audioDurationMs = attachment.audioDurationMs;
+        if (attachment.videoDurationMs !== undefined) node.videoDurationMs = attachment.videoDurationMs;
       });
       this.applyChildTagsDirect(parentId, id);
       return focus(id, { parentId, placement: { kind: 'end' } });
@@ -3487,6 +3523,73 @@ function resolveImageSource(
     return { mediaUrl };
   }
   throw CoreError.invalidOperation('image node requires an assetId or a mediaUrl');
+}
+
+function normalizeAttachmentOptions(options: {
+  assetId?: string | null;
+  mimeType?: string | null;
+  originalFilename?: string | null;
+  fileSize?: number | null;
+  thumbnailAssetId?: string | null;
+  pdfPageCount?: number | null;
+  audioDurationMs?: number | null;
+  videoDurationMs?: number | null;
+}): {
+  assetId: string;
+  mimeType: string;
+  originalFilename: string;
+  fileSize: number;
+  thumbnailAssetId?: string;
+  pdfPageCount?: number;
+  audioDurationMs?: number;
+  videoDurationMs?: number;
+} {
+  const assetId = options.assetId?.trim();
+  if (!assetId) throw CoreError.invalidOperation('attachment node requires an assetId');
+  const mimeType = normalizeMimeType(options.mimeType);
+  if (mimeType.startsWith('image/')) {
+    throw CoreError.invalidOperation('image assets must be created as image nodes');
+  }
+  const originalFilename = options.originalFilename?.trim();
+  if (!originalFilename) throw CoreError.invalidOperation('attachment node requires an originalFilename');
+  const fileSize = normalizeNonNegativeInteger(options.fileSize, 'attachment node requires a fileSize');
+  const thumbnailAssetId = normalizeOptionalText(options.thumbnailAssetId);
+  const pdfPageCount = optionalPositiveInteger(options.pdfPageCount);
+  const audioDurationMs = optionalPositiveInteger(options.audioDurationMs);
+  const videoDurationMs = optionalPositiveInteger(options.videoDurationMs);
+  return {
+    assetId,
+    mimeType,
+    originalFilename,
+    fileSize,
+    ...(thumbnailAssetId ? { thumbnailAssetId } : {}),
+    ...(pdfPageCount !== undefined ? { pdfPageCount } : {}),
+    ...(audioDurationMs !== undefined ? { audioDurationMs } : {}),
+    ...(videoDurationMs !== undefined ? { videoDurationMs } : {}),
+  };
+}
+
+function normalizeMimeType(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase() || 'application/octet-stream';
+  if (!/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*(?:;[a-z0-9!#$&^_.+-]+=[a-z0-9!#$&^_.+-]+)*$/.test(normalized)) {
+    throw CoreError.invalidOperation('attachment node requires a valid MIME type');
+  }
+  return normalized;
+}
+
+function normalizeNonNegativeInteger(value: number | null | undefined, message: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw CoreError.invalidOperation(message);
+  }
+  return value;
+}
+
+function optionalPositiveInteger(value: number | null | undefined): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw CoreError.invalidOperation('attachment metadata must be a positive integer');
+  }
+  return value;
 }
 
 function requiredNode(state: DocumentState, nodeId: string): Node {

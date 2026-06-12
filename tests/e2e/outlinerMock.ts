@@ -211,6 +211,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      queryOp?: string;
 	      targetId?: string;
 	      codeLanguage?: string;
+	      assetId?: string;
+	      mediaUrl?: string;
+	      mediaAlt?: string;
+	      imageWidth?: number;
+	      imageHeight?: number;
+	      mimeType?: string;
+	      originalFilename?: string;
+	      fileSize?: number;
+	      thumbnailAssetId?: string;
+	      pdfPageCount?: number;
+	      audioDurationMs?: number;
+	      videoDurationMs?: number;
 	      configKey?: string;
 	      refRole?: string;
 	      commandSchedule?: string;
@@ -232,6 +244,19 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // separately (reduceProjection.test.ts).
     let revision = 0;
     let clipboardText = '';
+    const assets = new Map<string, {
+      id: string;
+      mimeType: string;
+      byteSize: number;
+      originalFilename?: string;
+      createdAt: number;
+      imageWidth?: number;
+      imageHeight?: number;
+      thumbnailAssetId?: string;
+      pdfPageCount?: number;
+      audioDurationMs?: number;
+      videoDurationMs?: number;
+    }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     const agentListeners: Array<(event: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
@@ -873,6 +898,36 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       makeNode(nodeId, text, { parentId, showCheckbox: true, ...overrides });
       appendChild(parentId, nodeId, index);
       return nodeId;
+    };
+    const inferMimeType = (name: string, hinted?: string) => {
+      if (hinted) return hinted;
+      const lower = name.toLowerCase();
+      if (lower.endsWith('.png')) return 'image/png';
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+      if (lower.endsWith('.pdf')) return 'application/pdf';
+      if (lower.endsWith('.wav')) return 'audio/wav';
+      if (lower.endsWith('.mp4')) return 'video/mp4';
+      if (lower.endsWith('.md')) return 'text/markdown';
+      if (lower.endsWith('.txt')) return 'text/plain';
+      return 'application/octet-stream';
+    };
+    const createAsset = (input: { mimeType?: string; originalFilename?: string; byteSize?: number }) => {
+      const name = input.originalFilename || 'attachment';
+      const mimeType = inferMimeType(name, input.mimeType);
+      const id = `asset-${++sequence}`;
+      const asset = {
+        id,
+        mimeType,
+        byteSize: input.byteSize ?? 128,
+        originalFilename: name,
+        createdAt: ++now,
+        ...(mimeType.startsWith('image/') ? { imageWidth: 320, imageHeight: 180 } : {}),
+        ...(mimeType === 'application/pdf' ? { pdfPageCount: 1 } : {}),
+        ...(mimeType === 'audio/wav' ? { audioDurationMs: 1000 } : {}),
+        ...(mimeType === 'video/mp4' ? { videoDurationMs: 1000 } : {}),
+      };
+      assets.set(id, asset);
+      return asset;
     };
     const createTag = (name: string) => {
       const normalized = name.trim();
@@ -1814,6 +1869,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_steer_conversation') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projectionSnapshot());
+        if (cmd === 'ingest_asset') {
+          const data = args.data as { byteLength?: number } | undefined;
+          return clone(createAsset({
+            mimeType: typeof args.mimeType === 'string' ? args.mimeType : undefined,
+            originalFilename: typeof args.originalFilename === 'string' ? args.originalFilename : undefined,
+            byteSize: typeof data?.byteLength === 'number' ? data.byteLength : undefined,
+          })) as T;
+        }
+        if (cmd === 'lookup_asset') return clone(assets.get(String(args.id)) ?? null) as T;
+        if (cmd === 'delete_asset') {
+          assets.delete(String(args.id));
+          return clone(undefined) as T;
+        }
+        if (cmd === 'pick_image_files') {
+          return clone([createAsset({ mimeType: 'image/png', originalFilename: 'picked-image.png', byteSize: 24 })]) as T;
+        }
+        if (cmd === 'pick_attachment_files') {
+          return clone([createAsset({ mimeType: 'application/pdf', originalFilename: 'picked-report.pdf', byteSize: 256 })]) as T;
+        }
+        if (cmd === 'open_asset') return clone({ opened: assets.has(String(args.id)) }) as T;
+        if (cmd === 'reveal_asset') return clone({ revealed: assets.has(String(args.id)) }) as T;
+        if (cmd === 'copy_asset_file') return clone({ copied: assets.has(String(args.id)) }) as T;
         if (cmd === 'create_node') {
           const nodeId = createNode(
             String(args.parentId),
@@ -1823,6 +1900,35 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             typeof args.id === 'string' ? args.id : undefined,
           );
           return clone(outcome({ nodeId, parentId: String(args.parentId), placement: { kind: 'end' }, selectAll: false }));
+        }
+        if (cmd === 'create_image_node') {
+          const parentId = String(args.parentId);
+          const nodeId = createNode(parentId, args.index as number | null, '', {
+            type: 'image',
+            showCheckbox: false,
+            assetId: typeof args.assetId === 'string' ? args.assetId : undefined,
+            mediaUrl: typeof args.mediaUrl === 'string' ? args.mediaUrl : undefined,
+            imageWidth: typeof args.width === 'number' ? args.width : undefined,
+            imageHeight: typeof args.height === 'number' ? args.height : undefined,
+            mediaAlt: typeof args.alt === 'string' ? args.alt : undefined,
+          });
+          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
+        }
+        if (cmd === 'create_attachment_node') {
+          const parentId = String(args.parentId);
+          const nodeId = createNode(parentId, args.index as number | null, '', {
+            type: 'attachment',
+            showCheckbox: false,
+            assetId: String(args.assetId ?? ''),
+            mimeType: String(args.mimeType ?? 'application/octet-stream'),
+            originalFilename: String(args.originalFilename ?? 'attachment'),
+            fileSize: typeof args.fileSize === 'number' ? args.fileSize : 0,
+            thumbnailAssetId: typeof args.thumbnailAssetId === 'string' ? args.thumbnailAssetId : undefined,
+            pdfPageCount: typeof args.pdfPageCount === 'number' ? args.pdfPageCount : undefined,
+            audioDurationMs: typeof args.audioDurationMs === 'number' ? args.audioDurationMs : undefined,
+            videoDurationMs: typeof args.videoDurationMs === 'number' ? args.videoDurationMs : undefined,
+          });
+          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
         }
         if (cmd === 'create_rich_text_node') {
           const parentId = String(args.parentId);
@@ -2440,6 +2546,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             const lang = typeof args.codeLanguage === 'string' ? args.codeLanguage.trim().toLowerCase() : '';
             if (lang) node.codeLanguage = lang;
             else delete node.codeLanguage;
+            node.updatedAt = ++now;
+          }
+          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+        }
+        if (cmd === 'set_node_image') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            node.type = 'image';
+            node.assetId = typeof args.assetId === 'string' ? args.assetId : undefined;
+            node.mediaUrl = typeof args.mediaUrl === 'string' ? args.mediaUrl : undefined;
+            node.imageWidth = typeof args.width === 'number' ? args.width : undefined;
+            node.imageHeight = typeof args.height === 'number' ? args.height : undefined;
             node.updatedAt = ++now;
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
