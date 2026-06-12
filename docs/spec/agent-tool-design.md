@@ -2413,13 +2413,12 @@ Runtime control tools are not file tools:
 - Skill maintenance does not add a separate model-facing CRUD tool family in
   v1. It follows cc-2.1's smaller surface: `/skillify` produces/reviews content,
   then uses existing `file_write` or `file_edit`.
-- The file-tool gateway must classify writes under `.agents/skills/**` as
-  skill-content writes instead of generic document edits. These writes use
-  permission action `agent.skill.write`, cannot be globally always-allowed,
-  validate frontmatter/support files, reject risky `allowed-tools` escalation,
-  carry rollback metadata in tool details, emit `skill.created` /
-  `skill.patched` / `skill.replaced` audit events on success, and hot-reload the
-  skill registry.
+- Skill files use the ordinary `file_write` / `file_edit` permission decision.
+  After that decision, the file-tool gateway recognizes writes under registered
+  skill directories, validates frontmatter/support files, carries rollback
+  metadata in tool details, emits `skill.created` / `skill.patched` /
+  `skill.replaced` audit events on success, records provenance hashes, and
+  hot-reloads the skill registry.
 
 ## Mapping to Current Lin Commands
 

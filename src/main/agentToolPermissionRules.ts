@@ -33,7 +33,6 @@ export type AgentToolActionKind =
   | 'agent.config.write'
   | 'agent.doctor.run'
   | 'agent.skill.invoke'
-  | 'agent.skill.write'
   | 'agent.delegate.spawn'
   | 'agent.delegate.status'
   | 'agent.delegate.send'
@@ -167,7 +166,6 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'agent.config.write',
   'agent.doctor.run',
   'agent.skill.invoke',
-  'agent.skill.write',
   'agent.delegate.spawn',
   'agent.delegate.status',
   'agent.delegate.send',
@@ -287,7 +285,6 @@ const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
   ...PLATFORM_HARD_BLOCK_ACTIONS,
   'agent.config.write',
   'agent.memory.dream',
-  'agent.skill.write',
   'agent.delegate.spawn',
   'shell.unknown',
 ]);

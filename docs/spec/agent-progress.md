@@ -105,7 +105,7 @@ truth.
   - automatic and slash skill loading from `.agents/skills`
   - path-conditional and dynamically discovered skills with gitignore guards
   - governed `.agents/skills/**` writes through normal file tools with
-    `agent.skill.write` permission, validation, rollback metadata, and hot reload
+    validation, provenance, rollback metadata, and hot reload
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact

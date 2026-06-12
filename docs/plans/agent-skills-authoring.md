@@ -74,9 +74,9 @@ override; `context: fork`.
 
 **M1 implementation in this branch adds**: code-registered immutable `built-in`
 skills, slash-only `/skillify`, governed self-authoring through `file_write` /
-`file_edit`, `.agents/skills/**` permission classification (`agent.skill.write`),
-validation and no-escalation guards, registry hot-reload after successful skill
-writes, and `skill.created` / `skill.patched` / `skill.replaced` audit events.
+`file_edit`, skill-content validation and no-escalation guards, registry
+hot-reload after successful skill writes, and `skill.created` / `skill.patched` /
+`skill.replaced` audit events.
 Rollback UI and opt-in curation remain later work.
 
 ## Design
@@ -226,8 +226,8 @@ write-governance detector recognizes them from a *hardcoded path regex* (only
 `agentSkillAuthoring.ts:85-99`). They disagree: a skill in an additional configured dir
 that is outside the root and not named `.agents/skills` (e.g. `~/team-skills/`) is loaded
 as a real, model-invocable `user` skill, but a `file_edit` to its `SKILL.md` is **not**
-classified as `agent.skill.write` — no validation, no audit, no no-escalation guard, no
-hot-reload. This hole exists *because* lin added `additionalSkillDirectories`, which
+recognized as a skill content write — no validation, no audit, no no-escalation guard,
+no hot-reload. This hole exists *because* lin added `additionalSkillDirectories`, which
 cc-2.1 does not have (cc-2.1's path-regex is trivially single-source because skills only
 live in canonical locations). We keep the feature (PM 2026-06-09: cannot drop it).
 
@@ -430,13 +430,10 @@ deliberately conservative (self-modification §8):
 - [x] **Seam 2** — add `AgentSkillRuntime.resolveSkillTarget(filePath)` as the single skill-
       path source of truth (defaults + `additionalSkillDirectories` + nested dirs);
       loader enumerates through it; the file-tool gateway detects skill writes through
-      it; the `agent.skill.write` permission classifier shares it (skill-dir config
-      threaded into the permission policy); delete the hardcoded regex in
-      `detectAgentSkillContentTarget`.
-- [x] **Seam 2** — recognition ≠ permission. Resolution: a **uniform ask-gate** for every
-      recognized skill write (additional dirs included) — the user is the policy. No
-      separate read-only/writable mark; one less concept than the planned default-deny,
-      and the user can still refuse any write at the prompt.
+      it; delete the hardcoded regex in `detectAgentSkillContentTarget`.
+- [x] **Seam 2** — recognition ≠ permission. Skill writes use the ordinary
+      `file_write` / `file_edit` permission decision; recognition only drives
+      validation, audit events, rollback metadata, provenance, and hot reload.
 - [x] **Seam 3 / ratification** — gateway records `(skill file → content hash)` on every
       agent `SKILL.md` write (in-memory in the registry; persisted to
       `agent-skill-provenance.json` in userData, shared by subagent runtimes). A skill is

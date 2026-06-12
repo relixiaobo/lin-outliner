@@ -405,7 +405,7 @@ describe('agent permissions', () => {
     ]);
   });
 
-  test('skill content file writes use the skill-write permission action', () => {
+  test('skill content file writes use the ordinary file permission action', () => {
     const workspaceRoot = '/tmp/workspace';
     const skillPath = path.join(workspaceRoot, '.agents', 'skills', 'demo', 'SKILL.md');
     const decision = evaluateAgentToolPermission({
@@ -425,31 +425,16 @@ describe('agent permissions', () => {
         },
       },
     });
-    const config = parseGlobalToolPermissionSettings({
-      permissions: {
-        allow: ['Action(agent.skill.write)'],
-      },
-    });
 
     expect(decision).toMatchObject({
-      behavior: 'ask',
+      behavior: 'allow',
       access: 'write',
-      code: 'agent.skill.write',
-      descriptor: { actionKind: 'agent.skill.write' },
+      descriptor: { actionKind: 'file.edit.allowed_file_area' },
     });
-    expect(decision.behavior === 'ask' ? decision.request.title : undefined)
-      .toBe('Approve skill content write?');
     expect(globallyAllowed).toMatchObject({
-      behavior: 'ask',
-      descriptor: { actionKind: 'agent.skill.write' },
+      behavior: 'allow',
+      descriptor: { actionKind: 'file.edit.allowed_file_area' },
     });
-    expect(config.rules).toEqual([]);
-    expect(config.diagnostics).toEqual([{
-      ruleValue: 'Action(agent.skill.write)',
-      decision: 'allow',
-      code: 'forbidden_allow_rule',
-      message: 'Action agent.skill.write cannot be globally allowed.',
-    }]);
   });
 
   test('matches allowed-tools rules for restricted mode preapproval', () => {

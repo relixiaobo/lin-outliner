@@ -36,8 +36,8 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
   });
 
   test('recognizes an additional dir OUTSIDE root (the closed governance hole)', () => {
-    // Before convergence this path bypassed agent.skill.write classification entirely
-    // because the detector hardcoded .agents/skills paths and ignored configured dirs.
+    // The loader and file-tool gateway share this resolver so configured skill dirs
+    // get the same validation, provenance, and hot-reload handling as defaults.
     const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
     const target = resolveSkillContentTarget(
       path.join(teamSkills, 'shared', 'SKILL.md'),

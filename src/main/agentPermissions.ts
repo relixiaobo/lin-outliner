@@ -14,7 +14,6 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
-import { resolveSkillContentTarget } from './agentSkills';
 
 export type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
 export type {
@@ -48,10 +47,6 @@ export interface AgentPermissionPolicy {
   allowOutsideWorkspaceRead: boolean;
   allowOutsideWorkspaceWrite: boolean;
   globalPermissions: GlobalToolPermissionConfig;
-  // Skill-dir config, so `agent.skill.write` classification uses the same skill-path
-  // source of truth as the loader and the file-tool gateway (resolveSkillContentTarget).
-  includeUserSkills: boolean;
-  additionalSkillDirectories: readonly string[];
 }
 
 export interface AgentPermissionPolicyInput {
@@ -63,8 +58,6 @@ export interface AgentPermissionPolicyInput {
   allowOutsideWorkspaceRead?: boolean;
   allowOutsideWorkspaceWrite?: boolean;
   globalPermissions?: unknown;
-  includeUserSkills?: boolean;
-  additionalSkillDirectories?: readonly string[];
 }
 
 interface AgentPermissionDecisionBase {
@@ -269,8 +262,6 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,
     allowOutsideWorkspaceWrite: input.allowOutsideWorkspaceWrite ?? false,
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
-    includeUserSkills: input.includeUserSkills ?? true,
-    additionalSkillDirectories: input.additionalSkillDirectories ?? [],
   };
 }
 
@@ -420,7 +411,6 @@ const FULL_ACCESS_ALLOW_ACTIONS = new Set<AgentToolActionKind>([
   'git.publish_remote',
   'agent.delegate.spawn',
   'agent.memory.dream',
-  'agent.skill.write',
   'shell.background_process',
 ]);
 
@@ -853,36 +843,6 @@ function derivePathToolActionDescriptor(
       code: `outside_workspace_${isWrite ? 'write' : 'read'}`,
       requestTitle: `Approve outside file ${isWrite ? 'write' : 'read'}?`,
       requestTarget: resolved,
-    });
-  }
-
-  const skillTarget = isWrite
-    ? resolveSkillContentTarget(resolved, {
-      root: policy.workspaceRoot,
-      includeUserSkills: policy.includeUserSkills,
-      additionalSkillDirectories: policy.additionalSkillDirectories,
-    })
-    : null;
-  if (skillTarget) {
-    return descriptor(toolName, 'agent.skill.write', {
-      accessScope: 'allowed_file_area',
-      title: 'skill content write',
-      summary: `Write ${skillTarget.relativePath} for skill ${skillTarget.skillName}.`,
-      consequence: 'This changes local agent skill instructions and can affect future agent behavior.',
-      defaultDecision: 'ask',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      classifierAutoAllowEligible: false,
-      code: 'agent.skill.write',
-      requestTitle: 'Approve skill content write?',
-      requestTarget: `${skillTarget.skillName}/${skillTarget.relativePath}`,
-      requestDetails: [
-        { label: 'Tool', value: toolName },
-        { label: 'Skill', value: skillTarget.skillName },
-        { label: 'Path', value: resolved },
-        { label: 'Source', value: skillTarget.source },
-      ],
     });
   }
 

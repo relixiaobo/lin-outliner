@@ -97,21 +97,21 @@ Slash skills use the same loader and apply the same `allowed-tools`, `model`, an
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
 
 File writes into any skill directory are treated as skill-content writes, not
-generic local file edits. **Identity has one source of truth**: the same
-resolver (`resolveSkillContentTarget`) that the registry loads from also powers
-the file-tool gateway and the `agent.skill.write` permission classification, so
-the loader's notion of "what is a skill" and the governance layer's can never
-disagree — including additional configured skill directories and nested
-`.agents/skills` dirs discovered at runtime.
+generic local file edits after the ordinary `file_write` / `file_edit` permission
+check has passed. **Identity has one source of truth**: the same resolver
+(`resolveSkillContentTarget`) that the registry loads from also powers the
+file-tool gateway, so the loader's notion of "what is a skill" and the write
+validator's can never disagree — including additional configured skill
+directories and nested `.agents/skills` dirs discovered at runtime.
 
-The write boundary makes **no policy decisions — only validity, safety, and
-recording**: the gateway asks for the `agent.skill.write` permission action,
-validates `SKILL.md` frontmatter and support-file shape as immediate feedback to
-the model, rejects secret-looking content (skill-specific by design: skills are
-durable instructions injected into future contexts, an exfiltration amplifier),
-rejects hidden/executable support files, records rollback metadata in the tool
-details, records the written content hash as provenance, and hot-reloads the
-skill registry.
+The write boundary makes **no permission-policy decisions — only validity,
+safety, and recording**: the gateway uses the ordinary file tool permission
+result, then validates `SKILL.md` frontmatter and support-file shape as immediate
+feedback to the model, rejects secret-looking content (skill-specific by design:
+skills are durable instructions injected into future contexts, an exfiltration
+amplifier), rejects hidden/executable support files, records rollback metadata in
+the tool details, records the written content hash as provenance, and hot-reloads
+the skill registry.
 
 **Ratification** is the policy layer, enforced at listing/invocation time, not
 at write time. Each mutable skill has one **trust record** in
@@ -240,9 +240,8 @@ namespace choice, not a behavioral difference.
 
 Agent-managed skill edits follow cc-2.1's smaller tool surface:
 `skillify`-style workflows plus ordinary file write/edit tools after review and
-confirmation. Lin adds skill-path permission classification, validation, rollback
-metadata, and hot reload instead of a separate model-facing skill CRUD tool
-family.
+confirmation. Lin adds skill-path validation, rollback metadata, provenance, and
+hot reload instead of a separate model-facing skill CRUD tool family.
 
 ## Compatibility Decisions
 
@@ -262,7 +261,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
 | `context: fork` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Forked skill bodies run in a sidechain child run and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Any write into a registry-recognized skill directory is classified as `agent.skill.write` (single resolver, shared with the loader), ask-gated, validated as feedback, audit-event-emitting, rollback-metadata-bearing, provenance-hash-recorded, and registry-hot-reloaded. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts the exact bytes from the in-flow `skill_trust` card or Settings. User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts the exact bytes from the in-flow `skill_trust` card or Settings. User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
