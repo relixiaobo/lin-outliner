@@ -53,11 +53,10 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await row(page, ids.alpha).locator('.row-reference-counter').click();
 
   const section = page.locator('.backlinks-section');
-  await expect(section).toContainText('References');
   await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'true');
-  await expect(section).toContainText('3 references');
-  await expect(section).toContainText('Mentioned in');
-  await expect(section).toContainText('Appears as Related in');
+  await expect(section.locator('.backlinks-section-count')).toHaveText('3 references');
+  await expect(section).toContainText('Mentioned in...');
+  await expect(section).toContainText('Appears as Related in...');
   await expect(section).toContainText('Unlinked mentions');
   await expect(section).toContainText('Discuss Alpha soon');
 
@@ -70,5 +69,5 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
       : null;
   }).toBe(ids.alpha);
   await expect(section.getByRole('button', { name: 'Link', exact: true })).toHaveCount(0);
-  await expect(section).toContainText('3 references');
+  await expect(section.locator('.backlinks-section-count')).toHaveText('3 references');
 });

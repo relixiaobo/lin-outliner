@@ -19,7 +19,8 @@ import {
 } from '../../core/references';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { replaceRichTextRangeWithInlineRef } from './editor/richTextCodec';
-import { ChevronDownIcon, ICON_SIZE, ReferenceIcon } from './icons';
+import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
+import { RowMarker } from './outliner/RowMarker';
 import { useT } from '../i18n/I18nProvider';
 import type { DocumentIndex, ReferencesSectionRequest } from '../state/document';
 import type { CommandRunner, NavigateRootOptions } from './shared';
@@ -94,24 +95,25 @@ export function BacklinksSection(props: BacklinksSectionProps) {
 
   if (totalCount === 0) return null;
 
+  const countLabel = labels.counterLabel({ count: totalCount });
+  const countDetail = counts
+    ? labels.count({ total: counts.total, linked: counts.linked, unlinked: counts.unlinked })
+    : labels.count({ total: totalCount, linked: totalCount, unlinked: 0 });
+
   return (
     <section className="backlinks-section" ref={sectionRef} aria-label={labels.title}>
       <button
         type="button"
         className="backlinks-section-toggle"
         aria-expanded={expanded}
+        aria-label={expanded ? labels.collapse : labels.expand}
+        title={countDetail}
         onClick={() => setExpanded((next) => !next)}
       >
-        <span className="backlinks-section-title">
-          <ReferenceIcon size={ICON_SIZE.menu} aria-hidden />
-          <span>{labels.title}</span>
-        </span>
-        <span className="backlinks-section-meta">
-          {counts
-            ? labels.count({ total: counts.total, linked: counts.linked, unlinked: counts.unlinked })
-            : labels.count({ total: totalCount, linked: totalCount, unlinked: 0 })}
-          <ChevronDownIcon className="backlinks-section-chevron" size={ICON_SIZE.tiny} aria-hidden />
-        </span>
+        <span className="backlinks-section-count">{countLabel}</span>
+        {expanded
+          ? <ChevronDownIcon className="backlinks-section-chevron" size={ICON_SIZE.tiny} aria-hidden />
+          : <ChevronRightIcon className="backlinks-section-chevron" size={ICON_SIZE.tiny} aria-hidden />}
       </button>
       {expanded && (
         <div className="backlinks-section-body">
@@ -173,42 +175,122 @@ function ReferenceGroup({
       <div className="backlinks-group-heading">{heading}</div>
       <div className="backlinks-list">
         {rows.map((row) => (
-          <div key={row.key} className="backlinks-row">
-            <button
-              type="button"
-              className="backlinks-row-open"
-              aria-label={labels.openSource({ title: nodeTitle(row.node, labels.untitledSource) })}
-              onClick={(event) => onOpenSource(event, row.node.id)}
-            >
-              <span className="backlinks-row-main">
-                <span className="backlinks-row-title">{nodeTitle(row.node, labels.untitledSource)}</span>
-                <span className="backlinks-row-path">{breadcrumbLabel(row.node, index)}</span>
-                {row.source.mention && (
-                  <span className="backlinks-row-snippet">
-                    {row.source.mention.field === 'description'
-                      ? labels.descriptionMention
-                      : row.source.mention.text}
-                  </span>
-                )}
-              </span>
-            </button>
-            {onLinkMention && row.source.mention?.field === 'content' && !row.node.locked && (
-              <button
-                type="button"
-                className="backlinks-link-action"
-                title={labels.linkMentionTitle({ title: targetTitle ?? labels.untitledSource })}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onLinkMention(row.source);
-                }}
-              >
-                {labels.linkMention}
-              </button>
-            )}
-          </div>
+          <ReferenceResultRow
+            key={row.key}
+            row={row}
+            labels={labels}
+            index={index}
+            onOpenSource={onOpenSource}
+            onLinkMention={onLinkMention}
+            targetTitle={targetTitle}
+          />
         ))}
       </div>
+    </div>
+  );
+}
+
+function ReferenceResultRow({
+  row,
+  labels,
+  index,
+  onOpenSource,
+  onLinkMention,
+  targetTitle,
+}: {
+  row: ReferenceRow;
+  labels: ReturnType<typeof useT>['nodePanel']['references'];
+  index: DocumentIndex;
+  onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
+  onLinkMention?: (source: ReferenceSource) => void;
+  targetTitle?: string;
+}) {
+  const title = nodeTitle(row.node, labels.untitledSource);
+  const breadcrumb = buildPanelBreadcrumb(row.node, index).nodes;
+  const mentionLabel = row.source.mention
+    ? row.source.mention.field === 'description'
+      ? labels.descriptionMention
+      : ''
+    : '';
+  const markerVariant = row.source.kind === 'field' ? 'reference' : 'content';
+
+  return (
+    <article className="backlinks-row">
+      {breadcrumb.length > 0 && (
+        <BreadcrumbPath
+          nodes={breadcrumb}
+          labels={labels}
+          onOpenSource={onOpenSource}
+        />
+      )}
+      <div className="backlinks-row-line">
+        <button
+          type="button"
+          className="backlinks-row-open"
+          aria-label={labels.openSource({ title })}
+          onClick={(event) => onOpenSource(event, row.node.id)}
+        >
+          <span className="backlinks-row-highlight" aria-hidden />
+          <span className="backlinks-row-leading" aria-hidden>
+            <span className="backlinks-row-chevron-slot">
+              <ChevronRightIcon size={ICON_SIZE.rowGlyph} />
+            </span>
+            <span className="backlinks-row-marker">
+              <RowMarker
+                hasChildren={false}
+                expanded={false}
+                variant={markerVariant}
+              />
+            </span>
+          </span>
+          <span className="backlinks-row-main">
+            <span className="backlinks-row-title">{title}</span>
+            {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
+          </span>
+        </button>
+        {onLinkMention && row.source.mention?.field === 'content' && !row.node.locked && (
+          <button
+            type="button"
+            className="backlinks-link-action"
+            title={labels.linkMentionTitle({ title: targetTitle ?? labels.untitledSource })}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onLinkMention(row.source);
+            }}
+          >
+            {labels.linkMention}
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function BreadcrumbPath({
+  nodes,
+  labels,
+  onOpenSource,
+}: {
+  nodes: readonly NodeProjection[];
+  labels: ReturnType<typeof useT>['nodePanel']['references'];
+  onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
+}) {
+  return (
+    <div className="backlinks-row-path" aria-label={labels.breadcrumbLabel}>
+      {nodes.map((node, index) => (
+        <span key={node.id} className="backlinks-row-path-part">
+          {index > 0 && <span className="backlinks-row-path-separator">/</span>}
+          <button
+            type="button"
+            className="backlinks-row-path-button"
+            title={nodeTitle(node, labels.untitledSource)}
+            onClick={(event) => onOpenSource(event, node.id)}
+          >
+            {nodeTitle(node, labels.untitledSource)}
+          </button>
+        </span>
+      ))}
     </div>
   );
 }
@@ -267,11 +349,4 @@ function fieldLabel(source: ReferenceSource, index: DocumentIndex, fieldFallback
 
 function nodeTitle(node: NodeProjection, fallback: string): string {
   return node.content.text.trim() || fallback;
-}
-
-function breadcrumbLabel(node: NodeProjection, index: DocumentIndex): string {
-  const breadcrumb = buildPanelBreadcrumb(node, index).nodes
-    .map((entry) => entry.content.text.trim())
-    .filter(Boolean);
-  return breadcrumb.length > 0 ? breadcrumb.join(' / ') : '';
 }

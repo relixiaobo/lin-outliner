@@ -442,8 +442,8 @@ export const en = {
       // TODO plural via Intl
       count: ({ total, linked, unlinked }: { total: number; linked: number; unlinked: number }) =>
         `${total} ${total === 1 ? 'reference' : 'references'} · ${linked} linked · ${unlinked} unlinked`,
-      linkedHeading: 'Mentioned in',
-      fieldHeading: ({ field }: { field: string }) => `Appears as ${field} in`,
+      linkedHeading: 'Mentioned in...',
+      fieldHeading: ({ field }: { field: string }) => `Appears as ${field} in...`,
       unlinkedHeading: 'Unlinked mentions',
       expand: 'Show references',
       collapse: 'Hide references',
@@ -452,6 +452,7 @@ export const en = {
       linkMentionTitle: ({ title }: { title: string }) => `Link this mention to ${title}`,
       descriptionMention: 'description',
       untitledSource: 'Untitled',
+      breadcrumbLabel: 'Reference source path',
       // TODO plural via Intl
       counterLabel: ({ count }: { count: number }) => `${count} ${count === 1 ? 'reference' : 'references'}`,
       counterTitle: ({ count }: { count: number }) => `Open ${count} ${count === 1 ? 'reference' : 'references'}`,

@@ -182,6 +182,14 @@ from the shared reference summary, not from the optional `sys:refCount` system
 field, so the footer is always available even when the References field is not
 displayed on the node.
 
+The footer is outliner-native, not a card list: its collapsed affordance is a
+small `N references` row aligned with the node text column, and expansion reveals
+group labels plus source rows that reuse the outliner leading geometry (chevron
+slot, bullet/reference marker, title text, and row hover frame). Source breadcrumbs
+sit above the row title and are navigable. Reference field-value sources use the
+reference marker; ordinary linked and unlinked source rows use the normal content
+bullet.
+
 Linked references include:
 
 - tree reference rows whose `targetId` is the panel root and whose `refRole`
