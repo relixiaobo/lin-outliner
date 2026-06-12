@@ -105,7 +105,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
         <div className="backlinks-section-body">
           {groups.linked.length > 0 && (
             <ReferenceGroup
-              heading={labels.linkedHeading}
+              heading={labels.linkedHeading({ count: groups.linked.length })}
               rows={groups.linked}
               labels={labels}
               index={index}
@@ -115,7 +115,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
           {groups.fieldGroups.map((group) => (
             <ReferenceGroup
               key={group.fieldKey}
-              heading={labels.fieldHeading({ field: group.fieldLabel })}
+              heading={labels.fieldHeading({ field: group.fieldLabel, count: group.rows.length })}
               rows={group.rows}
               labels={labels}
               index={index}
@@ -124,7 +124,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
           ))}
           {groups.unlinked.length > 0 && (
             <ReferenceGroup
-              heading={labels.unlinkedHeading}
+              heading={labels.unlinkedHeading({ count: groups.unlinked.length })}
               rows={groups.unlinked}
               labels={labels}
               index={index}

@@ -60,9 +60,9 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'false');
   await section.locator('.backlinks-section-toggle').click();
   await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'true');
-  await expect(section).toContainText('Mentioned in...');
-  await expect(section).toContainText('Appears as Related in...');
-  await expect(section).toContainText('Unlinked mentions');
+  await expect(section).toContainText('1 Mentioned in...');
+  await expect(section).toContainText('1 Appears as Related in...');
+  await expect(section).toContainText('1 Unlinked mention');
   await expect(section).toContainText('Discuss Alpha soon');
 
   await section.getByRole('button', { name: 'Link', exact: true }).click();

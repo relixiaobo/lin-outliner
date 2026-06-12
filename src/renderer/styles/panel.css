@@ -342,7 +342,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  padding: 0 0 0 var(--row-selection-start);
+  padding: 0;
   text-align: left;
   user-select: none;
   transition: color var(--motion-fast);
@@ -376,7 +376,6 @@
 }
 
 .backlinks-group-heading {
-  padding-left: var(--row-selection-start);
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   font-weight: 500;
@@ -399,7 +398,6 @@
   min-width: 0;
   align-items: center;
   overflow: hidden;
-  padding-left: var(--row-selection-start);
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);

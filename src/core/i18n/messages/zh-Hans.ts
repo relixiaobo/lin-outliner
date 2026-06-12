@@ -399,9 +399,9 @@ export const zhHans: PartialMessages = {
     references: {
       title: '引用',
       count: ({ total, linked, unlinked }) => `${total} 条引用 · ${linked} 已链接 · ${unlinked} 未链接`,
-      linkedHeading: '提到此节点的位置…',
-      fieldHeading: ({ field }) => `作为 ${field} 出现于…`,
-      unlinkedHeading: '未链接提及',
+      linkedHeading: ({ count }) => `${count} 处提到此节点…`,
+      fieldHeading: ({ field, count }) => `${count} 处作为 ${field} 出现…`,
+      unlinkedHeading: ({ count }) => `${count} 处未链接提及`,
       expand: '显示引用',
       collapse: '隐藏引用',
       openSource: ({ title }) => `打开 ${title}`,
