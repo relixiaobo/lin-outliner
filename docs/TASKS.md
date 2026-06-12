@@ -33,10 +33,10 @@ file-attachments (codex-3, PR #206) — see Recently completed. cc / cc-2 / anti
 were deliberately unscheduled.
 
 Relay: **Realignment PR-4** (retrieval, unblocked by #200) slots into the next
-free lane. **M3-C** (per-agent POV inspector) follows Feature A. UX plan
-features B/D shipped (#201/#203) and A shipped (#207); the
-`agent-conversation-entry-identity-ux` plan stays `in-progress` pending Feature C
-(model-on-profile / global-provider trap) — reconcile/archive once C lands.
+free lane. **M3-C** (per-agent POV inspector) follows Feature A. The
+`agent-conversation-entry-identity-ux` plan is **complete and archived `done`** —
+all features shipped: B/C/E (#201, including the model-chip/global-provider-trap
+fix), D (#203), A (#207).
 `agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently
 completed.
 
@@ -414,20 +414,6 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
   no compile-time link to the real tool registry → guard-test against `filterAgentTools`.
 Standalone agent items (not part of the program):
 
-- **agent-conversation-entry-identity-ux** (P2, plan file, **direction PM-ratified
-  2026-06-11** — drafted by codex-2 as PR #197, revised by main after the review
-  conversation) — the UX layer over the ratified conversation semantics, five
-  independent complete features: **A** roster-as-DM-list + New Channel flow +
-  explicit DM→Channel escalation verb (hard runtime dependency: arbitrary-agent
-  canonical DMs — UI + runtime in ONE plan-track PR); **B** speaker identity
-  (DM identity in the header, Channel rows avatar+name with consecutive grouping;
-  **subsumes `agent-avatar-v1`**, the previously standalone PM-ratified derived-avatar
-  design — absorbed here 2026-06-11); **C** composer model chip → display+navigate
-  (the current menu mutates the GLOBAL provider — a trap, fixed in one step; small
-  early-able PR); **D** Channel activity area built to the parallel semantics +
-  automatic reply anchors for completion-order readability; **E** time separators +
-  native context-menu Details (timestamp/speaker/model/tokens). Order: B+E → D → A;
-  C any time. See `docs/plans/agent-conversation-entry-identity-ux.md`.
 - **agent-channel-parallel-runtime** (P2, plan file, draft) — repay the M3-A
   execution debt: co-addressees run concurrently, replies land in completion order.
   Pure execution-layer upgrade of already-committed semantics (context cuts at the
@@ -681,7 +667,8 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   test:core (910) + test:renderer (418) + agent-composer e2e + light/dark visual
   verified. Review ran one fix round (DM-specific prompt, index-stored snippet, doc
   reconciliation); post-merge cleanup dropped a redundant `tool_result.replaced`
-  list-summary recompute. Plan stays `in-progress` (Feature C still open).
+  list-summary recompute. With A merged, all plan features have shipped (B/C/E
+  #201, D #203, A #207); plan flipped `done` and archived.
 
 - **file-attachments** (codex-3, PR #206, plan-track) — Completes the feature on
   the #204 protocol slice: `create_attachment_node` end-to-end (core + Loro
@@ -818,9 +805,9 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   and fixed in one step, the activity area is designed to the parallel co-addressee
   semantics with automatic reply anchors, and parallel Channel execution is split
   out as `agent-channel-parallel-runtime` (execution-layer debt repayment, not a
-  product change). See `docs/plans/agent-conversation-entry-identity-ux.md` +
-  `docs/plans/agent-channel-parallel-runtime.md`; Backlog § Agent capabilities has
-  the build order (B+E → D → A; C any time; parallel runtime after D).
+  product change). See `docs/plans/archive/agent-conversation-entry-identity-ux.md`
+  (all features shipped: B/C/E #201, D #203, A #207) +
+  `docs/plans/archive/agent-channel-parallel-runtime.md`.
 
 - **full ask_user_question flow** (codex-3, PR #198, plan-track) — completes the
   v1 scaffold (#153) into the full tool. Adds a dedicated `discussed` outcome (skips

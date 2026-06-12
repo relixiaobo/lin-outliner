@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: main
 created: 2026-06-11
