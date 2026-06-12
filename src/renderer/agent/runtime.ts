@@ -526,7 +526,7 @@ export interface LinAgentRuntimeView {
   activityEntries: AgentRenderActivityEntry[];
   /** Read-only per-agent Channel POV projections keyed by agentId. */
   povInspectors: Record<string, AgentPovInspectorView>;
-  /** Folded per-conversation unread count for the off-floor task plane (badge source). */
+  /** Folded per-conversation unread count for conversation-list badges. */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
   childRunIds: string[];

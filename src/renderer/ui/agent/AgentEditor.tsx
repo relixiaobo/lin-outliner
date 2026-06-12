@@ -26,11 +26,11 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 // Switching Form→Raw serializes the current fields, Raw→Form re-parses, so the
 // two views are always the same data. Non-writable definitions render through
 // the SAME editor, just **read-only** (every control disabled, the only action is
-// "Duplicate to my agents") — so opening `general`, an extra-directory agent,
-// and opening a user agent look the same; the difference is only whether you can
-// change it. A new agent seeds a useful **scaffold** (sensible defaults + a
-// starter persona) so neither mode starts blank. The component owns its form
-// state and is reset by the parent via `key`.
+// "Duplicate to my agents") — so bundled, external-directory, and user definitions
+// share the same viewing surface; the difference is only whether you can change it.
+// A new agent seeds a useful **scaffold** (sensible defaults + a starter persona)
+// so neither mode starts blank. The component owns its form state and is reset by
+// the parent via `key`.
 
 const REASONING_OPTIONS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 type CatalogToolName = (typeof TOOL_CATALOG)[number];
@@ -39,7 +39,7 @@ type EditorMode = 'form' | 'raw';
 
 interface AgentEditorProps {
   // null → create mode (scaffold form). Otherwise edit (user/project) or
-  // read-only view (built-in).
+  // read-only view (built-in / external non-writable).
   agent: AgentDefinitionView | null;
   availableSkills: SkillDefinition[];
   busy: boolean;
@@ -47,6 +47,7 @@ interface AgentEditorProps {
   onUpdate: (agentId: string, input: AgentAuthoringInput) => void;
   onDelete: (agent: AgentDefinitionView) => void;
   onDuplicate: (agent: AgentDefinitionView) => void;
+  onCancel?: () => void;
 }
 
 interface AgentFormState {
@@ -72,8 +73,9 @@ interface AgentFormState {
   disallowedTools: string[];
 }
 
-export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, onDelete, onDuplicate }: AgentEditorProps) {
-  const t = useT().settings.agents;
+export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, onDelete, onDuplicate, onCancel }: AgentEditorProps) {
+  const messages = useT();
+  const t = messages.settings.agents;
   const isBuiltIn = agent?.source === 'built-in';
   // Non-writable definitions render through the SAME editor, just read-only —
   // same abstraction as a writable agent, so the only difference a user sees is
@@ -241,26 +243,45 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
       <div className="agent-editor-actions">
         {readOnly && agent ? (
           <>
-            <span />
-            <ButtonControl className="agent-settings-primary" disabled={busy} onClick={() => onDuplicate(agent)}>
-              {t.duplicateToMine}
-            </ButtonControl>
+            {onCancel ? (
+              <ButtonControl className="agent-settings-secondary" disabled={busy} onClick={onCancel}>
+                {messages.dialog.cancel}
+              </ButtonControl>
+            ) : <span />}
+            <span className="agent-editor-actions-right">
+              <ButtonControl className="agent-settings-primary" disabled={busy} onClick={() => onDuplicate(agent)}>
+                {t.duplicateToMine}
+              </ButtonControl>
+            </span>
           </>
         ) : agent ? (
           <>
             <ButtonControl className="agent-settings-secondary agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)}>
               {t.deleteAgent}
             </ButtonControl>
-            <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
-              {t.saveAgent}
-            </ButtonControl>
+            <span className="agent-editor-actions-right">
+              {onCancel ? (
+                <ButtonControl className="agent-settings-secondary" disabled={busy} onClick={onCancel}>
+                  {messages.dialog.cancel}
+                </ButtonControl>
+              ) : null}
+              <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
+                {t.saveAgent}
+              </ButtonControl>
+            </span>
           </>
         ) : (
           <>
-            <span />
-            <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
-              {t.createAgent}
-            </ButtonControl>
+            {onCancel ? (
+              <ButtonControl className="agent-settings-secondary" disabled={busy} onClick={onCancel}>
+                {messages.dialog.cancel}
+              </ButtonControl>
+            ) : <span />}
+            <span className="agent-editor-actions-right">
+              <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
+                {t.createAgent}
+              </ButtonControl>
+            </span>
           </>
         )}
       </div>

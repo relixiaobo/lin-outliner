@@ -737,7 +737,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'large output',
             prompt: 'Run a large-output tool call, then continue.',
-            agent_type: 'general',
           }, { id: 'tool-agent-large-output' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -799,7 +798,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'compact sidechain',
             prompt: 'Run large tool output, then continue after compaction.',
-            agent_type: 'general',
           }, { id: 'tool-agent-compact-output' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(
@@ -877,7 +875,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'reactive compact',
             prompt: 'Run until a context error, then recover.',
-            agent_type: 'general',
           }, { id: 'tool-agent-reactive-compact' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([], {
@@ -1510,7 +1507,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background check',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'bg-check',
           }, { id: 'tool-agent-1' }),
@@ -1570,7 +1566,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background notify',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'bg-notify',
           }, { id: 'tool-agent-1' }),
@@ -1654,7 +1649,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background command',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'command-bg',
           }, { id: 'tool-agent-1' }),
@@ -1726,7 +1720,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'stoppable background',
             prompt: 'Run until stopped.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'stoppable-bg',
           }, { id: 'tool-agent-1' }),
@@ -1866,8 +1859,8 @@ describe('agent runtime childRuns', () => {
         memoryOwnerAgentId: 'built-in:tenon:assistant',
         description: 'lost seed run',
         prompt: 'Verify the deployment pipeline.',
-        agentType: 'general',
-        contextMode: 'fresh',
+        agentType: 'fork',
+        contextMode: 'fork',
       },
       {
         v: 1,
@@ -1918,7 +1911,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background restore',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'restored-bg',
           }, { id: 'tool-agent-1' }),
@@ -2035,7 +2027,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'interruptible background',
             prompt: 'Run until the app dies.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'interrupted-bg',
           }, { id: 'tool-agent-1' }),
@@ -2136,7 +2127,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background seed',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'seed-bg',
           }, { id: 'tool-agent-1' }),

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { AGENT_EVENT_VERSION, getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
+import { agentDefinitionAgentId } from '../../src/main/agentDelegationIdentity';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-runtime-conversations-test-user-data');
@@ -38,7 +39,6 @@ async function loadRuntimeModule() {
 
 const roots: string[] = [];
 const ASSISTANT_AGENT_ID = 'built-in:tenon:assistant';
-const GENERAL_AGENT_ID = 'built-in:tenon:general';
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -69,7 +69,7 @@ function createWindowSink() {
   };
 }
 
-async function createRuntime(dataRoot: string) {
+async function createRuntime(dataRoot: string, localRoot?: string) {
   const { AgentRuntime } = await loadRuntimeModule();
   const sink = createWindowSink();
   const runtime = new AgentRuntime(
@@ -77,6 +77,7 @@ async function createRuntime(dataRoot: string) {
     hostFor(Core.new()),
     {
       agentDataRoot: dataRoot,
+      localFileRoot: localRoot,
       providerConfigLoader: async () => null,
       runtimeSettingsLoader: async () => ({
         permissionMode: 'trusted',
@@ -91,6 +92,33 @@ async function createRuntime(dataRoot: string) {
   return { runtime, sink };
 }
 
+async function createProjectAgent(localRoot: string, name = 'self') {
+  const rootDir = path.join(localRoot, '.agents', 'agents', name);
+  const agentFile = path.join(rootDir, 'AGENT.md');
+  await mkdir(rootDir, { recursive: true });
+  await writeFile(agentFile, [
+    '---',
+    `name: ${name}`,
+    'description: User-owned personal agent.',
+    '---',
+    'You are a focused child agent.',
+    '',
+  ].join('\n'));
+  return {
+    agentId: agentDefinitionAgentId({
+      name,
+      displayName: name,
+      source: 'project',
+      rootDir,
+      agentFile,
+      description: 'User-owned personal agent.',
+      body: 'You are a focused child agent.',
+    }),
+    rootDir,
+    agentFile,
+  };
+}
+
 async function expectRejects(fn: () => Promise<unknown>, message: string) {
   try {
     await fn();
@@ -102,6 +130,26 @@ async function expectRejects(fn: () => Promise<unknown>, message: string) {
 }
 
 describe('agent runtime conversations', () => {
+  test('exposes the built-in Tenon assistant as a view-only agent definition', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+
+    const definitions = await runtime.listAllAgentDefinitions('workspace');
+    const assistant = definitions.find((definition) => definition.agentId === ASSISTANT_AGENT_ID);
+
+    expect(assistant).toMatchObject({
+      agentId: ASSISTANT_AGENT_ID,
+      name: 'assistant',
+      displayName: 'Tenon Assistant',
+      source: 'built-in',
+      rootDir: 'built-in',
+      agentFile: 'built-in/assistant',
+      description: 'Default Tenon assistant profile.',
+    });
+    expect(assistant?.body).toContain('You are Tenon Agent.');
+  });
+
   test('previews run-scoped tool output payloads only with the owning run id', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
@@ -168,23 +216,25 @@ describe('agent runtime conversations', () => {
 
   test('lists every configured agent as a deterministic canonical DM roster row', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
-    roots.push(dataRoot);
-    const { runtime } = await createRuntime(dataRoot);
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
+    roots.push(dataRoot, localRoot);
+    const selfAgent = await createProjectAgent(localRoot);
+    const { runtime } = await createRuntime(dataRoot, localRoot);
 
     const first = await runtime.restoreLatestConversation();
-    const secondRuntime = await createRuntime(dataRoot);
+    const secondRuntime = await createRuntime(dataRoot, localRoot);
     const second = await secondRuntime.runtime.restoreLatestConversation();
     const state = await new AgentEventStore(dataRoot).replay(first.conversationId);
     const roster = await runtime.listConversations();
     const assistantRow = roster.find((entry) => entry.canonicalDmAgentId === ASSISTANT_AGENT_ID);
-    const generalRow = roster.find((entry) => entry.canonicalDmAgentId === GENERAL_AGENT_ID);
+    const selfRow = roster.find((entry) => entry.canonicalDmAgentId === selfAgent.agentId);
 
     expect(first.conversationId).toMatch(/^lin-agent-dm-/);
     expect(second.conversationId).toBe(first.conversationId);
     expect(roster.filter((entry) => !entry.canonicalDmAgentId)).toEqual([]);
     expect(assistantRow?.id).toBe(first.conversationId);
-    expect(generalRow?.id).toMatch(/^lin-agent-dm-/);
-    expect(generalRow?.messageCount).toBe(0);
+    expect(selfRow?.id).toMatch(/^lin-agent-dm-/);
+    expect(selfRow?.messageCount).toBe(0);
     expect(state.conversation?.title).toBe('Tenon Assistant');
     expect(state.conversation?.goal).toBeUndefined();
     expect(state.conversation?.members).toEqual([
@@ -192,13 +242,13 @@ describe('agent runtime conversations', () => {
       { type: 'agent', agentId: ASSISTANT_AGENT_ID },
     ]);
 
-    const general = await runtime.restoreConversation(generalRow!.id);
-    const generalState = await new AgentEventStore(dataRoot).replay(general.conversationId);
-    expect(general.conversationId).toBe(generalRow!.id);
-    expect(generalState.conversation?.goal).toBeUndefined();
-    expect(generalState.conversation?.members).toEqual([
+    const self = await runtime.restoreConversation(selfRow!.id);
+    const selfState = await new AgentEventStore(dataRoot).replay(self.conversationId);
+    expect(self.conversationId).toBe(selfRow!.id);
+    expect(selfState.conversation?.goal).toBeUndefined();
+    expect(selfState.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
-      { type: 'agent', agentId: GENERAL_AGENT_ID },
+      { type: 'agent', agentId: selfAgent.agentId },
     ]);
   });
 
@@ -238,15 +288,17 @@ describe('agent runtime conversations', () => {
 
   test('Channel creation requires a name and allows optional invited agents', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
-    roots.push(dataRoot);
-    const { runtime } = await createRuntime(dataRoot);
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
+    roots.push(dataRoot, localRoot);
+    const selfAgent = await createProjectAgent(localRoot);
+    const { runtime } = await createRuntime(dataRoot, localRoot);
 
     await expectRejects(
       () => runtime.createConversation(),
       'requires a name',
     );
     await expectRejects(
-      () => runtime.createConversation({ agentIds: [GENERAL_AGENT_ID] }),
+      () => runtime.createConversation({ agentIds: [selfAgent.agentId] }),
       'requires a name',
     );
 
@@ -262,7 +314,7 @@ describe('agent runtime conversations', () => {
     ]);
 
     const teamChannel = await runtime.createConversation({
-      agentIds: [GENERAL_AGENT_ID],
+      agentIds: [selfAgent.agentId],
       title: 'Shared channel',
     });
     state = await new AgentEventStore(dataRoot).replay(teamChannel.conversationId);
@@ -271,7 +323,7 @@ describe('agent runtime conversations', () => {
     expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: ASSISTANT_AGENT_ID },
-      { type: 'agent', agentId: GENERAL_AGENT_ID },
+      { type: 'agent', agentId: selfAgent.agentId },
     ]);
   });
 

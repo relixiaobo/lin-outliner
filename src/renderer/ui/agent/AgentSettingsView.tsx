@@ -204,7 +204,7 @@ const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter']
 const EMPTY_PERMISSION_RULES: AgentToolPermissionSettingsView['permissions'] = { allow: [], ask: [], deny: [] };
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
-  if (target?.agentId?.trim()) return { type: 'agent-detail', agentId: target.agentId.trim() };
+  if (target?.agentCreate || target?.agentId?.trim()) return { type: 'category', category: 'agents' };
   if (target?.category) return { type: 'category', category: target.category };
   return { type: 'category', category: 'providers' };
 }
@@ -429,6 +429,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
   function navigateAgentCreate() {
     navigateRoute({ type: 'agent-create' });
+  }
+
+  function openAgentConfig(agentId: string) {
+    void window.lin?.openAgentConfig?.({ agentId, mode: 'configure' });
+  }
+
+  function openAgentCreate() {
+    void window.lin?.openAgentConfig?.({ mode: 'create' });
   }
 
   function goBack() {
@@ -1459,22 +1467,24 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
                 ) : selectedAgent ? (
                   <>
-                    <InsetGroup ariaLabel={t.settings.agents.detailOptionsAriaLabel({ name: selectedAgent.name })}>
-                      <InsetRow
-                        label={t.settings.agents.enabledLabel}
-                        sublabel={t.settings.agents.enabledSublabel}
-                        trailing={(
-                          <SwitchControl
-                            checked={!isAgentDisabled(selectedAgent.agentId)}
-                            onCheckedChange={() => toggleAgent(selectedAgent.agentId)}
-                            label={t.settings.agents.toggleAgent({ name: selectedAgent.name })}
-                          >
-                            <SwitchMark checked={!isAgentDisabled(selectedAgent.agentId)} />
-                          </SwitchControl>
-                        )}
-                        wrap
-                      />
-                    </InsetGroup>
+                    {selectedAgent.source !== 'built-in' ? (
+                      <InsetGroup ariaLabel={t.settings.agents.detailOptionsAriaLabel({ name: selectedAgent.name })}>
+                        <InsetRow
+                          label={t.settings.agents.enabledLabel}
+                          sublabel={t.settings.agents.enabledSublabel}
+                          trailing={(
+                            <SwitchControl
+                              checked={!isAgentDisabled(selectedAgent.agentId)}
+                              onCheckedChange={() => toggleAgent(selectedAgent.agentId)}
+                              label={t.settings.agents.toggleAgent({ name: selectedAgent.name })}
+                            >
+                              <SwitchMark checked={!isAgentDisabled(selectedAgent.agentId)} />
+                            </SwitchControl>
+                          )}
+                          wrap
+                        />
+                      </InsetGroup>
+                    ) : null}
 
                     <AgentEditor
                       key={selectedAgent.agentId}
@@ -1515,25 +1525,35 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                         ariaLabel={t.settings.agents.newAgent}
                         leading={<AddIcon size={ICON_SIZE.rowGlyph} aria-hidden />}
                         label={t.settings.agents.newAgent}
-                        onSelect={navigateAgentCreate}
-                        trailing={<ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />}
+                        onSelect={openAgentCreate}
                       />
-                      {allAgents.map((agent) => (
-                        <InsetRow
-                          ariaLabel={agent.name}
-                          dimmed={isAgentDisabled(agent.agentId)}
-                          key={agent.agentId}
-                          label={(
-                            <>
-                              {agent.displayName || agent.name}
-                              <span className="settings-chip">{agent.source}</span>
-                            </>
-                          )}
-                          onSelect={() => navigateAgentDetail(agent.agentId)}
-                          sublabel={agent.description}
-                          trailing={<ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />}
-                        />
-                      ))}
+                      {allAgents.map((agent) => {
+                        const label = agent.displayName || agent.name;
+                        return (
+                          <InsetRow
+                            ariaLabel={label}
+                            dimmed={agent.source !== 'built-in' && isAgentDisabled(agent.agentId)}
+                            key={agent.agentId}
+                            label={(
+                              <>
+                                {label}
+                                <span className="settings-chip">{agent.source}</span>
+                              </>
+                            )}
+                            onSelect={() => openAgentConfig(agent.agentId)}
+                            sublabel={agent.description}
+                            trailing={agent.source === 'built-in' ? null : (
+                              <SwitchControl
+                                checked={!isAgentDisabled(agent.agentId)}
+                                onCheckedChange={() => toggleAgent(agent.agentId)}
+                                label={t.settings.agents.toggleAgent({ name: agent.name })}
+                              >
+                                <SwitchMark checked={!isAgentDisabled(agent.agentId)} />
+                              </SwitchControl>
+                            )}
+                          />
+                        );
+                      })}
                     </InsetGroup>
 
                     <div className="inset-group">

@@ -165,121 +165,161 @@ test.describe('agent composer controls', () => {
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
     await expect(menu.getByText('Direct Messages')).toBeVisible();
-    await expect(menu.getByRole('button', { name: /Agent System/ })).toBeVisible();
-    await expect(menu.getByRole('button', { name: /general/ })).toBeVisible();
-    await expect(menu.getByText('No messages yet')).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'New agent' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'New Channel' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: /Tenon Assistant/ })).toBeVisible();
+    await expect(menu.getByRole('button', { name: /self/ })).toBeVisible();
     await expect(menu.getByText('Planning Channel')).toBeVisible();
+    const headerBorders = await menu.locator('.agent-conversation-menu-header').evaluateAll((headers) => (
+      headers.map((header) => {
+        const computed = getComputedStyle(header);
+        return {
+          borderTopWidth: computed.borderTopWidth,
+          borderBottomWidth: computed.borderBottomWidth,
+        };
+      })
+    ));
+    expect(headerBorders.every((border) => border.borderTopWidth === '0px' && border.borderBottomWidth === '0px')).toBe(true);
+    const dmList = menu.locator('.agent-conversation-list').first();
+    const channelsList = menu.locator('.agent-conversation-list').nth(1);
+    await expect(dmList.locator('.agent-conversation-meta')).toHaveCount(0);
+    await expect(dmList.locator('.agent-conversation-members')).toHaveCount(0);
+    await expect(channelsList.locator('.agent-conversation-meta')).toHaveCount(0);
+    await expect(channelsList.locator('.agent-conversation-members')).toHaveCount(0);
+    await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(1);
+    await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).locator('.agent-conversation-unread')).toHaveText('3');
 
-    await menu.getByRole('button', { name: /general/ }).click();
-    await expect(page.locator('.agent-dock-title')).toHaveText('general');
-    await expect(page.locator('.agent-dock-subtitle')).toHaveText('@general · gpt-5.4-mini');
+    await menu.getByRole('button', { name: /self/ }).click();
+    await expect(page.locator('.agent-dock-title')).toHaveText('self');
+    await expect(page.locator('.agent-dock-subtitle')).toHaveCount(0);
+    await expect(page.locator('.agent-dock-title-button .agent-identity-avatar')).toHaveCount(1);
+    await expect(page.locator('.agent-dock-title-button .agent-dock-title-icon')).toHaveCount(0);
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return {
         created: calls.some((call) => call.cmd === 'agent_create_conversation'),
-        restoredGeneral: calls.some((call) => (
+        restoredSelf: calls.some((call) => (
           call.cmd === 'agent_restore_conversation'
-          && call.args.conversationId === 'mock-agent-dm-general'
+          && call.args.conversationId === 'mock-agent-dm-self'
         )),
       };
-    }).toEqual({ created: false, restoredGeneral: true });
+    }).toEqual({ created: false, restoredSelf: true });
   });
 
-  test('opens the Channel member POV inspector in light and dark themes', async ({ page }) => {
-    async function openPlanningPov() {
-      await page.getByRole('button', { name: 'Show conversations' }).click();
-      const history = page.getByRole('dialog', { name: 'Channels' });
-      await history.getByRole('button', { name: /Planning Channel/ }).click();
-      await expect(page.getByRole('button', { name: 'Members' })).toBeVisible();
-      await page.getByRole('button', { name: 'Members' }).click();
-      const memberMenu = page.getByRole('dialog', { name: 'Channel members' });
-      await memberMenu.getByRole('button', { name: "Inspect general's POV" }).click();
-      await expect(page.getByRole('complementary', { name: "general's assembled POV" })).toBeVisible();
-    }
+  test('opens New agent from the Direct Messages section action', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    await menu.getByRole('button', { name: 'New agent' }).click();
+    await expect(menu).toHaveCount(0);
 
-    await page.emulateMedia({ colorScheme: 'light' });
-    await openPlanningPov();
-    const panel = page.getByRole('complementary', { name: "general's assembled POV" });
-    await expect(panel.getByText("general's POV")).toBeVisible();
-    await expect(panel.getByText('Memory briefing')).toBeVisible();
-    await expect(panel.getByText('Prefers terse launch-risk notes.')).toBeVisible();
-    await expect(panel.getByText('@assistant (agent "Agent System") said:')).toBeVisible();
-    await expect(panel.getByText('General sees the launch-risk request')).toBeVisible();
-
-    const lightMetrics = await panel.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        background: getComputedStyle(element).backgroundColor,
-        overflowX: element.scrollWidth - element.clientWidth,
-        width: rect.width,
-      };
-    });
-    expect(lightMetrics.overflowX).toBeLessThanOrEqual(1);
-    expect(lightMetrics.width).toBeGreaterThan(300);
-
-    await page.emulateMedia({ colorScheme: 'dark' });
-    await expect.poll(async () => (
-      await panel.evaluate((element) => getComputedStyle(element).backgroundColor)
-    )).not.toBe(lightMetrics.background);
-    const darkMetrics = await panel.evaluate((element) => ({
-      background: getComputedStyle(element).backgroundColor,
-      overflowX: element.scrollWidth - element.clientWidth,
-      width: element.getBoundingClientRect().width,
-    }));
-    expect(darkMetrics.overflowX).toBeLessThanOrEqual(1);
-    expect(darkMetrics.width).toBe(lightMetrics.width);
-  });
-
-  test('creates a named Channel before inviting any extra agents', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Channel' }).click();
-    const dialog = page.getByRole('dialog', { name: 'New Channel' });
-    await expect(dialog).toBeVisible();
-
-    const create = dialog.getByRole('button', { name: 'Create Channel' });
-    await expect(create).toBeDisabled();
-    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'Agent System' })).toHaveCount(0);
-    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' })).toBeVisible();
-    await dialog.getByLabel('Channel name').fill('Feature A launch');
-    await expect(create).toBeEnabled();
-    await create.click();
-
-    await expect(page.locator('.agent-dock-title')).toHaveText('Feature A launch');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      const args = calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
-      return args
-        ? {
-            title: args.title,
-            hasInvitedAgents: Object.prototype.hasOwnProperty.call(args, 'agentIds'),
-          }
-        : null;
-    }).toEqual({ title: 'Feature A launch', hasInvitedAgents: false });
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ mode: 'create' });
   });
 
-  test('escalates a DM through a named Channel create with a system notice', async ({ page }) => {
+  test('opens row configuration from the conversation More affordance', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
-    await page.getByRole('dialog', { name: 'Channels' }).getByRole('button', { name: /general/ }).click();
-    await expect(page.locator('.agent-dock-title')).toHaveText('general');
+    let menu = page.getByRole('dialog', { name: 'Channels' });
+    const dmList = menu.locator('.agent-conversation-list').first();
+    const selfRow = dmList.locator('.agent-conversation-row', { hasText: 'self' }).first();
+    const selfActions = selfRow.locator('.agent-conversation-row-actions');
+    const agentMore = selfRow.getByRole('button', { name: 'Agent options' });
 
-    await page.getByRole('button', { name: 'Create a Channel with general…' }).click();
-    const dialog = page.getByRole('dialog', { name: 'New Channel' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input')).toBeChecked();
-    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input')).toBeDisabled();
+    await expect.poll(async () => selfActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+    await selfRow.hover();
+    await expect.poll(async () => selfActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+    await agentMore.click();
+    const agentMenu = page.getByRole('menu', { name: 'Agent options' });
+    await expect(agentMenu).toBeVisible();
+    await agentMenu.getByRole('menuitem', { name: 'Configure agent' }).click();
+    await expect(menu).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
 
-    await dialog.getByLabel('Channel name').fill('Release blockers');
-    await dialog.getByRole('button', { name: 'Create Channel' }).click();
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    menu = page.getByRole('dialog', { name: 'Channels' });
+    const channelsList = menu.locator('.agent-conversation-list').nth(1);
+    const channelRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
+    const channelActions = channelRow.locator('.agent-conversation-row-actions');
+    const channelMore = channelRow.getByRole('button', { name: 'Channel options' });
 
-    await expect(page.locator('.agent-dock-title')).toHaveText('Release blockers');
-    await expect(page.locator('.agent-system-line')).toContainText('Created from your DM with general · DM history not shared');
+    await expect.poll(async () => channelActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+    await channelRow.hover();
+    await expect.poll(async () => channelActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+    await channelMore.click();
+    const channelMenu = page.getByRole('menu', { name: 'Channel options' });
+    await expect(channelMenu).toBeVisible();
+    await channelMenu.getByRole('menuitem', { name: 'Configure channel' }).click();
+    await expect(menu).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-channel-planning',
+      mode: 'configure',
+    });
+  });
+
+  test('shows Channel member count in the header without member avatars', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const history = page.getByRole('dialog', { name: 'Channels' });
+    await history.getByRole('button', { name: /Planning Channel/ }).click();
+
+    await expect(page.locator('.agent-dock-title')).toHaveText('Planning Channel (3)');
+    await expect(page.locator('.agent-dock-title-button .agent-identity-avatar')).toHaveCount(0);
+    await expect(page.locator('.agent-members-button')).toHaveCount(0);
+    await expect(page.locator('.agent-dock-title-button .agent-dock-title-icon')).toHaveCount(1);
+  });
+
+  test('opens New Channel from the Channels section action', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    await menu.getByRole('button', { name: 'New Channel' }).click();
+    await expect(menu).toHaveCount(0);
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
+    }).toMatchObject({ mode: 'create' });
+  });
+
+  test('creates a Channel with invited agents from the channel config window', async ({ page }) => {
+    await page.goto('/?surface=channel-config&mode=create');
+    const config = page.locator('.channel-config-window');
+    await expect(config.getByRole('heading', { name: 'New Channel' })).toBeVisible();
+    await expect(config.getByRole('button', { name: /self/ })).toBeVisible();
+    await config.getByRole('button', { name: /self/ }).click();
+
+    await config.getByLabel('Channel name').fill('Release blockers');
+    await config.getByRole('button', { name: 'Create Channel' }).click();
+
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
     }).toMatchObject({
       title: 'Release blockers',
-      agentIds: ['built-in:tenon:general'],
-      systemNotice: 'Created from your DM with general · DM history not shared',
+      agentIds: ['user:mock:self'],
+    });
+  });
+
+  test('adds a member from the channel config window', async ({ page }) => {
+    await page.goto('/?surface=channel-config&mode=configure&conversation=mock-agent-channel-planning');
+    const config = page.locator('.channel-config-window');
+    await expect(config.getByLabel('Channel name')).toHaveValue('Planning Channel');
+    await expect(config.getByText('Tenon Assistant', { exact: true })).toBeVisible();
+    await expect(config.getByText('self', { exact: true })).toBeVisible();
+    await config.getByRole('button', { name: /Add reviewer/ }).click();
+    await expect(config.getByText('reviewer', { exact: true })).toBeVisible();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_add_conversation_member')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-channel-planning',
+      agentId: 'user:mock:reviewer',
     });
   });
 
@@ -736,7 +776,7 @@ test.describe('agent composer controls', () => {
     const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-user-with-attachments',
@@ -1428,7 +1468,7 @@ test.describe('agent composer controls', () => {
     });
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-user-with-ref',
@@ -1476,7 +1516,7 @@ test.describe('agent composer controls', () => {
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-assistant-inline-ref',
@@ -1599,7 +1639,7 @@ test.describe('agent composer controls', () => {
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
         id: 'active-compact-1',
@@ -1615,7 +1655,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {
@@ -1715,15 +1755,15 @@ test.describe('agent composer controls', () => {
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
         {
-          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Agent System',
+          displayName: 'Tenon Assistant',
           coordinator: true,
         },
         {
-          principal: { type: 'agent', agentId: 'built-in:tenon:general' },
-          mention: 'general',
-          displayName: 'general',
+          principal: { type: 'agent', agentId: 'user:mock:self' },
+          mention: 'self',
+          displayName: 'self',
         },
       ],
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -1739,7 +1779,7 @@ test.describe('agent composer controls', () => {
         },
         {
           nodeId: 'assistant-coordinator-meta',
-          actor: { type: 'agent', agentId: 'built-in:core:assistant' },
+          actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           message: {
             role: 'assistant',
             timestamp: 1_800_000_000_100,
@@ -1753,7 +1793,7 @@ test.describe('agent composer controls', () => {
         },
         {
           nodeId: 'assistant-peer-meta',
-          actor: { type: 'agent', agentId: 'built-in:tenon:general' },
+          actor: { type: 'agent', agentId: 'user:mock:self' },
           message: {
             role: 'assistant',
             timestamp: 1_800_000_000_100 + 2 * 60 * 60 * 1000,
@@ -1762,7 +1802,7 @@ test.describe('agent composer controls', () => {
             model: 'gpt-5.4',
             usage,
             stopReason: 'stop',
-            content: [{ type: 'text', text: 'General result.' }],
+            content: [{ type: 'text', text: 'Self result.' }],
           },
         },
       ],
@@ -1770,21 +1810,21 @@ test.describe('agent composer controls', () => {
 
     await expect(page.locator('.agent-message-time-separator')).toHaveCount(1);
     const coordinatorRow = page.locator('.agent-message-row.assistant', { hasText: 'Coordinator result.' });
-    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('Agent System');
+    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('Tenon Assistant');
     await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('@assistant');
     await expect(coordinatorRow.locator('.agent-identity-avatar')).toBeVisible();
 
-    const peerRow = page.locator('.agent-message-row.assistant', { hasText: 'General result.' });
-    await expect(peerRow.locator('.agent-message-actor')).toContainText('general');
-    await expect(peerRow.locator('.agent-message-actor')).toContainText('@general');
+    const peerRow = page.locator('.agent-message-row.assistant', { hasText: 'Self result.' });
+    await expect(peerRow.locator('.agent-message-actor')).toContainText('self');
+    await expect(peerRow.locator('.agent-message-actor')).toContainText('@self');
 
     await setAgentMessageContextMenuAction(page, 'details');
     await peerRow.click({ button: 'right' });
 
     const details = page.getByRole('dialog', { name: 'Details' });
     await expect(details).toBeVisible();
-    await expect(details).toContainText('general');
-    await expect(details).toContainText('@general');
+    await expect(details).toContainText('self');
+    await expect(details).toContainText('@self');
     await expect(details).toContainText('openai/gpt-5.4');
     await expect(details).toContainText('input 1,200');
     await expect(details).toContainText('output 34');
@@ -1800,21 +1840,24 @@ test.describe('agent composer controls', () => {
     });
   });
 
-  test('shows fixed Channel activity with overflow and entry stop affordance', async ({ page }) => {
+  test('shows floating Channel activity with overflow and entry stop affordance', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
         {
-          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Agent System',
+          displayName: 'Tenon Assistant',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
         { principal: { type: 'agent', agentId: 'agent-beta' }, mention: 'beta', displayName: 'Beta' },
         { principal: { type: 'agent', agentId: 'agent-gamma' }, mention: 'gamma', displayName: 'Gamma' },
         { principal: { type: 'agent', agentId: 'agent-delta' }, mention: 'delta', displayName: 'Delta' },
+        { principal: { type: 'agent', agentId: 'agent-epsilon' }, mention: 'epsilon', displayName: 'Epsilon' },
+        { principal: { type: 'agent', agentId: 'agent-zeta' }, mention: 'zeta', displayName: 'Zeta' },
+        { principal: { type: 'agent', agentId: 'agent-eta' }, mention: 'eta', displayName: 'Eta' },
       ],
       activeRunId: 'run-alpha',
       isStreaming: true,
@@ -1836,33 +1879,93 @@ test.describe('agent composer controls', () => {
         { id: 'user-activity:agent-beta', agentId: 'agent-beta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
         { id: 'user-activity:agent-gamma', agentId: 'agent-gamma', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
         { id: 'user-activity:agent-delta', agentId: 'agent-delta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+        { id: 'user-activity:agent-epsilon', agentId: 'agent-epsilon', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+        { id: 'user-activity:agent-zeta', agentId: 'agent-zeta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
+        { id: 'user-activity:agent-eta', agentId: 'agent-eta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
       ],
     });
 
     const activity = page.locator('.agent-channel-activity');
     await expect(activity).toBeVisible();
-    await expect(activity).toHaveCSS('height', '44px');
+    await expect(activity).toHaveCSS('position', 'absolute');
+    await expect(activity).toHaveCSS('border-top-width', '0px');
+    await expect(activity).not.toHaveCSS('box-shadow', 'none');
     await expect(activity).toContainText('Alpha');
     await expect(activity).toContainText('using tools');
     await expect(activity).toContainText('Beta');
-    await expect(activity).not.toContainText('Gamma');
-    await expect(activity).toContainText('+2');
+    await expect(activity.locator('.agent-channel-activity-list')).toHaveCSS('opacity', '0');
+    await expect(activity.locator('.agent-channel-activity-pulse')).toHaveCount(0);
 
     const geometryBefore = await page.locator('.agent-chat-panel').evaluate((panel) => {
       const activity = panel.querySelector('.agent-channel-activity');
       const composer = panel.querySelector('.agent-composer');
       if (!(activity instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
+      const summary = activity.querySelector('.agent-channel-activity-summary');
+      const listHeader = activity.querySelector('.agent-channel-activity-list-header');
+      const listScroll = activity.querySelector('.agent-channel-activity-list-scroll');
+      if (!(summary instanceof HTMLElement) || !(listHeader instanceof HTMLElement) || !(listScroll instanceof HTMLElement)) return null;
+      const activityStyle = getComputedStyle(activity);
       return {
-        activityHeight: activity.getBoundingClientRect().height,
+        activityBottom: activity.getBoundingClientRect().bottom,
         composerTop: composer.getBoundingClientRect().top,
+        hasBackdrop: activityStyle.backdropFilter !== 'none' || activityStyle.webkitBackdropFilter !== 'none',
+        listHeaderText: listHeader.textContent ?? '',
+        summaryAvatarCount: summary.querySelectorAll('.agent-identity-avatar').length,
+        summaryOverflowCount: summary.querySelectorAll('.agent-channel-activity-overflow').length,
+        listClientHeight: listScroll.clientHeight,
+        listScrollHeight: listScroll.scrollHeight,
+        position: getComputedStyle(activity).position,
+        summaryText: summary.textContent ?? '',
       };
     });
     expect(geometryBefore).not.toBeNull();
+    expect(geometryBefore!.position).toBe('absolute');
+    expect(geometryBefore!.activityBottom).toBeLessThan(geometryBefore!.composerTop);
+    expect(geometryBefore!.hasBackdrop).toBe(true);
+    expect(geometryBefore!.listHeaderText).toContain('Channel activity');
+    expect(geometryBefore!.listHeaderText).toContain('7');
+    expect(geometryBefore!.summaryAvatarCount).toBe(4);
+    expect(geometryBefore!.summaryOverflowCount).toBe(1);
+    expect(geometryBefore!.summaryText).toContain('+3');
+    expect(geometryBefore!.summaryText).not.toContain('Alpha');
+    expect(geometryBefore!.summaryText).not.toContain('using tools');
 
+    await activity.hover();
+    await expect(activity.locator('.agent-channel-activity-list')).toHaveCSS('opacity', '1');
+    await expect(activity).toContainText('Gamma');
+    await expect(activity).toContainText('Delta');
+    await expect(activity).toContainText('Eta');
+    expect(geometryBefore!.listScrollHeight).toBeGreaterThan(geometryBefore!.listClientHeight);
     const alphaShell = activity.locator('.agent-channel-activity-item-shell', { hasText: 'Alpha' });
     await alphaShell.hover();
+    await expect(alphaShell.getByRole('button', { name: 'Alpha using tools' })).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    const alphaStateColor = await alphaShell.locator('.agent-channel-activity-state').evaluate((node) => getComputedStyle(node).color);
+    const betaShell = activity.locator('.agent-channel-activity-item-shell', { hasText: 'Beta' });
+    const betaStateColor = await betaShell.locator('.agent-channel-activity-state').evaluate((node) => getComputedStyle(node).color);
+    expect(alphaStateColor).toBe(betaStateColor);
+    const alphaDotColor = await alphaShell.locator('.agent-channel-activity-state-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
+    const betaDotColor = await betaShell.locator('.agent-channel-activity-state-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
+    expect(alphaDotColor).not.toBe(betaDotColor);
     const stopAlpha = alphaShell.getByRole('button', { name: 'Stop Alpha' });
     await expect(stopAlpha).toHaveCSS('opacity', '1');
+
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Tenon Assistant',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+      ],
+      activityEntries: [
+        { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: 'assistant-streaming', addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300 },
+      ],
+    }, 2);
+    await expect(activity.locator('.agent-channel-activity-item-shell')).toHaveCount(7);
     await stopAlpha.click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -1873,6 +1976,7 @@ test.describe('agent composer controls', () => {
       ));
     }).toBe(true);
 
+    await activity.hover();
     await activity.getByRole('button', { name: 'Alpha using tools' }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
@@ -1883,30 +1987,26 @@ test.describe('agent composer controls', () => {
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
         {
-          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Agent System',
+          displayName: 'Tenon Assistant',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
         { principal: { type: 'agent', agentId: 'agent-beta' }, mention: 'beta', displayName: 'Beta' },
       ],
-      activityEntries: [
-        { id: 'user-activity:agent-beta', agentId: 'agent-beta', runId: null, messageId: null, addressedByMessageId: 'user-activity', state: 'received', updatedAt: 1_800_000_000_100 },
-      ],
+      activityEntries: [],
     }, 2);
+    await expect(page.locator('.agent-channel-activity')).toHaveCount(0);
 
     const geometryAfter = await page.locator('.agent-chat-panel').evaluate((panel) => {
-      const activity = panel.querySelector('.agent-channel-activity');
       const composer = panel.querySelector('.agent-composer');
-      if (!(activity instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
+      if (!(composer instanceof HTMLElement)) return null;
       return {
-        activityHeight: activity.getBoundingClientRect().height,
         composerTop: composer.getBoundingClientRect().top,
       };
     });
     expect(geometryAfter).not.toBeNull();
-    expect(geometryAfter!.activityHeight).toBeCloseTo(geometryBefore!.activityHeight, 1);
     expect(geometryAfter!.composerTop).toBeCloseTo(geometryBefore!.composerTop, 1);
   });
 
@@ -1916,9 +2016,9 @@ test.describe('agent composer controls', () => {
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
         {
-          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Agent System',
+          displayName: 'Tenon Assistant',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -1985,7 +2085,7 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-message-row.assistant', { hasText: 'Adjacent answer has no anchor.' }).locator('.agent-reply-anchor')).toHaveCount(0);
   });
 
-  test('opens provider config from the model chip without mutating model settings inline', async ({ page }) => {
+  test('opens the DM agent profile from the model chip without mutating model settings inline', async ({ page }) => {
     const modelButton = page.getByRole('button', { name: 'Open model settings' });
     await expect(modelButton).toContainText('GPT-5.4');
     await expect(modelButton).toContainText('Medium');
@@ -1995,8 +2095,8 @@ test.describe('agent composer controls', () => {
     await expect(page.getByRole('menu', { name: 'Model and reasoning settings' })).toHaveCount(0);
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_provider_config')?.args;
-    }).toMatchObject({ providerId: 'openai', mode: 'configure' });
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'built-in:tenon:assistant', mode: 'configure' });
     expect((await commandCalls(page)).some((call) => call.cmd === 'agent_upsert_provider_config')).toBe(false);
   });
 
@@ -2090,8 +2190,12 @@ test.describe('agent composer controls', () => {
       const scrollStyle = getComputedStyle(scroll);
       const headerStyle = getComputedStyle(header);
       const surfaceStyle = getComputedStyle(surface);
+      const titleLeading = header.querySelector('.agent-dock-title-leading');
+      const agentToggleIcon = document.querySelector('.window-chrome-cluster-right .agent-toggle svg');
       const editor = surface.querySelector('.agent-composer-editor');
       const editorText = surface.querySelector('.agent-composer-editor .ProseMirror');
+      const titleLeadingBox = titleLeading instanceof HTMLElement ? titleLeading.getBoundingClientRect() : null;
+      const agentToggleIconBox = agentToggleIcon instanceof SVGElement ? agentToggleIcon.getBoundingClientRect() : null;
       const editorBox = editor instanceof HTMLElement ? editor.getBoundingClientRect() : null;
       const editorTextBox = editorText instanceof HTMLElement ? editorText.getBoundingClientRect() : null;
       const actionButton = surface.querySelector('.agent-composer-action-button');
@@ -2131,6 +2235,8 @@ test.describe('agent composer controls', () => {
         composerPaddingRight: Number.parseFloat(composerStyle.paddingRight),
         headerPaddingLeft: Number.parseFloat(headerStyle.paddingLeft),
         headerPaddingRight: Number.parseFloat(headerStyle.paddingRight),
+        headerTitleVisibleLeftInset: titleLeadingBox ? titleLeadingBox.left - dockBox.left : null,
+        rightChromeIconInset: agentToggleIconBox ? dockBox.right - agentToggleIconBox.right : null,
         panelRadius: Number.parseFloat(outlinePanelStyle.borderTopLeftRadius),
         sidebarPaddingRight: Number.parseFloat(sidebarStyle.paddingRight),
         scrollPaddingLeft: Number.parseFloat(scrollStyle.paddingLeft),
@@ -2160,11 +2266,14 @@ test.describe('agent composer controls', () => {
     expect(metrics!.composerPaddingLeft).toBe(0);
     expect(metrics!.composerPaddingRight).toBe(0);
     // The floating rails (#57) each own their inset, so the dock no longer borrows the
-    // sidebar's padding. The agent content shares one horizontal inset instead: the
-    // header and transcript scroll left-align and the scroll is symmetric. (The header's
-    // right inset is larger to clear the agent collapse toggle.)
-    expect(metrics!.headerPaddingLeft).toBe(metrics!.scrollPaddingLeft);
+    // sidebar's padding. The transcript scroll stays symmetric; the header compensates
+    // for BOTH the title button hit-area padding and the chrome toggle's internal icon
+    // padding, so the visible avatar/hash aligns to the visible right chrome icon.
     expect(metrics!.scrollPaddingLeft).toBe(metrics!.scrollPaddingRight);
+    expect(metrics!.headerTitleVisibleLeftInset).not.toBeNull();
+    expect(metrics!.rightChromeIconInset).not.toBeNull();
+    expect(metrics!.headerTitleVisibleLeftInset!).toBeGreaterThan(metrics!.dockInset);
+    expect(Math.abs(metrics!.headerTitleVisibleLeftInset! - metrics!.rightChromeIconInset!)).toBeLessThanOrEqual(1);
     expect(metrics!.headerPaddingRight).toBeGreaterThanOrEqual(metrics!.scrollPaddingRight);
     // The composer is flush to the dock floor (its input REGION, not a floating card):
     // its surface bottom meets the dock's inner bottom, no rail-pad gap.
@@ -2216,13 +2325,24 @@ test.describe('agent composer controls', () => {
     expect(box).toBeTruthy();
     expect(box!.x).toBeGreaterThanOrEqual(8);
     expect(box!.x + box!.width).toBeLessThanOrEqual(752);
+    const insets = await page.locator('.agent-dock').evaluate((dock) => {
+      const menu = document.querySelector('.agent-conversation-menu');
+      if (!(dock instanceof HTMLElement) || !(menu instanceof HTMLElement)) return null;
+      const dockBox = dock.getBoundingClientRect();
+      const menuBox = menu.getBoundingClientRect();
+      return {
+        left: menuBox.left - dockBox.left,
+        right: dockBox.right - menuBox.right,
+      };
+    });
+    expect(insets).not.toBeNull();
+    expect(Math.abs(insets!.left - insets!.right)).toBeLessThanOrEqual(1);
   });
 
   test('keeps the header title compact and free of decorative status dots', async ({ page }) => {
     const metrics = await page.locator('.agent-dock-header').evaluate((header) => {
       const titleButton = header.querySelector('.agent-dock-title-button');
       const title = header.querySelector('.agent-dock-title');
-      const titleStack = header.querySelector('.agent-dock-title-stack');
       const avatar = header.querySelector('.agent-identity-avatar');
       const chevron = header.querySelector('.agent-title-chevron');
       const actions = header.querySelector('.agent-dock-actions');
@@ -2238,12 +2358,16 @@ test.describe('agent composer controls', () => {
 
       const titleButtonBox = titleButton.getBoundingClientRect();
       const titleBox = title.getBoundingClientRect();
-      const titleStackBox = titleStack instanceof HTMLElement ? titleStack.getBoundingClientRect() : titleBox;
       const avatarBox = avatar instanceof HTMLElement ? avatar.getBoundingClientRect() : null;
       const chevronBox = chevron.getBoundingClientRect();
       const actionsBox = actions.getBoundingClientRect();
-      const titleStyle = getComputedStyle(titleButton);
       const firstAction = actions.querySelector('.agent-menu-button');
+      const firstActionBox = firstAction instanceof HTMLElement ? firstAction.getBoundingClientRect() : null;
+      const dock = document.querySelector('.agent-dock');
+      const dockBox = dock instanceof HTMLElement ? dock.getBoundingClientRect() : null;
+      const agentToggleIcon = document.querySelector('.window-chrome-cluster-right .agent-toggle svg');
+      const agentToggleIconBox = agentToggleIcon instanceof SVGElement ? agentToggleIcon.getBoundingClientRect() : null;
+      const titleStyle = getComputedStyle(titleButton);
       const actionStyle = firstAction instanceof HTMLElement ? getComputedStyle(firstAction) : null;
       const rootStyle = getComputedStyle(document.documentElement);
 
@@ -2258,12 +2382,19 @@ test.describe('agent composer controls', () => {
 
       return {
         actionColor: actionStyle?.color ?? null,
+        actionHeight: firstActionBox?.height ?? null,
+        avatarHeight: avatarBox?.height ?? null,
+        avatarWidth: avatarBox?.width ?? null,
         buttonBackground: titleStyle.backgroundColor,
-        buttonExtraWidth: titleButtonBox.width - titleStackBox.width - (avatarBox?.width ?? 0) - chevronBox.width,
+        buttonExtraWidth: titleButtonBox.width - titleBox.width - (avatarBox?.width ?? 0) - chevronBox.width,
         buttonPaddingLeft: Number.parseFloat(titleStyle.paddingLeft),
         chevronOpacity: getComputedStyle(chevron).opacity,
         gapToActions: actionsBox.left - titleButtonBox.right,
         identityAvatarCount: header.querySelectorAll('.agent-identity-avatar').length,
+        leftVisibleInset: avatarBox && dockBox ? avatarBox.left - dockBox.left : null,
+        rightChromeIconInset: agentToggleIconBox && dockBox ? dockBox.right - agentToggleIconBox.right : null,
+        sidebarIconSize: Number.parseFloat(rootStyle.getPropertyValue('--icon-size-md')),
+        subtitleCount: header.querySelectorAll('.agent-dock-subtitle').length,
         textFaint: computedTokenColor(rootStyle.getPropertyValue('--text-faint').trim()),
         textSecondary: computedTokenColor(rootStyle.getPropertyValue('--text-secondary').trim()),
         textSoft: computedTokenColor(rootStyle.getPropertyValue('--text-soft').trim()),
@@ -2277,6 +2408,17 @@ test.describe('agent composer controls', () => {
     expect(metrics).not.toBeNull();
     expect(metrics!.statusDotCount).toBe(0);
     expect(metrics!.identityAvatarCount).toBe(1);
+    expect(metrics!.avatarWidth).not.toBeNull();
+    expect(metrics!.avatarHeight).not.toBeNull();
+    expect(metrics!.actionHeight).not.toBeNull();
+    expect(metrics!.sidebarIconSize).toBeGreaterThan(0);
+    expect(Math.abs(metrics!.avatarWidth! - metrics!.sidebarIconSize)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.avatarHeight! - metrics!.sidebarIconSize)).toBeLessThanOrEqual(1);
+    expect(metrics!.avatarHeight!).toBeLessThan(metrics!.actionHeight!);
+    expect(metrics!.leftVisibleInset).not.toBeNull();
+    expect(metrics!.rightChromeIconInset).not.toBeNull();
+    expect(Math.abs(metrics!.leftVisibleInset! - metrics!.rightChromeIconInset!)).toBeLessThanOrEqual(1);
+    expect(metrics!.subtitleCount).toBe(0);
     expect(metrics!.titleText.startsWith('#')).toBe(false);
     expect(metrics!.buttonBackground).toBe('rgba(0, 0, 0, 0)');
     expect(metrics!.titleColor).toBe(metrics!.textSoft);
@@ -2317,37 +2459,80 @@ test.describe('agent composer controls', () => {
   test('renders node reference conversation titles without node ids', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Tenon Assistant',
+          coordinator: true,
+        },
+        {
+          principal: { type: 'agent', agentId: 'user:mock:self' },
+          mention: 'self',
+          displayName: 'self',
+        },
+      ],
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [],
     });
 
-    await expect(page.locator('.agent-dock-title')).toHaveText('你好 你好');
+    await expect(page.locator('.agent-dock-title')).toHaveText('你好 你好 (3)');
     await expect(page.locator('.agent-dock-title')).not.toContainText('node:');
+    await expect(page.locator('.agent-dock-title-button .agent-dock-title-icon')).toHaveCount(1);
   });
 
-  test('keeps conversation rename geometry stable', async ({ page }) => {
+  test('opens Channel settings from the row options menu', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
     const channelsList = menu.locator('.agent-conversation-list').nth(1);
-    const row = channelsList.locator('.agent-conversation-row').first();
+    const row = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     await expect(row).toBeVisible();
-    const before = await row.boundingBox();
-    expect(before).toBeTruthy();
 
     await row.hover();
-    await row.getByRole('button', { name: 'Rename channel' }).click();
-    await expect(row.getByLabel('Channel name')).toBeVisible();
+    await row.getByRole('button', { name: 'Channel options' }).click();
+    await page.getByRole('menu', { name: 'Channel options' }).getByRole('menuitem', { name: 'Configure channel' }).click();
+    await expect(menu).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-channel-planning',
+      mode: 'configure',
+    });
+  });
 
-    const after = await row.boundingBox();
-    expect(after).toBeTruthy();
-    expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(1);
+  test('opens the Channel member POV inspector from the row options menu', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    let menu = page.getByRole('dialog', { name: 'Channels' });
+    await expect(menu).toBeVisible();
+
+    let channelsList = menu.locator('.agent-conversation-list').nth(1);
+    await channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).getByRole('button', { name: /Planning Channel/ }).click();
+    await expect(page.locator('.agent-dock-title')).toHaveText('Planning Channel (3)');
+
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    menu = page.getByRole('dialog', { name: 'Channels' });
+    channelsList = menu.locator('.agent-conversation-list').nth(1);
+    const row = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
+    await row.hover();
+    await row.getByRole('button', { name: 'Channel options' }).click();
+    await page.getByRole('menu', { name: 'Channel options' }).getByRole('menuitem', { name: "Inspect self's POV" }).click();
+
+    await expect(menu).toHaveCount(0);
+    const inspector = page.locator('.agent-pov-inspector-panel');
+    await expect(inspector).toBeVisible();
+    await expect(inspector).toHaveAttribute('aria-label', "self's assembled POV");
+    await expect(inspector.getByRole('heading', { name: "self's POV" })).toBeVisible();
+    await expect(inspector).toContainText('Prefers terse launch-risk notes.');
+    await expect(inspector).toContainText('Self sees the launch-risk request and answers as itself.');
   });
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
       thinkingLevel: 'medium',
@@ -2405,7 +2590,7 @@ test.describe('agent composer controls', () => {
     };
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Agent System',
+      conversationTitle: 'Tenon Assistant',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {

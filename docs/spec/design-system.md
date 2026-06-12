@@ -82,7 +82,7 @@ paper palettes, or feature concepts Tenon does not own.
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentIdentityAvatar.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, speaker identity, metadata details, process disclosure, thinking, tool calls, status slots. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx` | Textarea, attachments, model display/navigation chip, send/stop slot. |
 | Attachment rows | `AttachmentRow.tsx`, `BlockNodeRow.tsx`, `inlineFileIcon.tsx` | File attachment block rows, PDF thumbnails, file-kind glyphs, media controls, and safe system-action buttons. |
-| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + right-pane toolbar title, constrained inset grouped content, per-row `⋯` menu, and the per-provider config as its own native (modal child) window. See "Settings window" below. |
+| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `AgentConfigWindow.tsx`, `ChannelConfigWindow.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + right-pane toolbar title, constrained inset grouped content, per-row `⋯` menu, and provider / agent / Channel configuration as their own native child windows. See "Settings window" below. |
 | Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
 ## Foundations
@@ -846,8 +846,9 @@ traffic-light height, holds **every column's header in a single row**:
 - Far left: traffic lights + the sidebar toggle (in the sidebar rail's top).
 - Middle: each outliner pane's own breadcrumb header (`avatar / path / current`)
   with a `×` close at its right. The last remaining pane shows no `×`.
-- Far right: the agent dock's header (its `✦` brand mark + conversation title)
-  when open, and — pinned to the absolute top-right corner — the agent toggle.
+- Far right: the agent dock's header (leading identity avatar for a DM, or a
+  hash icon for a Channel, plus the conversation title) when open, and — pinned
+  to the absolute top-right corner — the agent toggle.
 
 **One shared centreline.** Everything in the top strip aligns to a single
 horizontal centreline (the traffic-light centre): the lights, both rail toggles,
@@ -871,9 +872,9 @@ lights sit in the sidebar's top-left corner.
 
 **Agent rail.** Floats on the right, toggled by the top-right control. Open =
 becomes the rightmost column and squeezes the layout; closed = gone. Default
-width `330px`; range `300px` to `520px`. Its header (`✦` + conversation title)
-lives in the top strip; the `✦` brand mark is one of the sparse rose-accent
-roles.
+width `330px`; range `300px` to `520px`. Its header lives in the top strip as a
+single compact title trigger: leading DM avatar or Channel hash icon, title, and
+hover/open chevron. The agent rail carries no static brand mark in its header.
 
 **Sidebar collapsed.** The traffic lights and the sidebar toggle are **window
 chrome anchored to the window's top-left**, not to the sidebar rail — when the
@@ -1058,17 +1059,41 @@ category history; see "Settings window".)
 - **Collapsed = slid off-screen; the toggle stays.** Closed, the rail is slid
   fully off the right window edge and faded out (see Motion → Rail slide). The
   fixed top-right toggle is a *bare* icon (no material, shadow, or fill —
-  restraint); its hover feedback is a centred fill tint on the icon itself, not a
-  glass chip behind it. The toggle is the collapse control in both states.
-- Its header lives in the top strip: the plain conversation title, no decorative
-  status dot or `#` prefix. A DM leads with that agent's circular identity chip
-  and a quiet subtitle (`@mention · provider/model`), with an action to create a
-  Channel from the DM. A Channel uses the Channel name as the primary text and
-  moves member management behind a compact Members popover; stacked avatars are
-  a secondary cue, not the title. The title trigger has no hover background; it
-  darkens text and reveals its chevron only on hover, focus, or open state. The
-  agent header carries no `✦` toggle of its own — collapsing happens through the
-  fixed top-right control.
+  restraint); its hover feedback deepens the glyph color, not a glass chip behind
+  it. The toggle is the collapse control in both states.
+- Its header lives in the top strip as one centered row. A DM shows only that
+  agent's circular identity chip and display name. A Channel shows a leading hash
+  icon, the Channel name, and a trailing member count in parentheses
+  (`Name (3)`) that includes the user; it never shows member avatar stacks or a
+  literal `#` text prefix. No header subtitle, decorative status dot, model line,
+  or DM-to-Channel action lives in the row. The title trigger has no hover
+  background; it darkens text and reveals its chevron only on hover, focus, or
+  open state. The agent header carries no `✦` toggle of its own — collapsing
+  happens through the fixed top-right control.
+- The conversation menu follows the Slack section-action model: the Direct
+  Messages section header owns the `New agent` action, and the Channels section
+  header owns the `New Channel` action. Creation commands are header affordances,
+  not fake rows mixed into the conversation lists. Section headers do not draw
+  hairline borders; spacing and quiet header text separate groups.
+- Conversation menu rows stay scan-first and single-line: DMs render only avatar
+  + agent name; Channels render only hash icon + Channel name. Optional unread
+  badges are numeric pills at the trailing edge and are suppressed for the active
+  conversation. Model names, snippets, timestamps, message counts, and member
+  stacks do not appear in these lists. Each row reserves a trailing More affordance
+  that appears on hover/focus and opens a dropdown. Today that dropdown contains
+  only the configuration entry (agent settings or Channel configuration); future
+  row actions should hang from that same menu rather than becoming persistent row
+  chrome.
+- New/edit Agent and New/edit Channel use dedicated native child windows
+  (`?surface=agent-config` / `?surface=channel-config`) opened through
+  `lin:open-agent-config` / `lin:open-channel-config`. The dock and Settings list
+  are launch points only; they never embed authoring forms or Channel membership
+  editors inline. Agent and Channel config windows use the same native child
+  dimensions, each starts with an explicit title header, and each keeps its
+  Cancel / Save action bar fixed to the bottom edge while content scrolls behind
+  it. Agent config reuses the shared AgentEditor surface. Channel config uses the
+  same settings sheet/inset-list language for name, optional opening message,
+  current members, and add-member actions.
 - Agent UI uses Tenon foundations: neutral text, translucent chrome, opaque content
   surfaces, sparse semantic color, low elevation, and compact controls.
 - Assistant prose, user bubbles, and composer input use
@@ -1087,6 +1112,18 @@ category history; see "Settings window".)
   including the coordinator. The label comes from the recorded message `actor`
   and member/definition metadata, not from provider/model strings or the current
   live roster alone.
+- Channel activity is a floating presence marker above the composer, not a
+  transcript row or bottom toolbar. It is out of layout flow, never changes the
+  transcript scroll height or composer position, and defaults to a compact stack
+  of working agent avatars in a liquid-glass capsule with a subtle neutral edge
+  highlight. The collapsed capsule contains only overlapping avatars; if more
+  agents are working than fit, a same-size overlapping `+n` count chip replaces
+  extra visible chrome. Hover or keyboard focus freezes the visible working set
+  until the overlay is dismissed, then expands a small scrollable level-1 overlay
+  with a compact title, stable rows, detail entry points, and stop controls for
+  active runs. Each row keeps avatar + agent name on one line, a quiet state
+  label on the next line with a small semantic status dot, and a fixed trailing
+  stop column when stopping is available. Row hover remains neutral fill.
 - Message metadata is quiet by default. Time separators appear only at meaningful
   transcript gaps; right-click opens the native message menu, whose Details action
   shows timestamp, speaker, model, and token usage in a small anchored popover.
@@ -1105,10 +1142,10 @@ category history; see "Settings window".)
 - Composer toolbar remains visually unified with the textarea; no internal
   divider. Its footer controls (attach / model / send) are capsules (B6).
 - The model chip is display + navigation, not an inline picker. It shows the
-  active provider/model and reasoning label, and clicking opens the owning
-  settings surface (agent profile for authored agents, provider config for the
-  built-in assistant/global provider). It never mutates provider/model settings
-  from the chat surface.
+  active provider/model and reasoning label. In a canonical agent DM, clicking
+  opens that agent's profile, including the view-only built-in Tenon assistant
+  profile; otherwise it opens the owning provider config. It never mutates
+  provider/model settings from the chat surface.
 - Settings opens as a standalone window (the `?surface=settings` route), not an
   in-app modal. See "Settings window" below.
 - Runtime approval/tool preview types exist, but no renderer approval overlay is

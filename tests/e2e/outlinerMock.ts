@@ -64,8 +64,12 @@ type E2EWindow = Window & {
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
+    openAgentConfig?: (params: { agentId?: string; mode: string }) => Promise<void>;
+    openChannelConfig?: (params: { conversationId?: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
+    closeAgentConfig?: () => Promise<void>;
+    closeChannelConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     showAgentMessageContextMenu?: (request: {
@@ -246,10 +250,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // separately (reduceProjection.test.ts).
     let revision = 0;
     let clipboardText = '';
-    const MAIN_AGENT_ID = 'built-in:core:assistant';
-    const GENERAL_AGENT_ID = 'built-in:tenon:general';
+    const MAIN_AGENT_ID = 'built-in:tenon:assistant';
+    const USER_AGENT_ID = 'user:mock:self';
+    const REVIEWER_AGENT_ID = 'user:mock:reviewer';
     const ASSISTANT_DM_ID = 'mock-agent-conversation';
-    const GENERAL_DM_ID = 'mock-agent-dm-general';
+    const USER_DM_ID = 'mock-agent-dm-self';
     const PLANNING_CHANNEL_ID = 'mock-agent-channel-planning';
     const assets = new Map<string, {
       id: string;
@@ -413,19 +418,47 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     }];
     const agentDefinitions = [
       {
-        agentId: GENERAL_AGENT_ID,
-        name: 'general',
-        displayName: 'general',
+        agentId: MAIN_AGENT_ID,
+        name: 'assistant',
+        displayName: 'Tenon Assistant',
         source: 'built-in',
         rootDir: 'built-in',
-        agentFile: 'built-in/general',
+        agentFile: 'built-in/assistant',
         writable: false,
-        description: 'General-purpose focused child run for research, analysis, and execution.',
+        description: 'Default Tenon assistant profile.',
+        model: 'inherit',
+        body: 'You are Tenon Assistant, the built-in default agent for Tenon.',
+        tools: ['*'],
+        maxTurns: null,
+      },
+      {
+        agentId: USER_AGENT_ID,
+        name: 'self',
+        displayName: 'self',
+        source: 'user',
+        rootDir: '/mock/home/.agents/agents/self',
+        agentFile: '/mock/home/.agents/agents/self/AGENT.md',
+        writable: true,
+        description: 'User-owned personal agent.',
         model: 'gpt-5.4-mini',
         body: [
           'You are a focused child agent running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
         ].join('\n'),
+        permissionMode: 'restricted',
+        maxTurns: null,
+      },
+      {
+        agentId: REVIEWER_AGENT_ID,
+        name: 'reviewer',
+        displayName: 'reviewer',
+        source: 'user',
+        rootDir: '/mock/home/.agents/agents/reviewer',
+        agentFile: '/mock/home/.agents/agents/reviewer/AGENT.md',
+        writable: true,
+        description: 'Reviews Channel plans.',
+        model: 'gpt-5.4-mini',
+        body: 'Review plans and identify risks.',
         permissionMode: 'restricted',
         maxTurns: null,
       },
@@ -600,7 +633,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentConversations = [
       {
         id: ASSISTANT_DM_ID,
-        title: 'Agent System',
+        title: 'Tenon Assistant',
         members: [
           { type: 'user', userId: 'local-user' },
           { type: 'agent', agentId: MAIN_AGENT_ID },
@@ -614,13 +647,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         unreadCount: 0,
       },
       {
-        id: GENERAL_DM_ID,
-        title: 'general',
+        id: USER_DM_ID,
+        title: 'self',
         members: [
           { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: GENERAL_AGENT_ID },
+          { type: 'agent', agentId: USER_AGENT_ID },
         ],
-        canonicalDmAgentId: GENERAL_AGENT_ID,
+        canonicalDmAgentId: USER_AGENT_ID,
         createdAt: now - 200_000,
         updatedAt: now - 80_000,
         messageCount: 0,
@@ -634,7 +667,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         members: [
           { type: 'user', userId: 'local-user' },
           { type: 'agent', agentId: MAIN_AGENT_ID },
-          { type: 'agent', agentId: GENERAL_AGENT_ID },
+          { type: 'agent', agentId: USER_AGENT_ID },
         ],
         goal: 'Planning Channel',
         createdAt: now - 180_000,
@@ -642,7 +675,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         messageCount: 1,
         lastMessageSnippet: 'Coordinate the launch plan.',
         lastMessageAt: now - 60_000,
-        unreadCount: 0,
+        unreadCount: 3,
       },
     ];
     // Memory entries are principal-keyed (the pool they belong to); the Settings pane
@@ -1401,7 +1434,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         type: 'command',
         parentId: ids.today,
         commandSchedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
-        commandAgent: 'general',
+        commandAgent: 'self',
       });
       // The two node-native config rows (Schedule / Agent) — real field entries
       // pointing at the built-in system fields, as `setCommandNode` seeds them.
@@ -1531,20 +1564,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
-    const agentLabel = (agentId: string) => agentId === MAIN_AGENT_ID ? 'Agent System' : 'general';
-    const agentMention = (agentId: string) => agentId === MAIN_AGENT_ID ? 'assistant' : 'general';
+    const agentLabel = (agentId: string) => {
+      if (agentId === MAIN_AGENT_ID) return 'Tenon Assistant';
+      if (agentId === USER_AGENT_ID) return 'self';
+      return 'reviewer';
+    };
+    const agentMention = (agentId: string) => {
+      if (agentId === MAIN_AGENT_ID) return 'assistant';
+      if (agentId === USER_AGENT_ID) return 'self';
+      return 'reviewer';
+    };
     const povInspectorsForConversation = (conversationId: string) => {
       if (conversationId !== PLANNING_CHANNEL_ID) return {};
       return {
-        [GENERAL_AGENT_ID]: {
-          agentId: GENERAL_AGENT_ID,
+        [USER_AGENT_ID]: {
+          agentId: USER_AGENT_ID,
           addressedByMessageId: 'assistant-planning-e2e',
           memoryBriefing: [
             '<memory>',
             '<self>',
             '- Prefers terse launch-risk notes.',
             '</self>',
-            '<principal name="Agent System">',
+            '<principal name="Tenon Assistant">',
             '- Tracks architecture seams for handoffs.',
             '</principal>',
             '</memory>',
@@ -1561,22 +1602,22 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               sourceRole: 'user',
               sourceActor: { type: 'user', userId: 'local-user' },
             }, {
-              preamble: '@assistant (agent "Agent System") said:',
-              text: '@general please review launch risk.',
+              preamble: '@assistant (agent "Tenon Assistant") said:',
+              text: '@self please review launch risk.',
               sourceMessageId: 'assistant-planning-e2e',
               sourceRole: 'assistant',
               sourceActor: { type: 'agent', agentId: MAIN_AGENT_ID },
             }],
           }, {
-            id: 'verbatim:general-planning-e2e',
+            id: 'verbatim:self-planning-e2e',
             role: 'assistant',
-            sourceMessageIds: ['general-planning-e2e'],
+            sourceMessageIds: ['self-planning-e2e'],
             createdAt: now - 50_000,
             parts: [{
-              text: 'General sees the launch-risk request and answers as itself.',
-              sourceMessageId: 'general-planning-e2e',
+              text: 'Self sees the launch-risk request and answers as itself.',
+              sourceMessageId: 'self-planning-e2e',
               sourceRole: 'assistant',
-              sourceActor: { type: 'agent', agentId: GENERAL_AGENT_ID },
+              sourceActor: { type: 'agent', agentId: USER_AGENT_ID },
             }],
           }],
         },
@@ -1592,7 +1633,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       })),
     ];
     const agentIdsForConversation = (conversationId: string, fallback: string[] = [MAIN_AGENT_ID]) => {
-      if (conversationId === GENERAL_DM_ID) return [GENERAL_AGENT_ID];
+      if (conversationId === USER_DM_ID) return [USER_AGENT_ID];
       const entry = agentConversations.find((conversation) => conversation.id === conversationId);
       const ids = entry?.members
         .filter((member): member is { type: 'agent'; agentId: string } => member.type === 'agent')
@@ -1604,15 +1645,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       options: {
         title?: string | null;
         agentIds?: string[];
-        systemNotice?: string;
         seedText?: string;
       } = {},
     ) => {
       const agentIds = options.agentIds ?? agentIdsForConversation(conversationId);
       const title = options.title ?? (
-        conversationId === GENERAL_DM_ID ? 'general'
+        conversationId === USER_DM_ID ? 'self'
           : conversationId === PLANNING_CHANNEL_ID ? 'Planning Channel'
-            : 'Agent System'
+            : 'Tenon Assistant'
       );
       const rows: Array<{ id: string; kind: 'message'; messageId: string }> = [];
       const messages: Record<string, unknown> = {};
@@ -1630,7 +1670,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           actor,
         };
       };
-      if (options.systemNotice) addMessage('system-notice-e2e', options.systemNotice, { type: 'system' }, now - 20);
       if (options.seedText) addMessage('seed-note-e2e', options.seedText, { type: 'user', userId: 'local-user' }, now - 10);
       return {
         conversationId,
@@ -1667,12 +1706,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       openProviderConfig: async (params: { providerId: string; mode: string }) => {
         calls.push({ cmd: 'open_provider_config', args: clone(params) });
       },
+      openAgentConfig: async (params: { agentId?: string; mode: string }) => {
+        calls.push({ cmd: 'open_agent_config', args: clone(params) });
+      },
+      openChannelConfig: async (params: { conversationId?: string; mode: string }) => {
+        calls.push({ cmd: 'open_channel_config', args: clone(params) });
+      },
       // The Settings window opens natively; in tests just record the request so
       // the onboarding CTA can be asserted (it deep-links to Providers).
       openSettings: async (target?: unknown) => {
         calls.push({ cmd: 'open_settings', args: clone(target ?? {}) });
       },
       closeProviderConfig: async () => {},
+      closeAgentConfig: async () => {},
+      closeChannelConfig: async () => {},
       notifySettingsChanged: async () => {},
       onSettingsNavigate: () => () => {},
       showAgentMessageContextMenu: async (request) => {
@@ -1730,12 +1777,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             goal: title,
             createdAt: now,
             updatedAt: now += 1,
-            messageCount: (typeof args.systemNotice === 'string' ? 1 : 0) + (typeof args.seedText === 'string' ? 1 : 0),
-            lastMessageSnippet: typeof args.seedText === 'string'
-              ? args.seedText
-              : typeof args.systemNotice === 'string'
-                ? args.systemNotice
-                : null,
+            messageCount: typeof args.seedText === 'string' ? 1 : 0,
+            lastMessageSnippet: typeof args.seedText === 'string' ? args.seedText : null,
             lastMessageAt: now,
             unreadCount: 0,
           });
@@ -1744,7 +1787,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             renderProjection: agentProjection(conversationId, {
               title,
               agentIds: Array.from(new Set(agentIds)),
-              systemNotice: typeof args.systemNotice === 'string' ? args.systemNotice : undefined,
               seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
             }),
           }) as T;
@@ -1758,6 +1800,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             target.updatedAt = now += 1;
           }
           return clone({ ok: true }) as T;
+        }
+        if (cmd === 'agent_add_conversation_member') {
+          const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
+          const agentId = String(args.agentId ?? '');
+          if (target && agentId && !target.members.some((member) => member.type === 'agent' && member.agentId === agentId)) {
+            target.members.push({ type: 'agent', agentId });
+            target.updatedAt = now += 1;
+          }
+          return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
         }
         if (cmd === 'agent_delete_conversation') {
           const index = agentConversations.findIndex((conversation) => conversation.id === args.conversationId);
@@ -3061,7 +3112,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     const messageId = entry.nodeId;
     const actor = entry.actor ?? (message.role === 'user'
       ? { type: 'user', userId: 'local-user' }
-      : { type: 'agent', agentId: 'built-in:core:assistant' });
+      : { type: 'agent', agentId: 'built-in:tenon:assistant' });
     rows.push({ id: `${message.role}:${messageId}`, kind: 'message', messageId });
     entities[messageId] = {
       id: messageId,
@@ -3099,7 +3150,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: streamingMessage.timestamp,
       updatedAt: streamingMessage.timestamp,
       branches: null,
-      actor: streamingMessage.actor ?? { type: 'agent', agentId: 'built-in:core:assistant' },
+      actor: streamingMessage.actor ?? { type: 'agent', agentId: 'built-in:tenon:assistant' },
       addressedByMessageId: streamingMessage.addressedByMessageId ?? null,
       apiId: streamingMessage.api,
       providerId: streamingMessage.provider,
@@ -3187,9 +3238,9 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       members: state.members ?? [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
         {
-          principal: { type: 'agent', agentId: 'built-in:core:assistant' },
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Agent System',
+          displayName: 'Tenon Assistant',
           coordinator: true,
         },
       ],

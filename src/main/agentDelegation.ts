@@ -43,7 +43,7 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
-import { LIN_CHILD_AGENT_CORE_PROMPT } from './agentSystemPrompt';
+import { LIN_AGENT_SYSTEM_PROMPT, LIN_CHILD_AGENT_CORE_PROMPT } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
@@ -66,6 +66,8 @@ const DEFAULT_MAX_DELEGATION_DEPTH = 3;
 const FORK_AGENT_TYPE = 'fork';
 const FORK_BOILERPLATE_TAG = 'lin-fork-child';
 const FORK_PLACEHOLDER_RESULT = 'Fork started - processing in background.';
+export const TENON_ASSISTANT_AGENT_NAME = 'assistant';
+export const TENON_ASSISTANT_AGENT_DISPLAY_NAME = 'Tenon Assistant';
 const AGENT_LISTING_STATE_MARKER = 'The following agents have already been listed to the agent in this session:';
 const CHILD_RUN_TOOL_RESULT_BUDGET_SKIP_TOOLS = new Set(['file_read']);
 const MAX_CHILD_RUN_AUTO_COMPACT_FAILURES = 3;
@@ -519,10 +521,11 @@ export class AgentDelegationRuntime {
   ): Promise<AgentDelegateToolData> {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
+      const agentType = await this.resolveSkillAgentType(input.agent);
       return await this.startAgent({
         description: compactInlineText(input.description) || `skill ${input.skillName}`,
         prompt: input.renderedContent,
-        agent_type: await this.resolveSkillAgentType(input.agent),
+        ...(agentType ? { agent_type: agentType } : {}),
         model: input.model,
         effort: input.effort,
         run_in_background: false,
@@ -1192,16 +1195,13 @@ export class AgentDelegationRuntime {
     if (run.contextMode === 'fork') return createForkAgentDefinition();
     const definition = await this.registry.resolve(run.agentType);
     if (definition) return definition;
-    return {
-      ...createGeneralAgentDefinition(),
-      name: run.agentType,
-      description: `${run.agentType} agent definition was not found; continuing with general child run behavior.`,
-    };
+    const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
+    throw new Error(`Agent definition '${run.agentType}' not found. Available agents: ${names || 'none'}`);
   }
 
-  private async resolveSkillAgentType(agentName: string | undefined): Promise<string> {
+  private async resolveSkillAgentType(agentName: string | undefined): Promise<string | undefined> {
     const normalized = normalizeAgentName(agentName ?? '');
-    if (!normalized) return 'general';
+    if (!normalized) return undefined;
     const definition = await this.registry.resolve(normalized);
     if (definition) return definition.name;
     const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
@@ -1395,8 +1395,7 @@ class AgentDefinitionRegistry {
   async resolve(name: string): Promise<AgentDefinition | null> {
     await this.ensureLoaded();
     const normalized = normalizeAgentName(name);
-    const lookupName = normalized === 'general-purpose' ? 'general' : normalized;
-    return this.agents.get(lookupName)
+    return this.agents.get(normalized)
       ?? [...this.agents.values()].find((agent) => agent.displayName === normalized)
       ?? null;
   }
@@ -1406,7 +1405,6 @@ class AgentDefinitionRegistry {
     this.loaded = true;
     this.agents.clear();
     this.seenAgentFileIds.clear();
-    await this.addLoadedAgent(createGeneralAgentDefinition());
     for (const { dir, source } of agentSearchDirs(this.localRoot, this.includeUserAgents, this.additionalAgentDirectories)) {
       for (const agent of await loadAgentsFromDir(dir, source)) {
         await this.addLoadedAgent(agent);
@@ -1422,21 +1420,6 @@ class AgentDefinitionRegistry {
   }
 }
 
-function createGeneralAgentDefinition(): AgentDefinition {
-  // `general` is the zero-persona default: it adds no body of its own, so a fresh
-  // `general` run is simply the base Tenon agent in headless/child run mode (the
-  // identity + directive + shared core that `buildFreshAgentSystemPrompt` supplies
-  // to every fresh childRun). A user agent specializes by adding a persona body.
-  return {
-    name: 'general',
-    source: 'built-in',
-    rootDir: 'built-in',
-    agentFile: 'built-in/general',
-    description: 'General-purpose focused child run for research, analysis, and execution.',
-    body: '',
-  };
-}
-
 function createForkAgentDefinition(): AgentDefinition {
   return {
     name: FORK_AGENT_TYPE,
@@ -1448,6 +1431,20 @@ function createForkAgentDefinition(): AgentDefinition {
     maxTurns: 200,
     model: 'inherit',
     body: '',
+  };
+}
+
+export function createTenonAssistantAgentDefinition(): AgentDefinition {
+  return {
+    name: TENON_ASSISTANT_AGENT_NAME,
+    displayName: TENON_ASSISTANT_AGENT_DISPLAY_NAME,
+    source: 'built-in',
+    rootDir: 'built-in',
+    agentFile: 'built-in/assistant',
+    description: 'Default Tenon assistant profile.',
+    tools: ['*'],
+    model: 'inherit',
+    body: LIN_AGENT_SYSTEM_PROMPT,
   };
 }
 
@@ -1544,10 +1541,9 @@ export { parseAgentMarkdownDocument as parseAgentMarkdown } from '../core/agentM
 // A fresh child run is the SAME Tenon agent in headless mode, not a separate
 // dumbed-down persona: it reuses the shared-core system prompt (capabilities,
 // tool conventions, safety — `LIN_CHILD_AGENT_CORE_PROMPT`) and layers a child run
-// identity + directive on top, then the definition's own persona body. `general`
-// carries an empty body, so it is just "the base agent, headless, zero persona";
-// a custom definition's body is the additive specialization. (Fork takes a
-// different path — it reuses the parent's full prompt + a fork directive.)
+// identity + directive on top, then the definition's own persona body. A custom
+// definition's body is the additive specialization. (Fork takes a different path
+// — it reuses the parent's full prompt + a fork directive.)
 export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
   const header = [
     'You are a Tenon child agent — a focused worker the main Tenon agent spawned to complete one task and report back.',

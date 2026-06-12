@@ -1,3 +1,9 @@
+.agent-composer-region {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .agent-composer {
   display: block;
   flex: 0 0 auto;

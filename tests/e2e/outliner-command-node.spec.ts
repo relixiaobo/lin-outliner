@@ -28,7 +28,7 @@ test.describe('command node fields', () => {
     // The Agent field row: a plain value (the stored choice as text) with its own
     // leading bullet, no pill <select>, listbox closed.
     const agentRow = row(page, ids.commandAgentEntry);
-    await expect(agentRow.locator('.command-field-value-label')).toHaveText('general');
+    await expect(agentRow.locator('.command-field-value-label')).toHaveText('self');
     await expect(agentRow.locator('.command-field-value-bullet')).toBeVisible();
     await expect(agentRow.locator('.command-agent-select-control')).toHaveCount(0);
     await expect(page.locator('.command-agent-popover')).toHaveCount(0);
@@ -60,9 +60,9 @@ test.describe('command node fields', () => {
     const listbox = page.locator('.command-agent-popover');
     await expect(listbox).toBeVisible();
     // Main agent (the implicit empty choice) + every registry definition.
-    await expect(listbox.getByRole('option')).toHaveText(['Main agent', 'general']);
+    await expect(listbox.getByRole('option')).toHaveText(['Main agent', 'self']);
     // The stored agent is marked selected.
-    await expect(listbox.getByRole('option', { name: 'general', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(listbox.getByRole('option', { name: 'self', exact: true })).toHaveAttribute('aria-selected', 'true');
 
     await page.keyboard.press('Escape');
     await expect(listbox).toHaveCount(0);

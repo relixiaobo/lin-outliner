@@ -274,6 +274,12 @@ const api = {
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
+  openAgentConfig: (params: { agentId?: string; mode: 'create' | 'configure' }) =>
+    ipcRenderer.invoke('lin:open-agent-config', params) as Promise<void>,
+  closeAgentConfig: () => ipcRenderer.invoke('lin:close-agent-config') as Promise<void>,
+  openChannelConfig: (params: { conversationId?: string; mode: 'create' | 'configure' }) =>
+    ipcRenderer.invoke('lin:open-channel-config', params) as Promise<void>,
+  closeChannelConfig: () => ipcRenderer.invoke('lin:close-channel-config') as Promise<void>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
   revealDiagnosticsLog: () =>
     ipcRenderer.invoke(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL) as Promise<DiagnosticsActionResult>,
