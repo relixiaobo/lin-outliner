@@ -2,9 +2,9 @@ import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentT
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import {
-  BrainIcon,
   ICON_SIZE,
   LoaderIcon,
+  ThinkingIcon,
   UsedToolsIcon,
   WarningIcon,
 } from '../icons';
@@ -166,7 +166,7 @@ export function AgentProcessBlock({
       ? <WarningIcon size={PROCESS_STATUS_ICON_SIZE} />
       : toolCalls.length > 0
         ? <UsedToolsIcon size={PROCESS_STATUS_ICON_SIZE} />
-        : <BrainIcon size={PROCESS_STATUS_ICON_SIZE} />;
+        : <ThinkingIcon size={PROCESS_STATUS_ICON_SIZE} />;
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>

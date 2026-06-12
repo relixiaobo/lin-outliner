@@ -28,6 +28,7 @@ import {
   PasswordIcon,
   PencilIcon,
   SettingsIcon,
+  SkillIcon,
   TrashIcon,
   WarningIcon,
 } from '../icons';
@@ -195,7 +196,7 @@ const SETTINGS_CATEGORY_ICONS = {
   providers: DatabaseIcon,
   permissions: PasswordIcon,
   memory: BrainIcon,
-  skills: BrainIcon,
+  skills: SkillIcon,
   agents: AgentIcon,
 } satisfies Record<SettingsCategory, AppIcon>;
 
