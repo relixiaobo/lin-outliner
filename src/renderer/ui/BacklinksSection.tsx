@@ -1,6 +1,8 @@
 import {
   useCallback,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent,
@@ -301,6 +303,10 @@ function ReferenceOutlineRow({
   expandedSourceIds,
   onToggleSourceExpansion,
 }: ReferenceOutlineRowProps) {
+  const rowMainRef = useRef<HTMLSpanElement | null>(null);
+  const titleRef = useRef<HTMLSpanElement | null>(null);
+  const linkRef = useRef<HTMLButtonElement | null>(null);
+  const [linkLeft, setLinkLeft] = useState<number | null>(null);
   const displayNode = displaySourceNode(node, index);
   const openId = displayNode.id;
   const title = nodeTitle(displayNode, labels.untitledSource);
@@ -309,9 +315,43 @@ function ReferenceOutlineRow({
   const childIds = !childParentId || cycle ? [] : index.byId.get(childParentId)?.children ?? [];
   const expanded = expandedSourceIds.has(node.id);
   const childPath = childParentId ? [...path, childParentId] : path;
+  const hasLinkAction = Boolean(linkAction);
   const style = depth > 0 ? {
     '--backlinks-row-indent': `${depth * 28}px`,
   } as CSSProperties : undefined;
+  const linkStyle = linkAction && linkLeft !== null ? {
+    '--backlinks-link-left': `${linkLeft}px`,
+  } as CSSProperties : undefined;
+
+  useLayoutEffect(() => {
+    if (!hasLinkAction) {
+      setLinkLeft(null);
+      return;
+    }
+
+    const measure = () => {
+      const rowMain = rowMainRef.current;
+      const titleElement = titleRef.current;
+      const linkElement = linkRef.current;
+      if (!rowMain || !titleElement || !linkElement) return;
+
+      const rowWidth = rowMain.getBoundingClientRect().width;
+      const linkWidth = linkElement.getBoundingClientRect().width;
+      const gap = Number.parseFloat(getComputedStyle(rowMain).getPropertyValue('--space-2')) || 4;
+      const desiredLeft = titleElement.scrollWidth + gap;
+      const maxLeft = Math.max(0, rowWidth - linkWidth);
+      const nextLeft = Math.min(desiredLeft, maxLeft);
+      setLinkLeft((current) => current === nextLeft ? current : nextLeft);
+    };
+
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    if (rowMainRef.current) observer.observe(rowMainRef.current);
+    if (titleRef.current) observer.observe(titleRef.current);
+    if (linkRef.current) observer.observe(linkRef.current);
+    return () => observer.disconnect();
+  }, [hasLinkAction, title]);
 
   return (
     <>
@@ -327,18 +367,23 @@ function ReferenceOutlineRow({
             }}
             onDrillDown={() => onOpenSourceInCurrentPane(openId)}
           />
-          <span className="backlinks-row-main">
+          <span
+            ref={rowMainRef}
+            className={hasLinkAction ? 'backlinks-row-main has-link-action' : 'backlinks-row-main'}
+            style={linkStyle}
+          >
             <button
               type="button"
               className="backlinks-row-title-button"
               aria-label={labels.openSource({ title })}
               onClick={(event) => onOpenSource(event, openId)}
             >
-              <span className="backlinks-row-title">{title}</span>
+              <span ref={titleRef} className="backlinks-row-title">{title}</span>
               {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
             </button>
             {linkAction && (
               <button
+                ref={linkRef}
                 type="button"
                 className="backlinks-link-action"
                 title={labels.linkMentionTitle({ title: linkAction.targetTitle ?? labels.untitledSource })}

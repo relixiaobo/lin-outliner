@@ -8,6 +8,8 @@ import {
   row,
 } from './outlinerMock';
 
+const LONG_UNLINKED_TEXT = 'Discuss Alpha soon with a deliberately long first line that should run underneath the Link action when the backlink row is narrow enough to force the action to float above the title text instead of reserving layout space';
+
 async function emitCurrentProjection(page: Page) {
   await emitDocumentEvent(page, {
     type: 'projection_changed',
@@ -27,7 +29,7 @@ async function createReferencesFixture(page: Page): Promise<string> {
       patch: {
         ops: [{
           type: 'replace_all',
-          content: { text: 'Discuss Alpha soon', marks: [], inlineRefs: [] },
+          content: { text: fixtureIds.longUnlinkedText, marks: [], inlineRefs: [] },
         }],
       },
     });
@@ -48,7 +50,7 @@ async function createReferencesFixture(page: Page): Promise<string> {
       id: 'reference-value-alpha',
     });
     return referenceResult?.focus?.nodeId ?? '';
-  }, ids);
+  }, { ...ids, longUnlinkedText: LONG_UNLINKED_TEXT });
   if (!referenceId) throw new Error('reference fixture did not create a reference row');
   await emitCurrentProjection(page);
   return referenceId;
@@ -69,8 +71,14 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await expect(section).toContainText('1 Mentioned in...');
   await expect(section).toContainText('1 Appears as Related in...');
   await expect(section).toContainText('1 Unlinked mention');
-  await expect(section).toContainText('Discuss Alpha soon');
+  await expect(section).toContainText(LONG_UNLINKED_TEXT);
   const alignment = await page.evaluate((alphaId) => {
+    const link = document.querySelector('.backlinks-link-action');
+    const linkRow = link?.closest('.backlinks-row');
+    const linkRowOpen = linkRow?.querySelector('.backlinks-row-open');
+    const sourceMarker = linkRow?.querySelector('.row-bullet-button');
+    const sourceTitle = linkRow?.querySelector('.backlinks-row-title');
+    if (!link || !linkRowOpen || !sourceMarker || !sourceTitle) throw new Error('missing unlinked row alignment target');
     const left = (selector: string) => {
       const element = document.querySelector(selector);
       if (!element) throw new Error(`missing alignment target: ${selector}`);
@@ -79,17 +87,19 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
     return {
       bodyBulletLeft: left(`[data-trailing-parent-id="${alphaId}"] .row-bullet-button`),
       bodyTextLeft: left(`[data-trailing-parent-id="${alphaId}"] .ProseMirror`),
-      rowRight: document.querySelector('.backlinks-row-open')?.getBoundingClientRect().right ?? 0,
-      linkLeft: document.querySelector('.backlinks-link-action')?.getBoundingClientRect().left ?? 0,
-      sourceMarkerLeft: left('.backlinks-row-open .row-bullet-button'),
-      sourceTitleLeft: left('.backlinks-row-title'),
-      sourceTitleRight: document.querySelector('.backlinks-row-title')?.getBoundingClientRect().right ?? 0,
+      rowRight: linkRowOpen.getBoundingClientRect().right,
+      linkLeft: link.getBoundingClientRect().left,
+      linkRight: link.getBoundingClientRect().right,
+      sourceMarkerLeft: sourceMarker.getBoundingClientRect().left,
+      sourceTitleLeft: sourceTitle.getBoundingClientRect().left,
+      sourceTitleRight: sourceTitle.getBoundingClientRect().right,
     };
   }, ids.alpha);
   expect(Math.abs(alignment.sourceMarkerLeft - alignment.bodyBulletLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(alignment.sourceTitleLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
-  expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleRight);
-  expect(alignment.linkLeft).toBeLessThan(alignment.rowRight);
+  expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleLeft);
+  expect(alignment.linkLeft).toBeLessThan(alignment.sourceTitleRight);
+  expect(alignment.linkRight).toBeLessThanOrEqual(alignment.rowRight + 1);
 
   const linkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Mentioned in...' }).first();
   const linkedRow = linkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
