@@ -281,15 +281,14 @@ where supported, a native file URL/file-list flavor to the clipboard.
 
 The conversation surface is product-shaped around DMs and Channels:
 `agent_list_conversations` returns one immutable canonical DM row for every
-configured agent, plus goal-backed Channels. Restoring a canonical DM id is
+configured agent, plus named Channels. Restoring a canonical DM id is
 find-or-create; DMs are never user-created, renamed, deleted, or membership-edited.
 `agent_create_conversation` is the user-facing New Channel command: it requires a
-goal and at least two agent members (user + two agents minimum), with an optional
-seed note. DM to Channel escalation creates a new Channel with an explicit system
-notice; it never shares or mutates the source DM transcript.
-Channel member removal is also constrained by the same invariant: the coordinator
-cannot be removed, removal is blocked while a run is active, and removal cannot
-leave fewer than two agent members.
+Channel name, with optional invited agents and an optional opening message. DM to
+Channel escalation creates a new Channel with an explicit system notice; it never
+shares or mutates the source DM transcript. Channel member removal keeps the same
+runtime guards: the coordinator cannot be removed, and removal is blocked while a
+run is active.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,

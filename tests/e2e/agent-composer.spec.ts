@@ -185,31 +185,28 @@ test.describe('agent composer controls', () => {
     }).toEqual({ created: false, restoredGeneral: true });
   });
 
-  test('requires a goal and at least two agents before creating a Channel', async ({ page }) => {
+  test('creates a named Channel before inviting any extra agents', async ({ page }) => {
     await page.getByRole('button', { name: 'New Channel' }).click();
     const dialog = page.getByRole('dialog', { name: 'New Channel' });
     await expect(dialog).toBeVisible();
 
     const create = dialog.getByRole('button', { name: 'Create Channel' });
     await expect(create).toBeDisabled();
-    await dialog.getByLabel('Goal').fill('Coordinate the Feature A launch');
-    await expect(create).toBeDisabled();
-
-    await dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input').check();
+    await dialog.getByLabel('Channel name').fill('Feature A launch');
     await expect(create).toBeEnabled();
     await create.click();
 
-    await expect(page.locator('.agent-dock-title')).toHaveText('Coordinate the Feature A launch');
+    await expect(page.locator('.agent-dock-title')).toHaveText('Feature A launch');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
     }).toMatchObject({
-      goal: 'Coordinate the Feature A launch',
-      agentIds: expect.arrayContaining(['built-in:core:assistant', 'built-in:tenon:general']),
+      title: 'Feature A launch',
+      agentIds: expect.arrayContaining(['built-in:core:assistant']),
     });
   });
 
-  test('escalates a DM through a goal-bearing Channel create with a system notice', async ({ page }) => {
+  test('escalates a DM through a named Channel create with a system notice', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     await page.getByRole('dialog', { name: 'Channels' }).getByRole('button', { name: /general/ }).click();
     await expect(page.locator('.agent-dock-title')).toHaveText('general');
@@ -220,16 +217,16 @@ test.describe('agent composer controls', () => {
     await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input')).toBeChecked();
     await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input')).toBeDisabled();
 
-    await dialog.getByLabel('Goal').fill('Review the release blockers');
+    await dialog.getByLabel('Channel name').fill('Release blockers');
     await dialog.getByRole('button', { name: 'Create Channel' }).click();
 
-    await expect(page.locator('.agent-dock-title')).toHaveText('Review the release blockers');
+    await expect(page.locator('.agent-dock-title')).toHaveText('Release blockers');
     await expect(page.locator('.agent-system-line')).toContainText('Created from your DM with general · DM history not shared');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
     }).toMatchObject({
-      goal: 'Review the release blockers',
+      title: 'Release blockers',
       agentIds: expect.arrayContaining(['built-in:core:assistant', 'built-in:tenon:general']),
       systemNotice: 'Created from your DM with general · DM history not shared',
     });

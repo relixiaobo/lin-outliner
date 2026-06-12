@@ -785,22 +785,20 @@ export class AgentRuntime {
 
   async createConversation(options: {
     agentIds?: string[];
+    title?: string;
     goal?: string;
     seedText?: string;
     systemNotice?: string;
   } = {}) {
     const conversationId = this.createChannelId();
     const eventState = createEmptyAgentEventReplayState();
-    const normalizedGoal = sanitizeConversationTitle(options.goal);
-    if (!normalizedGoal) {
-      throw new Error('A Channel requires a goal.');
+    const normalizedTitle = sanitizeConversationTitle(options.title ?? options.goal);
+    if (!normalizedTitle) {
+      throw new Error('A Channel requires a name.');
     }
-    const title = normalizedGoal;
+    const title = normalizedTitle;
     const extraMembers = await this.resolveAgentMemberPrincipals(options.agentIds ?? []);
     const members = mergeUniquePrincipals(this.defaultConversationMembers(), extraMembers);
-    if (channelAgentMembers(members).length < 2) {
-      throw new Error('A Channel requires at least two agents.');
-    }
     for (const member of channelAgentMembers(members)) {
       this.assertNoMentionTokenCollision(members.filter((candidate) => candidate !== member), member.agentId);
     }
@@ -847,13 +845,13 @@ export class AgentRuntime {
   /**
    * Add an agent member. On a Channel this is a real `member.added` event.
    * Canonical DMs are immutable; DM → Channel escalation is a separate creation
-   * action because a Channel needs an explicit goal.
+   * action because a DM never converts in place.
    */
   async addConversationMember(conversationId: string, agentId: string) {
     const principal = await this.requireAgentMemberPrincipal(agentId);
     const conversation = await this.ensureConversationWithId(conversationId);
     if (this.isCanonicalDmConversationId(conversationId)) {
-      throw new Error('Create a Channel from a DM requires a goal.');
+      throw new Error('Create a Channel from a DM first.');
     }
     const members = conversation.eventState.conversation?.members ?? [];
     if (!members.some((member) => samePrincipal(member, principal))) {
@@ -891,9 +889,6 @@ export class AgentRuntime {
     const principal: AgentPrincipal = { type: 'agent', agentId };
     const members = conversation.eventState.conversation?.members ?? [];
     const memberExists = members.some((member) => samePrincipal(member, principal));
-    if (memberExists && channelAgentMembers(members).filter((member) => member.agentId !== agentId).length < 2) {
-      throw new Error('A Channel requires at least two agents.');
-    }
     // Mid-run removal would yank a member whose run is live (or queued) and
     // can flip the conversation's POV selection under it — membership changes
     // wait for the Channel to settle.
@@ -1024,7 +1019,7 @@ export class AgentRuntime {
       )
     )));
     const channelRows = await Promise.all(entries
-      .filter((entry) => !!entry.goal && channelAgentMembers(entry.members).length >= 2)
+      .filter((entry) => !!entry.goal)
       .map((entry) => this.conversationListMetaFromIndexEntry(entry)));
     const listed = [...dmRows, ...channelRows];
     // Seed cross-conversation unread badges on launch: the live conversation_attention

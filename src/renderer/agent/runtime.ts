@@ -517,7 +517,7 @@ export interface LinAgentRuntimeView {
   conversationId: string | null;
   conversationTitle: string | null;
   conversationCost: number;
-  /** Conversation members (user + agents); Channel rows are goal rooms, DMs are canonical one-agent rows. */
+  /** Conversation members (user + agents); Channel rows are named rooms, DMs are canonical one-agent rows. */
   members: AgentRenderMemberView[];
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];

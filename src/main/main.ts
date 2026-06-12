@@ -2116,7 +2116,11 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
     case 'agent_create_conversation':
       return agentRuntime.createConversation({
         agentIds: Array.isArray(args.agentIds) ? args.agentIds.map(String) : undefined,
-        goal: typeof args.goal === 'string' ? args.goal : undefined,
+        title: typeof args.title === 'string'
+          ? args.title
+          : typeof args.goal === 'string'
+            ? args.goal
+            : undefined,
         seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
         systemNotice: typeof args.systemNotice === 'string' ? args.systemNotice : undefined,
       });

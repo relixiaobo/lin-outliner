@@ -144,7 +144,7 @@ describe('agent runtime conversations', () => {
     const { runtime } = await createRuntime(dataRoot);
 
     const dm = await runtime.restoreLatestConversation();
-    const channel = await runtime.createConversation({ agentIds: [GENERAL_AGENT_ID], goal: 'Initial Project' });
+    const channel = await runtime.createConversation({ title: 'Initial Project' });
     let channels = (await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId);
 
     expect(channel.conversationId).toMatch(/^lin-agent-channel-/);
@@ -156,7 +156,6 @@ describe('agent runtime conversations', () => {
       members: [
         { type: 'user', userId: 'local-user' },
         { type: 'agent', agentId: ASSISTANT_AGENT_ID },
-        { type: 'agent', agentId: GENERAL_AGENT_ID },
       ],
     });
 
@@ -173,31 +172,38 @@ describe('agent runtime conversations', () => {
     expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).conversation?.title).toBe('Tenon Assistant');
   });
 
-  test('Channel creation requires a goal and at least two agents', async () => {
+  test('Channel creation requires a name and allows optional invited agents', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
     const { runtime } = await createRuntime(dataRoot);
 
     await expectRejects(
       () => runtime.createConversation(),
-      'requires a goal',
-    );
-    await expectRejects(
-      () => runtime.createConversation({ goal: 'Solo goal' }),
-      'requires at least two agents',
+      'requires a name',
     );
     await expectRejects(
       () => runtime.createConversation({ agentIds: [GENERAL_AGENT_ID] }),
-      'requires a goal',
+      'requires a name',
     );
 
-    const channel = await runtime.createConversation({
-      agentIds: [GENERAL_AGENT_ID],
-      goal: 'Shared goal',
+    const soloChannel = await runtime.createConversation({
+      title: 'Solo channel',
     });
-    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    let state = await new AgentEventStore(dataRoot).replay(soloChannel.conversationId);
 
-    expect(state.conversation?.goal).toBe('Shared goal');
+    expect(state.conversation?.goal).toBe('Solo channel');
+    expect(state.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+    ]);
+
+    const teamChannel = await runtime.createConversation({
+      agentIds: [GENERAL_AGENT_ID],
+      title: 'Shared channel',
+    });
+    state = await new AgentEventStore(dataRoot).replay(teamChannel.conversationId);
+
+    expect(state.conversation?.goal).toBe('Shared channel');
     expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: ASSISTANT_AGENT_ID },

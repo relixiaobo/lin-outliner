@@ -745,8 +745,8 @@ export interface AgentConversation {
 }
 
 export interface AgentCreateConversationOptions {
-  agentIds: string[];
-  goal: string;
+  title: string;
+  agentIds?: string[];
   seedText?: string;
   systemNotice?: string;
 }

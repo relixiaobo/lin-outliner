@@ -310,7 +310,7 @@ describe('agent channel runtime', () => {
       sources: [conversationSource('seed-outsider')],
     });
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Review work' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Review work' });
     await runtime.sendMessage(channel.conversationId, '@reviewer please review the draft');
 
     // The peer ran as itself: member-voiced system prompt with its body, not the main prompt.
@@ -363,7 +363,7 @@ describe('agent channel runtime', () => {
       sources: [conversationSource('seed-reviewer')],
     });
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Relay test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Relay test' });
     await runtime.sendMessage(channel.conversationId, 'someone take a look');
 
     expect(calls).toHaveLength(4);
@@ -399,7 +399,7 @@ describe('agent channel runtime', () => {
     ]);
     const { runtime, sink, calls, reviewerAgentId, dataRoot } = fixture;
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Independent takes' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Independent takes' });
     await runtime.sendMessage(channel.conversationId, '@assistant @reviewer give me independent takes');
 
     expect(calls).toHaveLength(2);
@@ -456,7 +456,7 @@ describe('agent channel runtime', () => {
     const control = controlledStream(calls);
     const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Completion order' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Completion order' });
     const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently') as Promise<void>;
     while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     control.complete('reviewer', 'REVIEWER_FAST');
@@ -482,7 +482,7 @@ describe('agent channel runtime', () => {
     ]);
     const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Failure isolation' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Failure isolation' });
     await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
 
     expect(calls).toHaveLength(2);
@@ -509,7 +509,7 @@ describe('agent channel runtime', () => {
     const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
     holder.runtime = runtime;
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Queue test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Queue test' });
     holder.channelId = channel.conversationId;
     await runtime.sendMessage(channel.conversationId, 'first message');
     await holder.secondSend;
@@ -541,7 +541,7 @@ describe('agent channel runtime', () => {
     }) as StreamFn;
     const { runtime } = await createRuntime(dataRoot, localRoot, hangingStream);
 
-    const channel = await runtime.createConversation({ agentIds, goal: 'Stop cap test' });
+    const channel = await runtime.createConversation({ agentIds, title: 'Stop cap test' });
     const send = runtime.sendMessage(channel.conversationId, '@agent1 @agent2 @agent3 @agent4 @agent5 all run') as Promise<void>;
     while (streamCalls < 4) await new Promise((resolve) => setTimeout(resolve, 5));
     runtime.stopConversation(channel.conversationId);
@@ -589,7 +589,7 @@ describe('agent channel runtime', () => {
       },
     });
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Stop startup test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Stop startup test' });
     const send = runtime.sendMessage(channel.conversationId, 'first message') as Promise<void>;
     while (providerRequests < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     runtime.stopConversation(channel.conversationId);
@@ -624,7 +624,7 @@ describe('agent channel runtime', () => {
     const control = controlledStream(calls);
     const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Scoped stop' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Scoped stop' });
     const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer both run') as Promise<void>;
     while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -654,7 +654,7 @@ describe('agent channel runtime', () => {
     ]);
     const { runtime, sink, reviewerAgentId, dataRoot } = fixture;
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Delegation parent test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Delegation parent test' });
     await sendMessageApprovingAgent(runtime, channel.conversationId, '@reviewer fork a child', sink);
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -682,7 +682,7 @@ describe('agent channel runtime', () => {
     const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
     holder.runtime = runtime;
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Gate test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Gate test' });
     holder.channelId = channel.conversationId;
     await runtime.sendMessage(channel.conversationId, '@reviewer take one');
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -715,7 +715,7 @@ describe('agent channel runtime', () => {
     }) as StreamFn;
     const { runtime } = await createRuntime(dataRoot, localRoot, hangingStream);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Quit flush test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Quit flush test' });
     const hungSend = runtime.sendMessage(channel.conversationId, '@reviewer long task') as Promise<void>;
     while (streamCalls === 0) await new Promise((resolve) => setTimeout(resolve, 5));
     const secondSend = runtime.sendMessage(channel.conversationId, 'TYPED_BEFORE_QUIT message') as Promise<void>;
@@ -773,7 +773,7 @@ describe('agent channel runtime', () => {
     ]);
     const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Edit and regenerate' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Edit and regenerate' });
     await runtime.sendMessage(channel.conversationId, '@reviewer please review');
     expect(calls[0]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
 
@@ -813,7 +813,7 @@ describe('agent channel runtime', () => {
     const { runtime, reviewerAgentId, observerAgentId, dataRoot } = fixture;
     const reviewer = agentPrincipal(reviewerAgentId);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId, observerAgentId], goal: 'Fold test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId, observerAgentId], title: 'Fold test' });
     await runtime.sendMessage(channel.conversationId, '@reviewer say something');
     await runtime.removeConversationMember(channel.conversationId, reviewerAgentId);
     // Later events carry no membership change: the fold must not resurrect the
@@ -841,10 +841,10 @@ describe('agent channel runtime', () => {
     ].join('\n'));
     const impostorAgentId = projectAgentId(impostorDir, 'assistant');
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Collision test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Collision test' });
     await expect(runtime.addConversationMember(channel.conversationId, impostorAgentId))
       .rejects.toThrow('already addresses');
-    await expect(runtime.createConversation({ agentIds: [impostorAgentId], goal: 'Collision at create' }))
+    await expect(runtime.createConversation({ agentIds: [impostorAgentId], title: 'Collision at create' }))
       .rejects.toThrow('already addresses');
   });
 
@@ -872,7 +872,7 @@ describe('agent channel runtime', () => {
     const reviewer = agentPrincipal(reviewerAgentId);
 
     // Channel add → member.added; idempotent re-add appends nothing.
-    const channel = await runtime.createConversation({ agentIds: [observerAgentId], goal: 'Membership test' });
+    const channel = await runtime.createConversation({ agentIds: [observerAgentId], title: 'Membership test' });
     await runtime.addConversationMember(channel.conversationId, reviewerAgentId);
     await runtime.addConversationMember(channel.conversationId, reviewerAgentId);
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -894,9 +894,9 @@ describe('agent channel runtime', () => {
     expect(entry?.members).not.toContainEqual(reviewer);
     expect(entry?.members).toContainEqual(agentPrincipal(observerAgentId));
 
-    // DM never converts: Channel escalation is a separate goal-bearing create action.
+    // DM never converts: Channel escalation is a separate named create action.
     const dm = await runtime.restoreLatestConversation();
-    await expect(runtime.addConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('requires a goal');
+    await expect(runtime.addConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('DM');
     const dmState = await new AgentEventStore(dataRoot).replay(dm.conversationId);
     expect(dmState.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
@@ -906,8 +906,13 @@ describe('agent channel runtime', () => {
     // Guards: the coordinator and DM rosters are immovable.
     await expect(runtime.removeConversationMember(channel.conversationId, MAIN_AGENT_ID)).rejects.toThrow('coordinator');
     await expect(runtime.removeConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('DM');
-    const minimumChannel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Minimum membership test' });
-    await expect(runtime.removeConversationMember(minimumChannel.conversationId, reviewerAgentId)).rejects.toThrow('at least two agents');
+    const singleInviteChannel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Single invite removal test' });
+    await runtime.removeConversationMember(singleInviteChannel.conversationId, reviewerAgentId);
+    const singleInviteState = await new AgentEventStore(dataRoot).replay(singleInviteChannel.conversationId);
+    expect(singleInviteState.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      agentPrincipal(MAIN_AGENT_ID),
+    ]);
     await expect(runtime.addConversationMember(channel.conversationId, 'project:nope:ghost')).rejects.toThrow('not found');
   });
 });

@@ -1646,9 +1646,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_create_conversation') {
           const agentIds = Array.isArray(args.agentIds) ? args.agentIds.map(String) : [];
-          const goal = String(args.goal ?? '').trim();
-          if (!goal) throw new Error('A Channel requires a goal.');
-          if (new Set(agentIds).size < 2) throw new Error('A Channel requires at least two agents.');
+          const title = String(args.title ?? args.goal ?? '').trim();
+          if (!title) throw new Error('A Channel requires a name.');
           const conversationId = `mock-agent-channel-created-${++sequence}`;
           const members = [
             { type: 'user', userId: 'local-user' },
@@ -1656,9 +1655,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ];
           agentConversations.push({
             id: conversationId,
-            title: goal,
+            title,
             members,
-            goal,
+            goal: title,
             createdAt: now,
             updatedAt: now += 1,
             messageCount: (typeof args.systemNotice === 'string' ? 1 : 0) + (typeof args.seedText === 'string' ? 1 : 0),
@@ -1673,7 +1672,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({
             conversationId,
             renderProjection: agentProjection(conversationId, {
-              title: goal,
+              title,
               agentIds: Array.from(new Set(agentIds)),
               systemNotice: typeof args.systemNotice === 'string' ? args.systemNotice : undefined,
               seedText: typeof args.seedText === 'string' ? args.seedText : undefined,

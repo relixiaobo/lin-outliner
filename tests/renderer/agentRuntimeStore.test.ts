@@ -819,7 +819,7 @@ describe('agent runtime store', () => {
 
     await store.getSnapshot().newConversation({
       agentIds: ['built-in:tenon:assistant', 'built-in:tenon:general'],
-      goal: 'New channel',
+      title: 'New channel',
     });
 
     expect(fake.calls.createConversation).toHaveLength(1);
@@ -1041,7 +1041,7 @@ describe('agent runtime store', () => {
 
     await store.getSnapshot().newConversation({
       agentIds: ['built-in:tenon:assistant', 'built-in:tenon:general'],
-      goal: 'New channel',
+      title: 'New channel',
     });
     restore.resolve(restored);
     await flushMicrotasks();

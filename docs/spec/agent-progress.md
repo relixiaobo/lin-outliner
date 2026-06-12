@@ -169,7 +169,7 @@ truth.
     UI and runtime-owned consolidation (Dream), not by a model-visible CRUD tool
 - [x] Agent M1 self-maintenance and structured input:
   - one canonical DM per configured agent, restored by find-or-create; user-created
-    Channels require at least two agents plus a goal
+    Channels require a name and can invite agents now or later
   - `ask_user_question` tool with pending question persistence and renderer
     resolution
   - `runtime_status`, `config`, `doctor`, and `dream` tools with
@@ -181,7 +181,7 @@ truth.
     conversation index (membership events only — ordinary event actors never
     resurrect a removed member); `addressedTo` persisted on user messages AND on
     handing-off assistant replies
-  - Channel creation with a member set + goal seed; DM escalation opens New
+  - Channel creation with a name and optional invited agents; DM escalation opens New
     Channel with the source DM agent preselected and records a system provenance
     line without sharing DM history; coordinator and DM members are immovable;
     member removal blocked while a round is active;
