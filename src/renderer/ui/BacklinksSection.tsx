@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type MouseEvent,
 } from 'react';
@@ -22,7 +21,7 @@ import { replaceRichTextRangeWithInlineRef } from './editor/richTextCodec';
 import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
 import { RowMarker } from './outliner/RowMarker';
 import { useT } from '../i18n/I18nProvider';
-import type { DocumentIndex, ReferencesSectionRequest } from '../state/document';
+import type { DocumentIndex } from '../state/document';
 import type { CommandRunner, NavigateRootOptions } from './shared';
 import { wantsNewPaneFromClick } from './shared';
 
@@ -32,8 +31,6 @@ interface BacklinksSectionProps {
   summary: ReferenceSummary;
   run: CommandRunner;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
-  openRequest: ReferencesSectionRequest | null;
-  onOpenRequestConsumed: (request: ReferencesSectionRequest) => void;
 }
 
 interface ReferenceRow {
@@ -45,8 +42,7 @@ interface ReferenceRow {
 export function BacklinksSection(props: BacklinksSectionProps) {
   const t = useT();
   const labels = t.nodePanel.references;
-  const { index, onOpenRequestConsumed, onRoot, openRequest, run, targetId } = props;
-  const sectionRef = useRef<HTMLElement | null>(null);
+  const { index, onRoot, run, targetId } = props;
   const [expanded, setExpanded] = useState(false);
   const sources = props.summary.byTarget.get(targetId) ?? [];
   const counts = props.summary.countsByTarget.get(targetId);
@@ -60,16 +56,6 @@ export function BacklinksSection(props: BacklinksSectionProps) {
   useEffect(() => {
     setExpanded(false);
   }, [targetId]);
-
-  useEffect(() => {
-    const request = openRequest;
-    if (!request || request.nodeId !== targetId) return;
-    setExpanded(true);
-    window.requestAnimationFrame(() => {
-      sectionRef.current?.scrollIntoView({ block: 'nearest' });
-    });
-    onOpenRequestConsumed(request);
-  }, [onOpenRequestConsumed, openRequest, targetId]);
 
   const openSource = useCallback((event: MouseEvent, sourceNodeId: NodeId) => {
     onRoot(sourceNodeId, { focus: false, newPane: wantsNewPaneFromClick(event) });
@@ -101,7 +87,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
     : labels.count({ total: totalCount, linked: totalCount, unlinked: 0 });
 
   return (
-    <section className="backlinks-section" ref={sectionRef} aria-label={labels.title}>
+    <section className="backlinks-section" aria-label={labels.title}>
       <button
         type="button"
         className="backlinks-section-toggle"

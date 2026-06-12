@@ -17,8 +17,8 @@ async function emitCurrentProjection(page: Page) {
   });
 }
 
-async function createReferencesFixture(page: Page) {
-  await page.evaluate(async (fixtureIds) => {
+async function createReferencesFixture(page: Page): Promise<string> {
+  const referenceId = await page.evaluate(async (fixtureIds) => {
     const win = window as Window & {
       lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
     };
@@ -31,7 +31,7 @@ async function createReferencesFixture(page: Page) {
         }],
       },
     });
-    await win.lin?.invoke('add_reference', {
+    const referenceResult = await win.lin?.invoke<{ focus?: { nodeId: string } }>('add_reference', {
       parentId: fixtureIds.today,
       targetId: fixtureIds.alpha,
       index: null,
@@ -41,20 +41,25 @@ async function createReferencesFixture(page: Page) {
       targetNodeId: fixtureIds.alpha,
       id: 'reference-value-alpha',
     });
+    return referenceResult?.focus?.nodeId ?? '';
   }, ids);
+  if (!referenceId) throw new Error('reference fixture did not create a reference row');
   await emitCurrentProjection(page);
+  return referenceId;
 }
 
 test('NodePanel references footer shows linked and unlinked sources, and Link converts a mention', async ({ page }) => {
   await openMockedApp(page, { referenceField: true });
   await createReferencesFixture(page);
 
-  await expect(row(page, ids.alpha).locator('.row-reference-counter')).toHaveText('3');
-  await row(page, ids.alpha).locator('.row-reference-counter').click();
+  await expect(page.locator('.row-reference-counter')).toHaveCount(0);
+  await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
 
   const section = page.locator('.backlinks-section');
-  await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'true');
   await expect(section.locator('.backlinks-section-count')).toHaveText('3 references');
+  await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await section.locator('.backlinks-section-toggle').click();
+  await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'true');
   await expect(section).toContainText('Mentioned in...');
   await expect(section).toContainText('Appears as Related in...');
   await expect(section).toContainText('Unlinked mentions');
@@ -70,4 +75,15 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   }).toBe(ids.alpha);
   await expect(section.getByRole('button', { name: 'Link', exact: true })).toHaveCount(0);
   await expect(section.locator('.backlinks-section-count')).toHaveText('3 references');
+});
+
+test('opening a reference row renders the target node page, not the reference shell', async ({ page }) => {
+  await openMockedApp(page, { referenceField: true });
+  const referenceId = await createReferencesFixture(page);
+
+  await row(page, referenceId).getByRole('button', { name: 'Open' }).click();
+
+  await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+  await expect(page.locator('.backlinks-section-count')).toHaveText('3 references');
+  await expect(page.locator('.row-reference-counter')).toHaveCount(0);
 });

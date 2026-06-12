@@ -46,7 +46,6 @@ interface OutlinerViewProps {
   // Empty-state placeholder for the trailing draft row (definition template /
   // options blocks). Only the draft row receives it.
   draftPlaceholder?: string;
-  referenceCounts?: ReadonlyMap<NodeId, number>;
 }
 
 export function OutlinerView(props: OutlinerViewProps) {
@@ -179,8 +178,6 @@ export function OutlinerView(props: OutlinerViewProps) {
             draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft ? props.draftPlaceholder : undefined}
             fieldValue={props.fieldValue}
-            referenceCount={referenceCountForRow(props.index, row.id, props.referenceCounts)}
-            referenceCounts={props.referenceCounts}
             // An already-selected (not focused) reference value row reuses the
             // legacy read-only option picker; keep feeding it optionField +
             // onSelectOption derived from the field-value context.
@@ -191,15 +188,4 @@ export function OutlinerView(props: OutlinerViewProps) {
       />
     </>
   );
-}
-
-function referenceCountForRow(
-  index: DocumentIndex,
-  nodeId: NodeId,
-  referenceCounts: ReadonlyMap<NodeId, number> | undefined,
-): number {
-  if (!referenceCounts) return 0;
-  const node = index.byId.get(nodeId);
-  const targetId = node?.type === 'reference' && node.targetId ? node.targetId : nodeId;
-  return referenceCounts.get(targetId) ?? 0;
 }

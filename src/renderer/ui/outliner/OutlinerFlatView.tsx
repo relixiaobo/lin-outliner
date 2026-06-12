@@ -135,7 +135,6 @@ interface OutlinerFlatViewProps {
   // The panel's scroll container (NodePanel's <main>). Windowing measures the
   // flat list's offset within it to decide which rows fall in the viewport.
   scrollParentRef: RefObject<HTMLElement | null>;
-  referenceCounts?: ReadonlyMap<NodeId, number>;
 }
 
 // Multi-parent trailing-draft id minter. Mirrors useTrailingDraftId, but a single
@@ -501,8 +500,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             draft={row.draft}
             draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
-            referenceCount={referenceCountForRow(index, row.nodeId, props.referenceCounts)}
-            referenceCounts={props.referenceCounts}
             flat
           />
         );
@@ -529,15 +526,4 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       })}
     </div>
   );
-}
-
-function referenceCountForRow(
-  index: DocumentIndex,
-  nodeId: NodeId,
-  referenceCounts: ReadonlyMap<NodeId, number> | undefined,
-): number {
-  if (!referenceCounts) return 0;
-  const node = index.byId.get(nodeId);
-  const targetId = node?.type === 'reference' && node.targetId ? node.targetId : nodeId;
-  return referenceCounts.get(targetId) ?? 0;
 }

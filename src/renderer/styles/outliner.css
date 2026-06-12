@@ -1254,30 +1254,6 @@
   color: var(--text);
 }
 
-.row-reference-counter {
-  display: inline-flex;
-  height: 20px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-1);
-  margin-left: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  font-weight: 600;
-  line-height: var(--line-ui-2xs);
-  padding: 0;
-  user-select: none;
-  transition: color var(--motion-fast);
-}
-
-.row-reference-counter:hover,
-.row-reference-counter:active {
-  color: var(--text-secondary);
-}
-
 .field-value-node-preview.done {
   color: var(--muted);
   text-decoration: line-through;

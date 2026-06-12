@@ -207,11 +207,9 @@ action that replaces only the matched text range with an inline node reference
 through the normal rich-text patch command; description mentions are listed but
 not linkable.
 
-Rows with at least one linked reference or unlinked mention show a compact
-reference counter in row chrome. The counter uses the same summary as the footer,
-counts linked plus unlinked sources, and opens the target node's footer section.
-Cmd/Ctrl-click follows the normal reference-navigation rule and opens the target
-in a new pane.
+Rows do not show inline backlink counters. Counts live in the NodePanel footer
+only, where the References section uses the same summary as the source rows and
+counts linked plus unlinked sources.
 
 ## Selection Mode Matrix
 
