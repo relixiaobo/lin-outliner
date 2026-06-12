@@ -871,7 +871,7 @@
   left: var(--row-selection-start);
   z-index: 0;
   border: 1px solid var(--row-selection-border);
-  border-left-width: 2px;
+  border-left-width: 4px;
   border-radius: var(--radius-row);
   background: var(--row-selection-frame-bg);
   content: "";

@@ -194,15 +194,15 @@ Reference field-value sources use the reference marker; ordinary linked and
 unlinked source rows use the normal content bullet.
 Each source row renders a reference frame behind its bullet, wrapped title,
 description, and trailing action slot; the frame uses the same left and right
-range as the normal node selection affordance.
+range as the normal node selection affordance and a heavier left quote rule.
 
 Source rows show the source node's full title text with normal wrapping, not a
 single-line ellipsis. If the source node has a description, the description is
 shown as secondary wrapped text under the title, aligned to the same text column.
 Unlinked content mentions keep their `Link` action in the row's independent
-trailing action slot as a lightweight link-colored button with no default
-material background; the title wraps before the action slot so long source text
-remains readable.
+trailing action slot as a lightweight link-colored button with a transparent
+hit area and no default material background; the title wraps before the action
+slot so long source text remains readable.
 
 Linked references include:
 

@@ -118,6 +118,7 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
       linkHeight: linkRect.height,
       linkBackgroundColor: linkStyle.backgroundColor,
       linkBoxShadow: linkStyle.boxShadow,
+      linkPaddingRight: cssLength(linkStyle.paddingRight),
       sourceMarkerLeft: sourceMarker.getBoundingClientRect().left,
       sourceTitleHeight: titleRect.height,
       sourceTitleLeft: titleRect.left,
@@ -133,7 +134,7 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(alignment.frameContent).not.toBe('none');
   expect(Math.abs(alignment.frameLeft - alignment.rowSelectionStart)).toBeLessThanOrEqual(1);
   expect(Math.abs(alignment.frameRight - alignment.rowEdge)).toBeLessThanOrEqual(1);
-  expect(alignment.frameBorderLeftWidth).toBeGreaterThan(1);
+  expect(alignment.frameBorderLeftWidth).toBeGreaterThanOrEqual(4);
   expect(alignment.frameBackgroundColor).not.toBe('rgba(0, 0, 0, 0)');
   expect(alignment.sourceTitleWhiteSpace).toBe('normal');
   expect(alignment.sourceTitleHeight).toBeGreaterThan(alignment.sourceTitleLineHeight * 1.5);
@@ -144,6 +145,7 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(alignment.linkHeight).toBeGreaterThan(18);
   expect(alignment.linkBackgroundColor).toBe('rgba(0, 0, 0, 0)');
   expect(alignment.linkBoxShadow).toBe('none');
+  expect(alignment.linkPaddingRight).toBeGreaterThanOrEqual(8);
 
   const linkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Mentioned in...' }).first();
   const linkedRow = linkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();

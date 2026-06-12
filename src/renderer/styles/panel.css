@@ -442,7 +442,7 @@
 
 .backlinks-link-action {
   display: inline-flex;
-  min-width: 1.75rem;
+  min-width: 3rem;
   height: var(--line-content);
   align-items: center;
   justify-content: center;
@@ -452,7 +452,7 @@
   color: var(--link);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  padding: 0 var(--space-1);
+  padding: 0 var(--space-4);
   white-space: nowrap;
   opacity: 0.86;
   transition:
