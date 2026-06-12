@@ -183,6 +183,7 @@ import {
   createAgentDefinitionFile,
   deleteAgentDefinitionFile,
   duplicateAgentDefinitionFile,
+  isAgentDefinitionWritable,
   updateAgentDefinitionFile,
 } from './agentAuthoring';
 import { AgentRunLedgerWriter, fromPiAssistantContent } from './agentRunLedger';
@@ -1312,7 +1313,12 @@ export class AgentRuntime {
 
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
-    return definitions.map((definition) => ({ ...definition, agentId: agentDefinitionAgentId(definition) }));
+    const localRoot = this.authoringLocalRoot();
+    return definitions.map((definition) => ({
+      ...definition,
+      agentId: agentDefinitionAgentId(definition),
+      writable: isAgentDefinitionWritable(definition, localRoot),
+    }));
   }
 
   // The raw (agentId-less) scan, shared by the settings list and the

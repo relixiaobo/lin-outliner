@@ -1,18 +1,38 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  createAgentDefinitionFile,
-  deleteAgentDefinitionFile,
-  duplicateAgentDefinitionFile,
-  normalizeAgentSlug,
-  updateAgentDefinitionFile,
-} from '../../src/main/agentAuthoring';
 import { serializeAgentMarkdown } from '../../src/core/agentMarkdown';
-import { createAgentDefinition, parseAgentMarkdown } from '../../src/main/agentDelegation';
 import type { AgentAuthoringInput } from '../../src/core/agentTypes';
 import type { AgentDefinition } from '../../src/core/types';
+
+mock.module('electron', () => ({
+  app: {
+    getPath: () => '/tmp',
+  },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({
+      clearStorageData: async () => undefined,
+    }),
+  },
+}));
+
+type AgentAuthoringModule = typeof import('../../src/main/agentAuthoring');
+type AgentDelegationModule = typeof import('../../src/main/agentDelegation');
+
+let createAgentDefinitionFile: AgentAuthoringModule['createAgentDefinitionFile'];
+let deleteAgentDefinitionFile: AgentAuthoringModule['deleteAgentDefinitionFile'];
+let duplicateAgentDefinitionFile: AgentAuthoringModule['duplicateAgentDefinitionFile'];
+let isAgentDefinitionWritable: AgentAuthoringModule['isAgentDefinitionWritable'];
+let normalizeAgentSlug: AgentAuthoringModule['normalizeAgentSlug'];
+let updateAgentDefinitionFile: AgentAuthoringModule['updateAgentDefinitionFile'];
+let createAgentDefinition: AgentDelegationModule['createAgentDefinition'];
+let parseAgentMarkdown: AgentDelegationModule['parseAgentMarkdown'];
 
 const SAMPLE: AgentAuthoringInput = {
   name: 'My Helper',
@@ -26,6 +46,21 @@ const SAMPLE: AgentAuthoringInput = {
   skills: ['research'],
   background: true,
 };
+
+beforeAll(async () => {
+  const [authoring, delegation] = await Promise.all([
+    import('../../src/main/agentAuthoring'),
+    import('../../src/main/agentDelegation'),
+  ]);
+  createAgentDefinitionFile = authoring.createAgentDefinitionFile;
+  deleteAgentDefinitionFile = authoring.deleteAgentDefinitionFile;
+  duplicateAgentDefinitionFile = authoring.duplicateAgentDefinitionFile;
+  isAgentDefinitionWritable = authoring.isAgentDefinitionWritable;
+  normalizeAgentSlug = authoring.normalizeAgentSlug;
+  updateAgentDefinitionFile = authoring.updateAgentDefinitionFile;
+  createAgentDefinition = delegation.createAgentDefinition;
+  parseAgentMarkdown = delegation.parseAgentMarkdown;
+});
 
 // Round-trip helper: parse a written AGENT.md into a definition the way the
 // registry loader does.
@@ -132,6 +167,22 @@ describe('agent authoring file operations', () => {
     };
     await deleteAgentDefinitionFile({ existing, localRoot: root });
     await expect(stat(created.rootDir)).rejects.toThrow();
+  });
+
+  test('isAgentDefinitionWritable mirrors the authoring containment boundary', async () => {
+    const created = await createAgentDefinitionFile({ input: SAMPLE, storage: 'project', localRoot: root });
+    const writable: AgentDefinition = {
+      name: 'my-helper', source: 'project', rootDir: created.rootDir, agentFile: created.agentFile,
+      description: SAMPLE.description, body: SAMPLE.body,
+    };
+    const external: AgentDefinition = {
+      ...writable,
+      source: 'user',
+      rootDir: path.join(root, '..', 'shared-agents', 'external-reviewer'),
+      agentFile: path.join(root, '..', 'shared-agents', 'external-reviewer', 'AGENT.md'),
+    };
+    expect(isAgentDefinitionWritable(writable, root)).toBe(true);
+    expect(isAgentDefinitionWritable(external, root)).toBe(false);
   });
 
   test('duplicateAgentDefinitionFile copies a built-in into an editable user copy', async () => {

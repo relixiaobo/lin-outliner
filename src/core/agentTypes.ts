@@ -83,6 +83,8 @@ export interface AgentAuthoringInput {
  */
 export interface AgentDefinitionView extends AgentDefinition {
   agentId: string;
+  /** Whether settings can update/delete this exact definition in place. */
+  writable: boolean;
 }
 
 export interface AgentAttachmentInputBase {

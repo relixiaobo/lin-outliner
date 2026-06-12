@@ -108,6 +108,16 @@ export async function duplicateAgentDefinitionFile(opts: {
   return createAgentDefinitionFile({ input, storage: opts.storage, localRoot: opts.localRoot });
 }
 
+export function isAgentDefinitionWritable(agent: AgentDefinition, localRoot: string): boolean {
+  try {
+    assertWritableSource(agent);
+    assertContainedInAgentsDir(path.resolve(agent.rootDir), localRoot);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function writeAgentFile(rootDir: string, input: AgentAuthoringInput): Promise<WrittenAgentLocation> {
   await mkdir(rootDir, { recursive: true });
   const agentFile = path.join(rootDir, AGENT_FILE_NAME);

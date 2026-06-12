@@ -43,6 +43,8 @@ interface MockFixtureOptions {
   noProvider?: boolean;
   /** Adds an armed `command` (scheduled routine) node under today for the command-node specs. */
   commandNode?: boolean;
+  /** Adds an agent loaded from an additional directory outside writable authoring roots. */
+  additionalAgentDirectoryAgent?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -417,6 +419,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         source: 'built-in',
         rootDir: 'built-in',
         agentFile: 'built-in/general',
+        writable: false,
         description: 'General-purpose focused child run for research, analysis, and execution.',
         model: 'gpt-5.4-mini',
         body: [
@@ -427,6 +430,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         maxTurns: null,
       },
     ];
+    if (options.additionalAgentDirectoryAgent) {
+      agentDefinitions.push({
+        agentId: 'user:external123:external-reviewer',
+        name: 'external-reviewer',
+        displayName: 'external-reviewer',
+        source: 'user',
+        rootDir: '/mock/shared-agents/external-reviewer',
+        agentFile: '/mock/shared-agents/external-reviewer/AGENT.md',
+        writable: false,
+        description: 'Reviews work from a shared directory.',
+        model: 'gpt-5.4-mini',
+        effort: 'high',
+        body: 'You review work from a shared directory.',
+        permissionMode: 'restricted',
+        maxTurns: null,
+      });
+    }
     const debugUsage = {
       input: 12000,
       output: 420,
