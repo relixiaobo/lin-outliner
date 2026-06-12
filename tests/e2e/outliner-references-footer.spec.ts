@@ -36,6 +36,12 @@ async function createReferencesFixture(page: Page): Promise<string> {
       targetId: fixtureIds.alpha,
       index: null,
     });
+    await win.lin?.invoke('create_node', {
+      parentId: fixtureIds.beta,
+      index: null,
+      text: 'Beta child',
+      id: 'reference-source-child',
+    });
     await win.lin?.invoke('add_field_reference', {
       fieldEntryId: fixtureIds.referencesEntry,
       targetNodeId: fixtureIds.alpha,
@@ -84,7 +90,12 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(Math.abs(alignment.sourceTitleLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
   expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleRight);
   expect(alignment.linkLeft).toBeLessThan(alignment.rowRight);
-  await expect(section.locator('.backlinks-row-open .row-chevron-shell')).toHaveCount(3);
+
+  const unlinkedRow = section.locator('.backlinks-row').filter({ hasText: 'Discuss Alpha soon' }).first();
+  await unlinkedRow.locator('.backlinks-row-open').hover();
+  await unlinkedRow.locator('.row-chevron-button').click();
+  await expect(unlinkedRow).toContainText('Beta child');
+  await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
   await expect(section.locator('.backlinks-row-chevron-slot')).toHaveCount(0);
 
   await section.getByRole('button', { name: 'Link', exact: true }).click();

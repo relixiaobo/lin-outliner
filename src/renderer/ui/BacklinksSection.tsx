@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type MouseEvent,
 } from 'react';
 import { api } from '../api/client';
@@ -21,7 +22,7 @@ import { replaceRichTextRangeWithInlineRef } from './editor/richTextCodec';
 import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
 import { RowLeading } from './outliner/RowLeading';
 import { useT } from '../i18n/I18nProvider';
-import type { DocumentIndex } from '../state/document';
+import { outlinerChildParentId, resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import type { CommandRunner, NavigateRootOptions } from './shared';
 import { wantsNewPaneFromClick } from './shared';
 
@@ -44,6 +45,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
   const labels = t.nodePanel.references;
   const { index, onRoot, run, targetId } = props;
   const [expanded, setExpanded] = useState(false);
+  const [expandedSourceIds, setExpandedSourceIds] = useState<ReadonlySet<NodeId>>(() => new Set());
   const sources = props.summary.byTarget.get(targetId) ?? [];
   const counts = props.summary.countsByTarget.get(targetId);
   const totalCount = counts?.total ?? 0;
@@ -55,6 +57,7 @@ export function BacklinksSection(props: BacklinksSectionProps) {
 
   useEffect(() => {
     setExpanded(false);
+    setExpandedSourceIds(new Set());
   }, [targetId]);
 
   const openSource = useCallback((event: MouseEvent, sourceNodeId: NodeId) => {
@@ -63,6 +66,17 @@ export function BacklinksSection(props: BacklinksSectionProps) {
   const openSourceInCurrentPane = useCallback((sourceNodeId: NodeId) => {
     onRoot(sourceNodeId, { focus: false });
   }, [onRoot]);
+  const toggleSourceExpansion = useCallback((sourceNodeId: NodeId) => {
+    setExpandedSourceIds((current) => {
+      const next = new Set(current);
+      if (next.has(sourceNodeId)) {
+        next.delete(sourceNodeId);
+      } else {
+        next.add(sourceNodeId);
+      }
+      return next;
+    });
+  }, []);
 
   const linkMention = useCallback((source: ReferenceSource) => {
     const mention = source.mention;
@@ -114,6 +128,8 @@ export function BacklinksSection(props: BacklinksSectionProps) {
               index={index}
               onOpenSource={openSource}
               onOpenSourceInCurrentPane={openSourceInCurrentPane}
+              expandedSourceIds={expandedSourceIds}
+              onToggleSourceExpansion={toggleSourceExpansion}
             />
           )}
           {groups.fieldGroups.map((group) => (
@@ -125,6 +141,8 @@ export function BacklinksSection(props: BacklinksSectionProps) {
               index={index}
               onOpenSource={openSource}
               onOpenSourceInCurrentPane={openSourceInCurrentPane}
+              expandedSourceIds={expandedSourceIds}
+              onToggleSourceExpansion={toggleSourceExpansion}
             />
           ))}
           {groups.unlinked.length > 0 && (
@@ -135,6 +153,8 @@ export function BacklinksSection(props: BacklinksSectionProps) {
               index={index}
               onOpenSource={openSource}
               onOpenSourceInCurrentPane={openSourceInCurrentPane}
+              expandedSourceIds={expandedSourceIds}
+              onToggleSourceExpansion={toggleSourceExpansion}
               onLinkMention={linkMention}
               targetTitle={index.byId.get(targetId)?.content.text.trim() || labels.untitledSource}
             />
@@ -152,6 +172,8 @@ function ReferenceGroup({
   index,
   onOpenSource,
   onOpenSourceInCurrentPane,
+  expandedSourceIds,
+  onToggleSourceExpansion,
   onLinkMention,
   targetTitle,
 }: {
@@ -161,6 +183,8 @@ function ReferenceGroup({
   index: DocumentIndex;
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
   onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
+  expandedSourceIds: ReadonlySet<NodeId>;
+  onToggleSourceExpansion: (sourceNodeId: NodeId) => void;
   onLinkMention?: (source: ReferenceSource) => void;
   targetTitle?: string;
 }) {
@@ -176,6 +200,8 @@ function ReferenceGroup({
             index={index}
             onOpenSource={onOpenSource}
             onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
+            expandedSourceIds={expandedSourceIds}
+            onToggleSourceExpansion={onToggleSourceExpansion}
             onLinkMention={onLinkMention}
             targetTitle={targetTitle}
           />
@@ -191,6 +217,8 @@ function ReferenceResultRow({
   index,
   onOpenSource,
   onOpenSourceInCurrentPane,
+  expandedSourceIds,
+  onToggleSourceExpansion,
   onLinkMention,
   targetTitle,
 }: {
@@ -199,17 +227,24 @@ function ReferenceResultRow({
   index: DocumentIndex;
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
   onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
+  expandedSourceIds: ReadonlySet<NodeId>;
+  onToggleSourceExpansion: (sourceNodeId: NodeId) => void;
   onLinkMention?: (source: ReferenceSource) => void;
   targetTitle?: string;
 }) {
-  const title = nodeTitle(row.node, labels.untitledSource);
+  const displayNode = displaySourceNode(row.node, index);
+  const openId = displayNode.id;
+  const title = nodeTitle(displayNode, labels.untitledSource);
   const breadcrumb = buildPanelBreadcrumb(row.node, index).nodes;
   const mentionLabel = row.source.mention
     ? row.source.mention.field === 'description'
       ? labels.descriptionMention
       : ''
     : '';
-  const markerVariant = row.source.kind === 'field' ? 'reference' : 'content';
+  const markerVariant = row.source.kind === 'field' || row.node.type === 'reference' ? 'reference' : 'content';
+  const childParentId = outlinerChildParentId(row.node.id, index.byId);
+  const childIds = childParentId ? index.byId.get(childParentId)?.children ?? [] : [];
+  const expanded = expandedSourceIds.has(row.node.id);
 
   return (
     <article className="backlinks-row">
@@ -224,24 +259,27 @@ function ReferenceResultRow({
         <div className="backlinks-row-open">
           <span className="backlinks-row-highlight" aria-hidden />
           <RowLeading
-            hasChildren={false}
-            expanded={false}
+            hasChildren={childIds.length > 0}
+            expanded={expanded}
             variant={markerVariant}
-            onToggleExpand={() => onOpenSourceInCurrentPane(row.node.id)}
-            onDrillDown={() => onOpenSourceInCurrentPane(row.node.id)}
+            onToggleExpand={() => {
+              if (childIds.length > 0) onToggleSourceExpansion(row.node.id);
+            }}
+            onDrillDown={() => onOpenSourceInCurrentPane(openId)}
           />
-          <button
-            type="button"
-            className="backlinks-row-main"
-            aria-label={labels.openSource({ title })}
-            onClick={(event) => onOpenSource(event, row.node.id)}
-          >
-            <span className="backlinks-row-title">{title}</span>
-            {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
+          <span className="backlinks-row-main">
+            <button
+              type="button"
+              className="backlinks-row-title-button"
+              aria-label={labels.openSource({ title })}
+              onClick={(event) => onOpenSource(event, openId)}
+            >
+              <span className="backlinks-row-title">{title}</span>
+              {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
+            </button>
             {onLinkMention && row.source.mention?.field === 'content' && !row.node.locked && (
-              <span
-                role="button"
-                tabIndex={0}
+              <button
+                type="button"
                 className="backlinks-link-action"
                 title={labels.linkMentionTitle({ title: targetTitle ?? labels.untitledSource })}
                 onClick={(event) => {
@@ -249,20 +287,115 @@ function ReferenceResultRow({
                   event.stopPropagation();
                   onLinkMention(row.source);
                 }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onLinkMention(row.source);
-                }}
               >
                 {labels.linkMention}
-              </span>
+              </button>
             )}
-          </button>
+          </span>
         </div>
       </div>
+      {expanded && childIds.length > 0 && (
+        <div className="backlinks-row-children">
+          {childIds.map((childId) => (
+            <ReferenceChildRow
+              key={childId}
+              nodeId={childId}
+              depth={1}
+              path={childParentId ? [childParentId] : [row.node.id]}
+              labels={labels}
+              index={index}
+              onOpenSource={onOpenSource}
+              onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
+              expandedSourceIds={expandedSourceIds}
+              onToggleSourceExpansion={onToggleSourceExpansion}
+            />
+          ))}
+        </div>
+      )}
     </article>
+  );
+}
+
+function ReferenceChildRow({
+  nodeId,
+  depth,
+  path,
+  labels,
+  index,
+  onOpenSource,
+  onOpenSourceInCurrentPane,
+  expandedSourceIds,
+  onToggleSourceExpansion,
+}: {
+  nodeId: NodeId;
+  depth: number;
+  path: readonly NodeId[];
+  labels: ReturnType<typeof useT>['nodePanel']['references'];
+  index: DocumentIndex;
+  onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
+  onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
+  expandedSourceIds: ReadonlySet<NodeId>;
+  onToggleSourceExpansion: (sourceNodeId: NodeId) => void;
+}) {
+  const node = index.byId.get(nodeId);
+  if (!node) return null;
+  const displayNode = displaySourceNode(node, index);
+  const openId = displayNode.id;
+  const title = nodeTitle(displayNode, labels.untitledSource);
+  const markerVariant = node.type === 'reference' ? 'reference' : 'content';
+  const childParentId = outlinerChildParentId(node.id, index.byId);
+  const cycle = childParentId ? path.includes(childParentId) : false;
+  const childIds = !childParentId || cycle ? [] : index.byId.get(childParentId)?.children ?? [];
+  const expanded = expandedSourceIds.has(node.id);
+  const style = {
+    '--backlinks-row-indent': `${depth * 28}px`,
+  } as CSSProperties;
+
+  return (
+    <>
+      <div className="backlinks-row-line" style={style}>
+        <div className="backlinks-row-open">
+          <span className="backlinks-row-highlight" aria-hidden />
+          <RowLeading
+            hasChildren={childIds.length > 0}
+            expanded={expanded}
+            variant={markerVariant}
+            onToggleExpand={() => {
+              if (childIds.length > 0) onToggleSourceExpansion(node.id);
+            }}
+            onDrillDown={() => onOpenSourceInCurrentPane(openId)}
+          />
+          <span className="backlinks-row-main">
+            <button
+              type="button"
+              className="backlinks-row-title-button"
+              aria-label={labels.openSource({ title })}
+              onClick={(event) => onOpenSource(event, openId)}
+            >
+              <span className="backlinks-row-title">{title}</span>
+            </button>
+          </span>
+        </div>
+      </div>
+      {expanded && childIds.length > 0 && (
+        <div className="backlinks-row-children">
+          {childIds.map((childId) => (
+            <ReferenceChildRow
+              key={childId}
+              nodeId={childId}
+              depth={depth + 1}
+              path={childParentId ? [...path, childParentId] : path}
+              labels={labels}
+              index={index}
+              onOpenSource={onOpenSource}
+              onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
+              expandedSourceIds={expandedSourceIds}
+              onToggleSourceExpansion={onToggleSourceExpansion}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -348,4 +481,10 @@ function fieldLabel(source: ReferenceSource, index: DocumentIndex, fieldFallback
 
 function nodeTitle(node: NodeProjection, fallback: string): string {
   return node.content.text.trim() || fallback;
+}
+
+function displaySourceNode(node: NodeProjection, index: DocumentIndex): NodeProjection {
+  if (node.type !== 'reference' || !node.targetId) return node;
+  const targetId = resolveReferenceTargetId(node.targetId, index.byId);
+  return targetId ? index.byId.get(targetId) ?? node : node;
 }
