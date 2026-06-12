@@ -470,11 +470,16 @@ Standalone agent items (not part of the program):
   `BlockNodeRow` shell **shipped with #206** (inline `<audio>`/`<video controls>`
   + `pdftoppm` thumbnail). Remaining: `serve()` needs a streaming/range response
   for large media (today's whole-file read works but is memory-heavy and breaks
-  seeking on big files).
-- **file-preview** (P2, depends on **workspace-tabs-to-single-pane** — landed
-  PR #85) — in-app file/URL preview as a new per-pane *view-state* (generalizes
-  per-pane history from a `NodeId[]` stack to a discriminated view-state stack so
-  a `file-preview` entry slots in). See `docs/plans/file-preview.md`.
+  seeking on big files) — tracked as `file-preview` PR 3 (media streaming).
+- **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every
+  file-shaped source via a source-owned `PreviewTarget` (`local-file` / `asset` /
+  `agent-payload` / `url`): one shell + renderer registry, per-source
+  main-process byte authority. Structural prerequisite: generalize per-panel
+  history to a discriminated `PanelView` (optionally a standalone PR 0
+  refactor); then PR 1 = shell + web-native basics, PDF / media streaming /
+  Office / URL reader follow as independent PRs. Media streaming (PR 3) also
+  retires the **media-types** whole-file-read limitation. See
+  `docs/plans/file-preview.md`.
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
 

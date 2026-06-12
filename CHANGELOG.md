@@ -484,6 +484,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **File preview plan refreshed (PR #209, docs-only)** — rewrites
+  `docs/plans/file-preview.md` (status stays `draft`) around a source-owned
+  `PreviewTarget` model: `local-file`, `asset`, `agent-payload`, and `url` are
+  first-class preview sources feeding one panel shell + renderer registry, with
+  per-source main-process authority (`local://` token minting, the existing
+  `asset://` jail, conversation/run-scoped payload reads, URL reader
+  extraction). Reconciles the plan with shipped reality (single-pane #85,
+  file-attachments #204/#206, `AgentPayloadRef` storage) — the remaining
+  structural prerequisite is generalizing per-panel history to a discriminated
+  `PanelView`, optionally split out as a standalone PR 0 refactor. PR sequence:
+  shell + web-native basics, then PDF, media streaming, Office, URL reader as
+  independent complete PRs. Gate (main): plan claims fact-checked against
+  `main` (panel state shape, protocols, payload surface, dependency table, PR
+  numbers all verified); one review round folded in five notes (PanelView
+  naming, agent-dock host-panel question, persisted-layout wipe note, PR 0
+  split option, spec/plan reference fixes).
+  ([#209](https://github.com/relixiaobo/lin-outliner/pull/209))
+
 - **Agent ledger hygiene (PR #205)** — drops dead conversation-ledger event
   families that had no replay handler and no real reader (`task.created` /
   `task.completed`, `config.change`, `review_card.created`, `metric.recorded`),
