@@ -333,6 +333,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent authoring cleanups (PR #213, codex-4)** — closes the #167-review-gate
+  residue. Agents loaded from `additionalAgentDirectories` now render **read-only**
+  in the editor (Duplicate only, no Save/Delete) since every write to them is
+  rejected by the main-layer containment guard anyway — `isAgentDefinitionWritable`
+  (`not built-in AND contained in a writable agents dir`) drives the view's
+  `readOnly`. An out-of-catalog `effort` value now coerces to "Inherit" in the Form
+  `<select>` instead of a browser-auto-selected catalog option. A new core guard
+  test runs the real `filterAgentTools` over the renderer `TOOL_CATALOG` so the two
+  can't silently drift. (The fourth cleanup, AGENT.md parser consolidation, already
+  shipped in #184.) Gate (main): typecheck + test:core (923 pass / 0 fail) +
+  test:renderer (421 pass / 0 fail) green; no styling change (B-series N/A); spec
+  `agent-delegation-runtime.md` synced in-PR.
+
 - **Agent permission safety modes (PR #193)** — the app-level
   `permissionMode: trusted|restricted` is replaced by a global three-level
   `AgentSafetyMode` (`ask_first` / `balanced` (default) / `full_access`) that

@@ -22,22 +22,25 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/tana-style-references` | PR #208 ready — awaiting main gate |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-authoring-cleanups` | PR #213 ready — awaiting main gate |
+| Codex 3 | `lin-outliner-codex-3/` | `codex-3/tana-style-references` | PR #208 changes requested — B1 perf fix |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-**Two PRs are awaiting the main gate** — the only work in flight (2026-06-12):
+**One PR is in flight (2026-06-12):**
 
-- **#208 — Tana-style references experience** (codex-3, `codex-3/tana-style-references`),
-  marked ready. *(Distinct from the held `agent-import-skill` Tana import — this is the
-  references display/interaction experience.)*
-- **#213 — Agent authoring cleanups** (codex-4, `codex-4/agent-authoring-cleanups`),
-  marked ready: the #167-review-gate cleanups (b) agents from `additionalAgentDirectories`
-  render read-only · (c) out-of-catalog `effort` coercion · (d) a compile-time
-  `TOOL_CATALOG` ↔ `filterAgentTools` guard. (Cleanup (a), the AGENT.md parser
-  consolidation, already shipped in #184.)
+- **#208 — Tana-style references experience** (codex-3, `codex-3/tana-style-references`)
+  — **gated NO-GO at the main review**: one verified perf blocker (B1 — sorting by the
+  new References field rebuilds the whole-document backlink graph per comparison and
+  bypasses the PR's own `WeakMap` summary cache; violates the plan's mitigation + A9),
+  plus four non-blocking nits. Findings posted to the PR; codex-3 to thread the cached
+  summary into `systemFields`/the sort path and re-request review. Matches the
+  `/code-review ultra` tier (large + core) — recommend a cloud pass alongside the fix.
+  *(Distinct from the held `agent-import-skill` Tana import — this is the references
+  display/interaction experience.)*
+
+**Just merged:** #213 Agent authoring cleanups (codex-4) — see Recently completed.
 
 **Carried verification TODO** (merged, needs a one-time manual check):
 
@@ -289,13 +292,12 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-authoring follow-ups** (P2, *fast-track*) — the plan itself is **done** (core shipped
-  in #167; archived at `docs/plans/archive/agent-authoring.md`). Of the four #167-review-gate
-  cleanups: **(a) consolidate the two AGENT.md parsers** (`core/agentMarkdown.ts` vs the registry
-  loader's copy) **shipped in #184** (run unification — the parser is now single-source); **(b)
-  additionalAgentDirectories agents render read-only · (c) out-of-catalog `effort` coercion · (d)
-  `TOOL_CATALOG` ↔ `filterAgentTools` guard** are **in flight as PR #213** (codex-4, ready —
-  awaiting the main gate). Bullet closes when #213 merges.
+- **agent-authoring follow-ups** (P2, *fast-track*) — **DONE; all four #167-review-gate
+  cleanups shipped.** (a) AGENT.md parser consolidation in **#184** (run unification —
+  single-source parser); (b) `additionalAgentDirectories` agents render read-only · (c)
+  out-of-catalog `effort` coercion · (d) `TOOL_CATALOG` ↔ `filterAgentTools` guard in
+  **#213** (codex-4). The plan itself was already done (core #167; archived at
+  `docs/plans/archive/agent-authoring.md`). No follow-up remains.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
@@ -528,6 +530,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **Agent authoring cleanups** (codex-4, PR #213, fast-track) — closes the
+  #167-review-gate residue (the agent-authoring follow-up bullet is now fully
+  done; cleanup (a) had shipped in #184). (b) Agents loaded from
+  `additionalAgentDirectories` render **read-only** in the editor (Duplicate only,
+  no Save/Delete) — `isAgentDefinitionWritable` (not-built-in AND contained in a
+  writable agents dir) drives the view's `readOnly`; this is cosmetic hardening
+  over the real enforcement (`updateAgentDefinitionFile`/`deleteAgentDefinitionFile`
+  independently re-assert the containment guard, so there is no UI-only read-only
+  with an open IPC write path). (c) An out-of-catalog `effort` value coerces to
+  "Inherit" in the Form `<select>` instead of a browser-auto-selected option. (d) A
+  new core guard test runs the real `filterAgentTools` over the renderer
+  `TOOL_CATALOG` so the two can't silently drift. Gate (main): typecheck +
+  test:core (923 pass / 2 skip / 0 fail) + test:renderer (421 pass / 0 fail) green,
+  run on the branch HEAD in an isolated worktree; no styling change (B-series N/A);
+  spec `agent-delegation-runtime.md` synced in-PR. One non-blocking nit (an
+  unreachable path-heuristic fallback in `isWritableAgentDefinition`, now dead since
+  `writable` is a required field) left for later cleanup.
 
 - **File preview panel** (codex-4, PR #210, plan-track) — workspace panes
   generalize to a `PanelView` union so the outliner and a new `file-preview` view
