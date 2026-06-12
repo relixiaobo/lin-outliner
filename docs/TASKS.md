@@ -20,28 +20,23 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
-| Codex | `lin-outliner-codex/` | — | idle (M3-B cross-agent memory + isolation gate merged, PR #200) |
+| Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (agent-ledger-hygiene merged, PR #205) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (file-attachments feature merged, PR #206) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
-**2026-06-12 batch (round 3, PM-dispatched)** — Codex lanes only; cc / cc-2 /
-anti deliberately unscheduled. Plan-track lanes start with a one-pager per the
-flow; merge order owned by main.
-
-| Lane | Agent | Work | Track |
-|---|---|---|---|
-| 1 | codex | **UX Feature A** — roster-as-DM-list + New Channel flow + DM→Channel escalation verb (`agent-conversation-entry-identity-ux` Feature A; UI + arbitrary-agent canonical-DM runtime in ONE PR). Takes the `agentRuntime.ts` slot after #202. The lane-2 hygiene PR (#205) has merged — rebase over its append-site deletions before continuing. | plan-track |
-
-Lanes 2 (`agent-ledger-hygiene`, codex-2) and 3 (file-attachments, codex-3) of
-the 2026-06-12 round-3 batch **merged** as PR #205 and PR #206 — see Recently
-completed.
+**2026-06-12 batch (round 3, PM-dispatched)** — all three Codex lanes **merged**:
+Feature A (codex, PR #207), `agent-ledger-hygiene` (codex-2, PR #205), and
+file-attachments (codex-3, PR #206) — see Recently completed. cc / cc-2 / anti
+were deliberately unscheduled.
 
 Relay: **Realignment PR-4** (retrieval, unblocked by #200) slots into the next
 free lane. **M3-C** (per-agent POV inspector) follows Feature A. UX plan
-features B/C/D/E shipped (#201/#203); A is the last open feature.
+features B/D shipped (#201/#203) and A shipped (#207); the
+`agent-conversation-entry-identity-ux` plan stays `in-progress` pending Feature C
+(model-on-profile / global-provider trap) — reconcile/archive once C lands.
 `agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently
 completed.
 
@@ -668,6 +663,25 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **agent-conversation-entry-identity-ux Feature A** (codex, PR #207, plan-track)
+  — Roster-as-DM-list + named Channels + DM→Channel escalation. Canonical DM
+  generalized from the built-in assistant to one immutable find-or-create DM per
+  configured agent (`{user, agentId}`); switcher splits into Direct Messages
+  (full roster) and Channels (named rooms, avatar stack, unread). New Channel is
+  Slack-shaped: required name, optional invited agents, optional opening message;
+  the coordinator is an implicit runtime participant, not a locked invitee. DM
+  escalation preselects the source agent, writes a system provenance line, and
+  keeps the private DM transcript private. Each agent's DM runs **as that agent**
+  (model/tools/skills/memory bind to the identity) under a DM-specific 1:1 system
+  prompt; DMs are non-renamable/deletable/membership-editable. Members popover for
+  channel add/remove (coordinator + in-flight guards). Conversation index gained
+  list-projection fields (roster, unread, count, latest snippet + timestamp) so the
+  switcher stays index-only — no per-conversation replay. Gate (main): typecheck +
+  test:core (910) + test:renderer (418) + agent-composer e2e + light/dark visual
+  verified. Review ran one fix round (DM-specific prompt, index-stored snippet, doc
+  reconciliation); post-merge cleanup dropped a redundant `tool_result.replaced`
+  list-summary recompute. Plan stays `in-progress` (Feature C still open).
 
 - **file-attachments** (codex-3, PR #206, plan-track) — Completes the feature on
   the #204 protocol slice: `create_attachment_node` end-to-end (core + Loro

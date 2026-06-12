@@ -1874,10 +1874,15 @@ function conversationIndexEntryHasCurrentShape(entry: AgentConversationIndexEntr
     && Object.prototype.hasOwnProperty.call(entry, 'lastMessageAt');
 }
 
+// The list snippet is derived from the active path's latest user/assistant
+// message, so only events that can change which message that is — or its text —
+// warrant a replay-backed recompute. `tool_result.replaced` is deliberately
+// excluded: it only ever rewrites a `toolResult` record (never a user/assistant
+// message), so recomputing on it would replay the log on the run hot path
+// (microcompaction slims tool output repeatedly) only to land on the same snippet.
 function shouldRecomputeConversationListSummary(event: AgentEvent): boolean {
   return event.type === 'branch.selected'
-    || event.type === 'user_message.edited'
-    || event.type === 'tool_result.replaced';
+    || event.type === 'user_message.edited';
 }
 
 function conversationListSummaryFromReplayState(

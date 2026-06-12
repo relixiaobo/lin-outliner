@@ -12,6 +12,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent conversation UX: roster DMs + named Channels (PR #207)** — Feature A of
+  the agent-conversation UX plan. Generalizes the canonical DM from the single
+  built-in assistant to **one immutable find-or-create DM per configured agent**
+  (keyed by `{user, agentId}`); the switcher splits into **Direct Messages** (the
+  agent roster, including never-chatted agents) and **Channels** (named rooms with
+  a member avatar stack + unread state). New Channel follows the Slack-shaped flow
+  — name the room first; invited agents and the opening message are both optional,
+  and the coordinator stays an implicit runtime participant rather than a locked
+  invitee. DM → Channel escalation ("Create a Channel with <Agent>…") preselects
+  the source agent, focuses the name field, writes a system provenance line, and
+  never shares the private DM transcript. Each agent's DM **runs as that agent**
+  (capability binds to the identity — its model, tools, skills, memory) under a
+  DM-specific 1:1 system prompt distinct from the Channel-peer prompt; canonical
+  DMs cannot be renamed, deleted, or membership-edited. Channel member management
+  moved into a **Members popover** (coordinator + in-flight-run removal guards).
+  The conversation index now carries list-projection fields (member roster, unread
+  count, message count, latest visible snippet + timestamp) so opening the switcher
+  stays index-only — no per-conversation log replay. The runtime command contract
+  prefers `title` (legacy `goal` kept internally for existing event/index storage).
+  Gate (main): typecheck + test:core (910) + test:renderer (418) + agent-composer
+  e2e (DM roster / named-Channel create / DM escalation / anchored geometry) green,
+  light + dark visual verification of the switcher and New Channel dialog. Review
+  ran one fix round (DM-specific prompt, index-stored snippet, doc reconciliation);
+  a post-merge cleanup dropped a redundant `tool_result.replaced` list-summary
+  recompute (it can never change a user/assistant snippet).
+
 - **File attachments (PR #206)** — completes the `file-attachments` feature on
   top of the #204 protocol slice. `create_attachment_node` is wired end-to-end
   (core command + Loro persistence → document service → renderer API → `/attachment`
