@@ -23,6 +23,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (file-attachments feature merged, PR #206) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (file preview panel merged, PR #210) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
@@ -43,6 +44,10 @@ all features shipped: B/C/E (#201, including the model-chip/global-provider-trap
 fix), D (#203), A (#207).
 `agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently
 completed.
+
+Relay: **File preview panel** **merged as PR #210** (codex-4) — see Recently
+completed; the `file-preview` plan stays `in-progress` (PDF / media / Office /
+URL renderers remain open).
 
 - `ime-composition-focus-steal` (cc-2) **merged** as PR #177 — fixes #176 (`skill` →
   `sk ill` IME tearing), both root causes: the echo focusRequest steal (global
@@ -653,6 +658,29 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **File preview panel** (codex-4, PR #210, plan-track) — workspace panes
+  generalize to a `PanelView` union so the outliner and a new `file-preview` view
+  share one pane host and Back/Forward history. A shared `PreviewTarget` /
+  `PreviewSourceDescriptor` protocol (`src/core/preview.ts`) plus four
+  main-process preview IPC commands (`preview_resolve_source` / `_read_text` /
+  `_read_bytes` / `_list_directory`, capped at 1 MB text / 20 MB bytes / 200 dir
+  entries) resolve sources for local files (reusing the trusted-root gate, with
+  per-child re-validation on directory listing), Lin assets, and agent payload
+  refs. Agent-payload reads go through replay-state-scoped, run-isolated APIs and
+  never expose payload filesystem paths to the renderer. The panel renders
+  directory / image / text+code (Shiki) / Markdown (`react-markdown` +
+  `remark-gfm`) / CSV-TSV / fallback-metadata, wired from inline local-file refs,
+  attachment rows, agent inline file refs, and persisted tool-output rows (the
+  tool-output entry threads the payload's own run scope, so run-scoped outputs
+  preview correctly — the review-gate blocker, fixed + covered by a real
+  `previewPayload` core test and a renderer dispatch test). Playwright's
+  dev-server port is now `PLAYWRIGHT_PORT`-configurable so parallel clones don't
+  reuse a sibling's renderer server. `workspace-layout` spec synced; the
+  `file-preview` plan stays `in-progress` (PDF / media / Office / URL renderers
+  remain open). Gate (main): typecheck + test:core (914 pass / 0 fail) +
+  test:renderer (419 pass / 0 fail) + modified e2e specs (8/8) green; visual
+  verification (markdown + directory, light + dark) done.
 
 - **M3-C per-agent POV inspector** (codex-2, PR #212, plan-track) — a read-only,
   derived view of *what a given agent member actually sees* in a Channel, opened

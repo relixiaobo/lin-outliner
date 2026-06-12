@@ -12,6 +12,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **File preview panel (PR #210, codex-4)** — workspace panes generalize to a
+  `PanelView` union so the outliner and a new `file-preview` view share one pane
+  host and Back/Forward history. A shared `PreviewTarget` /
+  `PreviewSourceDescriptor` protocol (`src/core/preview.ts`) plus four
+  main-process preview IPC commands (`preview_resolve_source` / `_read_text` /
+  `_read_bytes` / `_list_directory`, capped at 1 MB text / 20 MB bytes / 200 dir
+  entries) resolve sources for local files (reusing the trusted-root gate, with
+  per-child re-validation on directory listing), Lin assets, and agent payload
+  refs. Agent-payload reads go through replay-state-scoped, run-isolated APIs and
+  never expose payload filesystem paths to the renderer. The panel renders
+  directory / image / text+code (Shiki) / Markdown (`react-markdown` +
+  `remark-gfm`) / CSV-TSV / fallback-metadata, wired from inline local-file refs,
+  attachment rows, agent inline file refs, and persisted tool-output rows (the
+  tool-output entry threads the payload's own run scope so run-scoped outputs
+  preview correctly). Playwright's dev-server port is now
+  `PLAYWRIGHT_PORT`-configurable so parallel clones don't reuse a sibling's
+  renderer server. `workspace-layout` spec synced in-PR; the `file-preview` plan
+  stays `in-progress` (PDF / media / Office / URL renderers remain open). Gate
+  (main): typecheck + test:core (914 pass / 0 fail) + test:renderer (419 pass / 0
+  fail) + modified e2e specs (8/8) green; visual verification (markdown +
+  directory, light + dark) done.
+
 - **Agent Channels: per-agent POV inspector (PR #212, M3-C)** — a read-only,
   derived view of *what a given agent member actually sees* in a Channel,
   reachable from the Channel members popover. It renders that member's §8 POV
