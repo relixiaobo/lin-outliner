@@ -26,6 +26,7 @@ import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
   AgentRenderActivityEntry,
+  AgentPovInspectorView,
   AgentRenderCompactionEntity,
   AgentRenderDreamEntity,
   AgentRenderMemberView,
@@ -112,6 +113,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   activeRuns: [],
   activeRunId: null,
   activityEntries: [],
+  povInspectors: {},
   activeCompaction: null,
   activeDream: null,
   isStreaming: false,
@@ -129,6 +131,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
 
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
 const EMPTY_ACTIVITY_ENTRIES: AgentRenderActivityEntry[] = [];
+const EMPTY_POV_INSPECTORS: Record<string, AgentPovInspectorView> = {};
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -521,6 +524,8 @@ export interface LinAgentRuntimeView {
   members: AgentRenderMemberView[];
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
+  /** Read-only per-agent Channel POV projections keyed by agentId. */
+  povInspectors: Record<string, AgentPovInspectorView>;
   /** Folded per-conversation unread count for the off-floor task plane (badge source). */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
@@ -1086,6 +1091,7 @@ export class AgentRuntimeStore {
       // member-derived memos don't recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
       activityEntries: this.projection.activityEntries ?? EMPTY_ACTIVITY_ENTRIES,
+      povInspectors: this.projection.povInspectors ?? EMPTY_POV_INSPECTORS,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
       childRunIds: this.projection.childRunIds,

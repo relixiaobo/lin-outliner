@@ -114,13 +114,19 @@ clean-cut, no migration).
     in the conversation.
   - Each peer turn runs as that agent (own definition/model/skills/memory line,
     `actor` stamped on its messages) and reads the thread through the per-POV
-    flatten (`agentChannel.ts` `flattenAgentPathForPov`, composed with the
+    derivation (`agentChannel.ts` `deriveAgentPovProjection`, composed with the
     independence cut: own turns verbatim, other principals coalesced into
     identity-preambled user-role blocks; assembled transiently in
     `deriveRuntimePiMessages` — never persisted, the shared log stays
     reader-neutral). POV applies whenever the transcript contains another
     agent's records — keyed on content, not the live roster — and mention
     tokens are collision-checked at create/add time.
+  - **Per-agent POV inspector (M3-C):** the Channel member menu can open a
+    read-only inspector for any agent member. It renders the same derived POV
+    steps used by runtime assembly plus that member's read-only memory briefing
+    (`<self>` + co-member `<principal>` zones). The inspector stores nothing,
+    emits no events, and never records memory access; it is a renderer projection
+    over the current conversation only.
   - **Renderer identity/metadata:** speaker attribution is a projection of the
     persisted message `actor` plus member/definition metadata. Channel assistant
     rows name every speaker, including the coordinator. Time separators and the
@@ -208,21 +214,21 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery, per-run Channel concurrency + completion-order append; UI: composer member typeahead, header/list member display, actor badges/avatars, typing indicator + run drill-in |
 | Conversation metadata UX | ✅ built | DM header identity subtitle; timestamp gap separators; native message context menu with Details for speaker, timestamp, model/provider, and token usage |
 | Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |
-| Per-agent POV projection | ⚠ partial | the assembly-side flatten ships in M3-A (each peer's model context is its own POV); the stored/inspectable per-agent projection + inspector UI = M3-C |
+| Per-agent POV projection | ✅ built | M3-C: one shared derivation (`deriveAgentPovProjection`) feeds both runtime assembly and the read-only Channel member inspector; inspector memory zones are rendered from a read-only briefing cache and are not stored |
 | Memory source binding under compaction (#164) | ✅ built | Realignment PR-2 records fact sources as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over conversation/run ledgers. `recall include_evidence` zooms fact → episode gist → raw span; PR #178's compaction evidence invariant remains pinned in `agent-data-model` §13.18. |
 
 Forward sequencing for the remaining gap lives in `agent-program.md` § *M3 sequencing &
 readiness* (debt-first: settle the map → fix #164 → then three independent complete
 features: **M3-A** working multi-agent Channel — shipped (#179, membership + routing +
-peer reply in one PR) → **M3-B** cross-agent memory + isolation gate — built here →
-**M3-C** per-agent POV inspector).
+peer reply in one PR) → **M3-B** cross-agent memory + isolation gate — shipped →
+**M3-C** per-agent POV inspector — built here.
 
 ## Known tensions / honest caveats
 
-- **Principal symmetry is now exercised on the memory layer** — membership +
-  routing shipped in M3-A, and M3-B extends the same membership rule to
-  co-member agent memory reads. The remaining M3 gap is the stored/inspectable
-  per-agent POV projection (M3-C), not the memory primitive.
+- **Principal symmetry is now exercised on the memory layer and in POV
+  inspection** — membership + routing shipped in M3-A, M3-B extends the same
+  membership rule to co-member agent memory reads, and M3-C exposes each member's
+  derived POV without adding storage.
 - **"user = agent" oversells**; the honest model is `(user + self-agent) = one agent`,
   symmetric only in the memory/identity layer.
 - **The cross-principal isolation gate is load-bearing** — unifying "self" and

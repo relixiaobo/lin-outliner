@@ -106,6 +106,7 @@ function projection(
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
     activityEntries: [],
+    povInspectors: {},
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     isStreaming: !!options.isStreaming,

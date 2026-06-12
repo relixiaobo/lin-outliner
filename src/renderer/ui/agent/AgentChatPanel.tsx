@@ -18,7 +18,11 @@ import type {
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import { agentMentionToken, channelAgentMembers } from '../../../core/agentChannel';
-import type { AgentRenderActivityEntry, AgentRenderMemberView } from '../../../core/agentRenderProjection';
+import type {
+  AgentPovInspectorView,
+  AgentRenderActivityEntry,
+  AgentRenderMemberView,
+} from '../../../core/agentRenderProjection';
 import type {
   AgentDefinitionView,
   AgentApprovalResolutionScope,
@@ -58,6 +62,7 @@ import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
 import type { AgentReplyAnchor } from './AgentMessageRow';
+import { AgentMarkdown } from './AgentMarkdown';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
@@ -702,6 +707,97 @@ function AgentChannelActivityArea({
   );
 }
 
+function povRoleLabel(role: AgentPovInspectorView['messages'][number]['role']): string {
+  if (role === 'toolResult') return 'tool result';
+  return role;
+}
+
+function AgentPovInspectorPanel({
+  member,
+  onClose,
+  view,
+}: {
+  member: AgentRenderMemberView;
+  onClose: () => void;
+  view: AgentPovInspectorView;
+}) {
+  const t = useT();
+  const label = member.displayName;
+  return (
+    <aside className="agent-child-run-details-panel agent-pov-inspector-panel" aria-label={t.agent.chat.povInspectorAriaLabel({ name: label })}>
+      <header className="agent-child-run-details-header">
+        <div className="agent-child-run-title-block">
+          <div className="agent-child-run-title-line">
+            <AgentIdentityAvatar label={label} mention={member.mention} />
+            <span>{`@${member.mention}`}</span>
+          </div>
+          <h3>{t.agent.chat.povInspectorTitle({ name: label })}</h3>
+          <p>
+            {view.addressedByMessageId
+              ? t.agent.chat.povInspectorBoundary({ messageId: view.addressedByMessageId })
+              : t.agent.chat.povInspectorNoBoundary}
+          </p>
+        </div>
+        <IconButton
+          className="agent-child-run-close"
+          icon={CloseIcon}
+          label={t.agent.chat.closePovInspector}
+          onClick={onClose}
+          variant="panel"
+        />
+      </header>
+      <div className="agent-child-run-details-body agent-pov-inspector-body">
+        <section className="agent-pov-inspector-section" aria-label={t.agent.chat.povInspectorMemory}>
+          <div className="agent-pov-inspector-section-title">{t.agent.chat.povInspectorMemory}</div>
+          {view.memoryBriefing?.trim() ? (
+            <div className="agent-pov-inspector-memory">
+              <AgentMarkdown keyPrefix={`pov-memory-${view.agentId}`} text={view.memoryBriefing} />
+            </div>
+          ) : (
+            <div className="agent-child-run-empty agent-pov-inspector-empty">
+              {t.agent.chat.povInspectorNoMemory}
+            </div>
+          )}
+        </section>
+        <section className="agent-pov-inspector-section" aria-label={t.agent.chat.povInspectorMessages}>
+          <div className="agent-pov-inspector-section-title">{t.agent.chat.povInspectorMessages}</div>
+          {view.messages.length === 0 ? (
+            <div className="agent-child-run-empty agent-pov-inspector-empty">
+              {t.agent.chat.povInspectorNoMessages}
+            </div>
+          ) : (
+            <div className="agent-pov-inspector-message-list">
+              {view.messages.map((message, index) => (
+                <article className={`agent-pov-inspector-message is-${message.role}`} key={message.id}>
+                  <div className="agent-child-run-transcript-head">
+                    <span>{povRoleLabel(message.role)}</span>
+                    <code>{message.sourceMessageIds.join(', ')}</code>
+                  </div>
+                  <div className="agent-pov-inspector-part-list">
+                    {message.parts.map((part, partIndex) => (
+                      <div className="agent-pov-inspector-part" key={`${part.sourceMessageId}:${partIndex}`}>
+                        {part.preamble ? <pre>{part.preamble}</pre> : null}
+                        {part.text.trim() ? (
+                          <AgentMarkdown
+                            keyPrefix={`pov-${view.agentId}-${index}-${partIndex}`}
+                            text={part.text}
+                          />
+                        ) : (
+                          <span className="agent-pov-inspector-muted">{t.agent.chat.povInspectorEmptyPart}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </aside>
+  );
+}
+
 export function AgentChatPanel({
   index,
   dockOpen,
@@ -734,6 +830,7 @@ export function AgentChatPanel({
     conversationTitle,
     members,
     activityEntries,
+    povInspectors,
     steer: steerRuntime,
     childRuns,
     childRunsByParentToolCallId,
@@ -764,6 +861,7 @@ export function AgentChatPanel({
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
   const [selectedActivityEntryId, setSelectedActivityEntryId] = useState<string | null>(null);
+  const [selectedPovAgentId, setSelectedPovAgentId] = useState<string | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -848,6 +946,8 @@ export function AgentChatPanel({
   const selectedActivityEntry = selectedActivityEntryId
     ? activityEntries.find((entry) => entry.id === selectedActivityEntryId) ?? null
     : null;
+  const selectedPovInspector = selectedPovAgentId ? povInspectors[selectedPovAgentId] ?? null : null;
+  const selectedPovMember = selectedPovAgentId ? memberByAgentId.get(selectedPovAgentId) ?? null : null;
   // Multi-agent Channel activity drill-in: live in-flight entries are filtered
   // out of the thread, but each activity item can still open its own detail.
   const workingEntryByMessageId = useMemo(() => {
@@ -1097,6 +1197,12 @@ export function AgentChatPanel({
       setSelectedActivityEntryId(null);
     }
   }, [activityEntries, selectedActivityEntryId]);
+
+  useEffect(() => {
+    if (selectedPovAgentId && !povInspectors[selectedPovAgentId]) {
+      setSelectedPovAgentId(null);
+    }
+  }, [povInspectors, selectedPovAgentId]);
 
   // A command Run reveals its delivery conversation and asks for the task panel —
   // the run is a parentless child run, so it surfaces there (the open task panel
@@ -1378,6 +1484,14 @@ export function AgentChatPanel({
     }
   }
 
+  function handleInspectMemberPov(agentId: string) {
+    setSelectedPovAgentId(agentId);
+    setSelectedActivityEntryId(null);
+    setSelectedChildRunId(null);
+    setTaskPanelOpen(false);
+    setMemberMenuOpen(false);
+  }
+
   async function handleRenameConversation(targetConversationId: string) {
     const trimmed = editingTitle.trim();
     if (!trimmed) return;
@@ -1634,6 +1748,16 @@ export function AgentChatPanel({
                       <span>{member.displayName}</span>
                       <span className="agent-conversation-meta">{`@${member.mention}`}</span>
                     </span>
+                    {agentId ? (
+                      <IconButton
+                        className="agent-message-action-button"
+                        icon={DebugIcon}
+                        label={t.agent.chat.inspectMemberPov({ name: member.displayName })}
+                        onClick={() => handleInspectMemberPov(agentId)}
+                        title={t.agent.chat.inspectMemberPov({ name: member.displayName })}
+                        variant="message"
+                      />
+                    ) : null}
                     {agentId && !member.coordinator && isChannel ? (
                       <IconButton
                         className="agent-message-action-button"
@@ -2113,6 +2237,13 @@ export function AgentChatPanel({
         childRun={selectedChildRun}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
       />
+      {selectedPovInspector && selectedPovMember ? (
+        <AgentPovInspectorPanel
+          member={selectedPovMember}
+          onClose={() => setSelectedPovAgentId(null)}
+          view={selectedPovInspector}
+        />
+      ) : null}
       {selectedActivityEntry ? (() => {
         const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
         const stateLabel = activityStateLabel(selectedActivityEntry, t);

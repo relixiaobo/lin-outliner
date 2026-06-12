@@ -13,7 +13,13 @@ import {
   type AgentDreamCompletedChanges,
   type AgentChildRunRecord,
 } from './agentEventLog';
-import { agentMentionToken, channelAgentMembers } from './agentChannel';
+import {
+  agentMentionToken,
+  channelAgentMembers,
+  deriveAgentPovProjection,
+  isMultiAgentConversation,
+  type PovFlattenStep,
+} from './agentChannel';
 
 export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'child-run';
 
@@ -135,6 +141,31 @@ export interface AgentRenderActivityEntry {
   updatedAt: number;
 }
 
+export type AgentPovInspectorMessageRole = 'user' | 'assistant' | 'toolResult';
+
+export interface AgentPovInspectorMessagePart {
+  preamble?: string;
+  text: string;
+  sourceMessageId: string;
+  sourceRole: AgentEventMessageRecord['role'];
+  sourceActor: AgentActor;
+}
+
+export interface AgentPovInspectorMessage {
+  id: string;
+  role: AgentPovInspectorMessageRole;
+  sourceMessageIds: string[];
+  createdAt: number;
+  parts: AgentPovInspectorMessagePart[];
+}
+
+export interface AgentPovInspectorView {
+  agentId: string;
+  addressedByMessageId: string | null;
+  messages: AgentPovInspectorMessage[];
+  memoryBriefing: string | null;
+}
+
 export interface AgentRenderCompactionEntity {
   id: string;
   messageId: string;
@@ -223,6 +254,7 @@ export interface AgentRenderProjection {
   activeRunId: string | null;
   /** Channel activity entries: one addressed agent per unfinished addressing message. */
   activityEntries: AgentRenderActivityEntry[];
+  povInspectors: Record<string, AgentPovInspectorView>;
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
   isStreaming: boolean;
@@ -244,6 +276,7 @@ export interface BuildAgentRenderProjectionOptions {
   activeRunId?: string | null;
   activeRunAddressedByMessageId?: string | null;
   activityEntries?: readonly AgentRenderActivityEntry[];
+  povInspectorMemoryByAgentId?: Record<string, string | null>;
   messageAddressedByMessageIds?: Record<string, string | null | undefined>;
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
@@ -313,6 +346,7 @@ export function buildAgentRenderProjection(
     activityEntries: options.activityEntries
       ? options.activityEntries.map((entry) => ({ ...entry }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),
+    povInspectors: buildPovInspectors(state, options),
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     isStreaming: options.isStreaming ?? !!streaming,
@@ -397,6 +431,64 @@ function buildDerivedActivityEntries(
         : 'received',
       updatedAt: agentId === activeAgentId ? activeRun.updatedAt : addressingMessage?.updatedAt ?? activeRun.startedAt,
     }));
+}
+
+function buildPovInspectors(
+  state: AgentEventReplayState,
+  options: BuildAgentRenderProjectionOptions,
+): Record<string, AgentPovInspectorView> {
+  const result: Record<string, AgentPovInspectorView> = {};
+  const coordinatorAgentId = options.coordinatorAgentId;
+  if (!coordinatorAgentId) return result;
+  const members = state.conversation?.members ?? [];
+  if (!isMultiAgentConversation(members)) return result;
+  for (const member of channelAgentMembers(members)) {
+    const projection = deriveAgentPovProjection(state, member.agentId, {
+      mainAgentId: coordinatorAgentId,
+      displayNameByAgentId: options.memberDisplayNames,
+    });
+    result[member.agentId] = {
+      agentId: member.agentId,
+      addressedByMessageId: projection.addressedByMessageId,
+      messages: inspectorMessagesFromPovSteps(projection.steps),
+      memoryBriefing: options.povInspectorMemoryByAgentId?.[member.agentId] ?? null,
+    };
+  }
+  return result;
+}
+
+function inspectorMessagesFromPovSteps(steps: readonly PovFlattenStep[]): AgentPovInspectorMessage[] {
+  return steps.map((step, index): AgentPovInspectorMessage => {
+    if (step.kind === 'verbatim') {
+      const text = textFromContent(step.record.content);
+      return {
+        id: `verbatim:${step.record.id}`,
+        role: step.record.role,
+        sourceMessageIds: [step.record.id],
+        createdAt: step.record.createdAt,
+        parts: [{
+          text,
+          sourceMessageId: step.record.id,
+          sourceRole: step.record.role,
+          sourceActor: step.record.actor,
+        }],
+      };
+    }
+    const parts = step.parts.map((part): AgentPovInspectorMessagePart => ({
+      preamble: part.preamble ?? undefined,
+      text: textFromContent(part.record.content),
+      sourceMessageId: part.record.id,
+      sourceRole: part.record.role,
+      sourceActor: part.record.actor,
+    }));
+    return {
+      id: `flattened:${index}:${step.parts.map((part) => part.record.id).join(':')}`,
+      role: 'user',
+      sourceMessageIds: step.parts.map((part) => part.record.id),
+      createdAt: step.parts.at(-1)?.record.createdAt ?? 0,
+      parts,
+    };
+  });
 }
 
 function latestAssistantMessageIdForRun(state: AgentEventReplayState, runId: string): string | null {
@@ -680,10 +772,13 @@ function dreamForMessage(
 }
 
 function textFromContent(content: AgentPersistedContent[]): string {
-  return content
-    .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
+  return content.map((part) => {
+    if (part.type === 'text') return part.text;
+    if (part.type === 'thinking') return part.redacted ? '[redacted thinking]' : `[thinking] ${part.thinking}`;
+    if (part.type === 'toolCall') return `[tool call: ${part.name}]`;
+    if (part.type === 'image') return part.alt || part.imageRef.summary || `[image: ${part.imageRef.id}]`;
+    return part.label || part.payload.summary || `[payload: ${part.payload.id}]`;
+  }).join('\n');
 }
 
 function cloneContent(content: AgentPersistedContent[]): AgentPersistedContent[] {

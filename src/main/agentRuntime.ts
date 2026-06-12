@@ -98,8 +98,7 @@ import {
   agentMentionToken,
   channelAgentMembers,
   channelMessageOwner,
-  cutChannelPathForRun,
-  flattenAgentPathForPov,
+  deriveAgentPovProjection,
   handOffTargets,
   isMultiAgentConversation,
   parseAgentMentionTargets,
@@ -468,6 +467,10 @@ interface AgentConversationState {
   toolResultBudgetState: ToolResultBudgetState;
   /** Display names for member agents (agentId → name), for projections + preambles. */
   memberDisplayNames: Record<string, string>;
+  /** Read-only briefing text for Channel POV inspectors (agentId → rendered zones). */
+  povInspectorMemoryByAgentId: Record<string, string | null>;
+  povInspectorMemoryRefreshInProgress: boolean;
+  povInspectorMemoryRefreshQueued: boolean;
   pendingChannelTurns: ChannelTurnRequest[];
   channelTurnStartsInProgress: number;
   channelStopRequested: boolean;
@@ -862,6 +865,7 @@ export class AgentRuntime {
         member: principal,
       }]);
       await this.refreshMemberDisplayNames(conversation);
+      this.queuePovInspectorMemoryRefresh(conversationId, conversation);
       this.emitProjection(conversationId, 'member.added');
     }
     return this.conversationResponse(conversationId, conversation);
@@ -901,6 +905,7 @@ export class AgentRuntime {
         actor: userActor(),
         member: principal,
       }]);
+      this.queuePovInspectorMemoryRefresh(conversationId, conversation);
       this.emitProjection(conversationId, 'member.removed');
     }
     return this.conversationResponse(conversationId, conversation);
@@ -1068,6 +1073,7 @@ export class AgentRuntime {
     const principal = await this.resolveMemoryPrincipal(memoryId);
     if (!principal) return null;
     const entry = await this.getEventStore().updateMemoryEntry(principal, memoryId, { fact: normalizedFact });
+    this.queuePovInspectorMemoryRefreshForPrincipal(principal);
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -1075,6 +1081,7 @@ export class AgentRuntime {
     const principal = await this.resolveMemoryPrincipal(memoryId);
     if (!principal) return null;
     const entry = await this.getEventStore().removeMemoryEntry(principal, memoryId, 'user');
+    this.queuePovInspectorMemoryRefreshForPrincipal(principal);
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -2251,6 +2258,9 @@ export class AgentRuntime {
         [this.agentIdentity.agentId]: this.agentIdentity.displayName,
         [defaultAgentId]: defaultAgentDisplayName,
       },
+      povInspectorMemoryByAgentId: {},
+      povInspectorMemoryRefreshInProgress: false,
+      povInspectorMemoryRefreshQueued: false,
       pendingChannelTurns: [],
       channelTurnStartsInProgress: 0,
       channelStopRequested: false,
@@ -2274,6 +2284,7 @@ export class AgentRuntime {
       this.emitProjection(conversationId, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
     });
     this.conversations.set(conversationId, conversation);
+    this.queuePovInspectorMemoryRefresh(conversationId, conversation);
     this.emitProjection(conversationId, 'conversation_created');
     return conversation;
   }
@@ -2353,6 +2364,62 @@ export class AgentRuntime {
       }
     }
     conversation.memberDisplayNames = names;
+  }
+
+  private queuePovInspectorMemoryRefresh(conversationId: string, conversation: AgentConversationState): void {
+    if (conversation.povInspectorMemoryRefreshInProgress) {
+      conversation.povInspectorMemoryRefreshQueued = true;
+      return;
+    }
+    const members = conversation.eventState.conversation?.members ?? [];
+    if (!isMultiAgentConversation(members)) {
+      conversation.povInspectorMemoryByAgentId = {};
+      return;
+    }
+    conversation.povInspectorMemoryRefreshQueued = false;
+    conversation.povInspectorMemoryRefreshInProgress = true;
+    void this.refreshPovInspectorMemory(conversation)
+      .then((next) => {
+        conversation.povInspectorMemoryByAgentId = next;
+        if (this.conversations.get(conversationId) === conversation) {
+          this.emitProjection(conversationId, 'pov_inspector_memory_refreshed', 'coalesce');
+        }
+      })
+      .catch((error) => {
+        this.reportWarn(
+          'persistence',
+          `Failed to refresh agent POV inspector memory: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { operation: 'refreshPovInspectorMemory' },
+          'agent-pov-inspector-memory-failed',
+        );
+      })
+      .finally(() => {
+        conversation.povInspectorMemoryRefreshInProgress = false;
+        if (conversation.povInspectorMemoryRefreshQueued && this.conversations.get(conversationId) === conversation) {
+          this.queuePovInspectorMemoryRefresh(conversationId, conversation);
+        }
+      });
+  }
+
+  private async refreshPovInspectorMemory(
+    conversation: AgentConversationState,
+  ): Promise<Record<string, string | null>> {
+    const next: Record<string, string | null> = {};
+    const agentMembers = channelAgentMembers(conversation.eventState.conversation?.members ?? []);
+    await Promise.all(agentMembers.map(async (member) => {
+      next[member.agentId] = await this.buildPovInspectorMemoryBriefing(member.agentId, conversation);
+    }));
+    return next;
+  }
+
+  private queuePovInspectorMemoryRefreshForPrincipal(principal: AgentPrincipal): void {
+    for (const [conversationId, conversation] of this.conversations) {
+      const members = conversation.eventState.conversation?.members ?? [];
+      if (members.some((member) => samePrincipal(member, principal))) {
+        this.queuePovInspectorMemoryRefresh(conversationId, conversation);
+      }
+    }
   }
 
   private async refreshRuntimeSettings(conversation: AgentConversationState): Promise<AgentRuntimeSettings> {
@@ -3675,6 +3742,9 @@ export class AgentRuntime {
       });
       await this.writeDreamRunMeta(task, 'completed', model);
       this.clearChildRunMemoryReminderCaches();
+      if (changes.added > 0 || changes.updated > 0 || changes.forgotten > 0) {
+        this.queuePovInspectorMemoryRefreshForPrincipal(task.principal);
+      }
       return {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -4088,6 +4158,7 @@ export class AgentRuntime {
       errorMessage: null,
       agentTasks: this.agentTaskCache,
       memberDisplayNames: conversation.memberDisplayNames,
+      povInspectorMemoryByAgentId: conversation.povInspectorMemoryByAgentId,
       coordinatorAgentId: this.agentIdentity.agentId,
     });
     return {
@@ -5023,6 +5094,29 @@ export class AgentRuntime {
     agentId: string,
     conversation: AgentConversationState | null,
   ): Promise<string | null> {
+    return this.deriveMemoryBriefing(agentId, conversation, {
+      recordAccess: true,
+      operation: 'buildMemoryReminder',
+      warningCode: 'agent-memory-reminder-failed',
+    });
+  }
+
+  private async buildPovInspectorMemoryBriefing(
+    agentId: string,
+    conversation: AgentConversationState | null,
+  ): Promise<string | null> {
+    return this.deriveMemoryBriefing(agentId, conversation, {
+      recordAccess: false,
+      operation: 'buildPovInspectorMemoryBriefing',
+      warningCode: 'agent-pov-inspector-memory-failed',
+    });
+  }
+
+  private async deriveMemoryBriefing(
+    agentId: string,
+    conversation: AgentConversationState | null,
+    options: { recordAccess: boolean; operation: string; warningCode: string },
+  ): Promise<string | null> {
     try {
       const reader: AgentPrincipal = { type: 'agent', agentId };
       // Chronic activation: the briefing is the distilled-memory prefix, so it lists
@@ -5044,7 +5138,7 @@ export class AgentRuntime {
         )),
         MEMORY_BRIEFING_MAX_ENTRIES,
       );
-      await this.recordMemoryAccessForEntries(selected, 'briefing', now);
+      if (options.recordAccess) await this.recordMemoryAccessForEntries(selected, 'briefing', now);
       const totalEntries = activations.reduce((sum, activation) => sum + activation.totalEntries, 0);
       const overview = mergeMemoryOverviews(
         activations.map((activation) => activation.overview),
@@ -5063,8 +5157,8 @@ export class AgentRuntime {
         'persistence',
         `Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`,
         error,
-        { operation: 'buildMemoryReminder' },
-        'agent-memory-reminder-failed',
+        { operation: options.operation },
+        options.warningCode,
       );
       return null;
     }
@@ -6175,27 +6269,13 @@ export class AgentRuntime {
     memoryReminder: string | null,
     addressedByMessageId: string | null,
   ): Promise<AgentMessage[]> {
-    const eventState = conversation.eventState;
-    // Independence cut first (context ends at the addressing message, plus the
-    // member's own in-flight records), then the §8 flatten over what remains.
-    const path = cutChannelPathForRun(
-      getAgentEventRuntimeTranscriptPath(eventState),
-      eventState.runs,
-      povAgentId,
+    const projection = deriveAgentPovProjection(conversation.eventState, povAgentId, {
       addressedByMessageId,
-      this.coordinatorAgentId(),
-    );
-    const steps = flattenAgentPathForPov(
-      path,
-      eventState.runs,
-      povAgentId,
-      {
-        mainAgentId: this.coordinatorAgentId(),
-        displayNameByAgentId: conversation.memberDisplayNames,
-      },
-    );
+      mainAgentId: this.coordinatorAgentId(),
+      displayNameByAgentId: conversation.memberDisplayNames,
+    });
     const messages: AgentMessage[] = [];
-    for (const step of steps) {
+    for (const step of projection.steps) {
       if (step.kind === 'verbatim') {
         messages.push(await this.runtimePiMessageFromRecord(conversationId, step.record));
         continue;
