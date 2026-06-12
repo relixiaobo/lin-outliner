@@ -1748,7 +1748,7 @@ export function AgentChatPanel({
                       <span>{member.displayName}</span>
                       <span className="agent-conversation-meta">{`@${member.mention}`}</span>
                     </span>
-                    {agentId ? (
+                    {agentId && povInspectors[agentId] ? (
                       <IconButton
                         className="agent-message-action-button"
                         icon={DebugIcon}

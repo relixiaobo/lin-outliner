@@ -460,7 +460,7 @@ function buildPovInspectors(
 function inspectorMessagesFromPovSteps(steps: readonly PovFlattenStep[]): AgentPovInspectorMessage[] {
   return steps.map((step, index): AgentPovInspectorMessage => {
     if (step.kind === 'verbatim') {
-      const text = textFromContent(step.record.content);
+      const text = inspectorTextFromContent(step.record.content);
       return {
         id: `verbatim:${step.record.id}`,
         role: step.record.role,
@@ -476,7 +476,7 @@ function inspectorMessagesFromPovSteps(steps: readonly PovFlattenStep[]): AgentP
     }
     const parts = step.parts.map((part): AgentPovInspectorMessagePart => ({
       preamble: part.preamble ?? undefined,
-      text: textFromContent(part.record.content),
+      text: inspectorTextFromContent(part.record.content),
       sourceMessageId: part.record.id,
       sourceRole: part.record.role,
       sourceActor: part.record.actor,
@@ -772,6 +772,19 @@ function dreamForMessage(
 }
 
 function textFromContent(content: AgentPersistedContent[]): string {
+  return content
+    .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
+
+/**
+ * Inspector-only rendering of assembled content: unlike {@link textFromContent}
+ * (which feeds the streaming text preview and stays text-only), the read-only POV
+ * inspector surfaces every part so "what X sees" is faithful — thinking, tool
+ * calls, images, and payloads become labeled placeholders.
+ */
+function inspectorTextFromContent(content: AgentPersistedContent[]): string {
   return content.map((part) => {
     if (part.type === 'text') return part.text;
     if (part.type === 'thinking') return part.redacted ? '[redacted thinking]' : `[thinking] ${part.thinking}`;
