@@ -1,10 +1,10 @@
 ---
-status: draft
+status: in-progress
 priority: P2
-owner: unassigned
+owner: codex-2
 phase: M3-C
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-12
 ---
 
 # M3-C: per-agent POV inspector (derived view)
@@ -87,3 +87,17 @@ assembly is the real input to B's model and currently invisible.
 
 - Sequenced after M3-A (it consumes M3-A's derivation). No protocol-surface
   changes expected. Re-run `gh pr list` at claim time.
+
+## Claim-time collision self-check (2026-06-12)
+
+- `gh pr list` shows only #208 (`codex-3/tana-style-references`), scoped to the
+  NodePanel references/backlinks surface; no overlap with `agentChannel`,
+  `agentRuntime`, `agentRenderProjection`, or `AgentChatPanel` member POV seams.
+- `origin/main:docs/TASKS.md` marks codex, codex-2, and codex-3 idle; Feature A
+  (#207), ledger hygiene (#205), and file attachments (#206) are merged.
+- The M3-A derivation is `flattenAgentPathForPov()` in
+  `src/core/agentChannel.ts`; runtime assembly currently wraps it in
+  `deriveChannelPiMessages()` in `src/main/agentRuntime.ts`.
+- PR-4 memory retrieval is not currently claimed by an open PR. This branch will
+  avoid recall/ranking changes and keep the inspector's memory briefing read-only
+  so a future retrieval upgrade can rebase cleanly.
