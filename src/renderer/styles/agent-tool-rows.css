@@ -315,6 +315,39 @@
   color: var(--text-faint);
 }
 
+.agent-loaded-skill {
+  display: flex;
+  max-width: min(100%, 520px);
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-loaded-skill-icon {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.agent-loaded-skill-name,
+.agent-loaded-skill-args {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-loaded-skill-name {
+  flex: 0 1 auto;
+}
+
+.agent-loaded-skill-args {
+  flex: 1 1 auto;
+  color: var(--text-faint);
+}
+
 .agent-tool-call-spinner,
 .agent-process-spinner {
   animation: agent-spin 900ms linear infinite;
@@ -388,4 +421,3 @@
   line-height: var(--line-meta);
   white-space: pre-wrap;
 }
-

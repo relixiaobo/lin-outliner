@@ -138,6 +138,91 @@ describe('agent tool output view', () => {
       },
     }]);
   });
+
+  test('renders loaded skill calls as a compact affordance without input or output panels', () => {
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-skill-loaded',
+      toolName: 'skill',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: 'Launching skill: review-pr' }],
+      details: {
+        ok: true,
+        tool: 'skill',
+        version: 1,
+        status: 'success',
+        data: {
+          success: true,
+          skill: 'review-pr',
+          status: 'loaded',
+        },
+      },
+    };
+
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-skill-loaded', name: 'skill', arguments: { skill: 'review-pr', args: '123 --diff' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+    );
+
+    const text = rendered.container.textContent ?? '';
+    expect(rendered.container.querySelector('.agent-loaded-skill')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-tool-call-toggle')).toBeNull();
+    expect(rendered.container.querySelector('.agent-tool-call-panel')).toBeNull();
+    expect(text).toContain('/review-pr');
+    expect(text).toContain('123 --diff');
+    expect(text).not.toContain('Input');
+    expect(text).not.toContain('Output');
+    expect(text).not.toContain('Launching skill: review-pr');
+  });
+
+  test('keeps forked skill calls on the standard input and output disclosure path', () => {
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-skill-forked',
+      toolName: 'skill',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: 'Forked skill result.' }],
+      details: {
+        ok: true,
+        tool: 'skill',
+        version: 1,
+        status: 'success',
+        data: {
+          success: true,
+          skill: 'investigate',
+          status: 'forked',
+          result: 'Forked skill result.',
+        },
+      },
+    };
+
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-skill-forked', name: 'skill', arguments: { skill: 'investigate', args: 'regression' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+    );
+
+    const text = rendered.container.textContent ?? '';
+    expect(rendered.container.querySelector('.agent-loaded-skill')).toBeNull();
+    expect(rendered.container.querySelector('.agent-tool-call-toggle')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-tool-call-panel')).not.toBeNull();
+    expect(text).toContain('Input');
+    expect(text).toContain('Output');
+    expect(text).toContain('Forked skill result.');
+  });
 });
 
 function textButton(rendered: RenderedComponent, text: string): HTMLButtonElement {

@@ -82,6 +82,12 @@ When the model calls the `skill` tool for an inline skill:
 7. `pi-agent-core` receives the loaded skill as a steering user message before the next provider request.
 8. `prepareNextTurn` applies the model/effort override for that next provider request only.
 
+The renderer treats that inline `loaded` result as a compact loaded-skill line:
+skill glyph, slash-prefixed skill name, and dimmed invocation args. It does not
+show the generic Input/Output disclosure card because the real work is the
+steering message injected into the next model turn, not a user-inspectable tool
+output.
+
 When the model calls the `skill` tool for a `context: fork` skill:
 
 1. `AgentSkillRuntime` resolves, validates, and renders the skill body.
@@ -91,6 +97,9 @@ When the model calls the `skill` tool for a `context: fork` skill:
 5. The skill's `model` and `effort` fields apply to the child agent run.
 6. The parent receives only the final child-run result or error as the `skill` tool result.
 7. The rendered skill body is not injected into the parent context and is not recorded as an invoked parent skill for compact restore.
+
+Forked skill results stay on the normal tool-call disclosure path because they
+carry a real child-run result or error for the parent turn.
 
 Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; the skills it writes are still born unratified.
 
