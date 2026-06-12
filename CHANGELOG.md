@@ -355,6 +355,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Compact loaded-skill tool calls (PR #216, codex-2 + main follow-up)** — when
+  the model invokes an inline `skill` (status `loaded`), the agent transcript no
+  longer renders a generic Input/Output disclosure card whose Output is just the
+  `Launching skill: <name>` receipt. Instead it shows one compact line — a
+  dedicated skill glyph, the slash-prefixed skill name, and dimmed invocation
+  args — because the real payload is the steering message injected into the next
+  model turn, not a user-inspectable tool output. `context: fork` skills keep the
+  normal expandable disclosure (they carry a real child-run result). Detection
+  branches on the existing `details.data.status` (`loaded` vs `forked`) with a
+  `Launching skill:` text fallback; no backend/protocol change
+  (`AgentToolCallBlock.tsx` + token-based `agent-tool-rows.css`). Main follow-up
+  polish: the glyph is a dedicated `SkillIcon` (not the `BrainIcon` shared with
+  recall/dream memory tools), and the ellipsis-truncated name/args carry `title`
+  tooltips so the full value stays inspectable on hover. Spec: `docs/spec/agent-skills.md`.
+  Gate (main): typecheck + test:renderer (427 pass / 0 fail) + agent-process e2e
+  light/dark (`renders loaded skill calls`, 1 pass).
+
 - **Agent authoring cleanups (PR #213, codex-4)** — closes the #167-review-gate
   residue. Agents loaded from `additionalAgentDirectories` now render **read-only**
   in the editor (Duplicate only, no Save/Delete) since every write to them is

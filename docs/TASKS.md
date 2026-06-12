@@ -28,12 +28,12 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 ## In progress
 
-**No PR is in flight (2026-06-12).** All dev clones idle; the queue is clear for
-the next batch.
+**In flight (2026-06-12):** #215 Security Settings IA Redesign (codex, draft).
 
-**Just merged:** #214 Skillify built-in path fix + skill-write permission
-simplification (codex-2), #208 Tana-style references experience (codex-3), and
-#213 Agent authoring cleanups (codex-4) — see Recently completed.
+**Just merged:** #216 Compact loaded-skill tool calls (codex-2 + main polish),
+#214 Skillify built-in path fix + skill-write permission simplification (codex-2),
+#208 Tana-style references experience (codex-3), and #213 Agent authoring
+cleanups (codex-4) — see Recently completed.
 
 **Deferred follow-ups from #208** (non-blocking, surfaced by `/code-review high`;
 file as small fast-track items when a clone is free):
@@ -530,6 +530,19 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Compact loaded-skill tool calls** (codex-2, PR #216, fast-track + main
+  follow-up) — inline `skill` results (`status: loaded`) render as one compact
+  line (skill glyph + `/name` + dimmed args) instead of a generic Input/Output
+  card whose Output was only the `Launching skill: <name>` receipt; the real
+  payload is the injected steering message, not a tool output. `context: fork`
+  skills keep the normal expandable disclosure. Renderer-only, branches on the
+  existing `details.data.status`, no backend/protocol change. Main follow-up
+  polish (commit `9babb9a`): dedicated `SkillIcon` (not the memory `BrainIcon`) +
+  `title` hover tooltips for truncated name/args. Gate (main): typecheck +
+  test:renderer 427 / 0 fail + agent-process e2e light/dark (`renders loaded
+  skill calls`) 1 pass; spec `agent-skills.md` synced. Originated from the
+  PM-approved one-line task fixing the opaque `Launching skill: X` Output box.
 
 - **Skillify built-in path fix + skill-write permission simplification**
   (codex-2, PR #214, plan-track) — code-registered built-in skills (currently
