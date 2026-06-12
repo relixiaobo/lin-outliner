@@ -283,6 +283,46 @@ previous view, whether that previous view was an outliner or a file preview.
 Opening a file preview in the current pane does the same, so Back can return to
 the originating node view.
 
+### File preview panel
+
+`file-preview` is a workspace-panel view, not an overlay and not part of the
+agent dock. It can be opened from outliner inline local-file refs, attachment
+rows, agent inline local-file refs, and visible agent payload rows. A plain click
+opens in the active workspace pane when there is one; if the click originates in
+the agent dock, the active workspace pane is used, then the first available
+workspace pane. Cmd/Ctrl-click opens a split pane. When the 4-pane cap is already
+reached, preview reuses the rightmost workspace pane and preserves that pane's
+view history so Back can return to the previous outliner or preview view.
+
+The renderer normalizes every entry point to `PreviewTarget` and asks main to
+resolve it through the preload preview API:
+
+- `preview_resolve_source` returns source metadata and never exposes raw payload
+  filesystem paths to the renderer.
+- `preview_read_text` is capped to bounded text reads.
+- `preview_read_bytes` is capped to bounded binary reads for image preview.
+- `preview_list_directory` lists trusted local-file directories with a capped
+  result set.
+
+Source authority stays source-specific:
+
+- `local-file` targets are validated in main through the local-file reference
+  policy before reads or external open.
+- `asset` targets resolve by `assetId` inside the asset jail. Image rendering may
+  use the existing `asset://` URL; open/reveal/copy stay on the existing
+  asset commands.
+- `agent-payload` targets resolve only through the active replay state for the
+  referenced conversation and payload id. Normal conversation payloads can be
+  previewed; debug-only payloads are not exposed through the normal preview
+  router. Renderer code never receives a payload file path.
+- `url` targets are modeled but only render metadata/unsupported until the URL
+  reader PR ships.
+
+Initial renderers are directory listing, image, text/source-code with Shiki,
+Markdown with `react-markdown` + `remark-gfm`, CSV/TSV table, and fallback
+metadata. Markdown renderer output does not enable raw HTML execution; arbitrary
+HTML files render as text or fallback.
+
 ## Panel Semantics
 
 An outline view is a view into document data. Multiple panes can show different
@@ -325,9 +365,9 @@ Rules:
   just to avoid scrolling.
 - Pane resize handles sit between panes.
 - Opening a pane appends it next to the current pane or at the end, capped at
-  `MAX_PERSISTED_PANELS` (4). At the cap, opening repurposes an existing outliner
-  pane (rightmost first) rather than adding a fifth pane — never a debug pane, so
-  an agent-debug session is not silently dropped.
+  `MAX_PERSISTED_PANELS` (4). At the cap, opening repurposes an existing
+  workspace pane (rightmost first) rather than adding a fifth pane — never a debug
+  pane, so an agent-debug session is not silently dropped.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
   nearest remaining pane, and clears when that pane is an agent-debug pane (which
   carries no node to focus).
