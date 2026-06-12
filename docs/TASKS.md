@@ -21,7 +21,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (M3-B cross-agent memory + isolation gate merged, PR #200) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (UX B+E+C identity/metadata/model-chip merged, PR #201); next lane UX D |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (UX Feature D — Channel activity + reply anchors — merged, PR #203) |
 | Codex 3 | `lin-outliner-codex-3/` | — | building file-attachments feature PR (protocol slice merged, PR #204) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -33,11 +33,10 @@ the flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 1 | codex | **`agent-channel-parallel-runtime`** (round 2; M3-B merged as PR #200 — see Recently completed — freed the `agentRuntime.ts` slot). Build may overlap codex-2's D, but **merge is gated behind D**, and the `agentRenderProjection.ts` activity surface is D's to define — the parallel PR re-points it at per-run state and rebases on D. | plan-track |
-| 2 | codex-2 | **UX Feature D** — Channel activity area (parallel-presence model) + automatic reply anchors (round 2; B+E+C merged as PR #201 — see Recently completed). Renderer/projection only; defines the activity-entry projection surface the parallel runtime will later feed. | plan-track |
+| 1 | codex → main | **`agent-channel-parallel-runtime`** (PR #202; Feature D gate now satisfied — D merged as PR #203). Per PM directive (2026-06-12), **main integrates and merges it directly**: rebase #202 onto post-#203 `main`, reconcile the 4-file conflict + the duplicate `agent_stop_run` surface, wire `activeRuns` → D's `activityEntries`, gate, merge. | plan-track |
 | 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Protocol slice **merged as PR #204** (see Recently completed); now building the complete feature PR (core handler, persistence, ingest, renderer rows, system actions) on top — gate adds `/security-review`. | plan-track |
 
-Relay: merge order **D → parallel runtime** (main enforces). **Realignment PR-4**
+Relay: **Realignment PR-4**
 (retrieval) is unblocked by #200 — slots into the next free lane. UX **Feature A**
 (roster + arbitrary-agent DMs) follows the parallel runtime in the
 `agentRuntime.ts` queue (one runtime-touching PR in flight at a time:

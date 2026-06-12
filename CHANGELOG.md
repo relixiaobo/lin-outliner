@@ -12,6 +12,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Channel activity area + reply anchors (PR #203)** — Feature D of the
+  agent-conversation UX plan. A fixed-height Channel activity rail sits at the
+  transcript/composer boundary: each addressed-but-unfinished agent shows its
+  identity chip, name, and own true state (`received` / `thinking` /
+  `using tools`), overflow collapses to a `+N` count with no layout shift, hover
+  reveals a per-entry stop, and clicking opens that run's working-state panel
+  keyed by its `messageId`/`runId` (no single global "active agent"). Out-of-order
+  assistant replies carry a quiet `↩ "quote"` anchor back to their addressing
+  message — rendered only when that message is not the nearest preceding visible
+  user message — and clicking it scrolls to and briefly highlights the source.
+  `addressedByMessageId` is now persisted on the `run.started` /
+  `assistant_message.started` events (and surfaced through the render projection),
+  so anchors survive reply finalization and app restart. Adds a run-scoped
+  `agent_stop_run` command so an activity-item stop cancels only that addressed
+  run while sibling Channel turns continue; the composer stop remains the global
+  stop-all path. typecheck + core/renderer/e2e green; light + dark verified.
+
 - **File-attachment protocol slice (PR #204)** — Shared-interface-first protocol
   surface for the `file-attachments` feature (no handlers yet). Adds the
   `attachment` `NodeType` and an `AttachmentNode` shape (`assetId`, `mimeType`,
