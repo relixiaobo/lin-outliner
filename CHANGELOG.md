@@ -12,6 +12,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Parallel Channel runtime (PR #202)** — Channel turns now run concurrently:
+  each addressed agent executes as its own `Agent` instance held in
+  `conversation.activeRuns`, scoped through an `AsyncLocalStorage` run context (a
+  `scopedConversation` proxy resolves `activeRun`/`agent` per run) so per-run state
+  never leaks across siblings. A concurrency cap (`CHANNEL_MAX_CONCURRENT_RUNS`)
+  plus a pending-turn queue bound fan-out; co-addressee independence (context cut
+  at the addressing message) and completion-order landing are preserved, and
+  `agent_stop_run` cancels one run without touching its siblings. The conversation
+  graph is now **one linear spine per run**: a run's first segment parents to its
+  addressing message (so concurrent peers fan out as siblings under it) while every
+  later segment parents to the run's own tail — never the shared, concurrently
+  moving `selectedLeafMessageId` — so a multi-segment turn (any tool use: tool call
+  → tool result → continuation) renders in full for each agent instead of
+  collapsing to its last segment, and the same fix keeps runtime replay/next-turn
+  context complete. The visible-transcript reconstruction surfaces a non-active
+  peer's whole spine. typecheck + core/renderer green.
+
 - **Channel activity area + reply anchors (PR #203)** — Feature D of the
   agent-conversation UX plan. A fixed-height Channel activity rail sits at the
   transcript/composer boundary: each addressed-but-unfinished agent shows its

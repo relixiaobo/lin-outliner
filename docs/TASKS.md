@@ -33,8 +33,9 @@ the flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 1 | codex | **`agent-channel-parallel-runtime`** (PR #202) — **sent back to codex (2026-06-12)**. Main rebased it onto post-#203 `main` and integrated cleanly (conflicts + duplicate `agent_stop_run` + `activeRuns`→D's `activityEntries` wiring all resolved), but the rebase surfaced a **fundamental bug**: a multi-addressee Channel renders only ONE reply. Root cause + recommended fix posted on PR #202 (single-writer branching tree vs multi-writer channel; fix the transcript traversal to show each concurrent *peer* — keyed off `addressedByMessageId` + agent — NOT `parentMessageId`, which is the regenerate anchor). Needs a one-pager + `/code-review ultra` + `/security-review` before re-merge. | plan-track |
 | 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Protocol slice **merged as PR #204** (see Recently completed); now building the complete feature PR (core handler, persistence, ingest, renderer rows, system actions) on top — gate adds `/security-review`. | plan-track |
+
+`agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently completed.
 
 Relay: **Realignment PR-4**
 (retrieval) is unblocked by #200 — slots into the next free lane. UX **Feature A**
@@ -665,6 +666,25 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **agent-channel-parallel-runtime** (codex, PR #202, plan-track) — Per-run
+  parallel Channel execution: each addressed turn runs as its own `Agent` instance
+  in `conversation.activeRuns`, scoped through an `AsyncLocalStorage` run context
+  (a `scopedConversation` proxy resolves `activeRun`/`agent` per run), with a
+  concurrency cap (`CHANNEL_MAX_CONCURRENT_RUNS`), a pending-turn queue, and
+  per-run stop. Co-addressee independence + completion-order landing preserved.
+  Gate (main, 2 rounds): round-1 caught a multi-addressee display bug (codex fixed
+  via `getAgentEventVisibleTranscriptPath` slot logic); round-2 caught a **proven
+  regression** — a Channel turn that used any tool dropped its tool call + result +
+  intermediate segments from the transcript (and runtime replay context), because
+  continuation segments fanned out as siblings under the addressing message. Main
+  fixed it in-branch (commit d805005, **linear run spines**): a run's first segment
+  parents to its addressing message, every later segment to the run's own tail
+  (`lastMessageId`, maintained at all three message-creating sites incl. mid-run
+  skill steering); the transcript reconstruction now surfaces a non-active peer's
+  whole spine. Verified main vs branch with a replay harness (4 vs 2 entries).
+  typecheck + test:core (899/2 skip/0) + test:renderer (416) green; plan archived
+  `done` in-PR.
 
 - **file-attachments protocol slice** (codex-3, PR #204, plan-track) — The
   shared-interface-first slice for `file-attachments`: adds the `attachment`
