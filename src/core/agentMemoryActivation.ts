@@ -92,6 +92,8 @@ export interface AgentMemoryStrength {
 export interface AgentMemoryRankedEntry {
   entry: AgentMemoryEntry;
   strength: AgentMemoryStrength;
+  /** Optional surface-specific score; activation-only callers leave this unset. */
+  rankScore?: number;
 }
 
 export interface AgentMemorySchemaNode {
@@ -297,6 +299,10 @@ function compareRankedMemoryEntries(left: AgentMemoryRankedEntry, right: AgentMe
 }
 
 function compareNoveltyMemoryEntries(left: AgentMemoryRankedEntry, right: AgentMemoryRankedEntry): number {
+  const rankedDifference = optionalRankScore(right) - optionalRankScore(left);
+  if (rankedDifference !== 0 && (left.rankScore !== undefined || right.rankScore !== undefined)) {
+    return rankedDifference;
+  }
   return (
     right.entry.createdAt - left.entry.createdAt
     || left.strength.briefingCount - right.strength.briefingCount
@@ -368,4 +374,8 @@ function latestTimestamp(left: number | null, right: number | null): number | nu
 function roundStrength(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 1000) / 1000;
+}
+
+function optionalRankScore(item: AgentMemoryRankedEntry): number {
+  return item.rankScore ?? 0;
 }

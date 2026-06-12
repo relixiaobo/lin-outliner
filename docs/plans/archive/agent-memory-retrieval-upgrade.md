@@ -14,14 +14,16 @@ debt; deliberately last (D1's strength signal and D3's reverse index feed it).
 
 > **PM gate closed for this PR:** no embeddings. PR-4 ships BM25-class lexical
 > ranking + retrieval strength + query-time `sources[]` co-citation association
-> only. Local/API embeddings remain separately ratifiable later upgrades.
+> for `recall`; resident briefing uses retrieval strength plus source co-citation
+> support, with no current-turn cue. Local/API embeddings remain separately
+> ratifiable later upgrades.
 
 ## Goal
 
 Replace the lexical top-N ranking in `recall` and the briefing's relevance
 scoring with a **hybrid retriever**:
 
-- lexical (BM25-class)
+- lexical (BM25-class) for cued `recall`
 - composed with D1's retrieval strength (accessibility) and
 - light association expansion via D3's index (entries sharing sources/episodes
   with strong hits get a secondary boost — spreading-activation-lite, **without
@@ -56,10 +58,15 @@ smarter. No new tools (settled: the single `recall` is the surface).
 ## As built
 
 The production ranker is `src/core/agentMemoryRetrieval.ts`. `recall` uses the
-hybrid query path; the resident briefing uses the same helper's cue-less
-activation path so automatic current-turn association remains deferred. The
-regression fixture compares the old lexical baseline against the hybrid ranker
-and verifies strictly better top-k hit-rate for co-cited paraphrases.
+hybrid query path: BM25-class lexical relevance + retrieval strength +
+query-time `sources[]` co-citation association. The resident briefing uses the
+same module's cue-less chronic-activation path: retrieval strength remains the
+base signal, while `sources[]` co-citation lightly boosts facts that travel with
+already-accessible entries. It does not use the current turn as a cue, so
+automatic association remains deferred. The regression fixture compares the old
+lexical baseline against the hybrid ranker with neutral memory ids and verifies
+strictly better top-k hit-rate for co-cited paraphrases; an event-store test
+pins the production query path.
 
 ## Collision self-check (plan time 2026-06-10)
 

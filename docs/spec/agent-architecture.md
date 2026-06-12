@@ -162,10 +162,11 @@ is `agent-data-model.md` § *Canonical memory vocabulary*):
   semantic store; evidence-preserving under compaction; ONE phrasing rule:
   third-person-singular subject-elided facts in every pool) · retrieval (three
   modes: chronic activation = the resident briefing's full-read-set schema
-  overview + strength-selected fact budget · deliberate cued retrieval =
-  `recall` ranked by BM25-class lexical relevance + retrieval strength +
-  query-time `sources[]` co-citation association, with provenance zoom down the
-  ladder schema → fact → episode gist → raw span · automatic association =
+  overview + strength-selected fact budget, with co-cited facts lightly boosted
+  from `sources[]` · deliberate cued retrieval = `recall` ranked by BM25-class
+  lexical relevance + retrieval strength + query-time `sources[]` co-citation
+  association, with provenance zoom down the ladder schema → fact → episode
+  gist → raw span · automatic association =
   deferred on a data gate) · forgetting (two-strength projection:
   storage strength never decays, retrieval strength governs injection — never
   deletion).

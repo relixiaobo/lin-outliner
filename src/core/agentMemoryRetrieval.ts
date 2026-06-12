@@ -25,6 +25,8 @@ const RETRIEVAL_STRENGTH_CAP = 4;
 const ASSOCIATION_SEED_LIMIT = 8;
 const ASSOCIATION_WEIGHT = 0.38;
 const ASSOCIATION_MAX_BOOST = 6;
+const BRIEFING_ASSOCIATION_WEIGHT = 0.22;
+const BRIEFING_ASSOCIATION_MAX_BOOST = 3;
 
 interface IndexedMemoryEntry {
   entry: AgentMemoryEntry;
@@ -33,6 +35,11 @@ interface IndexedMemoryEntry {
   normalizedId: string;
   terms: Map<string, number>;
   length: number;
+}
+
+interface SourceAssociationEntry {
+  entry: AgentMemoryEntry;
+  strength: AgentMemoryStrength;
 }
 
 export interface AgentHybridMemoryRankedEntry extends AgentMemoryRankedEntry {
@@ -74,7 +81,10 @@ export function rankMemoryEntriesForRecall(
     };
   });
 
-  const associations = associationScores(direct, sourceIndex(indexed));
+  const associations = associationScores(direct, sourceIndex(indexed), {
+    weight: ASSOCIATION_WEIGHT,
+    maxBoost: ASSOCIATION_MAX_BOOST,
+  });
   return direct
     .map((item) => {
       const associationScore = associations.get(entryKey(item.entry)) ?? 0;
@@ -93,34 +103,29 @@ export function rankMemoryEntriesForBriefing(
   accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
   now = Date.now(),
 ): AgentMemoryRankedEntry[] {
-  return rankMemoryEntriesByActivation(entries, accessStatsByEntryId, now);
-}
-
-export function rankMemoryEntriesByLexicalBaseline(
-  entries: readonly AgentMemoryEntry[],
-  query: string | undefined,
-  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats> = new Map(),
-  now = Date.now(),
-): AgentHybridMemoryRankedEntry[] {
-  const fallback = fallbackSort(entries, accessStatsByEntryId, now);
-  if (!query || normalizeSearchText(query).length === 0) return fallback;
-  const analysis = analyzeTextSearchQuery(query);
-  const terms = limitedQueryTerms(query);
-  if (analysis.normalized.length === 0 || terms.length === 0) return fallback;
-  return entries
-    .map((entry) => {
-      const lexicalScore = oldLexicalScore(entry, analysis.normalized, terms);
-      const strength = computeMemoryStrength(entry, accessStatsByEntryId.get(entry.id), now);
-      return {
-        entry,
-        strength,
-        lexicalScore,
-        associationScore: 0,
-        score: lexicalScore * (1 + Math.min(RETRIEVAL_STRENGTH_CAP, strength.retrievalStrength) * RETRIEVAL_STRENGTH_WEIGHT),
-      };
-    })
-    .filter((item) => item.score > 0)
-    .sort(compareHybridRankedEntries);
+  const activated = rankMemoryEntriesByActivation(entries, accessStatsByEntryId, now);
+  const direct = activated.map((item) => ({
+    entry: item.entry,
+    strength: item.strength,
+    lexicalScore: 0,
+    associationScore: 0,
+    score: residentActivationScore(item),
+  }));
+  const associations = associationScores(direct, sourceIndex(direct), {
+    weight: BRIEFING_ASSOCIATION_WEIGHT,
+    maxBoost: BRIEFING_ASSOCIATION_MAX_BOOST,
+  });
+  return direct
+    .map((item) => ({
+      ...item,
+      associationScore: associations.get(entryKey(item.entry)) ?? 0,
+    }))
+    .map((item) => ({
+      ...item,
+      score: item.score + item.associationScore,
+    }))
+    .sort(compareHybridRankedEntries)
+    .map((item) => ({ entry: item.entry, strength: item.strength, rankScore: item.score }));
 }
 
 function indexEntries(
@@ -163,7 +168,8 @@ function bm25Score(
 
 function associationScores(
   ranked: readonly AgentHybridMemoryRankedEntry[],
-  sourcesByKey: ReadonlyMap<string, readonly IndexedMemoryEntry[]>,
+  sourcesByKey: ReadonlyMap<string, readonly SourceAssociationEntry[]>,
+  options: { weight: number; maxBoost: number },
 ): Map<string, number> {
   const boosts = new Map<string, number>();
   const seeds = ranked
@@ -176,7 +182,7 @@ function associationScores(
       const related = sourcesByKey.get(sourceKey);
       if (!related || related.length <= 1) continue;
       const groupPenalty = Math.sqrt(related.length);
-      const baseBoost = Math.min(ASSOCIATION_MAX_BOOST, seed.score * ASSOCIATION_WEIGHT / groupPenalty);
+      const baseBoost = Math.min(options.maxBoost, seed.score * options.weight / groupPenalty);
       for (const item of related) {
         if (entryKey(item.entry) === entryKey(seed.entry)) continue;
         const strengthMultiplier = 1 + Math.min(RETRIEVAL_STRENGTH_CAP, item.strength.retrievalStrength) * (RETRIEVAL_STRENGTH_WEIGHT / 2);
@@ -189,8 +195,8 @@ function associationScores(
   return boosts;
 }
 
-function sourceIndex(entries: readonly IndexedMemoryEntry[]): Map<string, IndexedMemoryEntry[]> {
-  const index = new Map<string, IndexedMemoryEntry[]>();
+function sourceIndex(entries: readonly SourceAssociationEntry[]): Map<string, SourceAssociationEntry[]> {
+  const index = new Map<string, SourceAssociationEntry[]>();
   for (const item of entries) {
     for (const sourceKey of sourceAssociationKeys(item.entry.sources)) {
       const current = index.get(sourceKey);
@@ -267,18 +273,6 @@ function idBoost(normalizedId: string, queryTerms: readonly string[]): number {
   return score;
 }
 
-function oldLexicalScore(entry: AgentMemoryEntry, normalizedQuery: string, terms: readonly string[]): number {
-  const fact = normalizeSearchText(entry.fact);
-  const id = normalizeSearchText(entry.id);
-  let score = 0;
-  if (fact.includes(normalizedQuery)) score += 100;
-  for (const term of terms) {
-    if (fact.includes(term)) score += 10;
-    if (id.includes(term)) score += 4;
-  }
-  return score;
-}
-
 function fallbackSort(
   entries: readonly AgentMemoryEntry[],
   accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats> = new Map(),
@@ -312,4 +306,12 @@ function fallbackEntrySort(left: AgentMemoryEntry, right: AgentMemoryEntry): num
 
 function entryKey(entry: AgentMemoryEntry): string {
   return `${principalKey(entry.principal)}\0${entry.id}`;
+}
+
+function residentActivationScore(item: AgentMemoryRankedEntry): number {
+  return (
+    item.strength.retrievalStrength
+    + Math.min(4, item.strength.storageStrength) * 0.05
+    + item.entry.createdAt / 1_000_000_000_000_000
+  );
 }
