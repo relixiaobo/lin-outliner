@@ -26,6 +26,7 @@ import {
   type SearchQueryOperand,
 } from './types';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from './configProjection';
+import { refRoleCountsAsBacklink } from './configSchema';
 import {
   dateFieldValueRangesInText,
   parseDateFieldValueRange,
@@ -949,11 +950,21 @@ function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSe
 }
 
 function nodeLinksTo(index: SearchIndex, node: SearchNode, targetId: NodeId): boolean {
-  if (node.type === 'reference' && node.targetId === targetId) return true;
+  if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId) return true;
   if (node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
   return node.children.some((childId) => {
     const child = index.nodes.get(childId);
-    return child?.type === 'reference' && child.targetId === targetId && !isInTrash(index, child.id);
+    if (!child || isInTrash(index, child.id)) return false;
+    if (child.type === 'reference') return refRoleCountsAsBacklink(child) && child.targetId === targetId;
+    if (child.type !== 'fieldEntry') return false;
+    return child.children.some((valueId) => {
+      const value = index.nodes.get(valueId);
+      return Boolean(value)
+        && !isInTrash(index, value!.id)
+        && value!.type === 'reference'
+        && refRoleCountsAsBacklink(value!)
+        && value!.targetId === targetId;
+    });
   });
 }
 

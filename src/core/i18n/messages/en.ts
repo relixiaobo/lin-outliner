@@ -437,6 +437,25 @@ export const en = {
     moreActionsTitle: 'More',
     showQuery: 'Show query',
     hideQuery: 'Hide query',
+    references: {
+      title: 'References',
+      // TODO plural via Intl
+      count: ({ total, linked, unlinked }: { total: number; linked: number; unlinked: number }) =>
+        `${total} ${total === 1 ? 'reference' : 'references'} · ${linked} linked · ${unlinked} unlinked`,
+      linkedHeading: 'Mentioned in',
+      fieldHeading: ({ field }: { field: string }) => `Appears as ${field} in`,
+      unlinkedHeading: 'Unlinked mentions',
+      expand: 'Show references',
+      collapse: 'Hide references',
+      openSource: ({ title }: { title: string }) => `Open ${title}`,
+      linkMention: 'Link',
+      linkMentionTitle: ({ title }: { title: string }) => `Link this mention to ${title}`,
+      descriptionMention: 'description',
+      untitledSource: 'Untitled',
+      // TODO plural via Intl
+      counterLabel: ({ count }: { count: number }) => `${count} ${count === 1 ? 'reference' : 'references'}`,
+      counterTitle: ({ count }: { count: number }) => `Open ${count} ${count === 1 ? 'reference' : 'references'}`,
+    },
   },
   // The day-panel date navigation strip (prev/next/today + calendar popover).
   dateNavigation: {

@@ -129,8 +129,10 @@ as bare text:
   calendar glyph (matching the editable `date` value styling).
 - **Tags** — the owner's applied tags as read-only colored badges (the same
   nodex-style badges shown inline after node text), each navigable to its tag.
-- **References** — the backlink source nodes (nodes that reference the owner) as
-  read-only **reference rows**, not a bare count.
+- **References** — linked backlink source nodes (tree references, inline node
+  references, and reference field values that point at the owner) as read-only
+  **reference rows**, not a bare count. The raw `sys:refCount` sort/filter value
+  counts every linked reference edge; the rendered value dedupes by source node.
 - **Owner** — the owner's parent node, as a read-only reference row.
 - **Day** — the date of the nearest `day`-tagged ancestor (the daily-note page
   the node lives under), as a read-only reference row to that day node.
@@ -170,6 +172,38 @@ persisted as a free-text value (it is purely the search query). This is the
 editable peer of the read-only References / Owner / Day system fields above: same
 reference-row presentation, but the value set is user-managed rather than
 computed.
+
+## NodePanel References Footer
+
+Each `NodePanel` has a Tana-style bottom **References** section when its root node
+has linked references or exact unlinked textual mentions. The section is hidden
+when both counts are zero and collapsed by default when present. It is derived
+from the shared reference summary, not from the optional `sys:refCount` system
+field, so the footer is always available even when the References field is not
+displayed on the node.
+
+Linked references include:
+
+- tree reference rows whose `targetId` is the panel root and whose `refRole`
+  counts as a backlink;
+- inline node references in rich text;
+- reference field values, attributed to the owning content node and grouped under
+  the field name.
+
+Unlinked mentions are exact, case-insensitive title matches in visible node text
+and descriptions. A source node that already has any linked reference to the
+target is not also shown as an unlinked mention for that target. Latin-word
+matches require word boundaries, so `Project Alpha` does not match
+`Project Alphabet`. Unlinked mentions in normal content rows expose a `Link`
+action that replaces only the matched text range with an inline node reference
+through the normal rich-text patch command; description mentions are listed but
+not linkable.
+
+Rows with at least one linked reference or unlinked mention show a compact
+reference counter in row chrome. The counter uses the same summary as the footer,
+counts linked plus unlinked sources, and opens the target node's footer section.
+Cmd/Ctrl-click follows the normal reference-navigation rule and opens the target
+in a new pane.
 
 ## Selection Mode Matrix
 
@@ -267,6 +301,7 @@ in that sibling uniqueness rule.
 | Backspace/Delete a selected reference row | Delete/trash the reference link itself. The target node remains. Mixed normal-node/reference selections use normal batch block deletion. | `outliner-selection-keyboard.spec.ts` |
 | Selected option-reference field value | ArrowUp/Down moves through field options, Enter selects, and Escape closes the options list before clearing the selected reference row. | `outliner-triggers.spec.ts` |
 | Type in a `reference` field value draft | Open the node-search popover over the whole document; ArrowUp/Down/Enter pick a candidate, Escape closes. Picking appends a `reference` value (`add_field_reference`) and advances to the next draft. A non-matching query never materializes a free-text value. | `trailingReferencePopover.test.tsx`, `outliner-triggers.spec.ts` |
+| `LINKS_TO` query rule | Match linked references only: tree references, inline node references, and reference field values whose target is the query target. Do not match unlinked textual mentions. | `searchEngine` |
 | Toggle checkbox/done on a reference row | Apply the done state to the target node, because the reference displays the target. | `outliner-parity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Permanently delete a target node | Remove tree references and inline references to that target. Undo restores both. | `core.test.ts` |
 | Trash a target node | Keep references restorable; the reference still points at the trashed target until restore or permanent delete. | `core.test.ts` |

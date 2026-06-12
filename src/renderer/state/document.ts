@@ -199,6 +199,7 @@ export interface UiState {
   commandOpen: boolean;
   batchTagSelectorOpen: boolean;
   toolbarDropdownRequest: ToolbarDropdownRequest | null;
+  referencesSectionRequest: ReferencesSectionRequest | null;
 }
 
 export interface FocusTarget {
@@ -244,6 +245,11 @@ export interface ToolbarDropdownRequest {
   nonce: number;
 }
 
+export interface ReferencesSectionRequest {
+  nodeId: NodeId;
+  nonce: number;
+}
+
 export function useUiState() {
   return useState<UiState>({
     focusedId: null,
@@ -266,6 +272,7 @@ export function useUiState() {
     commandOpen: false,
     batchTagSelectorOpen: false,
     toolbarDropdownRequest: null,
+    referencesSectionRequest: null,
   });
 }
 

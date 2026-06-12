@@ -44,7 +44,7 @@ import {
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
+import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent, textOf, wantsNewPaneFromClick } from '../shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -82,7 +82,7 @@ import { TrailingReferencePopover } from './TrailingReferencePopover';
 import { DateValuePicker } from './DateValuePicker';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
 import { fieldValueOpenHref, validateFieldValue } from '../fields/fieldValueValidation';
-import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
+import { CalendarIcon, ICON_SIZE, OpenIcon, ReferenceIcon, WarningIcon } from '../icons';
 import {
   createPlaceholderInlineField,
   createPlaceholderInlineFieldAfterNode,
@@ -141,11 +141,15 @@ interface OutlinerItemProps {
   // by the flat producer, so this row must not render its own nested OutlinerView.
   // Indentation comes from `depth` (cumulative) instead of nested `.children`.
   flat?: boolean;
+  referenceCount?: number;
+  referenceCounts?: ReadonlyMap<NodeId, number>;
 }
 
 function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
-  const tf = useT().outliner.field;
+  const t = useT();
+  const tf = t.outliner.field;
+  const referenceLabels = t.nodePanel.references;
   const realNode = props.index.byId.get(props.nodeId);
   const parentNode = props.index.byId.get(props.parentId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
@@ -1575,6 +1579,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // empty draft is guided by its "Press Space…" placeholder instead, so it shows
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
+  const referenceCount = props.referenceCount ?? 0;
+  const showReferenceCounter = Boolean(realNode && referenceCount > 0);
+  const openReferencesForRow = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    props.setUi((prev) => ({
+      ...prev,
+      referencesSectionRequest: { nodeId: targetEditId, nonce: Date.now() },
+    }));
+    props.onRoot(targetEditId, { focus: false, newPane: wantsNewPaneFromClick(event) });
+  };
 
   return (
     <OutlinerRowShell
@@ -1811,6 +1826,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               />
             )
           )}
+          {showReferenceCounter && (
+            <button
+              type="button"
+              className="row-reference-counter"
+              data-preserve-selection
+              aria-label={referenceLabels.counterLabel({ count: referenceCount })}
+              title={referenceLabels.counterTitle({ count: referenceCount })}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={openReferencesForRow}
+            >
+              <ReferenceIcon size={ICON_SIZE.rowGlyph} aria-hidden />
+              <span>{referenceCount}</span>
+            </button>
+          )}
           {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref) && (
             <span className="field-value-affordances" data-preserve-selection>
               {fieldValueHint && (
@@ -2016,6 +2045,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             dragId={props.dragId}
             setDragId={props.setDragId}
             referencePath={childReferencePath}
+            referenceCounts={props.referenceCounts}
             // The trailing draft (eager materialization) replaces the old child
             // TrailingInput: shown for an empty child list or when nav focuses
             // the trailing surface, unless this is a reference cycle.
@@ -2191,6 +2221,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.parentId !== next.parentId) return false;
   if (prev.rootId !== next.rootId) return false;
   if (prev.depth !== next.depth) return false;
+  if ((prev.referenceCount ?? 0) !== (next.referenceCount ?? 0)) return false;
   // Drag start/end is infrequent; re-render every row so drag handlers close over
   // the current dragId and the dragged row picks up its 'dragging' class.
   if (prev.dragId !== next.dragId) return false;
@@ -2233,6 +2264,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
     || prev.ui.pendingReferenceConversion !== next.ui.pendingReferenceConversion
     || prev.ui.pendingReferenceTypeAhead !== next.ui.pendingReferenceTypeAhead
     || prev.ui.trailingDraftPlacement !== next.ui.trailingDraftPlacement
+    || prev.referenceCounts !== next.referenceCounts
   )) {
     return false;
   }

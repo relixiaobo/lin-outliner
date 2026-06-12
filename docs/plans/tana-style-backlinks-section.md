@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: codex-3
 created: 2026-06-12
@@ -24,8 +24,8 @@ the product in a split state.
 
 ## Goal
 
-1. Add a bottom `References` section to every non-definition `NodePanel` whose
-   root node has at least one linked reference or unlinked textual mention.
+1. Add a bottom `References` section to every `NodePanel` whose root node has at
+   least one linked reference or unlinked textual mention.
 2. Count and render the same linked-reference classes everywhere:
    - tree reference nodes (`type === 'reference'`, target is the current node);
    - inline node references inside rich text;
@@ -231,9 +231,8 @@ inventing a half-shaped query editor.
 Update:
 
 - `docs/spec/ui-behavior.md` — document the default `NodePanel` bottom
-  `References` section and its relationship to the `References` system field.
-- `docs/spec/outliner-parity-matrix.md` — add a parity row for Tana/nodex-style
-  backlinks footer, including click/navigation and collapsed-by-default behavior.
+  `References` section, its relationship to the `References` system field, the
+  counter behavior, click navigation, and collapsed-by-default behavior.
 
 Do not edit `docs/TASKS.md` or `CHANGELOG.md`; those are main-agent-owned and
 updated at merge.
@@ -250,7 +249,7 @@ Expected touch set:
 - `src/core/systemFields.ts`.
 - `src/main/agentNodeToolProjection.ts`.
 - `src/renderer/ui/NodePanel.tsx`.
-- `src/renderer/ui/outliner/BacklinksSection.tsx` (new).
+- `src/renderer/ui/BacklinksSection.tsx` (new).
 - `src/renderer/ui/outliner/OutlinerItem.tsx` or row-leading/right-metadata
   components for the reference counter.
 - `src/renderer/styles/outliner.css` or the appropriate existing panel/outliner

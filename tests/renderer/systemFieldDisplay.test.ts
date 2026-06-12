@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeId, NodeProjection } from '../../src/renderer/api/types';
+import { nodeReferenceTarget } from '../../src/renderer/api/types';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -112,5 +113,30 @@ describe('systemFieldValues (sort/group/filter adapter)', () => {
     expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['2']);
     const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
     expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'source', label: 'Src' }]);
+  });
+
+  test('References counts inline and field-value references', () => {
+    const map = byId(
+      node({ id: 'target' }),
+      node({
+        id: 'inline-source',
+        content: {
+          text: 'Inline source',
+          marks: [],
+          inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }],
+        },
+      }),
+      node({ id: 'field-def', type: 'fieldDef', content: { text: 'Related', marks: [], inlineRefs: [] } } as Partial<NodeProjection> & { id: string }),
+      node({ id: 'owner', children: ['field-entry'], content: { text: 'Owner', marks: [], inlineRefs: [] } }),
+      node({ id: 'field-entry', type: 'fieldEntry', parentId: 'owner', fieldDefId: 'field-def', children: ['field-ref'] } as Partial<NodeProjection> & { id: string }),
+      node({ id: 'field-ref', type: 'reference', parentId: 'field-entry', targetId: 'target', refRole: 'fieldValue' } as Partial<NodeProjection> & { id: string }),
+    );
+
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['2']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([
+      { id: 'inline-source', label: 'Inline source' },
+      { id: 'owner', label: 'Owner' },
+    ]);
   });
 });

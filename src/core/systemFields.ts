@@ -7,7 +7,8 @@
 // drifting, and living in `core/` lets both the renderer and the main process use
 // it (it reads a structural node shape that `Node` and `NodeProjection` satisfy).
 
-import type { NodeId, NodeType } from './types';
+import { buildReferenceSummary } from './references';
+import type { NodeId, NodeType, RefRole, RichText } from './types';
 
 export const NAME_FIELD = 'sys:name';
 export const CREATED_FIELD = 'sys:createdAt';
@@ -29,7 +30,8 @@ export const COMMAND_AGENT_FIELD_ID = 'sys:commandAgent';
 export interface SysFieldNode {
   id: NodeId;
   type?: NodeType;
-  content: { text: string };
+  content: RichText;
+  description?: string;
   children: readonly NodeId[];
   tags: readonly NodeId[];
   parentId?: NodeId | null;
@@ -38,6 +40,7 @@ export interface SysFieldNode {
   updatedAt?: number;
   targetId?: NodeId;
   fieldDefId?: NodeId;
+  refRole?: RefRole;
   commandSchedule?: string;
   commandAgent?: string;
 }
@@ -111,13 +114,14 @@ function nearestDayNode(node: SysFieldNode, byId: SysFieldNodeMap): SysFieldNode
 // (what sort/group reports); `sources` are the deduped containing nodes, each
 // navigable (what the value renders).
 function resolveBacklinks(node: SysFieldNode, byId: SysFieldNodeMap): { sources: SystemFieldRef[]; count: number } {
+  const summary = buildReferenceSummary(byId);
+  const backlinks = summary.byTarget.get(node.id) ?? [];
+  const count = summary.countsByTarget.get(node.id)?.linked ?? 0;
   const sources: SystemFieldRef[] = [];
   const seen = new Set<NodeId>();
-  let count = 0;
-  for (const candidate of byId.values()) {
-    if (candidate.type !== 'reference' || candidate.targetId !== node.id) continue;
-    count += 1;
-    const source = candidate.parentId ? byId.get(candidate.parentId) : undefined;
+  for (const backlink of backlinks) {
+    if (backlink.kind === 'unlinked') continue;
+    const source = byId.get(backlink.sourceNodeId);
     if (!source || seen.has(source.id)) continue;
     seen.add(source.id);
     sources.push({ id: source.id, label: nodeTitle(source) });

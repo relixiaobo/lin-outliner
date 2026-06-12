@@ -25,6 +25,7 @@ import {
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel, definitionOutlinerPlaceholder } from './definition/definitionConfig';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
+import { buildReferenceSummary } from '../../core/references';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
 import {
@@ -65,9 +66,11 @@ import { IconButton } from './primitives/IconButton';
 import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
+import { BacklinksSection } from './BacklinksSection';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { useT } from '../i18n/I18nProvider';
+import { isNodeInTrash } from './interactions/nodeLocation';
 
 const PANEL_HEADER_ICON_SIZE = 20;
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
@@ -191,6 +194,24 @@ export function NodePanel(props: NodePanelProps) {
   const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
+  const referenceSummary = useMemo(() => buildReferenceSummary(props.index.byId, {
+    includeUnlinked: true,
+    isDeleted: (nodeId) => isNodeInTrash(props.index, nodeId),
+  }), [props.index]);
+  const referenceCounts = useMemo(() => {
+    const counts = new Map<NodeId, number>();
+    for (const [nodeId, count] of referenceSummary.countsByTarget) {
+      if (count.total > 0) counts.set(nodeId, count.total);
+    }
+    return counts;
+  }, [referenceSummary]);
+  const consumeReferencesSectionRequest = useCallback((request: NonNullable<UiState['referencesSectionRequest']>) => {
+    props.setUi((prev) => (
+      prev.referencesSectionRequest === request
+        ? { ...prev, referencesSectionRequest: null }
+        : prev
+    ));
+  }, [props.setUi]);
 
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId) return;
@@ -829,6 +850,7 @@ export function NodePanel(props: NodePanelProps) {
                 trailingDraft={showTrailingInput ? 'always' : 'none'}
                 draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
                 scrollParentRef={mainPanelRef}
+                referenceCounts={referenceCounts}
               />
             ) : (
               <OutlinerView
@@ -853,9 +875,21 @@ export function NodePanel(props: NodePanelProps) {
                 // (eager materialization) subsumes the old body TrailingInput.
                 trailingDraft={showTrailingInput ? 'always' : 'none'}
                 draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
+                referenceCounts={referenceCounts}
               />
             )}
           </div>
+        )}
+        {rootNode && (
+          <BacklinksSection
+            targetId={props.rootId}
+            index={props.index}
+            summary={referenceSummary}
+            run={props.run}
+            onRoot={props.onRoot}
+            openRequest={props.ui.referencesSectionRequest}
+            onOpenRequestConsumed={consumeReferencesSectionRequest}
+          />
         )}
       </div>
     </main>
