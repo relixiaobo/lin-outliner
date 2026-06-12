@@ -24,6 +24,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import {
   AgentInlineReferenceText,
   type AgentNodeReferenceOpenHandler,
@@ -517,6 +518,18 @@ function PersistedToolOutput({
     }
   }
 
+  function previewOutput() {
+    if (!conversationId) return;
+    dispatchPreviewTargetOpen({
+      target: {
+        kind: 'agent-payload',
+        conversationId,
+        payloadId: payload.id,
+        label: payload.summary || t.agent.toolCall.storedOutput,
+      },
+    });
+  }
+
   return (
     <div className="agent-tool-persisted-output">
       <div className="agent-tool-persisted-meta">
@@ -528,6 +541,14 @@ function PersistedToolOutput({
         <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={visible.text} />
       </pre>
       <div className="agent-tool-persisted-actions">
+        <ButtonControl
+          className="agent-tool-persisted-load"
+          disabled={!conversationId}
+          onClick={previewOutput}
+        >
+          <FileTextIcon size={ICON_SIZE.menu} />
+          <span>{t.agent.toolCall.previewOutput}</span>
+        </ButtonControl>
         <ButtonControl
           className="agent-tool-persisted-load"
           disabled={!canLoad || loading}

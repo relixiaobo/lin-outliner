@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
+import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
@@ -34,6 +35,7 @@ import { useWorkspaceLayout } from './useWorkspaceLayout';
 import { useWorkspacePinnedNodes } from './useWorkspacePinnedNodes';
 import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
+import { onPreviewTargetOpen } from './preview/previewEvents';
 import {
   persistOutlineViewState,
   restoreOutlineExpansionForRoot,
@@ -113,10 +115,12 @@ export function App() {
     initializeLayout,
     navigatePanelBack: goPanelBack,
     navigatePanelForward: goPanelForward,
+    navigatePanelPreview: setPanelPreview,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
     openAgentDebugPanel,
     openPanel,
+    openPreview,
     panels,
     resizePanelPair,
     rootId,
@@ -274,6 +278,10 @@ export function App() {
     focusNode(nodeId as NodeId);
   }) ?? undefined, [navigateRoot, focusNode]);
 
+  useEffect(() => onPreviewTargetOpen(({ newPane, target }) => {
+    openPreview(target, { newPane });
+  }), [openPreview]);
+
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
     if (options?.newPane) {
       openPanel(nodeId);
@@ -283,6 +291,10 @@ export function App() {
     setPanelRoot(panelId, nodeId, options);
     restoreNodeInOutliner(nodeId);
   }, [openPanel, restoreNodeInOutliner, setPanelRoot]);
+
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
+    setPanelPreview(panelId, target, options);
+  }, [setPanelPreview]);
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const view = goPanelBack(panelId);
@@ -461,6 +473,7 @@ export function App() {
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
           onNavigatePanelBack={navigatePanelBack}
+          onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeReset={resetPanelPair}

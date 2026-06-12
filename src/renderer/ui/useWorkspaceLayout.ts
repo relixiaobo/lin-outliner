@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayIsoLocalDate, type DocumentProjection, type NodeId } from '../api/types';
-import { previewTargetFromUnknown, previewTargetKey } from '../../core/preview';
+import { previewTargetFromUnknown, previewTargetKey, type PreviewTarget } from '../../core/preview';
 import type { NavigateRootOptions } from './shared';
 import type {
   AgentDebugPanelState,
@@ -42,6 +42,10 @@ function outlinerView(rootId: NodeId): OutlinerPanelView {
   return { kind: 'outliner', rootId };
 }
 
+function filePreviewView(target: PreviewTarget): PanelView {
+  return { kind: 'file-preview', target };
+}
+
 function isWorkspacePanel(
   panel: WorkspacePanelState | null | undefined,
 ): panel is WorkspaceContentPanelState {
@@ -67,8 +71,16 @@ function samePanelView(left: PanelView, right: PanelView): boolean {
   return panelViewKey(left) === panelViewKey(right);
 }
 
+function workspacePanel(id: string, view: PanelView, size = 1): WorkspaceContentPanelState {
+  return { id, type: 'workspace', view, size, backStack: [], forwardStack: [] };
+}
+
 function outlinerPanel(id: string, rootId: NodeId, size = 1): WorkspaceContentPanelState {
-  return { id, type: 'workspace', view: outlinerView(rootId), size, backStack: [], forwardStack: [] };
+  return workspacePanel(id, outlinerView(rootId), size);
+}
+
+function filePreviewPanel(id: string, target: PreviewTarget, size = 1): WorkspaceContentPanelState {
+  return workspacePanel(id, filePreviewView(target), size);
 }
 
 function agentDebugPanel(id: string, conversationId: string | null, size = 1): AgentDebugPanelState {
@@ -300,6 +312,60 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
     focusNode(options?.focus === false ? null : nodeId);
   }, [focusNode]);
 
+  const openPreviewPanel = useCallback((target: PreviewTarget) => {
+    const keepActive = (panelId: string) => {
+      setActivePanelId(panelId);
+      window.requestAnimationFrame(() => setActivePanelId(panelId));
+    };
+    if (panels.length >= MAX_PERSISTED_PANELS) {
+      const replacePanel = [...panels].reverse().find(isWorkspacePanel) ?? panels.at(-1);
+      if (!replacePanel) return;
+      keepActive(replacePanel.id);
+      setPanels((prev) => prev.map((panel) => (
+        panel.id === replacePanel.id
+          ? isWorkspacePanel(panel)
+            ? navigateWorkspacePanel(panel, filePreviewView(target))
+            : filePreviewPanel(panel.id, target, panel.size)
+          : panel
+      )));
+    } else {
+      const panelId = nextId('panel');
+      keepActive(panelId);
+      setPanels((prev) => [...prev, filePreviewPanel(panelId, target)]);
+    }
+    focusNode(null);
+  }, [focusNode, panels]);
+
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
+    if (options?.newPane) {
+      openPreviewPanel(target);
+      return;
+    }
+    setActivePanelId(panelId);
+    setPanels((prev) => prev.map((panel) => (
+      panel.id === panelId && isWorkspacePanel(panel)
+        ? navigateWorkspacePanel(panel, filePreviewView(target))
+        : panel
+    )));
+    focusNode(null);
+  }, [focusNode, openPreviewPanel]);
+
+  const openPreview = useCallback((target: PreviewTarget, options?: { newPane?: boolean }) => {
+    if (options?.newPane) {
+      openPreviewPanel(target);
+      return;
+    }
+    const current = panels.find((panel) => panel.id === activePanelId);
+    const targetPanel = isWorkspacePanel(current)
+      ? current
+      : panels.find(isOutlinerPanel) ?? panels.find(isWorkspacePanel);
+    if (!targetPanel) {
+      openPreviewPanel(target);
+      return;
+    }
+    navigatePanelPreview(targetPanel.id, target);
+  }, [activePanelId, navigatePanelPreview, openPreviewPanel, panels]);
+
   const navigatePanelBack = useCallback((panelId: string): PanelView | null => {
     const panel = panels.find((candidate) => candidate.id === panelId);
     const previousView = isWorkspacePanel(panel) ? panel.backStack.at(-1) ?? null : null;
@@ -441,11 +507,13 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
     closePanel,
     initializeLayout,
     navigatePanelRoot,
+    navigatePanelPreview,
     navigatePanelBack,
     navigatePanelForward,
     navigateRoot,
     openAgentDebugPanel,
     openPanel,
+    openPreview,
     panels,
     resizePanelPair,
     rootId,

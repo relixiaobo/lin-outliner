@@ -5,6 +5,8 @@ import {
 } from './inlineFileIcon';
 import type { InlineFilePreviewDescriptor } from './inlineFilePreviewData';
 import { useT } from '../../i18n/I18nProvider';
+import { wantsNewPaneFromClick } from '../shared';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 
 interface InlineFilePreviewFile extends InlineFilePreviewDescriptor {
   entryKind: 'file' | 'directory';
@@ -151,11 +153,19 @@ export function InlineFilePreviewLayer() {
       event.preventDefault();
       event.stopPropagation();
       const file = fileFromElement(element);
-      if (!file?.path || !window.lin?.openLocalFile) {
+      if (!file?.path) {
         hidePreview();
         return;
       }
-      void window.lin.openLocalFile({ path: file.path });
+      dispatchPreviewTargetOpen({
+        newPane: wantsNewPaneFromClick(event),
+        target: {
+          kind: 'local-file',
+          path: file.path,
+          entryKind: file.entryKind,
+          label: file.name,
+        },
+      });
       hidePreview();
     }
 
