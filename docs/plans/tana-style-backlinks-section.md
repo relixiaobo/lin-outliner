@@ -151,7 +151,8 @@ mentions:
   - `Appears as <Field> in...` for field-value references, grouped by field name
     if grouping remains visually clean;
   - `Unlinked mentions...` for exact text mentions that are not real references;
-  - each item shows breadcrumb context and source title;
+  - each item shows breadcrumb context, the source's full wrapping title, and the
+    source description when present;
   - click navigates to the source node through the existing `onRoot` path;
   - unlinked mention rows include a secondary `Link` action that converts the
     exact mention text into an inline reference;

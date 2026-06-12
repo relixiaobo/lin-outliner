@@ -515,34 +515,52 @@
 }
 
 .backlinks-row-title-button {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
-  align-items: baseline;
-  gap: var(--space-3);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
   padding: 0;
   text-align: left;
 }
 
-.backlinks-row-title {
+.backlinks-row-title-line {
+  display: block;
+  max-width: 100%;
   min-width: 0;
-  overflow: hidden;
+}
+
+.backlinks-row-main.has-link-action .backlinks-row-title-line {
+  padding-right: calc(2.25rem + var(--space-4));
+}
+
+.backlinks-row-title {
   color: var(--text);
   font-size: var(--font-content);
   line-height: var(--line-content);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .backlinks-row-snippet {
-  max-width: 16rem;
-  min-width: 0;
-  overflow: hidden;
+  margin-left: var(--space-3);
   color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.backlinks-row-description {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-description);
+  line-height: var(--line-description);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .backlinks-link-action {

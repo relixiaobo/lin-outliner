@@ -191,6 +191,13 @@ titles align with normal node body rows. Source breadcrumbs are navigable.
 Reference field-value sources use the reference marker; ordinary linked and
 unlinked source rows use the normal content bullet.
 
+Source rows show the source node's full title text with normal wrapping, not a
+single-line ellipsis. If the source node has a description, the description is
+shown as secondary wrapped text under the title, aligned to the same text column.
+Unlinked content mentions keep their `Link` action fixed at the first title line's
+right edge as a small material button; the title wraps around the action slot so
+long source text remains readable.
+
 Linked references include:
 
 - tree reference rows whose `targetId` is the panel root and whose `refRole`

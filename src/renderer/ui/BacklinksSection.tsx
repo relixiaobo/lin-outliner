@@ -304,6 +304,7 @@ function ReferenceOutlineRow({
   const displayNode = displaySourceNode(node, index);
   const openId = displayNode.id;
   const title = nodeTitle(displayNode, labels.untitledSource);
+  const description = displayNode.description?.trim() ?? '';
   const childParentId = outlinerChildParentId(node.id, index.byId);
   const cycle = childParentId ? path.includes(childParentId) : false;
   const childIds = !childParentId || cycle ? [] : index.byId.get(childParentId)?.children ?? [];
@@ -335,8 +336,11 @@ function ReferenceOutlineRow({
               aria-label={labels.openSource({ title })}
               onClick={(event) => onOpenSource(event, openId)}
             >
-              <span className="backlinks-row-title">{title}</span>
-              {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
+              <span className="backlinks-row-title-line">
+                <span className="backlinks-row-title">{title}</span>
+                {mentionLabel && <span className="backlinks-row-snippet">{mentionLabel}</span>}
+              </span>
+              {description && <span className="backlinks-row-description">{description}</span>}
             </button>
             {linkAction && (
               <button

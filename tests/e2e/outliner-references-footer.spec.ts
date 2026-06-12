@@ -9,6 +9,7 @@ import {
 } from './outlinerMock';
 
 const LONG_UNLINKED_TEXT = 'Discuss Alpha soon with a deliberately long first line that should run underneath the Link action when the backlink row is narrow enough to force the action to float above the title text instead of reserving layout space';
+const SOURCE_DESCRIPTION = 'Stored context appears as the secondary line beneath this source node.';
 
 async function emitCurrentProjection(page: Page) {
   await emitDocumentEvent(page, {
@@ -33,6 +34,10 @@ async function createReferencesFixture(page: Page): Promise<string> {
         }],
       },
     });
+    await win.lin?.invoke('update_node_description', {
+      nodeId: fixtureIds.beta,
+      description: fixtureIds.sourceDescription,
+    });
     const referenceResult = await win.lin?.invoke<{ focus?: { nodeId: string } }>('add_reference', {
       parentId: fixtureIds.today,
       targetId: fixtureIds.alpha,
@@ -50,7 +55,7 @@ async function createReferencesFixture(page: Page): Promise<string> {
       id: 'reference-value-alpha',
     });
     return referenceResult?.focus?.nodeId ?? '';
-  }, { ...ids, longUnlinkedText: LONG_UNLINKED_TEXT });
+  }, { ...ids, longUnlinkedText: LONG_UNLINKED_TEXT, sourceDescription: SOURCE_DESCRIPTION });
   if (!referenceId) throw new Error('reference fixture did not create a reference row');
   await emitCurrentProjection(page);
   return referenceId;
@@ -72,16 +77,23 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await expect(section).toContainText('1 Appears as Related in...');
   await expect(section).toContainText('1 Unlinked mention');
   await expect(section).toContainText(LONG_UNLINKED_TEXT);
+  await expect(section).toContainText(SOURCE_DESCRIPTION);
   const alignment = await page.evaluate((alphaId) => {
     const link = document.querySelector('.backlinks-link-action');
     const linkRow = link?.closest('.backlinks-row');
     const linkRowOpen = linkRow?.querySelector('.backlinks-row-open');
     const sourceMarker = linkRow?.querySelector('.row-bullet-button');
     const sourceTitle = linkRow?.querySelector('.backlinks-row-title');
-    if (!link || !linkRowOpen || !sourceMarker || !sourceTitle) throw new Error('missing unlinked row alignment target');
+    const sourceDescription = linkRow?.querySelector('.backlinks-row-description');
+    if (!link || !linkRowOpen || !sourceMarker || !sourceTitle || !sourceDescription) {
+      throw new Error('missing unlinked row alignment target');
+    }
     const linkRect = link.getBoundingClientRect();
     const rowRect = linkRowOpen.getBoundingClientRect();
     const linkStyle = getComputedStyle(link);
+    const titleRect = sourceTitle.getBoundingClientRect();
+    const titleStyle = getComputedStyle(sourceTitle);
+    const titleLineHeight = Number.parseFloat(titleStyle.lineHeight);
     const left = (selector: string) => {
       const element = document.querySelector(selector);
       if (!element) throw new Error(`missing alignment target: ${selector}`);
@@ -96,14 +108,21 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
       linkHeight: linkRect.height,
       linkBackgroundColor: linkStyle.backgroundColor,
       sourceMarkerLeft: sourceMarker.getBoundingClientRect().left,
-      sourceTitleLeft: sourceTitle.getBoundingClientRect().left,
-      sourceTitleRight: sourceTitle.getBoundingClientRect().right,
+      sourceTitleHeight: titleRect.height,
+      sourceTitleLeft: titleRect.left,
+      sourceTitleRight: titleRect.right,
+      sourceTitleLineHeight: titleLineHeight,
+      sourceTitleWhiteSpace: titleStyle.whiteSpace,
+      sourceDescriptionLeft: sourceDescription.getBoundingClientRect().left,
     };
   }, ids.alpha);
   expect(Math.abs(alignment.sourceMarkerLeft - alignment.bodyBulletLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(alignment.sourceTitleLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(alignment.sourceDescriptionLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
+  expect(alignment.sourceTitleWhiteSpace).toBe('normal');
+  expect(alignment.sourceTitleHeight).toBeGreaterThan(alignment.sourceTitleLineHeight * 1.5);
   expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleLeft);
-  expect(alignment.linkLeft).toBeLessThan(alignment.sourceTitleRight);
+  expect(alignment.sourceTitleRight).toBeLessThanOrEqual(alignment.linkLeft + 1);
   expect(alignment.linkRight).toBeLessThanOrEqual(alignment.rowRight + 1);
   expect(alignment.rowRight - alignment.linkRight).toBeLessThanOrEqual(10);
   expect(alignment.linkHeight).toBeGreaterThan(18);
