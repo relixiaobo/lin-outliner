@@ -173,7 +173,7 @@ describe('agent runtime attachments', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(
       created.conversationId,
       `Read ${formatFileReferenceMarker('report.txt', sourcePath)}.`,
@@ -234,7 +234,7 @@ describe('agent runtime attachments', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(
       created.conversationId,
       `Read ${formatFileReferenceMarker('secret.txt', sourcePath)}.`,
@@ -285,7 +285,7 @@ describe('agent runtime attachments', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(
       created.conversationId,
       `List ${formatFileReferenceMarker('Projects', sourceRoot, 'directory')}.`,

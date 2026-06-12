@@ -11,7 +11,7 @@ import type {
   AssistantMessage,
   UserMessage,
 } from '../../src/core/agentTypes';
-import type { AgentConversation } from '../../src/core/types';
+import type { AgentConversation, AgentCreateConversationOptions } from '../../src/core/types';
 import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
@@ -224,7 +224,7 @@ function createFakeClient(options: {
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   const calls = {
     closeConversation: [] as string[],
-    createConversation: 0,
+    createConversation: [] as AgentCreateConversationOptions[],
     restoreLatestConversation: 0,
     restoreConversation: [] as string[],
     markConversationRead: [] as string[],
@@ -252,8 +252,8 @@ function createFakeClient(options: {
     markConversationRead: async (conversationId) => {
       calls.markConversationRead.push(conversationId);
     },
-    createConversation: async () => {
-      calls.createConversation += 1;
+    createConversation: async (createOptions) => {
+      calls.createConversation.push(createOptions);
       return options.createdConversation ?? conversation('created', projection([]));
     },
     closeConversation: async (conversationId) => {
@@ -817,9 +817,12 @@ describe('agent runtime store', () => {
     const unsubscribe = store.subscribe(() => {});
     await flushMicrotasks();
 
-    await store.getSnapshot().newConversation();
+    await store.getSnapshot().newConversation({
+      agentIds: ['built-in:tenon:assistant', 'built-in:tenon:general'],
+      goal: 'New channel',
+    });
 
-    expect(fake.calls.createConversation).toBe(1);
+    expect(fake.calls.createConversation).toHaveLength(1);
     expect(fake.calls.closeConversation).toEqual(['saved']);
     expect(store.getSnapshot().conversationId).toBe('created');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
@@ -1036,12 +1039,15 @@ describe('agent runtime store', () => {
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
-    await store.getSnapshot().newConversation();
+    await store.getSnapshot().newConversation({
+      agentIds: ['built-in:tenon:assistant', 'built-in:tenon:general'],
+      goal: 'New channel',
+    });
     restore.resolve(restored);
     await flushMicrotasks();
 
     expect(fake.calls.restoreLatestConversation).toBe(1);
-    expect(fake.calls.createConversation).toBe(1);
+    expect(fake.calls.createConversation).toHaveLength(1);
     expect(store.getSnapshot().conversationId).toBe('created');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u2']);

@@ -744,6 +744,13 @@ export interface AgentConversation {
   pendingUserQuestion?: AgentUserQuestionPendingView | null;
 }
 
+export interface AgentCreateConversationOptions {
+  agentIds: string[];
+  goal: string;
+  seedText?: string;
+  systemNotice?: string;
+}
+
 export interface AgentConversationListMeta {
   id: string;
   title: string | null;

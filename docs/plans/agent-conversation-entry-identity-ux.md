@@ -105,8 +105,9 @@ Channel header and member management:
 - the Channel title (goal) is the primary label; stacked member avatars are
   secondary context;
 - member add/remove lives behind a **Members** popover, not loose header
-  icons; removal of the coordinator is disabled, and removal is disabled while
-  runs are in flight (matching runtime rules);
+  icons; removal of the coordinator is disabled, removal cannot drop the Channel
+  below two agent members, and removal is disabled while runs are in flight
+  (matching runtime rules);
 - historical attribution survives member removal (already the stored-record
   behavior; the UI must not re-resolve past speakers against the live roster).
 
@@ -291,7 +292,8 @@ Touches `agentRenderProjection.ts`, `AgentMessageRow.tsx`,
 - Creating a Channel = pick members + name a goal (+ optional seed note); the
   seed/system line and membership match the ratified spawn semantics.
 - Channel membership is managed from a Members popover; removing the
-  coordinator is disabled, as is removal while runs are in flight.
+  coordinator is disabled, as is removal below two agent members or while runs
+  are in flight.
 - The DM escalation verb names its consequence; the original DM is unchanged
   and a system line in the new Channel says so.
 - DM rows are quiet with identity in the header; Channel rows show grouped

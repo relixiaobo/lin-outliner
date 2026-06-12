@@ -21,7 +21,7 @@ import type {
   Usage,
   UserMessage,
 } from '../../core/agentTypes';
-import type { AgentConversation } from '../../core/types';
+import type { AgentConversation, AgentCreateConversationOptions } from '../../core/types';
 import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
@@ -469,7 +469,7 @@ export interface AgentRuntimeClient {
   restoreConversation: (conversationId: string) => Promise<AgentConversation>;
   /** Durably mark a conversation read (genuine user open / active+focused view). */
   markConversationRead: (conversationId: string) => Promise<void>;
-  createConversation: (options?: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string }) => Promise<AgentConversation>;
+  createConversation: (options: AgentCreateConversationOptions) => Promise<AgentConversation>;
   closeConversation: (conversationId: string) => Promise<void>;
   sendMessage: (
     conversationId: string,
@@ -532,7 +532,7 @@ export interface LinAgentRuntimeView {
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
   selectConversation: (targetConversationId: string) => Promise<void>;
-  newConversation: (options?: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string }) => Promise<void>;
+  newConversation: (options: AgentCreateConversationOptions) => Promise<void>;
   openDefaultConversation: () => Promise<void>;
   sendMessage: (
     prompt: string,
@@ -564,7 +564,7 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   restoreLatestConversation: () => api.agentRestoreLatestConversation(),
   restoreConversation: (conversationId) => api.agentRestoreConversation(conversationId),
   markConversationRead: (conversationId) => api.agentMarkConversationRead(conversationId),
-  createConversation: (options = {}) => api.agentCreateConversation(options),
+  createConversation: (options) => api.agentCreateConversation(options),
   closeConversation: (conversationId) => api.agentCloseConversation(conversationId),
   sendMessage: (conversationId, message, attachments = [], userViewContext = null) =>
     api.agentSendMessage(conversationId, message, attachments, userViewContext),
@@ -642,7 +642,7 @@ export class AgentRuntimeStore {
     }
   };
 
-  newConversation = async (options: { agentIds?: string[]; goal?: string; seedText?: string; systemNotice?: string } = {}) => {
+  newConversation = async (options: AgentCreateConversationOptions) => {
     const previousConversationId = this.conversationId;
     const requestVersion = this.beginConversationRequest();
     this.conversationId = null;

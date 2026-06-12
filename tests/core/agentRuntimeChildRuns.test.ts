@@ -333,7 +333,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run for this.', sink);
 
     expect(script.pendingCount()).toBe(0);
@@ -420,7 +420,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use the researcher agent.', sink);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     await flushProjectionCoalescing();
@@ -558,7 +558,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     const store = new AgentEventStore(dataRoot);
     const replay = await store.replay(conversation.conversationId);
     // The unified representation: a slim child_run.* lifecycle marker in the
@@ -716,7 +716,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Parent context marker.', sink);
 
     const forkContext = contexts.join('\n');
@@ -778,7 +778,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run for large output.', sink);
 
     const slimmedContext = childContexts.find((context) => context.includes('<persisted-output>')) ?? '';
@@ -854,7 +854,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run that will compact.', sink);
 
     const compactedChildContext = childContexts.join('\n');
@@ -924,7 +924,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run that will hit a context error.', sink);
 
     const retriedContext = childContexts.join('\n');
@@ -1038,7 +1038,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(
       runtime,
       conversation.conversationId,
@@ -1160,7 +1160,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     const store = new AgentEventStore(dataRoot);
     const replay = await store.replay(conversation.conversationId);
     const toolActor = { type: 'tool', toolName: 'Agent', toolCallId } as const;
@@ -1376,7 +1376,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     const store = new AgentEventStore(dataRoot);
     const replay = await store.replay(conversation.conversationId);
     const toolActor = { type: 'tool', toolName: 'Agent', toolCallId } as const;
@@ -1550,7 +1550,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start and inspect a background child run.', sink);
 
     expect(script.pendingCount()).toBe(0);
@@ -1604,7 +1604,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a self-reporting background child run.', sink);
 
     expect(script.pendingCount()).toBe(0);
@@ -1689,7 +1689,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a commandable background child run.', sink);
     const restored = await runtime.restoreConversation(conversation.conversationId);
     const childRunId = restored.renderProjection.childRunIds[0]!;
@@ -1765,7 +1765,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background child run.', sink);
     const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
 
@@ -1843,7 +1843,7 @@ describe('agent runtime childRuns', () => {
         streamFn: script.streamFn,
       },
     );
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     runtime.closeConversation(conversation.conversationId);
 
     // The crash window: the conversation records the run, but runs/<id>/ was
@@ -1955,7 +1955,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await firstRuntime.createConversation();
+    const conversation = await firstRuntime.restoreLatestConversation();
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background child run.', firstSink);
     firstRuntime.closeConversation(conversation.conversationId);
     // The transcript is the child run's own ledger — no snapshot payloads exist.
@@ -2068,7 +2068,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await firstRuntime.createConversation();
+    const conversation = await firstRuntime.restoreLatestConversation();
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start an interruptible background child run.', firstSink);
     const childRunId = latestProjection(firstSink.events)?.childRunIds[0]!;
     expect(childRunId).toBeTruthy();
@@ -2167,7 +2167,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await firstRuntime.createConversation();
+    const conversation = await firstRuntime.restoreLatestConversation();
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a background child run that completes.', firstSink);
     // The completed background child run left durable unread (never opened/read).
     const persisted = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
@@ -2228,7 +2228,7 @@ describe('agent runtime childRuns', () => {
       },
     );
 
-    const conversation = await runtime.createConversation();
+    const conversation = await runtime.restoreLatestConversation();
     const conversationId = conversation.conversationId;
 
     // First delivery → unread 1.

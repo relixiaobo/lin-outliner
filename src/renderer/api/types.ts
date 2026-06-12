@@ -20,6 +20,7 @@ export type {
   AgentDefinition,
   SkillDefinition,
   AgentConversation,
+  AgentCreateConversationOptions,
   AgentConversationListMeta,
   AgentMemoryEntryView,
   Backlink,

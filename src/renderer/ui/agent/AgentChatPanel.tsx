@@ -764,13 +764,11 @@ export function AgentChatPanel({
     }
     dockOpenRef.current = dockOpen;
   }, [dockOpen]);
-  // Channel identity is the goal-room id; channel ids stay channels even before
-  // all roster metadata arrives, while goal-less `lin-agent-dm-*` rows stay DMs.
   const agentMembers = useMemo(
     () => members.filter((member) => member.principal.type === 'agent' && member.mention),
     [members],
   );
-  const isChannel = conversationId?.startsWith('lin-agent-channel-') || agentMembers.length >= 2;
+  const isChannel = agentMembers.length >= 2;
   const memberByAgentId = useMemo(() => {
     const map = new Map<string, AgentRenderMemberView>();
     for (const member of agentMembers) {
@@ -839,8 +837,6 @@ export function AgentChatPanel({
     }
     return byId;
   }, [entries, isChannel]);
-  // Member management entry (A8: the user-reachable way to create a Channel —
-  // adding an agent to the DM spawns a seeded Channel and switches to it).
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
   const [memberMenuError, setMemberMenuError] = useState<string | null>(null);
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
@@ -1330,12 +1326,8 @@ export function AgentChatPanel({
     if (!conversationId) return;
     try {
       setMemberMenuError(null);
-      const result = await api.agentAddConversationMember(conversationId, agentId);
+      await api.agentAddConversationMember(conversationId, agentId);
       setMemberMenuOpen(false);
-      // Adding to the DM spawns a seeded Channel (ratified) — follow the user there.
-      if (result.conversationId !== conversationId) {
-        await selectConversation(result.conversationId);
-      }
       await loadConversations();
     } catch (caught) {
       setMemberMenuError(caught instanceof Error ? caught.message : String(caught));
@@ -1610,11 +1602,17 @@ export function AgentChatPanel({
                     {agentId && !member.coordinator && isChannel ? (
                       <IconButton
                         className="agent-message-action-button"
-                        disabled={isStreaming}
+                        disabled={isStreaming || agentMembers.length <= 2}
                         icon={CloseIcon}
                         label={t.agent.chat.removeMember}
                         onClick={() => void handleRemoveMember(agentId)}
-                        title={isStreaming ? t.agent.chat.removeMemberWhileActive : t.agent.chat.removeMember}
+                        title={
+                          isStreaming
+                            ? t.agent.chat.removeMemberWhileActive
+                            : agentMembers.length <= 2
+                              ? t.agent.chat.channelMembersRequired
+                              : t.agent.chat.removeMember
+                        }
                         variant="message"
                       />
                     ) : null}

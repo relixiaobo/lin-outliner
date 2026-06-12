@@ -276,10 +276,17 @@ describe('agent channel runtime', () => {
       'REVIEWER_AGENT_BODY: always review thoroughly.',
     ].join('\n'));
     const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const observerDir = await createAgentDefinition(localRoot, 'observer', [
+      '---',
+      'description: Observes channel work.',
+      '---',
+      'OBSERVER_AGENT_BODY: observe quietly.',
+    ].join('\n'));
+    const observerAgentId = projectAgentId(observerDir, 'observer');
     const calls: RecordedCall[] = [];
     const script = scriptedStream(streamResponses, calls);
     const { runtime, sink } = await createRuntime(dataRoot, localRoot, script.streamFn);
-    return { runtime, sink, calls, script, reviewerAgentId, dataRoot, localRoot };
+    return { runtime, sink, calls, script, reviewerAgentId, observerAgentId, dataRoot, localRoot };
   }
 
   test('@member routes the turn to that member, which runs as itself', async () => {
@@ -803,10 +810,10 @@ describe('agent channel runtime', () => {
       fauxAssistantMessage(fauxText('Reviewer spoke once.')),
       fauxAssistantMessage(fauxText('Coordinator continues without the reviewer.')),
     ]);
-    const { runtime, reviewerAgentId, dataRoot } = fixture;
+    const { runtime, reviewerAgentId, observerAgentId, dataRoot } = fixture;
     const reviewer = agentPrincipal(reviewerAgentId);
 
-    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Fold test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId, observerAgentId], goal: 'Fold test' });
     await runtime.sendMessage(channel.conversationId, '@reviewer say something');
     await runtime.removeConversationMember(channel.conversationId, reviewerAgentId);
     // Later events carry no membership change: the fold must not resurrect the
@@ -817,13 +824,14 @@ describe('agent channel runtime', () => {
     const entry = listed.find((candidate) => candidate.id === channel.conversationId);
     expect(entry?.members).not.toContainEqual(reviewer);
     expect(entry?.members).toContainEqual(agentPrincipal(MAIN_AGENT_ID));
+    expect(entry?.members).toContainEqual(agentPrincipal(observerAgentId));
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(state.conversation?.members).not.toContainEqual(reviewer);
   });
 
   test('a mention-token collision is rejected at member-add time', async () => {
     const fixture = await setupChannelFixture([]);
-    const { runtime, localRoot } = fixture;
+    const { runtime, localRoot, reviewerAgentId } = fixture;
     // A project agent named "assistant" collides with the coordinator's token.
     const impostorDir = await createAgentDefinition(localRoot, 'assistant', [
       '---',
@@ -833,7 +841,7 @@ describe('agent channel runtime', () => {
     ].join('\n'));
     const impostorAgentId = projectAgentId(impostorDir, 'assistant');
 
-    const channel = await runtime.createConversation({ goal: 'Collision test' });
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Collision test' });
     await expect(runtime.addConversationMember(channel.conversationId, impostorAgentId))
       .rejects.toThrow('already addresses');
     await expect(runtime.createConversation({ agentIds: [impostorAgentId], goal: 'Collision at create' }))
@@ -860,11 +868,11 @@ describe('agent channel runtime', () => {
 
   test('membership changes are real events: add/remove replay and survive restart; DMs stay immutable', async () => {
     const fixture = await setupChannelFixture([]);
-    const { runtime, reviewerAgentId, dataRoot } = fixture;
+    const { runtime, reviewerAgentId, observerAgentId, dataRoot } = fixture;
     const reviewer = agentPrincipal(reviewerAgentId);
 
     // Channel add → member.added; idempotent re-add appends nothing.
-    const channel = await runtime.createConversation({ goal: 'Membership test' });
+    const channel = await runtime.createConversation({ agentIds: [observerAgentId], goal: 'Membership test' });
     await runtime.addConversationMember(channel.conversationId, reviewerAgentId);
     await runtime.addConversationMember(channel.conversationId, reviewerAgentId);
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -884,6 +892,7 @@ describe('agent channel runtime', () => {
     const listed = await runtime.listConversations();
     const entry = listed.find((candidate) => candidate.id === channel.conversationId);
     expect(entry?.members).not.toContainEqual(reviewer);
+    expect(entry?.members).toContainEqual(agentPrincipal(observerAgentId));
 
     // DM never converts: Channel escalation is a separate goal-bearing create action.
     const dm = await runtime.restoreLatestConversation();
@@ -897,6 +906,8 @@ describe('agent channel runtime', () => {
     // Guards: the coordinator and DM rosters are immovable.
     await expect(runtime.removeConversationMember(channel.conversationId, MAIN_AGENT_ID)).rejects.toThrow('coordinator');
     await expect(runtime.removeConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('DM');
+    const minimumChannel = await runtime.createConversation({ agentIds: [reviewerAgentId], goal: 'Minimum membership test' });
+    await expect(runtime.removeConversationMember(minimumChannel.conversationId, reviewerAgentId)).rejects.toThrow('at least two agents');
     await expect(runtime.addConversationMember(channel.conversationId, 'project:nope:ghost')).rejects.toThrow('not found');
   });
 });

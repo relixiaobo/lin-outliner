@@ -287,6 +287,9 @@ find-or-create; DMs are never user-created, renamed, deleted, or membership-edit
 goal and at least two agent members (user + two agents minimum), with an optional
 seed note. DM to Channel escalation creates a new Channel with an explicit system
 notice; it never shares or mutates the source DM transcript.
+Channel member removal is also constrained by the same invariant: the coordinator
+cannot be removed, removal is blocked while a run is active, and removal cannot
+leave fewer than two agent members.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,

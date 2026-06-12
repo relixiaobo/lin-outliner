@@ -205,8 +205,8 @@ truth.
     transient per-POV flatten (own turns verbatim; other principals coalesced
     into identity-preambled user-role blocks; selected by transcript content,
     not the live roster); the persisted log stays reader-neutral
-  - UI: composer `@` member typeahead, member strip + "+" member menu on the
-    Channel header (add member incl. the DM-spawn path, remove member),
+  - UI: composer `@` member typeahead, member strip + Members popover on the
+    Channel header (add/remove members while preserving the minimum member set),
     conversation-list member display, speaker badges on non-coordinator
     assistant rows that survive member removal
 
