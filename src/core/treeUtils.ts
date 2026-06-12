@@ -1,5 +1,5 @@
 interface TreeNodeLike {
-  parentId?: string;
+  parentId?: string | null;
   children: readonly string[];
 }
 

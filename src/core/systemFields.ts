@@ -8,7 +8,8 @@
 // it (it reads a structural node shape that `Node` and `NodeProjection` satisfy).
 
 import { buildReferenceSummary } from './references';
-import type { NodeId, NodeType, RefRole, RichText } from './types';
+import { nodeIsInSubtree } from './treeUtils';
+import { TRASH_ID, type NodeId, type NodeType, type RefRole, type RichText } from './types';
 
 export const NAME_FIELD = 'sys:name';
 export const CREATED_FIELD = 'sys:createdAt';
@@ -114,7 +115,9 @@ function nearestDayNode(node: SysFieldNode, byId: SysFieldNodeMap): SysFieldNode
 // (what sort/group reports); `sources` are the deduped containing nodes, each
 // navigable (what the value renders).
 function resolveBacklinks(node: SysFieldNode, byId: SysFieldNodeMap): { sources: SystemFieldRef[]; count: number } {
-  const summary = buildReferenceSummary(byId);
+  const summary = buildReferenceSummary(byId, {
+    isDeleted: (nodeId) => nodeIsInSubtree(byId, nodeId, TRASH_ID),
+  });
   const backlinks = summary.byTarget.get(node.id) ?? [];
   const count = summary.countsByTarget.get(node.id)?.linked ?? 0;
   const sources: SystemFieldRef[] = [];

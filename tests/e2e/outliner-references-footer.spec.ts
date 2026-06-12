@@ -91,7 +91,15 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleRight);
   expect(alignment.linkLeft).toBeLessThan(alignment.rowRight);
 
-  const unlinkedRow = section.locator('.backlinks-row').filter({ hasText: 'Discuss Alpha soon' }).first();
+  const linkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Mentioned in...' }).first();
+  const linkedRow = linkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
+  await linkedRow.locator('.backlinks-row-open').hover();
+  await linkedRow.locator('.row-chevron-button').click();
+  await expect(linkedRow.locator('.backlinks-row-children')).toContainText('Alpha');
+  await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+
+  const unlinkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Unlinked mention' }).first();
+  const unlinkedRow = unlinkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
   await unlinkedRow.locator('.backlinks-row-open').hover();
   await unlinkedRow.locator('.row-chevron-button').click();
   await expect(unlinkedRow).toContainText('Beta child');

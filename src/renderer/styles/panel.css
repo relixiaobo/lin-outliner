@@ -530,18 +530,14 @@
 }
 
 .backlinks-row-snippet {
+  max-width: 16rem;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.backlinks-row-snippet {
-  max-width: 16rem;
-  color: var(--text-secondary);
 }
 
 .backlinks-link-action {

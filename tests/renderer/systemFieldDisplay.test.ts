@@ -11,6 +11,7 @@ import {
   systemFieldDisplay,
   systemFieldValues,
 } from '../../src/core/systemFields';
+import { TRASH_ID } from '../../src/core/types';
 
 function node(partial: Partial<NodeProjection> & { id: string }): NodeProjection {
   return {
@@ -138,5 +139,29 @@ describe('systemFieldValues (sort/group/filter adapter)', () => {
       { id: 'inline-source', label: 'Inline source' },
       { id: 'owner', label: 'Owner' },
     ]);
+  });
+
+  test('References ignores linked references from Trash', () => {
+    const map = byId(
+      node({ id: TRASH_ID, children: ['trashed-source'] }),
+      node({ id: 'target', content: { text: 'Target', inlineRefs: [] } as NodeProjection['content'] }),
+      node({
+        id: 'active-source',
+        children: ['active-ref'],
+        content: { text: 'Active', inlineRefs: [] } as NodeProjection['content'],
+      }),
+      node({ id: 'active-ref', type: 'reference', parentId: 'active-source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+      node({
+        id: 'trashed-source',
+        parentId: TRASH_ID,
+        children: ['trashed-ref'],
+        content: { text: 'Trashed', inlineRefs: [] } as NodeProjection['content'],
+      }),
+      node({ id: 'trashed-ref', type: 'reference', parentId: 'trashed-source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+    );
+
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['1']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'active-source', label: 'Active' }]);
   });
 });

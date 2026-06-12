@@ -26,7 +26,6 @@ import {
   type SearchQueryOperand,
 } from './types';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from './configProjection';
-import { refRoleCountsAsBacklink } from './configSchema';
 import {
   dateFieldValueRangesInText,
   parseDateFieldValueRange,
@@ -47,6 +46,7 @@ import {
   type TextSearchRecord,
 } from './textSearchIndex';
 import { analyzeTextSearchQuery, type TextSearchQueryAnalysis } from './textSearchAnalyzer';
+import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { nodeIsInSubtree } from './treeUtils';
 
 type SearchDocument = DocumentState | DocumentProjection;
@@ -177,6 +177,7 @@ interface SearchIndex {
 
 interface SearchContext {
   searchNode: SearchNode;
+  references: ReferenceSummary;
   textIndex?: TextSearchIndex;
   textAnalysisByQuery?: Map<string, TextSearchQueryAnalysis>;
 }
@@ -233,10 +234,12 @@ export function runSearchExpr(
 
   const scored: SearchHit[] = [];
   const textAnalysisByQuery = options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined;
+  const references = referenceSummaryForSearchIndex(evalIndex);
   for (const node of candidateNodes) {
     if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(evalIndex, node.id)) continue;
     const evaluation = evaluateCondition(evalIndex, node, virtualTree.root, {
       searchNode: contextSearchNode,
+      references,
       textIndex: options.textIndex,
       textAnalysisByQuery,
     });
@@ -397,6 +400,12 @@ export function textSearchRecordForNodeMap(
   }, nodeId);
 }
 
+function referenceSummaryForSearchIndex(index: SearchIndex): ReferenceSummary {
+  return buildReferenceSummary(index.nodes, {
+    isDeleted: (nodeId) => isInTrash(index, nodeId),
+  });
+}
+
 function indexSearchDocument(document: SearchDocument): SearchIndex {
   const allNodes = Array.isArray(document.nodes)
     ? document.nodes
@@ -476,7 +485,7 @@ type SearchEvaluation =
   | { ok: false; issue: SearchConditionIssue };
 
 function evaluateSearchNode(index: SearchIndex, candidate: SearchNode, searchNode: SearchNode): SearchEvaluation {
-  const context: SearchContext = { searchNode };
+  const context: SearchContext = { searchNode, references: referenceSummaryForSearchIndex(index) };
   const conditionNodes = searchNode.children
     .map((childId) => index.nodes.get(childId))
     .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
@@ -665,7 +674,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   if (op === 'LINKS_TO') {
     const targetId = conditionTargetId(index, conditionNode, context);
     if (!targetId) return missingEvaluationOperand(conditionNode, op, 'target id');
-    return { ok: true, match: nodeLinksTo(index, candidate, targetId), score: 20 };
+    return { ok: true, match: nodeLinksTo(candidate, targetId, context), score: 20 };
   }
 
   if (op === 'STRING_MATCH') {
@@ -690,7 +699,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
       : op === 'OWNED_BY'
         ? candidate.parentId === targetId
         : op === 'DESCENDANT_OF_WITH_REFS'
-          ? nodeIsInTreeUnderWithRefs(index, candidate, targetId)
+          ? nodeIsInTreeUnderWithRefs(index, candidate, targetId, context)
           : isDescendantOf(index, candidate.id, targetId);
     return { ok: true, match, score: 16 };
   }
@@ -704,7 +713,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     const targetId = scopedAncestorId(index, context.searchNode, op.startsWith('GRANDPARENTS') ? 'grandparent' : 'parent');
     if (!targetId) return missingEvaluationOperand(conditionNode, op, 'search node parent');
     const match = op.endsWith('WITH_REFS')
-      ? nodeIsInTreeUnderWithRefs(index, candidate, targetId)
+      ? nodeIsInTreeUnderWithRefs(index, candidate, targetId, context)
       : isDescendantOf(index, candidate.id, targetId);
     return { ok: true, match, score: 16 };
   }
@@ -949,20 +958,9 @@ function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSe
   };
 }
 
-function nodeLinksTo(index: SearchIndex, node: SearchNode, targetId: NodeId): boolean {
-  if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId) return true;
-  if (node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
-  return node.children.some((childId) => {
-    const child = index.nodes.get(childId);
-    if (!child || isInTrash(index, child.id)) return false;
-    if (child.type === 'reference') return refRoleCountsAsBacklink(child) && child.targetId === targetId;
-    if (child.type !== 'fieldEntry') return false;
-    return child.children.some((valueId) => {
-      const value = index.nodes.get(valueId);
-      if (!value || isInTrash(index, value.id) || value.type !== 'reference') return false;
-      return refRoleCountsAsBacklink(value) && value.targetId === targetId;
-    });
-  });
+function nodeLinksTo(node: SearchNode, targetId: NodeId, context: SearchContext): boolean {
+  const sources = context.references.byTarget.get(targetId) ?? [];
+  return sources.some((source) => source.kind !== 'unlinked' && source.sourceNodeId === node.id);
 }
 
 function nodeIsChildOf(index: SearchIndex, node: SearchNode, targetId: NodeId): boolean {
@@ -974,12 +972,12 @@ function nodeIsChildOf(index: SearchIndex, node: SearchNode, targetId: NodeId): 
   }));
 }
 
-function nodeIsInTreeUnderWithRefs(index: SearchIndex, node: SearchNode, targetId: NodeId): boolean {
+function nodeIsInTreeUnderWithRefs(index: SearchIndex, node: SearchNode, targetId: NodeId, context: SearchContext): boolean {
   if (isDescendantOf(index, node.id, targetId)) return true;
-  return index.allNodes.some((candidate) =>
-    candidate.id !== node.id
-    && isDescendantOf(index, candidate.id, targetId)
-    && nodeLinksTo(index, candidate, node.id));
+  const sources = context.references.byTarget.get(node.id) ?? [];
+  return sources.some((source) =>
+    source.kind !== 'unlinked'
+    && (source.sourceNodeId === targetId || isDescendantOf(index, source.sourceNodeId, targetId)));
 }
 
 function nodeMatchesFieldCondition(index: SearchIndex, node: SearchNode, fieldDefId: NodeId, text?: string): boolean {

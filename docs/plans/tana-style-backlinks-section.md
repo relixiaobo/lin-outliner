@@ -13,11 +13,11 @@ current page node has references or textual mentions, its `NodePanel` shows a
 bottom **References** section by default. The existing `References` system field
 stays available, but references are no longer hidden behind an optional field
 row. This plan now targets the Tana-level surface in one pass: linked
-references, unlinked mentions with a `Link` action, a reference counter, and
+references, unlinked mentions with a `Link` action, footer counts, and
 query/related-content reuse.
 
 Execution shape: **one complete feature in one PR**. The canonical backlink
-collector, mention scanner, `NodePanel` footer UI, reference counter, existing
+collector, mention scanner, `NodePanel` footer UI, footer counts, existing
 `References` system-field alignment, search/related-content reuse, spec sync,
 and tests ship together. Landing only a data helper or only the UI would leave
 the product in a split state.
@@ -36,9 +36,9 @@ the product in a split state.
 4. Add a `Link` action for unlinked mentions that converts the exact text range
    into an inline reference to the current node through the normal command
    mutation path.
-5. Add a quiet, optional reference counter in row chrome for nodes with linked
-   references or unlinked mentions. Clicking the counter opens the same
-   references surface for that node.
+5. Keep counts in the `NodePanel` footer header only. The count appears in the
+   Tana-like footer position and expands/collapses that section; row chrome does
+   not render inline counters.
 6. Keep the section navigational by default: source rows show breadcrumbs and
    click/drill navigates to the source. The only mutation in the footer is the
    explicit unlinked-mention `Link` action.
@@ -66,7 +66,7 @@ the product in a split state.
   positives and need separate product rules.
 - **Protocol reshaping without ratification.** Avoid changing
   `src/core/commands.ts` or the public `Backlink` protocol shape unless
-  implementation proves the current shape cannot express the footer/counter. If
+  implementation proves the current shape cannot express the footer count. If
   that happens, stop and ratify a small interface-first change before touching
   consumers.
 - **Whole-app performance rewrite.** Tana-level scope likely needs a mention
@@ -128,8 +128,8 @@ This helper becomes the source for:
 - `OutlinerCore.backlinks` / document command response;
 - `agentNodeToolProjection.backlinks`;
 - `systemFieldDisplay` / `systemFieldValues` for `sys:refCount`;
-- renderer footer section data.
-- reference counter counts;
+- renderer footer section data;
+- footer count data;
 - `LINKS_TO` / related-content search paths.
 
 If full sharing across main and renderer creates import-boundary friction, keep
@@ -166,21 +166,18 @@ Use existing primitives and design-system rules:
 - no raw hex;
 - labels go through i18n.
 
-### Reference counter
+### Footer count
 
-Add a compact reference counter affordance for visible rows whose source set is
-non-empty. This follows Tana's counter concept but must fit Lin's row chrome:
+The reference count lives in the `NodePanel` footer header, matching the Tana
+placement the user expects for page-level reference context:
 
-- default: visible but quiet for rows with count > 0; no zero-count placeholder;
+- default: visible only when the footer has at least one linked reference or
+  unlinked mention; no zero-count placeholder;
 - label/title exposes the linked/unlinked counts for accessibility;
-- click opens the references surface for that node, preferably by navigating to
-  the node and expanding its footer; if the current pane is already on that node,
-  expand/scroll the footer in place;
-- Cmd/Ctrl-click should mirror existing reference navigation when feasible;
-- no hand cursor on non-link row chrome beyond the actual button.
-
-If the counter causes visual crowding, prefer a small numeric text/button near
-existing right-side row metadata rather than adding a new filled pill.
+- click expands/collapses the footer in place;
+- row chrome, inline node rows, and reference rows do not render separate count
+  badges or numeric affordances;
+- no hand cursor on non-link row chrome beyond actual links/buttons.
 
 ### Link unlinked mentions
 
@@ -207,7 +204,7 @@ view sorting/filtering. It should stop being a separate backlink definition:
   the same read-only synthetic reference rows it uses today;
 - `systemFieldValues(..., REF_COUNT_FIELD)` returns the canonical linked-reference
   count, including inline refs and field references. Unlinked mentions are
-  exposed in the footer/counter but do not change field sort semantics unless the
+  exposed in the footer but do not change field sort semantics unless the
   PM explicitly wants "References" sorting to include unlinked text hits too;
 - tests cover multiple references from one source, inline-only refs, field refs,
   filtered internal refs, and unlinked mentions.
@@ -232,7 +229,7 @@ Update:
 
 - `docs/spec/ui-behavior.md` — document the default `NodePanel` bottom
   `References` section, its relationship to the `References` system field, the
-  counter behavior, click navigation, and collapsed-by-default behavior.
+  footer count behavior, click navigation, and collapsed-by-default behavior.
 
 Do not edit `docs/TASKS.md` or `CHANGELOG.md`; those are main-agent-owned and
 updated at merge.
@@ -250,8 +247,8 @@ Expected touch set:
 - `src/main/agentNodeToolProjection.ts`.
 - `src/renderer/ui/NodePanel.tsx`.
 - `src/renderer/ui/BacklinksSection.tsx` (new).
-- `src/renderer/ui/outliner/OutlinerItem.tsx` or row-leading/right-metadata
-  components for the reference counter.
+- `src/renderer/ui/outliner/OutlinerItem.tsx` only if row-leading or shared
+  outliner chrome reuse requires it; counters stay out of row chrome.
 - `src/renderer/styles/outliner.css` or the appropriate existing panel/outliner
   stylesheet.
 - i18n message files.
@@ -272,13 +269,13 @@ Expected touch set:
   unlinked mention. Mitigation: revalidate the range immediately before applying
   `Link`; never patch by stale offsets.
 - **Performance on every keystroke.** The current `References` system field can
-  already scan `byId`; adding unlinked mentions and visible row counters raises
-  the cost. The implementation must memoize by projection revision / `byId`, and
-  it should build a per-target count map once per projection frame rather than
+  already scan `byId`; adding unlinked mentions and footer counts raises the
+  cost. The implementation must memoize by projection revision / `byId`, and it
+  should build a per-target count map once per projection frame rather than
   scanning the document per row.
 - **Visual noise.** Tana's footer is useful because it is quiet and collapsible.
   Default-collapsed behavior plus no-zero-state rendering keeps empty pages clean;
-  the counter must stay visually secondary.
+  the footer count must stay visually secondary and row chrome must remain clean.
 - **Synthetic row semantics.** Footer rows are navigational summaries, not real
   document rows. They should not enter selectable-row batch actions unless the
   implementation deliberately renders them as existing read-only `sysref:*` rows
@@ -314,8 +311,8 @@ Expected touch set:
   - unlinked mention `Link` converts the exact source range into an inline
     reference, reclassifies it as linked, and is undoable;
   - stale/locked source rows do not mutate on `Link`;
-  - reference counter appears only when count > 0 and activates the references
-    surface.
+  - footer count appears only when count > 0, expands/collapses the references
+    section, and row chrome does not render counters.
 - If CSS/layout changes are non-trivial, run a focused Playwright visual check in
   light and dark.
 
@@ -331,7 +328,7 @@ Expected touch set:
 - Should definition nodes show the footer? Default: no in the first PR, matching
   nodex's `!isDefinitionNode` guard and keeping schema/config pages quieter.
 - Should the `References` system field's numeric value include unlinked mentions?
-  Default: no. The footer/counter are "all reference context"; the system field
+  Default: no. The footer is "all reference context"; the system field
   remains graph-linked count for sorting/filtering unless PM says otherwise.
 - What minimum normalized title length should qualify for unlinked mentions?
   Default: 3 non-space characters, with token-boundary matching.
@@ -339,7 +336,7 @@ Expected touch set:
 ## References
 
 - Tana docs: `Nodes and references` describes the built-in references section,
-  unlinked mentions, and reference counter.
+  unlinked mentions, and page-level count placement.
 - Tana docs: `Related content` describes configurable related-content sections,
   which this plan covers only for the backlinks/mentions source set.
 - nodex implementation references:
