@@ -848,6 +848,117 @@
   background: transparent;
 }
 
+.outliner-preview-wrap {
+  width: calc(100% + var(--row-bullet-start) - var(--outliner-preview-indent, 0px));
+  margin-left: var(--outliner-preview-indent, 0px);
+  transform: translateX(calc(-1 * var(--row-bullet-start)));
+}
+
+.outliner-preview-row {
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
+  color: var(--text);
+}
+
+.outliner-preview-row.is-reference-frame {
+  isolation: isolate;
+}
+
+.outliner-preview-row.is-reference-frame::before {
+  position: absolute;
+  top: 1px;
+  right: var(--row-edge);
+  bottom: 1px;
+  left: var(--row-selection-start);
+  z-index: 0;
+  border: 1px solid var(--row-selection-border);
+  border-left-width: 4px;
+  border-radius: var(--radius-row);
+  background: var(--row-selection-frame-bg);
+  content: "";
+  pointer-events: none;
+}
+
+.outliner-preview-row.is-reference-frame > * {
+  position: relative;
+  z-index: 1;
+}
+
+.outliner-preview-content {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.outliner-preview-content:active {
+  outline: none;
+  box-shadow: none;
+}
+
+.outliner-preview-content:focus-visible {
+  border-radius: var(--radius-row);
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.outliner-preview-title-line {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.outliner-preview-title {
+  color: var(--text);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.outliner-preview-meta {
+  margin-left: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  white-space: normal;
+}
+
+.outliner-preview-description {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-description);
+  line-height: var(--line-description);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.outliner-preview-action {
+  display: inline-flex;
+  min-height: var(--line-content);
+  align-items: center;
+  align-self: start;
+  justify-content: flex-end;
+  padding-left: var(--space-2);
+}
+
+.outliner-preview-children {
+  display: grid;
+  gap: var(--space-1);
+}
+
 .row.row-move-animating {
   will-change: transform;
 }

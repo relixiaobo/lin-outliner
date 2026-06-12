@@ -29,9 +29,9 @@ import {
   configKeysForDefType,
   configValueKind,
   isInternalConfigNode,
-  refRoleCountsAsBacklink,
   type SetConfigValueInput,
 } from './configSchema';
+import { referencesForTarget } from './references';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -2125,19 +2125,14 @@ export class Core {
 
   backlinks(targetId: string): Backlink[] {
     this.refreshStateFromLoro();
-    const result: Backlink[] = [];
-    for (const node of Object.values(this.stateValue.nodes)) {
-      if (isInTrash(this.stateValue, node.id)) continue;
-      if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId && node.parentId) {
-        result.push({ sourceId: node.parentId, referenceId: node.id, kind: 'tree' });
-      }
-      for (const inlineRef of node.content.inlineRefs) {
-        if (inlineRefNodeId(inlineRef) === targetId) {
-          result.push({ sourceId: node.id, referenceId: node.id, kind: 'inline' });
-        }
-      }
-    }
-    return result;
+    const byId = new Map(Object.values(this.stateValue.nodes).map((node) => [node.id, node]));
+    return referencesForTarget(byId, targetId, {
+      isDeleted: (nodeId) => isInTrash(this.stateValue, nodeId),
+    }).map((source) => ({
+      sourceId: source.sourceNodeId,
+      referenceId: source.referenceNodeId,
+      kind: source.kind,
+    }));
   }
 
   undo(): CommandOutcome {

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { buildReferenceSummary } from '../../src/core/references';
 import type { NodeId, NodeProjection } from '../../src/renderer/api/types';
+import { nodeReferenceTarget } from '../../src/renderer/api/types';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -10,6 +12,7 @@ import {
   systemFieldDisplay,
   systemFieldValues,
 } from '../../src/core/systemFields';
+import { TRASH_ID } from '../../src/core/types';
 
 function node(partial: Partial<NodeProjection> & { id: string }): NodeProjection {
   return {
@@ -101,16 +104,79 @@ describe('systemFieldValues (sort/group/filter adapter)', () => {
     expect(systemFieldValues(map.get('n')!, DONE_FIELD, map)).toEqual(['true']);
   });
 
-  test('References reports its raw reference count, while the display dedupes sources', () => {
-    // One source node references the target twice: count is 2, deduped sources is 1.
+  test('References reports the deduped linked row count', () => {
+    // One source node references the target twice: count and display both dedupe to one source row.
     const map = byId(
       node({ id: 'target' }),
       node({ id: 'source', content: { text: 'Src', inlineRefs: [] } as NodeProjection['content'] }),
       node({ id: 'r1', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
       node({ id: 'r2', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
     );
-    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['2']);
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['1']);
     const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
     expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'source', label: 'Src' }]);
+  });
+
+  test('References counts inline and field-value references', () => {
+    const map = byId(
+      node({ id: 'target' }),
+      node({
+        id: 'inline-source',
+        content: {
+          text: 'Inline source',
+          marks: [],
+          inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }],
+        },
+      }),
+      node({ id: 'field-def', type: 'fieldDef', content: { text: 'Related', marks: [], inlineRefs: [] } } as Partial<NodeProjection> & { id: string }),
+      node({ id: 'owner', children: ['field-entry'], content: { text: 'Owner', marks: [], inlineRefs: [] } }),
+      node({ id: 'field-entry', type: 'fieldEntry', parentId: 'owner', fieldDefId: 'field-def', children: ['field-ref'] } as Partial<NodeProjection> & { id: string }),
+      node({ id: 'field-ref', type: 'reference', parentId: 'field-entry', targetId: 'target', refRole: 'fieldValue' } as Partial<NodeProjection> & { id: string }),
+    );
+
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['2']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([
+      { id: 'inline-source', label: 'Inline source' },
+      { id: 'owner', label: 'Owner' },
+    ]);
+  });
+
+  test('References ignores linked references from Trash', () => {
+    const map = byId(
+      node({ id: TRASH_ID, children: ['trashed-source'] }),
+      node({ id: 'target', content: { text: 'Target', inlineRefs: [] } as NodeProjection['content'] }),
+      node({
+        id: 'active-source',
+        children: ['active-ref'],
+        content: { text: 'Active', inlineRefs: [] } as NodeProjection['content'],
+      }),
+      node({ id: 'active-ref', type: 'reference', parentId: 'active-source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+      node({
+        id: 'trashed-source',
+        parentId: TRASH_ID,
+        children: ['trashed-ref'],
+        content: { text: 'Trashed', inlineRefs: [] } as NodeProjection['content'],
+      }),
+      node({ id: 'trashed-ref', type: 'reference', parentId: 'trashed-source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+    );
+
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['1']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'active-source', label: 'Active' }]);
+  });
+
+  test('References can resolve from a shared summary context', () => {
+    const map = byId(
+      node({ id: 'target' }),
+      node({ id: 'source', children: ['ref'], content: { text: 'Source', marks: [], inlineRefs: [] } }),
+      node({ id: 'ref', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+    );
+    const referenceSummary = buildReferenceSummary(map);
+    const context = { referenceSummary };
+
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map, context)).toEqual(['1']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map, context);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'source', label: 'Source' }]);
   });
 });

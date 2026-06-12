@@ -9,7 +9,15 @@ import {
   searchNodeToQueryExpr,
 } from '../../src/core/searchEngine';
 import type { TextSearchIndex } from '../../src/core/textSearchIndex';
-import { QUERY_OPS, type EmbedNode, type ImageNode, type QueryOp } from '../../src/core/types';
+import {
+  nodeReferenceTarget,
+  plainText,
+  QUERY_OPS,
+  replaceAllRichTextPatch,
+  type EmbedNode,
+  type ImageNode,
+  type QueryOp,
+} from '../../src/core/types';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -85,6 +93,35 @@ describe('core search engine', () => {
     const anyTagged = runSearchNode(state, searchId);
     expect(anyTagged.ok ? anyTagged.hits.map((hit) => hit.nodeId) : []).toContain(tagged);
     expect(anyTagged.ok ? anyTagged.hits.map((hit) => hit.nodeId) : []).not.toContain(other);
+  });
+
+  test('LINKS_TO uses canonical linked reference sources', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const treeSource = mustFocus(core.createNode(today, null, 'Tree source'));
+    const inlineSource = mustFocus(core.createNode(today, null, 'Inline source'));
+    const fieldSource = mustFocus(core.createNode(today, null, 'Field source'));
+    const unlinkedSource = mustFocus(core.createNode(today, null, 'Target in text only'));
+    const trashedSource = mustFocus(core.createNode(today, null, 'Trashed source'));
+
+    core.addReference(treeSource, target, null);
+    core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
+      ...plainText('Inline target'),
+      inlineRefs: [{ offset: 7, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+    const fieldEntry = mustFocus(core.createInlineField(fieldSource, null, 'Related', 'reference'));
+    core.addFieldReference(fieldEntry, target);
+    core.addReference(trashedSource, target, null);
+    core.trashNode(trashedSource);
+
+    const result = runSearchExpr(core.state(), { kind: 'rule', op: 'LINKS_TO', targetId: target });
+    expect(result.ok).toBe(true);
+    const hits = result.ok ? result.hits.map((hit) => hit.nodeId) : [];
+
+    expect(hits).toEqual(expect.arrayContaining([treeSource, inlineSource, fieldSource]));
+    expect(hits).not.toContain(unlinkedSource);
+    expect(hits).not.toContain(trashedSource);
   });
 
   test('sorts saved search hits by explicit timestamp sort settings', () => {

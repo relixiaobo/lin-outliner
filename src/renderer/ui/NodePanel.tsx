@@ -13,7 +13,7 @@ import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
 import { TAG_DAY_ID } from '../../core/types';
-import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
+import { flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
 import {
   deleteRichTextRange,
@@ -65,9 +65,11 @@ import { IconButton } from './primitives/IconButton';
 import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
+import { BacklinksSection } from './BacklinksSection';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { useT } from '../i18n/I18nProvider';
+import { referenceSummaryForIndex } from '../state/referenceSummary';
 
 const PANEL_HEADER_ICON_SIZE = 20;
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
@@ -151,7 +153,11 @@ export function formatDayNodeTitle(isoDate: string, now: Date, labels: DayNodeTi
 
 export function NodePanel(props: NodePanelProps) {
   const t = useT();
-  const rootNode = props.index.byId.get(props.rootId);
+  const requestedRootNode = props.index.byId.get(props.rootId);
+  const resolvedRootId = requestedRootNode?.type === 'reference' && requestedRootNode.targetId
+    ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
+    : props.rootId;
+  const rootNode = props.index.byId.get(resolvedRootId);
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const [titleContentRevision, setTitleContentRevision] = useState(0);
@@ -183,14 +189,17 @@ export function NodePanel(props: NodePanelProps) {
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
-  const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
-  const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
-  const titleEditorFocused = props.ui.focusedId === props.rootId
+  const titleFocusTarget = focusTarget(resolvedRootId, null, props.panelId, 'panel-title');
+  const descriptionFocusTarget = focusTarget(resolvedRootId, null, props.panelId, 'description');
+  const titleEditorFocused = props.ui.focusedId === resolvedRootId
     && props.ui.focusSurface === 'panel-title'
     && props.ui.focusedPanelId === props.panelId;
+  const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
+  const systemFieldContext = useMemo(() => ({ referenceSummary }), [referenceSummary]);
   const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
-  }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
+    systemFieldContext,
+  }), [props.index.byId, props.ui.expandedHiddenFields, rootNode, systemFieldContext]);
 
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId) return;
@@ -204,8 +213,8 @@ export function NodePanel(props: NodePanelProps) {
     event.stopPropagation();
     const draggedId = props.dragId;
     props.setDragId(null);
-    if (draggedId === props.rootId) return;
-    void props.run(() => api.moveNode(draggedId, props.rootId, null));
+    if (draggedId === resolvedRootId) return;
+    void props.run(() => api.moveNode(draggedId, resolvedRootId, null));
   };
 
   useEffect(() => {
@@ -227,11 +236,11 @@ export function NodePanel(props: NodePanelProps) {
 
   useEffect(() => {
     setSearchQueryOpen(false);
-  }, [props.rootId]);
+  }, [resolvedRootId]);
 
   const focusFirstVisibleRowOrTrailing = () => {
     const rows = flattenVisibleRows(
-      props.rootId,
+      resolvedRootId,
       props.index.byId,
       props.ui.expanded,
       props.ui.expandedHiddenFields,
@@ -240,7 +249,7 @@ export function NodePanel(props: NodePanelProps) {
     if (!first) {
       props.setUi((prev) => requestFocusState(
         prev,
-        focusTarget(props.rootId, props.rootId, props.panelId, 'trailing'),
+        focusTarget(resolvedRootId, resolvedRootId, props.panelId, 'trailing'),
         cursorEnd(),
       ));
       return;
@@ -248,23 +257,23 @@ export function NodePanel(props: NodePanelProps) {
     const firstNode = props.index.byId.get(first);
     props.setUi((prev) => requestFocusState(
       prev,
-      rowFocusTarget(first, firstNode?.parentId ?? props.rootId, props.panelId),
+      rowFocusTarget(first, firstNode?.parentId ?? resolvedRootId, props.panelId),
       cursorStart(),
     ));
   };
 
   const replaceLocalTitleContent = (content: RichText) => {
-    localTitleSyncRef.current = { nodeId: props.rootId, content };
+    localTitleSyncRef.current = { nodeId: resolvedRootId, content };
     setTitleContent(content);
     setTitleContentRevision((revision) => revision + 1);
   };
 
   const renderHeaderIcon = () => {
     if (!rootNode) return null;
-    if (props.rootId === projection.libraryId) return <LibraryIcon size={PANEL_HEADER_ICON_SIZE} />;
-    if (props.rootId === projection.schemaId) return <SupertagIcon size={PANEL_HEADER_ICON_SIZE} />;
-    if (props.rootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
-    if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (resolvedRootId === projection.libraryId) return <LibraryIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (resolvedRootId === projection.schemaId) return <SupertagIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (resolvedRootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (resolvedRootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (rootNode.type === 'tagDef') {
       // Solid accent fill with a white hash. The accent IS the tag's colour, and
       // white-on-accent stays high-contrast in both themes — a soft tinted
@@ -330,7 +339,7 @@ export function NodePanel(props: NodePanelProps) {
     setBreadcrumbExpanded(false);
     setTitleDocked(false);
     window.requestAnimationFrame(updateTitleDockedState);
-  }, [props.rootId, updateTitleDockedState]);
+  }, [resolvedRootId, updateTitleDockedState]);
 
   useEffect(() => {
     const handleResize = () => updateTitleDockedState();
@@ -344,7 +353,7 @@ export function NodePanel(props: NodePanelProps) {
 
   const clearHeaderFocus = () => {
     props.setUi((prev) => (
-      prev.focusedId === props.rootId
+      prev.focusedId === resolvedRootId
         ? clearFocusState(prev)
         : prev
     ));
@@ -357,14 +366,14 @@ export function NodePanel(props: NodePanelProps) {
 
   const applyTitlePatch = (patch: RichTextPatch) => {
     pendingTitlePatchRef.current = pendingTitlePatchRef.current.then(() =>
-      props.run(() => api.applyNodeTextPatch(props.rootId, patch), {
+      props.run(() => api.applyNodeTextPatch(resolvedRootId, patch), {
         applyFocus: false,
       }));
     void pendingTitlePatchRef.current;
   };
 
   const handleTitleChange = (content: RichText) => {
-    localTitleSyncRef.current = { nodeId: props.rootId, content };
+    localTitleSyncRef.current = { nodeId: resolvedRootId, content };
     setTitleContent(content);
   };
 
@@ -381,7 +390,7 @@ export function NodePanel(props: NodePanelProps) {
   const handleTitleModEnter = async (content: RichText) => {
     replaceLocalTitleContent(content);
     await pendingTitlePatchRef.current;
-    await props.run(() => api.cycleDoneState(props.rootId));
+    await props.run(() => api.cycleDoneState(resolvedRootId));
   };
 
   const openHeaderContextMenu = (event: MouseEvent) => {
@@ -392,10 +401,10 @@ export function NodePanel(props: NodePanelProps) {
     props.setUi((prev) => ({
       ...clearFocusState(prev),
       focusedId: null,
-      selectedId: props.rootId,
-      selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
-      selectionAnchorId: prev.selectedIds.has(props.rootId) ? prev.selectionAnchorId ?? props.rootId : props.rootId,
-      selectionRootId: props.rootId,
+      selectedId: resolvedRootId,
+      selectedIds: prev.selectedIds.has(resolvedRootId) ? new Set(prev.selectedIds) : new Set([resolvedRootId]),
+      selectionAnchorId: prev.selectedIds.has(resolvedRootId) ? prev.selectionAnchorId ?? resolvedRootId : resolvedRootId,
+      selectionRootId: resolvedRootId,
       selectionSource: 'global',
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
@@ -409,10 +418,10 @@ export function NodePanel(props: NodePanelProps) {
     props.setUi((prev) => ({
       ...clearFocusState(prev),
       focusedId: null,
-      selectedId: props.rootId,
-      selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
-      selectionAnchorId: prev.selectedIds.has(props.rootId) ? prev.selectionAnchorId ?? props.rootId : props.rootId,
-      selectionRootId: props.rootId,
+      selectedId: resolvedRootId,
+      selectedIds: prev.selectedIds.has(resolvedRootId) ? new Set(prev.selectedIds) : new Set([resolvedRootId]),
+      selectionAnchorId: prev.selectedIds.has(resolvedRootId) ? prev.selectionAnchorId ?? resolvedRootId : resolvedRootId,
+      selectionRootId: resolvedRootId,
       selectionSource: 'global',
     }));
     const rect = event.currentTarget.getBoundingClientRect();
@@ -461,7 +470,7 @@ export function NodePanel(props: NodePanelProps) {
     await pendingTitlePatchRef.current;
     const nextContent = deleteRichTextRange(titleContent, titleTrigger.from, titleTrigger.to);
     replaceLocalTitleContent(nextContent);
-    await props.run(() => api.replaceNodeText(props.rootId, nextContent));
+    await props.run(() => api.replaceNodeText(resolvedRootId, nextContent));
   };
 
   const applyTitleInlineReference = async (target: { id: NodeId; content: RichText }) => {
@@ -484,7 +493,7 @@ export function NodePanel(props: NodePanelProps) {
       titleFocusTarget,
       cursorAtOffset(cursorOffsetAfterInlineReference(nextContent, titleTrigger.from), 'after'),
     ));
-    return api.replaceNodeText(props.rootId, nextContent);
+    return api.replaceNodeText(resolvedRootId, nextContent);
   };
 
   const executeTitleSlashCommand = async (commandId: SlashCommandId) => {
@@ -494,7 +503,7 @@ export function NodePanel(props: NodePanelProps) {
       await pendingTitlePatchRef.current;
       const nextContent = replaceRichTextRangeWithText(titleContent, titleTrigger.from, titleTrigger.to, '@');
       replaceLocalTitleContent(nextContent);
-      const result = await api.replaceNodeText(props.rootId, nextContent);
+      const result = await api.replaceNodeText(resolvedRootId, nextContent);
       window.requestAnimationFrame(() => {
         setTitleTrigger({
           kind: '@',
@@ -512,12 +521,12 @@ export function NodePanel(props: NodePanelProps) {
       const withoutTrigger = deleteRichTextRange(titleContent, titleTrigger.from, titleTrigger.to);
       const nextContent = markWholeTextAsHeading(withoutTrigger);
       replaceLocalTitleContent(nextContent);
-      return api.replaceNodeText(props.rootId, nextContent);
+      return api.replaceNodeText(resolvedRootId, nextContent);
     }
 
     if (commandId === 'checkbox') {
       await clearTitleTriggerText();
-      return api.toggleDone(props.rootId);
+      return api.toggleDone(resolvedRootId);
     }
 
     if (commandId === 'command_palette') {
@@ -624,11 +633,11 @@ export function NodePanel(props: NodePanelProps) {
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox
                   checked={Boolean(rootNode.completedAt)}
-                  onToggle={() => void props.run(() => api.toggleDone(props.rootId))}
+                  onToggle={() => void props.run(() => api.toggleDone(resolvedRootId))}
                 />
               )}
               <RichTextEditor
-                nodeId={props.rootId}
+                nodeId={resolvedRootId}
                 content={dayTitleContent ?? titleContent}
                 contentRevision={titleContentRevision}
                 placeholder={t.common.untitled}
@@ -648,7 +657,7 @@ export function NodePanel(props: NodePanelProps) {
                 onDescriptionToggle={({ cursorOffset }) => {
                   descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
                   props.setUi((prev) => requestFocusState(
-                    { ...prev, editingDescriptionId: props.rootId },
+                    { ...prev, editingDescriptionId: resolvedRootId },
                     descriptionFocusTarget,
                     cursorEnd(),
                   ));
@@ -683,9 +692,9 @@ export function NodePanel(props: NodePanelProps) {
               />
               {titleTrigger && (
                 <TriggerPopover
-                  trigger={{ nodeId: props.rootId, ...titleTrigger }}
+                  trigger={{ nodeId: resolvedRootId, ...titleTrigger }}
                   index={props.index}
-                  nodeId={props.rootId}
+                  nodeId={resolvedRootId}
                   run={props.run}
                   close={() => setTitleTrigger(null)}
                   clearTriggerText={clearTitleTriggerText}
@@ -707,13 +716,13 @@ export function NodePanel(props: NodePanelProps) {
           {rootNode && (
             <NodeDescription
               node={rootNode}
-              targetId={props.rootId}
-              editing={props.ui.editingDescriptionId === props.rootId}
+              targetId={resolvedRootId}
+              editing={props.ui.editingDescriptionId === resolvedRootId}
               run={props.run}
               onEditingChange={(editing) => {
                 props.setUi((prev) => ({
                   ...prev,
-                  editingDescriptionId: editing ? props.rootId : null,
+                  editingDescriptionId: editing ? resolvedRootId : null,
                 }));
               }}
               focusTarget={descriptionFocusTarget}
@@ -740,7 +749,7 @@ export function NodePanel(props: NodePanelProps) {
           {rootNode && hasTitleTags && (
             <div className="panel-title-toolbar-row">
               <TagBar
-                nodeId={props.rootId}
+                nodeId={resolvedRootId}
                 tagIds={rootNode.tags}
                 index={props.index}
                 run={props.run}
@@ -753,7 +762,7 @@ export function NodePanel(props: NodePanelProps) {
           {rootNode?.type === 'search' && searchQueryOpen && (
             <SearchQueryBuilderPanel
               index={props.index}
-              nodeId={props.rootId}
+              nodeId={resolvedRootId}
               run={props.run}
               onClose={() => setSearchQueryOpen(false)}
             />
@@ -772,18 +781,18 @@ export function NodePanel(props: NodePanelProps) {
             x={contextMenu.x}
             y={contextMenu.y}
             node={rootNode}
-            targetId={props.rootId}
-            openId={props.rootId}
+            targetId={resolvedRootId}
+            openId={resolvedRootId}
             selectedIds={props.ui.selectedIds}
             index={props.index}
-            isPinned={props.isNodePinned(props.rootId)}
+            isPinned={props.isNodePinned(resolvedRootId)}
             run={props.run}
             onRoot={props.onRoot}
             onTogglePin={props.onTogglePin}
             onEditDescription={() => {
               descriptionReturnPlacementRef.current = cursorEnd();
               props.setUi((prev) => requestFocusState(
-                { ...prev, editingDescriptionId: props.rootId },
+                { ...prev, editingDescriptionId: resolvedRootId },
                 descriptionFocusTarget,
                 cursorEnd(),
               ));
@@ -812,8 +821,8 @@ export function NodePanel(props: NodePanelProps) {
             {FLAT_OUTLINER_ENABLED ? (
               <OutlinerFlatView
                 panelId={props.panelId}
-                parentId={props.rootId}
-                rootId={props.rootId}
+                parentId={resolvedRootId}
+                rootId={resolvedRootId}
                 onRoot={props.onRoot}
                 index={props.index}
                 isNodePinned={props.isNodePinned}
@@ -833,8 +842,8 @@ export function NodePanel(props: NodePanelProps) {
             ) : (
               <OutlinerView
                 panelId={props.panelId}
-                parentId={props.rootId}
-                rootId={props.rootId}
+                parentId={resolvedRootId}
+                rootId={resolvedRootId}
                 onRoot={props.onRoot}
                 depth={0}
                 index={props.index}
@@ -856,6 +865,15 @@ export function NodePanel(props: NodePanelProps) {
               />
             )}
           </div>
+        )}
+        {rootNode && (
+          <BacklinksSection
+            targetId={resolvedRootId}
+            index={props.index}
+            summary={referenceSummary}
+            run={props.run}
+            onRoot={props.onRoot}
+          />
         )}
       </div>
     </main>

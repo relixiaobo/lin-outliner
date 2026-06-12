@@ -152,7 +152,8 @@ interface OutlinerItemProps {
 
 function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
-  const tf = useT().outliner.field;
+  const t = useT();
+  const tf = t.outliner.field;
   const realNode = props.index.byId.get(props.nodeId);
   const parentNode = props.index.byId.get(props.parentId);
   // A draft row synthesizes an empty plain node so the normal render path runs;

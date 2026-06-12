@@ -8,13 +8,13 @@ import {
   TAG_YEAR_ID,
   TRASH_ID,
   WORKSPACE_ID,
-  inlineRefNodeId,
   type DocumentProjection,
   type NodeProjection,
 } from '../core/types';
 import { formatNodeReferenceMarker, richTextToReferenceMarkup } from '../core/referenceMarkup';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
-import { isInternalConfigNode, refRoleCountsAsBacklink } from '../core/configSchema';
+import { isInternalConfigNode } from '../core/configSchema';
+import { referencesForTarget, type ReferenceSource } from '../core/references';
 import type {
   NodeBacklink,
   NodeFieldRead,
@@ -69,31 +69,26 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
 }
 
 export function backlinks(index: ProjectionIndex, targetId: string, includeDeleted: boolean): NodeBacklink[] {
-  const result: NodeBacklink[] = [];
-  for (const node of index.projection.nodes) {
-    if (!includeDeleted && isInTrash(index, node.id)) continue;
-    if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId) {
-      const parent = node.parentId ? index.nodes.get(node.parentId) : undefined;
-      const source = parent && parent.type === 'fieldEntry' && parent.parentId ? index.nodes.get(parent.parentId) : parent;
-      result.push({
-        sourceNodeId: source?.id ?? node.id,
-        sourceTitle: source ? nodeTitle(index, source) : nodeTitle(index, node),
-        kind: parent?.type === 'fieldEntry' ? 'field' : 'tree',
-        snippet: parent?.type === 'fieldEntry' ? fieldName(index, parent) : undefined,
-      });
-    }
-    for (const inlineRef of node.content.inlineRefs) {
-      if (inlineRefNodeId(inlineRef) === targetId) {
-        result.push({
-          sourceNodeId: node.id,
-          sourceTitle: nodeTitle(index, node),
-          kind: 'inline',
-          snippet: snippetFor(node, [inlineRef.displayName ?? '']),
-        });
-      }
-    }
-  }
-  return result;
+  return referencesForTarget(index.nodes, targetId, {
+    isDeleted: includeDeleted ? undefined : (nodeId) => isInTrash(index, nodeId),
+  }).filter(isLinkedReferenceSource).map((source) => {
+    const sourceNode = index.nodes.get(source.sourceNodeId);
+    const fieldEntry = source.fieldEntryId ? index.nodes.get(source.fieldEntryId) : undefined;
+    return {
+      sourceNodeId: source.sourceNodeId,
+      sourceTitle: sourceNode ? nodeTitle(index, sourceNode) : source.sourceNodeId,
+      kind: source.kind,
+      snippet: source.kind === 'field' && fieldEntry
+        ? fieldName(index, fieldEntry)
+        : source.kind === 'inline' && sourceNode
+          ? snippetFor(sourceNode, [source.inlineDisplayName ?? ''])
+          : undefined,
+    };
+  });
+}
+
+function isLinkedReferenceSource(source: ReferenceSource): source is ReferenceSource & { kind: 'tree' | 'inline' | 'field' } {
+  return source.kind !== 'unlinked';
 }
 
 export function normalChildIds(index: ProjectionIndex, nodeId: string, includeDeleted: boolean): string[] {

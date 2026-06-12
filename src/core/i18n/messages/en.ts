@@ -459,6 +459,26 @@ export const en = {
     moreActionsTitle: 'More',
     showQuery: 'Show query',
     hideQuery: 'Hide query',
+    references: {
+      title: 'References',
+      // TODO plural via Intl
+      count: ({ total: _total, linked, unlinked }: { total: number; linked: number; unlinked: number }) =>
+        `${linked} ${linked === 1 ? 'reference' : 'references'} · ${unlinked} unlinked ${unlinked === 1 ? 'mention' : 'mentions'}`,
+      linkedHeading: ({ count }: { count: number }) => `${count} Mentioned in...`,
+      fieldHeading: ({ field, count }: { field: string; count: number }) => `${count} Appears as ${field} in...`,
+      unlinkedHeading: ({ count }: { count: number }) => `${count} Unlinked ${count === 1 ? 'mention' : 'mentions'}`,
+      expand: 'Show references',
+      collapse: 'Hide references',
+      openSource: ({ title }: { title: string }) => `Open ${title}`,
+      linkMention: 'Link',
+      linkMentionTitle: ({ title }: { title: string }) => `Link this mention to ${title}`,
+      descriptionMention: 'description',
+      untitledSource: 'Untitled',
+      breadcrumbLabel: 'Reference source path',
+      // TODO plural via Intl
+      counterLabel: ({ count }: { count: number }) => `${count} ${count === 1 ? 'reference' : 'references'}`,
+      counterTitle: ({ count }: { count: number }) => `Open ${count} ${count === 1 ? 'reference' : 'references'}`,
+    },
   },
   // The day-panel date navigation strip (prev/next/today + calendar popover).
   dateNavigation: {
