@@ -859,6 +859,30 @@
   color: var(--text);
 }
 
+.outliner-preview-row.is-reference-frame {
+  isolation: isolate;
+}
+
+.outliner-preview-row.is-reference-frame::before {
+  position: absolute;
+  top: 1px;
+  right: var(--row-edge);
+  bottom: 1px;
+  left: var(--row-selection-start);
+  z-index: 0;
+  border: 1px solid var(--row-selection-border);
+  border-left-width: 2px;
+  border-radius: var(--radius-row);
+  background: var(--row-selection-frame-bg);
+  content: "";
+  pointer-events: none;
+}
+
+.outliner-preview-row.is-reference-frame > * {
+  position: relative;
+  z-index: 1;
+}
+
 .outliner-preview-content {
   appearance: none;
   -webkit-appearance: none;

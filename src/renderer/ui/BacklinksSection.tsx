@@ -321,6 +321,7 @@ function ReferenceOutlineRow({
       title={title}
       meta={mentionLabel}
       description={description}
+      referenceFrame
       action={linkAction && (
         <button
           type="button"

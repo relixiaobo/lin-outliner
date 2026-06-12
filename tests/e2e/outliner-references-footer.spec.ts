@@ -91,9 +91,12 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
     const linkRect = link.getBoundingClientRect();
     const rowRect = previewRow.getBoundingClientRect();
     const linkStyle = getComputedStyle(link);
+    const rowStyle = getComputedStyle(previewRow);
+    const frameStyle = getComputedStyle(previewRow, '::before');
     const titleRect = sourceTitle.getBoundingClientRect();
     const titleStyle = getComputedStyle(sourceTitle);
     const titleLineHeight = Number.parseFloat(titleStyle.lineHeight);
+    const cssLength = (value: string) => Number.parseFloat(value.trim());
     const left = (selector: string) => {
       const element = document.querySelector(selector);
       if (!element) throw new Error(`missing alignment target: ${selector}`);
@@ -102,7 +105,14 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
     return {
       bodyBulletLeft: left(`[data-trailing-parent-id="${alphaId}"] .row-bullet-button`),
       bodyTextLeft: left(`[data-trailing-parent-id="${alphaId}"] .ProseMirror`),
+      frameBackgroundColor: frameStyle.backgroundColor,
+      frameBorderLeftWidth: cssLength(frameStyle.borderLeftWidth),
+      frameContent: frameStyle.content,
+      frameLeft: cssLength(frameStyle.left),
+      frameRight: cssLength(frameStyle.right),
       rowRight: rowRect.right,
+      rowSelectionStart: cssLength(rowStyle.getPropertyValue('--row-selection-start')),
+      rowEdge: cssLength(rowStyle.getPropertyValue('--row-edge')),
       linkLeft: linkRect.left,
       linkRight: linkRect.right,
       linkHeight: linkRect.height,
@@ -119,6 +129,11 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(Math.abs(alignment.sourceMarkerLeft - alignment.bodyBulletLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(alignment.sourceTitleLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(alignment.sourceDescriptionLeft - alignment.bodyTextLeft)).toBeLessThanOrEqual(1);
+  expect(alignment.frameContent).not.toBe('none');
+  expect(Math.abs(alignment.frameLeft - alignment.rowSelectionStart)).toBeLessThanOrEqual(1);
+  expect(Math.abs(alignment.frameRight - alignment.rowEdge)).toBeLessThanOrEqual(1);
+  expect(alignment.frameBorderLeftWidth).toBeGreaterThan(1);
+  expect(alignment.frameBackgroundColor).not.toBe('rgba(0, 0, 0, 0)');
   expect(alignment.sourceTitleWhiteSpace).toBe('normal');
   expect(alignment.sourceTitleHeight).toBeGreaterThan(alignment.sourceTitleLineHeight * 1.5);
   expect(alignment.linkLeft).toBeGreaterThan(alignment.sourceTitleLeft);

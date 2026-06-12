@@ -153,7 +153,8 @@ mentions:
   - `Unlinked mentions...` for exact text mentions that are not real references;
   - each item uses the shared read-only outliner preview row: breadcrumb context,
     normal row shell/leading geometry, the source's full wrapping title, the
-    source description when present, and a trailing action slot;
+    source description when present, a trailing action slot, and a reference
+    frame matching the normal selected-row range around the bullet plus content;
   - click navigates to the source node through the existing `onRoot` path;
   - unlinked mention rows include a secondary `Link` action that converts the
     exact mention text into an inline reference;

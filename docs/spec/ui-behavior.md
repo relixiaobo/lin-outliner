@@ -192,6 +192,9 @@ group labels; source row markers and titles align with normal node body rows.
 Source breadcrumbs are navigable.
 Reference field-value sources use the reference marker; ordinary linked and
 unlinked source rows use the normal content bullet.
+Each source row renders a reference frame behind its bullet, wrapped title,
+description, and trailing action slot; the frame uses the same left and right
+range as the normal node selection affordance.
 
 Source rows show the source node's full title text with normal wrapping, not a
 single-line ellipsis. If the source node has a description, the description is

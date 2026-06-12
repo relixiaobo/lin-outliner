@@ -13,6 +13,7 @@ interface OutlinerPreviewRowProps {
   meta?: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
+  referenceFrame?: boolean;
   onOpen: MouseEventHandler<HTMLButtonElement>;
   onToggleExpand: () => void;
   onDrillDown: () => void;
@@ -30,6 +31,7 @@ export function OutlinerPreviewRow({
   meta,
   description,
   action,
+  referenceFrame = false,
   onOpen,
   onToggleExpand,
   onDrillDown,
@@ -49,7 +51,12 @@ export function OutlinerPreviewRow({
       expanded={expanded}
       wrapClassName="outliner-preview-wrap"
       wrapProps={wrapProps}
-      rowClassName={`row outliner-preview-row ${action ? 'has-preview-action' : ''}`.trim()}
+      rowClassName={[
+        'row',
+        'outliner-preview-row',
+        action ? 'has-preview-action' : '',
+        referenceFrame ? 'is-reference-frame' : '',
+      ].filter(Boolean).join(' ')}
       onSelectFromPointer={() => undefined}
       onContextMenu={() => undefined}
       rowContent={(
