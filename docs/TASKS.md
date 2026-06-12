@@ -406,17 +406,6 @@ Standalone agent items (not part of the program):
   the other boarded fast-tracks (outliner-indent-draft-fixes **merged as PR #182** —
   it touched the same Tab/draft paths, so rebase this branch on current `main`).
 
-- **ime-composition-focus-steal** (P1, bug, *no plan file yet* — see issue #176) — typing
-  pinyin right after Enter tears the word apart (`skill` → `sk ill`): the split
-  echo's focusRequest applies `focusEditorDom` + `applyCursorPlacement`
-  (`RichTextEditor.tsx` ~842–854, no composition guard) mid-composition, forcing
-  the IME to commit partial text. **PM-ratified direction (2026-06-10): root
-  cure** — eliminate the race window (composed text lands whole in the intended
-  row; optimistic local split and/or IME-aware pendingInput relay; a
-  defer-to-compositionend guard is at most an interim net, not the fix). Full
-  diagnosis, probe log, and the CDP `Input.imeSetComposition` repro technique
-  (synthetic keystrokes bypass macOS IME; e2e mock can't reproduce) are in
-  issue #176. Next: a dev agent drafts the one-pager for PM ratification.
 - **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
@@ -523,19 +512,6 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   outliner-row focus must go through the focusRequest rail (IME composition guard,
   #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
   no collision with #179/#180.
-- **error-observability** (P2, plan file, **draft — direction fully PM-ratified 2026-06-11**) —
-  collect runtime failures so caught-but-silenced errors (the #188 Dream 400 flood is the
-  motivating symptom) become legible. One `reportError` choke point + global
-  `uncaughtException`/`unhandledRejection`/`window.onerror` net + a bounded, rotating local
-  diagnostic log. **Local-only, no remote/egress; silent recording** (no hint/badge/toast, `fatal`
-  doesn't interrupt); hand-off is user-initiated — Settings "reveal/export diagnostics log" → user
-  sends it to us, analysis on our side, **no in-app dashboard**. **Substrate decided: extend
-  `AppendOnlySeqLog`** with a structured, Sentry-event-shaped, upload-ready schema (NOT
-  `electron-log`) — chosen for the stated future of scrubbed cloud upload (redaction is auditable
-  only over structured records). Cloud uploader intentionally NOT built now (A7/YAGNI), schema
-  shaped for it. Shape (a) one PR, foundation-first. The #184 sequencing gate is
-  cleared (merged) — build on current `main`'s `agentRuntime.ts` catch-sites. See
-  `docs/plans/error-observability.md`.
 
 ## Recently completed
 
