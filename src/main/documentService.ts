@@ -430,6 +430,17 @@ export class DocumentService {
           height: nullableNumber(args.height),
           alt: nullableString(args.alt),
         });
+      case 'create_attachment_node':
+        return this.core.createAttachmentNode(String(args.parentId), nullableNumber(args.index), {
+          assetId: nullableString(args.assetId),
+          mimeType: nullableString(args.mimeType),
+          originalFilename: nullableString(args.originalFilename),
+          fileSize: nullableNumber(args.fileSize),
+          thumbnailAssetId: nullableString(args.thumbnailAssetId),
+          pdfPageCount: nullableNumber(args.pdfPageCount),
+          audioDurationMs: nullableNumber(args.audioDurationMs),
+          videoDurationMs: nullableNumber(args.videoDurationMs),
+        });
       case 'set_node_image':
         return this.core.setNodeImage(String(args.nodeId), {
           assetId: nullableString(args.assetId) ?? undefined,

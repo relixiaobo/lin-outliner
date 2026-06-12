@@ -44,6 +44,7 @@ export const zhHans: PartialMessages = {
     settingsTitle: ({ app }) => `${app} 设置`,
     providerConfigTitle: '配置服务商',
     insertImageTitle: '插入图片',
+    insertAttachmentTitle: '插入附件',
     imageFilesFilter: '图片',
   },
   launcher: {
@@ -606,6 +607,7 @@ commandPalette: {
         checkbox: '复选框',
         code: '代码块',
         image: '图片',
+        attachment: '附件',
         command_palette: '命令面板',
         command: '命令',
       },
@@ -617,6 +619,19 @@ commandPalette: {
         expand: '放大图片',
         openOriginal: '打开原图',
         openInBrowser: '在浏览器中打开',
+      },
+      // 附件块工具栏 + 元数据标签。
+      attachment: {
+        unavailable: '附件不可用',
+        open: '打开',
+        reveal: '在 Finder 中显示',
+        copy: '拷贝文件',
+        pdf: 'PDF',
+        audio: '音频',
+        video: '视频',
+        file: '文件',
+        pages: ({ count }) => `${count} 页`,
+        duration: ({ duration }) => duration,
       },
       // 代码块界面。
       code: {

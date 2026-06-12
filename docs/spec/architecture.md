@@ -19,6 +19,19 @@ are all implemented in TypeScript.
 The TypeScript core is the only document writer. React keeps UI-only state such
 as focus, expanded rows, selection, popovers, and transient editor drafts.
 
+Binary assets are outside the CRDT document. The document stores stable asset
+ids and derived metadata on `image` / `attachment` nodes; `src/main/assetService`
+owns bytes and sidecar metadata under the workspace asset directory. Renderer
+flows ingest files through asset commands, then mutate the document only through
+core commands such as `create_image_node`, `set_node_image`, and
+`create_attachment_node`.
+
+The asset directory is treated as a local-file jail. Path-backed ingest resolves
+the source with `realpath` and accepts regular files only. Asset reads and system
+actions resolve the stored file with `realpath`, require the result to remain
+inside the asset root, and reject missing, non-file, or escaped paths before the
+renderer can serve, open, reveal, or copy the asset.
+
 ## Command Flow
 
 ```txt

@@ -7,6 +7,7 @@ export type SlashCommandId =
   | 'checkbox'
   | 'code'
   | 'image'
+  | 'attachment'
   | 'command'
   | 'command_palette';
 
@@ -56,6 +57,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     id: 'image',
     label: 'Image',
     keywords: ['image', 'picture', 'photo', 'img', 'media'],
+    enabled: true,
+  },
+  {
+    id: 'attachment',
+    label: 'Attachment',
+    keywords: ['attachment', 'file', 'pdf', 'audio', 'video', 'document'],
     enabled: true,
   },
   {

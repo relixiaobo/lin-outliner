@@ -101,7 +101,7 @@
   box-shadow: var(--overlay-shadow-level-2);
 }
 
-/* Block nodes (image today; attachments / embeds later) replace the row's text
+/* Block nodes (images and attachments today; embeds later) replace the row's text
    editor with a focusable, caret-less body. Their caption is the node's
    `description`, added on demand via the hover toolbar and rendered below as
    `.node-description`. The shell shows a neutral focus ring on keyboard focus
@@ -114,6 +114,114 @@
 .block-node-row:focus-visible .outliner-image-el {
   border-color: var(--focus-border);
   box-shadow: var(--focus-ring-shadow);
+}
+
+.outliner-attachment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  margin: var(--space-1) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  user-select: none;
+}
+
+.block-node-row:focus-visible .outliner-attachment {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.outliner-attachment-icon {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.outliner-attachment-thumb {
+  display: block;
+  width: 42px;
+  height: 54px;
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.outliner-attachment-main {
+  min-width: 0;
+}
+
+.outliner-attachment-title {
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outliner-attachment-meta {
+  margin-top: var(--space-hairline);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outliner-attachment-media {
+  display: block;
+  width: min(420px, 100%);
+  margin-top: var(--space-2);
+}
+
+.outliner-attachment-actions {
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.outliner-attachment:hover .outliner-attachment-actions,
+.outliner-attachment-actions:focus-within,
+.block-node-row:focus-visible .outliner-attachment-actions {
+  opacity: 1;
+}
+
+.outliner-attachment-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: color var(--motion-fast);
+}
+
+.outliner-attachment-action:hover {
+  color: var(--text-main);
+}
+
+.outliner-attachment-action:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.outliner-attachment--missing {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-style: dashed;
+  color: var(--text-muted);
+  font-size: var(--font-meta);
 }
 
 .code-block {
@@ -309,4 +417,3 @@
   caret-color: var(--text-strong);
   outline: none;
 }
-

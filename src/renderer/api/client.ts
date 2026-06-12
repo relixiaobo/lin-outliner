@@ -116,6 +116,20 @@ export const api = {
     index: number | null,
     options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null },
   ) => command<CommandResult>('create_image_node', { parentId, index, ...options }),
+  createAttachmentNode: (
+    parentId: string,
+    index: number | null,
+    options: {
+      assetId: string;
+      mimeType: string;
+      originalFilename: string;
+      fileSize: number;
+      thumbnailAssetId?: string;
+      pdfPageCount?: number;
+      audioDurationMs?: number;
+      videoDurationMs?: number;
+    },
+  ) => command<CommandResult>('create_attachment_node', { parentId, index, ...options }),
   setNodeImage: (
     nodeId: string,
     options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null },
@@ -127,8 +141,10 @@ export const api = {
   lookupAsset: (id: string) => command<AssetMetadata | null>('lookup_asset', { id }),
   deleteAsset: (id: string) => command<void>('delete_asset', { id }),
   pickImageFiles: () => command<AssetMetadata[]>('pick_image_files'),
+  pickAttachmentFiles: () => command<AssetMetadata[]>('pick_attachment_files'),
   openAsset: (id: string) => command<{ opened: boolean }>('open_asset', { id }),
   revealAsset: (id: string) => command<{ revealed: boolean }>('reveal_asset', { id }),
+  copyAssetFile: (id: string) => command<{ copied: boolean }>('copy_asset_file', { id }),
   openExternalUrl: (url: string) => command<{ opened: boolean }>('open_external_url', { url }),
   setViewToolbarVisible: (nodeId: string, visible: boolean) =>
     command<CommandResult>('set_view_toolbar_visible', { nodeId, visible }),

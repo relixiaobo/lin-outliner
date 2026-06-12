@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type DragEvent,
   type MouseEvent,
   type MutableRefObject,
   type RefObject,
@@ -33,6 +34,12 @@ import {
 import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { selectVisibleRowsState } from '../interactions/selectionActions';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
+import {
+  attachmentNodeInput,
+  dataTransferFiles,
+  hasFileTransfer,
+  ingestFiles,
+} from '../interactions/attachmentIngest';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import { resolveFieldOptions, resolveSelectedOptionId, type FieldOption } from '../interactions/fieldOptions';
@@ -659,6 +666,29 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
   };
 
+  const insertAssetNodesAt = async (assets: AssetMetadata[], initialIndex: number | null) => {
+    let insertIndex = initialIndex;
+    for (const asset of assets) {
+      if (asset.mimeType.startsWith('image/')) {
+        await props.run(() => api.createImageNode(props.parentId, insertIndex, {
+          assetId: asset.id,
+          width: asset.imageWidth,
+          height: asset.imageHeight,
+        }));
+      } else {
+        await props.run(() => api.createAttachmentNode(props.parentId, insertIndex, attachmentNodeInput(asset)));
+      }
+      if (insertIndex !== null) insertIndex += 1;
+    }
+  };
+
+  const insertAssetNodesAfterCurrentRow = async (assets: AssetMetadata[]) => {
+    if (assets.length === 0) return;
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    await insertAssetNodesAt(assets, rowIndex >= 0 ? rowIndex + 1 : null);
+  };
+
   // Land images "here": convert the current row into the first image when it is
   // a plain, *empty*, childless row (so no typed text is buried under an image
   // body that never renders it) rather than spawning an empty row beside the
@@ -667,6 +697,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // `BlockNodeRow` shell.
   const landImagesOnCurrentRow = async (assets: AssetMetadata[]) => {
     if (assets.length === 0) return;
+    if (props.draft && !realNode && !materializeStartedRef.current) {
+      await insertAssetNodesAt(assets, currentDraftCreateIndex());
+      return;
+    }
     const draft = draftContentRef.current;
     const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
     const canConvertInPlace = shouldConvertRowToImage({
@@ -692,6 +726,54 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     await commitDraft();
     const assets = await ingestPastedImages(images);
     await landImagesOnCurrentRow(assets);
+  };
+
+  const landAssetsOnCurrentRow = async (assets: AssetMetadata[]) => {
+    if (assets.length === 0) return;
+    if (props.draft && !realNode && !materializeStartedRef.current) {
+      await insertAssetNodesAt(assets, currentDraftCreateIndex());
+      return;
+    }
+    const [first, ...rest] = assets;
+    const draft = draftContentRef.current;
+    const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
+    const canConvertFirstImage = first.mimeType.startsWith('image/') && shouldConvertRowToImage({
+      referenceLikeRow,
+      nodeType: displayed.type,
+      hasChildren: row.hasChildren,
+      rowTextEmpty,
+    });
+    if (!canConvertFirstImage) {
+      await insertAssetNodesAfterCurrentRow(assets);
+      return;
+    }
+    await props.run(() => api.setNodeImage(targetEditId, {
+      assetId: first.id,
+      width: first.imageWidth,
+      height: first.imageHeight,
+    }));
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    await insertAssetNodesAt(rest, rowIndex >= 0 ? rowIndex + 1 : null);
+  };
+
+  const handleExternalFileDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!hasFileTransfer(event.dataTransfer)) return;
+    const files = dataTransferFiles(event.dataTransfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void (async () => {
+      await commitDraft();
+      const ingested = await ingestFiles(files);
+      await landAssetsOnCurrentRow(ingested.assets);
+    })();
+  };
+
+  const handleExternalFileDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!hasFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
   };
 
   // A pasted remote image URL: same land-here logic as a local image, but the
@@ -936,6 +1018,25 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }
       const assets = await api.pickImageFiles();
       await landImagesOnCurrentRow(assets);
+      return api.getProjection();
+    }
+
+    if (commandId === 'attachment') {
+      await pendingTextPatchRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+      replaceLocalDraftContent(withoutTrigger);
+      if (onDraftTrigger) {
+        const assets = await api.pickAttachmentFiles();
+        if (assets.length > 0) {
+          replaceLocalDraftContent(EMPTY_RICH_TEXT);
+          await insertAssetNodesAt(assets, currentDraftCreateIndex());
+        }
+        return api.getProjection();
+      } else {
+        await api.replaceNodeText(targetEditId, withoutTrigger);
+      }
+      const assets = await api.pickAttachmentFiles();
+      await landAssetsOnCurrentRow(assets);
       return api.getProjection();
     }
 
@@ -1610,6 +1711,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         <div
           ref={optionAnchorRef}
           className={isBlockNode ? 'row-content-line row-content-line--block' : 'row-content-line'}
+          onDragOver={handleExternalFileDragOver}
+          onDrop={handleExternalFileDrop}
           onMouseDownCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
           onMouseDown={referenceLikeRow ? undefined : focusEditorFromRowClick}
           onClickCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
@@ -1953,7 +2056,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           applyTag={onDraftTrigger ? applyDraftTag : undefined}
           createTagAndApply={onDraftTrigger ? createAndApplyDraftTag : undefined}
           executeSlashCommand={executeSlashCommand}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'attachment', 'command', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
           existingTagIds={displayed.tags}
         />

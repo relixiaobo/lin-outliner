@@ -810,12 +810,14 @@ describe('row interaction resolvers', () => {
       'checkbox',
       'code',
       'image',
+      'attachment',
       'command',
       'command_palette',
     ]);
     expect(filterSlashCommands('ref').map((command) => command.id)).toEqual(['reference']);
     expect(filterSlashCommands('code').map((command) => command.id)).toEqual(['code']);
     expect(filterSlashCommands('image').map((command) => command.id)).toEqual(['image']);
+    expect(filterSlashCommands('pdf').map((command) => command.id)).toEqual(['attachment']);
     expect(filterSlashCommands('routine').map((command) => command.id)).toEqual(['command']);
     expect(filterSlashCommands('>')[0]?.id).toBe('field');
   });

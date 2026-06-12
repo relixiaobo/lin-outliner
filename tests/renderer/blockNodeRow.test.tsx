@@ -30,6 +30,19 @@ function imageNode(overrides: Partial<NodeProjection> = {}): NodeProjection {
   } as unknown as NodeProjection;
 }
 
+function attachmentNode(overrides: Partial<NodeProjection> = {}): NodeProjection {
+  return {
+    id: 'att1',
+    type: 'attachment',
+    assetId: 'asset-pdf',
+    mimeType: 'application/pdf',
+    originalFilename: 'Report.pdf',
+    fileSize: 2048,
+    pdfPageCount: 2,
+    ...overrides,
+  } as unknown as NodeProjection;
+}
+
 function render(props: Partial<BlockNodeRowProps> & { node?: NodeProjection } = {}): {
   rendered: Rendered;
   calls: Record<string, number>;
@@ -113,6 +126,8 @@ describe('isBlockNodeType', () => {
     expect(isBlockNodeType({ type: 'image', assetId: 'a', mediaUrl: undefined })).toBe(true);
     expect(isBlockNodeType({ type: 'image', assetId: undefined, mediaUrl: 'https://x/y.png' })).toBe(true);
     expect(isBlockNodeType({ type: 'image', assetId: undefined, mediaUrl: undefined })).toBe(false);
+    expect(isBlockNodeType({ type: 'attachment', assetId: 'asset-file', mediaUrl: undefined })).toBe(true);
+    expect(isBlockNodeType({ type: 'attachment', assetId: undefined, mediaUrl: undefined })).toBe(false);
     expect(isBlockNodeType({ type: undefined, assetId: undefined, mediaUrl: undefined })).toBe(false);
     expect(isBlockNodeType({ type: 'codeBlock', assetId: undefined, mediaUrl: undefined })).toBe(false);
   });
@@ -139,6 +154,31 @@ describe('BlockNodeRow', () => {
     const img = rendered.document.querySelector('img');
     expect(img?.getAttribute('src')).toBe('https://example.com/cat.png');
     expect(rendered.document.querySelector('button[aria-label="Open in browser"]')).not.toBeNull();
+  });
+
+  test('renders an attachment body with metadata and system actions', () => {
+    const { rendered } = render({ node: attachmentNode() });
+    expect(rendered.document.querySelector('.outliner-attachment-title')?.textContent).toBe('Report.pdf');
+    expect(rendered.document.querySelector('.outliner-attachment-meta')?.textContent).toContain('PDF · 2.0 KB · 2 pages');
+    expect(rendered.document.querySelector('button[aria-label="Open"]')).not.toBeNull();
+    expect(rendered.document.querySelector('button[aria-label="Reveal in Finder"]')).not.toBeNull();
+    expect(rendered.document.querySelector('button[aria-label="Copy file"]')).not.toBeNull();
+  });
+
+  test('renders attachment thumbnails and media controls when available', () => {
+    const pdf = render({ node: attachmentNode({ thumbnailAssetId: 'thumb1' }) });
+    expect(pdf.rendered.document.querySelector('.outliner-attachment-thumb')?.getAttribute('src')).toBe('asset://thumb1');
+
+    const audio = render({
+      node: attachmentNode({
+        mimeType: 'audio/wav',
+        originalFilename: 'memo.wav',
+        audioDurationMs: 1000,
+        pdfPageCount: undefined,
+      }),
+    });
+    expect(audio.rendered.document.querySelector('audio')?.getAttribute('src')).toBe('asset://asset-pdf');
+    expect(audio.rendered.document.querySelector('.outliner-attachment-meta')?.textContent).toContain('Audio · 2.0 KB · 0:01');
   });
 
   test('labels the caption button "Edit caption" when a description exists', () => {

@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
+import { isPathInside } from './agentAttachmentMaterialization';
 
 const META_SUFFIX = '.meta.json';
 // Lowercase + digits only: ids land in `asset://<id>` URLs whose hostname
@@ -36,6 +38,7 @@ export class AssetService {
     const id = nanoid();
     const ext = extensionForMime(mimeType, originalFilename);
     const dimensions = imageDimensions(bytes, mimeType);
+    const durationMs = mediaDurationMs(bytes, mimeType);
     const metadata: AssetMetadata = {
       id,
       mimeType,
@@ -43,9 +46,17 @@ export class AssetService {
       createdAt: Date.now(),
       ...(originalFilename ? { originalFilename } : {}),
       ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
+      ...(mimeType === 'application/pdf' ? pdfMetadata(bytes) : {}),
+      ...(durationMs !== undefined && mimeType.startsWith('audio/') ? { audioDurationMs: durationMs } : {}),
+      ...(durationMs !== undefined && mimeType.startsWith('video/') ? { videoDurationMs: durationMs } : {}),
     };
     await mkdir(this.root, { recursive: true });
-    await this.atomicWrite(join(this.root, `${id}${ext}`), bytes);
+    const assetPath = join(this.root, `${id}${ext}`);
+    await this.atomicWrite(assetPath, bytes);
+    const thumbnailAssetId = mimeType === 'application/pdf'
+      ? await this.derivePdfThumbnail(assetPath, originalFilename)
+      : undefined;
+    if (thumbnailAssetId) metadata.thumbnailAssetId = thumbnailAssetId;
     await this.atomicWrite(join(this.root, `${id}${META_SUFFIX}`), Buffer.from(JSON.stringify(metadata, null, 2)));
     this.metaCache.set(id, metadata);
     return metadata;
@@ -67,8 +78,7 @@ export class AssetService {
 
   /** Absolute path to the stored asset bytes, or null if missing. */
   async pathFor(id: string): Promise<string | null> {
-    const file = await this.findAssetFile(sanitizeId(id));
-    return file ? join(this.root, file) : null;
+    return this.safeAssetFilePath(sanitizeId(id));
   }
 
   async delete(id: string): Promise<void> {
@@ -92,11 +102,11 @@ export class AssetService {
       return notFoundResponse();
     }
     const metadata = await this.lookup(safe);
-    const file = await this.findAssetFile(safe);
-    if (!file) return notFoundResponse();
+    const filePath = await this.safeAssetFilePath(safe);
+    if (!filePath) return notFoundResponse();
     // Whole-file read is fine for images; large media (video/audio) will need a
     // streaming/range response — a follow-up when those types land.
-    const bytes = await readFile(join(this.root, file));
+    const bytes = await readFile(filePath);
     return new Response(bytes, {
       status: 200,
       headers: {
@@ -111,11 +121,31 @@ export class AssetService {
 
   private async readInput(input: AssetIngestInput) {
     if (input.kind === 'path') {
-      const bytes = await readFile(input.path);
-      return { bytes, originalFilename: basename(input.path), hintedMime: undefined as string | undefined };
+      const sourcePath = await realpath(input.path);
+      const sourceStat = await stat(sourcePath);
+      if (!sourceStat.isFile()) throw new Error('Only regular files can be ingested as assets.');
+      const bytes = await readFile(sourcePath);
+      return { bytes, originalFilename: basename(sourcePath), hintedMime: undefined as string | undefined };
     }
     const bytes = Buffer.from(input.data);
     return { bytes, originalFilename: input.originalFilename, hintedMime: input.mimeType };
+  }
+
+  private async safeAssetFilePath(safeId: string): Promise<string | null> {
+    const file = await this.findAssetFile(safeId);
+    if (!file) return null;
+    try {
+      const [rootRealPath, fileRealPath] = await Promise.all([
+        realpath(this.root),
+        realpath(join(this.root, file)),
+      ]);
+      if (!isPathInside(rootRealPath, fileRealPath)) return null;
+      const fileStat = await stat(fileRealPath);
+      return fileStat.isFile() ? fileRealPath : null;
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
   }
 
   private async findAssetFile(safeId: string): Promise<string | null> {
@@ -133,6 +163,42 @@ export class AssetService {
     const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tmp, data);
     await rename(tmp, path);
+  }
+
+  private async derivePdfThumbnail(pdfPath: string, originalFilename: string | undefined): Promise<string | undefined> {
+    const tempDir = await mkdtemp(join(this.root, '.pdf-thumb-'));
+    try {
+      const prefix = join(tempDir, 'page');
+      const result = await runProcess('pdftoppm', [
+        '-f', '1',
+        '-l', '1',
+        '-singlefile',
+        '-png',
+        '-scale-to', '512',
+        pdfPath,
+        prefix,
+      ], 5000);
+      if (!result.ok) return undefined;
+      const pngPath = `${prefix}.png`;
+      const pngBytes = await readFile(pngPath).catch(() => null);
+      if (!pngBytes || pngBytes.byteLength === 0) return undefined;
+      const id = nanoid();
+      const dimensions = imageDimensions(pngBytes, 'image/png');
+      const metadata: AssetMetadata = {
+        id,
+        mimeType: 'image/png',
+        byteSize: pngBytes.byteLength,
+        createdAt: Date.now(),
+        originalFilename: `${originalFilename ?? 'attachment.pdf'} thumbnail.png`,
+        ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
+      };
+      await this.atomicWrite(join(this.root, `${id}.png`), pngBytes);
+      await this.atomicWrite(join(this.root, `${id}${META_SUFFIX}`), Buffer.from(JSON.stringify(metadata, null, 2)));
+      this.metaCache.set(id, metadata);
+      return id;
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }
 
@@ -169,6 +235,17 @@ const MIME_TO_EXT: Record<string, string> = {
   'image/bmp': '.bmp',
   'image/heic': '.heic',
   'application/pdf': '.pdf',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/ogg': '.ogg',
+  'audio/wav': '.wav',
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'application/json': '.json',
+  'application/zip': '.zip',
 };
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -182,6 +259,20 @@ const EXT_TO_MIME: Record<string, string> = {
   '.bmp': 'image/bmp',
   '.heic': 'image/heic',
   '.pdf': 'application/pdf',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.oga': 'audio/ogg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.markdown': 'text/markdown',
+  '.json': 'application/json',
+  '.zip': 'application/zip',
 };
 
 function extname(filename: string): string {
@@ -209,8 +300,17 @@ export function sniffMimeType(bytes: Uint8Array, filename?: string): string | un
     const brand = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
     if (brand === 'avif') return 'image/avif';
     if (brand.startsWith('hei') || brand === 'mif1') return 'image/heic';
+    if (['M4A ', 'M4B ', 'M4P ', 'M4V '].includes(brand)) return brand === 'M4V ' ? 'video/mp4' : 'audio/mp4';
+    if (['isom', 'iso2', 'mp41', 'mp42', 'avc1'].includes(brand)) return 'video/mp4';
+    if (brand === 'qt  ') return 'video/quicktime';
   }
   if (bytes.length >= 5 && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]) === '%PDF-') return 'application/pdf';
+  if (bytes.length >= 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45) return 'audio/wav';
+  if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg';
+  if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return 'audio/ogg';
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return 'application/zip';
   if (looksLikeSvg(bytes)) return 'image/svg+xml';
   return filename ? EXT_TO_MIME[extname(filename)] : undefined;
 }
@@ -282,4 +382,92 @@ function isNotFound(error: unknown): boolean {
 
 function ignoreNotFound(error: unknown): void {
   if (!isNotFound(error)) throw error;
+}
+
+function pdfMetadata(bytes: Uint8Array): Pick<AssetMetadata, 'pdfPageCount'> {
+  const text = Buffer.from(bytes.subarray(0, Math.min(bytes.length, 8 * 1024 * 1024))).toString('latin1');
+  const matches = text.match(/\/Type\s*\/Page\b/g);
+  return matches && matches.length > 0 ? { pdfPageCount: matches.length } : {};
+}
+
+function mediaDurationMs(bytes: Uint8Array, mimeType: string): number | undefined {
+  if (mimeType === 'audio/wav') return wavDurationMs(bytes);
+  if (mimeType === 'video/mp4' || mimeType === 'video/quicktime' || mimeType === 'audio/mp4') {
+    return mp4DurationMs(bytes);
+  }
+  return undefined;
+}
+
+function wavDurationMs(bytes: Uint8Array): number | undefined {
+  if (bytes.length < 44) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 12;
+  let byteRate: number | undefined;
+  let dataSize: number | undefined;
+  while (offset + 8 <= bytes.length) {
+    const chunk = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+    const size = view.getUint32(offset + 4, true);
+    const dataOffset = offset + 8;
+    if (chunk === 'fmt ' && dataOffset + 12 <= bytes.length) byteRate = view.getUint32(dataOffset + 8, true);
+    if (chunk === 'data') dataSize = size;
+    if (byteRate && dataSize !== undefined) break;
+    offset = dataOffset + size + (size % 2);
+  }
+  if (!byteRate || dataSize === undefined) return undefined;
+  return Math.round((dataSize / byteRate) * 1000);
+}
+
+function mp4DurationMs(bytes: Uint8Array): number | undefined {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const findMvhd = (start: number, end: number): { offset: number; size: number } | undefined => {
+    let offset = start;
+    while (offset + 8 <= end && offset + 8 <= bytes.length) {
+      const size32 = view.getUint32(offset);
+      const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+      const headerSize = size32 === 1 ? 16 : 8;
+      const size = size32 === 1 && offset + 16 <= bytes.length
+        ? Number(view.getBigUint64(offset + 8))
+        : size32;
+      if (!Number.isSafeInteger(size) || size < headerSize) return undefined;
+      const boxEnd = Math.min(offset + size, bytes.length);
+      if (type === 'mvhd') return { offset: offset + headerSize, size: boxEnd - offset - headerSize };
+      if (type === 'moov') {
+        const nested = findMvhd(offset + headerSize, boxEnd);
+        if (nested) return nested;
+      }
+      offset = boxEnd;
+    }
+    return undefined;
+  };
+  const mvhd = findMvhd(0, bytes.length);
+  if (!mvhd || mvhd.size < 20) return undefined;
+  const version = view.getUint8(mvhd.offset);
+  if (version === 1) {
+    if (mvhd.size < 32) return undefined;
+    const timescale = view.getUint32(mvhd.offset + 20);
+    const duration = view.getBigUint64(mvhd.offset + 24);
+    return timescale > 0 ? Math.round(Number(duration) * 1000 / timescale) : undefined;
+  }
+  const timescale = view.getUint32(mvhd.offset + 12);
+  const duration = view.getUint32(mvhd.offset + 16);
+  return timescale > 0 ? Math.round(duration * 1000 / timescale) : undefined;
+}
+
+function runProcess(command: string, args: string[], timeoutMs: number): Promise<{ ok: boolean }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'ignore'] });
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok });
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, timeoutMs);
+    child.on('error', () => finish(false));
+    child.on('close', (code) => finish(code === 0));
+  });
 }

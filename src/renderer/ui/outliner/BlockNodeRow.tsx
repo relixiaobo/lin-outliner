@@ -9,6 +9,7 @@ import type { FocusRequest, FocusTarget } from '../../state/document';
 import { assetUrl } from '../../../core/assets';
 import { focusTargetMatches } from '../focus/focusModel';
 import { isCompositionLive } from '../editor/compositionRelay';
+import { AttachmentRow } from './AttachmentRow';
 import { ImageRow } from './ImageRow';
 
 /**
@@ -39,6 +40,8 @@ export function isBlockNodeType(node: { type?: NodeProjection['type']; assetId?:
   switch (node.type) {
     case 'image':
       return Boolean(node.assetId || node.mediaUrl);
+    case 'attachment':
+      return Boolean(node.assetId);
     default:
       return false;
   }
@@ -88,6 +91,8 @@ function renderBlockBody(props: BlockNodeRowProps): ReactNode {
         />
       );
     }
+    case 'attachment':
+      return <AttachmentRow node={node} />;
     default:
       return null;
   }

@@ -81,6 +81,7 @@ paper palettes, or feature concepts Tenon does not own.
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | Persistent dock, chat scroll, debug surface, settings entry. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentIdentityAvatar.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, speaker identity, metadata details, process disclosure, thinking, tool calls, status slots. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx` | Textarea, attachments, model display/navigation chip, send/stop slot. |
+| Attachment rows | `AttachmentRow.tsx`, `BlockNodeRow.tsx`, `inlineFileIcon.tsx` | File attachment block rows, PDF thumbnails, file-kind glyphs, media controls, and safe system-action buttons. |
 | Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + right-pane toolbar title, constrained inset grouped content, per-row `⋯` menu, and the per-provider config as its own native (modal child) window. See "Settings window" below. |
 | Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
@@ -947,6 +948,14 @@ category history; see "Settings window".)
 - Normal rows, reference rows, tag definition rows, field definition rows, field
   entry rows, completed rows, selected rows, and expanded/collapsed parent rows
   keep the same text-start grid.
+- Attachment rows are block-node bodies, not nested cards. They use the content
+  base's neutral surface tokens, `--radius-md`, a restrained border, and compact
+  `--font-ui-sm` / `--font-ui-xs` text. The filename is primary, metadata is
+  secondary, and long names truncate within the content column rather than
+  resizing the row. A PDF thumbnail may replace the file-kind glyph; otherwise
+  file type uses the shared monochrome `inlineFileIcon` mask mechanism painted
+  with `currentColor`. System action buttons are icon-only, remain hidden until
+  hover/focus, and deepen icon color without drawing a hover box.
 - `>` in an empty row converts that row into a field row in place. Trailing
   field creation appends a field row at the trailing position.
 - Field name `Enter` creates a sibling node. It does not jump into the field
