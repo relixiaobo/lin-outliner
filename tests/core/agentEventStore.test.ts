@@ -1416,6 +1416,44 @@ describe('agent event store', () => {
     });
   });
 
+  test('hybrid memory queries expand lexical hits to co-cited paraphrases', async () => {
+    await withStore(async (store) => {
+      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
+      const episode = await store.recordMemoryEpisode(principal, {
+        id: 'episode-status',
+        gist: 'The user wants short progress reports.',
+        sources: [conversationSource('conversation-status')],
+        createdAt: 10,
+      });
+      await store.addMemoryEntry(principal, {
+        id: 'm1',
+        fact: 'prefers compact status updates',
+        sources: [{ episodeId: episode.id }],
+        createdAt: 20,
+      });
+      await store.addMemoryEntry(principal, {
+        id: 'm2',
+        fact: 'keeps progress notes short',
+        sources: [{ episodeId: episode.id }],
+        createdAt: 30,
+      });
+      await store.addMemoryEntry(principal, {
+        id: 'm3',
+        fact: 'uses amber focus rings',
+        sources: [conversationSource('conversation-focus')],
+        createdAt: 40,
+      });
+
+      const result = await store.queryMemoryEntries(principal, {
+        query: 'compact status updates',
+        limit: 2,
+      });
+
+      expect(result.entries.map((entry) => entry.id)).toEqual(['m1', 'm2']);
+      expect(result.totalEntries).toBe(2);
+    });
+  });
+
   test('projects memory access strength and schema overview from batched events', async () => {
     await withStore(async (store, root) => {
       const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
