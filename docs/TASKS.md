@@ -28,12 +28,13 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 ## In progress
 
-**In flight (2026-06-12):** #215 Security Settings IA Redesign (codex, draft).
+**No PR is in flight (2026-06-12).** The queue is clear for the next batch.
 
-**Just merged:** #216 Compact loaded-skill tool calls (codex-2 + main polish),
-#214 Skillify built-in path fix + skill-write permission simplification (codex-2),
-#208 Tana-style references experience (codex-3), and #213 Agent authoring
-cleanups (codex-4) — see Recently completed.
+**Just merged:** #215 Security Settings IA Redesign (codex-3), #216 Compact
+loaded-skill tool calls (codex-2 + main polish), #214 Skillify built-in path fix
++ skill-write permission simplification (codex-2), #208 Tana-style references
+experience (codex-3), and #213 Agent authoring cleanups (codex-4) — see Recently
+completed.
 
 **Deferred follow-ups from #208** (non-blocking, surfaced by `/code-review high`;
 file as small fast-track items when a clone is free):
@@ -530,6 +531,23 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Security Settings IA redesign — one honest trust model** (codex-3, PR #215,
+  plan-track) — fixes the security-surface correctness bug where the page showed
+  `Ask first` for actions Full Access actually runs without asking. New shared
+  `src/core/agentPermissionModel.ts` (`effectiveActionDecision`) is the single
+  source for both the runtime fallback and the Settings → Security display, so
+  they can no longer drift. **Behavior-preserving**: runtime decision/precedence
+  unchanged (untouched `agentPermissions.test.ts` passes + new parity/truth-table
+  test), hard blocks and the #214 `agent.skill.write` removal preserved. Page
+  rebuilt around **Default + Exceptions** (derived "Custom" header + Reset; Granted
+  Trust + Advanced merged into one Exceptions list + "Add an exception"). Naming
+  pass per PM (Trust/Mode/catalog jargon → Default/Exceptions/Actions). Specs +
+  i18n (en/zh) synced; plan archived `done`. Gate (main): typecheck + test:core
+  944/0 + test:renderer 430/0 + agent-settings e2e light/dark 27/0; PM chose
+  direct merge on the deep manual security review (mechanism byte-identical to
+  the reviewed head, only UI copy changed in the ready pass) over a billed
+  `/security-review`.
 
 - **Compact loaded-skill tool calls** (codex-2, PR #216, fast-track + main
   follow-up) — inline `skill` results (`status: loaded`) render as one compact

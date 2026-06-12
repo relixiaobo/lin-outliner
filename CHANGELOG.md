@@ -355,6 +355,34 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Security Settings IA redesign — one honest trust model (PR #215, codex-3)** —
+  fixes a security-surface correctness bug: the old Security page read only
+  explicit overrides and otherwise showed the literal `Ask first`, so under Full
+  Access it displayed "Fetch web / Delete files / Run scripts → Ask first" while
+  the runtime would actually run them without asking. The page now mirrors the
+  runtime precedence — **hard safety blocks → your exceptions → the selected mode
+  default** — by sharing one pure decision model. A new `src/core/agentPermissionModel.ts`
+  holds the per-action-kind default table, the `ask_first`/`full_access` adjustment
+  sets, and `effectiveActionDecision(actionKind, mode, overrides, actionDefault?)`;
+  both the runtime fallback (`agentPermissions.ts`) and the renderer
+  (`permissionSettingsModel.ts`) compute from it, so display and runtime can no
+  longer drift. **Behavior-preserving extraction**: the runtime decision and
+  precedence are unchanged (the pre-existing `tests/core/agentPermissions.test.ts`
+  is untouched and passes; a new parity + truth-table test pins it), hard blocks
+  and the #214 `agent.skill.write` removal are preserved, and per-descriptor
+  `defaultDecision` is now injected from the central table except where a context
+  is intentionally stricter (outside-area/sensitive `deny`, inline shell edit
+  `ask`). The page is rebuilt around **Default + Exceptions**: the three-way mode
+  is the living default, explicit rules surface as visible deltas, deviation flips
+  the header to a derived "Custom · based on `<mode>` · N changed" with Reset, and
+  Granted Trust + Advanced collapse into one Exceptions list plus an "Add an
+  exception" disclosure (`agent.delegate.spawn` stays non-allowable; accepted
+  skill hashes are listed separately). Specs synced (`agent-tool-permissions.md`,
+  `agent-skills.md`); i18n en + zh-Hans. Gate (main): typecheck + test:core
+  (944 / 0 fail) + test:renderer (430 / 0 fail) + agent-settings e2e light/dark
+  (27 / 0); deep manual security/behavior-preservation review in lieu of the
+  billed `/security-review` (PM decision, mechanism byte-identical to review).
+
 - **Compact loaded-skill tool calls (PR #216, codex-2 + main follow-up)** — when
   the model invokes an inline `skill` (status `loaded`), the agent transcript no
   longer renders a generic Input/Output disclosure card whose Output is just the
