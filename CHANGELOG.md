@@ -459,6 +459,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Built-in skill path handling + skill-write permission simplification (PR
+  #214, codex-2)** — code-registered built-in skills (currently `/skillify`) no
+  longer render a fake `Base directory for this skill: built-in/<name>` header or
+  claim a readable `built-in/<name>/SKILL.md`, so the model stops attempting an
+  out-of-workspace `file_read` that hit a hard permission block; built-ins render
+  body-only and post-compact bookkeeping records them as `built-in:<name>`.
+  Restore bookkeeping hardened: `parseLoadedSkillFromText` skips forked-skill
+  result messages (guarded on `<skill-result>`) so one-shot child-run output is
+  never re-injected as persistent skill guidance, the skill-listing-state identity
+  uses `built-in:<name>` instead of the pseudo path, and `addLoadedSkill` no longer
+  stats the non-existent built-in file. Permission model: the dedicated
+  `agent.skill.write` action is **removed** — writes into recognized skill
+  directories now use the ordinary `file_write` / `file_edit` permission decision
+  (PM-ratified 2026-06-12); recognition still drives validation, provenance,
+  rollback metadata, audit events, and hot-reload, and the safety floor remains
+  invocation-time ratification (agent-written skills are born unratified and need
+  exact-byte user acceptance to become model-invocable). Specs synced:
+  `docs/spec/agent-skills.md`, `agent-tool-design.md`, `agent-tool-permissions.md`,
+  `agent-progress.md`. Gate (main): typecheck + test:core (936 pass / 2 skip /
+  0 fail).
+
 - **Packaged agent local-file root no longer defaults to `/` (PR #192)** — the
   launch-time fallback was `LIN_AGENT_LOCAL_ROOT ?? process.cwd()`; in a packaged
   app launched from Finder, `process.cwd()` can be `/`, which made the whole disk

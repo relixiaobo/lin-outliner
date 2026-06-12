@@ -31,8 +31,9 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 **No PR is in flight (2026-06-12).** All dev clones idle; the queue is clear for
 the next batch.
 
-**Just merged:** #208 Tana-style references experience (codex-3) and #213 Agent
-authoring cleanups (codex-4) — see Recently completed.
+**Just merged:** #214 Skillify built-in path fix + skill-write permission
+simplification (codex-2), #208 Tana-style references experience (codex-3), and
+#213 Agent authoring cleanups (codex-4) — see Recently completed.
 
 **Deferred follow-ups from #208** (non-blocking, surfaced by `/code-review high`;
 file as small fast-track items when a clone is free):
@@ -529,6 +530,26 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Skillify built-in path fix + skill-write permission simplification**
+  (codex-2, PR #214, plan-track) — code-registered built-in skills (currently
+  `/skillify`) stop rendering a fake `Base directory: built-in/<name>` header /
+  pseudo `SKILL.md`, so the model no longer attempts an out-of-workspace
+  `file_read` that hit a hard permission block; body-only render, post-compact
+  path `built-in:<name>`. Restore bookkeeping hardened: `parseLoadedSkillFromText`
+  skips forked-skill result messages (`<skill-result>`) so one-shot child output
+  isn't re-injected as skill guidance; listing-state identity = `built-in:<name>`;
+  `addLoadedSkill` no longer stats the missing built-in file. Permission model:
+  dedicated `agent.skill.write` action **removed** — skill-dir writes use the
+  ordinary `file_write` / `file_edit` decision (PM-ratified 2026-06-12);
+  recognition still drives validation / provenance / rollback / audit / hot-reload,
+  and the safety floor stays invocation-time ratification (agent-written skills
+  born unratified, need exact-byte user acceptance to go model-invocable). Specs
+  synced (`agent-skills` / `agent-tool-design` / `agent-tool-permissions` /
+  `agent-progress`); plan `agent-skills-authoring` updated in-PR. Reviewed two
+  rounds — prior fork-result + listing-identity findings fixed, then the B-part
+  security trade-off (removing the write-time ask-gate) flagged and PM-ratified
+  before merge. Gate (main): typecheck + test:core 936 / 2 skip / 0 fail.
 
 - **Tana-style References experience** (codex-3, PR #208, plan-track) — every
   `NodePanel` whose root has a linked reference or unlinked mention gets a bottom
