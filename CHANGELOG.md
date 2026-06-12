@@ -12,6 +12,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent memory: hybrid retrieval for `recall` + briefing co-citation (PR #211)** —
+  the last unit of the `agent-memory-realignment` program (PR-4). The deliberate
+  `recall` path graduates from the old private lexical top-N scorer to a
+  rebuildable **hybrid ranker** in `src/core/agentMemoryRetrieval.ts`: BM25-class
+  lexical relevance × D1 retrieval strength, plus query-time `sources[]`
+  co-citation **association expansion** — entries that share an episode/stream
+  source with a strong lexical hit surface even when they paraphrase the query
+  (the spreading-activation-lite the plan called for, bounded by group size and
+  seed score). The resident briefing routes through the same module's **cue-less**
+  chronic-activation path: retrieval strength stays the base signal while
+  co-citation lightly boosts facts that travel with already-accessible entries;
+  it does not use the current turn as a cue, so **automatic association stays
+  deferred**. The `recall` tool surface is unchanged (`query`, `limit`,
+  `include_evidence`, `max_chars`). PM embedding gate closed as option (c): **no
+  embeddings** — no local model, provider call, dependency, stored field, graph,
+  or sidecar index; local/API embeddings remain separately ratifiable later.
+  Latency (synthetic 1,000-entry probe): briefing chronic activation 0.631 ms avg
+  (per-turn, stays sub-ms); deliberate `recall` hybrid query 11.85 ms avg. Specs
+  synced in-PR (`agent-data-model` Retrieval row, `agent-architecture` § memory);
+  the `agent-memory-retrieval-upgrade` plan is archived `done`. Covered by a
+  regression eval fixture (hybrid strictly beats the old lexical baseline on
+  co-cited paraphrase top-k hit-rate) and an `AgentEventStore.queryMemoryEntries`
+  integration test pinning the production query path. Gate (main): typecheck +
+  test:core (914 pass / 2 skip / 0 fail) green; contained core change, no
+  protocol/UI/security surface.
+
 - **Agent conversation UX: roster DMs + named Channels (PR #207)** — Feature A of
   the agent-conversation UX plan. Generalizes the canonical DM from the single
   built-in assistant to **one immutable find-or-create DM per configured agent**

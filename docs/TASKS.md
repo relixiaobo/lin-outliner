@@ -32,8 +32,10 @@ Feature A (codex, PR #207), `agent-ledger-hygiene` (codex-2, PR #205), and
 file-attachments (codex-3, PR #206) — see Recently completed. cc / cc-2 / anti
 were deliberately unscheduled.
 
-Relay: **Realignment PR-4** (retrieval, unblocked by #200) slots into the next
-free lane. **M3-C** (per-agent POV inspector) follows Feature A. The
+Relay: **Realignment PR-4** (retrieval) **merged as PR #211** (codex) — see
+Recently completed; the realignment program's shippable units are now all landed
+(automatic associative retrieval stays deferred on the data gate). **M3-C**
+(per-agent POV inspector) follows Feature A. The
 `agent-conversation-entry-identity-ux` plan is **complete and archived `done`** —
 all features shipped: B/C/E (#201, including the model-chip/global-provider-trap
 fix), D (#203), A (#207).
@@ -354,9 +356,12 @@ extension into `agent-data-model` for ratification (see `agent-memory-model` §4
     model knows what it knows before deciding to dig). PR-2 must build episode-gist
     machinery schema nodes can reuse (A7).
   - **PR-4 retrieval engine** (was D4 `agent-memory-retrieval-upgrade`,
-    **rescoped 2026-06-10**): lexical → hybrid serving the **deliberate `recall`
-    path only**; read side of the 3-level provenance zoom; carries the
-    **embedding-provider PM gate** — close at claim.
+    **rescoped 2026-06-10**) **merged as PR #211** (codex) — see Recently
+    completed; plan archived `done` in-PR. Lexical → hybrid (BM25-class × D1
+    retrieval strength + query-time `sources[]` co-citation association) for
+    deliberate `recall`; briefing gains cue-less co-citation support. **PM
+    embedding gate closed as option (c): no embeddings** (local/API embeddings
+    remain separately ratifiable later upgrades).
   - **DEFERRED — automatic associative retrieval** (PM call 2026-06-10: wait for
     data): the runtime-owned per-turn background faculty — current turn as cue,
     top-k relevant facts/gists auto-surface in the `[5]` volatile tail
@@ -644,6 +649,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   `docs/plans/error-observability.md`.
 
 ## Recently completed
+
+- **memory realignment PR-4: hybrid retrieval upgrade** (codex, PR #211,
+  plan-track) — the last shippable unit of `agent-memory-realignment`. Deliberate
+  `recall` moves from the old private lexical top-N scorer to a rebuildable hybrid
+  ranker (`src/core/agentMemoryRetrieval.ts`): BM25-class lexical × D1 retrieval
+  strength + query-time `sources[]` co-citation association (paraphrases co-cited
+  with a strong hit now surface). Resident briefing routes through the same
+  module's **cue-less** chronic-activation path — retrieval strength base + light
+  co-citation boost, no current-turn cue, so automatic association stays deferred.
+  `recall` tool surface unchanged. **PM embedding gate closed as option (c): no
+  embeddings** (no model/API/dependency/stored field/graph/sidecar; local/API
+  embeddings remain separately ratifiable). Latency: briefing 0.631 ms avg
+  (sub-ms per turn), recall 11.85 ms avg over a 1,000-entry probe. Specs synced
+  (`agent-data-model` Retrieval row, `agent-architecture` § memory); plan archived
+  `done` in-PR. Gate (main): typecheck + test:core (914 pass / 2 skip / 0 fail)
+  green; contained core change (no protocol/UI/security surface). With this the
+  realignment program's shippable units are all landed; automatic associative
+  retrieval remains deferred on the data gate.
 
 - **agent-conversation-entry-identity-ux Feature A** (codex, PR #207, plan-track)
   — Roster-as-DM-list + named Channels + DM→Channel escalation. Canonical DM
