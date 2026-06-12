@@ -54,6 +54,7 @@ export interface ReferenceNodeLike {
 export interface ReferenceSummaryOptions {
   includeUnlinked?: boolean;
   includeDescriptions?: boolean;
+  mentionTargetIds?: readonly NodeId[];
   isDeleted?: (nodeId: NodeId) => boolean;
   minMentionLength?: number;
 }
@@ -82,7 +83,6 @@ export function buildReferenceSummary(
   options: ReferenceSummaryOptions = {},
 ): ReferenceSummary {
   const byTarget = new Map<NodeId, ReferenceSource[]>();
-  const linkedSourceIdsByTarget = new Map<NodeId, Set<NodeId>>();
   const isDeleted = options.isDeleted ?? (() => false);
 
   for (const node of byId.values()) {
@@ -98,7 +98,6 @@ export function buildReferenceSummary(
         fieldEntryId: source.fieldEntryId,
         fieldDefId: source.fieldDefId,
       });
-      addSourceIdForTarget(linkedSourceIdsByTarget, node.targetId, source.sourceNodeId);
     }
 
     for (const inlineRef of node.content.inlineRefs) {
@@ -111,12 +110,11 @@ export function buildReferenceSummary(
         kind: 'inline',
         inlineDisplayName: inlineRef.displayName,
       });
-      addSourceIdForTarget(linkedSourceIdsByTarget, targetId, node.id);
     }
   }
 
   if (options.includeUnlinked) {
-    addUnlinkedMentions(byId, byTarget, linkedSourceIdsByTarget, isDeleted, options);
+    addUnlinkedMentions(byId, byTarget, isDeleted, options);
   }
 
   return {
@@ -165,44 +163,48 @@ function addReferenceSource(
   byTarget.set(source.targetId, [source]);
 }
 
-function addSourceIdForTarget(
-  sourceIdsByTarget: Map<NodeId, Set<NodeId>>,
-  targetId: NodeId,
-  sourceNodeId: NodeId,
-): void {
-  const existing = sourceIdsByTarget.get(targetId);
-  if (existing) {
-    existing.add(sourceNodeId);
-    return;
-  }
-  sourceIdsByTarget.set(targetId, new Set([sourceNodeId]));
-}
-
 function buildCountsByTarget(byTarget: ReadonlyMap<NodeId, readonly ReferenceSource[]>): Map<NodeId, ReferenceCounts> {
   const counts = new Map<NodeId, ReferenceCounts>();
   for (const [targetId, sources] of byTarget) {
-    let linked = 0;
-    let unlinked = 0;
+    const linked = new Set<string>();
+    const unlinked = new Set<string>();
     for (const source of sources) {
-      if (source.kind === 'unlinked') unlinked += 1;
-      else linked += 1;
+      if (source.kind === 'unlinked') {
+        unlinked.add(referenceCountKey(source));
+      } else {
+        linked.add(referenceCountKey(source));
+      }
     }
-    counts.set(targetId, { linked, unlinked, total: linked + unlinked });
+    counts.set(targetId, { linked: linked.size, unlinked: unlinked.size, total: linked.size + unlinked.size });
   }
   return counts;
+}
+
+function referenceCountKey(source: ReferenceSource): string {
+  if (source.kind === 'unlinked') {
+    const mention = source.mention;
+    return `${source.kind}:${source.sourceNodeId}:${mention?.field ?? ''}:${mention?.start ?? ''}:${mention?.end ?? ''}`;
+  }
+  if (source.kind === 'field') {
+    return `${source.kind}:${source.sourceNodeId}:${source.fieldEntryId ?? source.referenceNodeId}`;
+  }
+  return `${source.kind}:${source.sourceNodeId}`;
 }
 
 function addUnlinkedMentions(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   byTarget: Map<NodeId, ReferenceSource[]>,
-  linkedSourceIdsByTarget: ReadonlyMap<NodeId, ReadonlySet<NodeId>>,
   isDeleted: (nodeId: NodeId) => boolean,
   options: ReferenceSummaryOptions,
 ): void {
-  const targetTitles = mentionTargetTitles(byId, isDeleted, options.minMentionLength ?? MIN_MENTION_LENGTH);
+  const targetTitles = mentionTargetTitles(
+    byId,
+    isDeleted,
+    options.minMentionLength ?? MIN_MENTION_LENGTH,
+    options.mentionTargetIds,
+  );
   if (targetTitles.length === 0) return;
   const targetsByFirstChar = mentionTargetsByFirstChar(targetTitles);
-  const unlinkedSourceIdsByTarget = new Map<NodeId, Set<NodeId>>();
 
   const scanDescriptions = options.includeDescriptions ?? true;
   for (const source of byId.values()) {
@@ -211,8 +213,6 @@ function addUnlinkedMentions(
       byTarget,
       source,
       targetsByFirstChar,
-      linkedSourceIdsByTarget,
-      unlinkedSourceIdsByTarget,
       'content',
       source.content.text,
     );
@@ -221,8 +221,6 @@ function addUnlinkedMentions(
         byTarget,
         source,
         targetsByFirstChar,
-        linkedSourceIdsByTarget,
-        unlinkedSourceIdsByTarget,
         'description',
         source.description,
       );
@@ -234,10 +232,13 @@ function mentionTargetTitles(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   isDeleted: (nodeId: NodeId) => boolean,
   minMentionLength: number,
+  mentionTargetIds?: readonly NodeId[],
 ): MentionTarget[] {
   const targets: MentionTarget[] = [];
   const seenTitlesByNode = new Set<string>();
+  const allowedTargetIds = mentionTargetIds ? new Set(mentionTargetIds) : null;
   for (const node of byId.values()) {
+    if (allowedTargetIds && !allowedTargetIds.has(node.id)) continue;
     if (isDeleted(node.id) || !nodeCanBeMentionTarget(node)) continue;
     const text = node.content.text.trim();
     if (text.length < minMentionLength) continue;
@@ -280,8 +281,6 @@ function addUnlinkedMentionsFromText(
   byTarget: Map<NodeId, ReferenceSource[]>,
   source: ReferenceNodeLike,
   targetsByFirstChar: ReadonlyMap<string, readonly MentionTarget[]>,
-  linkedSourceIdsByTarget: ReadonlyMap<NodeId, ReadonlySet<NodeId>>,
-  unlinkedSourceIdsByTarget: Map<NodeId, Set<NodeId>>,
   field: ReferenceMentionField,
   text: string,
 ): void {
@@ -291,13 +290,12 @@ function addUnlinkedMentionsFromText(
     if (!candidates) continue;
     for (const target of candidates) {
       if (source.id === target.nodeId) continue;
-      if (linkedSourceIdsByTarget.get(target.nodeId)?.has(source.id)) continue;
-      if (unlinkedSourceIdsByTarget.get(target.nodeId)?.has(source.id)) continue;
       const end = start + target.text.length;
       if (end > text.length) continue;
       const matchedText = text.slice(start, end);
       if (caseFold(matchedText) !== target.lowerText) continue;
       if (!hasMentionBoundary(text, start, end)) continue;
+      if (field === 'content' && hasInlineRefAtOffset(source, target.nodeId, start)) continue;
       addReferenceSource(byTarget, {
         targetId: target.nodeId,
         sourceNodeId: source.id,
@@ -310,9 +308,13 @@ function addUnlinkedMentionsFromText(
           text: matchedText || target.text,
         },
       });
-      addSourceIdForTarget(unlinkedSourceIdsByTarget, target.nodeId, source.id);
     }
   }
+}
+
+function hasInlineRefAtOffset(source: ReferenceNodeLike, targetId: NodeId, offset: number): boolean {
+  return source.content.inlineRefs.some((inlineRef) =>
+    inlineRef.offset === offset && inlineRefNodeId(inlineRef) === targetId);
 }
 
 function hasMentionBoundary(text: string, start: number, end: number): boolean {

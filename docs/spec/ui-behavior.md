@@ -213,20 +213,20 @@ Linked references include:
   the field name.
 
 Unlinked mentions are exact, case-insensitive title matches in visible node text
-and descriptions. A source node that already has any linked reference to the
-target is not also shown as an unlinked mention for that target. Latin-word
-matches require word boundaries, so `Project Alpha` does not match
-`Project Alphabet`; adjacent Unicode letters/numbers are also treated as token
-characters, so a CJK title does not match inside a longer CJK word. Repeated
-matches in the same source node count and render as one unlinked source row per
-target, using the first matched range as the `Link` action target. Unlinked
-mentions in normal content rows expose a `Link` action that replaces only the
-matched text range with an inline node reference through the normal rich-text
-patch command; description mentions are listed but not linkable.
+and descriptions. Latin-word matches require word boundaries, so `Project Alpha`
+does not match `Project Alphabet`; adjacent Unicode letters/numbers are also
+treated as token characters, so a CJK title does not match inside a longer CJK
+word. Repeated matches in the same source node count and render as separate
+unlinked mention rows, so linking one occurrence leaves the other plain-text
+occurrences visible and linkable. Unlinked mentions in normal content rows expose
+a `Link` action that replaces only the matched text range with an inline node
+reference through the normal rich-text patch command; description mentions are
+listed but not linkable.
 
 Rows do not show inline backlink counters. Counts live in the NodePanel footer
-only, where the References section uses the same summary as the source rows and
-counts linked plus unlinked sources.
+only. The collapsed References count is the linked-reference count, matching the
+read-only `References` system field. Unlinked mentions are computed only for the
+expanded panel root and appear as a separate group count.
 
 The read-only `References` system field uses the same cached reference summary
 for its linked count and deduped source rows. Sorting, filtering, grouping, and

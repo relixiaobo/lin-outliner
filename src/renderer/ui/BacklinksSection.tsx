@@ -21,6 +21,7 @@ import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
 import { OutlinerPreviewRow } from './outliner/OutlinerPreviewRow';
 import { useT } from '../i18n/I18nProvider';
 import { outlinerChildParentId, resolveReferenceTargetId, type DocumentIndex } from '../state/document';
+import { referenceSummaryForExpandedTarget } from '../state/referenceSummary';
 import type { CommandRunner, NavigateRootOptions } from './shared';
 import { wantsNewPaneFromClick } from './shared';
 
@@ -53,8 +54,9 @@ interface ReferenceOutlineRowProps {
   };
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
   onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
-  expandedSourceIds: ReadonlySet<NodeId>;
-  onToggleSourceExpansion: (sourceNodeId: NodeId) => void;
+  rowKey: string;
+  expandedRowKeys: ReadonlySet<string>;
+  onToggleRowExpansion: (rowKey: string) => void;
 }
 
 export function BacklinksSection(props: BacklinksSectionProps) {
@@ -66,10 +68,15 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
   const labels = t.nodePanel.references;
   const { index, onRoot, run, targetId } = props;
   const [expanded, setExpanded] = useState(false);
-  const [expandedSourceIds, setExpandedSourceIds] = useState<ReadonlySet<NodeId>>(() => new Set());
-  const sources = props.summary.byTarget.get(targetId) ?? [];
-  const counts = props.summary.countsByTarget.get(targetId);
-  const totalCount = counts?.total ?? 0;
+  const [expandedRowKeys, setExpandedRowKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const expandedSummary = useMemo(
+    () => expanded ? referenceSummaryForExpandedTarget(index, targetId) : props.summary,
+    [expanded, index, props.summary, targetId],
+  );
+  const activeSummary = expanded ? expandedSummary : props.summary;
+  const sources = activeSummary.byTarget.get(targetId) ?? [];
+  const counts = activeSummary.countsByTarget.get(targetId);
+  const linkedCount = props.summary.countsByTarget.get(targetId)?.linked ?? 0;
 
   const groups = useMemo(
     () => groupReferenceRows(sources, index, t.outliner.viewToolbar.fieldFallback),
@@ -82,13 +89,13 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
   const openSourceInCurrentPane = useCallback((sourceNodeId: NodeId) => {
     onRoot(sourceNodeId, { focus: false });
   }, [onRoot]);
-  const toggleSourceExpansion = useCallback((sourceNodeId: NodeId) => {
-    setExpandedSourceIds((current) => {
+  const toggleRowExpansion = useCallback((rowKey: string) => {
+    setExpandedRowKeys((current) => {
       const next = new Set(current);
-      if (next.has(sourceNodeId)) {
-        next.delete(sourceNodeId);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
       } else {
-        next.add(sourceNodeId);
+        next.add(rowKey);
       }
       return next;
     });
@@ -112,12 +119,12 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
     void run(() => api.applyNodeTextPatch(source.sourceNodeId, replaceAllRichTextPatch(nextContent)));
   }, [index.byId, labels.untitledSource, run, targetId]);
 
-  if (totalCount === 0) return null;
+  if (linkedCount === 0) return null;
 
-  const countLabel = labels.counterLabel({ count: totalCount });
+  const countLabel = labels.counterLabel({ count: linkedCount });
   const countDetail = counts
     ? labels.count({ total: counts.total, linked: counts.linked, unlinked: counts.unlinked })
-    : labels.count({ total: totalCount, linked: totalCount, unlinked: 0 });
+    : labels.count({ total: linkedCount, linked: linkedCount, unlinked: 0 });
 
   return (
     <section className="backlinks-section" aria-label={labels.title}>
@@ -144,8 +151,8 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
               index={index}
               onOpenSource={openSource}
               onOpenSourceInCurrentPane={openSourceInCurrentPane}
-              expandedSourceIds={expandedSourceIds}
-              onToggleSourceExpansion={toggleSourceExpansion}
+              expandedRowKeys={expandedRowKeys}
+              onToggleRowExpansion={toggleRowExpansion}
             />
           )}
           {groups.fieldGroups.map((group) => (
@@ -157,8 +164,8 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
               index={index}
               onOpenSource={openSource}
               onOpenSourceInCurrentPane={openSourceInCurrentPane}
-              expandedSourceIds={expandedSourceIds}
-              onToggleSourceExpansion={toggleSourceExpansion}
+              expandedRowKeys={expandedRowKeys}
+              onToggleRowExpansion={toggleRowExpansion}
             />
           ))}
           {groups.unlinked.length > 0 && (
@@ -169,8 +176,8 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
               index={index}
               onOpenSource={openSource}
               onOpenSourceInCurrentPane={openSourceInCurrentPane}
-              expandedSourceIds={expandedSourceIds}
-              onToggleSourceExpansion={toggleSourceExpansion}
+              expandedRowKeys={expandedRowKeys}
+              onToggleRowExpansion={toggleRowExpansion}
               onLinkMention={linkMention}
               targetTitle={index.byId.get(targetId)?.content.text.trim() || labels.untitledSource}
             />
@@ -188,8 +195,8 @@ function ReferenceGroup({
   index,
   onOpenSource,
   onOpenSourceInCurrentPane,
-  expandedSourceIds,
-  onToggleSourceExpansion,
+  expandedRowKeys,
+  onToggleRowExpansion,
   onLinkMention,
   targetTitle,
 }: {
@@ -199,8 +206,8 @@ function ReferenceGroup({
   index: DocumentIndex;
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
   onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
-  expandedSourceIds: ReadonlySet<NodeId>;
-  onToggleSourceExpansion: (sourceNodeId: NodeId) => void;
+  expandedRowKeys: ReadonlySet<string>;
+  onToggleRowExpansion: (rowKey: string) => void;
   onLinkMention?: (source: ReferenceSource) => void;
   targetTitle?: string;
 }) {
@@ -216,8 +223,8 @@ function ReferenceGroup({
             index={index}
             onOpenSource={onOpenSource}
             onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
-            expandedSourceIds={expandedSourceIds}
-            onToggleSourceExpansion={onToggleSourceExpansion}
+            expandedRowKeys={expandedRowKeys}
+            onToggleRowExpansion={onToggleRowExpansion}
             onLinkMention={onLinkMention}
             targetTitle={targetTitle}
           />
@@ -233,8 +240,8 @@ function ReferenceResultRow({
   index,
   onOpenSource,
   onOpenSourceInCurrentPane,
-  expandedSourceIds,
-  onToggleSourceExpansion,
+  expandedRowKeys,
+  onToggleRowExpansion,
   onLinkMention,
   targetTitle,
 }: {
@@ -243,8 +250,8 @@ function ReferenceResultRow({
   index: DocumentIndex;
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
   onOpenSourceInCurrentPane: (sourceNodeId: NodeId) => void;
-  expandedSourceIds: ReadonlySet<NodeId>;
-  onToggleSourceExpansion: (sourceNodeId: NodeId) => void;
+  expandedRowKeys: ReadonlySet<string>;
+  onToggleRowExpansion: (rowKey: string) => void;
   onLinkMention?: (source: ReferenceSource) => void;
   targetTitle?: string;
 }) {
@@ -279,8 +286,9 @@ function ReferenceResultRow({
         linkAction={linkAction}
         onOpenSource={onOpenSource}
         onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
-        expandedSourceIds={expandedSourceIds}
-        onToggleSourceExpansion={onToggleSourceExpansion}
+        rowKey={row.key}
+        expandedRowKeys={expandedRowKeys}
+        onToggleRowExpansion={onToggleRowExpansion}
       />
     </article>
   );
@@ -297,8 +305,9 @@ function ReferenceOutlineRow({
   linkAction,
   onOpenSource,
   onOpenSourceInCurrentPane,
-  expandedSourceIds,
-  onToggleSourceExpansion,
+  rowKey,
+  expandedRowKeys,
+  onToggleRowExpansion,
 }: ReferenceOutlineRowProps) {
   const displayNode = displaySourceNode(node, index);
   const openId = displayNode.id;
@@ -307,7 +316,7 @@ function ReferenceOutlineRow({
   const childParentId = outlinerChildParentId(node.id, index.byId);
   const cycle = childParentId ? path.includes(childParentId) : false;
   const childIds = !childParentId || cycle ? [] : index.byId.get(childParentId)?.children ?? [];
-  const expanded = expandedSourceIds.has(node.id);
+  const expanded = expandedRowKeys.has(rowKey);
   const childPath = childParentId ? [...path, childParentId] : path;
 
   return (
@@ -337,7 +346,7 @@ function ReferenceOutlineRow({
         </button>
       )}
       onOpen={(event) => onOpenSource(event, openId)}
-      onToggleExpand={() => onToggleSourceExpansion(node.id)}
+      onToggleExpand={() => onToggleRowExpansion(rowKey)}
       onDrillDown={() => onOpenSourceInCurrentPane(openId)}
     >
       {childIds.map((childId) => (
@@ -350,8 +359,9 @@ function ReferenceOutlineRow({
           index={index}
           onOpenSource={onOpenSource}
           onOpenSourceInCurrentPane={onOpenSourceInCurrentPane}
-          expandedSourceIds={expandedSourceIds}
-          onToggleSourceExpansion={onToggleSourceExpansion}
+          rowKey={`${rowKey}/${childId}`}
+          expandedRowKeys={expandedRowKeys}
+          onToggleRowExpansion={onToggleRowExpansion}
         />
       ))}
     </OutlinerPreviewRow>
@@ -436,12 +446,23 @@ function dedupeRows(
   for (const source of sources) {
     const node = index.byId.get(source.sourceNodeId);
     if (!node) continue;
-    const key = `${source.kind}:${source.sourceNodeId}:${source.fieldEntryId ?? ''}`;
+    const key = referenceRowKey(source);
     if (seen.has(key)) continue;
     seen.add(key);
     rows.push({ source, node, key });
   }
   return rows;
+}
+
+function referenceRowKey(source: ReferenceSource): string {
+  if (source.kind === 'unlinked') {
+    const mention = source.mention;
+    return `${source.kind}:${source.sourceNodeId}:${mention?.field ?? ''}:${mention?.start ?? ''}:${mention?.end ?? ''}`;
+  }
+  if (source.kind === 'field') {
+    return `${source.kind}:${source.sourceNodeId}:${source.fieldEntryId ?? source.referenceNodeId}`;
+  }
+  return `${source.kind}:${source.sourceNodeId}`;
 }
 
 function fieldLabel(source: ReferenceSource, index: DocumentIndex, fieldFallback: string): string {

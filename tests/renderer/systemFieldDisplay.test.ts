@@ -104,15 +104,15 @@ describe('systemFieldValues (sort/group/filter adapter)', () => {
     expect(systemFieldValues(map.get('n')!, DONE_FIELD, map)).toEqual(['true']);
   });
 
-  test('References reports its raw reference count, while the display dedupes sources', () => {
-    // One source node references the target twice: count is 2, deduped sources is 1.
+  test('References reports the deduped linked row count', () => {
+    // One source node references the target twice: count and display both dedupe to one source row.
     const map = byId(
       node({ id: 'target' }),
       node({ id: 'source', content: { text: 'Src', inlineRefs: [] } as NodeProjection['content'] }),
       node({ id: 'r1', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
       node({ id: 'r2', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
     );
-    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['2']);
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['1']);
     const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
     expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'source', label: 'Src' }]);
   });

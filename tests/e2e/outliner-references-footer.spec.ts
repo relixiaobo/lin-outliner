@@ -69,13 +69,13 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
 
   const section = page.locator('.backlinks-section');
-  await expect(section.locator('.backlinks-section-count')).toHaveText('3 references');
+  await expect(section.locator('.backlinks-section-count')).toHaveText('2 references');
   await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'false');
   await section.locator('.backlinks-section-toggle').click();
   await expect(section.locator('.backlinks-section-toggle')).toHaveAttribute('aria-expanded', 'true');
   await expect(section).toContainText('1 Mentioned in...');
   await expect(section).toContainText('1 Appears as Related in...');
-  await expect(section).toContainText('1 Unlinked mention');
+  await expect(section).toContainText('2 Unlinked mentions');
   await expect(section).toContainText(LONG_UNLINKED_TEXT);
   await expect(section).toContainText(SOURCE_DESCRIPTION);
   const alignment = await page.evaluate((alphaId) => {
@@ -154,15 +154,18 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   await expect(linkedRow.locator('.outliner-preview-children')).toContainText('Alpha');
   await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
 
-  const unlinkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Unlinked mention' }).first();
-  const unlinkedRow = unlinkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();
+  const unlinkedGroup = section.locator('.backlinks-group').filter({ hasText: '2 Unlinked mentions' }).first();
+  const unlinkedRows = unlinkedGroup.locator(':scope > .backlinks-list > .backlinks-row');
+  await expect(unlinkedRows).toHaveCount(2);
+  const unlinkedRow = unlinkedRows.first();
   await unlinkedRow.locator('.outliner-preview-row').hover();
   await unlinkedRow.locator('.row-chevron-button').click();
   await expect(unlinkedRow).toContainText('Beta child');
+  await expect(unlinkedRows.nth(1).locator('.outliner-preview-children')).toHaveCount(0);
   await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
   await expect(section.locator('.backlinks-row-chevron-slot')).toHaveCount(0);
 
-  await section.getByRole('button', { name: 'Link', exact: true }).click();
+  await section.getByRole('button', { name: 'Link', exact: true }).first().click();
 
   await expect.poll(async () => {
     const beta = await nodeById(page, ids.beta);
@@ -170,7 +173,7 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
       ? beta.content.inlineRefs[0].target.nodeId
       : null;
   }).toBe(ids.alpha);
-  await expect(section.getByRole('button', { name: 'Link', exact: true })).toHaveCount(0);
+  await expect(section.getByRole('button', { name: 'Link', exact: true })).toHaveCount(1);
   await expect(section.locator('.backlinks-section-count')).toHaveText('3 references');
 });
 
@@ -181,6 +184,6 @@ test('opening a reference row renders the target node page, not the reference sh
   await row(page, referenceId).getByRole('button', { name: 'Open' }).click();
 
   await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
-  await expect(page.locator('.backlinks-section-count')).toHaveText('3 references');
+  await expect(page.locator('.backlinks-section-count')).toHaveText('2 references');
   await expect(page.locator('.row-reference-counter')).toHaveCount(0);
 });

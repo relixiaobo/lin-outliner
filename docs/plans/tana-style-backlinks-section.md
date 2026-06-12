@@ -106,14 +106,12 @@ Rules:
   which field supplied the reference.
 - Search-result, config, enum, system, auto-init, and other non-link reference
   roles stay out of backlinks through the existing allowlist.
-- Multiple references from the same source are counted in the raw count, but the
-  footer display can dedupe visual rows by `(sourceNodeId, kind, fieldDefId)` so
-  one source does not spam the section.
+- Multiple linked references from the same source row are counted once per
+  rendered linked-reference row.
 - Unlinked mentions scan visible content text and descriptions for an exact,
   normalized phrase match against the target's current title. They exclude:
   - the target node itself;
   - trashed nodes;
-  - nodes that already have any linked reference to the target;
   - internal/config/search-result nodes;
   - empty or too-short target titles that would create noisy matches.
 - Mention matching must be deterministic and testable. Prefer a small tokenizer
@@ -124,8 +122,9 @@ Rules:
   before the user clicks `Link`, revalidate the range against current content
   before writing. If it no longer matches, refresh the source set and do not
   mutate.
-- Repeated unlinked text matches in the same source node are one source row and
-  one count for a target; keep the first content match as the linkable range.
+- Repeated unlinked text matches in the same source node stay as separate
+  occurrence rows, so linking one occurrence does not hide the remaining
+  plain-text mentions.
 
 This helper becomes the source for:
 
@@ -213,9 +212,9 @@ view sorting/filtering. It should stop being a separate backlink definition:
 - display value uses the canonical helper and renders deduped source nodes as
   the same read-only synthetic reference rows it uses today;
 - `systemFieldValues(..., REF_COUNT_FIELD)` returns the canonical linked-reference
-  count, including inline refs and field references. Unlinked mentions are
-  exposed in the footer but do not change field sort semantics unless the
-  PM explicitly wants "References" sorting to include unlinked text hits too;
+  row count, including inline refs and field references but excluding unlinked
+  text hits. The footer's collapsed References count uses the same linked count;
+  unlinked mentions are exposed as their own expanded group.
 - tests cover multiple references from one source, inline-only refs, field refs,
   filtered internal refs, and unlinked mentions.
 
@@ -280,10 +279,10 @@ Expected touch set:
   `Link`; never patch by stale offsets.
 - **Performance on every keystroke.** The current `References` system field can
   already scan `byId`; adding unlinked mentions and footer counts raises the
-  cost. The implementation memoizes by projection frame / `byId`, builds a
-  per-target count map once, and passes or primes that cached summary into the
-  `References` system field so sort/filter/render paths do not scan the document
-  per row or per comparison.
+  cost. The implementation memoizes linked references by projection frame /
+  `byId`, passes or primes that cached summary into the `References` system field
+  so sort/filter/render paths do not scan the document per row or per comparison,
+  and runs unlinked text scanning only for the expanded panel target.
 - **Visual noise.** Tana's footer is useful because it is quiet and collapsible.
   Default-collapsed behavior plus no-zero-state rendering keeps empty pages clean;
   the footer count must stay visually secondary and row chrome must remain clean.

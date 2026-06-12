@@ -81,7 +81,7 @@ describe('buildReferenceSummary', () => {
     });
   });
 
-  test('deduplicates repeated unlinked mentions by source node and target', () => {
+  test('keeps repeated unlinked mention occurrences linkable independently', () => {
     const byId = new Map([
       node({ id: 'target', content: plainText('Project Alpha') }),
       node({
@@ -95,9 +95,46 @@ describe('buildReferenceSummary', () => {
     const summary = buildReferenceSummary(byId, { includeUnlinked: true });
     const unlinked = (summary.byTarget.get('target') ?? []).filter((source) => source.kind === 'unlinked');
 
-    expect(summary.countsByTarget.get('target')).toEqual({ linked: 0, unlinked: 2, total: 2 });
-    expect(unlinked.map((source) => source.sourceNodeId)).toEqual(['repeated-source', 'second-source']);
+    expect(summary.countsByTarget.get('target')).toEqual({ linked: 0, unlinked: 4, total: 4 });
+    expect(unlinked.map((source) => source.sourceNodeId)).toEqual([
+      'repeated-source',
+      'repeated-source',
+      'repeated-source',
+      'second-source',
+    ]);
     expect(unlinked[0]?.mention).toMatchObject({ field: 'content', start: 0, end: 13, text: 'Project Alpha' });
+    expect(unlinked[1]?.mention).toMatchObject({ field: 'content', start: 19, end: 32, text: 'Project Alpha' });
+    expect(unlinked[2]?.mention).toMatchObject({ field: 'description', start: 0, end: 13, text: 'Project Alpha' });
+  });
+
+  test('continues to show a plain mention from a node that already links to the target elsewhere', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('Project Alpha') }),
+      node({
+        id: 'source',
+        content: { ...plainText('Already linked. Project Alpha later'), inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }] },
+      }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+    const unlinked = (summary.byTarget.get('target') ?? []).filter((source) => source.kind === 'unlinked');
+
+    expect(summary.countsByTarget.get('target')).toEqual({ linked: 1, unlinked: 1, total: 2 });
+    expect(unlinked).toHaveLength(1);
+    expect(unlinked[0]?.mention).toMatchObject({ field: 'content', start: 16, end: 29, text: 'Project Alpha' });
+  });
+
+  test('limits unlinked mention scanning to requested targets', () => {
+    const byId = new Map([
+      node({ id: 'target-a', content: plainText('Project Alpha') }),
+      node({ id: 'target-b', content: plainText('Project Beta') }),
+      node({ id: 'source', content: plainText('Project Alpha and Project Beta') }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true, mentionTargetIds: ['target-a'] });
+
+    expect(summary.countsByTarget.get('target-a')).toEqual({ linked: 0, unlinked: 1, total: 1 });
+    expect(summary.countsByTarget.get('target-b')).toBeUndefined();
   });
 
   test('does not create unlinked mentions from a node to itself', () => {

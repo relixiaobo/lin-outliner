@@ -398,7 +398,7 @@ export const zhHans: PartialMessages = {
     hideQuery: '隐藏查询',
     references: {
       title: '引用',
-      count: ({ total, linked, unlinked }) => `${total} 条引用 · ${linked} 已链接 · ${unlinked} 未链接`,
+      count: ({ total: _total, linked, unlinked }) => `${linked} 条引用 · ${unlinked} 处未链接提及`,
       linkedHeading: ({ count }) => `${count} 处提到此节点…`,
       fieldHeading: ({ field, count }) => `${count} 处作为 ${field} 出现…`,
       unlinkedHeading: ({ count }) => `${count} 处未链接提及`,
