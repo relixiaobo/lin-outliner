@@ -118,6 +118,29 @@ function latestRenderProjection(events: AgentRuntimeEvent[]): AgentRenderProject
   return projection;
 }
 
+async function waitForPovInspectorProjection(
+  events: AgentRuntimeEvent[],
+  agentId: string,
+  expectedMemoryText: string,
+): Promise<AgentRenderProjection> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const projection = [...events].reverse().find((event) => event.type === 'projection')?.renderProjection;
+    const inspector = projection?.povInspectors?.[agentId];
+    if (inspector?.memoryBriefing?.includes(expectedMemoryText)) return projection;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`No POV inspector memory projection for ${agentId}`);
+}
+
+async function memoryAccessEventCount(
+  store: AgentEventStore,
+  principal: AgentPrincipal,
+): Promise<number> {
+  return (await store.readMemoryEvents(principal))
+    .filter((event) => event.type === 'memory.accessed')
+    .length;
+}
+
 interface RecordedCall {
   systemPrompt: string;
   serialized: string;
@@ -291,7 +314,7 @@ describe('agent channel runtime', () => {
 
   test('@member routes the turn to that member, which runs as itself', async () => {
     const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('Reviewed: ship it.'))]);
-    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+    const { runtime, sink, calls, reviewerAgentId, dataRoot } = fixture;
 
     const store = new AgentEventStore(dataRoot);
     await store.addMemoryEntry(agentPrincipal(reviewerAgentId), {
@@ -341,6 +364,24 @@ describe('agent channel runtime', () => {
     expect(assistantRecord?.actor).toEqual({ type: 'agent', agentId: reviewerAgentId });
     const run = Object.values(state.runs).find((candidate) => candidate.status === 'completed');
     expect(run?.agentId).toBe(reviewerAgentId);
+
+    const reviewerAccessCount = await memoryAccessEventCount(store, agentPrincipal(reviewerAgentId));
+    const mainAccessCount = await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID));
+    const projection = await waitForPovInspectorProjection(
+      sink.events,
+      reviewerAgentId,
+      'Reviewer prefers terse verdicts.',
+    );
+    const inspector = projection.povInspectors[reviewerAgentId]!;
+    expect(inspector.memoryBriefing).toContain('Reviewer prefers terse verdicts.');
+    expect(inspector.memoryBriefing).toContain('Assistant tracks architecture seams for handoffs.');
+    expect(inspector.memoryBriefing).not.toContain('Outsider memory must not enter member briefings.');
+    expect(inspector.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(inspector.messages[0]?.parts[0]?.preamble).toBe('@user (the human user) said:');
+    expect(inspector.messages[0]?.sourceMessageIds).toEqual([userRecord?.id]);
+    expect(inspector.messages[1]?.sourceMessageIds).toEqual([assistantRecord?.id]);
+    expect(await memoryAccessEventCount(store, agentPrincipal(reviewerAgentId))).toBe(reviewerAccessCount);
+    expect(await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID))).toBe(mainAccessCount);
   });
 
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {

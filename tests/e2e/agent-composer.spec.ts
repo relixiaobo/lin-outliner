@@ -186,6 +186,51 @@ test.describe('agent composer controls', () => {
     }).toEqual({ created: false, restoredGeneral: true });
   });
 
+  test('opens the Channel member POV inspector in light and dark themes', async ({ page }) => {
+    async function openPlanningPov() {
+      await page.getByRole('button', { name: 'Show conversations' }).click();
+      const history = page.getByRole('dialog', { name: 'Channels' });
+      await history.getByRole('button', { name: /Planning Channel/ }).click();
+      await expect(page.getByRole('button', { name: 'Members' })).toBeVisible();
+      await page.getByRole('button', { name: 'Members' }).click();
+      const memberMenu = page.getByRole('dialog', { name: 'Channel members' });
+      await memberMenu.getByRole('button', { name: "Inspect general's POV" }).click();
+      await expect(page.getByRole('complementary', { name: "general's assembled POV" })).toBeVisible();
+    }
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await openPlanningPov();
+    const panel = page.getByRole('complementary', { name: "general's assembled POV" });
+    await expect(panel.getByText("general's POV")).toBeVisible();
+    await expect(panel.getByText('Memory briefing')).toBeVisible();
+    await expect(panel.getByText('Prefers terse launch-risk notes.')).toBeVisible();
+    await expect(panel.getByText('@assistant (agent "Agent System") said:')).toBeVisible();
+    await expect(panel.getByText('General sees the launch-risk request')).toBeVisible();
+
+    const lightMetrics = await panel.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        background: getComputedStyle(element).backgroundColor,
+        overflowX: element.scrollWidth - element.clientWidth,
+        width: rect.width,
+      };
+    });
+    expect(lightMetrics.overflowX).toBeLessThanOrEqual(1);
+    expect(lightMetrics.width).toBeGreaterThan(300);
+
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect.poll(async () => (
+      await panel.evaluate((element) => getComputedStyle(element).backgroundColor)
+    )).not.toBe(lightMetrics.background);
+    const darkMetrics = await panel.evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      overflowX: element.scrollWidth - element.clientWidth,
+      width: element.getBoundingClientRect().width,
+    }));
+    expect(darkMetrics.overflowX).toBeLessThanOrEqual(1);
+    expect(darkMetrics.width).toBe(lightMetrics.width);
+  });
+
   test('creates a named Channel before inviting any extra agents', async ({ page }) => {
     await page.getByRole('button', { name: 'New Channel' }).click();
     const dialog = page.getByRole('dialog', { name: 'New Channel' });

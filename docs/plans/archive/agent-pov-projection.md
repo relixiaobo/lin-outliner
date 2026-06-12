@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: codex-2
 phase: M3-C
@@ -73,14 +73,18 @@ assembly is the real input to B's model and currently invisible.
   debug-flavored pane). Reversible local — dev proposes in the one-line build
   note; visual gate (light + dark) applies either way.
 
+**Decision shipped:** a member-scoped action in the Channel Members popover opens
+a read-only debug-flavored side inspector. This keeps the control next to the
+member identity and reuses the existing run/details panel geometry.
+
 ## Acceptance
 
-- [ ] For a 2-agent Channel, selecting member B shows B's POV: B's turns as its
+- [x] For a 2-agent Channel, selecting member B shows B's POV: B's turns as its
       own voice, user + A coalesced with identity preambles, B's memory zones.
-- [ ] A derivation unit test pins inspector output == the runtime assembly
+- [x] A derivation unit test pins inspector output == the runtime assembly
       derivation for the same `(state, agentId)` (one-derivation invariant).
-- [ ] Read-only verified (no mutation paths); visual check light + dark.
-- [ ] `bun run typecheck` + relevant tests green; spec row flipped; plan
+- [x] Read-only verified (no mutation paths); visual check light + dark.
+- [x] `bun run typecheck` + relevant tests green; spec row flipped; plan
       archived `done`.
 
 ## Collision self-check (2026-06-10, plan time)

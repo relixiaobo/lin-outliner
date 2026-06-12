@@ -1513,6 +1513,55 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 
     const agentLabel = (agentId: string) => agentId === MAIN_AGENT_ID ? 'Agent System' : 'general';
     const agentMention = (agentId: string) => agentId === MAIN_AGENT_ID ? 'assistant' : 'general';
+    const povInspectorsForConversation = (conversationId: string) => {
+      if (conversationId !== PLANNING_CHANNEL_ID) return {};
+      return {
+        [GENERAL_AGENT_ID]: {
+          agentId: GENERAL_AGENT_ID,
+          addressedByMessageId: 'assistant-planning-e2e',
+          memoryBriefing: [
+            '<memory>',
+            '<self>',
+            '- Prefers terse launch-risk notes.',
+            '</self>',
+            '<principal name="Agent System">',
+            '- Tracks architecture seams for handoffs.',
+            '</principal>',
+            '</memory>',
+          ].join('\n'),
+          messages: [{
+            id: 'flattened:planning:1',
+            role: 'user',
+            sourceMessageIds: ['user-planning-e2e', 'assistant-planning-e2e'],
+            createdAt: now - 55_000,
+            parts: [{
+              preamble: '@user (the human user) said:',
+              text: 'Coordinate the launch plan.',
+              sourceMessageId: 'user-planning-e2e',
+              sourceRole: 'user',
+              sourceActor: { type: 'user', userId: 'local-user' },
+            }, {
+              preamble: '@assistant (agent "Agent System") said:',
+              text: '@general please review launch risk.',
+              sourceMessageId: 'assistant-planning-e2e',
+              sourceRole: 'assistant',
+              sourceActor: { type: 'agent', agentId: MAIN_AGENT_ID },
+            }],
+          }, {
+            id: 'verbatim:general-planning-e2e',
+            role: 'assistant',
+            sourceMessageIds: ['general-planning-e2e'],
+            createdAt: now - 50_000,
+            parts: [{
+              text: 'General sees the launch-risk request and answers as itself.',
+              sourceMessageId: 'general-planning-e2e',
+              sourceRole: 'assistant',
+              sourceActor: { type: 'agent', agentId: GENERAL_AGENT_ID },
+            }],
+          }],
+        },
+      };
+    };
     const renderMembers = (agentIds: string[]) => [
       { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
       ...agentIds.map((agentId) => ({
@@ -1571,6 +1620,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         activeRunId: null,
         activeRuns: [],
         activityEntries: [],
+        povInspectors: povInspectorsForConversation(conversationId),
         activeCompaction: null,
         activeDream: null,
         isStreaming: false,
@@ -3034,6 +3084,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       ],
       activeRunId: state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null),
       activityEntries: state.activityEntries ?? [],
+      povInspectors: state.povInspectors ?? {},
       activeCompaction: state.activeCompaction ?? null,
       isStreaming: !!state.isStreaming,
       model: state.model ?? {},

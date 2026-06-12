@@ -1,6 +1,8 @@
 import {
+  getAgentEventRuntimeTranscriptPath,
   isAgentConversationMessage,
   type AgentEventMessageRecord,
+  type AgentEventReplayState,
   type AgentPrincipal,
   type AgentRunRecord,
 } from './agentEventLog';
@@ -149,6 +151,48 @@ export interface PovFlattenOptions {
   displayNameByAgentId?: Record<string, string>;
 }
 
+export interface AgentPovProjectionOptions extends PovFlattenOptions {
+  /**
+   * Optional explicit Channel addressing boundary. Runtime active turns pass
+   * their in-memory run boundary; inspector projections fall back to the latest
+   * run boundary recorded in replay state for the selected agent.
+   */
+  addressedByMessageId?: string | null;
+}
+
+export interface AgentPovProjection {
+  agentId: string;
+  addressedByMessageId: string | null;
+  steps: PovFlattenStep[];
+}
+
+/**
+ * The one §8 POV derivation consumed by both runtime assembly and the read-only
+ * inspector. It owns the Channel independence cut and flatten selection; callers
+ * may render the returned steps to provider messages, UI rows, or tests, but
+ * must not reimplement the mapping.
+ */
+export function deriveAgentPovProjection(
+  state: AgentEventReplayState,
+  agentId: string,
+  options: AgentPovProjectionOptions,
+): AgentPovProjection {
+  const addressedByMessageId = options.addressedByMessageId
+    ?? latestAddressingMessageIdForAgent(state.runs, agentId);
+  const path = cutChannelPathForRun(
+    getAgentEventRuntimeTranscriptPath(state),
+    state.runs,
+    agentId,
+    addressedByMessageId,
+    options.mainAgentId,
+  );
+  return {
+    agentId,
+    addressedByMessageId,
+    steps: flattenAgentPathForPov(path, state.runs, agentId, options),
+  };
+}
+
 /**
  * §8 POV flatten ([[agent-data-model]]): derive agent `povAgentId`'s view of the
  * shared transcript. The POV agent's own turns (assistant + its tool results)
@@ -224,4 +268,18 @@ export function povIdentityPreamble(
 
 function recordHasVisibleText(record: AgentEventMessageRecord): boolean {
   return record.content.some((part) => part.type === 'text' && part.text.trim().length > 0);
+}
+
+function latestAddressingMessageIdForAgent(
+  runs: Record<string, AgentRunRecord>,
+  agentId: string,
+): string | null {
+  let latest: AgentRunRecord | null = null;
+  for (const run of Object.values(runs)) {
+    if (run.agentId !== agentId || !run.addressedByMessageId) continue;
+    if (!latest || run.startedAt > latest.startedAt || (run.startedAt === latest.startedAt && run.id > latest.id)) {
+      latest = run;
+    }
+  }
+  return latest?.addressedByMessageId ?? null;
 }

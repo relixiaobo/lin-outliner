@@ -3,7 +3,7 @@ status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-06
-updated: 2026-06-10
+updated: 2026-06-12
 ---
 
 # Agent Data Model — Persistence & Context Contract
@@ -523,6 +523,13 @@ Three rules this forces:
   log reconstructs its tool loop in `[4]`. Labels render at assembly, so for prefix-cache
   stability the POV derivation must be **byte-deterministic** ([[agent-conversation-model]]
   §Prompt cache impact); the exact preamble wording is a P3 detail.
+
+  **One derivation, two consumers.** Runtime model assembly and the Channel
+  member POV inspector both consume the same pure replay-state derivation
+  (`deriveAgentPovProjection(state, agentId, ...)`). The inspector only
+  re-renders the derived steps and the reader's transient memory briefing zones
+  (`<self>` + membership-scoped `<principal>` zones); it never stores messages,
+  never emits conversation/memory events, and never records briefing access.
 
 ### 9. Token accounting & request fidelity
 
