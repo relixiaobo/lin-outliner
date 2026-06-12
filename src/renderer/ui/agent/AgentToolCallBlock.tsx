@@ -56,6 +56,11 @@ type ResultPart =
 const TOOL_OUTPUT_WINDOW_HEAD_CHARS = 12_000;
 const TOOL_OUTPUT_WINDOW_TAIL_CHARS = 4_000;
 
+interface LoadedSkillDetails {
+  args: string | null;
+  skill: string;
+}
+
 export function getToolCallStatus(
   toolCallId: string,
   result: AgentToolResultWithPayloads | undefined,
@@ -98,6 +103,10 @@ function pickSubject(args: Record<string, unknown>, ...keys: string[]): string |
     }
   }
   return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
 }
 
 type ToolCallLabels = Messages['agent']['toolCall'];
@@ -388,6 +397,51 @@ function jsonText(value: unknown): string {
   }
 }
 
+function getLoadedSkillDetails(
+  toolCall: ToolCall,
+  result: AgentToolResultWithPayloads | undefined,
+): LoadedSkillDetails | null {
+  if (toolCall.name !== 'skill') return null;
+  if (!result || result.isError) return null;
+  const details = result?.details;
+  const argumentSkill = pickSubject(toolCall.arguments, 'skill');
+  if (isRecord(details)) {
+    if (details.tool !== 'skill') return null;
+    const data = details.data;
+    if (!isRecord(data) || data.status !== 'loaded') return null;
+    const detailSkill = typeof data.skill === 'string' ? data.skill.trim() : '';
+    const skill = detailSkill || argumentSkill;
+    if (!skill) return null;
+    return {
+      args: pickSubject(toolCall.arguments, 'args'),
+      skill,
+    };
+  }
+  const launched = /^Launching skill:\s*(.+)$/i.exec(resultText(result));
+  if (!launched) return null;
+  const launchedSkill = (launched[1] ?? '').trim();
+  const skill = launchedSkill || argumentSkill;
+  if (!skill) return null;
+  return {
+    args: pickSubject(toolCall.arguments, 'args'),
+    skill,
+  };
+}
+
+function LoadedSkillAffordance({ details }: { details: LoadedSkillDetails }) {
+  return (
+    <div className="agent-tool-call is-done">
+      <div className="agent-loaded-skill">
+        <BrainIcon aria-hidden="true" className="agent-loaded-skill-icon" size={ICON_SIZE.menu} />
+        <span className="agent-loaded-skill-name">/{details.skill}</span>
+        {details.args ? (
+          <span className="agent-loaded-skill-args">{details.args}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
@@ -600,6 +654,7 @@ export function AgentToolCallBlock({
   const hasChildRunDetails = Boolean(childRun);
   const hasDetails = hasChildRunDetails || inputText !== '{}' || outputText.length > 0;
   const hasOutputDetails = outputText.length > 0;
+  const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
   function toggle() {
     if (onToggle) {
@@ -607,6 +662,10 @@ export function AgentToolCallBlock({
       return;
     }
     setInternalExpanded((current) => !current);
+  }
+
+  if (loadedSkillDetails) {
+    return <LoadedSkillAffordance details={loadedSkillDetails} />;
   }
 
   return (

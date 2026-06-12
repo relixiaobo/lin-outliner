@@ -61,6 +61,22 @@ async function expectSummaryStableOnHover(row: Locator, textSelector: string) {
   expect(Math.abs(after!.x - before!.x)).toBeLessThan(1);
 }
 
+async function loadedSkillMetrics(row: Locator) {
+  return row.evaluate((element) => {
+    const args = element.querySelector('.agent-loaded-skill-args');
+    const icon = element.querySelector('.agent-loaded-skill-icon');
+    const rect = element.getBoundingClientRect();
+    return {
+      argsColor: args ? getComputedStyle(args).color : '',
+      color: getComputedStyle(element).color,
+      height: rect.height,
+      iconColor: icon ? getComputedStyle(icon).color : '',
+      overflowX: element.scrollWidth - element.clientWidth,
+      width: rect.width,
+    };
+  });
+}
+
 test.describe('agent process disclosure', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -446,6 +462,112 @@ test.describe('agent process disclosure', () => {
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
     await expect(page.getByText('"query": "design system"')).toBeVisible();
     await expect(page.getByText('3 matches: Agent System')).toBeVisible();
+  });
+
+  test('renders loaded skill calls as a compact light and dark affordance while forked skills stay expandable', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const loadedAssistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'toolUse',
+      timestamp: 1_800_000_001_100,
+      content: [{
+        type: 'toolCall',
+        id: 'tool-skill-loaded-e2e',
+        name: 'skill',
+        arguments: { skill: 'review-pr', args: '214 --focus rendering' },
+      }],
+    };
+    const forkedAssistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'toolUse',
+      timestamp: 1_800_000_001_200,
+      content: [{
+        type: 'toolCall',
+        id: 'tool-skill-forked-e2e',
+        name: 'skill',
+        arguments: { skill: 'investigate', args: 'render regression' },
+      }],
+    };
+
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [
+        loadedAssistant,
+        {
+          role: 'toolResult',
+          toolCallId: 'tool-skill-loaded-e2e',
+          toolName: 'skill',
+          content: [{ type: 'text', text: 'Launching skill: review-pr' }],
+          isError: false,
+          timestamp: 1_800_000_001_101,
+        },
+        forkedAssistant,
+        {
+          role: 'toolResult',
+          toolCallId: 'tool-skill-forked-e2e',
+          toolName: 'skill',
+          content: [{ type: 'text', text: 'Forked skill result.' }],
+          isError: false,
+          timestamp: 1_800_000_001_201,
+        },
+      ],
+      conversation: [{
+        nodeId: 'assistant-node-loaded-skill',
+        message: loadedAssistant,
+        branches: null,
+      }, {
+        nodeId: 'assistant-node-forked-skill',
+        message: forkedAssistant,
+        branches: null,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const loadedCall = page.locator('.agent-tool-call').filter({ has: page.locator('.agent-loaded-skill') });
+    const loaded = loadedCall.locator('.agent-loaded-skill');
+    await expect(loaded).toBeVisible();
+    await expect(loaded.locator('.agent-loaded-skill-name')).toHaveText('/review-pr');
+    await expect(loaded.locator('.agent-loaded-skill-args')).toHaveText('214 --focus rendering');
+    await expect(loadedCall.locator('.agent-tool-call-toggle')).toHaveCount(0);
+    await expect(loadedCall.locator('.agent-tool-call-panel')).toHaveCount(0);
+    await expect(loadedCall).not.toContainText('Launching skill: review-pr');
+
+    const light = await loadedSkillMetrics(loaded);
+    expect(light.overflowX).toBeLessThanOrEqual(1);
+    expect(light.width).toBeGreaterThan(100);
+    expect(light.height).toBeGreaterThan(10);
+    expect(light.argsColor).toBe(light.iconColor);
+    expect(light.argsColor).not.toBe(light.color);
+
+    const forkedToggle = page.locator('.agent-tool-call-toggle').filter({ hasText: 'skill' });
+    await expect(forkedToggle).toHaveCount(1);
+    await forkedToggle.click();
+    await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Input' })).toBeVisible();
+    await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
+    await expect(page.getByText('Forked skill result.')).toBeVisible();
+
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect.poll(async () => (await loadedSkillMetrics(loaded)).color).not.toBe(light.color);
+    const dark = await loadedSkillMetrics(loaded);
+    expect(dark.overflowX).toBeLessThanOrEqual(1);
+    expect(dark.width).toBeGreaterThan(100);
+    expect(dark.height).toBe(light.height);
+    expect(dark.argsColor).toBe(dark.iconColor);
+    expect(dark.argsColor).not.toBe(dark.color);
   });
 
   test('virtualizes long transcripts and keeps scroll navigation working', async ({ page }) => {
