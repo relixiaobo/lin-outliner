@@ -354,6 +354,21 @@ Standalone agent items (not part of the program):
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
+- **security-settings-ia-redesign** (P1, plan file, **draft — awaiting PM
+  ratification**) — the Settings → Security page (shipped by #193) draws three
+  overlapping controls (Trust Level / Granted Trust / Advanced) with no expressed
+  precedence, and its Advanced rows display a value that contradicts the effective
+  runtime decision (Full Access shows "Ask first" on web.fetch / delete / project
+  scripts while the runtime auto-allows them — `AgentSettingsView.tsx:590-595` vs
+  `agentPermissions.ts:410-422`). Redesign to one honest model: the mode is a
+  *living default*, explicit exceptions are *visible deltas* on it, any deviation
+  is a derived **Custom** state, and Granted Trust + manual overrides merge into one
+  "Exceptions to `<mode>`" list. Foundation-first (A7): extract one pure
+  `src/core/agentPermissionModel.ts` (`effectiveActionDecision`) shared by the
+  runtime evaluator and the page so they can't drift. Runtime decision/precedence
+  unchanged — this is a presentation + shared-model fix. ONE PR. Gate adds
+  `/security-review` + light/dark visual. See
+  `docs/plans/security-settings-ia-redesign.md`.
 
 ### Files & media
 
