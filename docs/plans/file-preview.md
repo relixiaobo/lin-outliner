@@ -3,309 +3,379 @@ status: draft
 priority: P2
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-12
 ---
 
-# File Preview
+# File Preview Pane
 
-> **Depends on [`workspace-tabs-to-single-pane.md`](workspace-tabs-to-single-pane.md).**
-> Preview is a new kind of *view-state* in a pane. This plan assumes the
-> single-pane refactor has generalized the per-pane history from a `NodeId[]`
-> stack to a discriminated **view-state** stack (so a `file-preview` entry slots
-> in next to `outliner`). An advisory note to that effect has been raised on the
-> refactor. If that refactor ships with history still hard-typed to `NodeId`,
-> S1 must first generalize it — do not build preview on the interim shape (A7).
+Open any file-shaped reference in a workspace panel and inspect it inside Lin.
+The target is broader than "open a local path": files can come from outliner
+local-file refs, outliner attachment/image assets, agent message references,
+agent answer attachments, agent-generated payloads, and captured URLs. One panel
+shell and one renderer registry should serve all of them.
 
-Let a user click a local-file reference — in the outliner, in agent output, or
-anywhere a file appears — and read that file **inside the app**, in the current
-pane, with a back button to return to the node. `Cmd`+click opens the preview in
-a split pane (read on one side, take notes on the other). URLs open in a
-reader-mode preview with an "open original" escape hatch.
+Plain click opens the preview in the current panel with Back returning to the
+previous view. Cmd/Ctrl-click opens the preview in a split panel so a user can
+read beside their outline. URLs use reader-mode preview with "open original" as
+the escape hatch.
 
 ## Goal
 
-- A **unified preview pane**: one shell (back / file identity / source-aware
-  "open externally" / loading·error·unsupported states) hosting a **swappable,
-  per-type content renderer** chosen from a registry. Identical interaction
-  chrome across every file type; content-level interaction lives in each
-  renderer.
-- A **unified click router**, keyed on the reference target, wired into **every**
-  surface where a file/URL can appear, so "click → preview" behaves the same
-  everywhere by construction (not per-surface logic).
-- **Read local file bytes** from the main process by absolute path (validated),
-  delivered to the renderer over a new `local://` custom protocol — streamed,
-  never base64'd over IPC.
-- Inline interactive rendering for the high-value, web-native types; a metadata
-  card + "open in default app" for everything else; URLs via reader-mode
-  extraction.
-- **100% web-native / cross-platform, zero OS-native dependency.** macOS-first
-  in practice, but nothing here is mac-specific.
+- A unified **preview panel**: one shell (Back / identity / source-aware open
+  externally / reveal or copy where safe / loading, error, unsupported states)
+  hosting a swappable per-type renderer chosen from a registry.
+- A unified **PreviewTarget** model keyed by source authority, not by local path:
+  `local-file`, `asset`, `agent-payload`, and `url`.
+- A unified click router wired into every file-shaped surface: outliner inline
+  refs, attachment/image rows, agent message file refs, agent answer attachments,
+  agent persisted payloads/tool outputs, and URLs.
+- Byte delivery from main to renderer through source-owned protocols/endpoints:
+  path-backed files are validated before a `local://` token is minted; assets are
+  served from the asset jail; agent payloads are read only through their
+  conversation/run-scoped payload authority.
+- Inline rendering for high-value web-native types; a metadata card + safe open
+  externally for everything else.
+- Cross-platform web rendering only. No QuickLook dependency and no
+  OS-specific preview renderer.
 
 ## Non-goals
 
-- **Annotation / Reader (highlights, comments, bidirectional highlight,
-  select-to-insert-quote).** Still being explored; explicitly **not** part of
-  this PR and **not** a stage here. The renderer contract is kept minimal and
-  does *not* pre-bake annotation fields — see "Forward-compat" for how it extends
-  cleanly later.
-- **The `attachment` node type** ([`file-attachments.md`](archive/file-attachments.md))
-  and **block-node inline rendering** ([`image-rendering.md`](image-rendering.md),
-  `BlockNodeRow`/`ImageRow`). Those render a file *as a block inside the outline*.
-  This plan is the *destination pane* you open *from* such things. They compose:
-  an attachment node's "open" routes into this preview pane. We do **not**
-  duplicate the attachment node, the block-node shell, or the asset pipeline.
-- **An in-app live browser** (an isolated `<webview>`/`WebContentsView` loading
-  real, interactive remote pages). Considered and rejected for this line: it is a
-  larger, separate capability (browser-grade scope, expanded threat surface,
-  doesn't fit the renderer contract). URLs here are reader-mode only, with an
-  "open original page" escape to the system browser.
-- **Embeds** (YouTube/Twitter iframes) — separate decision in
-  [`embed-strategy.md`](embed-strategy.md). Reader-mode article extraction is not
-  an embed.
-- High-fidelity Office rendering. docx/xlsx/pptx are best-effort web-native
-  conversions (read the content, not pixel-perfect layout). No LibreOffice /
-  external-binary conversion path.
+- **Annotation / Reader**: highlights, comments, quote insertion, and
+  bidirectional anchors are deferred. The registry leaves room for later
+  capability flags and per-type anchors, but this plan does not design them.
+- **A long-lived artifact editor**: preview is read-only inspection plus safe
+  external open/copy/reveal. Editing generated artifacts belongs to the natural
+  owner: outliner nodes, file tools, or a future artifact editor.
+- **Replacing inline block rendering**: `ImageRow` and `AttachmentRow` keep
+  rendering files inside the outline. This plan is the destination opened from
+  those rows.
+- **An in-app live browser**: remote URLs are reader-mode static previews only.
+  Real interactive pages belong to the browser-extension/CDP plan.
+- **High-fidelity Office rendering**: docx/xlsx/pptx are best-effort
+  web-native readers. No LibreOffice or external conversion binary.
+- **Back-compat migrations**: pre-release policy still applies. Do not add
+  legacy readers only to preserve dev data.
 
-## Relationship to existing work (collision self-check)
+## Current State And Collision Check
 
-Run 2026-06-03: `gh pr list` → **no open PRs**. Related plans:
+Run 2026-06-12:
 
-- **Dependency** — `workspace-tabs-to-single-pane.md` (draft): the pane /
-  view-state model this builds on. Blocked on it.
-- **Composes with** — `file-attachments.md` (draft): the `attachment` node type.
-  Preview is its "open" destination. Coordinate so attachment "open" calls the
-  same click router, not a bespoke handler.
-- **Adjacent surface** — `image-rendering.md` (in-progress, branch
-  `cc/asset-subsystem-images`): block-node inline rendering via `BlockNodeRow`.
-  Distinct from the preview pane. Images already render inline as blocks; the
-  preview pane is the full-view click-through. Reuse `asset://` patterns; do not
-  touch `BlockNodeRow`.
-- **Sibling protocol** — `asset-subsystem.md`: the `asset://` protocol. `local://`
-  is a sibling handler with a **separate origin** (stored snapshot assets vs.
-  live arbitrary local files are two different security capabilities).
-- **Protocol seam** — `outliner-local-file-references.md` (done, PR #80) shipped
-  `ReferenceTarget = node | local-file` and deferred an `asset` / `remote-url`
-  kind "added with their consumers". **S6 (url-reader) is that consumer for
-  `remote-url`.** Today URLs are stored as `link` text marks, not a
-  `ReferenceTarget`; the router handles both (see Click router). Adding the
-  `remote-url` kind touches `src/core/types.ts` — a protocol/shared change →
-  land it **interface-first**, coordinated, per the shared-interface rule.
+- `gh pr list` shows #208 (`codex-3/tana-style-references`) touching reference
+  derivation/UI/core files, but not this plan. Future implementation must
+  re-check collision before wiring the click router because #208 changes nearby
+  reference surfaces.
+- `workspace-tabs-to-single-pane` shipped as PR #85. The old blocker is gone.
+  The spec now records an extensibility seam for `file-preview`, but per-panel
+  history is still outliner-only (`pageBackStack: NodeId[]`). PR 1 must
+  generalize panel current view and history to a discriminated `PaneView`; do
+  not build preview against the interim `rootId + NodeId[]` shape.
+- `file-attachments` shipped as PR #204 + PR #206. Attachment/image rows store
+  asset ids and use `asset://`; preview must support assets directly rather than
+  forcing them through original filesystem paths.
+- Inline local-file hover preview/open shipped earlier. Keep the hover metadata
+  popover; plain click behavior changes from OS open to in-panel preview only
+  where the click router is installed. Composer editing chips remain editor
+  owned and should not surprise-jump during text editing.
+- Agent event storage already has `AgentPayloadRef` for large outputs, media,
+  PDFs, diffs, debug payloads, and answer attachments. Agent-generated files are
+  therefore first-class preview inputs, not an afterthought.
+- `launcher-provider-expansion` separately tracks preview/open-original for
+  capture `OriginalResourceRef` and local-file capture. File preview should
+  provide the destination and target model that launcher capture can call.
 
-## Design
+## Product Model
 
-### 1. Unified preview pane = shell + renderer registry
+### 1. PreviewTarget, Not Path
 
-A `file-preview` view-state renders a **shell** that is identical for every
-source. The shell owns:
+Every entry point normalizes to a `PreviewTarget`:
 
-- **Back** (pops the pane's view-state stack → returns to the prior node/preview).
-- **File identity** in the breadcrumb slot (name + path), replacing the node
-  breadcrumb while in preview.
-- **Source-aware "open externally"** action (the universal escape hatch):
-  - file → "Open in default app" (`shell.openPath`, path validated)
-  - url → "Open original page" (`shell.openExternal`, https only)
-- **Loading / error / unsupported** overlay states (handled once, in the shell).
-- An optional **per-type toolbar slot** (PDF page/zoom, etc.) injected by the
-  renderer into the shell's one toolbar row.
+```ts
+type PreviewTarget =
+  | {
+      kind: 'local-file';
+      path: string;
+      entryKind: 'file' | 'directory';
+      label?: string;
+    }
+  | {
+      kind: 'asset';
+      assetId: string;
+      label?: string;
+    }
+  | {
+      kind: 'agent-payload';
+      conversationId: string;
+      runId?: string;
+      payloadId: string;
+      label?: string;
+    }
+  | {
+      kind: 'url';
+      url: string;
+      label?: string;
+    };
+```
 
-Inside, the **reader area** hosts one renderer chosen from a registry:
+Rationale:
+
+- Local files are live paths. They need realpath validation, local-root policy,
+  executable/bundle denial for external open, and a tokenized `local://` URL for
+  renderer fetches.
+- Assets are Lin-owned stored bytes under the asset jail. Their identity is
+  `assetId`; original paths may be absent, stale, or intentionally irrelevant.
+- Agent payloads are event-store files with conversation/run scope. Their
+  identity is `(conversationId, runId?, payloadId)`; renderer code must not
+  infer payload filesystem paths.
+- URLs are remote resources. Main fetches/extracts/sanitizes; renderer receives
+  static reader content, never a live remote page.
+
+### 2. PreviewSource
+
+Main resolves a target into a renderer-facing `PreviewSource`:
+
+```ts
+type PreviewSource =
+  | {
+      kind: 'file';
+      sourceKind: 'local-file' | 'asset' | 'agent-payload';
+      id: string;
+      name: string;
+      ext: string;
+      mimeType: string;
+      entryKind: 'file' | 'directory';
+      sizeBytes: number;
+      lastModified?: number;
+      streamUrl?: string;
+      readText(): Promise<string>;
+      readBytes(): Promise<ArrayBuffer>;
+    }
+  | {
+      kind: 'url';
+      id: string;
+      url: string;
+      title: string;
+      html: string;
+      byline?: string;
+      siteName?: string;
+    };
+```
+
+`readText` and `readBytes` are conceptual renderer API hooks; implementation can
+use preload IPC or fetchable internal URLs. Large binary media must stream from
+main and support Range before media preview ships.
+
+### 3. Unified Panel Shell
+
+A `file-preview` panel view renders the same shell for every source:
+
+- Back pops the panel view-state stack.
+- Breadcrumb/title shows source identity: display name, type, and source label
+  (`Local file`, `Lin asset`, `Agent output`, `URL`).
+- Primary escape hatch:
+  - local file -> `shell.openPath` after path policy validation;
+  - asset -> open/reveal/copy the stored asset copy after asset jail validation;
+  - agent payload -> copy/export/open a temporary materialized file only through
+    main-owned payload APIs;
+  - URL -> `shell.openExternal` for `https?://` only.
+- Loading/error/unsupported states are owned by the shell.
+- Renderers may contribute a compact toolbar slot (PDF page/zoom, table sheet
+  selector, etc.).
+
+Design-system constraints: opaque content base; preview chrome is not
+user-selectable; icon controls deepen by color rather than getting rounded-square
+fills; respect reduced motion/transparency/contrast.
+
+### 4. Renderer Registry
+
+Every body is selected from the same registry:
 
 ```ts
 interface PreviewRendererEntry {
-  id: string;                            // "pdf" | "image" | "text" | "docx" | "fallback" | ...
-  priority: number;                      // higher wins; fallback = -Infinity
-  match(source: PreviewSource): boolean; // by ext / mimeType / source kind
-  component: PreviewRendererComponent;   // renders into the reader area
-  toolbar?: PreviewToolbarComponent;     // optional; shares the renderer's handle
+  id: string;
+  priority: number;
+  match(source: PreviewSource): boolean;
+  component: PreviewRendererComponent;
+  toolbar?: PreviewToolbarComponent;
 }
 ```
 
-**The bucket-2 metadata card is just a `fallback` entry** (`match` always true,
-`priority = -Infinity`). So every source — supported or not — opens the *same*
-pane through the *same* machinery; "unsupported" is simply a registry miss. This
-is the core simplification: one code path, one shell, swappable bodies.
+The fallback metadata card is a normal registry entry with `priority =
+-Infinity`. Unsupported is a render choice, not a separate navigation path.
 
-Design-system: shell is an opaque content layer (B5); back / open-externally are
-icon controls that deepen on hover, no box (B6); preview chrome is not
-user-selectable (B10).
-
-### 2. `local://` protocol — byte delivery
-
-Bytes reach the renderer over a new privileged custom protocol, **not** base64
-over IPC (verified: base64-over-IPC is the wrong pattern; `protocol.handle` +
-`net.fetch(pathToFileURL(path))` is the modern, streamed, Range-capable way —
-Electron protocol docs; issue #42612 notes added latency, fine for
-preview-sized reads, **stream large media via Range**).
-
-- Scheme: **`local://`** (internal only — appears in `src=`/`fetch`, never shown
-  to the user; same nature as the existing `asset://`).
-- Registered `registerSchemesAsPrivileged` as standard + secure + stream +
-  `supportFetchAPI`. **Do not set `bypassCSP`** (verified refuted as a fix; it
-  only weakens CSP — the real PDF-blank cause is cross-origin/CORS, addressed by
-  serving same-origin).
-- Token→path mapping in main (mirrors the existing search-cache hashed-ID
-  pattern) so raw paths never appear in URLs and every fetch passes validation.
-- Separate origin from `asset://` (distinct, more-scrutinized capability).
-
-`PreviewSource` (the input every renderer receives):
-
-```ts
-interface PreviewSource {
-  path: string;            // absolute, realpath'd + validated in main
-  name: string;
-  ext: string;             // lowercased, no dot
-  mimeType: string;        // sniffed in main
-  entryKind: 'file' | 'directory';
-  sizeBytes: number;
-  lastModified: number;
-  url: string;             // "local://<token>" — same-origin, streamed
-  readText(): Promise<string>;       // size-capped in main
-  readBytes(): Promise<ArrayBuffer>; // for pdfjs / mammoth / SheetJS
-}
-```
-
-S6 generalizes this to a `file | url` discriminated union (url sources carry the
-fetched + extracted article HTML instead of a `local://` url).
-
-### 3. Unified click router
-
-One router, invoked from every surface, normalizes the click target and
-dispatches:
-
-```
-node       → navigate the pane to that node (existing behavior)
-local-file → open file preview (onOpenFilePreview(path, entryKind))
-url        → open reader-mode preview (S6); escape hatch = open original
-```
-
-Wired into:
-
-- **Outliner inline refs** — `RichTextEditor.tsx` click handler (today handles
-  only node refs at ~`:425`; add the `local-file` arm).
-- **Outliner link marks** — URL clicks (today stored as `link` text marks) →
-  url arm.
-- **Agent output** — `AgentMarkdown.tsx` (today renders `local-file` segments as
-  plain text) → make them clickable; route through the same router.
-- **Agent attachments** — `AgentInlineReferenceText` file chips.
-- **Attachment node "open"** — when `file-attachments.md` lands (coordinate).
-
-**Entry-point coverage checklist + edge cases** (must all be handled for "works
-everywhere" to be true):
-
-- [ ] Directory ref (`entryKind: 'directory'`) → directory-listing renderer, not
-      a read error.
-- [ ] URL → reader preview / open-original; **never** the file path.
-- [ ] Agent `inline_text` attachment → no disk path; detect and degrade (not
-      previewable).
-- [ ] Snapshot vs live: agent attachments carry `path` and `readPath`; preview
-      opens the **live `path`** (consistent with path-based live read).
-- [ ] Composer (input) chips → editing context; plain click does not jump to
-      preview (or gate behind a modifier) — decide and note.
-
-### 4. Scope — two buckets
-
-**Bucket 1 — inline preview** (renderer entries):
+Initial renderers:
 
 | Type | Renderer | Dependency | Notes |
 |---|---|---|---|
-| Text / source code | shiki (read-only) | already bundled | CodeMirror 6 only if scroll/search/fold demanded later |
-| Markdown | react-markdown + remark-gfm + DOMPurify | bundled + `dompurify` | |
-| Images (SVG as `<img>`) | `<img src="local://…">` | — | SVG rendered as image (neutralizes scripts), never inlined |
-| PDF | pdf.js (pdfjs-dist) → canvas | `pdfjs-dist` | bundle the worker locally (the "worker→blob breaks CSP" claim is refuted); serve same-origin to avoid the CORS-blank issue |
-| Audio / video | `<video>`/`<audio>` + `local://` streaming + Range | — | codec caveat: Electron's Chromium plays H.264/AAC/MP4 etc., **not every** codec → unplayable falls back to the card |
-| CSV / TSV | table renderer (reuse SheetJS once present) | (via `xlsx`) | |
-| Word `.docx` | mammoth **or** docx-preview + DOMPurify | `mammoth`/`docx-preview` | semantic vs visual-fidelity — pick one in S5 |
-| Excel `.xlsx` | SheetJS (Community) → react-data-grid | `xlsx` + `react-data-grid` | data fidelity (no charts/visual layout); needs **no** nodeIntegration (refuted), fed an ArrayBuffer |
-| PowerPoint `.pptx` | **best-effort** JS renderer + DOMPurify | **TBD (unverified)** | lowest fidelity, highest risk; library selection + verification is an S5 sub-step |
-| URL | reader-mode (S6) | `defuddle` + `linkedom` (bundled) | |
+| Directory | directory listing | none | local-file directories only at first; no recursive indexing |
+| Text / source code | shiki read-only | already bundled | Size-capped text read; no editor |
+| Markdown | react-markdown + remark-gfm + DOMPurify | DOMPurify missing today | Sanitize all HTML output |
+| Images, including SVG | `<img>` from internal URL | none | SVG as image only, never inline |
+| CSV / TSV | table renderer | none for first pass | Add SheetJS only when xlsx lands |
+| PDF | pdf.js canvas | missing today | Local worker; same-origin internal URL |
+| Audio/video | native media elements | none | Requires streaming/Range |
+| Office | docx/xlsx/pptx best effort | missing/TBD | Separate PR after library verification |
+| URL article | sanitized static reader HTML | defuddle/linkedom present | Remote image policy required |
+| Unknown/binary | fallback metadata card | none | Open/reveal/export only |
 
-**Bucket 2 — open in default app** (the `fallback` entry): zip/archives,
-`.ipynb`, design/proprietary/binary/executables, unknown. A metadata card
-(icon / name / size / mtime / path) + "Open in default app" / "Reveal in
-Finder". **No QuickLook/Shell thumbnail** in the preview fallback (dropped
-deliberately). Note: this does **not** remove `nativeImage.createThumbnailFromPath`
-(`src/main/main.ts:~1087`), which still serves inline file chips / agent composer
-thumbnails — a different surface.
+## Routing Coverage
 
-### 5. url-reader (S6)
+The click router takes `(target, clickModifiers, sourceSurface)` and dispatches:
 
-- main fetches the URL (Node side; https only), extracts the article with
-  **defuddle** (+ linkedom — both already deps; likely already used by agent web
-  tools), DOMPurifies the result, returns clean **static HTML**. No live remote
-  content in any renderer.
-- Rendered in the same pane via a `url-reader` registry entry (same path as
-  markdown/docx HTML).
-- **Remote images** in the extracted article need a policy (the packaged CSP
-  blocks remote loads): **proxy/inline through main, or strip/placeholder** —
-  do **not** open `img-src` to remote (privacy/tracking). Lean (b) proxy or (c)
-  strip.
-- Escape hatch: shell "Open original page" → `shell.openExternal`.
-- Adds the `remote-url` `ReferenceTarget` kind (interface-first; see collision
-  check) when a URL is a first-class reference; link-mark URL clicks work
-  without it.
+```text
+node          -> existing node navigation
+local-file    -> file-preview target
+asset         -> file-preview target
+agent-payload -> file-preview target
+url           -> url-reader target
+```
 
-### 6. Security checklist
+Surfaces to wire:
 
-- **DOMPurify** every file→HTML product (markdown, docx, pptx, url-reader). SVG
-  as `<img>`, never inlined.
-- **Path validation** in main: realpath (resolve symlinks), confirm in-bounds,
-  `isFile`/`isDirectory`, size cap, timeout; reject zip-bombs / oversized reads
-  before loading into memory; stream binaries.
-- **`shell.openPath`** (files) / **`shell.openExternal`** (urls, https only) —
-  validate the target; `openExternal` is a known XSS→RCE vector (DeepChat CVE).
-- **Untrusted-content isolation**: v1 renders *derived, sanitized* HTML in the
-  trusted renderer (acceptable, documented compromise). Raw `.html` files and any
-  genuinely-untrusted interactive content stay "open externally" until/unless an
-  isolated `<webview>` is added (deferred hardening). pdf.js parsing untrusted
-  PDFs in the trusted renderer is moderate risk — acceptable with bundled worker,
-  no eval; isolate later if needed.
+- Outliner inline local-file refs.
+- Outliner link marks (URL reader target).
+- Outliner `AttachmentRow` and `ImageRow` open actions (`asset` target).
+- Agent message inline file refs (`local-file` target when path-backed).
+- Agent user/answer attachments with payload refs (`agent-payload` target).
+- Agent persisted tool-output rows and debug/payload rows (`agent-payload`
+  target where safe for normal conversation UI; debug-only payloads stay behind
+  debug affordances).
+- Future launcher captures via `OriginalResourceRef` (`local-file`, `asset`,
+  or `url` target).
 
-## Forward-compat (the annotation seam — defined, not built)
+Edge cases:
 
-When Reader/Annotation is eventually designed, it extends this cleanly **without
-re-cutting the contract**, because the registry is open: add capability flags
-(`selectable`, `annotatable`), an imperative handle (`getSelection()`,
-`applyHighlights()`, `scrollToAnchor()`), and a per-type `PreviewAnchor`
-(text-quote / pdf page+rects / epub CFI / sheet cell). Highlights would be
-**nodes** (quoted text + a `file-locator` `ReferenceTarget`, comments as child
-nodes), painted back by querying the open file's highlight nodes. **None of this
-is in scope now** — the anchor model is the hard, unvalidated part and is left
-for its own plan + research. We deliberately do not speculate its shape here.
+- Directory targets render a directory listing, not a read error.
+- Agent inline text attachments without a payload/path degrade to the existing
+  inline text rendering and are not preview targets.
+- Snapshot vs live path: path-backed agent references continue to preview the
+  live materialized/read path, matching file tools. Agent payload refs preview
+  the immutable stored payload.
+- Composer chips stay edit-context controls. Plain click should not navigate
+  away while editing; use hover metadata and explicit picker/actions only.
+- If a target has both `path` and `payload`, prefer the identity carried by the
+  visible reference: file marker path -> `local-file`; payload chip -> payload.
 
-## Open questions
+## Main-Process Authority
 
-- pptx renderer library — needs a focused evaluation/verification before S5
-  (first research pass did not cover pptx). Accept best-effort fidelity.
-- docx: mammoth (clean/semantic) vs docx-preview (visual fidelity) — decide in S5.
-- url-reader remote-image policy: proxy-through-main vs strip — decide in S6.
-- Composer chip click behavior (jump vs modifier-gated) — decide in S1.
-- `remote-url` `ReferenceTarget` kind: confirm interface-first ordering with
-  whoever owns `src/core/types.ts` at S6 time.
+### `local://`
 
-## Complete PRs (dependency-ordered)
+Path-backed local files use a tokenized `local://<token>` URL:
 
-**Execution (complete-per-PR).** Shape (b): each PR below is a complete, usable
-preview capability — not a partial slice. The shell alone isn't independently
-useful, so it bundles with the cheap web renderers into the first PR; each later
-renderer class is a complete feature on its own ("PDF preview works", "Office
-preview works"). The whole line is **blocked on**
-`workspace-tabs-to-single-pane`. Gate per PR: protocol/shared + UI → `/code-review
-ultra` + visual verification (light + dark).
+- Register as standard + secure + stream + `supportFetchAPI`.
+- Do not set `bypassCSP`.
+- Token maps to an absolute realpath validated in main.
+- Reject missing, non-regular, symlink-escaped, NUL-containing, oversized
+  memory reads, and external-open denied targets.
+- Text reads are capped; binary/media streams are Range-capable before media
+  ships.
 
-- [ ] **PR 1 — Shell + web-native renderers (the first usable feature).**
-  `local://` protocol + main path-read/validate; `PreviewSource(file)`; preview
-  pane shell (back / file identity / source-aware open-externally /
-  loading·error·unsupported); renderer registry + `fallback` metadata-card entry;
-  unified click router wired into all entry points (coverage checklist); plus the
-  cheap web-native renderers — text/code (shiki), markdown (react-markdown +
-  DOMPurify), images (SVG-as-img), CSV/TSV. *Outcome: every file opens the pane
-  and the common types render — a complete, usable preview.*
-- [ ] **PR 2 — PDF.** pdfjs-dist → canvas; local worker; same-origin serving;
-  per-type toolbar (page/zoom).
-- [ ] **PR 3 — Media.** `<video>`/`<audio>` + `local://` Range streaming; codec
-  failure → fallback card.
-- [ ] **PR 4 — Office.** docx (mammoth/docx-preview), xlsx (SheetJS + react-data-grid;
-  CSV reuse), **pptx (best-effort; library selection + verification first)**.
-- [ ] **PR 5 — url-reader.** `PreviewSource(url)`; main fetch + defuddle + DOMPurify
-  + remote-image policy; router url arm; "Open original" escape; `remote-url`
-  `ReferenceTarget` kind interface-first.
+### `asset://`
+
+Assets stay on the existing `asset://<assetId>` authority:
+
+- Asset lookup validates ids and resolves inside the asset directory.
+- Media preview should add streaming/Range to asset serving before depending on
+  large audio/video seeking.
+- Open/reveal/copy reuse existing asset commands and local-file open policy.
+
+### Agent payload delivery
+
+Agent payload preview needs a new read surface rather than renderer filesystem
+paths:
+
+- Resolve by current conversation plus `payloadId`; include `runId` when needed
+  to enforce scope.
+- Only payloads present in replay state for the active conversation/run are
+  readable.
+- Text reads can reuse the existing `agent_payload_text` behavior with a preview
+  cap; binary preview needs a fetchable internal URL or byte IPC with caps.
+- Opening externally materializes a temporary/export file from main, never a
+  renderer-supplied path.
+- Debug-only payloads remain debug-scoped unless a normal conversation row
+  explicitly references them.
+
+### URL reader
+
+- Main fetches `https?://` URLs only.
+- Extract with defuddle + linkedom.
+- DOMPurify all generated HTML before rendering.
+- Remote images are not allowed directly by CSP. Choose one policy in the URL
+  PR: proxy-through-main, inline cached images, or strip/placeholders.
+- "Open original" uses `shell.openExternal` after URL validation.
+
+## Security Checklist
+
+- Treat every source as untrusted bytes even when Lin owns the storage.
+- Keep Node out of renderer; renderer sees only internal URLs/metadata/preload
+  methods.
+- DOMPurify every file-to-HTML product: markdown, docx, pptx, and URL reader.
+- Render SVG as `<img>`, never inline.
+- Do not expose raw local paths in internal URLs.
+- Do not let payload refs become arbitrary file-read handles; scope them through
+  event-store replay state.
+- External open is always source-aware and main-owned:
+  `shell.openPath` for files/assets/materialized payload exports,
+  `shell.openExternal` for validated URLs.
+- Raw `.html` files render as text or fallback in v1; no trusted renderer HTML
+  execution for arbitrary local HTML.
+- pdf.js runs with bundled worker and no eval. If this proves too risky, isolate
+  PDF rendering in a later hardening plan.
+
+## Relationship To Other Plans
+
+- `workspace-tabs-to-single-pane`: shipped PR #85. Its remaining preview
+  implication is the unbuilt `PaneView` history/current-view generalization.
+- `file-attachments`: shipped PR #204/#206. This plan consumes attachment/image
+  assets as preview targets.
+- `outliner-local-file-references`: shipped PR #80. This plan consumes
+  `ReferenceTarget.local-file` and may later add `remote-url` only when URL
+  references become first-class rich refs.
+- `agent-conversation-model`: result routing says durable results live as nodes
+  or files and replies point at them. This plan provides the file side's
+  click-through destination.
+- `agent-event-log-rendering`: payload refs are authoritative large-output
+  storage. This plan adds user-facing preview for the payloads that are meant to
+  be visible in conversation UI.
+- `launcher-provider-expansion`: captures need preview/open-original for
+  `OriginalResourceRef`. This plan should be the shared destination.
+- `browser-extension-integration`: remote rich capture/control is separate; URL
+  reader remains static preview.
+
+## Open Questions
+
+- Should `PreviewTarget.agent-payload` use a new `agent-payload://` protocol, a
+  preload `readPayloadBytes` API, or a shared generic `preview://` URL? Decide in
+  PR 1 after checking CSP and payload scoping.
+- What is the exact export/open behavior for agent payloads: temp file, "Save
+  As", or open a materialized copy under the agent local file root?
+- URL reader remote image policy: proxy, inline cached image, or strip.
+- docx renderer: mammoth (semantic) vs docx-preview (visual).
+- pptx renderer library remains unverified.
+- Whether URL rich refs should become `ReferenceTarget.remote-url` in PR 5, or
+  stay as link marks plus router handling.
+
+## Complete PRs
+
+Shape (b): a set of independent complete features. Each PR must leave a usable
+preview capability, not a partial scaffold. Gate per PR: protocol/shared + UI
+requires ultra review plus light/dark visual verification.
+
+- [ ] **PR 1 - Panel shell, target model, and web-native basics.**
+  Generalize panel current view/history to `PaneView`; add `PreviewTarget` /
+  `PreviewSource`; implement preview shell and registry; add local-file,
+  asset, and agent-payload source resolution; wire outliner local-file refs,
+  attachment/image rows, agent message file refs, and visible agent payload rows;
+  ship directory, text/code, markdown, image, CSV/TSV, and fallback metadata
+  renderers. Outcome: every file-shaped source opens the same panel, and common
+  formats render.
+- [ ] **PR 2 - PDF.** Add pdf.js canvas renderer over local-file, asset, and
+  agent-payload sources; bundle the worker; add page/zoom toolbar; preserve
+  fallback for parse failures.
+- [ ] **PR 3 - Media streaming.** Add Range-capable local/asset/payload streams
+  and audio/video renderers; codec failures fall back to metadata card. This also
+  removes the current whole-file-read limitation for large asset media.
+- [ ] **PR 4 - Office.** Add docx/xlsx/pptx best-effort renderers after library
+  verification; reuse CSV/table infrastructure; sanitize all generated HTML.
+- [ ] **PR 5 - URL reader.** Add URL `PreviewTarget`, main fetch/extract/sanitize,
+  remote image policy, link-mark router wiring, "Open original", and optional
+  `ReferenceTarget.remote-url` interface-first if first-class URL refs are needed.
