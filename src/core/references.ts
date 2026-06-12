@@ -97,7 +97,7 @@ export function buildReferenceSummary(
         fieldEntryId: source.fieldEntryId,
         fieldDefId: source.fieldDefId,
       });
-      addLinkedSource(linkedSourceIdsByTarget, node.targetId, source.sourceNodeId);
+      addSourceIdForTarget(linkedSourceIdsByTarget, node.targetId, source.sourceNodeId);
     }
 
     for (const inlineRef of node.content.inlineRefs) {
@@ -110,7 +110,7 @@ export function buildReferenceSummary(
         kind: 'inline',
         inlineDisplayName: inlineRef.displayName,
       });
-      addLinkedSource(linkedSourceIdsByTarget, targetId, node.id);
+      addSourceIdForTarget(linkedSourceIdsByTarget, targetId, node.id);
     }
   }
 
@@ -163,17 +163,17 @@ function addReferenceSource(
   byTarget.set(source.targetId, [source]);
 }
 
-function addLinkedSource(
-  linkedSourceIdsByTarget: Map<NodeId, Set<NodeId>>,
+function addSourceIdForTarget(
+  sourceIdsByTarget: Map<NodeId, Set<NodeId>>,
   targetId: NodeId,
   sourceNodeId: NodeId,
 ): void {
-  const existing = linkedSourceIdsByTarget.get(targetId);
+  const existing = sourceIdsByTarget.get(targetId);
   if (existing) {
     existing.add(sourceNodeId);
     return;
   }
-  linkedSourceIdsByTarget.set(targetId, new Set([sourceNodeId]));
+  sourceIdsByTarget.set(targetId, new Set([sourceNodeId]));
 }
 
 function buildCountsByTarget(byTarget: ReadonlyMap<NodeId, readonly ReferenceSource[]>): Map<NodeId, ReferenceCounts> {
@@ -200,6 +200,7 @@ function addUnlinkedMentions(
   const targetTitles = mentionTargetTitles(byId, isDeleted, options.minMentionLength ?? MIN_MENTION_LENGTH);
   if (targetTitles.length === 0) return;
   const targetsByFirstChar = mentionTargetsByFirstChar(targetTitles);
+  const unlinkedSourceIdsByTarget = new Map<NodeId, Set<NodeId>>();
 
   const scanDescriptions = options.includeDescriptions ?? true;
   for (const source of byId.values()) {
@@ -209,6 +210,7 @@ function addUnlinkedMentions(
       source,
       targetsByFirstChar,
       linkedSourceIdsByTarget,
+      unlinkedSourceIdsByTarget,
       'content',
       source.content.text,
     );
@@ -218,6 +220,7 @@ function addUnlinkedMentions(
         source,
         targetsByFirstChar,
         linkedSourceIdsByTarget,
+        unlinkedSourceIdsByTarget,
         'description',
         source.description,
       );
@@ -276,25 +279,23 @@ function addUnlinkedMentionsFromText(
   source: ReferenceNodeLike,
   targetsByFirstChar: ReadonlyMap<string, readonly MentionTarget[]>,
   linkedSourceIdsByTarget: ReadonlyMap<NodeId, ReadonlySet<NodeId>>,
+  unlinkedSourceIdsByTarget: Map<NodeId, Set<NodeId>>,
   field: ReferenceMentionField,
   text: string,
 ): void {
   if (!text) return;
-  const addedRanges = new Set<string>();
   for (let start = 0; start < text.length; start += 1) {
     const candidates = targetsByFirstChar.get(firstCaseFoldedChar(text[start] ?? ''));
     if (!candidates) continue;
     for (const target of candidates) {
       if (source.id === target.nodeId) continue;
       if (linkedSourceIdsByTarget.get(target.nodeId)?.has(source.id)) continue;
+      if (unlinkedSourceIdsByTarget.get(target.nodeId)?.has(source.id)) continue;
       const end = start + target.text.length;
       if (end > text.length) continue;
       const matchedText = text.slice(start, end);
       if (caseFold(matchedText) !== target.lowerText) continue;
       if (!hasMentionBoundary(text, start, end)) continue;
-      const rangeKey = `${target.nodeId}:${field}:${start}:${end}`;
-      if (addedRanges.has(rangeKey)) continue;
-      addedRanges.add(rangeKey);
       addReferenceSource(byTarget, {
         targetId: target.nodeId,
         sourceNodeId: source.id,
@@ -307,6 +308,7 @@ function addUnlinkedMentionsFromText(
           text: matchedText || target.text,
         },
       });
+      addSourceIdForTarget(unlinkedSourceIdsByTarget, target.nodeId, source.id);
     }
   }
 }

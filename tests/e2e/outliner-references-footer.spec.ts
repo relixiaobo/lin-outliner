@@ -8,7 +8,7 @@ import {
   row,
 } from './outlinerMock';
 
-const LONG_UNLINKED_TEXT = 'Discuss Alpha soon with a deliberately long first line that should wrap before the trailing Link action when the backlink row is narrow enough to reserve an action slot';
+const LONG_UNLINKED_TEXT = 'Discuss Alpha soon, then revisit Alpha again with a deliberately long first line that should wrap before the trailing Link action when the backlink row is narrow enough to reserve an action slot';
 const SOURCE_DESCRIPTION = 'Stored context appears as the secondary line beneath this source node.';
 
 async function emitCurrentProjection(page: Page) {

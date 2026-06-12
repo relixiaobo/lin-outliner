@@ -122,6 +122,8 @@ Rules:
   before the user clicks `Link`, revalidate the range against current content
   before writing. If it no longer matches, refresh the source set and do not
   mutate.
+- Repeated unlinked text matches in the same source node are one source row and
+  one count for a target; keep the first content match as the linkable range.
 
 This helper becomes the source for:
 

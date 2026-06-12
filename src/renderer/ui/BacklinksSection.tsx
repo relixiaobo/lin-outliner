@@ -409,7 +409,7 @@ function groupReferenceRows(sources: readonly ReferenceSource[], index: Document
   unlinked: ReferenceRow[];
 } {
   const linked = dedupeRows(sources.filter((source) => source.kind === 'tree' || source.kind === 'inline'), index);
-  const unlinked = dedupeRows(sources.filter((source) => source.kind === 'unlinked'), index, true);
+  const unlinked = dedupeRows(sources.filter((source) => source.kind === 'unlinked'), index);
   const fieldGroupsByKey = new Map<string, { fieldKey: string; fieldLabel: string; rows: ReferenceRow[] }>();
   for (const row of dedupeRows(sources.filter((source) => source.kind === 'field'), index)) {
     const fieldKey = row.source.fieldDefId ?? row.source.fieldEntryId ?? 'field';
@@ -430,17 +430,13 @@ function groupReferenceRows(sources: readonly ReferenceSource[], index: Document
 function dedupeRows(
   sources: readonly ReferenceSource[],
   index: DocumentIndex,
-  keepMentionRanges = false,
 ): ReferenceRow[] {
   const rows: ReferenceRow[] = [];
   const seen = new Set<string>();
   for (const source of sources) {
     const node = index.byId.get(source.sourceNodeId);
     if (!node) continue;
-    const mentionKey = keepMentionRanges && source.mention
-      ? `${source.mention.field}:${source.mention.start}:${source.mention.end}`
-      : '';
-    const key = `${source.kind}:${source.sourceNodeId}:${source.fieldEntryId ?? ''}:${mentionKey}`;
+    const key = `${source.kind}:${source.sourceNodeId}:${source.fieldEntryId ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     rows.push({ source, node, key });

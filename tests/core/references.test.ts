@@ -80,4 +80,23 @@ describe('buildReferenceSummary', () => {
       mention: { field: 'content', start: 6, end: 14, text: 'İstanbul' },
     });
   });
+
+  test('deduplicates repeated unlinked mentions by source node and target', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('Project Alpha') }),
+      node({
+        id: 'repeated-source',
+        content: plainText('Project Alpha now, Project Alpha later'),
+        description: 'Project Alpha in the description too',
+      }),
+      node({ id: 'second-source', content: plainText('Review Project Alpha') }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+    const unlinked = (summary.byTarget.get('target') ?? []).filter((source) => source.kind === 'unlinked');
+
+    expect(summary.countsByTarget.get('target')).toEqual({ linked: 0, unlinked: 2, total: 2 });
+    expect(unlinked.map((source) => source.sourceNodeId)).toEqual(['repeated-source', 'second-source']);
+    expect(unlinked[0]?.mention).toMatchObject({ field: 'content', start: 0, end: 13, text: 'Project Alpha' });
+  });
 });
