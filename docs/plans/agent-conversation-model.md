@@ -156,9 +156,12 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
 | **Per-turn assembly** | Transient context for one turn (the read seam; the former "session" read side). | nobody |
 | **Task** | An agent's **off-floor background Run** (long work); visible, stateful, posts its result back to the anchor conversation. | Agent (Run inside a conversation) |
 
-**Channel membership starts at two agents.** A user + one agent is always the
-canonical DM relationship; adding a second agent creates a Channel. "Single
-member Channel" is not a product state.
+**Channels are named rooms; DMs are agent relationships.** A user + one specific
+agent relationship is always the canonical DM. A Channel can be created as a
+named room before extra invitations: it starts with the user and the coordinator
+agent, then optional invited agents can be added later. This matches the
+Slack-like room-first flow and keeps "I want a place called X" distinct from "I
+want to talk to agent Y."
 
 **Coordinator is likewise a per-Channel role flag on a Member, not a kind nor a
 new entity.** The same Agent identity is coordinator in one Channel and a plain

@@ -1010,6 +1010,9 @@ Open-conversation policy:
   membership-edited. A Channel is a named room with the user, the coordinator
   agent as an implicit runtime participant, and optional invited agents that can
   be added later.
+- `conversation-index.json` carries list projection fields, including member
+  roster, unread count, message count, and the latest visible message snippet /
+  timestamp. Opening the conversation menu does not replay each conversation log.
 - Opening a conversation loads the latest checkpoint, reads the conversation segment
   and indexed run logs from the checkpoint target offsets, then replays only
   events after the checkpoint `seq`.

@@ -100,6 +100,12 @@ describe('agent event store', () => {
           providerId: 'test',
           modelId: 'test',
         },
+        {
+          ...base(conversationId, 5, 'assistant_message.completed'),
+          messageId: 'assistant-1',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Assistant reply [[node:Alpha^node-alpha]]' }],
+        },
       ]);
 
       const entries = await store.listConversationIndexEntries();
@@ -108,9 +114,11 @@ describe('agent event store', () => {
         title: 'Renamed',
         members: [],
         createdAt: 1_700_000_000_001,
-        updatedAt: 1_700_000_000_004,
+        updatedAt: 1_700_000_000_005,
         messageCount: 2,
-        latestSeq: 4,
+        latestSeq: 5,
+        lastMessageSnippet: 'Assistant reply Alpha',
+        lastMessageAt: 1_700_000_000_005,
         unreadCount: 0,
       }]);
       const index = JSON.parse(await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')) as {
@@ -462,6 +470,8 @@ describe('agent event store', () => {
         title: 'Untitled',
         messageCount: 1,
         latestSeq: 2,
+        lastMessageSnippet: 'Hello',
+        lastMessageAt: 1_700_000_000_002,
       }]);
       await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(conversationId);
     });
@@ -696,6 +706,41 @@ describe('agent event store', () => {
         conversations: Record<string, unknown>;
       };
       expect(Object.keys(rebuilt.conversations)).toEqual([conversationId]);
+    });
+  });
+
+  test('rebuilds old conversation indexes that lack list summary fields', async () => {
+    await withStore(async (store, root) => {
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Indexed conversation' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'message-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Fresh summary' }],
+        },
+      ]);
+      await writeFile(path.join(root, 'indexes', 'conversation-index.json'), JSON.stringify({
+        conversations: {
+          [conversationId]: {
+            id: conversationId,
+            title: 'Indexed conversation',
+            members: [],
+            createdAt: 1_700_000_000_001,
+            updatedAt: 1_700_000_000_002,
+            messageCount: 1,
+            latestSeq: 2,
+            unreadCount: 0,
+          },
+        },
+      }), 'utf8');
+
+      expect(await new AgentEventStore(root).listConversationIndexEntries()).toMatchObject([{
+        id: conversationId,
+        lastMessageSnippet: 'Fresh summary',
+        lastMessageAt: 1_700_000_000_002,
+      }]);
     });
   });
 

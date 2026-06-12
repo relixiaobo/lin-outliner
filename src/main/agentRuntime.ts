@@ -961,7 +961,7 @@ export class AgentRuntime {
     return entries;
   }
 
-  private async conversationListMetaFromIndexEntry(
+  private conversationListMetaFromIndexEntry(
     entry: AgentConversationIndexEntry | null,
     fallback?: {
       id: string;
@@ -969,11 +969,8 @@ export class AgentRuntime {
       members: AgentPrincipal[];
       canonicalDmAgentId?: string;
     },
-  ): Promise<AgentConversationListMeta> {
+  ): AgentConversationListMeta {
     const id = entry?.id ?? fallback!.id;
-    const summary = entry && entry.messageCount > 0
-      ? await this.latestConversationMessageSummary(id)
-      : null;
     return {
       id,
       title: sanitizeConversationTitle(entry?.title ?? fallback?.title),
@@ -983,31 +980,17 @@ export class AgentRuntime {
       createdAt: entry?.createdAt ?? 0,
       updatedAt: entry?.updatedAt ?? 0,
       messageCount: entry?.messageCount ?? 0,
-      lastMessageSnippet: summary?.snippet ?? null,
-      lastMessageAt: summary?.timestamp ?? null,
+      lastMessageSnippet: entry?.lastMessageSnippet ?? null,
+      lastMessageAt: entry?.lastMessageAt ?? null,
       unreadCount: entry?.unreadCount ?? 0,
     };
-  }
-
-  private async latestConversationMessageSummary(conversationId: string): Promise<{ snippet: string; timestamp: number } | null> {
-    const state = await this.loadEventState(conversationId);
-    for (const message of [...getAgentEventActivePath(state)].reverse()) {
-      if (message.role !== 'user' && message.role !== 'assistant') continue;
-      const text = persistedTextContent(message.content).replace(/\s+/g, ' ').trim();
-      if (!text) continue;
-      return {
-        snippet: nodeReferenceMarkersToText(text).slice(0, 140),
-        timestamp: message.updatedAt,
-      };
-    }
-    return null;
   }
 
   async listConversations() {
     const entries = await this.getEventStore().listConversationIndexEntries();
     const entryById = new Map(entries.map((entry) => [entry.id, entry]));
     const roster = await this.listConversationRosterAgents();
-    const dmRows = await Promise.all(roster.map((agent) => (
+    const dmRows = roster.map((agent) => (
       this.conversationListMetaFromIndexEntry(
         entryById.get(this.canonicalDmConversationId(agent.agentId)) ?? null,
         {
@@ -1017,10 +1000,10 @@ export class AgentRuntime {
           canonicalDmAgentId: agent.agentId,
         },
       )
-    )));
-    const channelRows = await Promise.all(entries
+    ));
+    const channelRows = entries
       .filter((entry) => !!entry.goal)
-      .map((entry) => this.conversationListMetaFromIndexEntry(entry)));
+      .map((entry) => this.conversationListMetaFromIndexEntry(entry));
     const listed = [...dmRows, ...channelRows];
     // Seed cross-conversation unread badges on launch: the live conversation_attention
     // event only fires for conversations touched this run, so a conversation that went
@@ -2161,8 +2144,12 @@ export class AgentRuntime {
     });
     delegationRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     delegationRuntime.restoreListedAgentsFromMessages(activePath);
+    const directMessageAgentId = this.directMessageAgentId(eventState);
     const defaultAgentProfile = providerConfig && defaultAgentId !== this.agentIdentity.agentId
-      ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, providerConfig)
+      ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, {
+          mode: directMessageAgentId === defaultAgentId ? 'dm' : 'channel',
+          providerConfig,
+        })
       : null;
     if (defaultAgentProfile) {
       await this.getEventStore().writeAgentIdentity(defaultAgentProfile.identity);
@@ -6079,14 +6066,17 @@ export class AgentRuntime {
     systemPrompt: string;
     definition: AgentDefinition;
   }> {
-    return this.resolveAgentProfile(agentId, conversation.delegationRuntime, conversation.skillRuntime);
+    return this.resolveAgentProfile(agentId, conversation.delegationRuntime, conversation.skillRuntime, { mode: 'channel' });
   }
 
   private async resolveAgentProfile(
     agentId: string,
     delegationRuntime: AgentDelegationRuntime,
     skillRuntime: AgentSkillRuntime,
-    providerConfigInput?: AgentProviderRuntimeConfig,
+    options: {
+      mode?: 'channel' | 'dm';
+      providerConfig?: AgentProviderRuntimeConfig;
+    } = {},
   ): Promise<{
     identity: AgentIdentityRecord;
     model: Model<Api>;
@@ -6096,8 +6086,8 @@ export class AgentRuntime {
   }> {
     const definitions = await delegationRuntime.listAllAgentDefinitions();
     const definition = definitions.find((candidate) => agentDefinitionAgentId(candidate) === agentId);
-    if (!definition) throw new Error(`Channel member agent not found: ${agentId}`);
-    const providerConfig = providerConfigInput ?? await this.getActiveProviderConfig();
+    if (!definition) throw new Error(`Agent definition not found: ${agentId}`);
+    const providerConfig = options.providerConfig ?? await this.getActiveProviderConfig();
     if (!providerConfig) throw new Error('No enabled agent provider is configured.');
     const inheritedModel = this.resolveProviderModel(providerConfig);
     const model = definition.model
@@ -6107,7 +6097,9 @@ export class AgentRuntime {
       ? resolveSkillEffortOverride(definition.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
     const skillSections = await this.channelPeerSkillSections(skillRuntime, definition);
-    const systemPrompt = buildChannelPeerSystemPrompt(definition, agentMentionToken(agentId), skillSections);
+    const systemPrompt = options.mode === 'dm'
+      ? buildDirectMessageAgentSystemPrompt(definition, agentMentionToken(agentId), skillSections)
+      : buildChannelPeerSystemPrompt(definition, agentMentionToken(agentId), skillSections);
     const identity: AgentIdentityRecord = {
       agentId: agentId as AgentId,
       displayName: agentDefinitionDisplayName(definition),
@@ -7619,6 +7611,27 @@ function buildChannelPeerSystemPrompt(
       '- Other members\' turns appear as quoted context with an identity preamble; never imitate another member or speak on their behalf.',
       '- To hand off to another agent member, mention them as @<name> in your reply — only when they are clearly better suited. Every mention routes a turn and there is no relay limit, so mention deliberately and do not create mention loops; the user can stop the round at any time.',
       '- Stay within your description and instructions; defer outside work to better-suited members.',
+    ].join('\n'),
+    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
+    skillSections.length > 0 ? `# Profile skills\n${skillSections.join('\n\n')}` : null,
+  ].filter(Boolean).join('\n\n');
+}
+
+function buildDirectMessageAgentSystemPrompt(
+  definition: AgentDefinition,
+  mention: string,
+  skillSections: readonly string[],
+): string {
+  const displayName = agentDefinitionDisplayName(definition);
+  return [
+    [
+      `You are "${displayName}" (@${mention}), in a direct 1:1 conversation with the user.`,
+      `Agent description: ${definition.description}`,
+      '',
+      '# Direct message rules',
+      '- Speak as yourself. Your reply is posted to this DM under your name.',
+      '- There are no other agent members in this DM. Do not mention or hand off to another agent as a routing instruction.',
+      '- Stay within your description and instructions; if the user needs a broader room, suggest creating a Channel.',
     ].join('\n'),
     definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
     skillSections.length > 0 ? `# Profile skills\n${skillSections.join('\n\n')}` : null,

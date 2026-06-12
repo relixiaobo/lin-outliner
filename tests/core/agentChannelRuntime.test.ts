@@ -866,6 +866,32 @@ describe('agent channel runtime', () => {
     expect(run?.agentId).toBe(MAIN_AGENT_ID);
   });
 
+  test('a non-coordinator canonical DM uses a DM prompt, not the Channel peer prompt', async () => {
+    const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('Hello from reviewer DM.'))]);
+    const { runtime, calls, reviewerAgentId, dataRoot } = fixture;
+
+    const reviewerDm = (await runtime.listConversations())
+      .find((entry) => entry.canonicalDmAgentId === reviewerAgentId);
+    expect(reviewerDm).toBeDefined();
+
+    const dm = await runtime.restoreConversation(reviewerDm!.id);
+    await runtime.sendMessage(dm.conversationId, 'hello @reviewer');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
+    expect(calls[0]!.systemPrompt).toContain('# Direct message rules');
+    expect(calls[0]!.systemPrompt).toContain('direct 1:1 conversation');
+    expect(calls[0]!.systemPrompt).not.toContain('# Channel rules');
+    expect(calls[0]!.systemPrompt).not.toContain('shared multi-agent conversation');
+    expect(calls[0]!.serialized).not.toContain('the human user) said:');
+
+    const state = await new AgentEventStore(dataRoot).replay(dm.conversationId);
+    const userRecord = Object.values(state.messages).find((record) => record.role === 'user');
+    expect(userRecord?.addressedTo).toBeUndefined();
+    const run = Object.values(state.runs)[0];
+    expect(run?.agentId).toBe(reviewerAgentId);
+  });
+
   test('membership changes are real events: add/remove replay and survive restart; DMs stay immutable', async () => {
     const fixture = await setupChannelFixture([]);
     const { runtime, reviewerAgentId, observerAgentId, dataRoot } = fixture;
