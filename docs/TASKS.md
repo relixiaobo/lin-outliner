@@ -27,21 +27,21 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 ## In progress
 
-**2026-06-11 batch (PM-dispatched)** — Codex lanes only this round; cc / cc-2 /
-anti are deliberately unscheduled. Plan-track lanes start with a one-pager per
-the flow; merge order owned by main.
+**2026-06-12 batch (round 3, PM-dispatched)** — Codex lanes only; cc / cc-2 /
+anti deliberately unscheduled. Plan-track lanes start with a one-pager per the
+flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Protocol slice **merged as PR #204** (see Recently completed); now building the complete feature PR (core handler, persistence, ingest, renderer rows, system actions) on top — gate adds `/security-review`. | plan-track |
+| 1 | codex | **UX Feature A** — roster-as-DM-list + New Channel flow + DM→Channel escalation verb (`agent-conversation-entry-identity-ux` Feature A; UI + arbitrary-agent canonical-DM runtime in ONE PR). Takes the `agentRuntime.ts` slot after #202. Coordinate: lane 2's hygiene PR is small, merges FIRST, A rebases over its append-site deletions. | plan-track |
+| 2 | codex-2 | **`agent-ledger-hygiene`** — dead platform events out of the conversation ledger · `queuedMessages`/`activeRunAgentId` compat fields die · spec sync (volumetrics wording, bipartite-parentage invariant, #202 fields, execution-staging note) · visible-transcript spine oracle test. From the 2026-06-12 post-parallel audit; see `docs/plans/agent-ledger-hygiene.md`. | plan-track (small) |
+| 3 | codex-3 | **file-attachments** (P1; protocol slice merged as PR #204 — see Recently completed) — continuing the complete feature PR (core handler, persistence, ingest, renderer rows, system actions); gate adds `/security-review`. | plan-track |
 
-`agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently completed.
-
-Relay: **Realignment PR-4**
-(retrieval) is unblocked by #200 — slots into the next free lane. UX **Feature A**
-(roster + arbitrary-agent DMs) follows the parallel runtime in the
-`agentRuntime.ts` queue (one runtime-touching PR in flight at a time:
-M3-B → parallel runtime → A). M3-C follows D.
+Relay: **Realignment PR-4** (retrieval, unblocked by #200) slots into the next
+free lane. **M3-C** (per-agent POV inspector) follows Feature A. UX plan
+features B/C/D/E shipped (#201/#203); A is the last open feature.
+`agent-channel-parallel-runtime` (codex, PR #202) **merged** — see Recently
+completed.
 
 - `ime-composition-focus-steal` (cc-2) **merged** as PR #177 — fixes #176 (`skill` →
   `sk ill` IME tearing), both root causes: the echo focusRequest steal (global
