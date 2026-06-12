@@ -442,24 +442,20 @@
 
 .backlinks-link-action {
   display: inline-flex;
-  min-width: 2.25rem;
-  height: calc(var(--line-content) - var(--space-2));
+  min-width: 1.75rem;
+  height: var(--line-content);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  background: var(--material-popover);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow-thumb), inset 0 0 0 0.5px var(--separator);
+  background: transparent;
+  box-shadow: none;
   color: var(--link);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-1);
   white-space: nowrap;
   opacity: 0.86;
   transition:
-    background var(--motion-fast),
-    box-shadow var(--motion-fast),
     color var(--motion-fast),
     opacity var(--motion-fast);
 }
@@ -471,7 +467,10 @@
 
 .backlinks-link-action:hover,
 .backlinks-link-action:focus-visible {
-  background: color-mix(in srgb, var(--material-popover) 84%, var(--fill-2));
-  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 0.5px var(--separator);
   color: var(--accent-strong);
+}
+
+.backlinks-link-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
 }

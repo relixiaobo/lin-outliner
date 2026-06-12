@@ -8,7 +8,7 @@ import {
   row,
 } from './outlinerMock';
 
-const LONG_UNLINKED_TEXT = 'Discuss Alpha soon with a deliberately long first line that should run underneath the Link action when the backlink row is narrow enough to force the action to float above the title text instead of reserving layout space';
+const LONG_UNLINKED_TEXT = 'Discuss Alpha soon with a deliberately long first line that should wrap before the trailing Link action when the backlink row is narrow enough to reserve an action slot';
 const SOURCE_DESCRIPTION = 'Stored context appears as the secondary line beneath this source node.';
 
 async function emitCurrentProjection(page: Page) {
@@ -117,6 +117,7 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
       linkRight: linkRect.right,
       linkHeight: linkRect.height,
       linkBackgroundColor: linkStyle.backgroundColor,
+      linkBoxShadow: linkStyle.boxShadow,
       sourceMarkerLeft: sourceMarker.getBoundingClientRect().left,
       sourceTitleHeight: titleRect.height,
       sourceTitleLeft: titleRect.left,
@@ -141,7 +142,8 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
   expect(alignment.linkRight).toBeLessThanOrEqual(alignment.rowRight + 1);
   expect(alignment.rowRight - alignment.linkRight).toBeLessThanOrEqual(10);
   expect(alignment.linkHeight).toBeGreaterThan(18);
-  expect(alignment.linkBackgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+  expect(alignment.linkBackgroundColor).toBe('rgba(0, 0, 0, 0)');
+  expect(alignment.linkBoxShadow).toBe('none');
 
   const linkedGroup = section.locator('.backlinks-group').filter({ hasText: '1 Mentioned in...' }).first();
   const linkedRow = linkedGroup.locator(':scope > .backlinks-list > .backlinks-row').first();

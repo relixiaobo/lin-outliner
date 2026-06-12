@@ -199,9 +199,10 @@ range as the normal node selection affordance.
 Source rows show the source node's full title text with normal wrapping, not a
 single-line ellipsis. If the source node has a description, the description is
 shown as secondary wrapped text under the title, aligned to the same text column.
-Unlinked content mentions keep their `Link` action fixed at the first title line's
-right edge as a small material button; the title wraps around the action slot so
-long source text remains readable.
+Unlinked content mentions keep their `Link` action in the row's independent
+trailing action slot as a lightweight link-colored button with no default
+material background; the title wraps before the action slot so long source text
+remains readable.
 
 Linked references include:
 
