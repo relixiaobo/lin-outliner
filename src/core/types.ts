@@ -744,14 +744,25 @@ export interface AgentConversation {
   pendingUserQuestion?: AgentUserQuestionPendingView | null;
 }
 
+export interface AgentCreateConversationOptions {
+  title: string;
+  agentIds?: string[];
+  seedText?: string;
+  systemNotice?: string;
+}
+
 export interface AgentConversationListMeta {
   id: string;
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
+  canonicalDmAgentId?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  lastMessageSnippet?: string | null;
+  lastMessageAt?: number | null;
+  unreadCount?: number;
 }
 
 export type AgentMemorySourceView =

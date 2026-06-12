@@ -197,11 +197,11 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 |---|---|---|
 | Three-ledger storage + write-time split | ✅ built | migration complete; legacy flat log deleted on startup |
 | `Principal` + per-message `actor` | ✅ built | user actor = `local-user` (single-user) |
-| `members[]` populated + used for memory scope | ✅ built | every conversation = `[user, mainAgent]` |
+| `members[]` populated + used for memory scope | ✅ built | canonical DM = `[user, one agent]`; Channel = named room with `[user, coordinator]` by default and optional invited agents |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Typed sub-agent identity + per-agent memory line (#164) | ✅ built | the groundwork multi-agent builds on |
 | `addressedTo`, `member.added/removed`, `<principal>` render hook | ✅ built | connected in M3-A (#179): `addressedTo` written on user messages + read by routing; membership events applied on replay + folded into the conversation index |
-| Create a >1-agent conversation (Channel) | ✅ built | `agent_create_conversation` takes `{agentIds, goal, seedText}`; add/remove member commands + header "+" member menu in the UI; "add agent to DM" spawns a seeded Channel (DM itself never converts); mention-token collisions rejected at create/add |
+| Create a named Channel | ✅ built | `agent_create_conversation` takes `{title, agentIds?, seedText?}` and requires only a Channel name; member management lives in the Channel header Members popover; DM escalation opens New Channel with an explicit name and provenance notice, while the DM itself never converts or shares history; mention-token collisions rejected at create/add |
 | Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery, per-run Channel concurrency + completion-order append; UI: composer member typeahead, header/list member display, actor badges/avatars, typing indicator + run drill-in |
 | Conversation metadata UX | ✅ built | DM header identity subtitle; timestamp gap separators; native message context menu with Details for speaker, timestamp, model/provider, and token usage |
 | Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |

@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-09
+updated: 2026-06-12
 ---
 
 # Agent Conversation Model — Agents, Conversations, Memory
@@ -36,10 +36,11 @@ folded into `docs/spec/`. **Remaining:** mid-run `needs-input` (deferred by deci
 
 - **Agents are first-class, durable identities** carrying their own memory. An
   agent is the same identity across every conversation it is in.
-- **Conversations are one primitive (members + optional goal), not a stored kind.**
-  "DM" (1:1, identity = the relationship) vs "Channel" (a goal, 1..N members, identity =
-  the goal) is a **rendering** derived from the member set + `goal` presence (§Data
-  structure) — not a `kind` enum.
+- **Conversations are one primitive (members + optional Channel name), not a stored kind.**
+  "DM" (1:1, identity = the relationship) vs "Channel" (named room, identity =
+  the room name) is a **rendering** derived from canonical-DM identity vs
+  Channel-name presence (§Data structure) — not a `kind` enum. The current event
+  vocabulary still stores the Channel name in the legacy `goal` field.
 - **Memory belongs to the agent**, lives in runtime storage (not the document,
   not the read-only agent config), and is **visible/editable** (inspect, correct,
   forget).
@@ -144,7 +145,7 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
 | **Principal** | A participant: `user` or `agent`. The one type used as member = actor = addressee. | — |
 | **Conversation** | One primitive holding a message stream; **no stored `kind`** (§Data structure). | — |
 | **DM** *(rendering)* | A conversation rendered 1:1 (you + one agent, no goal, canonical). Identity = the relationship. | participants |
-| **Channel** *(rendering)* | A conversation rendered as a goal-room (1..N members + a `goal`). Identity = the goal. | the goal |
+| **Channel** *(rendering)* | A conversation rendered as a named room (user + coordinator by default, optional invited agents; stored in the legacy `goal` field). Identity = the Channel name. | the Channel name |
 | **Member** | A `Principal` placed in a conversation. An edge, not an entity. | — |
 | **Run** | The execution stream of one turn / task; anchored to exactly one conversation (§Data structure). | the running Agent |
 | **Memory line** | Per-agent distilled memory, unified across conversations, private, relevance-retrieved, **visible**, **addressable** to source. | Agent |
@@ -155,10 +156,12 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
 | **Per-turn assembly** | Transient context for one turn (the read seam; the former "session" read side). | nobody |
 | **Task** | An agent's **off-floor background Run** (long work); visible, stateful, posts its result back to the anchor conversation. | Agent (Run inside a conversation) |
 
-**Member count is a property of a Channel (1..N), never a kind.** "single/multi
-member" survive only as internal implementation-phase labels, never user-facing
-names. Naming by headcount repeats the people-centric mistake; kind is intrinsic
-(relationship vs goal).
+**Channels are named rooms; DMs are agent relationships.** A user + one specific
+agent relationship is always the canonical DM. A Channel can be created as a
+named room before extra invitations: it starts with the user and the coordinator
+agent, then optional invited agents can be added later. This matches the
+Slack-like room-first flow and keeps "I want a place called X" distinct from "I
+want to talk to agent Y."
 
 **Coordinator is likewise a per-Channel role flag on a Member, not a kind nor a
 new entity.** The same Agent identity is coordinator in one Channel and a plain
@@ -196,9 +199,9 @@ The facts the rest of *this* plan leans on:
   deltas) — `tool_result` lives **only** in the run log. This keeps the conversation log
   low-volume and keeps `tool_call ↔ tool_result` pairs off the shared channel stream
   (the three-role pi-agent-core transcript is reconstructed at assembly, §Runtime).
-- **Conversation = one primitive, no stored `kind`** (members + `goal` presence +
-  canonical-ness); DM/Channel is a rendering + two product rules (§Conversations,
-  §Adding an agent).
+- **Conversation = one primitive, no stored `kind`** (members + Channel-name
+  presence, currently stored in the legacy `goal` field, plus canonical-ness);
+  DM/Channel is a rendering + two product rules (§Conversations, §Adding an agent).
 - **A run anchors to exactly one conversation**; `trigger` (message / node / parent /
   manual) is provenance, never the home — no conversation-less runs.
 - **Ownership boundary:** a conversation owns the objective record (messages +
@@ -234,8 +237,8 @@ memory (accumulated)   the memory line — visible, editable, deletable
 
 - **Capability binds to the agent, not the conversation.** Model + effort + tools +
   permission + skills travel with the agent identity into every conversation it
-  joins; a conversation adds a task overlay (goal / focus) but **never overrides who
-  the agent is** — exactly symmetric with the memory line. Model selection therefore
+  joins; a conversation adds a task overlay (room name / focus) but **never
+  overrides who the agent is** — exactly symmetric with the memory line. Model selection therefore
   moves from a global setting onto the **agent profile**. Sequencing: real
   `AgentDefinition` agents already carry these fields (`types.ts:702`), so per-agent
   model/config is **near-free at the type level** for specialist agents (the fields
@@ -274,7 +277,7 @@ memory (accumulated)   the memory line — visible, editable, deletable
 Conversation {
   id: ConversationId            // was sessionId
   members: Principal[]          // the staffing edge; the user is a member too
-  goal?: string                 // a channel's goal = its render-time identity (a DM has none)
+  goal?: string                 // legacy field carrying a Channel's display name (a DM has none)
   anchors?: NodeId[]            // OPTIONAL navigation backlinks; never gate/scope/identity
   overlay?: string              // optional "what to do here"
   // message stream = segmented events.jsonl + branch structure (reused as-is)
@@ -282,13 +285,13 @@ Conversation {
 // read cursors are a SEPARATE per-principal store (ReadCursors), NOT a conversation field — [[agent-data-model]] §3
 ```
 
-DM vs Channel is a **rendering** (members + `goal` presence + canonical-ness), not a
-stored type — see §Data structure.
+DM vs Channel is a **rendering** (canonical DM id vs Channel-name presence), not
+a stored type — see §Data structure.
 
 **Conversation UX — DECIDED (PM-ratified 2026-06-05): canonical DM + user-creatable
 Channels.** Each agent has **one always-on continuous DM** (no "new conversation" button
 for DMs; find-or-create-unique). The **session list becomes the Channel list**: Channels
-are the goal-scoped rooms the user creates / names / archives — that is where the
+are the named rooms the user creates / renames / archives — that is where the
 familiar "make a new conversation / fresh start" affordance lives now. So today's
 `createSession`/`deleteSession`/`renameSession` surface re-targets to Channels, while the
 DM is the persistent default thread. (Rejected: keeping a ChatGPT-style per-agent session
@@ -311,20 +314,20 @@ is not in the channel.
   operation, not an `@`. *Optional convenience:* typing `@` on a non-member may
   offer "add them?" — but the default rule stays clean: `@` addresses members only,
   adding is its own action.
-- **DM is intrinsically 1:1.** Adding a second agent does **not** convert it — there
-  is no "DM with two agents"; it **spawns a new Channel** (the DM persists). See
-  §Adding an agent.
+- **DM is intrinsically 1:1.** Adding an agent does **not** convert it — there
+  is no "DM with two agents"; it **creates a new named Channel** with the current
+  DM agent preselected (the DM persists). See §Adding an agent.
 
 ### Adding an agent — spawn, don't convert
 
-A DM never converts in place. Adding a second agent **spawns a new, seeded Channel**
-(a goal + the existing agent as a member + an optional back-link to the DM); the
-**DM persists**. Different identity kinds (relationship vs goal) don't morph into
-each other, and the 1:1 stream stays private. This is cheap in our model because a
-new Channel is a **warm start, not a cold one**: the agent's memory line + the
-ambient outline already carry the context — only the verbatim DM transcript stays
-behind (a record, reachable only through internal evidence search / explicit
-provenance expansion, not a public `past_chats` tool).
+A DM never converts in place. Escalating a DM **creates a new named Channel**
+with the source DM agent preselected and an optional opening message; the **DM
+persists**. Different identity kinds (relationship vs named room) don't morph
+into each other, and the 1:1 stream stays private. This is cheap in our model
+because a new Channel is a **warm start, not a cold one**: the agent's memory line
+and the ambient outline already carry the context — only the verbatim DM transcript
+stays behind (a record, reachable only through internal evidence search /
+explicit provenance expansion, not a public `past_chats` tool).
 
 A newly added agent onboards from **shared substrates only — never the private DM
 transcript** — via a toolkit, each for a different need:
@@ -1037,13 +1040,13 @@ M3 multi-member spine — each its own complete PR.
 | Phase | Scope | Honest size |
 |---|---|---|
 | **P0** | Give the main agent a stable identity record — the `sourceKind:sourceInstanceId:name` **tuple** ([[agent-data-model]] §3), not a bare `name` — that memory keys off. **Not** the registry refactor. Pinning the full tuple here is what avoids the cross-project same-name memory collision (a bare `name` would reintroduce it). | small (incl. the tuple decision) |
-| **P1** | **mixed-resolution assembly** in `deriveRuntimePiMessages` — join run logs for the recent window, render old segments as their (compaction) summaries; **canonical DM + user-creatable Channels** (conversation-list surface; DM find-or-create); **memory foundation** (runtime-owned event-sourced append surface — *not* `file_write`; **global-default + opt-in isolation** retrieval; profile UI; reminder-stack injection). Single-member only. | memory storage/UI/recall + channel UX on top of M0/M0.5 |
+| **P1** | **mixed-resolution assembly** in `deriveRuntimePiMessages` — join run logs for the recent window, render old segments as their (compaction) summaries; **canonical DM + user-creatable Channels** (conversation-list surface; DM find-or-create); **memory foundation** (runtime-owned event-sourced append surface — *not* `file_write`; **global-default + opt-in isolation** retrieval; profile UI; reminder-stack injection). DMs are one-agent relationships; Channels are named rooms whose invited agents can change over time. | memory storage/UI/recall + channel UX on top of M0/M0.5 |
 | **P2** | **Memory v2 Dream + recall clean cut** — remove the main agent's model-visible inline memory tool and model-visible `past_chats`; add the single read-only `recall` tool over durable memory, with optional nested evidence expansion through `MemoryEntry.sources`; add a runtime-owned Dream/extraction writer that uses summaries/search only to locate candidate spans, then reads raw conversation/run evidence before add/update/forget; host callback + throttling + provenance tagging. | real build (~500–700 LoC) |
 | **P3** | **Sequential multi-member Channels** — per-agent POV derivation + per-member `agentId` (on the P1 `actor` field), **coordinator-based turn-taking routing** (§Channel routing), rooms-are-linear; **the main-agent registry unification**; deeper memory consolidation. | the big subsystem |
 
 Single-member conversations (DM + a Channel staffed with one agent) deliver most
-of the value — per-agent memory, DM/goal conversations, no session — without any
-of the multi-agent machinery.
+of the value — per-agent memory, named Channels, no session — without any of the
+multi-agent machinery.
 
 **Background tasks** span P2–P3: the visible per-agent task panel + notification
 generalized session→conversation-scoped (with rate-limiting) can land at **P2**;
@@ -1178,9 +1181,9 @@ P0 — identity
 P1 — conversations + memory foundation
 - [x] `session`→`{conversation, run}`: split the message stream (communication) from the run log (execution **incl. `tool_result`**); re-key `sessions/<id>` → `conversations/<id>` + `runs/<id>`; IPC, state map, scopes.
 - [x] **Mixed-resolution assembly** (PM-ratified): `deriveRuntimePiMessages` joins the recent window's run logs into a valid pi-agent-core transcript and renders old segments as their (compaction) summaries — the agent no longer re-sees old tool outputs verbatim.
-- [x] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
+- [x] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/Channel derived from canonical DM identity vs Channel-name presence; the current event field is still `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
 - [x] Store `actor` on `AgentEventMessageRecord`; drop implicit `'pi-mono'` by parameterizing runtime-authored agent actors — foundation for task-notification attribution + P3 POV.
-- [x] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
+- [x] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; Channel creation requires a name, while invited agents are optional and mutable.
 - [x] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). The later model-facing recall surface is a single `recall` tool; summary search and raw expansion stay internal implementation details.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
 - [x] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, audited — *not* `file_write`); retrieval over **one undivided pool** (`isolated` tier removed 2026-06-10; `read-only-global` = pause writes), `originWorkspace` recorded as provenance; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.

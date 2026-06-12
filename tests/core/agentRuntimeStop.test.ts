@@ -118,7 +118,7 @@ describe('agent runtime stop', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const send = runtime.sendMessage(created.conversationId, 'Start and wait.');
     await streamStarted;
 
@@ -180,7 +180,7 @@ describe('agent runtime stop', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Trigger a provider error.');
 
     const projection = latestProjection(sink.events);

@@ -289,7 +289,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Which tools are live?');
     const contextText = contexts.join('\n');
 
@@ -356,7 +356,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'I want to test the Dream feature.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -454,7 +454,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'What did we decide last time about focus rings?');
 
     const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
@@ -559,7 +559,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Can you recall durable episode gist evidence?');
     const contextText = contexts.join('\n');
 
@@ -651,7 +651,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'What do we know about reviews and focus rings?');
     const contextText = contexts.join('\n');
 
@@ -715,7 +715,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Please answer directly.');
     const contextText = contexts.join('\n');
 
@@ -784,7 +784,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Please answer directly.');
     const contextText = contexts.join('\n');
 
@@ -856,7 +856,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Which focus rings should I use here?');
     const contextText = contexts.join('\n');
 
@@ -949,7 +949,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Recall focus-ring memories.');
 
     const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
@@ -1029,7 +1029,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Please keep engineering answers concise from now on.');
     // Conversation evidence consolidates into the user pool (the user-Dream), not the agent pool.
     expect(await new AgentEventStore(dataRoot).listMemoryEntries(USER_PRINCIPAL)).toEqual([]);
@@ -1122,7 +1122,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const firstDream = runtime.sendMessage(created.conversationId, '/dream');
     await firstDreamReady;
     await runtime.sendMessage(created.conversationId, '/dream');
@@ -1187,7 +1187,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Prefer compact acknowledgements.');
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     expect(dreamCalls).toBe(0);
@@ -1255,7 +1255,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, longPreference);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00'));
     await flushProjectionCoalescing();
@@ -1343,7 +1343,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, longPreference);
 
     // First scheduled tick: the Dream fires for the new evidence, the provider throws, the user
@@ -1419,7 +1419,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, longPreference);
 
     // Scheduled tick: the Dream fires, the provider throws, the user pool arms its backoff window.
@@ -1507,7 +1507,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Stable concise memory is preferred.');
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.sendMessage(created.conversationId, '/dream');
@@ -1592,7 +1592,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'For this workspace, prefer short answers.');
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
@@ -1675,7 +1675,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Keep answers concise.');
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();
@@ -1738,7 +1738,7 @@ describe('agent runtime past chats integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Do not write memories in this workspace.');
     await runtime.sendMessage(created.conversationId, '/dream');
     await runtime.drainDreamMemoryExtractionForTest();

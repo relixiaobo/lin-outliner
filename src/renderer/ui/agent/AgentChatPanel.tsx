@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FormEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -151,6 +152,56 @@ function activeProviderModelSubtitle(settings: AgentProviderSettingsView | null)
   const activeProvider = settings ? resolveUsableActiveProvider(settings) : null;
   if (!activeProvider) return null;
   return `${activeProvider.providerId}/${activeProvider.modelId}`;
+}
+
+function conversationAgentDisplayName(
+  agentId: string,
+  agentDefinitionById: Map<string, AgentDefinitionView>,
+  fallback?: string | null,
+): string {
+  return agentDefinitionName(agentDefinitionById.get(agentId)) ?? fallback ?? `@${agentMentionToken(agentId)}`;
+}
+
+function agentModelSubtitle(
+  agentId: string,
+  agentDefinitionById: Map<string, AgentDefinitionView>,
+  activeProviderModel: string | null,
+): string | null {
+  const definition = agentDefinitionById.get(agentId);
+  if (!definition) return activeProviderModel;
+  return definition.model?.trim() || activeProviderModel;
+}
+
+function isCanonicalDmConversation(
+  conversationId: string | null,
+  conversation: AgentConversationListMeta | null,
+): boolean {
+  return Boolean(conversation?.canonicalDmAgentId) || (conversationId?.startsWith('lin-agent-dm-') ?? false);
+}
+
+function isRuntimeChannelConversationId(conversationId: string | null): boolean {
+  return conversationId?.startsWith('lin-agent-channel-')
+    || conversationId?.startsWith('mock-agent-channel')
+    || false;
+}
+
+function isChannelConversation(
+  conversationId: string | null,
+  conversation: AgentConversationListMeta | null,
+  agentMemberCount: number,
+): boolean {
+  if (isCanonicalDmConversation(conversationId, conversation)) return false;
+  if (isRuntimeChannelConversationId(conversationId)) return true;
+  if (conversation && !conversation.canonicalDmAgentId && conversation.goal) return true;
+  // Older e2e fixtures predate channel ids/list metadata but still model
+  // Channel speaker identity through a multi-agent roster.
+  return agentMemberCount >= 2;
+}
+
+function systemLineText(entry: AgentMessageEntry): string | null {
+  if (entry.actor?.type !== 'system') return null;
+  const text = textFromConversationEntry(entry).trim();
+  return text || null;
 }
 
 type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
@@ -700,6 +751,12 @@ export function AgentChatPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<AgentConversationListMeta[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [newChannelOpen, setNewChannelOpen] = useState(false);
+  const [newChannelAgentIds, setNewChannelAgentIds] = useState<string[]>([]);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelSeed, setNewChannelSeed] = useState('');
+  const [newChannelEscalationAgentId, setNewChannelEscalationAgentId] = useState<string | null>(null);
+  const [newChannelError, setNewChannelError] = useState<string | null>(null);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<{ id: string; title: string | null } | null>(null);
@@ -712,6 +769,8 @@ export function AgentChatPanel({
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
+  const newChannelMenuRef = useRef<HTMLDivElement>(null);
+  const newChannelNameRef = useRef<HTMLInputElement>(null);
   const stickToBottomRef = useRef(true);
   const mountedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
@@ -731,13 +790,16 @@ export function AgentChatPanel({
     }
     dockOpenRef.current = dockOpen;
   }, [dockOpen]);
-  // ≥2 agent members = a Channel: member strip + `@` typeahead + queue-send
-  // composer + the IM delivery model (typing indicator, utterance-only thread).
   const agentMembers = useMemo(
     () => members.filter((member) => member.principal.type === 'agent' && member.mention),
     [members],
   );
-  const isChannel = agentMembers.length >= 2;
+  const activeConversationMeta = useMemo(
+    () => conversations.find((conversation) => conversation.id === conversationId) ?? null,
+    [conversations, conversationId],
+  );
+  const isChannel = isChannelConversation(conversationId, activeConversationMeta, agentMembers.length);
+  const isMultiAgentChannel = isChannel && agentMembers.length >= 2;
   const memberByAgentId = useMemo(() => {
     const map = new Map<string, AgentRenderMemberView>();
     for (const member of agentMembers) {
@@ -755,27 +817,27 @@ export function AgentChatPanel({
     return null;
   }, [members]);
   const composerMembers = useMemo(
-    () => (isChannel
+    () => (isMultiAgentChannel
       ? agentMembers.map((member) => ({
           mention: member.mention,
           displayName: member.displayName,
           ...(member.coordinator ? { coordinator: true } : {}),
         }))
       : []),
-    [agentMembers, isChannel],
+    [agentMembers, isMultiAgentChannel],
   );
-  // Channel thread = utterances only (ratified IM model): in-flight assistant
-  // entries never render in the thread — the typing indicator carries the run,
-  // and the message appears whole on completion. DMs keep the streaming tail.
+  // Multi-agent Channel thread = utterances only: in-flight assistant entries
+  // live in the activity area, and each message appears whole on completion.
+  // DMs and single-agent Channels keep the streaming tail.
   const threadEntries = useMemo(
-    () => (isChannel
+    () => (isMultiAgentChannel
       ? entries.filter((entry) => !(entry.kind === 'message' && entry.message.role === 'assistant' && entry.streaming))
       : entries),
-    [entries, isChannel],
+    [entries, isMultiAgentChannel],
   );
   const conversationRows = useMemo(
-    () => buildConversationRenderRows(threadEntries, isChannel ? 'idle' : turnPhase),
-    [threadEntries, isChannel, turnPhase],
+    () => buildConversationRenderRows(threadEntries, isMultiAgentChannel ? 'idle' : turnPhase),
+    [threadEntries, isMultiAgentChannel, turnPhase],
   );
   const replyAnchorByMessageId = useMemo(
     () => buildReplyAnchorMap(conversationRows),
@@ -786,28 +848,26 @@ export function AgentChatPanel({
   const selectedActivityEntry = selectedActivityEntryId
     ? activityEntries.find((entry) => entry.id === selectedActivityEntryId) ?? null
     : null;
-  // Channel activity drill-in: live in-flight entries are filtered out of the
-  // thread, but each activity item can still open its own working-state detail.
+  // Multi-agent Channel activity drill-in: live in-flight entries are filtered
+  // out of the thread, but each activity item can still open its own detail.
   const workingEntryByMessageId = useMemo(() => {
     const byId = new Map<string, AgentMessageEntry>();
-    if (!isChannel) return byId;
+    if (!isMultiAgentChannel) return byId;
     for (const entry of entries) {
       if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming) continue;
       if (entry.nodeId) byId.set(entry.nodeId, entry);
     }
     return byId;
-  }, [entries, isChannel]);
+  }, [entries, isMultiAgentChannel]);
   const workingEntryByRunId = useMemo(() => {
     const byId = new Map<string, AgentMessageEntry>();
-    if (!isChannel) return byId;
+    if (!isMultiAgentChannel) return byId;
     for (const entry of entries) {
       if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming || !entry.runId) continue;
       byId.set(entry.runId, entry);
     }
     return byId;
-  }, [entries, isChannel]);
-  // Member management entry (A8: the user-reachable way to create a Channel —
-  // adding an agent to the DM spawns a seeded Channel and switches to it).
+  }, [entries, isMultiAgentChannel]);
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
   const [memberMenuError, setMemberMenuError] = useState<string | null>(null);
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
@@ -826,6 +886,21 @@ export function AgentChatPanel({
     : null;
   const dmAgentMention = dmAgentMember?.mention ?? (dmAgentId ? agentMentionToken(dmAgentId) : null);
   const activeProviderModel = activeProviderModelSubtitle(providerSettings);
+  const dmAgentModelSubtitle = dmAgentId ? agentModelSubtitle(dmAgentId, agentDefinitionById, activeProviderModel) : null;
+  const isCanonicalDmView = isCanonicalDmConversation(conversationId, activeConversationMeta);
+  const directMessageRows = useMemo(
+    () => conversations.filter((conversation) => conversation.canonicalDmAgentId),
+    [conversations],
+  );
+  const coordinatorRosterAgentId = directMessageRows[0]?.canonicalDmAgentId ?? null;
+  const inviteAgentRows = useMemo(
+    () => directMessageRows.filter((conversation) => conversation.canonicalDmAgentId !== coordinatorRosterAgentId),
+    [coordinatorRosterAgentId, directMessageRows],
+  );
+  const channelRows = useMemo(
+    () => conversations.filter((conversation) => !conversation.canonicalDmAgentId),
+    [conversations],
+  );
   const virtualLayout = useMemo(
     () => buildVirtualTranscriptLayout(conversationRows, rowHeightsRef.current),
     [conversationRows, measureVersion],
@@ -1033,8 +1108,25 @@ export function AgentChatPanel({
   }), []);
 
   useEffect(() => {
-    if (historyOpen) void loadConversations();
-  }, [historyOpen, loadConversations]);
+    if (historyOpen || newChannelOpen) void loadConversations();
+  }, [historyOpen, loadConversations, newChannelOpen]);
+
+  useEffect(() => {
+    if (!newChannelOpen) return;
+    window.requestAnimationFrame(() => newChannelNameRef.current?.focus());
+  }, [newChannelOpen]);
+
+  useEffect(() => {
+    if (!newChannelOpen) return;
+    setNewChannelAgentIds((current) => {
+      const required = [newChannelEscalationAgentId].filter((id): id is string => !!id);
+      const next = [...current];
+      for (const agentId of required) {
+        if (!next.includes(agentId)) next.unshift(agentId);
+      }
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [newChannelEscalationAgentId, newChannelOpen]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -1065,6 +1157,18 @@ export function AgentChatPanel({
     document.addEventListener('pointerdown', handlePointerDown, true);
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
   }, [historyOpen]);
+
+  useEffect(() => {
+    if (!newChannelOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && headerRef.current?.contains(target)) return;
+      if (target instanceof Node && newChannelMenuRef.current?.contains(target)) return;
+      setNewChannelOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [newChannelOpen]);
 
   useEffect(() => {
     if (!memberMenuOpen) return;
@@ -1182,10 +1286,66 @@ export function AgentChatPanel({
     await clearSteer();
   }
 
-  async function handleNewConversation() {
+  function openNewChannelForm(options: { agentId?: string } = {}) {
     setHistoryOpen(false);
+    setMemberMenuOpen(false);
     setEditingConversationId(null);
-    await newConversation();
+    setNewChannelAgentIds(options.agentId ? [options.agentId] : []);
+    setNewChannelName('');
+    setNewChannelSeed('');
+    setNewChannelEscalationAgentId(options.agentId ?? null);
+    setNewChannelError(null);
+    setNewChannelOpen(true);
+  }
+
+  function toggleNewChannelAgent(agentId: string) {
+    if (agentId === newChannelEscalationAgentId) return;
+    setNewChannelAgentIds((current) => (
+      current.includes(agentId)
+        ? current.filter((id) => id !== agentId)
+        : [...current, agentId]
+    ));
+  }
+
+  async function handleCreateChannel(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const title = newChannelName.trim();
+    if (!title) {
+      setNewChannelError(t.agent.chat.channelNameRequired);
+      newChannelNameRef.current?.focus();
+      return;
+    }
+    const selectedAgentIds = Array.from(new Set(newChannelAgentIds))
+      .filter((agentId) => agentId !== coordinatorRosterAgentId);
+    const escalationAgentName = newChannelEscalationAgentId
+      ? conversationAgentDisplayName(newChannelEscalationAgentId, agentDefinitionById, dmAgentLabel)
+      : null;
+    try {
+      setNewChannelError(null);
+      await newConversation({
+        ...(selectedAgentIds.length > 0 ? { agentIds: selectedAgentIds } : {}),
+        title,
+        seedText: newChannelSeed.trim() || undefined,
+        systemNotice: escalationAgentName
+          ? t.agent.chat.createdFromDmNotice({ name: escalationAgentName })
+          : undefined,
+      });
+      setNewChannelOpen(false);
+      setNewChannelEscalationAgentId(null);
+      setNewChannelSeed('');
+      setNewChannelName('');
+      setNewChannelAgentIds([]);
+      setHistoryOpen(false);
+      setEditingConversationId(null);
+      setMemberMenuOpen(false);
+      await loadConversations();
+    } catch (caught) {
+      setNewChannelError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function handleNewConversation() {
+    openNewChannelForm();
     await loadConversations();
   }
 
@@ -1200,12 +1360,8 @@ export function AgentChatPanel({
     if (!conversationId) return;
     try {
       setMemberMenuError(null);
-      const result = await api.agentAddConversationMember(conversationId, agentId);
+      await api.agentAddConversationMember(conversationId, agentId);
       setMemberMenuOpen(false);
-      // Adding to the DM spawns a seeded Channel (ratified) — follow the user there.
-      if (result.conversationId !== conversationId) {
-        await selectConversation(result.conversationId);
-      }
       await loadConversations();
     } catch (caught) {
       setMemberMenuError(caught instanceof Error ? caught.message : String(caught));
@@ -1255,6 +1411,15 @@ export function AgentChatPanel({
     }
     if (row.entry.kind === 'child-run') {
       return <AgentChildRunBoundary entry={row.entry} onOpenTranscript={setSelectedChildRunId} />;
+    }
+
+    const systemText = systemLineText(row.entry);
+    if (systemText) {
+      return (
+        <div className="agent-system-line" role="note">
+          <span>{systemText}</span>
+        </div>
+      );
     }
 
     // Channel attribution: name the speaking agent on assistant rows. Derived
@@ -1362,6 +1527,14 @@ export function AgentChatPanel({
     placement: 'bottom-start',
     width: 326,
   });
+  const newChannelMenuStyle = useAnchoredOverlay(newChannelMenuRef, {
+    anchorRef: historyButtonRef,
+    disabled: !newChannelOpen,
+    layoutKey: `${directMessageRows.length}:${newChannelAgentIds.join(',')}:${newChannelError ?? ''}`,
+    maxHeight: 520,
+    placement: 'bottom-start',
+    width: 326,
+  });
   const memberMenuStyle = useAnchoredOverlay(memberMenuRef, {
     anchorRef: memberButtonRef,
     disabled: !memberMenuOpen,
@@ -1378,6 +1551,7 @@ export function AgentChatPanel({
     () => agentDefinitions.filter((definition) => !memberAgentIds.has(definition.agentId)),
     [agentDefinitions, memberAgentIds],
   );
+  const dmHeaderTitle = isCanonicalDmView ? dmAgentLabel : (conversationTitle ? displayTitle : dmAgentLabel);
 
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
@@ -1398,9 +1572,9 @@ export function AgentChatPanel({
                 size="md"
               />
               <span className="agent-dock-title-stack">
-                <span className="agent-dock-title">{conversationTitle ? displayTitle : dmAgentLabel}</span>
+                <span className="agent-dock-title">{dmHeaderTitle}</span>
                 <span className="agent-dock-subtitle">
-                  {[dmAgentMention ? `@${dmAgentMention}` : null, activeProviderModel].filter(Boolean).join(' · ')}
+                  {[dmAgentMention ? `@${dmAgentMention}` : null, dmAgentModelSubtitle].filter(Boolean).join(' · ')}
                 </span>
               </span>
             </>
@@ -1413,31 +1587,33 @@ export function AgentChatPanel({
           />
         </ButtonControl>
         {isChannel ? (
-          <span
-            aria-label={t.agent.chat.channelMembers}
-            className="agent-dock-members"
-            title={agentMembers.map((member) => member.displayName).join(', ')}
+          <ButtonControl
+            ref={memberButtonRef}
+            aria-expanded={memberMenuOpen}
+            aria-label={t.agent.chat.members}
+            className="agent-members-button"
+            onClick={() => setMemberMenuOpen((open) => !open)}
+            title={t.agent.chat.members}
           >
-            {agentMembers.map((member) => (
-              <span
-                className={member.coordinator ? 'agent-dock-member is-coordinator' : 'agent-dock-member'}
-                key={member.principal.type === 'agent' ? member.principal.agentId : member.mention}
-              >
-                {`@${member.mention}`}
-              </span>
-            ))}
-          </span>
+            <span className="agent-dock-member-stack">
+              {agentMembers.slice(0, 4).map((member) => (
+                <AgentIdentityAvatar
+                  key={member.principal.type === 'agent' ? member.principal.agentId : member.mention}
+                  label={member.displayName}
+                  mention={member.mention}
+                  size="sm"
+                />
+              ))}
+              {agentMembers.length > 4 ? (
+                <span className="agent-dock-member-overflow">{t.agent.chat.activityOverflow({ count: agentMembers.length - 4 })}</span>
+              ) : null}
+            </span>
+            <ChevronDownIcon
+              className={memberMenuOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
+              size={ICON_SIZE.menu}
+            />
+          </ButtonControl>
         ) : null}
-        <ButtonControl
-          ref={memberButtonRef}
-          aria-expanded={memberMenuOpen}
-          aria-label={t.agent.chat.addMember}
-          className="agent-member-add-button"
-          onClick={() => setMemberMenuOpen((open) => !open)}
-          title={t.agent.chat.addMember}
-        >
-          <AddIcon size={ICON_SIZE.menu} />
-        </ButtonControl>
         {memberMenuOpen ? createPortal(
           <div
             ref={memberMenuRef}
@@ -1465,7 +1641,7 @@ export function AgentChatPanel({
                         icon={CloseIcon}
                         label={t.agent.chat.removeMember}
                         onClick={() => void handleRemoveMember(agentId)}
-                        title={t.agent.chat.removeMember}
+                        title={isStreaming ? t.agent.chat.removeMemberWhileActive : t.agent.chat.removeMember}
                         variant="message"
                       />
                     ) : null}
@@ -1497,6 +1673,17 @@ export function AgentChatPanel({
           document.body,
         ) : null}
         <div className="agent-dock-actions">
+          {dmAgentId && dmAgentLabel ? (
+            <IconButton
+              className="agent-menu-button"
+              disabled={isStreaming}
+              icon={NewConversationIcon}
+              label={t.agent.chat.createChannelWithAgent({ name: dmAgentLabel })}
+              onClick={() => openNewChannelForm({ agentId: dmAgentId })}
+              title={t.agent.chat.createChannelWithAgent({ name: dmAgentLabel })}
+              variant="composerTool"
+            />
+          ) : null}
           <IconButton
             className="agent-menu-button"
             disabled={isStreaming}
@@ -1539,7 +1726,7 @@ export function AgentChatPanel({
             style={historyMenuStyle}
           >
             <div className="agent-conversation-menu-header">
-              <span>{t.agent.chat.conversations}</span>
+              <span>{t.agent.chat.directMessages}</span>
               <IconButton
                 className="agent-message-action-button"
                 disabled={isStreaming}
@@ -1553,9 +1740,62 @@ export function AgentChatPanel({
             <div className="agent-conversation-list">
               {conversationsLoading ? (
                 <div className="agent-conversation-empty">{t.common.loading}</div>
-              ) : conversations.length === 0 ? (
+              ) : directMessageRows.length === 0 ? (
+                <div className="agent-conversation-empty">{t.agent.chat.noDirectMessages}</div>
+              ) : directMessageRows.map((conversation) => {
+                const agentId = conversation.canonicalDmAgentId!;
+                const isCurrent = conversation.id === conversationId;
+                const label = conversationAgentDisplayName(
+                  agentId,
+                  agentDefinitionById,
+                  readableConversationTitle(conversation.title, `@${agentMentionToken(agentId)}`),
+                );
+                const mention = agentMentionToken(agentId);
+                const modelSubtitle = agentModelSubtitle(agentId, agentDefinitionById, activeProviderModel);
+                const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
+                return (
+                  <div
+                    className={isCurrent ? 'agent-conversation-row is-current' : 'agent-conversation-row'}
+                    key={conversation.id}
+                  >
+                    <ButtonControl
+                      className="agent-conversation-select agent-conversation-dm-select"
+                      disabled={isStreaming}
+                      onClick={() => void handleSelectConversation(conversation.id)}
+                    >
+                      <AgentIdentityAvatar label={label} mention={mention} size="md" />
+                      <span className="agent-conversation-row-copy">
+                        <span className="agent-conversation-name">{label}</span>
+                        {modelSubtitle ? <span className="agent-conversation-members">{modelSubtitle}</span> : null}
+                        <span className="agent-conversation-meta">
+                          {conversation.lastMessageSnippet
+                            ? conversation.lastMessageSnippet
+                            : conversation.messageCount > 0 && conversation.lastMessageAt
+                              ? formatConversationTime(conversation.lastMessageAt, locale)
+                              : t.agent.chat.noMessagesYet}
+                        </span>
+                      </span>
+                      {unread > 0 ? (
+                        <span
+                          className="agent-conversation-unread"
+                          aria-label={t.agent.chat.unreadTasks({ count: unread })}
+                          title={t.agent.chat.unreadTasks({ count: unread })}
+                        >
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      ) : null}
+                    </ButtonControl>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="agent-conversation-menu-header agent-conversation-section-header">
+              <span>{t.agent.chat.conversations}</span>
+            </div>
+            <div className="agent-conversation-list">
+              {conversationsLoading ? null : channelRows.length === 0 ? (
                 <div className="agent-conversation-empty">{t.agent.chat.noConversations}</div>
-              ) : conversations.map((conversation) => {
+              ) : channelRows.map((conversation) => {
                 const isCurrent = conversation.id === conversationId;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 if (editingConversationId === conversation.id) {
@@ -1600,15 +1840,19 @@ export function AgentChatPanel({
                       onClick={() => void handleSelectConversation(conversation.id)}
                     >
                       <span className="agent-conversation-name">{title}</span>
-                      {(() => {
-                        const listAgentMembers = channelAgentMembers(conversation.members);
-                        if (listAgentMembers.length < 2) return null;
-                        return (
-                          <span className="agent-conversation-members">
-                            {listAgentMembers.map((member) => `@${agentMentionToken(member.agentId)}`).join(' ')}
-                          </span>
-                        );
-                      })()}
+                      <span className="agent-conversation-members agent-conversation-channel-members">
+                        {channelAgentMembers(conversation.members).slice(0, 4).map((member) => {
+                          const label = conversationAgentDisplayName(member.agentId, agentDefinitionById);
+                          return (
+                            <AgentIdentityAvatar
+                              key={member.agentId}
+                              label={label}
+                              mention={agentMentionToken(member.agentId)}
+                              size="sm"
+                            />
+                          );
+                        })}
+                      </span>
                       <span className="agent-conversation-meta">
                         {formatConversationTime(conversation.updatedAt, locale)}
                         {conversation.messageCount > 0 ? ` · ${conversation.messageCount}` : ''}
@@ -1657,6 +1901,107 @@ export function AgentChatPanel({
                 );
               })}
             </div>
+          </div>,
+          document.body,
+        ) : null}
+        {newChannelOpen ? createPortal(
+          <div
+            ref={newChannelMenuRef}
+            className="agent-conversation-menu agent-new-channel-menu"
+            role="dialog"
+            aria-label={t.agent.chat.newConversation}
+            style={newChannelMenuStyle}
+          >
+            <form className="agent-new-channel-form" onSubmit={(event) => void handleCreateChannel(event)}>
+              <div className="agent-conversation-menu-header">
+                <span>{t.agent.chat.newConversation}</span>
+                <IconButton
+                  className="agent-message-action-button"
+                  icon={CloseIcon}
+                  label={t.agent.chat.cancel}
+                  onClick={() => setNewChannelOpen(false)}
+                  variant="message"
+                />
+              </div>
+              <div className="agent-new-channel-body">
+                <div className="agent-new-channel-field">
+                  <label className="agent-new-channel-label" htmlFor="agent-new-channel-name">
+                    {t.agent.chat.channelName}
+                  </label>
+                  <TextInputControl
+                    ref={newChannelNameRef}
+                    className="agent-new-channel-input"
+                    id="agent-new-channel-name"
+                    label={t.agent.chat.channelName}
+                    onChange={(event) => setNewChannelName(event.target.value)}
+                    placeholder={t.agent.chat.channelNamePlaceholder}
+                    required
+                    value={newChannelName}
+                  />
+                </div>
+                <div className="agent-new-channel-field">
+                  <div className="agent-new-channel-label">{t.agent.chat.channelAgents}</div>
+                  <div className="agent-new-channel-roster">
+                    {inviteAgentRows.length === 0 ? (
+                      <div className="agent-conversation-empty">{t.agent.chat.noAddableAgents}</div>
+                    ) : inviteAgentRows.map((conversation) => {
+                      const agentId = conversation.canonicalDmAgentId!;
+                      const label = conversationAgentDisplayName(
+                        agentId,
+                        agentDefinitionById,
+                        readableConversationTitle(conversation.title, `@${agentMentionToken(agentId)}`),
+                      );
+                      const mention = agentMentionToken(agentId);
+                      const checked = newChannelAgentIds.includes(agentId);
+                      const locked = agentId === newChannelEscalationAgentId;
+                      return (
+                        <label className="agent-new-channel-agent" key={agentId}>
+                          <input
+                            checked={checked}
+                            disabled={locked}
+                            onChange={() => toggleNewChannelAgent(agentId)}
+                            type="checkbox"
+                          />
+                          <AgentIdentityAvatar label={label} mention={mention} size="sm" />
+                          <span className="agent-new-channel-agent-copy">
+                            <span>{label}</span>
+                            <small>{`@${mention}`}</small>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="agent-new-channel-field">
+                  <label className="agent-new-channel-label" htmlFor="agent-new-channel-seed">
+                    {t.agent.chat.channelSeed}
+                  </label>
+                  <textarea
+                    className="agent-new-channel-seed"
+                    id="agent-new-channel-seed"
+                    onChange={(event) => setNewChannelSeed(event.target.value)}
+                    placeholder={t.agent.chat.channelSeedPlaceholder}
+                    rows={3}
+                    value={newChannelSeed}
+                  />
+                </div>
+                {newChannelError ? (
+                  <div className="agent-conversation-empty is-error" role="alert">{newChannelError}</div>
+                ) : null}
+              </div>
+              <div className="agent-new-channel-actions">
+                <ButtonControl className="agent-new-channel-cancel" onClick={() => setNewChannelOpen(false)}>
+                  {t.agent.chat.cancel}
+                </ButtonControl>
+                <ButtonControl
+                  className="agent-new-channel-submit"
+                  disabled={!newChannelName.trim() || isStreaming}
+                  type="submit"
+                >
+                  {t.agent.chat.createChannel}
+                </ButtonControl>
+              </div>
+            </form>
           </div>,
           document.body,
         ) : null}
@@ -1728,7 +2073,7 @@ export function AgentChatPanel({
         )}
       </div>
 
-      {isChannel ? (
+      {isMultiAgentChannel ? (
         <AgentChannelActivityArea
           agentDefinitionById={agentDefinitionById}
           entries={activityEntries}
@@ -1747,7 +2092,7 @@ export function AgentChatPanel({
         index={index}
         isStreaming={isStreaming}
         members={composerMembers}
-        queueSends={isChannel}
+        queueSends={isMultiAgentChannel}
         onNodeReferenceOpen={onOpenNodeReference}
         onOpenModelSettings={openComposerModelSettings}
         onCancelSteer={handleCancelSteer}

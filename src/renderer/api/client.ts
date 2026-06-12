@@ -6,6 +6,7 @@ import type {
   AgentProviderSettingsView,
   AgentRuntimeSettingsInput,
   AgentConversation,
+  AgentCreateConversationOptions,
   AgentConversationListMeta,
   AgentMemoryEntryView,
   AgentSlashCommandView,
@@ -279,8 +280,8 @@ export const api = {
   // read when the user genuinely opens/views it. No-ops without the desktop bridge.
   agentMarkConversationRead: (conversationId: string): Promise<void> =>
     window.lin?.agentMarkConversationRead(conversationId) ?? Promise.resolve(),
-  agentCreateConversation: (options: { agentIds?: string[]; goal?: string; seedText?: string } = {}) =>
-    command<AgentConversation>('agent_create_conversation', options),
+  agentCreateConversation: (options: AgentCreateConversationOptions) =>
+    command<AgentConversation>('agent_create_conversation', { ...options }),
   agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
   agentAddConversationMember: (conversationId: string, agentId: string) =>
     command<AgentConversation>('agent_add_conversation_member', { conversationId, agentId }),

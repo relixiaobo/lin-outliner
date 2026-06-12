@@ -35,7 +35,7 @@ import type {
   AgentMemoryAccessVia,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
+import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import {
   buildMemoryOverview,
   cloneMemoryAccessStats,
@@ -52,6 +52,7 @@ import {
   normalizeSearchText,
   textSearchTextMatchesQuery,
 } from '../core/textSearchAnalyzer';
+import { nodeReferenceMarkersToText } from '../core/referenceMarkup';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
 import { AppendOnlySeqLog, serializeJsonl, type AppendOnlySeqLogTail } from './appendOnlySeqLog';
 
@@ -211,6 +212,8 @@ export interface AgentConversationIndexEntry {
   updatedAt: number;
   messageCount: number;
   latestSeq: number;
+  lastMessageSnippet: string | null;
+  lastMessageAt: number | null;
   /**
    * Folded off-floor unread count for this conversation, persisted so the badge
    * survives restart (the live `conversation_attention` event only fires for
@@ -1568,11 +1571,19 @@ export class AgentEventStore {
             updatedAt: event.createdAt,
             messageCount: entry?.messageCount ?? 0,
             latestSeq: event.seq,
+            lastMessageSnippet: entry?.lastMessageSnippet ?? null,
+            lastMessageAt: entry?.lastMessageAt ?? null,
             unreadCount: entry?.unreadCount ?? 0,
           };
         } else if (entry) {
           entry = updateConversationIndexEntry(entry, event);
         }
+      }
+      if (entry && events.some(shouldRecomputeConversationListSummary)) {
+        entry = {
+          ...entry,
+          ...conversationListSummaryFromReplayState(await this.replay(conversationId)),
+        };
       }
       if (!entry) entry = conversationIndexEntryFromReplayState(conversationId, await this.replay(conversationId));
       if (entry) index.conversations[conversationId] = entry;
@@ -1746,6 +1757,7 @@ export class AgentEventStore {
     if (indexedIds.size !== conversationIds.size) return false;
     for (const id of indexedIds) {
       if (!conversationIds.has(id)) return false;
+      if (!conversationIndexEntryHasCurrentShape(index.conversations[id])) return false;
     }
     return true;
   }
@@ -1820,6 +1832,20 @@ function updateConversationIndexEntry(
   ) {
     next.messageCount += 1;
   }
+  if (event.type === 'user_message.created') {
+    const summary = conversationListSummaryFromContent(event.content, event.createdAt);
+    if (summary) {
+      next.lastMessageSnippet = summary.lastMessageSnippet;
+      next.lastMessageAt = summary.lastMessageAt;
+    }
+  }
+  if (event.type === 'assistant_message.completed') {
+    const summary = conversationListSummaryFromContent(event.content, event.createdAt);
+    if (summary) {
+      next.lastMessageSnippet = summary.lastMessageSnippet;
+      next.lastMessageAt = summary.lastMessageAt;
+    }
+  }
   return next;
 }
 
@@ -1837,8 +1863,52 @@ function conversationIndexEntryFromReplayState(
     updatedAt: state.conversation.updatedAt,
     messageCount: Object.keys(state.messages).length,
     latestSeq: state.latestSeq,
+    ...conversationListSummaryFromReplayState(state),
     unreadCount: state.attentionByConversationId[conversationId]?.unreadCount ?? 0,
   };
+}
+
+function conversationIndexEntryHasCurrentShape(entry: AgentConversationIndexEntry | undefined): boolean {
+  if (!entry) return false;
+  return Object.prototype.hasOwnProperty.call(entry, 'lastMessageSnippet')
+    && Object.prototype.hasOwnProperty.call(entry, 'lastMessageAt');
+}
+
+function shouldRecomputeConversationListSummary(event: AgentEvent): boolean {
+  return event.type === 'branch.selected'
+    || event.type === 'user_message.edited'
+    || event.type === 'tool_result.replaced';
+}
+
+function conversationListSummaryFromReplayState(
+  state: AgentEventReplayState,
+): Pick<AgentConversationIndexEntry, 'lastMessageSnippet' | 'lastMessageAt'> {
+  for (const message of [...getAgentEventActivePath(state)].reverse()) {
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    const summary = conversationListSummaryFromContent(message.content, message.updatedAt);
+    if (summary) return summary;
+  }
+  return { lastMessageSnippet: null, lastMessageAt: null };
+}
+
+function conversationListSummaryFromContent(
+  content: readonly AgentPersistedContent[],
+  timestamp: number,
+): Pick<AgentConversationIndexEntry, 'lastMessageSnippet' | 'lastMessageAt'> | null {
+  const text = persistedTextContent(content).replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return {
+    lastMessageSnippet: nodeReferenceMarkersToText(text).slice(0, 140),
+    lastMessageAt: timestamp,
+  };
+}
+
+function persistedTextContent(content: readonly AgentPersistedContent[]): string {
+  return content
+    .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
 }
 
 function createEmptySearchIndex(): AgentEventSearchIndex {

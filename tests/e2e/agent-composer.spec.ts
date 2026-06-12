@@ -160,6 +160,84 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('shows every configured agent as a default DM and opens DMs without creating one', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText('Direct Messages')).toBeVisible();
+    await expect(menu.getByRole('button', { name: /Agent System/ })).toBeVisible();
+    await expect(menu.getByRole('button', { name: /general/ })).toBeVisible();
+    await expect(menu.getByText('No messages yet')).toBeVisible();
+    await expect(menu.getByText('Planning Channel')).toBeVisible();
+
+    await menu.getByRole('button', { name: /general/ }).click();
+    await expect(page.locator('.agent-dock-title')).toHaveText('general');
+    await expect(page.locator('.agent-dock-subtitle')).toHaveText('@general · gpt-5.4-mini');
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return {
+        created: calls.some((call) => call.cmd === 'agent_create_conversation'),
+        restoredGeneral: calls.some((call) => (
+          call.cmd === 'agent_restore_conversation'
+          && call.args.conversationId === 'mock-agent-dm-general'
+        )),
+      };
+    }).toEqual({ created: false, restoredGeneral: true });
+  });
+
+  test('creates a named Channel before inviting any extra agents', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Channel' }).click();
+    const dialog = page.getByRole('dialog', { name: 'New Channel' });
+    await expect(dialog).toBeVisible();
+
+    const create = dialog.getByRole('button', { name: 'Create Channel' });
+    await expect(create).toBeDisabled();
+    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'Agent System' })).toHaveCount(0);
+    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' })).toBeVisible();
+    await dialog.getByLabel('Channel name').fill('Feature A launch');
+    await expect(create).toBeEnabled();
+    await create.click();
+
+    await expect(page.locator('.agent-dock-title')).toHaveText('Feature A launch');
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      const args = calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
+      return args
+        ? {
+            title: args.title,
+            hasInvitedAgents: Object.prototype.hasOwnProperty.call(args, 'agentIds'),
+          }
+        : null;
+    }).toEqual({ title: 'Feature A launch', hasInvitedAgents: false });
+  });
+
+  test('escalates a DM through a named Channel create with a system notice', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    await page.getByRole('dialog', { name: 'Channels' }).getByRole('button', { name: /general/ }).click();
+    await expect(page.locator('.agent-dock-title')).toHaveText('general');
+
+    await page.getByRole('button', { name: 'Create a Channel with general…' }).click();
+    const dialog = page.getByRole('dialog', { name: 'New Channel' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input')).toBeChecked();
+    await expect(dialog.locator('.agent-new-channel-agent', { hasText: 'general' }).locator('input')).toBeDisabled();
+
+    await dialog.getByLabel('Channel name').fill('Release blockers');
+    await dialog.getByRole('button', { name: 'Create Channel' }).click();
+
+    await expect(page.locator('.agent-dock-title')).toHaveText('Release blockers');
+    await expect(page.locator('.agent-system-line')).toContainText('Created from your DM with general · DM history not shared');
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
+    }).toMatchObject({
+      title: 'Release blockers',
+      agentIds: ['built-in:tenon:general'],
+      systemNotice: 'Created from your DM with general · DM history not shared',
+    });
+  });
+
   test('renders skill trust approvals as accept/not-now cards', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'approval_request',
@@ -2085,7 +2163,7 @@ test.describe('agent composer controls', () => {
   test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 620 });
 
-    await page.getByRole('button', { name: 'Show channels' }).click();
+    await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
@@ -2203,11 +2281,12 @@ test.describe('agent composer controls', () => {
   });
 
   test('keeps conversation rename geometry stable', async ({ page }) => {
-    await page.getByRole('button', { name: 'Show channels' }).click();
+    await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
-    const row = menu.locator('.agent-conversation-row').nth(1);
+    const channelsList = menu.locator('.agent-conversation-list').nth(1);
+    const row = channelsList.locator('.agent-conversation-row').first();
     await expect(row).toBeVisible();
     const before = await row.boundingBox();
     expect(before).toBeTruthy();

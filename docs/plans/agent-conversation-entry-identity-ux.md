@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: main
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 ---
 
 # Agent Conversation UX: Roster, Channels, Identity, Presence
@@ -19,7 +19,7 @@ This plan is the UX layer over already-ratified conversation semantics. It
 introduces no new conversation primitives. Read first:
 
 - `docs/spec/agent-conversation-model.md` — canonical DM per agent
-  (find-or-create, continuous), Channels as goal rooms, derived (not stored)
+  (find-or-create, continuous), Channels as named rooms, derived (not stored)
   kind, "a DM never converts in place", `@` scoped to roster, capability binds
   to the agent identity.
 - `docs/spec/agent-architecture.md` — Channel delivery model (typing presence
@@ -57,9 +57,10 @@ Make agent conversations feel like a simple messaging product:
 1. **People first, transport second.** The primary object is an agent; at this
    product's scale (a handful of configured agents) the roster is the best
    picker — no compose-style recipient search is needed.
-2. **DMs are relationships; Channels are goals.** A DM is clicked open (the
-   relationship already exists); a Channel is created (the goal must be
-   declared). Two objects, two verbs — no morphing starter.
+2. **DMs are relationships; Channels are named rooms.** A DM is clicked open
+   (the relationship already exists); a Channel is created by naming the room.
+   Members can be invited now or later. Two objects, two verbs — no morphing
+   starter.
 3. **No surprise conversion.** Escalating from a DM explicitly creates a new
    Channel; the verb says so before the click, a system line confirms after.
 4. **Identity is visible where it disambiguates, silent where it repeats.**
@@ -94,15 +95,16 @@ Conversation list, two sections:
   restrictions).
 - **Channels.** Title, stacked member avatars, unread badge, rename/delete.
 
-One creation verb: **New Channel** — member multi-select over the roster + a
-goal field + an optional seed note (an explicit first message shared with the
-room). Goal is required but light (single line, example placeholder): unlike a
-human group name, the goal is a functional input that steers the coordinator,
-so requiring it is load-bearing, not form ceremony.
+One creation verb: **New Channel** — a required Channel name, optional member
+multi-select over the roster, and an optional opening message shared with the
+room. This follows the Slack-shaped flow: create the named space first, then
+invite people/agents now or later. The runtime still stores the name in the
+legacy `goal` field for existing event/index compatibility, but that is not a
+user-facing concept.
 
 Channel header and member management:
 
-- the Channel title (goal) is the primary label; stacked member avatars are
+- the Channel title is the primary label; stacked member avatars are
   secondary context;
 - member add/remove lives behind a **Members** popover, not loose header
   icons; removal of the coordinator is disabled, and removal is disabled while
@@ -112,10 +114,10 @@ Channel header and member management:
 
 DM → Channel escalation: the DM header action is labeled **"Create a Channel
 with <Agent>…"** (never a bare `+`). It opens the New Channel flow with that
-agent preselected and focus on the goal field. After creation, navigate to the
-new Channel; its top shows a system line: "Created from your DM with <Agent> ·
-DM history not shared." The original DM is untouched (the runtime already
-spawns, never converts — this feature makes that semantic legible).
+agent preselected, and focus lands on the Channel name field. After creation,
+navigate to the new Channel; its top shows a system line: "Created from your DM
+with <Agent> · DM history not shared." The original DM is untouched (the runtime
+already spawns, never converts — this feature makes that semantic legible).
 
 Runtime scope (the hard dependency): one canonical DM per agent
 (find-or-create keyed by `{user, agentId}`), restore on startup, same
@@ -287,8 +289,9 @@ Touches `agentRenderProjection.ts`, `AgentMessageRow.tsx`,
 
 - Every configured agent appears in the Direct Messages roster; one click
   opens its continuous DM (no "new conversation" ceremony).
-- Creating a Channel = pick members + name a goal (+ optional seed note); the
-  seed/system line and membership match the ratified spawn semantics.
+- Creating a Channel = name the room, optionally invite agents, optionally add
+  an opening message; the system line and membership match the ratified spawn
+  semantics.
 - Channel membership is managed from a Members popover; removing the
   coordinator is disabled, as is removal while runs are in flight.
 - The DM escalation verb names its consequence; the original DM is unchanged

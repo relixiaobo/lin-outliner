@@ -272,7 +272,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Check provider stream settings.');
     await runtime.sendMessage(created.conversationId, '/compact');
 
@@ -333,7 +333,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'First request before manual compact.');
     await runtime.sendMessage(created.conversationId, '/compact');
     await runtime.sendMessage(created.conversationId, 'Second request after manual compact.');
@@ -404,7 +404,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await acceptRuntimeSkill(runtime, created.conversationId, 'auto-skill');
     await runtime.sendMessage(created.conversationId, 'Please do the automatic skill integration check.');
 
@@ -488,7 +488,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Use the card skill.');
     await waitFor(() => sink.events.some((event) => (
       event.type === 'approval_request'
@@ -561,7 +561,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Use the abort skill.')
       .catch(() => undefined);
     await waitFor(() => sink.events.some((event) => (
@@ -643,7 +643,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Create the audited skill.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -713,7 +713,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Create compactable context.');
 
     const compactPromise = runtime.sendMessage(created.conversationId, '/compact');
@@ -797,7 +797,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await acceptRuntimeSkill(runtime, created.conversationId, 'fork-skill');
     await runtime.sendMessage(created.conversationId, 'Use the fork skill.');
 
@@ -857,7 +857,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await acceptRuntimeSkill(runtime, created.conversationId, 'unknown-agent-skill');
     await runtime.sendMessage(created.conversationId, 'Use the unknown agent fork skill.');
 
@@ -919,7 +919,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await acceptRuntimeSkill(runtime, created.conversationId, 'shell-skill');
     await runtime.sendMessage(created.conversationId, 'Please load the shell skill.');
 
@@ -980,7 +980,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await acceptRuntimeSkill(runtime, created.conversationId, 'shell-approval-skill');
     const sendPromise = runtime.sendMessage(created.conversationId, 'Please load the shell approval skill.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
@@ -1075,7 +1075,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Try the dry-run push.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -1166,7 +1166,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Run the ambiguous shell command.');
 
     const noticeEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -1243,7 +1243,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Run the blocked shell command.')
       .catch(() => undefined);
     await waitFor(() => sink.events.some((event) => (
@@ -1317,7 +1317,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Run repeated blocked shell commands.');
 
     const notices = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -1383,7 +1383,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Clean build output.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -1454,7 +1454,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Clean build output.');
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
     const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
@@ -1537,7 +1537,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Clean build output without prompting.');
 
     expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
@@ -1601,7 +1601,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Try the dry-run push before close.')
       .catch(() => undefined);
     await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
@@ -1685,7 +1685,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, '/compact should be a normal prompt');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -1747,7 +1747,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'First turn before extra skills are configured.');
     expect(callTexts[0]).not.toContain('extra-skill');
 
@@ -1833,7 +1833,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const firstSend = runtime.sendMessage(created.conversationId, 'Start without any configured skills.');
     await firstStreamStarted;
     additionalSkillDirectories = [path.join(extraRoot, '.agents', 'skills')];
@@ -1916,7 +1916,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     const send = runtime.sendMessage(created.conversationId, 'Read the notes file first.');
     await firstStreamStarted;
 
@@ -1983,7 +1983,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Read the large file.');
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -2051,7 +2051,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Start a small context.');
     await runtime.sendMessage(created.conversationId, `Please continue after this large context.\n\n${'z'.repeat(90_000)}`);
 
@@ -2114,7 +2114,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Trigger a context length retry.');
 
     expect(script.pendingCount()).toBe(0);
@@ -2174,7 +2174,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'First request before compact.');
     await runtime.sendMessage(created.conversationId, 'Second request before compact.');
     await runtime.sendMessage(created.conversationId, '/compact');
@@ -2226,7 +2226,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Read notes before compact.');
     await runtime.sendMessage(created.conversationId, '/compact');
 
@@ -2288,7 +2288,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Earlier context to summarize.');
     await runtime.sendMessage(created.conversationId, 'Latest prompt must stay verbatim.');
 
@@ -2357,7 +2357,7 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const created = await runtime.createConversation();
+    const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Read the file initially.');
     await runtime.sendMessage(created.conversationId, 'Read it again, then continue.');
 
