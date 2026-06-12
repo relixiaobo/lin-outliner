@@ -25,6 +25,7 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
     );
   }
 
+  const assetId = node.assetId;
   const kind = attachmentKind(node.mimeType);
   const typeLabel = attachmentTypeLabel(kind, node.mimeType, ta);
   const metaParts = [
@@ -44,7 +45,7 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
           newPane: wantsNewPaneFromClick(event),
           target: {
             kind: 'asset',
-            assetId: node.assetId!,
+            assetId,
             label: node.originalFilename,
           },
         });
@@ -79,7 +80,7 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             preload="metadata"
-            src={assetUrl(node.assetId)}
+            src={assetUrl(assetId)}
           />
         )}
         {kind === 'video' && (
@@ -90,7 +91,7 @@ export function AttachmentRow({ node }: AttachmentRowProps) {
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             preload="metadata"
-            src={assetUrl(node.assetId)}
+            src={assetUrl(assetId)}
           />
         )}
       </div>

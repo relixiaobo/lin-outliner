@@ -520,10 +520,12 @@ function PersistedToolOutput({
 
   function previewOutput() {
     if (!conversationId) return;
+    const runId = payload.scope?.type === 'run' ? payload.scope.runId : undefined;
     dispatchPreviewTargetOpen({
       target: {
         kind: 'agent-payload',
         conversationId,
+        ...(runId ? { runId } : {}),
         payloadId: payload.id,
         label: payload.summary || t.agent.toolCall.storedOutput,
       },

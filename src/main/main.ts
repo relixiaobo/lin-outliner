@@ -32,7 +32,7 @@ import {
   type AgentMessageContextMenuRequest,
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import { ASSET_URL_SCHEME, assetUrl } from '../core/assets';
+import { ASSET_URL_SCHEME } from '../core/assets';
 import { handlePreviewCommand } from './previewSource';
 import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
@@ -218,9 +218,6 @@ const LOCAL_FILE_THUMBNAIL_TIMEOUT_MS = 350;
 const LOCAL_FILE_THUMBNAIL_SIZE = 512;
 const RECENT_LOCAL_FILE_TIMEOUT_MS = 900;
 const LOCAL_FILE_CACHE_LIMIT = 1000;
-const PREVIEW_TEXT_BYTE_LIMIT = 1024 * 1024;
-const PREVIEW_BYTES_LIMIT = 20 * 1024 * 1024;
-const PREVIEW_DIRECTORY_ENTRY_LIMIT = 200;
 const localFileSearchCache = new Map<string, string>();
 const localFileIconCache = new Map<string, string | null>();
 const localFileThumbnailCache = new Map<string, string | null>();

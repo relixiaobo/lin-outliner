@@ -2019,6 +2019,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             label?: string;
             path?: string;
             payloadId?: string;
+            runId?: string;
             url?: string;
           } | undefined;
           if (target?.kind === 'asset' && target.assetId) {
@@ -2056,11 +2057,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             }) as T;
           }
           if (target?.kind === 'agent-payload' && target.payloadId) {
+            if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
+              return clone({ source: null, error: 'missing' }) as T;
+            }
             return clone({
               source: {
                 kind: 'file',
                 sourceKind: 'agent-payload',
-                id: `agent-payload:${target.conversationId ?? ''}::${target.payloadId}`,
+                id: `agent-payload:${target.conversationId ?? ''}:${target.runId ?? ''}:${target.payloadId}`,
                 target,
                 name: target.label || `${target.payloadId}.txt`,
                 ext: 'txt',
@@ -2073,8 +2077,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ source: null, error: 'missing' }) as T;
         }
         if (cmd === 'preview_read_text') {
-          const target = args.target as { kind?: string; path?: string; payloadId?: string } | undefined;
-          if (target?.kind === 'agent-payload') return clone({ text: 'Full persisted tool output from payload' }) as T;
+          const target = args.target as { kind?: string; path?: string; payloadId?: string; runId?: string } | undefined;
+          if (target?.kind === 'agent-payload') {
+            if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
+              return clone({ text: null, error: 'missing' }) as T;
+            }
+            return clone({ text: 'Full persisted tool output from payload' }) as T;
+          }
           if (target?.kind === 'local-file') return clone({ text: `# ${target.path?.split('/').pop() ?? 'file'}\n\nMock preview text.` }) as T;
           return clone({ text: 'Mock asset preview text.' }) as T;
         }

@@ -544,6 +544,7 @@ test.describe('agent process disclosure', () => {
               byteLength: 38,
               sha256: 'payload-sha',
               role: 'tool_output',
+              scope: { type: 'run', conversationId: 'mock-agent-conversation', runId: 'run-payload-output' },
               summary: 'large.log output',
               truncated: true,
             },
