@@ -20,7 +20,7 @@ the original broad plan.
   `src/core/agentPermissionModel.ts` (`GlobalToolPermissionDecision`) and are
   re-exported by the main permission-rule module for existing main-process
   callers.
-- Every governed operation maps to an **action kind** (`AgentToolActionKind`, ~34
+- Every governed operation maps to an **action kind** (`AgentToolActionKind`, ~40
   kinds — e.g. `file.write.workspace`, `shell.network.write`,
   `external.message.send`, `agent.permission.modify`, `payment.purchase`).
 - Each action kind has one routine default in
@@ -37,11 +37,11 @@ the original broad plan.
   stored app-level `permissionMode: trusted|restricted` normalizes at read time
   to `balanced|ask_first`; agent definitions use `permission-mode: restricted`
   only as a narrow delegation sandbox.
-- The mode-plus-exception layer is computed by one pure shared function:
+- The default-plus-exception layer is computed by one pure shared function:
   `effectiveActionDecision(actionKind, safetyMode, overrides, actionDefault?)`
   in `src/core/agentPermissionModel.ts`. Runtime fallback evaluation passes the
   descriptor's possibly stricter `defaultDecision`; Settings → Security uses the
-  routine action default for its catalog rows.
+  routine action default for its exception rows.
 
 ## Allowed file area
 
@@ -122,23 +122,26 @@ The Security page presents the same precedence the runtime uses:
 3. **The selected safety-mode default** — computed by
    `effectiveActionDecision`.
 
-The three-way safety mode remains the primary control and is a living default:
-new action kinds inherit the selected mode through the shared model rather than
-through a persisted snapshot. "Custom" is derived, never stored: when explicit
-rules create visible deltas against the selected mode, the header reads as a
-custom state based on that mode and shows the number of changed actions. Reset to
-the mode clears the permission rule lists.
+The page labels the primary control **Default**. It is still backed by the
+three-way safety mode (`Ask First`, `Balanced`, `Full Access`), but the visible
+model is base-plus-delta: new action kinds inherit the selected default through
+the shared model rather than through a persisted snapshot. "Custom" is derived,
+never stored: when explicit rules create visible deltas against the selected
+default, the header reads as a custom state based on that default and shows the
+number of changed actions. Reset clears the permission rule lists back to that
+default. The Default group also carries the non-interactive note: "Some actions
+are always blocked and can't be changed here."
 
 The Exceptions list is the visible delta layer. It shows explicit `Action(...)`
-rules whose decision differs from the current mode default, plus raw non-Action
+rules whose decision differs from the current default, plus raw non-Action
 rules from the JSON store without inventing provenance. Raw `Tool(...)`,
 `Bash(...)`, and `Capability(...)` rules can match more than one runtime action,
-so they are shown as advanced exceptions rather than folded into a single Action
-Catalog row. Each exception row shows the rule, its effective decision, and a
+so they are shown as advanced exceptions rather than folded into a single common
+action row. Each exception row shows the rule, its effective decision, and a
 revert action that removes that rule from all permission lists. The collapsed
-Action Catalog exposes the curated common action kinds for manual overrides;
-choosing the mode default removes the override instead of storing a redundant
-rule.
+**Add an exception** disclosure exposes the curated common action kinds for
+manual overrides without surfacing a separate "catalog" concept; choosing
+Default removes the override instead of storing a redundant rule.
 
 ## Platform hard blocks
 
@@ -283,13 +286,13 @@ move behind the same projection.
   resolves the pending card as `approved: false` (`run_aborted` for blocking
   approval waiters) and removes it from renderer pending state.
 - **Security center** — the **Security** category in `AgentSettingsView.tsx`
-  exposes the global trust level, the derived Custom state, an Exceptions list
-  over action permission rules, and a collapsed Action Catalog for manual
-  per-action overrides (`agent.delegate.spawn` is shown non-allowable for
+  exposes the global Default, the derived Custom state, an Exceptions list over
+  action permission rules, and a collapsed Add an exception disclosure for
+  manual per-action overrides (`agent.delegate.spawn` is shown non-allowable for
   `allow`). Accepted skill hashes are listed separately as skill trust, not as
-  mode exceptions. It reads/writes via `agentGetToolPermissionSettings` and
-  surfaces store diagnostics. There is no in-app raw-JSON editor (advanced users
-  edit the file directly).
+  default/action exceptions. It reads/writes via
+  `agentGetToolPermissionSettings` and surfaces store diagnostics. There is no
+  in-app raw-JSON editor (advanced users edit the file directly).
 - **Agent editor** — agent definitions can only *Follow global* or enter the
   `restricted` delegation sandbox. Legacy `permission-mode: trusted` frontmatter
   is ignored on parse so an agent cannot widen above the global safety mode.

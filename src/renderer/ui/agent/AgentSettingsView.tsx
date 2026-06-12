@@ -1075,7 +1075,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
               <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
                 <InsetGroup
                   ariaLabel={t.settings.permissions.trustLevelAriaLabel}
-                  footnote={t.settings.permissions.precedenceFootnote({ mode: permissionModeLabel })}
+                  footnote={t.settings.permissions.hardBlockNote}
                   label={t.settings.permissions.trustLevelGroup}
                 >
                   <InsetRow

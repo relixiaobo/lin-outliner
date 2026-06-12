@@ -38,7 +38,7 @@ test.describe('agent settings window', () => {
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'Exceptions to Balanced' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Exceptions' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -50,7 +50,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'Exceptions to Balanced' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Exceptions' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -165,8 +165,12 @@ test.describe('agent settings window', () => {
   test('shows effective safety-mode decisions and resets custom exceptions', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
+    await expect(settings.getByRole('list', { name: 'Default' })).toBeVisible();
+    await expect(settings.getByText("Some actions are always blocked and can't be changed here.")).toBeVisible();
     await settings.getByRole('radio', { name: 'Full Access' }).click();
     await settings.getByText('Add an exception').click();
+    await expect(settings.getByText('Action Catalog')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Actions' })).toBeVisible();
 
     const fetchRow = settings.locator('.inset-row', { hasText: 'Fetch web pages' });
     await expect(fetchRow.locator('.settings-chip', { hasText: 'Always allow' })).toBeVisible();
@@ -176,7 +180,7 @@ test.describe('agent settings window', () => {
     await outsideReadRow.locator('.select-popup-input').selectOption('allow');
     await expect(settings.getByText('Custom')).toBeVisible();
     await expect(settings.getByText('Based on Full Access')).toBeVisible();
-    await expect(settings.getByRole('list', { name: 'Exceptions to Full Access' })
+    await expect(settings.getByRole('list', { name: 'Exceptions' })
       .locator('.inset-row', { hasText: 'Read outside allowed area' })).toBeVisible();
 
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
@@ -206,7 +210,7 @@ test.describe('agent settings window', () => {
         },
       },
     });
-    await expect(settings.getByRole('list', { name: 'Exceptions to Full Access' })
+    await expect(settings.getByRole('list', { name: 'Exceptions' })
       .locator('.inset-row', { hasText: 'Read outside allowed area' })).toHaveCount(0);
   });
 
