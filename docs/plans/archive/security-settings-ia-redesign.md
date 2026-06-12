@@ -1,7 +1,7 @@
 ---
-status: draft
+status: done
 priority: P1
-owner: unassigned
+owner: codex-3
 created: 2026-06-12
 updated: 2026-06-12
 ---

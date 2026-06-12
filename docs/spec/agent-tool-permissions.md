@@ -16,8 +16,10 @@ the original broad plan.
 ## Decision model
 
 - Three decisions: **`allow`**, **`ask`** (suspend and request user approval),
-  **`deny`**. Types in `src/main/agentToolPermissionRules.ts`
-  (`GlobalToolPermissionDecision`).
+  **`deny`**. Pure action-kind and safety-mode decision types live in
+  `src/core/agentPermissionModel.ts` (`GlobalToolPermissionDecision`) and are
+  re-exported by the main permission-rule module for existing main-process
+  callers.
 - Every governed operation maps to an **action kind** (`AgentToolActionKind`, ~34
   kinds — e.g. `file.write.workspace`, `shell.network.write`,
   `external.message.send`, `agent.permission.modify`, `payment.purchase`).
@@ -32,6 +34,11 @@ the original broad plan.
   stored app-level `permissionMode: trusted|restricted` normalizes at read time
   to `balanced|ask_first`; agent definitions use `permission-mode: restricted`
   only as a narrow delegation sandbox.
+- The mode-plus-exception layer is computed by one pure shared function:
+  `effectiveActionDecision(actionKind, safetyMode, overrides)` in
+  `src/core/agentPermissionModel.ts`. Runtime fallback evaluation and the
+  Settings → Security page both use this model, so a row cannot display
+  `ask` while the runtime would default the same action kind to `allow`.
 
 ## Allowed file area
 
@@ -100,6 +107,32 @@ Skill files follow the ordinary `file_write` / `file_edit` permission decision.
 After that decision, the file-tool gateway still validates skill content, records
 provenance and rollback metadata, emits skill audit events, and hot-reloads the
 registry.
+
+## Settings → Security
+
+The Security page presents the same precedence the runtime uses:
+
+1. **Hard safety blocks** — platform hard blocks and redlines are never waivable
+   from settings.
+2. **Your exceptions** — explicit `permissions.deny`, `permissions.ask`, and
+   `permissions.allow` rules.
+3. **The selected safety-mode default** — computed by
+   `effectiveActionDecision`.
+
+The three-way safety mode remains the primary control and is a living default:
+new action kinds inherit the selected mode through the shared model rather than
+through a persisted snapshot. "Custom" is derived, never stored: when explicit
+rules create visible deltas against the selected mode, the header reads as a
+custom state based on that mode and shows the number of changed actions. Reset to
+the mode clears the permission rule lists.
+
+The Exceptions list is the visible delta layer. It shows explicit rules whose
+decision differs from the current mode default, plus raw non-Action rules from
+the JSON store without inventing provenance. Each exception row shows the rule,
+its effective decision, and a revert action that removes that rule from all
+permission lists. The collapsed Action Catalog exposes the curated common action
+kinds for manual overrides; choosing the mode default removes the override
+instead of storing a redundant rule.
 
 ## Platform hard blocks
 
@@ -184,12 +217,10 @@ Evaluated first; sourced from descriptors and the bash hard-deny rules
 
 `src/main/agentToolPermissionStore.ts` — `agent-tool-permissions.json` under
 `userData`, in the grouped form `{ permissions: { allow, ask, deny } }`. The
-Security page projects `allow` entries as granted action trust and lets the user
-revoke them individually; revocation applies immediately and the row is also
-merged into any unsaved permission draft as `ask`. Skill content-hash trust still
-lives in the skill provenance store, but the Security page also lists accepted
-skill hashes in the same Granted Trust section and revokes them through the
-existing skill trust API.
+Security page treats these lists as the exception layer above the selected safety
+mode, not as a separate "Granted Trust" surface. Skill content-hash trust still
+lives in the skill provenance store; accepted skill hashes remain revocable from
+Security but are separate from mode/action exceptions.
 
 - **Fail-closed parse**: `parseGlobalToolPermissionSettings` /
   `parseGlobalToolPermissionRule` validate every rule string
@@ -246,11 +277,13 @@ move behind the same projection.
   resolves the pending card as `approved: false` (`run_aborted` for blocking
   approval waiters) and removes it from renderer pending state.
 - **Security center** — the **Security** category in `AgentSettingsView.tsx`
-  exposes the global trust level, a revocable Granted Trust projection over
-  action allow rules and accepted skill hashes, and Advanced action-kind rows with allow/ask toggles
-  (`agent.delegate.spawn` is shown non-allowable). It reads/writes via
-  `agentGetToolPermissionSettings` and surfaces store diagnostics. There is no
-  in-app raw-JSON editor (advanced users edit the file directly).
+  exposes the global trust level, the derived Custom state, an Exceptions list
+  over action permission rules, and a collapsed Action Catalog for manual
+  per-action overrides (`agent.delegate.spawn` is shown non-allowable for
+  `allow`). Accepted skill hashes are listed separately as skill trust, not as
+  mode exceptions. It reads/writes via `agentGetToolPermissionSettings` and
+  surfaces store diagnostics. There is no in-app raw-JSON editor (advanced users
+  edit the file directly).
 - **Agent editor** — agent definitions can only *Follow global* or enter the
   `restricted` delegation sandbox. Legacy `permission-mode: trusted` frontmatter
   is ignored on parse so an agent cannot widen above the global safety mode.

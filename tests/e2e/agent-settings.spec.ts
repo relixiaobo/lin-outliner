@@ -38,7 +38,7 @@ test.describe('agent settings window', () => {
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'Advanced' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Exceptions to Balanced' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -50,7 +50,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'Advanced' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Exceptions to Balanced' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -141,6 +141,7 @@ test.describe('agent settings window', () => {
   test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
+    await settings.getByText('Add an exception').click();
     const content = settings.locator('.settings-content');
     const popups = settings.locator('.settings-permissions-section .select-popup-input');
     await expect(popups).toHaveCount(10);
@@ -161,12 +162,23 @@ test.describe('agent settings window', () => {
     expect(scrolledLastBox!.y + scrolledLastBox!.height).toBeLessThan(contentBox!.y + contentBox!.height - 6);
   });
 
-  test('revokes action trust grants immediately from Granted Trust', async ({ page }) => {
+  test('shows effective safety-mode decisions and resets custom exceptions', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
+    await settings.getByRole('radio', { name: 'Full Access' }).click();
+    await settings.getByText('Add an exception').click();
+
+    const fetchRow = settings.locator('.inset-row', { hasText: 'Fetch web pages' });
+    await expect(fetchRow.locator('.settings-chip', { hasText: 'Always allow' })).toBeVisible();
 
     const ruleValue = 'Action(file.read.outside_allowed_file_area)';
-    await settings.locator('.settings-permissions-section .select-popup-input').first().selectOption('allow');
+    const outsideReadRow = settings.locator('.inset-row', { hasText: 'Read outside allowed area' });
+    await outsideReadRow.locator('.select-popup-input').selectOption('allow');
+    await expect(settings.getByText('Custom')).toBeVisible();
+    await expect(settings.getByText('Based on Full Access')).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Exceptions to Full Access' })
+      .locator('.inset-row', { hasText: 'Read outside allowed area' })).toBeVisible();
+
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -179,10 +191,8 @@ test.describe('agent settings window', () => {
       },
     });
 
-    const grantedTrust = settings.getByRole('list', { name: 'Granted Trust' });
-    const grantedRow = grantedTrust.locator('.inset-row', { hasText: 'Read outside allowed area' });
-    await expect(grantedRow).toBeVisible();
-    await grantedRow.getByRole('button', { name: 'Revoke' }).click();
+    await settings.getByRole('button', { name: 'Reset to Full Access' }).click();
+    await settings.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -191,11 +201,13 @@ test.describe('agent settings window', () => {
       settings: {
         permissions: {
           allow: [],
-          ask: [ruleValue],
+          ask: [],
+          deny: [],
         },
       },
     });
-    await expect(grantedRow).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Exceptions to Full Access' })
+      .locator('.inset-row', { hasText: 'Read outside allowed area' })).toHaveCount(0);
   });
 
   test('opens agent profile details as a drill-down settings page', async ({ page }) => {

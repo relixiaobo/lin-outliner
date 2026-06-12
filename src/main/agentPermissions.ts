@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
 import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
+import { effectiveActionDecision } from '../core/agentPermissionModel';
 import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
@@ -392,28 +393,6 @@ interface SafetyModeProfileResolution {
   descriptor: DerivedToolActionDescriptor;
 }
 
-const ASK_FIRST_ASK_ACTIONS = new Set<AgentToolActionKind>([
-  'file.edit.allowed_file_area',
-  'outline.edit',
-  'agent.skill.invoke',
-]);
-
-const FULL_ACCESS_ALLOW_ACTIONS = new Set<AgentToolActionKind>([
-  'file.edit.allowed_file_area',
-  'file.delete.allowed_file_area',
-  'outline.edit',
-  'outline.delete',
-  'web.fetch',
-  'shell.local_code_execution',
-  'shell.project_script',
-  'shell.dependency_install',
-  'shell.network_write',
-  'git.publish_remote',
-  'agent.delegate.spawn',
-  'agent.memory.dream',
-  'shell.background_process',
-]);
-
 function resolveSafetyModeProfileDecision(
   descriptors: readonly DerivedToolActionDescriptor[],
   safetyMode: AgentSafetyMode,
@@ -440,13 +419,12 @@ function safetyModeDecisionForDescriptor(
   descriptor: DerivedToolActionDescriptor,
   safetyMode: AgentSafetyMode,
 ): GlobalToolPermissionDecision {
-  if (descriptor.defaultDecision === 'deny') return 'deny';
-  if (safetyMode === 'balanced') return descriptor.defaultDecision;
-  if (safetyMode === 'ask_first') {
-    return ASK_FIRST_ASK_ACTIONS.has(descriptor.actionKind) ? 'ask' : descriptor.defaultDecision;
-  }
-  if (FULL_ACCESS_ALLOW_ACTIONS.has(descriptor.actionKind)) return 'allow';
-  return descriptor.defaultDecision;
+  return effectiveActionDecision(
+    descriptor.actionKind,
+    safetyMode,
+    { allow: [], ask: [], deny: [] },
+    descriptor.defaultDecision,
+  );
 }
 
 function permissionSourceRank(source: SafetyModeProfileSource): number {
