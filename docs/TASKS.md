@@ -33,7 +33,7 @@ the flow; merge order owned by main.
 
 | Lane | Agent | Work | Track |
 |---|---|---|---|
-| 1 | codex → main | **`agent-channel-parallel-runtime`** (PR #202; Feature D gate now satisfied — D merged as PR #203). Per PM directive (2026-06-12), **main integrates and merges it directly**: rebase #202 onto post-#203 `main`, reconcile the 4-file conflict + the duplicate `agent_stop_run` surface, wire `activeRuns` → D's `activityEntries`, gate, merge. | plan-track |
+| 1 | codex | **`agent-channel-parallel-runtime`** (PR #202) — **sent back to codex (2026-06-12)**. Main rebased it onto post-#203 `main` and integrated cleanly (conflicts + duplicate `agent_stop_run` + `activeRuns`→D's `activityEntries` wiring all resolved), but the rebase surfaced a **fundamental bug**: a multi-addressee Channel renders only ONE reply. Root cause + recommended fix posted on PR #202 (single-writer branching tree vs multi-writer channel; fix the transcript traversal to show each concurrent *peer* — keyed off `addressedByMessageId` + agent — NOT `parentMessageId`, which is the regenerate anchor). Needs a one-pager + `/code-review ultra` + `/security-review` before re-merge. | plan-track |
 | 3 | codex-3 | **file-attachments** (P1, top of queue, self-contained — PM-confirmed 2026-06-11). Protocol slice **merged as PR #204** (see Recently completed); now building the complete feature PR (core handler, persistence, ingest, renderer rows, system actions) on top — gate adds `/security-review`. | plan-track |
 
 Relay: **Realignment PR-4**
