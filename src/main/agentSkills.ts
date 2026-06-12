@@ -1072,7 +1072,9 @@ class SkillRegistry {
   private async addLoadedSkill(skill: SkillDefinition): Promise<boolean> {
     const existing = this.skills.get(skill.name) ?? this.conditionalSkills.get(skill.name);
     if (existing?.source === 'built-in') return false;
-    const fileId = await skillFileIdentity(skill.skillFile);
+    const fileId = skill.source === 'built-in'
+      ? skillPathForPrompt(skill)
+      : await skillFileIdentity(skill.skillFile);
     if (this.seenSkillFileIds.has(fileId)) return false;
     this.seenSkillFileIds.add(fileId);
     const record = this.provenance.get(path.resolve(skill.skillFile));
@@ -1617,6 +1619,7 @@ function parseLiveSkillListing(body: string): string[] {
 
 function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
   const body = unwrapSystemReminder(text);
+  if (body.includes('<skill-result>')) return null;
   const explicitName = /<skill-name>([^<]+)<\/skill-name>/.exec(body)?.[1]?.trim();
   const baseDir = /^Base directory for this skill:\s*(.+)$/m.exec(body)?.[1]?.trim();
   if (!explicitName && !baseDir) return null;
@@ -1624,7 +1627,7 @@ function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
   if (!skillName) return null;
   return {
     skillName,
-    skillPath: baseDir ?? skillName,
+    skillPath: baseDir ?? `built-in:${skillName}`,
     content: body.trim(),
     invokedAt: Date.now(),
   };
@@ -1666,7 +1669,7 @@ function formatPersistedListingStateEntry(entry: SkillListingStateEntry): string
 }
 
 function skillListingIdentity(skill: SkillDefinition): string {
-  return skill.identity ?? normalizePathForPrompt(skill.skillFile);
+  return skill.identity ?? skillPathForPrompt(skill);
 }
 
 function formatSkillDescription(skill: SkillDefinition): string {

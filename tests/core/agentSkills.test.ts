@@ -595,6 +595,17 @@ describe('agent skills', () => {
     expect(text).not.toContain('built-in/skillify/SKILL.md');
   });
 
+  test('persists built-in skill listing state without pseudo file paths', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+
+    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('- skillify:');
+    const reminder = runtime.createSkillListingStateReminder();
+    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+
+    expect(text).toContain('- skillify [skill-file: built-in:skillify]');
+    expect(text).not.toContain('built-in/skillify/SKILL.md');
+  });
+
   test('records model and effort effects for slash and agent-invoked skills', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
@@ -722,6 +733,33 @@ describe('agent skills', () => {
       ? invocation.message.content[0].text
       : '';
     expect(messageText).toContain('fork result:');
+  });
+
+  test('does not restore slash fork skill results as reusable skill guidance', async () => {
+    const root = await createSkillFixture('forked', {
+      frontmatter: [
+        'description: Forked skill',
+        'context: fork',
+      ],
+      body: 'Requires isolated execution.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeForkedSkill: async ({ skill }) => ({
+        agentId: 'child-run-test',
+        agentType: skill.agent ?? 'general',
+        status: 'completed',
+        result: 'one-shot fork result',
+      }),
+    });
+    await acceptSkillForTest(runtime, 'forked');
+
+    const prompt = await createSlashSkillPrompt(runtime, '/forked demo', null);
+    const restored = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    if (prompt) restored.restoreInvokedSkillsFromMessages([prompt]);
+
+    expect(restored.createInvokedSkillsReminder()).toBeNull();
   });
 
   test('rejects fork-context skills when no fork executor is available', async () => {
