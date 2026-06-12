@@ -421,10 +421,6 @@ export class AgentSkillRuntime {
     return this.registry.resolveSkillTarget(filePath);
   }
 
-  getSkillDirConfig(): { includeUserSkills: boolean; additionalSkillDirectories: readonly string[] } {
-    return this.registry.getSkillDirConfig();
-  }
-
   async recordAgentSkillWrite(
     skillFile: string,
     contentHash: string,
@@ -977,13 +973,6 @@ class SkillRegistry {
     if (sameStringList(this.additionalSkillDirectories, normalized)) return;
     this.additionalSkillDirectories = normalized;
     this.reloadAll();
-  }
-
-  getSkillDirConfig(): { includeUserSkills: boolean; additionalSkillDirectories: readonly string[] } {
-    return {
-      includeUserSkills: this.includeUserSkills,
-      additionalSkillDirectories: [...this.additionalSkillDirectories],
-    };
   }
 
   resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
