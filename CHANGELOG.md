@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Built-in `/research` read-only isolated skill (PR #235, codex-3)** — adds a user- and
+  model-invocable `/research` built-in that runs bounded investigation as a same-agent
+  **isolated read-only child run**: it inherits the current agent's conversation context and
+  DM/Channel identity (no `agent` override) but its child model request is narrowed to a
+  read-only tool catalog, so mutating tools (`file_write`/`file_edit`, node mutations, `bash`,
+  `skill`, `Agent`/`AgentSend`/`AgentStop`, config write, `dream`) are **absent** rather than
+  merely denied at call time. The read-only set is the skill's declared `allowed-tools`
+  (`node_search`/`node_read`, `file_read`/`file_glob`/`file_grep`, `web_search`/`web_fetch`,
+  `recall`) filtered through the exhaustive `AgentToolActionKind` read-only partition
+  (`readOnlyAgentToolNames`, `src/core/agentPermissionModel.ts`); the runtime-only
+  `readOnlyIsolated` flag is built-in-only and not mutable `SKILL.md` frontmatter. As part of
+  this, the skill execution DSL is renamed `context: 'inline' | 'fork'` →
+  `execution: 'inline' | 'isolated'` on `SkillDefinition` (legacy `context: fork` still parses
+  as `execution: isolated`; invalid values now throw and the loader skips the skill), and the
+  live permission classifier is refactored to derive every tool's action kind from a single
+  `AGENT_TOOL_ACTION_KIND_PROFILES` source — making `operation_history` action-sensitive
+  (`list`→`outline.read`, `undo`/`redo`→`outline.edit`, no longer auto-allowed) and splitting
+  `file_write` onto its own `file.write.allowed_file_area` action kind. Spec:
+  `docs/spec/agent-skills.md`, `docs/spec/agent-delegation-runtime.md`,
+  `docs/spec/agent-tool-permissions.md`.
 - **Referenced outliner files become agent-readable (agent-file-model F3, PR #237, cc-2)** —
   closes the lossy input path: an outliner image / attachment node `@`-referenced into a
   conversation used to reach the agent as a node with **no readable bytes**. At send time each

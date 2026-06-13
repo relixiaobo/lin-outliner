@@ -296,11 +296,19 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   agent" call (#232) is **superseded**: the "no durable agent" worry was a workaround for
   "agents can't consult" — `ungate-contact` removes it, and a consulted researcher is a
   sidechain, not a Channel/DM participant. Read-only (world) and memory-bearing (own line, via
-  Dream) don't conflict. **Next:** codex-3 **redirects the #232 plan** (R1+R2 design) and syncs
-  the `agent-conversation-model` §"Cross-agent help → Relationship to /research" pointer in the
-  same PR; PM ratifies the redraft. **Sequence:** R1 (skill) is independent; **R2's
-  consult-by-others rides on `ungate-contact`**. cc-2.1 confirms research-as-agent (read-only
-  `Explore`, spawned + consulted) — but stateless; ours is deliberately memory-bearing.
+  Dream) don't conflict. **R1 SHIPPED — PR #235 (codex-3):** built-in `/research` as a
+  user/model-invocable `execution: isolated` skill (the `context: fork` DSL renamed to
+  `execution: isolated`), running as a same-agent read-only child run whose declared read
+  tools are filtered through the `AgentToolActionKind` read-only partition
+  (`readOnlyAgentToolNames`); the live permission classifier now derives every tool's action
+  kind from one `AGENT_TOOL_ACTION_KIND_PROFILES` source, and `operation_history` is
+  action-sensitive (`list`→`outline.read`, `undo`/`redo`→`outline.edit`). Gate: typecheck +
+  `test:core` 992/0 + `test:renderer` 443/0 + `docs:check`; `/code-review xhigh` (7 findings,
+  all fixed in-PR) + `/security-review` (no HIGH/MEDIUM). **Remaining = R2:** a memory-bearing
+  persistent `researcher` agent that binds R1 by default and is **consulted** (invisible
+  sidechain) — **R2's consult-by-others rides on `ungate-contact`**. cc-2.1 confirms
+  research-as-agent (read-only `Explore`, spawned + consulted) — but stateless; ours is
+  deliberately memory-bearing.
 - **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
   completed; plan archived `done` in-PR. The global `AgentSafetyMode`
   (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
