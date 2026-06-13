@@ -48,11 +48,11 @@ describe('agent tool call block', () => {
     expect(summarizeToolCall(dreamToolCall({}), 'error', labels)).toBe('Failed to dream memory');
   });
 
-  test('summarizes file_write with the basename, not the full path', () => {
-    const call = fileWriteToolCall({ file_path: '/home/agent-workdir/reports/report.md', content: '...' });
+  test('summarizes file_write with the path the model passed (as every tool does)', () => {
+    const call = fileWriteToolCall({ file_path: 'reports/report.md', content: '...' });
     expect(getToolIcon(call)).toBe(NodeCreateToolIcon);
-    expect(summarizeToolCall(call, 'pending', labels)).toBe('Writing file "report.md"');
-    expect(summarizeToolCall(call, 'done', labels)).toBe('Wrote file "report.md"');
-    expect(summarizeToolCall(call, 'error', labels)).toBe('Failed to write file "report.md"');
+    expect(summarizeToolCall(call, 'pending', labels)).toBe('Writing file "reports/report.md"');
+    expect(summarizeToolCall(call, 'done', labels)).toBe('Wrote file "reports/report.md"');
+    expect(summarizeToolCall(call, 'error', labels)).toBe('Failed to write file "reports/report.md"');
   });
 });

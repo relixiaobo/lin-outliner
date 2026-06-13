@@ -113,13 +113,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
-// File tools address paths the model passes (often absolute); the summary line
-// only needs the basename — the full path stays available on the file chip.
-function fileSubjectLabel(subject: string | null): string | null {
-  if (!subject) return null;
-  return basenameForPath(subject) || subject;
-}
-
 type ToolCallLabels = Messages['agent']['toolCall'];
 type ToolVerbForms = { base: string; pending: string; done: string };
 
@@ -192,11 +185,11 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   }
   if (toolCall.name === 'file_edit') {
     const subject = pickSubject(args, 'path', 'file_path');
-    return withSubject(verbByStatus(verbs.editFile, status, labels), fileSubjectLabel(subject), labels);
+    return withSubject(verbByStatus(verbs.editFile, status, labels), subject, labels);
   }
   if (toolCall.name === 'file_write') {
     const subject = pickSubject(args, 'file_path', 'path');
-    return withSubject(verbByStatus(verbs.writeFile, status, labels), fileSubjectLabel(subject), labels);
+    return withSubject(verbByStatus(verbs.writeFile, status, labels), subject, labels);
   }
   // Unknown tools fall back to the raw tool name (an identifier, not translatable);
   // only the trailing pending ellipsis is localized.
@@ -429,15 +422,15 @@ interface FileToolOutput {
 // patch in its model-visible content (the persisted text, so this survives a
 // reload — `details` does not reach the render projection). Reading it here lets
 // the conversation render the produced file as an inspectable chip + diff
-// instead of a raw-JSON dump.
+// instead of a raw-JSON dump. `text` is the caller's already-computed
+// `resultText(result)`, so the content blocks are walked once per render.
 function parseFileToolOutput(
   toolCall: ToolCall,
   result: AgentToolResultWithPayloads | undefined,
+  text: string,
 ): FileToolOutput | null {
   if (toolCall.name !== 'file_write' && toolCall.name !== 'file_edit') return null;
-  if (!result || result.isError) return null;
-  const text = resultText(result);
-  if (!text) return null;
+  if (!result || result.isError || !text) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -750,9 +743,17 @@ export function AgentToolCallBlock({
   const isExpanded = expanded ?? internalExpanded;
   const inputText = useMemo(() => jsonText(toolCall.arguments), [toolCall.arguments]);
   const outputText = useMemo(() => resultText(result), [result]);
+  const fileOutput = useMemo(
+    () => parseFileToolOutput(toolCall, result, outputText),
+    [toolCall, result, outputText],
+  );
   const images = useMemo(() => resultImages(result), [result]);
-  const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
-  const fileOutput = useMemo(() => parseFileToolOutput(toolCall, result), [toolCall, result]);
+  // A file output renders its own chip + diff, so the generic output parts (and
+  // their flat-map over content) are only needed when there is no file output.
+  const parts = useMemo(
+    () => (fileOutput ? [] : resultParts(result, isExpanded)),
+    [fileOutput, result, isExpanded],
+  );
   const hasChildRunDetails = Boolean(childRun);
   const hasDetails = fileOutput
     ? hasChildRunDetails || fileOutput.diff.length > 0
