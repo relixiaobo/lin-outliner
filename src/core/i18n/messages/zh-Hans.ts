@@ -1022,6 +1022,7 @@ commandPalette: {
       errorBadge: '错误',
       copyInput: '复制工具输入',
       copyOutput: '复制工具输出',
+      copyChanges: '复制变更',
       copyFullOutput: '复制完整工具输出',
       screenshotCaptured: '已捕获截图',
       storedOutput: '已存储的工具输出',

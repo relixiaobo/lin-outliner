@@ -417,24 +417,19 @@ function jsonText(value: unknown): string {
   }
 }
 
-interface FileDiffHunk {
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  lines: string[];
-}
-
 interface FileToolOutput {
   path: string;
   basename: string;
-  hunks: FileDiffHunk[];
+  // Unified-diff text, ready for Shiki's `diff` grammar; empty when there is no
+  // patch to show (e.g. a newly created file).
+  diff: string;
 }
 
 // A successful file_write / file_edit reports the written path and a structured
 // patch in its model-visible content (the persisted text, so this survives a
-// reload — `details` does not). Reading it here lets the conversation render the
-// produced file as an inspectable chip + diff instead of a raw-JSON dump.
+// reload — `details` does not reach the render projection). Reading it here lets
+// the conversation render the produced file as an inspectable chip + diff
+// instead of a raw-JSON dump.
 function parseFileToolOutput(
   toolCall: ToolCall,
   result: AgentToolResultWithPayloads | undefined,
@@ -455,38 +450,29 @@ function parseFileToolOutput(
   return {
     path: data.filePath,
     basename: basenameForPath(data.filePath) || data.filePath,
-    hunks: parseDiffHunks(data.structuredPatch),
+    diff: unifiedDiff(data.structuredPatch),
   };
-}
-
-function parseDiffHunks(value: unknown): FileDiffHunk[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry): FileDiffHunk[] => {
-    if (!isRecord(entry) || !Array.isArray(entry.lines)) return [];
-    return [{
-      oldStart: numberOr(entry.oldStart, 0),
-      oldLines: numberOr(entry.oldLines, 0),
-      newStart: numberOr(entry.newStart, 0),
-      newLines: numberOr(entry.newLines, 0),
-      lines: entry.lines.filter((line): line is string => typeof line === 'string'),
-    }];
-  });
-}
-
-function numberOr(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 // Reassemble a unified-diff text from the structured patch so Shiki's `diff`
 // grammar can color it — the same code-rendering path used for every other code
-// surface, no bespoke diff colors.
-function unifiedDiffText(hunks: FileDiffHunk[]): string {
-  return hunks
-    .map((hunk) => [
-      `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
-      ...hunk.lines,
-    ].join('\n'))
-    .join('\n');
+// surface, no bespoke diff colors. The `lines` already carry their `+`/`-`
+// prefixes; this only re-adds the hunk headers.
+function unifiedDiff(structuredPatch: unknown): string {
+  if (!Array.isArray(structuredPatch)) return '';
+  const blocks: string[] = [];
+  for (const hunk of structuredPatch) {
+    if (!isRecord(hunk) || !Array.isArray(hunk.lines)) continue;
+    const lines = hunk.lines.filter((line): line is string => typeof line === 'string');
+    if (lines.length === 0) continue;
+    const header = `@@ -${num(hunk.oldStart)},${num(hunk.oldLines)} +${num(hunk.newStart)},${num(hunk.newLines)} @@`;
+    blocks.push([header, ...lines].join('\n'));
+  }
+  return blocks.join('\n');
+}
+
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 // The produced file, shown as a local-file chip. The app-wide
@@ -767,10 +753,9 @@ export function AgentToolCallBlock({
   const images = useMemo(() => resultImages(result), [result]);
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
   const fileOutput = useMemo(() => parseFileToolOutput(toolCall, result), [toolCall, result]);
-  const diffText = useMemo(() => (fileOutput ? unifiedDiffText(fileOutput.hunks) : ''), [fileOutput]);
   const hasChildRunDetails = Boolean(childRun);
   const hasDetails = fileOutput
-    ? hasChildRunDetails || diffText.length > 0
+    ? hasChildRunDetails || fileOutput.diff.length > 0
     : hasChildRunDetails || inputText !== '{}' || outputText.length > 0;
   const hasOutputDetails = outputText.length > 0;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
@@ -807,13 +792,13 @@ export function AgentToolCallBlock({
           childRun={childRun}
         />
       ) : null}
-      {!hasChildRunDetails && fileOutput && diffText ? (
+      {!hasChildRunDetails && fileOutput && fileOutput.diff ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.changes}</div>
-            <ToolCopyButton ariaLabel={t.agent.toolCall.copyOutput} text={diffText} />
+            <ToolCopyButton ariaLabel={t.agent.toolCall.copyChanges} text={fileOutput.diff} />
           </div>
-          <HighlightedCode code={diffText} lang="diff" />
+          <HighlightedCode code={fileOutput.diff} lang="diff" />
         </section>
       ) : null}
       {!hasChildRunDetails && !fileOutput && inputText !== '{}' ? (

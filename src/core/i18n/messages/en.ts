@@ -1109,6 +1109,7 @@ commandPalette: {
       errorBadge: 'error',
       copyInput: 'Copy tool input',
       copyOutput: 'Copy tool output',
+      copyChanges: 'Copy changes',
       copyFullOutput: 'Copy full tool output',
       screenshotCaptured: 'Screenshot captured',
       storedOutput: 'Stored tool output',
