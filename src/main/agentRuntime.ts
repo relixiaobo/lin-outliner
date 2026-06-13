@@ -328,6 +328,9 @@ const MAX_ATTACHMENTS = 8;
 const MAX_ATTACHMENT_NAME_LENGTH = 180;
 const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
 const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
+// Upper bound on referenced outliner images inlined for vision in one turn; the rest
+// are still surfaced as readable paths. Mirrors the composer's MAX_ATTACHMENTS spirit.
+const MAX_REFERENCED_INLINE_IMAGES = MAX_ATTACHMENTS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
 const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
@@ -1585,12 +1588,6 @@ export class AgentRuntime {
         normalizedUserViewContext,
       );
       const userViewReminderText = userViewContextReminder.reminder;
-      // Materialize bridge: hand the agent the bytes of any outliner image /
-      // attachment node the user explicitly referenced (images also inline for vision).
-      const referencedAssets = await this.materializeReferencedAssetNodes(
-        normalizedUserViewContext?.referencedNodes,
-      );
-      const referencedFilesReminder = buildReferencedFilesReminder(referencedAssets.files);
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
       // In a Channel the persisted user message stays reader-neutral: a memory
@@ -1615,14 +1612,26 @@ export class AgentRuntime {
       const agentListingReminder = slashSkillPrompt || multiAgent
         ? null
         : await this.buildAgentListingReminder(conversation);
-      const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, [...attachments, ...referencedAssets.imageAttachments], {
-        memoryReminder,
-        outlinerContext,
-        userViewContextReminder: userViewReminderText,
-        referencedFilesReminder,
-        skillListingReminder,
-        agentListingReminder,
-      }, now);
+      let prompt: UserMessage;
+      if (slashSkillPrompt) {
+        // A slash-skill turn replaces the user prompt wholesale, so referenced
+        // assets are not materialized for it (nothing would surface them).
+        prompt = slashSkillPrompt;
+      } else {
+        // Materialize bridge: hand the agent the bytes of any outliner image /
+        // attachment node the user explicitly referenced (images also inline for vision).
+        const referencedAssets = await this.materializeReferencedAssetNodes(
+          normalizedUserViewContext?.referencedNodes,
+        );
+        prompt = buildUserPromptMessage(messageText, [...attachments, ...referencedAssets.imageAttachments], {
+          memoryReminder,
+          outlinerContext,
+          userViewContextReminder: userViewReminderText,
+          referencedFilesReminder: buildReferencedFilesReminder(referencedAssets.files),
+          skillListingReminder,
+          agentListingReminder,
+        }, now);
+      }
       if (multiAgent) {
         const addressedTo = this.resolveAddressedMembers(messageText, channelMembers);
         const messageId = await this.appendUserPromptEvent(conversationId, conversation, prompt, { addressedTo });
@@ -7205,7 +7214,12 @@ export class AgentRuntime {
         const scratchPath = await materializeAgentLocalPath(root, scratch, assetPath, name);
         const sizeBytes = meta?.byteSize ?? 0;
         let inlineImage = false;
-        const inlineMime = normalizeInlineImageMimeType(mimeType);
+        // Bound the base64 vision payload: every referenced file is still surfaced
+        // as a readable path below, but only the first N images are inlined so a
+        // turn that references many images cannot balloon the request.
+        const inlineMime = imageAttachments.length < MAX_REFERENCED_INLINE_IMAGES
+          ? normalizeInlineImageMimeType(mimeType)
+          : null;
         if (inlineMime) {
           const dataBase64 = (await readFile(scratchPath)).toString('base64');
           if (dataBase64.length <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS) {

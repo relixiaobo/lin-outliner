@@ -1,5 +1,5 @@
 import type { DocumentProjection } from '../core/types';
-import { escapeXml } from './agentReminderXml';
+import { xmlAttrs } from './agentReminderXml';
 
 // Outliner node types whose bytes live in the asset store and can be handed to the agent.
 const ASSET_NODE_TYPES = new Set(['image', 'attachment']);
@@ -78,11 +78,4 @@ export function buildReferencedFilesReminder(files: ReadonlyArray<MaterializedRe
   }
   lines.push('</referenced-files>');
   return lines.join('\n');
-}
-
-function xmlAttrs(attrs: Record<string, string | null>): string {
-  const serialized = Object.entries(attrs)
-    .filter((entry): entry is [string, string] => entry[1] !== null && entry[1] !== '')
-    .map(([key, value]) => `${key}="${escapeXml(value)}"`);
-  return serialized.length ? ` ${serialized.join(' ')}` : '';
 }

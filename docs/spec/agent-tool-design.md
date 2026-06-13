@@ -1541,6 +1541,13 @@ output are both a workdir/scratch path the agent reads with `file_read`.
   inline_image />` per asset) inside the turn's `<system-reminder>`, instructing the
   agent to `file_read` them. The renderer keeps the `asset://` handle for its own
   display; only the agent-facing side gains a path.
+- **Bound.** At most `MAX_REFERENCED_INLINE_IMAGES` images are inlined per turn; any
+  beyond that (and every non-image) are still surfaced as readable paths, so a turn
+  that references many images cannot balloon the request with base64.
+- **Scope.** Materialization is wired into the standard send only; a `/slash`-skill
+  turn (which replaces the user prompt wholesale) and a **steer** message (sent while
+  a run is active, carrying only text) surface the reference marker but not the bytes.
+  Referencing an asset on those paths is a documented no-op for the bytes, not an error.
 
 ### `file_read`
 

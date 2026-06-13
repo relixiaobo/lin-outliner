@@ -116,12 +116,12 @@ function normalizeAssistantMessage(message: AssistantMessage, model: Model<Api>)
   };
 }
 
-function userContentParts(context: Context): Array<{ type?: string; text?: string; mimeType?: string }> {
+function userContentParts(context: Context): Array<{ type?: string; text?: string; mimeType?: string; data?: string }> {
   return context.messages
     .filter((message) => (message as { role?: string }).role === 'user')
     .flatMap((message) => {
       const content = (message as { content?: unknown }).content;
-      return Array.isArray(content) ? (content as Array<{ type?: string; text?: string; mimeType?: string }>) : [];
+      return Array.isArray(content) ? (content as Array<{ type?: string; text?: string; mimeType?: string; data?: string }>) : [];
     });
 }
 
@@ -211,6 +211,8 @@ describe('agent runtime referenced asset materialization', () => {
     // The referenced image is inlined as a vision block; the PDF is not.
     expect(imageParts).toHaveLength(1);
     expect(imageParts[0].mimeType).toBe('image/png');
+    // The inlined bytes are the actual asset bytes — not a placeholder or the wrong file.
+    expect(imageParts[0].data).toBe(imageBytes.toString('base64'));
 
     const text = textFromContext(contexts[0]!);
     expect(text).toContain('<referenced-files>');
@@ -266,6 +268,49 @@ describe('agent runtime referenced asset materialization', () => {
     expect(text).not.toContain('<referenced-files>');
     expect(userContentParts(contexts[0]!).some((part) => part.type === 'image')).toBe(false);
     await expect(readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).rejects.toThrow();
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
+  test('an image whose metadata is missing is still materialized as a readable path (not inlined)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-data-'));
+    const assetRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-store-'));
+    roots.push(localRoot, dataRoot, assetRoot);
+
+    const imagePath = path.join(assetRoot, 'asset-img.png');
+    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]));
+    // pathFor resolves the bytes, but lookup returns null (missing .meta sidecar) and
+    // an ImageNode carries no mimeType, so the bytes cannot be confirmed as an image.
+    const assetResolver = {
+      pathFor: async () => imagePath,
+      lookup: async () => null,
+    };
+
+    const contexts: Context[] = [];
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostWithNodes([node({ id: 'img', type: 'image', assetId: 'asset-img', content: plainText('Mystery') })]),
+      defaultRuntimeOptions(localRoot, dataRoot, assetResolver, contexts),
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(
+      created.conversationId,
+      'Look at this.',
+      [],
+      { referencedNodes: [{ nodeId: 'img', title: 'Mystery' }] },
+    );
+
+    expect(contexts).toHaveLength(1);
+    const text = textFromContext(contexts[0]!);
+    // Surfaced as a readable path, no inline image block, no crash.
+    expect(text).toContain('<referenced-files>');
+    expect(text).toContain('node_id="img"');
+    expect(text).not.toContain('inline_image="true"');
+    expect(userContentParts(contexts[0]!).some((part) => part.type === 'image')).toBe(false);
+    expect(await readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).toHaveLength(1);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 });
