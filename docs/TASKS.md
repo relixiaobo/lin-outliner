@@ -293,6 +293,21 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   key concurrent approval/`ask_user_question` requests by `runId` so runs can't
   steal each other's input. ONE PR (runtime + projection + renderer + tests + spec).
   No DM behavior change. See `docs/plans/channel-async-message-bus.md`.
+- **delegation-record-convergence (C1+C2)** (P1, *no separate plan file — design in
+  `docs/plans/agent-program.md` § Convergence + `docs/plans/agent-data-model.md`
+  shapes*) — surfaced by **PR #221**'s delegation hygiene pass (which fixed behavior
+  but deliberately left shape). **C1**: collapse the three near-duplicate run records
+  (`AgentChildRunRecord` durable / `AgentChildRunSnapshot` IPC / `AgentRunRecord`
+  in-memory, `src/main/agentDelegation.ts` + `src/core/agentEventLog.ts`) into one
+  canonical `DelegationDetail` the IPC + durable shapes derive from. **C2**: unify the
+  dual run-status enums (`AgentRunStatus` `…|cancelled` vs `AgentChildRunStatus`
+  `…|stopped`, both in `src/core/agentEventLog.ts`) onto the single `RunMeta.status`
+  vocabulary, and persist `unattended` durably (today in-memory only). Ships as **ONE
+  near-term PR** (C1+C2 together); shapes owned by `agent-data-model`. **Foundation
+  for `channel-async-message-bus`** (A7) — it consumes run-status via
+  `agentRuntime.ts`, so land this first so channel-async builds on the unified
+  vocabulary, not the dual enums. C3 (run-context assembly) is **not** standalone —
+  it folds into the M-series context-assembly rewrite. Needs a dev build one-pager → GO.
 - **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
   durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
   daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
