@@ -108,8 +108,10 @@ clean-cut, no migration).
     persists the user message and enqueues the addressed turns, then returns
     without awaiting the runs; the runs drain asynchronously and a single detached
     watcher (`scheduleChannelIdleEmit`) emits the final idle projection when the
-    Channel goes idle. (Tests that need a settled Channel call
-    `drainChannelTurnsForTest`.) A user message sent while Channel runs are active
+    Channel goes idle. The watcher is ownership-token-guarded: a conversation
+    reset/close/delete tears it down (`teardownChannelDraining` resolves its parked
+    waiter and bumps the token) instead of leaking it or emitting on a dead
+    conversation. (Tests that need a settled Channel call `drainChannelTurnsForTest`.) A user message sent while Channel runs are active
     is persisted and routed immediately, with that message as each addressed run's
     context cut. Replies append when they complete, so transcript order is
     completion order. The independence cut remains the invariant: a run sees only
@@ -124,15 +126,25 @@ clean-cut, no migration).
     never turns the composer into Stop/Steer (the composer stays a pure message
     composer — empty + active shows a disabled Send, never Stop). Conversation
     `kind` is never stored; the split is derived (`isMultiAgentConversation`).
-    Navigation and unread continue while Channel runs work: switching away from an
-    active Channel is allowed (only a busy DM blocks it), and a completed reply
-    increments unread through the existing `conversation_attention` path.
+    Navigation continues while Channel runs work: switching away from an active
+    Channel is allowed (only a busy DM blocks it). Backgrounded-Channel unread is
+    meant to ride the existing `conversation_attention` path, but it is **not yet
+    raised on an in-Channel peer reply** — no `notification.created` is emitted for
+    one (the reducer folds unread only from `notification.created`, which today has
+    only off-floor-task emitters). Whether, and how loudly, in-Channel replies
+    should notify is an open product decision.
   - **Stop scope:** Channel stop has two scopes. A per-run stop cancels exactly
     that run and leaves siblings in flight; a conversation stop cancels every
     active run, drops undispatched pending Channel turns, and preserves the
-    visible discarded-turns system trace. Edit/regenerate/retry gates are
-    set-based: transcript rewrites are blocked while any Channel run is active
-    in the conversation.
+    visible discarded-turns system trace. A send that arrives while a stopped round
+    is still draining resumes the Channel: the stop flag clears once the stopped
+    runs drain (it is *not* gated on pending being empty), so the new turn pumps
+    rather than deadlocking behind a flag that pending-emptiness would never clear.
+    Only per-run stop is exposed in the Channel UI today; a conversation-level
+    Channel "stop all" is deferred (the composer never becomes Stop in a Channel),
+    so a conversation stop in a Channel is reachable only programmatically.
+    Edit/regenerate/retry gates are set-based: transcript rewrites are blocked
+    while any Channel run is active in the conversation.
   - Each peer turn runs as that agent (own definition/model/skills/memory line,
     `actor` stamped on its messages) and reads the thread through the per-POV
     derivation (`agentChannel.ts` `deriveAgentPovProjection`, composed with the

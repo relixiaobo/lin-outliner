@@ -708,6 +708,61 @@ describe('agent channel runtime', () => {
     expect(texts).toContain('AFTER_STOP_OK');
   });
 
+  test('a send that lands while a stopped round is still draining resumes the Channel (no deadlock)', async () => {
+    // Regression: async-accept means a Channel send can enqueue a pending turn
+    // WHILE channelStopRequested is still set (a stop whose runs have not finished
+    // draining). maybeClearChannelStopRequested must clear once the runs drain, NOT
+    // gate on pending being empty — otherwise the late send is pinned in
+    // pendingChannelTurns forever and the Channel deadlocks (channelRunsActive stuck
+    // true, no run ever launches). Deterministic: the provider gate holds the first
+    // turn in startup so the second send is provably enqueued before the stop drains.
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', '---\ndescription: r\n---\nbody');
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    const script = scriptedStream([fauxAssistantMessage(fauxText('RESUMED_OK'))], calls);
+    let releaseProvider!: () => void;
+    let holdProvider = true;
+    let providerRequests = 0;
+    const providerGate = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const { runtime } = await createRuntime(dataRoot, localRoot, script.streamFn, {
+      providerConfigLoader: async () => {
+        providerRequests += 1;
+        if (providerRequests > 1 && holdProvider) await providerGate;
+        return {
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        };
+      },
+    });
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Resume after stop' });
+    // First addressed turn parks in startup behind the provider gate.
+    void (runtime.sendMessage(channel.conversationId, '@reviewer first') as Promise<void>);
+    while (providerRequests < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    // Stop the round, then enqueue a NEW send while the stop is still draining.
+    // Awaiting the send (it resolves on acceptance) guarantees the pending turn is
+    // queued with channelStopRequested still set, before the held turn unwinds.
+    runtime.stopConversation(channel.conversationId);
+    await runtime.sendMessage(channel.conversationId, '@reviewer after stop');
+    // Release the held first turn: it bails on the stop flag; the flag must then
+    // clear (its run drained) so the pending second turn pumps and completes.
+    holdProvider = false;
+    releaseProvider();
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const completed = Object.values(state.runs).filter((run) => run.status === 'completed');
+    expect(completed).toHaveLength(1);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('RESUMED_OK');
+  });
+
   test('per-run stop cancels one Channel run without stopping siblings', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));

@@ -1093,26 +1093,6 @@ export function AgentChatPanel({
     : null;
   const selectedPovInspector = selectedPovAgentId ? povInspectors[selectedPovAgentId] ?? null : null;
   const selectedPovMember = selectedPovAgentId ? memberByAgentId.get(selectedPovAgentId) ?? null : null;
-  // Multi-agent Channel activity drill-in: live in-flight entries are filtered
-  // out of the thread, but each activity item can still open its own detail.
-  const workingEntryByMessageId = useMemo(() => {
-    const byId = new Map<string, AgentMessageEntry>();
-    if (!isMultiAgentChannel) return byId;
-    for (const entry of entries) {
-      if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming) continue;
-      if (entry.nodeId) byId.set(entry.nodeId, entry);
-    }
-    return byId;
-  }, [entries, isMultiAgentChannel]);
-  const workingEntryByRunId = useMemo(() => {
-    const byId = new Map<string, AgentMessageEntry>();
-    if (!isMultiAgentChannel) return byId;
-    for (const entry of entries) {
-      if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming || !entry.runId) continue;
-      byId.set(entry.runId, entry);
-    }
-    return byId;
-  }, [entries, isMultiAgentChannel]);
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -2007,11 +1987,6 @@ export function AgentChatPanel({
       {selectedActivityEntry ? (() => {
         const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
         const stateLabel = activityStateLabel(selectedActivityEntry, t);
-        const selectedWorkingEntry = selectedActivityEntry.messageId
-          ? workingEntryByMessageId.get(selectedActivityEntry.messageId) ?? null
-          : selectedActivityEntry.runId
-            ? workingEntryByRunId.get(selectedActivityEntry.runId) ?? null
-            : null;
         return (
           <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
             <header className="agent-child-run-details-header">
@@ -2030,24 +2005,11 @@ export function AgentChatPanel({
               />
             </header>
             <div className="agent-child-run-details-body">
-              {selectedWorkingEntry ? (
-                <AgentMessageRow
-                  busy={channelRunsActive}
-                  entry={selectedWorkingEntry}
-                  index={index}
-                  onNodeReferenceOpen={onOpenNodeReference}
-                  onOpenChildRunTranscript={setSelectedChildRunId}
-                  pendingToolCallIds={pendingToolCallIds}
-                  conversationId={conversationId}
-                  streaming
-                  childRunsByParentToolCallId={childRunsByParentToolCallId}
-                  toolResults={toolResults}
-                  turnPhase={turnPhase}
-                />
-              ) : selectedActivityEntry.streamingText ? (
+              {selectedActivityEntry.streamingText ? (
                 // The live token stream of the running Channel agent (PM-ratified
-                // 2026-06-13): retained from message_update, surfaced here only —
-                // never in the whole-utterance message flow.
+                // 2026-06-13): retained per-run from message_update and surfaced
+                // ONLY here — never in the whole-utterance message flow. Tool-call
+                // progress shows in the header state label, not a transcript row.
                 <div className="agent-channel-run-live">
                   <AgentMarkdown
                     keyPrefix={`channel-run-live-${selectedActivityEntry.id}`}

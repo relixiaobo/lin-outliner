@@ -485,6 +485,12 @@ interface AgentConversationState {
    * most one watcher runs per conversation so the drain emits exactly once.
    */
   channelIdleEmitInFlight: boolean;
+  /**
+   * Ownership token for the detached idle watcher. `teardownChannelDraining`
+   * bumps it (reset/close/delete) so an orphaned watcher bows out instead of
+   * emitting on a dead conversation or leaving `channelIdleEmitInFlight` stuck.
+   */
+  channelIdleEmitToken: number;
   unsubscribe: (() => void) | null;
 }
 
@@ -1497,6 +1503,9 @@ export class AgentRuntime {
       await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
       for (const run of this.activeRunList(conversation)) run.agent.abort();
       conversation.agent.abort();
+      // Settle the detached idle watcher before dropping the conversation: an
+      // unresolved parked watcher would pin it and could emit on a deleted one.
+      this.teardownChannelDraining(conversation);
       conversation.unsubscribe?.();
       clearPendingProjection(conversation);
       this.conversations.delete(conversationId);
@@ -1927,8 +1936,10 @@ export class AgentRuntime {
       conversation.lastRun = null;
       conversation.pendingChannelTurns = [];
       conversation.channelTurnStartsInProgress = 0;
-      conversation.channelStopRequested = false;
-      conversation.channelDrainWaiters.clear();
+      // Tears down the detached idle watcher too: clearing channelDrainWaiters
+      // without resolving them would orphan a parked watcher and leave
+      // channelIdleEmitInFlight stuck true, blocking every later idle emit.
+      this.teardownChannelDraining(conversation);
       conversation.pendingChildRunNotifications.length = 0;
       conversation.queuedFollowUpSkillListingReservation = null;
       conversation.reactiveCompactRequested = false;
@@ -1949,6 +1960,9 @@ export class AgentRuntime {
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
+    // Settle the detached idle watcher before dropping the conversation: an
+    // unresolved parked watcher would pin it and could emit on a deleted one.
+    this.teardownChannelDraining(conversation);
     conversation.unsubscribe?.();
     clearPendingProjection(conversation);
     this.conversations.delete(conversationId);
@@ -2302,6 +2316,7 @@ export class AgentRuntime {
       channelStopRequested: false,
       channelDrainWaiters: new Set(),
       channelIdleEmitInFlight: false,
+      channelIdleEmitToken: 0,
       unsubscribe: null,
     };
     conversationRef.current = conversation;
@@ -4060,9 +4075,15 @@ export class AgentRuntime {
   }
 
   private maybeClearChannelStopRequested(conversation: AgentConversationState): void {
+    // Clear once the stopped round's runs have drained — deliberately NOT gated on
+    // pendingChannelTurns being empty. `stopConversation` synchronously discards the
+    // pending-at-stop-time turns (discardPendingChannelTurns), and hand-offs are
+    // suppressed while the flag is set, so any pending that appears afterward is a
+    // NEW user send. It must resume the Channel; gating on pending-emptiness would
+    // pin the flag true forever (the late send pumps nothing), deadlocking the
+    // Channel — see the async-accept regression this guards against.
     if (
       conversation.channelStopRequested
-      && conversation.pendingChannelTurns.length === 0
       && this.activeOrStartingChannelRunCount(conversation) === 0
     ) {
       conversation.channelStopRequested = false;
@@ -4174,17 +4195,19 @@ export class AgentRuntime {
     const members = conversation.eventState.conversation?.members ?? [];
     const multiAgent = isMultiAgentConversation(members);
     const hasActiveRuns = this.hasActiveRuns(conversation);
+    // Sort the active-run list once: renderProjection reads it three times below.
+    const runList = this.activeRunList(conversation);
     const projection = buildAgentRenderProjection(conversation.eventState, {
       revision: conversation.revision,
       activeRunId: this.activeRunId(conversation),
-      activeRuns: this.activeRunList(conversation).map((run) => ({
+      activeRuns: runList.map((run) => ({
         runId: run.id,
         agentId: run.executingAgentId,
         addressedByMessageId: run.addressedByMessageId,
         startedAt: run.startedAt,
       })),
       activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
-      channelActivityEntries: this.channelActivityEntries(conversation),
+      channelActivityEntries: this.channelActivityEntries(conversation, runList),
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
       // Mode-specific run state: a multi-agent Channel never drives the DM
@@ -4196,7 +4219,7 @@ export class AgentRuntime {
       thinkingLevel: conversation.agent.state.thinkingLevel,
       pendingToolCallIds: uniqueStrings([
         ...Array.from(conversation.agent.state.pendingToolCalls),
-        ...this.activeRunList(conversation).flatMap((run) => Array.from(run.agent.state.pendingToolCalls)),
+        ...runList.flatMap((run) => Array.from(run.agent.state.pendingToolCalls)),
       ]),
       // Run/provider failures render inline as a failed assistant message (see
       // appendAssistantCompleted). The top-level banner is reserved for transient
@@ -4213,9 +4236,12 @@ export class AgentRuntime {
     };
   }
 
-  private channelActivityEntries(conversation: AgentConversationState): AgentRenderActivityEntry[] {
+  private channelActivityEntries(
+    conversation: AgentConversationState,
+    runList: AgentActiveRunState[] = this.activeRunList(conversation),
+  ): AgentRenderActivityEntry[] {
     const entries = new Map<string, AgentRenderActivityEntry>();
-    for (const run of this.activeRunList(conversation)) {
+    for (const run of runList) {
       if (!run.addressedByMessageId) continue;
       const pendingToolCalls = run.agent.state.pendingToolCalls;
       const persistedRun = conversation.eventState.runs[run.id];
@@ -6025,12 +6051,17 @@ export class AgentRuntime {
       && this.activeChannelRuns(conversation).length === 0;
   }
 
-  private async waitForChannelIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
+  /** Resolve once the Channel has no pending, starting, or active addressed runs. */
+  private async awaitChannelIdle(conversation: AgentConversationState): Promise<void> {
     while (!this.channelFullyIdle(conversation)) {
       await new Promise<void>((resolve) => {
         conversation.channelDrainWaiters.add(resolve);
       });
     }
+  }
+
+  private async waitForChannelIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    await this.awaitChannelIdle(conversation);
     await this.persistAndEmitIdle(conversationId, conversation);
   }
 
@@ -6040,20 +6071,51 @@ export class AgentRuntime {
    * drain asynchronously — so the idle finalization is detached here. At most one
    * watcher runs per conversation; it re-arms if fresh work (a follow-up send or a
    * hand-off turn) arrives during the emit, so the drain always emits exactly once.
+   *
+   * Ownership is tracked by `channelIdleEmitToken`: a teardown (reset/close/delete,
+   * via {@link teardownChannelDraining}) bumps the token and resolves the parked
+   * waiter, so the orphaned watcher neither emits on a dead conversation nor leaves
+   * `channelIdleEmitInFlight` stuck true (which would block every later idle emit).
    */
   private scheduleChannelIdleEmit(conversationId: string, conversation: AgentConversationState): void {
     if (conversation.channelIdleEmitInFlight || this.channelFullyIdle(conversation)) return;
     conversation.channelIdleEmitInFlight = true;
+    const token = conversation.channelIdleEmitToken;
+    const stillOwned = () => conversation.channelIdleEmitToken === token
+      && this.conversations.get(conversationId) === conversation;
     void (async () => {
       try {
-        await this.waitForChannelIdle(conversationId, conversation);
+        await this.awaitChannelIdle(conversation);
+        // A teardown (reset/close/delete) supersedes this watcher; skip the emit
+        // so we never persist/emit on a conversation that is gone or restarted.
+        if (stillOwned()) await this.persistAndEmitIdle(conversationId, conversation);
       } catch (error) {
         this.emitError(conversationId, error instanceof Error ? error.message : String(error));
       } finally {
-        conversation.channelIdleEmitInFlight = false;
-        if (!this.channelFullyIdle(conversation)) this.scheduleChannelIdleEmit(conversationId, conversation);
+        // Only the owning watcher clears the flag and re-arms; a superseded one bows out.
+        if (conversation.channelIdleEmitToken === token) {
+          conversation.channelIdleEmitInFlight = false;
+          if (stillOwned() && !this.channelFullyIdle(conversation)) {
+            this.scheduleChannelIdleEmit(conversationId, conversation);
+          }
+        }
       }
     })();
+  }
+
+  /**
+   * Tear down the detached idle-drain machinery for a conversation being reset,
+   * closed, or deleted: supersede any in-flight watcher (bump the token) and
+   * resolve its parked waiter so the watcher's Promise settles and is collected
+   * instead of pinning the conversation, then clear the stop flag. Idempotent.
+   */
+  private teardownChannelDraining(conversation: AgentConversationState): void {
+    conversation.channelStopRequested = false;
+    conversation.channelIdleEmitInFlight = false;
+    conversation.channelIdleEmitToken += 1;
+    const waiters = [...conversation.channelDrainWaiters];
+    conversation.channelDrainWaiters.clear();
+    for (const resolve of waiters) resolve();
   }
 
   async drainChannelTurnsForTest(conversationId: string): Promise<void> {
@@ -6489,7 +6551,11 @@ export class AgentRuntime {
     if (!activeRun || activeRun.assistantMessageId) return;
     const messageId = this.createMessageId('assistant');
     activeRun.assistantMessageId = messageId;
-    activeRun.assistantText = '';
+    // DM accumulates streamed deltas from an empty base. A Channel turn's
+    // assistantText is only the per-run live-detail buffer (set whole on each
+    // message_update), so keep the prior segment's text visible during a tool
+    // segment instead of blanking the detail view between segments.
+    if (!activeRun.channelTurn) activeRun.assistantText = '';
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'assistant_message.started',
       actor: this.runActor(conversation),
@@ -6572,7 +6638,8 @@ export class AgentRuntime {
       }] : []),
     ]);
     activeRun.assistantMessageId = null;
-    activeRun.assistantText = '';
+    // Keep a Channel turn's last live-detail text across segments (see ensureAssistantStarted).
+    if (!activeRun.channelTurn) activeRun.assistantText = '';
   }
 
   private async appendToolResultMessage(conversationId: string, conversation: AgentConversationState, message: ToolResultMessage) {
