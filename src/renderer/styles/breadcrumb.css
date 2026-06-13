@@ -69,13 +69,12 @@
   align-items: center;
   justify-content: center;
   justify-self: end;
-  border-radius: var(--radius-row);
+  border-radius: var(--radius-pill);
   color: color-mix(in srgb, var(--text) 42%, transparent);
 }
 
 .panel-breadcrumb-close:hover,
 .panel-breadcrumb-close:focus-visible {
-  background: var(--control-hover);
   color: var(--text);
 }
 
@@ -92,13 +91,12 @@
   height: var(--control-size-md);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-row);
+  border-radius: var(--radius-pill);
   color: color-mix(in srgb, var(--text) 42%, transparent);
 }
 
 .panel-page-back-button:hover:not(:disabled),
 .panel-page-back-button:focus-visible:not(:disabled) {
-  background: var(--control-hover);
   color: var(--text);
 }
 
@@ -188,12 +186,11 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: transparent;
   color: var(--text-faint);
 }
 
 .panel-breadcrumb-ellipsis:hover,
 .panel-breadcrumb-ellipsis:focus-visible {
-  background: color-mix(in srgb, var(--text) 11%, transparent);
   color: var(--text-soft);
 }

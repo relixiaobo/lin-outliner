@@ -162,7 +162,7 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
-  border-radius: var(--agent-composer-corner-radius);
+  border-radius: var(--radius-pill);
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm-tight);
@@ -531,8 +531,10 @@
   z-index: var(--z-popover);
   height: 112px;
   overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-1);
   pointer-events: none;
@@ -542,7 +544,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: calc(var(--radius-sm) - 2px);
+  border-radius: calc(var(--radius-overlay-sm) - var(--space-1));
   object-fit: contain;
   image-rendering: auto;
 }

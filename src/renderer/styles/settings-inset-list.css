@@ -22,9 +22,10 @@
 .inset-group-header {
   padding: 0 var(--space-1) var(--space-1);
   color: var(--text-strong);
-  font-size: var(--font-ui-sm);
+  font-size: var(--title-group);
   font-weight: 600;
   line-height: var(--line-ui-sm);
+  user-select: none;
 }
 
 /* The card clips its rows so the first/last row's neutral selection fill follows
@@ -52,7 +53,7 @@
   position: relative;
   display: flex;
   align-items: stretch;
-  min-height: 44px;
+  min-height: var(--row-h-comfortable);
 }
 
 /* Content-aligned hairline (macOS): the separator is INSET so it starts at the

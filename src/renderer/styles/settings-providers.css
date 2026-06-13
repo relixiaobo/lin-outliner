@@ -93,7 +93,6 @@
    flat window base — no card wrapper — so the grouped cards float on it the same
    way the rail does (shared --bg-elevated). */
 .settings-content {
-  --settings-content-max-width: 920px;
   display: flex;
   min-width: 0;
   min-height: 0;

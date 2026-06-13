@@ -31,6 +31,10 @@
   /* panel display title — 24px, the top of the concentric type scale */
   --font-panel-title: 1.5rem;
   --line-panel-title: 2rem;
+  /* Section-title scale: one source for the surface/section heading role. */
+  --title-display: var(--font-panel-title);
+  --title-section: var(--font-heading-lg);
+  --title-group: var(--font-ui-sm);
   font-family: var(--font-family-sans);
   font-size: var(--font-scale);
   color: var(--text-main);
@@ -301,6 +305,10 @@
   --control-size-xs: 20px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
+  /* List-row height tier: each surface picks a deliberate density step. */
+  --row-h-compact: 22px;
+  --row-h-dense: var(--line-content);
+  --row-h-comfortable: 44px;
   /* The switch track is wider than the 28px control box — a documented 30x18
      track (see design-system spec) — so it carries its own width rather than
      aliasing --control-size-xl. */
@@ -352,7 +360,11 @@
      the scroll content needs its own end padding to keep the last lines off the very
      edge (a comfortable end-of-document margin, mirroring the top breathing space). */
   --panel-content-bottom: 64px;
-  --panel-content-max: 720px;
+  /* Reading measure: the outliner's established prose cap. Settings keeps a
+     wider utility cap for two-column control grids. */
+  --reading-max: 720px;
+  --settings-content-max-width: 920px;
+  --panel-content-max: var(--reading-max);
   --resize-cursor: ew-resize;
   --resize-hit-width: 10px;
   /* tab tokens are subtle and die with the global tab strip in Phase 4 */
@@ -393,6 +405,10 @@
   --z-modal: 200;
   --z-toast: 300;
   --row-edge: 6px;
+  /* Text reading gutters are intentionally tiered by surface affordance:
+     outliner = --panel-content-x + --row-leading-width, agent =
+     --agent-content-x, settings = inset-row text padding. Do not flatten them
+     into one value; converge within a surface instead. */
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;

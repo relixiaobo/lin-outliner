@@ -72,7 +72,7 @@
 .panel-title-editor .row-editor {
   display: inline-block;
   color: var(--text);
-  font-size: var(--font-panel-title);
+  font-size: var(--title-display);
   font-weight: 600;
   line-height: var(--line-panel-title);
   letter-spacing: 0;
@@ -135,7 +135,7 @@
 .panel-date-nav-today,
 .panel-date-picker-button {
   height: 24px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
 }
 
 .panel-date-nav-button {
@@ -155,9 +155,16 @@
 .panel-date-nav-today:focus-visible,
 .panel-date-picker-button:hover,
 .panel-date-picker-button:focus-visible,
-.panel-date-picker-button[aria-expanded="true"],
 .calendar-month-nav:hover,
-.calendar-month-nav:focus-visible,
+.calendar-month-nav:focus-visible {
+  color: var(--text-sub);
+}
+
+.panel-date-picker-button[aria-expanded="true"] {
+  background: var(--control-active);
+  color: var(--text-sub);
+}
+
 .calendar-month-day:hover,
 .calendar-month-day:focus-visible {
   background: var(--control-hover);
@@ -180,12 +187,14 @@
 .panel-date-popover {
   position: absolute;
   z-index: var(--z-popover);
-  top: calc(100% + 6px);
+  top: calc(100% + var(--space-3));
   left: 0;
   width: 252px;
-  border-radius: var(--radius-md);
-  background: var(--overlay-bg);
-  box-shadow: var(--overlay-shadow-level-2);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-5);
 }
 
@@ -209,7 +218,7 @@
 .calendar-month-nav {
   width: 26px;
   height: 26px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
 }
 
 .calendar-month-weekdays,
@@ -295,20 +304,19 @@
   flex: 0 0 30px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--row-hover);
+  border-radius: var(--radius-pill);
+  background: transparent;
   color: var(--muted);
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
 .panel-title-more-button:hover,
 .panel-title-more-button:focus-visible {
-  background: var(--tab-active-bg);
   color: var(--text);
 }
 
 .panel-title-more-button.is-active {
-  background: var(--tab-active-bg);
+  background: var(--control-active);
   color: var(--text);
 }
 

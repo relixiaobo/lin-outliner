@@ -123,6 +123,9 @@ Use these default desktop tokens before adding component-specific values:
   --line-heading-lg: 1.625rem; /* 26px */
   --font-panel-title: 1.5rem; /* 24px — top of the type scale */
   --line-panel-title: 2rem; /* 32px */
+  --title-display: var(--font-panel-title);
+  --title-section: var(--font-heading-lg);
+  --title-group: var(--font-ui-sm);
   font-size: var(--font-scale);
 
   color-scheme: light dark;
@@ -282,6 +285,9 @@ Use these default desktop tokens before adding component-specific values:
   --control-size-xs: 20px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
+  --row-h-compact: 22px;
+  --row-h-dense: var(--line-content);
+  --row-h-comfortable: 44px;
   --icon-size-xs: 12px;
   --icon-size-sm: 14px;
   --icon-size-md: 16px;
@@ -342,8 +348,11 @@ Use these default desktop tokens before adding component-specific values:
   --row-selection-start: 21px;
 
   /* Reading measure: outliner content centres in a bounded column on wide panes
-     (~70–80 chars at 16px). Chrome like the breadcrumb hugs the pane edge. */
-  --reading-column-max: 720px;
+     (~70–80 chars at 16px). Settings keeps a wider utility cap for two-column
+     control grids. Chrome like the breadcrumb hugs the pane edge. */
+  --reading-max: 720px;
+  --settings-content-max-width: 920px;
+  --panel-content-max: var(--reading-max);
 
   /* Native overlay scrollbar: thumb is a neutral ink alpha, never coloured and
      never permanently visible. Honors the OS "show scrollbars" setting. */
@@ -646,10 +655,11 @@ rail's own material.
 
 Type roles map onto the Foundations font tokens; do not introduce new sizes.
 
-- **Panel title:** `--font-panel-title / --line-panel-title`, weight `600`.
-- **Headings:** one large heading size `--font-heading-lg` (18, markdown h1);
-  smaller headings reuse `--font-content` (16) and `--font-ui-md` (14) rather
-  than a parallel ladder. The panel display title is `--font-panel-title` (24).
+- **Panel title:** `--title-display / --line-panel-title`, weight `600`.
+- **Headings:** the title scale names the surface heading steps:
+  `--title-display` (24), `--title-section` (18, markdown h1 / large section),
+  and `--title-group` (13, list-section caption). Smaller headings reuse
+  `--font-content` (16) and `--font-ui-md` (14) rather than a parallel ladder.
   Weight `600`.
 - **Body / content (the reading + editing baseline):** `--font-content /
   --line-content` (16/26). Outliner rows, field values, agent assistant prose,
@@ -679,8 +689,18 @@ scale font size with viewport width.
   `15px 4px 15px 8px`) is the shared spine. Breadcrumb, normal rows, reference
   rows, and field rows all align text-start to it.
 - **Reading column:** outliner content is a centered, bounded reading column on
-  wide panels — max width `--reading-column-max` (720px, ~70–80 chars at 16px);
-  chrome like the breadcrumb hugs the panel's left edge instead.
+  wide panels — max width `--reading-max` (720px, ~70–80 chars at 16px), surfaced
+  to panels as `--panel-content-max`. Chrome like the breadcrumb hugs the panel's
+  left edge instead. Settings uses the distinct
+  `--settings-content-max-width` (920px) utility cap because grouped control grids
+  need more measure than prose.
+- **Row-height tier:** `--row-h-compact` (22px), `--row-h-dense` (26px), and
+  `--row-h-comfortable` (44px) are deliberate density steps. Outliner rows use the
+  dense step; Settings inset rows use the comfortable step; agent process rows
+  keep compact line/padding geometry.
+- **Text gutters:** outliner, agent, and settings body text starts are intentionally
+  tiered by each surface's affordance width. Do not flatten them into one x-offset;
+  converge within a surface instead.
 - **Dock widths:** sidebar `216px` (`180–280`); agent dock `330px` (`300–520`).
 
 ### Elevation, Radius & Stroke
@@ -710,12 +730,12 @@ scale font size with viewport width.
 - **Style:** line (outline) icons aligned to SF Symbols' metrics and weight on
   macOS so they sit native beside system glyphs. Use filled variants only for
   selected/active toggles where a fill reads clearer.
-- **Delivery:** a hand-curated **inline-SVG icon set** rendered in the WebView —
-  *not* the SF Symbols font. SF Symbols is licensed for system UI only and cannot
-  be embedded, so we ship our own SVGs drawn to SF's optical grid (16px box,
-  ~1.5px stroke) so they read as native without being the system font. Icons use
-  `currentColor` so they inherit the text-colour tokens. Keep one source set; do
-  not mix icon libraries (no drifting stroke weights or corner styles).
+- **Delivery:** `lucide-react` is the single product icon library rendered in the
+  WebView — *not* the SF Symbols font. SF Symbols is licensed for system UI only
+  and cannot be embedded, so we use lucide outline glyphs sized to the product
+  grid and painted with `currentColor` so they inherit text-colour tokens. Keep
+  one product icon source; provider logos and inline-file masks are separate
+  identity/file-kind assets, not a second control icon library.
 - **Grid & sizing:** icons live in fixed slots — `--icon-size-xs … --icon-size-lg`
   (12/14/16/18). The outliner bullet/chevron slot is `15px`; sidebar and tab icon
   slots are `16px` (bullets, emoji, and svg icons share the slot so titles do not
@@ -1036,6 +1056,10 @@ category history; see "Settings window".)
 
 - Menus and popovers use level 1 overlay shadow.
 - Dialogs and command palette use level 2 overlay shadow.
+- Menus, popovers, command palette, and compact modal dialogs share the
+  `--radius-overlay-sm` radius rung. Menu/popover chrome uses
+  `--material-popover` + `--material-backdrop`; the a11y layer provides the
+  reduced-transparency opaque fallback from the shared material tokens.
 - Overlay shadows are pure drop shadows. Do not add a real outer border to
   floating surfaces.
 - Search/input headers stay visually attached to their surface.
@@ -1083,7 +1107,8 @@ category history; see "Settings window".)
   that appears on hover/focus and opens a dropdown. Today that dropdown contains
   only the configuration entry (agent settings or Channel configuration); future
   row actions should hang from that same menu rather than becoming persistent row
-  chrome.
+  chrome. Hover uses `--control-hover`; the current conversation uses
+  `--selection-bg` so hover and current state remain visually distinct.
 - New/edit Agent and New/edit Channel use dedicated native child windows
   (`?surface=agent-config` / `?surface=channel-config`) opened through
   `lin:open-agent-config` / `lin:open-channel-config`. The dock and Settings list
@@ -1200,8 +1225,9 @@ not Apple chrome. We borrow the interaction, not the chrome.
   surrounding card) and is the single scroll container, so the rail stays put; the
   grouped cards float on it on an opaque `--bg-elevated` surface. The content
   column is constrained
-  (`--settings-content-max-width`) so rows keep a stable reading width instead of
-  stretching across the whole window. There is NO permanent side detail pane:
+  (`--settings-content-max-width`, 920px) so rows keep a stable utility width
+  instead of stretching across the whole window; this is intentionally wider than
+  the 720px prose `--reading-max`. There is NO permanent side detail pane:
   per-provider config opens in its own native window (below). Categories — not
   individual providers — are the top-level rail rows.
 - **General pane — appearance.** The **General** category holds app-wide
@@ -1243,7 +1269,9 @@ not Apple chrome. We borrow the interaction, not the chrome.
 - **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
   (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
   above a rounded inset card whose rows are split by hairlines; geometry derives
-  from the radius / hairline ladders (B9). The card is its own region by COLOUR —
+  from the radius / hairline / row-height ladders (B9). Inset rows use
+  `--row-h-comfortable`; section headers use `--title-group` and are chrome text,
+  not user-selectable content. The card is its own region by COLOUR —
   `--bg-elevated` floating on the content base — per the surface ladder (`--bg-window`
   < `--bg-content` < `--bg-elevated`), with only an inset hairline shadow rather
   than a heavy border. **Row hairlines are

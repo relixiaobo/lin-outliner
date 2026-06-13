@@ -23,7 +23,7 @@
 }
 
 .agent-markdown h1 {
-  font-size: var(--font-heading-lg);
+  font-size: var(--title-section);
   line-height: var(--line-heading-lg);
 }
 
@@ -96,4 +96,3 @@
   line-height: var(--line-code-inline);
   padding: var(--space-hairline) var(--space-2);
 }
-

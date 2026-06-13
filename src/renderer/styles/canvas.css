@@ -97,19 +97,18 @@
 .outline-panel-close {
   position: absolute;
   z-index: var(--z-resize);
-  top: 8px;
-  right: 8px;
+  top: var(--space-4);
+  right: var(--space-4);
   display: inline-flex;
   width: 22px;
   height: 22px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-row);
+  border-radius: var(--radius-pill);
   color: var(--text-faint);
 }
 
 .outline-panel-close:hover {
-  background: var(--fill-1);
   color: var(--text-strong);
 }
 

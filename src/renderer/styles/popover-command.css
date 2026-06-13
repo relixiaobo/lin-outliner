@@ -3,7 +3,7 @@
   position: absolute;
   z-index: var(--z-popover);
   min-width: 220px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-overlay-sm);
   /* Overlay glass (design-system B5 / D2). --material-backdrop carries the PR-B
      reduced-transparency / high-contrast opaque fallback for free. */
   background: var(--material-popover);
@@ -161,4 +161,3 @@
   font-size: var(--font-ui-sm);
   padding: calc(var(--space-3) + var(--space-hairline)) var(--space-4);
 }
-
