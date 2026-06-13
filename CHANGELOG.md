@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Skillify v2 — built-in skill-authoring workflow (PR #230, codex-3)** — the
+  built-in `/skillify` skill body is reworked from a short 6-step note into a
+  structured 7-step Tenon-native workflow: understand-before-asking (no
+  over-interview), choose the skill path (`~/.agents/skills/<name>/SKILL.md` for
+  personal or the workspace `.agents/skills` path for repo skills; directory-name
+  identity, no `name:` frontmatter), draft the supported `SKILL.md` shape, keep
+  create vs update distinct (read-first + focused `file_edit` on updates), treat
+  `allowed-tools` as an authored runtime contract (the tools used to author a
+  skill are not the future skill's preapproval; broad grants are flagged),
+  preview and confirm via `ask_user_question`, then write and explain trust
+  state. Reinforces — does not relax — the existing skill-write safety floor
+  (ordinary `file_write`/`file_edit`, no model-facing CRUD tool; born unratified,
+  so model-invocable only after exact-byte acceptance). Spec:
+  `docs/spec/agent-skills.md`.
 - **Async Channel message bus (PR #231, cc)** — multi-agent Channels now behave
   like an IM group instead of a special case of the single-run DM composer. An
   addressed `agent_send_message` **returns on acceptance** (the user message is

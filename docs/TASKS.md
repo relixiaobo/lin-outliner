@@ -368,7 +368,9 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
   hot-reload, no allowed-tools self-escalation, opt-in curation). Extracted from
   conversation-model (§Skills) + self-modification (§7/§8) so skills live in one place.
-  See `docs/plans/agent-skills-authoring.md`.
+  **Skillify v2 body shipped (#230)** — the structured authoring workflow on the
+  built-in `/skillify` skill; remaining active work is the **NL save-as-skill +
+  diff/preview creative-UX**. See `docs/plans/agent-skills-authoring.md`.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
   `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
@@ -616,6 +618,25 @@ see Recently completed). Remaining Layer-2/3 lanes:
 
 ## Recently completed
 
+- **Skillify v2 — built-in skill-authoring workflow** (codex-3, PR #230,
+  plan-track) — rewrites the built-in `/skillify` skill body from a 6-step note
+  into a structured 7-step Tenon-native workflow: understand-before-asking (no
+  over-interview), choose the skill path (`~/.agents/skills/<name>/SKILL.md` or
+  the workspace `<ws>/.agents/skills/<name>/SKILL.md`, directory-name identity, no
+  `name:` frontmatter), draft the supported `SKILL.md` shape, keep create/update
+  distinct (read-first + focused `file_edit` for updates), treat `allowed-tools`
+  as an authored runtime contract (separate authoring tools from the future
+  skill's preapproval, flag broad grants), preview + confirm via
+  `ask_user_question`, then write/report/explain trust (born unratified:
+  slash-invocable immediately, model-invocable only after exact-byte acceptance).
+  Reinforces — does not relax — the skill-write safety floor (ordinary
+  `file_write`/`file_edit`, no CRUD tool; safety = invocation-time ratification).
+  Spec `agent-skills.md` synced in-change. Gate (main): clean merge over 28
+  unrelated commits (no file overlap with main since merge-base), typecheck +
+  `agentSkills` test (42 pass / 0 fail) green on the merged state; manual +
+  automated gate (content + test change — no billed code-review). The
+  `agent-skills-authoring` plan stays `in-progress` (NL save-as-skill +
+  diff/preview creative-UX remain).
 - **channel-async-message-bus** (cc, PR #231, plan-track) — Channels now behave
   like an async IM group: an addressed `agent_send_message` **returns on
   acceptance** (enqueue + project), not when the addressed run finishes, instead of
