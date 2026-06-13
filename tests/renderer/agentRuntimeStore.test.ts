@@ -819,7 +819,7 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     await store.getSnapshot().newConversation({
-      agentIds: ['built-in:tenon:assistant', 'built-in:tenon:general'],
+      agentIds: ['built-in:tenon:assistant', 'user:mock:self'],
       title: 'New channel',
     });
 
@@ -1041,7 +1041,7 @@ describe('agent runtime store', () => {
     const unsubscribe = store.subscribe(() => {});
 
     await store.getSnapshot().newConversation({
-      agentIds: ['built-in:tenon:assistant', 'built-in:tenon:general'],
+      agentIds: ['built-in:tenon:assistant', 'user:mock:self'],
       title: 'New channel',
     });
     restore.resolve(restored);

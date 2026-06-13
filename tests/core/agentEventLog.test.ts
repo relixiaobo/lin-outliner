@@ -1047,7 +1047,7 @@ describe('agent event log', () => {
         name: 'research',
         description: 'research docs',
         prompt: 'Research this.',
-        agentType: 'general',
+        agentType: 'researcher',
         contextMode: 'fresh',
       },
       {
@@ -1066,7 +1066,7 @@ describe('agent event log', () => {
     expect(state.childRuns['child-1']).toMatchObject({
       id: 'child-1',
       name: 'research',
-      agentType: 'general',
+      agentType: 'researcher',
       parentRunId: 'run-parent',
       status: 'completed',
       result: 'Done.',

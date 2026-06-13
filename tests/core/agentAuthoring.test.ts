@@ -187,17 +187,17 @@ describe('agent authoring file operations', () => {
 
   test('duplicateAgentDefinitionFile copies a built-in into an editable user copy', async () => {
     const builtIn: AgentDefinition = {
-      name: 'general', source: 'built-in', rootDir: 'built-in', agentFile: 'built-in/general',
-      description: 'General-purpose child run', body: 'You are a focused child agent.',
+      name: 'assistant', displayName: 'Tenon Assistant', source: 'built-in', rootDir: 'built-in', agentFile: 'built-in/assistant',
+      description: 'Default Tenon assistant profile', body: 'You are Tenon Assistant.',
     };
-    const { agentFile } = await duplicateAgentDefinitionFile({ source: builtIn, newName: 'general-copy', storage: 'project', localRoot: root });
+    const { agentFile } = await duplicateAgentDefinitionFile({ source: builtIn, newName: 'assistant-copy', storage: 'project', localRoot: root });
     const raw = await readFile(agentFile, 'utf8');
-    expect(definitionFromRaw(raw).body).toBe('You are a focused child agent.');
+    expect(definitionFromRaw(raw).body).toBe('You are Tenon Assistant.');
   });
 
   test('refuses to edit or delete a built-in agent', async () => {
     const builtIn: AgentDefinition = {
-      name: 'general', source: 'built-in', rootDir: 'built-in', agentFile: 'built-in/general',
+      name: 'assistant', displayName: 'Tenon Assistant', source: 'built-in', rootDir: 'built-in', agentFile: 'built-in/assistant',
       description: 'x', body: '',
     };
     await expect(updateAgentDefinitionFile({ existing: builtIn, input: SAMPLE, localRoot: root })).rejects.toThrow(/Built-in/);

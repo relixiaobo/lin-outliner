@@ -15,12 +15,20 @@ import { applyMacWindowCorner } from './nativeWindowCorner';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
+  AGENT_CONFIG_AGENT_PARAM,
+  AGENT_CONFIG_MODE_PARAM,
+  CHANNEL_CONFIG_CONVERSATION_PARAM,
+  CHANNEL_CONFIG_MODE_PARAM,
+  SETTINGS_AGENT_MODE_PARAM,
+  SETTINGS_AGENT_CREATE_VALUE,
   SETTINGS_AGENT_PARAM,
   SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
   isSettingsCategoryTarget,
+  type AgentConfigMode,
+  type ChannelConfigMode,
   type ProviderConfigMode,
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
@@ -205,11 +213,19 @@ const assetService = new AssetService(() => join(app.getPath('userData'), 'asset
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
+let agentConfigWindow: BrowserWindow | null = null;
+let channelConfigWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
 const DEFAULT_RECENT_LOCAL_FILE_LIMIT = 6;
+const AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS = {
+  width: 620,
+  height: 680,
+  minWidth: 520,
+  minHeight: 560,
+} as const;
 const LOCAL_FILE_SEARCH_TIMEOUT_MS = 1200;
 const LOCAL_FILE_ICON_TIMEOUT_MS = 250;
 const LOCAL_FILE_ICON_SIZE: Electron.FileIconOptions['size'] = 'normal';
@@ -874,22 +890,25 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // region. It isn't persisted across launches.
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; agentId?: unknown };
+  const input = raw as { category?: unknown; agentId?: unknown; agentCreate?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
+  const agentCreate = input.agentCreate === true;
   const agentId = typeof input.agentId === 'string' && input.agentId.trim()
     ? input.agentId.trim()
     : undefined;
   return {
-    ...(category ? { category } : {}),
-    ...(agentId ? { agentId } : {}),
+    ...(agentCreate ? { agentCreate: true } : {}),
+    ...(!agentCreate && category ? { category } : {}),
+    ...(!agentCreate && agentId ? { agentId } : {}),
   };
 }
 
 function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
   return {
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
-    ...(!target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+    ...(target.agentCreate ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_MODE_PARAM]: SETTINGS_AGENT_CREATE_VALUE } : {}),
+    ...(!target.agentCreate && target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
+    ...(!target.agentCreate && !target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
   };
 }
 
@@ -968,36 +987,96 @@ function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
 // its own Cancel / Save), opaque, fixed-size, centred over the parent. Security
 // defaults (A3) match every other window.
 function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) {
-  const parent = settingsWindow ?? undefined;
   // Replace any open config window (clicking another provider re-targets it).
-  if (providerConfigWindow) {
+  if (isLiveWindow(providerConfigWindow)) {
     // Abort any in-flight sign-in tied to the window we're replacing, so its
     // loopback server / parked prompts don't leak and stale events can't reach
     // the new window. (Only this provider's login can be in flight here.)
     oauthLoginManager.cancelAll();
     providerConfigWindow.close();
-    providerConfigWindow = null;
   }
+  providerConfigWindow = null;
 
-  const bounds = parent?.getBounds();
   const width = 460;
   const height = 384;
-  const position = bounds
+  const target = createConfigChildWindow({
+    title: getMessages(effectiveLocale()).window.providerConfigTitle,
+    width,
+    height,
+    resizable: false,
+    parent: liveWindow(settingsWindow),
+    query: {
+      [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
+      [PROVIDER_CONFIG_PROVIDER_PARAM]: providerId,
+      [PROVIDER_CONFIG_MODE_PARAM]: mode,
+    },
+  });
+  providerConfigWindow = target;
+
+  target.on('closed', () => {
+    // Act only on a genuine close of the *current* window — a re-target already
+    // cancelled the old login and reassigned the ref. Closing the live window
+    // must abort its in-flight sign-in (loopback server / parked prompts).
+    if (providerConfigWindow === target) {
+      oauthLoginManager.cancelAll();
+      providerConfigWindow = null;
+    }
+  });
+}
+
+function isLiveWindow(window: BrowserWindow | null | undefined): window is BrowserWindow {
+  return Boolean(window && !window.isDestroyed());
+}
+
+function liveWindow(window: BrowserWindow | null | undefined): BrowserWindow | undefined {
+  return isLiveWindow(window) ? window : undefined;
+}
+
+function centeredChildWindowPosition(parent: BrowserWindow | null | undefined, width: number, height: number) {
+  const bounds = isLiveWindow(parent) ? parent.getBounds() : undefined;
+  return bounds
     ? {
         x: Math.round(bounds.x + (bounds.width - width) / 2),
         y: Math.round(bounds.y + Math.max(48, (bounds.height - height) / 2)),
       }
     : {};
+}
 
-  providerConfigWindow = new BrowserWindow({
-    title: getMessages(effectiveLocale()).window.providerConfigTitle,
+function loadRendererSurface(
+  target: BrowserWindow,
+  query: Record<string, string>,
+) {
+  if (RENDERER_DEV_URL) {
+    const url = new URL(RENDERER_DEV_URL);
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+    void target.loadURL(url.toString());
+  } else {
+    void target.loadFile(join(__dirname, '../renderer/index.html'), { query });
+  }
+}
+
+function createConfigChildWindow(options: {
+  title: string;
+  width: number;
+  height: number;
+  minWidth?: number;
+  minHeight?: number;
+  parent?: BrowserWindow;
+  query: Record<string, string>;
+  resizable: boolean;
+}): BrowserWindow {
+  const { width, height, parent } = options;
+  const target = new BrowserWindow({
+    title: options.title,
     width,
     height,
-    ...position,
+    ...(options.minWidth ? { minWidth: options.minWidth } : {}),
+    ...(options.minHeight ? { minHeight: options.minHeight } : {}),
+    ...centeredChildWindowPosition(parent, width, height),
     parent,
     modal: Boolean(parent),
     show: false,
-    resizable: false,
+    resizable: options.resizable,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -1011,7 +1090,6 @@ function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) 
     },
   });
 
-  const target = providerConfigWindow;
   hardenWebContents(target.webContents);
   attachNativeContextMenu(target.webContents);
   applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
@@ -1019,28 +1097,81 @@ function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) 
     applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
     target.show();
   });
+  loadRendererSurface(target, options.query);
+  return target;
+}
 
-  const query = {
-    [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
-    [PROVIDER_CONFIG_PROVIDER_PARAM]: providerId,
-    [PROVIDER_CONFIG_MODE_PARAM]: mode,
-  };
-  if (RENDERER_DEV_URL) {
-    const url = new URL(RENDERER_DEV_URL);
-    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
-    void target.loadURL(url.toString());
-  } else {
-    void target.loadFile(join(__dirname, '../renderer/index.html'), { query });
+function configChildWindowParent(excluded: BrowserWindow | null = null): BrowserWindow | undefined {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (isLiveWindow(focused) && focused !== excluded) {
+    if (focused === providerConfigWindow || focused === agentConfigWindow || focused === channelConfigWindow) {
+      return liveWindow(focused.getParentWindow()) ?? liveWindow(settingsWindow) ?? liveWindow(mainWindow);
+    }
+    return focused;
   }
+  return liveWindow(settingsWindow) ?? liveWindow(mainWindow);
+}
+
+// Agent and Channel create/edit are their own native config windows, like the
+// provider config child. Settings owns the list; these child windows own the
+// create/edit process.
+function openAgentConfigWindow(agentId: string, mode: AgentConfigMode) {
+  const previous = agentConfigWindow;
+  if (isLiveWindow(previous)) {
+    previous.close();
+  }
+  agentConfigWindow = null;
+
+  const { width, height, minWidth, minHeight } = AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS;
+  const parent = configChildWindowParent(previous);
+  const target = createConfigChildWindow({
+    title: getMessages(effectiveLocale()).window.agentConfigTitle,
+    width,
+    height,
+    minWidth,
+    minHeight,
+    resizable: true,
+    parent,
+    query: {
+      [WINDOW_SURFACE_QUERY_PARAM]: 'agent-config',
+      [AGENT_CONFIG_AGENT_PARAM]: agentId,
+      [AGENT_CONFIG_MODE_PARAM]: mode,
+    },
+  });
+  agentConfigWindow = target;
 
   target.on('closed', () => {
-    // Act only on a genuine close of the *current* window — a re-target already
-    // cancelled the old login and reassigned the ref. Closing the live window
-    // must abort its in-flight sign-in (loopback server / parked prompts).
-    if (providerConfigWindow === target) {
-      oauthLoginManager.cancelAll();
-      providerConfigWindow = null;
-    }
+    if (agentConfigWindow === target) agentConfigWindow = null;
+  });
+}
+
+function openChannelConfigWindow(conversationId: string, mode: ChannelConfigMode) {
+  const previous = channelConfigWindow;
+  if (isLiveWindow(previous)) {
+    previous.close();
+  }
+  channelConfigWindow = null;
+
+  const { width, height, minWidth, minHeight } = AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS;
+  const parent = configChildWindowParent(previous);
+  const target = createConfigChildWindow({
+    title: getMessages(effectiveLocale()).window.channelConfigTitle,
+    width,
+    height,
+    minWidth,
+    minHeight,
+    resizable: true,
+    parent,
+    query: {
+      [WINDOW_SURFACE_QUERY_PARAM]: 'channel-config',
+      [CHANNEL_CONFIG_CONVERSATION_PARAM]: conversationId,
+      [CHANNEL_CONFIG_MODE_PARAM]: mode,
+    },
+  });
+  channelConfigWindow = target;
+
+  target.on('closed', () => {
+    if (channelConfigWindow === target) channelConfigWindow = null;
   });
 }
 
@@ -1272,8 +1403,10 @@ function registerIpc() {
     // Open windows localize their native title bar once at construction; their content
     // re-renders via I18nProvider, but the OS title bar would otherwise stay stale.
     const messages = getMessages(raw);
-    settingsWindow?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
-    providerConfigWindow?.setTitle(messages.window.providerConfigTitle);
+    liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
+    liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
+    liveWindow(agentConfigWindow)?.setTitle(messages.window.agentConfigTitle);
+    liveWindow(channelConfigWindow)?.setTitle(messages.window.channelConfigTitle);
   });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
@@ -1281,13 +1414,29 @@ function registerIpc() {
     const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
     openProviderConfigWindow(providerId, mode);
   });
-  ipcMain.handle('lin:close-provider-config', () => providerConfigWindow?.close());
+  ipcMain.handle('lin:close-provider-config', () => liveWindow(providerConfigWindow)?.close());
+  ipcMain.handle('lin:open-agent-config', (_event, args?: { agentId?: unknown; mode?: unknown }) => {
+    const agentId = typeof args?.agentId === 'string' ? args.agentId : '';
+    const mode: AgentConfigMode = args?.mode === 'create' ? 'create' : 'configure';
+    openAgentConfigWindow(agentId, mode);
+  });
+  ipcMain.handle('lin:close-agent-config', () => liveWindow(agentConfigWindow)?.close());
+  ipcMain.handle('lin:open-channel-config', (_event, args?: { conversationId?: unknown; mode?: unknown }) => {
+    const conversationId = typeof args?.conversationId === 'string' ? args.conversationId : '';
+    const mode: ChannelConfigMode = args?.mode === 'create' ? 'create' : 'configure';
+    openChannelConfigWindow(conversationId, mode);
+  });
+  ipcMain.handle('lin:close-channel-config', () => liveWindow(channelConfigWindow)?.close());
+  ipcMain.handle('lin:agent-navigate-conversation', (_event, conversationId?: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId.trim()) return;
+    liveWindow(mainWindow)?.webContents.send(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, conversationId.trim());
+  });
   // A provider/agent setting changed (from the settings window OR its config child).
   // Tell BOTH the main window (stale provider state) and the settings window (its
   // list reflects the new connection) to re-fetch.
   ipcMain.handle('lin:settings-changed', () => {
-    mainWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
-    settingsWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+    liveWindow(mainWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+    liveWindow(settingsWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
   });
 
   ipcMain.handle(LIN_REPORT_RENDERER_ERROR_CHANNEL, (_event, raw: unknown) => {
@@ -2140,7 +2289,6 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
             ? args.goal
             : undefined,
         seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
-        systemNotice: typeof args.systemNotice === 'string' ? args.systemNotice : undefined,
       });
     case 'agent_list_conversations':
       return agentRuntime.listConversations();

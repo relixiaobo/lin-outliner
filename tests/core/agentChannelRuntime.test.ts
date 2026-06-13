@@ -971,7 +971,7 @@ describe('agent channel runtime', () => {
     expect(entry?.members).not.toContainEqual(reviewer);
     expect(entry?.members).toContainEqual(agentPrincipal(observerAgentId));
 
-    // DM never converts: Channel escalation is a separate named create action.
+    // DMs never convert or accept membership edits.
     const dm = await runtime.restoreLatestConversation();
     await expect(runtime.addConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('DM');
     const dmState = await new AgentEventStore(dataRoot).replay(dm.conversationId);

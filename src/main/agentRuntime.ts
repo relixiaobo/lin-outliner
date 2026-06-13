@@ -170,6 +170,7 @@ import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   AGENT_DELEGATE_TOOL_NAME,
   AgentDelegationRuntime,
+  createTenonAssistantAgentDefinition,
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
@@ -792,7 +793,6 @@ export class AgentRuntime {
     title?: string;
     goal?: string;
     seedText?: string;
-    systemNotice?: string;
   } = {}) {
     const conversationId = this.createChannelId();
     const eventState = createEmptyAgentEventReplayState();
@@ -813,18 +813,6 @@ export class AgentRuntime {
       members,
       goal: title,
     }];
-    const systemNotice = options.systemNotice?.trim();
-    let parentMessageId: string | null = null;
-    if (systemNotice) {
-      parentMessageId = this.createMessageId('system');
-      inputs.push({
-        type: 'user_message.created',
-        actor: systemActor(),
-        messageId: parentMessageId,
-        parentMessageId: null,
-        content: textPersistedContent(systemNotice),
-      });
-    }
     // New-member onboarding floor (ratified): shared substrates only. The optional
     // seed is the Channel's opening context for every member — never a DM transcript.
     const seedText = options.seedText?.trim();
@@ -833,7 +821,7 @@ export class AgentRuntime {
         type: 'user_message.created',
         actor: userActor(),
         messageId: this.createMessageId('user'),
-        parentMessageId,
+        parentMessageId: null,
         content: textPersistedContent(seedText),
       });
     }
@@ -848,8 +836,7 @@ export class AgentRuntime {
 
   /**
    * Add an agent member. On a Channel this is a real `member.added` event.
-   * Canonical DMs are immutable; DM → Channel escalation is a separate creation
-   * action because a DM never converts in place.
+   * Canonical DMs are immutable; only named Channels support membership edits.
    */
   async addConversationMember(conversationId: string, agentId: string) {
     const principal = await this.requireAgentMemberPrincipal(agentId);
@@ -1314,7 +1301,7 @@ export class AgentRuntime {
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const localRoot = this.authoringLocalRoot();
-    return definitions.map((definition) => ({
+    return this.withBuiltInAgentDefinitions(definitions).map((definition) => ({
       ...definition,
       agentId: agentDefinitionAgentId(definition),
       writable: isAgentDefinitionWritable(definition, localRoot),
@@ -1337,6 +1324,15 @@ export class AgentRuntime {
       host: {} as any,
     });
     return tempRuntime.listAllAgentDefinitions();
+  }
+
+  private withBuiltInAgentDefinitions(definitions: readonly AgentDefinition[]): AgentDefinition[] {
+    const builtIn = createTenonAssistantAgentDefinition();
+    const builtInId = agentDefinitionAgentId(builtIn);
+    return [
+      builtIn,
+      ...definitions.filter((definition) => agentDefinitionAgentId(definition) !== builtInId),
+    ];
   }
 
   // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
@@ -1391,7 +1387,8 @@ export class AgentRuntime {
 
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
-    const match = definitions.find((definition) => agentDefinitionAgentId(definition) === agentId);
+    const match = this.withBuiltInAgentDefinitions(definitions)
+      .find((definition) => agentDefinitionAgentId(definition) === agentId);
     if (!match) throw new Error('Agent definition not found.');
     return match;
   }
@@ -6199,7 +6196,7 @@ export class AgentRuntime {
     systemPrompt: string;
     definition: AgentDefinition;
   }> {
-    const definitions = await delegationRuntime.listAllAgentDefinitions();
+    const definitions = this.withBuiltInAgentDefinitions(await delegationRuntime.listAllAgentDefinitions());
     const definition = definitions.find((candidate) => agentDefinitionAgentId(candidate) === agentId);
     if (!definition) throw new Error(`Agent definition not found: ${agentId}`);
     const providerConfig = options.providerConfig ?? await this.getActiveProviderConfig();

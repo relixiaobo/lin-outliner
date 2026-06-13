@@ -97,10 +97,10 @@
   left: var(--chrome-sidebar-toggle-left);
 }
 
-/* The agent toggle is the agent rail's corner control, so it is inset by the rail's own
-   concentric inset (--rail-pad) from the rail edge — i.e. --layout-gap (the rail float) +
-   --rail-pad from the window edge. That puts its right edge on the very line the agent
-   content (header / transcript / composer, all at --rail-pad) sits on: one shared edge. */
+/* The agent toggle is the agent rail's corner control, so its 26px hitbox is inset by
+   the rail's own concentric inset (--rail-pad) from the rail edge — i.e. --layout-gap
+   (the rail float) + --rail-pad from the window edge. Header title geometry aligns to
+   the toggle's internal 16px glyph edge; transcript and composer keep the rail inset. */
 .window-chrome-cluster-right {
   right: calc(var(--layout-gap) + var(--rail-pad));
 }

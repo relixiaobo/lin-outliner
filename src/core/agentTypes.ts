@@ -405,9 +405,10 @@ export interface AgentUserQuestionResolvedEvent {
 }
 
 /**
- * Per-conversation unread/attention signal for the off-floor task plane. Emitted
- * whenever a conversation's folded unread count changes (a task delivered a
- * notification off-floor, or the user opened the conversation and cleared it).
+ * Per-conversation unread/attention signal for the conversation list. Emitted
+ * whenever a conversation's folded unread count changes (new agent-visible
+ * delivery while the user is elsewhere, or the user opened the conversation and
+ * cleared it).
  * Threaded to the renderer's conversation list independently of the active-
  * conversation projection, so badges update across all conversations.
  */

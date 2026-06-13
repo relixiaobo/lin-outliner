@@ -284,11 +284,10 @@ The conversation surface is product-shaped around DMs and Channels:
 configured agent, plus named Channels. Restoring a canonical DM id is
 find-or-create; DMs are never user-created, renamed, deleted, or membership-edited.
 `agent_create_conversation` is the user-facing New Channel command: it requires a
-Channel name, with optional invited agents and an optional opening message. DM to
-Channel escalation creates a new Channel with an explicit system notice; it never
-shares or mutates the source DM transcript. Channel member removal keeps the same
-runtime guards: the coordinator cannot be removed, and removal is blocked while a
-run is active.
+Channel name, with optional invited agents and an optional opening message. DMs
+never convert into Channels, and their transcript is never shared into a Channel.
+Channel member removal keeps the same runtime guards: the coordinator cannot be
+removed, and removal is blocked while a run is active.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,

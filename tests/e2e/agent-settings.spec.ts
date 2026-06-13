@@ -214,7 +214,7 @@ test.describe('agent settings window', () => {
       .locator('.inset-row', { hasText: 'Read outside allowed area' })).toHaveCount(0);
   });
 
-  test('opens agent profile details as a drill-down settings page', async ({ page }) => {
+  test('opens agent config from the Agent Profiles list', async ({ page }) => {
     const settings = await openSettings(page);
     const back = settings.getByRole('button', { name: 'Back' });
     const forward = settings.getByRole('button', { name: 'Forward' });
@@ -222,41 +222,83 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
     await expect(settings.locator('.agent-editor')).toHaveCount(0);
-    await expect(settings.getByRole('switch', { name: 'Toggle general' })).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: 'Tenon Assistant' })).toBeVisible();
+    await expect(settings.getByRole('switch', { name: 'Toggle assistant' })).toHaveCount(0);
+    await expect(settings.getByRole('switch', { name: 'Toggle self' })).toBeVisible();
 
-    await settings.getByRole('button', { name: 'general', exact: true }).click();
-    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
-    await expect(settings.locator('.agent-editor')).toBeVisible();
-    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
-    await expect(settings.getByRole('switch', { name: 'Toggle general' })).toBeVisible();
-    await expect(back).toBeEnabled();
-    await expect(forward).toBeDisabled();
+    await settings.getByRole('button', { name: 'Tenon Assistant' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'built-in:tenon:assistant', mode: 'configure' });
 
-    await back.click();
+    await settings.getByRole('button', { name: 'self', exact: true }).click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
-    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
     await expect(settings.locator('.agent-editor')).toHaveCount(0);
-    await expect(forward).toBeEnabled();
-
-    await forward.click();
-    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
-    await expect(settings.locator('.agent-editor')).toBeVisible();
+    await expect(forward).toBeDisabled();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
   });
 
-  test('opens directly to an agent profile from the settings deep link', async ({ page }) => {
-    const settings = await openSettings(page, '&agent=built-in%3Atenon%3Ageneral');
-    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
-    await expect(settings.locator('.agent-editor')).toBeVisible();
-    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
+  test('opens the built-in Tenon agent config as a view-only profile', async ({ page }) => {
+    const config = await openAgentConfig(page, 'built-in%3Atenon%3Aassistant');
+    await expect(config.getByRole('heading', { name: 'Tenon Assistant' })).toBeVisible();
+    await expect(config.getByText('Default Tenon assistant profile.')).toBeVisible();
+    await expect(config.getByText('Built-in agents are view-only')).toBeVisible();
+    await expect(config.getByLabel('Name')).toHaveValue('Tenon Assistant');
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    await expect(config.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+    await expect(config.getByRole('button', { name: 'Duplicate to my agents' })).toBeVisible();
+  });
+
+  test('agent profile settings deep links resolve to the Agent Profiles list', async ({ page }) => {
+    const settings = await openSettings(page, '&agent=user%3Amock%3Aself');
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
+  });
+
+  test('new-agent settings deep links resolve to the Agent Profiles list', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agents&agentMode=create');
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ mode: 'create' });
+  });
+
+  test('settings deep links treat create as an agent id unless agentMode requests creation', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agents&agent=create');
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'create', mode: 'configure' });
   });
 
   test('renders additional-directory agent profiles as read-only', async ({ page }) => {
     const settings = await openSettings(page, '', { additionalAgentDirectoryAgent: true });
     await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
     await settings.getByRole('button', { name: 'external-reviewer', exact: true }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'user:external123:external-reviewer', mode: 'configure' });
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
 
-    const editor = settings.locator('.agent-editor');
-    await expect(settings.locator('.settings-toolbar-title')).toHaveText('external-reviewer');
+    const config = await openAgentConfig(page, 'user%3Aexternal123%3Aexternal-reviewer', 'configure', { additionalAgentDirectoryAgent: true });
+    const editor = config.locator('.agent-editor');
+    await expect(config.getByRole('heading', { name: 'Edit external-reviewer' })).toBeVisible();
     await expect(editor.getByLabel('Name')).not.toBeEditable();
     await expect(editor.getByLabel('Thinking Level')).toBeDisabled();
     await expect(editor.getByRole('switch', { name: 'Toggle file_read' })).toBeDisabled();
@@ -360,6 +402,72 @@ test.describe('agent settings window', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_provider_config')?.args;
     }).toMatchObject({ providerId: '', mode: 'custom' });
+  });
+});
+
+test.describe('agent and Channel config windows', () => {
+  test('renders the agent config as a titled child window with fixed actions', async ({ page }) => {
+    const config = await openAgentConfig(page, 'user%3Amock%3Aself');
+    await expect(config.getByRole('heading', { name: 'Edit self' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+
+    const actions = await config.locator('.agent-editor-actions').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        position: computed.position,
+        bottom: computed.bottom,
+        left: computed.left,
+        right: computed.right,
+      };
+    });
+    expect(actions.position).toBe('fixed');
+    expect(Number.parseFloat(actions.bottom)).toBeGreaterThan(0);
+    expect(Number.parseFloat(actions.left)).toBeGreaterThan(0);
+    expect(Number.parseFloat(actions.right)).toBeGreaterThan(0);
+  });
+
+  test('renders the Channel config as a titled child window with fixed actions', async ({ page }) => {
+    const config = await openChannelConfig(page, 'mock-agent-channel-planning');
+    await expect(config.getByRole('heading', { name: 'Channel settings' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Save name' })).toBeVisible();
+    await expect(config.locator('.settings-sheet-avatar .settings-sheet-icon-avatar')).toBeVisible();
+
+    const actions = await config.locator('.settings-sheet-actions').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        position: computed.position,
+        bottom: computed.bottom,
+        left: computed.left,
+        right: computed.right,
+      };
+    });
+    expect(actions.position).toBe('fixed');
+    expect(Number.parseFloat(actions.bottom)).toBeGreaterThan(0);
+    expect(Number.parseFloat(actions.left)).toBeGreaterThan(0);
+    expect(Number.parseFloat(actions.right)).toBeGreaterThan(0);
+  });
+
+  test('uses design-system controls inside the Channel config window', async ({ page }) => {
+    const config = await openChannelConfig(page, '', 'create');
+    await expect(config.locator('.channel-config-seed.settings-sheet-row-input')).toBeVisible();
+    await expect.poll(async () => config.locator('.channel-config-member-checkbox .checkbox-mark').count()).toBeGreaterThan(0);
+    await expect(config.locator('input[type="checkbox"]:not(.agent-settings-checkbox input)')).toHaveCount(0);
+
+    const shadows = await config.locator('.settings-sheet-actions').evaluate((element) => {
+      const token = getComputedStyle(document.documentElement).getPropertyValue('--overlay-shadow-level-1').trim();
+      const probe = document.createElement('div');
+      probe.style.boxShadow = token;
+      document.body.appendChild(probe);
+      const normalizedToken = getComputedStyle(probe).boxShadow;
+      probe.remove();
+      return {
+        footer: getComputedStyle(element).boxShadow,
+        token: normalizedToken,
+      };
+    });
+    expect(shadows.footer).toBe(shadows.token);
   });
 });
 
@@ -499,5 +607,28 @@ async function openProviderConfig(page: Page, provider: string, mode = 'configur
   await expect(config).toBeVisible();
   // Wait for the form (after the provider-settings fetch resolves) before asserting.
   await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+  return config;
+}
+
+async function openAgentConfig(
+  page: Page,
+  agent: string,
+  mode = 'configure',
+  options: Parameters<typeof installElectronMock>[1] = {},
+): Promise<Locator> {
+  await installElectronMock(page, options);
+  await page.goto(`/?surface=agent-config&agent=${agent}&mode=${mode}`);
+  const config = page.locator('.agent-config-window');
+  await expect(config).toBeVisible();
+  await expect(config.locator('.agent-editor-actions')).toBeVisible();
+  return config;
+}
+
+async function openChannelConfig(page: Page, conversation: string, mode = 'configure'): Promise<Locator> {
+  await installElectronMock(page);
+  await page.goto(`/?surface=channel-config&conversation=${conversation}&mode=${mode}`);
+  const config = page.locator('.channel-config-window');
+  await expect(config).toBeVisible();
+  await expect(config.locator('.settings-sheet-actions')).toBeVisible();
   return config;
 }

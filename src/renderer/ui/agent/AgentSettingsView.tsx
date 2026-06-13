@@ -8,8 +8,6 @@ import type {
   AgentReasoningLevel,
   AgentSafetyMode,
   AgentDefinitionView,
-  AgentAuthoringInput,
-  AgentStorageLocation,
   AgentMemoryEntryView,
   AgentToolPermissionSettingsView,
   SkillDefinition,
@@ -50,7 +48,6 @@ import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
-import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import {
   ProviderAvatar,
@@ -60,7 +57,6 @@ import {
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { defaultReasoningLevel } from './settingsReasoning';
-import { AgentEditor } from './AgentEditor';
 import {
   COMMON_PERMISSION_RULES,
   buildPermissionExceptionRows,
@@ -79,10 +75,7 @@ interface AgentSettingsViewProps {
 }
 
 type SettingsCategory = SettingsCategoryTarget;
-type SettingsRoute =
-  | { type: 'category'; category: SettingsCategory }
-  | { type: 'agent-detail'; agentId: string }
-  | { type: 'agent-create' };
+type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'section' | 'mutation';
 
 interface DraftConfig {
@@ -204,7 +197,7 @@ const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter']
 const EMPTY_PERMISSION_RULES: AgentToolPermissionSettingsView['permissions'] = { allow: [], ask: [], deny: [] };
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
-  if (target?.agentId?.trim()) return { type: 'agent-detail', agentId: target.agentId.trim() };
+  if (target?.agentCreate || target?.agentId?.trim()) return { type: 'category', category: 'agents' };
   if (target?.category) return { type: 'category', category: target.category };
   return { type: 'category', category: 'providers' };
 }
@@ -214,18 +207,11 @@ function navFromOpenTarget(target: SettingsOpenTarget | undefined): { stack: Set
 }
 
 function routeCategory(route: SettingsRoute): SettingsCategory {
-  return route.type === 'category' ? route.category : 'agents';
+  return route.category;
 }
 
 function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
-  if (left.type !== right.type) return false;
-  if (left.type === 'category') {
-    return left.category === (right as Extract<SettingsRoute, { type: 'category' }>).category;
-  }
-  if (left.type === 'agent-detail') {
-    return left.agentId === (right as Extract<SettingsRoute, { type: 'agent-detail' }>).agentId;
-  }
-  return true;
+  return left.category === right.category;
 }
 
 export function AgentSettingsView({ onApplied, onClose, conversationId, initialTarget }: AgentSettingsViewProps) {
@@ -263,8 +249,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [pendingDeleteAgent, setPendingDeleteAgent] = useState<AgentDefinitionView | null>(null);
   const [memoryEntries, setMemoryEntries] = useState<AgentMemoryEntryView[]>([]);
   const [loadingMemory, setLoadingMemory] = useState(false);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
@@ -284,14 +268,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
-  const routeAgent = route.type === 'agent-detail'
-    ? allAgents.find((agent) => agent.agentId === route.agentId) ?? null
-    : null;
-  const categoryLabel = route.type === 'agent-detail'
-    ? (routeAgent?.displayName || routeAgent?.name || t.settings.categories.agents.label)
-    : route.type === 'agent-create'
-      ? t.settings.agents.createTitle
-      : t.settings.categories[category].label;
+  const categoryLabel = t.settings.categories[category].label;
   const themeOptions = useMemo(() => {
     const g = t.settings.general;
     const labels: Record<ThemeMode, string> = { system: g.themeSystem, light: g.themeLight, dark: g.themeDark };
@@ -314,7 +291,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     setOpenRowMenu(null);
     setError(null);
     setNotice(null);
+    openAgentTarget(target);
   }), []);
+
+  useEffect(() => {
+    openAgentTarget(initialTarget);
+  }, [initialTarget]);
 
   // Load the current appearance preference once so the General pane's segmented
   // control reflects the active theme. Best-effort: if the bridge is unavailable
@@ -423,12 +405,21 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     navigateRoute({ type: 'category', category: next });
   }
 
-  function navigateAgentDetail(agentId: string) {
-    navigateRoute({ type: 'agent-detail', agentId });
+  function openAgentConfig(agentId: string) {
+    void window.lin?.openAgentConfig?.({ agentId, mode: 'configure' });
   }
 
-  function navigateAgentCreate() {
-    navigateRoute({ type: 'agent-create' });
+  function openAgentCreate() {
+    void window.lin?.openAgentConfig?.({ mode: 'create' });
+  }
+
+  function openAgentTarget(target: SettingsOpenTarget | undefined) {
+    if (target?.agentCreate) {
+      openAgentCreate();
+      return;
+    }
+    const agentId = target?.agentId?.trim();
+    if (agentId) openAgentConfig(agentId);
   }
 
   function goBack() {
@@ -561,7 +552,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     [providerChoices],
   );
 
-  const selectedAgent = routeAgent;
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
   const permissionRules = permissionDraft?.permissions ?? EMPTY_PERMISSION_RULES;
   const permissionExceptions = buildPermissionExceptionRows(permissionRules, draft.safetyMode);
@@ -712,90 +702,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       return { ...current, disabledAgents: disabled };
     });
   };
-
-  // Authoring mutations (user-driven). Each IPC returns the freshly reloaded list
-  // (the registry hot-reloads on write), which we set directly; `findCreated`
-  // diffs against the prior ids to navigate to a newly created / renamed agent.
-  async function runAgentMutation(
-    action: () => Promise<AgentDefinitionView[]>,
-    successNotice: string,
-    onSuccess?: (agents: AgentDefinitionView[], priorIds: Set<string>) => void,
-  ) {
-    const requestId = beginRequest('mutation');
-    const priorIds = new Set(allAgents.map((agent) => agent.agentId));
-    setAgentBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const agents = await action();
-      if (isCurrentRequest('mutation', requestId)) {
-        setAllAgents(agents);
-        onSuccess?.(agents, priorIds);
-        setNotice(successNotice);
-      }
-      // Broadcast settings-changed so the main window's chat composer refreshes its
-      // child run picker — a newly authored agent must be pickable (and a deleted one
-      // gone) without a restart. Mirrors runProviderMutation.
-      await onApplied();
-    } catch (caught) {
-      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest('mutation', requestId)) setAgentBusy(false);
-    }
-  }
-
-  function createAgent(input: AgentAuthoringInput, storage: AgentStorageLocation) {
-    void runAgentMutation(
-      () => api.agentCreateAgentDefinition(conversationId || 'workspace', input, storage),
-      t.settings.agents.createdNotice,
-      (agents, priorIds) => {
-        const created = agents.find((agent) => !priorIds.has(agent.agentId));
-        navigateRoute(created ? { type: 'agent-detail', agentId: created.agentId } : { type: 'category', category: 'agents' });
-      },
-    );
-  }
-
-  function updateAgent(agentId: string, input: AgentAuthoringInput) {
-    void runAgentMutation(
-      () => api.agentUpdateAgentDefinition(conversationId || 'workspace', agentId, input),
-      t.settings.agents.savedAgentNotice,
-      (agents, priorIds) => {
-        // A rename changes the agentId (it folds in the name); re-point the route
-        // to the surviving/new id so the editor stays on the same agent.
-        if (!agents.some((agent) => agent.agentId === agentId)) {
-          const next = agents.find((agent) => !priorIds.has(agent.agentId));
-          navigateRoute(next ? { type: 'agent-detail', agentId: next.agentId } : { type: 'category', category: 'agents' });
-        }
-      },
-    );
-  }
-
-  function requestDeleteAgent(agent: AgentDefinitionView) {
-    setPendingDeleteAgent(agent);
-  }
-
-  function confirmDeleteAgent() {
-    const agent = pendingDeleteAgent;
-    setPendingDeleteAgent(null);
-    if (!agent) return;
-    void runAgentMutation(
-      () => api.agentDeleteAgentDefinition(conversationId || 'workspace', agent.agentId),
-      t.settings.agents.deletedNotice,
-      () => navigateRoute({ type: 'category', category: 'agents' }),
-    );
-  }
-
-  function duplicateAgent(agent: AgentDefinitionView) {
-    const newName = `${agent.displayName || agent.name}-copy`;
-    void runAgentMutation(
-      () => api.agentDuplicateAgentDefinition(conversationId || 'workspace', agent.agentId, newName, 'user'),
-      t.settings.agents.duplicatedNotice,
-      (agents, priorIds) => {
-        const created = agents.find((a) => !priorIds.has(a.agentId));
-        if (created) navigateRoute({ type: 'agent-detail', agentId: created.agentId });
-      },
-    );
-  }
 
   function startEditMemory(entry: AgentMemoryEntryView) {
     if (entry.status !== 'active') return;
@@ -1453,57 +1359,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   </InsetGroup>
                 )}
               </section>
-            ) : route.type === 'agent-detail' ? (
-              <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.detailAriaLabel({ name: routeAgent?.name ?? '' })}>
-                {loadingAgents ? (
-                  <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
-                ) : selectedAgent ? (
-                  <>
-                    <InsetGroup ariaLabel={t.settings.agents.detailOptionsAriaLabel({ name: selectedAgent.name })}>
-                      <InsetRow
-                        label={t.settings.agents.enabledLabel}
-                        sublabel={t.settings.agents.enabledSublabel}
-                        trailing={(
-                          <SwitchControl
-                            checked={!isAgentDisabled(selectedAgent.agentId)}
-                            onCheckedChange={() => toggleAgent(selectedAgent.agentId)}
-                            label={t.settings.agents.toggleAgent({ name: selectedAgent.name })}
-                          >
-                            <SwitchMark checked={!isAgentDisabled(selectedAgent.agentId)} />
-                          </SwitchControl>
-                        )}
-                        wrap
-                      />
-                    </InsetGroup>
-
-                    <AgentEditor
-                      key={selectedAgent.agentId}
-                      agent={selectedAgent}
-                      availableSkills={allSkills}
-                      busy={agentBusy}
-                      onCreate={createAgent}
-                      onUpdate={updateAgent}
-                      onDelete={requestDeleteAgent}
-                      onDuplicate={duplicateAgent}
-                    />
-                  </>
-                ) : (
-                  <div className="agent-settings-empty">{t.settings.agents.profileNotFound}</div>
-                )}
-              </section>
-            ) : route.type === 'agent-create' ? (
-              <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.createTitle}>
-                <AgentEditor
-                  key="agent-create-new"
-                  agent={null}
-                  availableSkills={allSkills}
-                  busy={agentBusy}
-                  onCreate={createAgent}
-                  onUpdate={updateAgent}
-                  onDelete={requestDeleteAgent}
-                  onDuplicate={duplicateAgent}
-                />
-              </section>
             ) : (
               <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.sectionAriaLabel}>
                 {loadingAgents ? (
@@ -1515,25 +1370,35 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                         ariaLabel={t.settings.agents.newAgent}
                         leading={<AddIcon size={ICON_SIZE.rowGlyph} aria-hidden />}
                         label={t.settings.agents.newAgent}
-                        onSelect={navigateAgentCreate}
-                        trailing={<ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />}
+                        onSelect={openAgentCreate}
                       />
-                      {allAgents.map((agent) => (
-                        <InsetRow
-                          ariaLabel={agent.name}
-                          dimmed={isAgentDisabled(agent.agentId)}
-                          key={agent.agentId}
-                          label={(
-                            <>
-                              {agent.displayName || agent.name}
-                              <span className="settings-chip">{agent.source}</span>
-                            </>
-                          )}
-                          onSelect={() => navigateAgentDetail(agent.agentId)}
-                          sublabel={agent.description}
-                          trailing={<ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />}
-                        />
-                      ))}
+                      {allAgents.map((agent) => {
+                        const label = agent.displayName || agent.name;
+                        return (
+                          <InsetRow
+                            ariaLabel={label}
+                            dimmed={agent.source !== 'built-in' && isAgentDisabled(agent.agentId)}
+                            key={agent.agentId}
+                            label={(
+                              <>
+                                {label}
+                                <span className="settings-chip">{agent.source}</span>
+                              </>
+                            )}
+                            onSelect={() => openAgentConfig(agent.agentId)}
+                            sublabel={agent.description}
+                            trailing={agent.source === 'built-in' ? null : (
+                              <SwitchControl
+                                checked={!isAgentDisabled(agent.agentId)}
+                                onCheckedChange={() => toggleAgent(agent.agentId)}
+                                label={t.settings.agents.toggleAgent({ name: agent.name })}
+                              >
+                                <SwitchMark checked={!isAgentDisabled(agent.agentId)} />
+                              </SwitchControl>
+                            )}
+                          />
+                        );
+                      })}
                     </InsetGroup>
 
                     <div className="inset-group">
@@ -1585,16 +1450,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
           </div>
         </div>
       )}
-      {pendingDeleteAgent ? (
-        <ConfirmDialog
-          danger
-          title={t.settings.agents.deleteAgent}
-          message={t.settings.agents.deleteConfirm({ name: pendingDeleteAgent.displayName || pendingDeleteAgent.name })}
-          confirmLabel={t.settings.agents.deleteAgent}
-          onCancel={() => setPendingDeleteAgent(null)}
-          onConfirm={confirmDeleteAgent}
-        />
-      ) : null}
     </main>
   );
 }

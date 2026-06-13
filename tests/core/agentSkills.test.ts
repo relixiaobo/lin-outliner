@@ -708,7 +708,7 @@ describe('agent skills', () => {
       includeUserSkills: false,
       executeForkedSkill: async ({ skill, renderedContent }) => ({
         agentId: 'child-run-test',
-        agentType: skill.agent ?? 'general',
+        agentType: skill.agent ?? 'fork',
         status: 'completed',
         result: `fork result: ${renderedContent}`,
       }),
