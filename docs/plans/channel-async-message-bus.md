@@ -176,6 +176,30 @@ This matches the existing renderer store shape (`pendingUserQuestions` and
 `pendingApprovals` maps with stable order) and prevents concurrent Channel runs
 from stealing each other's user input.
 
+## Open Questions
+
+- **Whole-utterance delivery is a product bet, not a technical constraint
+  (confirm at ratification).** Rendering Channel replies only on completion
+  (no token streaming) makes Channels deliberately feel less "live" than DMs —
+  the Slack-like model. This is a UX choice, and the runtime *could* stream
+  Channel runs the same way DMs do. Confirm it is intended before code, because
+  a later "watch a Channel agent compose" or per-run steer would have to revisit
+  the activity-vs-transcript cut in §4. Default: whole-utterance, as written.
+- **Multi-request presentation depth.** §6 makes concurrent approval /
+  `ask_user_question` requests run-scoped and queued (oldest-first, non-
+  overwriting) — that correctness floor is in scope. A richer multi-request UX
+  (e.g. a stacked request tray) is explicitly deferrable to a follow-up.
+
+## Ratification note
+
+This is the **async behavior of the M3 multi-member-Channel + coordinator
+spine**, not greenfield. Ratify it as a continuation of
+`docs/plans/agent-conversation-model.md` (the spine / live design authority) and
+`docs/plans/agent-program.md` (umbrella, M3) — reconcile the projection-field
+split and the send/return contract against those before code, and keep the
+ratified bound that conversation `kind` is never stored (the new fields are a
+derived renderer-facing view only).
+
 ## Risks
 
 - Returning early from Channel send changes command timing; tests that currently
@@ -199,7 +223,9 @@ Checked 2026-06-13:
   `src/renderer/ui/agent/AgentComposerControls.tsx`, Channel/agent specs, and
   focused core/renderer/e2e tests.
 - Spec sync target: fold the shipped runtime behavior into
-  `docs/spec/agent-architecture.md` (Channel runtime section) in the same PR.
+  `docs/spec/agent-architecture.md` (Channel runtime section) in the same PR;
+  also sync `docs/spec/commands.md` for the changed `agent_send_message`
+  contract (Channel send returns on acceptance, not on idle).
 - Main-agent merge gate should place this P1 item in `docs/TASKS.md`; dev agents
   do not edit that file directly.
 
@@ -212,6 +238,11 @@ Checked 2026-06-13:
   persisted immediately and dispatches its own addressed runs.
 - Renderer test: active Channel work never changes the composer primary action
   into Stop or Steer.
+- Core runtime test (concurrency-critical): two concurrent Channel runs each
+  raise a pending approval / `ask_user_question` at the same time — both are
+  retained keyed by `runId`, neither overwrites the other, the UI surfaces the
+  oldest first and preserves the rest, and stopping one run clears only that
+  run's pending request (the others survive).
 - Renderer/E2E test: switching away from an active Channel is allowed, and a
   completed reply increments unread for that conversation.
 - E2E visual check: Channel activity floats above the composer, contains only
