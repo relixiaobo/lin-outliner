@@ -1515,6 +1515,42 @@ stable system prompt. This follows the agent runtime pattern:
   root and then sent as file markers. Runtime still accepts inline text
   attachments for historical events.
 
+### Referenced outliner files (the materialize bridge)
+
+The document stores app-owned bytes as a **handle** (`asset://<id>` on an image /
+attachment node); the agent lives in a **path**-addressed world. The *materialize*
+bridge copies bytes across that boundary so a referenced document file reaches the
+agent the same way a composer attachment does — a readable path, plus inline vision
+for images. This is the input mirror of the `file_write` output side: input and
+output are both a workdir/scratch path the agent reads with `file_read`.
+
+- **Trigger and authorization.** Only nodes the user **explicitly references** into
+  the turn (the composer's `@`-mention `referencedNodes`) are materialized — the
+  explicit reference is the authorization. A merely-embedded asset the user did not
+  reference is never copied, and a referenced plain/text node copies nothing.
+- **At send time** (no lazy-on-read), each referenced image/attachment node with an
+  `assetId` is resolved (`assetService.pathFor`/`lookup`) and copied into the
+  **scratch** root via the same `materializeAgentLocalPath` machinery as composer
+  attachments (size-capped by `MAX_MATERIALIZED_ATTACHMENT_BYTES`; oversized or
+  unreadable assets are skipped, never failing the send).
+- **Images** are additionally inlined as native `ImageContent` blocks for vision
+  (same 4.5 MB base64 budget; if it would exceed the budget the image is still
+  surfaced as a readable path, just not inlined).
+- **Path surfacing.** The materialized read paths are listed in a hidden
+  `<referenced-files>` reminder (one `<file node_id title mime size_bytes path
+  inline_image />` per asset) inside the turn's `<system-reminder>`, instructing the
+  agent to `file_read` them. The renderer keeps the `asset://` handle for its own
+  display; only the agent-facing side gains a path.
+- **Bound.** At most `MAX_REFERENCED_INLINE_IMAGES` images are inlined per turn,
+  **counting the composer image attachments already in the turn**; any beyond that
+  (and every non-image) are still surfaced as readable paths, so a turn that
+  references many images cannot balloon the request with base64. A known oversized
+  image skips the inline read entirely.
+- **Scope.** Materialization is wired into the standard send only; a `/slash`-skill
+  turn (which replaces the user prompt wholesale) and a **steer** message (sent while
+  a run is active, carrying only text) surface the reference marker but not the bytes.
+  Referencing an asset on those paths is a documented no-op for the bytes, not an error.
+
 ### `file_read`
 
 Read a file with bounded output. This is the only tool that should inspect file

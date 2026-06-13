@@ -270,6 +270,7 @@ void pruneAgentScratch(agentScratchRoot).catch((error) => {
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
+  assetResolver: assetService,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });

@@ -4,7 +4,7 @@ import type {
   AgentUserViewOutlineNodeContext,
   AgentUserViewPanelContext,
 } from '../core/agentTypes';
-import { escapeXml } from './agentReminderXml';
+import { xmlAttrs } from './agentReminderXml';
 
 export function buildUserViewContextReminder(context: AgentUserViewContext | null | undefined): string | null {
   const snapshot = createSnapshot(context);
@@ -239,13 +239,6 @@ function formatOutlineLine(node: AgentUserViewOutlineNodeContext): string {
   if (node.childCount && node.childCount > 0) annotation.push(`children=${node.childCount}`);
   if (node.partial && node.partial.total > 0) annotation.push(`partial=${node.partial.included}/${node.partial.total}`);
   return `${'  '.repeat(node.depth)}- %%${annotation.join(' ')}%% ${outlineText(node.title, 'Untitled')}`;
-}
-
-function xmlAttrs(attrs: Record<string, string | null | undefined>): string {
-  const serialized = Object.entries(attrs)
-    .filter((entry): entry is [string, string] => entry[1] !== null && entry[1] !== undefined && entry[1] !== '')
-    .map(([key, value]) => `${key}="${escapeXml(value)}"`);
-  return serialized.length ? ` ${serialized.join(' ')}` : '';
 }
 
 function annotationValue(value: string): string {

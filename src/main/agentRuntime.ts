@@ -31,6 +31,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
@@ -111,7 +112,13 @@ import {
 } from '../core/referenceMarkup';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
-import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import { sniffMimeType } from './assetService';
+import {
+  buildReferencedFilesReminder,
+  selectReferencedAssetNodes,
+  type MaterializedReferencedFile,
+} from './agentReferencedAssets';
 import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
@@ -256,6 +263,7 @@ import type {
   AgentConversationListMeta,
   AgentMemoryEntryView,
   AgentSlashCommandView,
+  AssetMetadata,
   DocumentProjection,
 } from '../core/types';
 import {
@@ -321,6 +329,9 @@ const MAX_ATTACHMENTS = 8;
 const MAX_ATTACHMENT_NAME_LENGTH = 180;
 const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
 const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
+// Upper bound on referenced outliner images inlined for vision in one turn; the rest
+// are still surfaced as readable paths. Mirrors the composer's MAX_ATTACHMENTS spirit.
+const MAX_REFERENCED_INLINE_IMAGES = MAX_ATTACHMENTS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
 const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
@@ -346,6 +357,15 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
 type CompleteSimpleFn = typeof completeSimple;
 type ErrorReporter = (report: ErrorReport) => void | Promise<void>;
 
+/**
+ * Narrow view of the asset store the runtime needs to materialize a referenced
+ * outliner file (handle → path) for the agent. `AssetService` satisfies it.
+ */
+export interface AgentAssetResolver {
+  pathFor(id: string): Promise<string | null>;
+  lookup(id: string): Promise<AssetMetadata | null>;
+}
+
 interface AgentRuntimeOptions {
   agentDataRoot?: string;
   agentIdentity?: AgentIdentityRecord;
@@ -353,6 +373,7 @@ interface AgentRuntimeOptions {
   completeSimpleFn?: CompleteSimpleFn;
   localFileRoot?: string;
   scratchRoot?: string;
+  assetResolver?: AgentAssetResolver;
   permissionMode?: AgentPermissionMode;
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
   providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
@@ -1562,9 +1583,10 @@ export class AgentRuntime {
         conversation.skillRuntime.resetRunPermissionRules();
         this.beginDebugQuery(conversation);
       }
+      const normalizedUserViewContext = normalizeAgentUserViewContext(userViewContextInput);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
         conversationId,
-        normalizeAgentUserViewContext(userViewContextInput),
+        normalizedUserViewContext,
       );
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
@@ -1591,13 +1613,29 @@ export class AgentRuntime {
       const agentListingReminder = slashSkillPrompt || multiAgent
         ? null
         : await this.buildAgentListingReminder(conversation);
-      const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, attachments, {
-        memoryReminder,
-        outlinerContext,
-        userViewContextReminder: userViewReminderText,
-        skillListingReminder,
-        agentListingReminder,
-      }, now);
+      let prompt: UserMessage;
+      if (slashSkillPrompt) {
+        // A slash-skill turn replaces the user prompt wholesale, so referenced
+        // assets are not materialized for it (nothing would surface them).
+        prompt = slashSkillPrompt;
+      } else {
+        // Materialize bridge: hand the agent the bytes of any outliner image /
+        // attachment node the user explicitly referenced (images also inline for
+        // vision). The composer images already in this turn count against the inline cap.
+        const composerInlineImages = attachments.reduce((count, a) => count + (a.kind === 'image' ? 1 : 0), 0);
+        const referencedAssets = await this.materializeReferencedAssetNodes(
+          normalizedUserViewContext?.referencedNodes,
+          composerInlineImages,
+        );
+        prompt = buildUserPromptMessage(messageText, [...attachments, ...referencedAssets.imageAttachments], {
+          memoryReminder,
+          outlinerContext,
+          userViewContextReminder: userViewReminderText,
+          referencedFilesReminder: buildReferencedFilesReminder(referencedAssets.files),
+          skillListingReminder,
+          agentListingReminder,
+        }, now);
+      }
       if (multiAgent) {
         const addressedTo = this.resolveAddressedMembers(messageText, channelMembers);
         const messageId = await this.appendUserPromptEvent(conversationId, conversation, prompt, { addressedTo });
@@ -7142,10 +7180,103 @@ export class AgentRuntime {
     }
     return { attachments: out, pathMap };
   }
+
+  // Materialize bridge (handle → path): when the user references outliner image /
+  // attachment nodes into a message, copy their asset-store bytes into the agent
+  // scratch root and hand them over the same way a composer attachment arrives —
+  // a readable path, plus a base64 image block for vision. The renderer keeps the
+  // `asset://` handle for its own display; only the agent-facing side gains a path.
+  private async materializeReferencedAssetNodes(
+    referencedNodes: ReadonlyArray<{ nodeId: string; title?: string }> | undefined,
+    alreadyInlinedImages = 0,
+  ): Promise<{ imageAttachments: AgentImageAttachmentInput[]; files: MaterializedReferencedFile[] }> {
+    const resolver = this.options.assetResolver;
+    if (!resolver || !referencedNodes || referencedNodes.length === 0) {
+      return { imageAttachments: [], files: [] };
+    }
+    let projection: DocumentProjection;
+    try {
+      projection = this.outlinerToolHost.getProjection();
+    } catch {
+      return { imageAttachments: [], files: [] };
+    }
+    const selected = selectReferencedAssetNodes(projection, referencedNodes);
+    if (selected.length === 0) return { imageAttachments: [], files: [] };
+
+    const root = this.localFileRoot();
+    const scratch = this.scratchRoot();
+    const imageAttachments: AgentImageAttachmentInput[] = [];
+    const files: MaterializedReferencedFile[] = [];
+    for (const ref of selected) {
+      try {
+        const assetPath = await resolver.pathFor(ref.assetId);
+        if (!assetPath) continue;
+        const meta = await resolver.lookup(ref.assetId);
+        let mimeType = meta?.mimeType || ref.nodeMimeType || '';
+        const name = meta?.originalFilename || ref.nodeFileName || ref.title || 'attachment';
+        const sizeBytes = meta?.byteSize ?? ref.nodeFileSize ?? 0;
+        // Copies into scratch; throws (and we skip) when the asset is larger than
+        // MAX_MATERIALIZED_ATTACHMENT_BYTES, matching composer-attachment behavior.
+        const scratchPath = await materializeAgentLocalPath(root, scratch, assetPath, name);
+
+        // Inline images for vision — best-effort and bounded. The count cap (which
+        // includes composer images already in this turn) plus the per-image base64
+        // budget keep one turn from ballooning; the size pre-check avoids reading a
+        // large file we already know cannot fit. The path entry below is emitted
+        // regardless, so a skipped/failed inline still leaves the file readable.
+        let inlineImage = false;
+        let inlineMime = normalizeInlineImageMimeType(mimeType);
+        const underCountCap = (alreadyInlinedImages + imageAttachments.length) < MAX_REFERENCED_INLINE_IMAGES;
+        if ((inlineMime || ref.isImageNode) && underCountCap && withinInlineByteBudget(sizeBytes)) {
+          try {
+            const bytes = await readFile(scratchPath);
+            // An image node whose metadata gave no canonical image mime: sniff the
+            // bytes — the node type already proves the asset is an image.
+            if (!inlineMime && ref.isImageNode) {
+              const sniffed = sniffMimeType(bytes, name);
+              if (sniffed) {
+                if (!mimeType) mimeType = sniffed;
+                inlineMime = normalizeInlineImageMimeType(sniffed);
+              }
+            }
+            const dataBase64 = bytes.toString('base64');
+            if (inlineMime && dataBase64.length <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS) {
+              imageAttachments.push({
+                id: randomUUID(),
+                ref: name,
+                kind: 'image',
+                name,
+                mimeType: inlineMime,
+                sizeBytes,
+                dataBase64,
+                path: scratchPath,
+              });
+              inlineImage = true;
+            }
+          } catch {
+            // Inlining is best-effort; fall through and still surface the path.
+          }
+        }
+        if (!mimeType) mimeType = 'application/octet-stream';
+        files.push({ nodeId: ref.nodeId, title: ref.title, mimeType, sizeBytes, path: scratchPath, inlineImage });
+      } catch {
+        // A referenced asset that is missing, oversized, or unreadable is skipped
+        // rather than failing the whole send.
+      }
+    }
+    return { imageAttachments, files };
+  }
 }
 
 function isDirectoryAttachment(attachment: AgentPathBackedAttachment): boolean {
   return attachment.kind === 'file' && attachment.mimeType === 'inode/directory';
+}
+
+// Whether a known byte size could possibly fit the inline base64 budget (base64
+// length ≈ ceil(bytes / 3) * 4). A size of 0 means "unknown" — let the caller read
+// and check the real encoded length.
+function withinInlineByteBudget(sizeBytes: number): boolean {
+  return sizeBytes <= 0 || Math.ceil(sizeBytes / 3) * 4 <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS;
 }
 
 // The instruction text for a scheduled command fire: the brief, plus a bounded
@@ -7165,6 +7296,7 @@ function buildUserPromptMessage(
     memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
+    referencedFilesReminder?: string | null;
     skillListingReminder?: string | null;
     agentListingReminder?: string | null;
   } = {},
@@ -7305,6 +7437,7 @@ function buildTurnReminderBlocks(
     memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
+    referencedFilesReminder?: string | null;
     skillListingReminder?: string | null;
     agentListingReminder?: string | null;
   },
@@ -7316,6 +7449,7 @@ function buildTurnReminderBlocks(
     context.memoryReminder,
     context.outlinerContext,
     context.userViewContextReminder,
+    context.referencedFilesReminder,
     context.skillListingReminder,
     context.agentListingReminder,
   ]);
