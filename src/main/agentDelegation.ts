@@ -154,6 +154,12 @@ export interface AgentChildAgentCreateInput {
   systemPrompt: string;
   executingAgentId: string;
   parentAgentId: string;
+  /**
+   * The consultee to attribute this run's gated/denied approvals to (its own id
+   * for a fresh consult, the inherited consultee for a fork, undefined for the
+   * user's own agent). Resolved to a mention token by the approval card.
+   */
+  requestedByAgentId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
   model?: string;
@@ -246,6 +252,12 @@ export interface AgentDelegationRuntimeOptions {
   depth?: number;
   ancestry?: string[];
   maxDepth?: number;
+  /**
+   * The consultee this runtime executes as, for approval attribution — set when
+   * this runtime IS a consulted agent (a fresh child) or a fork descending from
+   * one; undefined for the user's own top agent. A run's forks inherit it.
+   */
+  requestedByAgentId?: string;
   host: AgentDelegationRuntimeHost;
 }
 
@@ -337,6 +349,7 @@ export class AgentDelegationRuntime {
   private readonly ancestry: string[];
   private readonly executingAgentId: string;
   private readonly memoryOwnerAgentId: string;
+  private readonly requestedByAgentId?: string;
   private readonly host: AgentDelegationRuntimeHost;
   private readonly runs = new Map<string, DelegationRunState>();
   private readonly names = new Map<string, string>();
@@ -354,6 +367,7 @@ export class AgentDelegationRuntime {
     this.ancestry = options.ancestry ?? [];
     this.executingAgentId = options.executingAgentId;
     this.memoryOwnerAgentId = options.memoryOwnerAgentId ?? options.executingAgentId;
+    this.requestedByAgentId = options.requestedByAgentId;
     this.host = options.host;
     this.registry = new AgentDefinitionRegistry({
       localRoot: this.localRoot,
@@ -770,10 +784,19 @@ export class AgentDelegationRuntime {
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
+    // Attribution travels with consultee identity (authoritative `contextMode`, not
+    // an id heuristic): a FRESH child IS a consultee → attribute to it; a FORK runs
+    // as its spawner → INHERIT the spawner's attribution (undefined when the spawner
+    // is the user's own top agent). The child's runtime carries it so the child's
+    // OWN forks inherit it in turn.
+    const requestedByAgentId = input.contextMode === 'fresh'
+      ? input.executingAgentId
+      : this.requestedByAgentId;
     childRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
       executingAgentId: input.executingAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
+      requestedByAgentId,
       localRoot: this.localRoot,
       scratchRoot: this.scratchRoot,
       additionalAgentDirectories: this.additionalAgentDirectories,
@@ -793,6 +816,7 @@ export class AgentDelegationRuntime {
       systemPrompt,
       executingAgentId: input.executingAgentId,
       parentAgentId: input.parentAgentId,
+      requestedByAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
       memoryOriginWorkspace: input.memoryOriginWorkspace,
       model: input.model ?? input.definition.model,

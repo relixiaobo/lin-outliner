@@ -563,6 +563,164 @@ describe('agent runtime childRuns', () => {
     expect(attributions).toEqual([undefined]);
   });
 
+  test('a consultee that forks itself still attributes the fork approval to the consultee', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-nested-fork-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-nested-fork-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const researcherDir = await createAgent(localRoot, 'researcher', [
+      '---',
+      'description: Researches focused questions in isolation.',
+      'tools: ["*"]',
+      '---',
+      'RESEARCHER_AGENT_BODY.',
+    ].join('\n'));
+    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
+
+    const script = scriptedStream(
+      [
+        // Top agent consults @researcher (fresh, depth 1).
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'consult researcher',
+            prompt: 'Inspect the local config.',
+            agent_type: 'researcher',
+          }, { id: 'tool-agent-consult' }),
+        ], { stopReason: 'toolUse' }),
+        // The consultee forks ITSELF (no agent_type, depth 2) — the fork runs AS researcher.
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'fork to read config',
+            prompt: 'Read the env file.',
+          }, { id: 'tool-agent-nested-fork' }),
+        ], { stopReason: 'toolUse' }),
+        // The fork hits an 'ask'-level capability (sensitive read).
+        fauxAssistantMessage([
+          fauxToolCall('file_read', { file_path: path.join(localRoot, '.env') }, { id: 'tool-nested-fork-read' }),
+        ], { stopReason: 'toolUse' }),
+        // Wrap up each level once the read is denied.
+        fauxAssistantMessage(fauxText('Fork done.')),
+        fauxAssistantMessage(fauxText('Researcher done.')),
+        fauxAssistantMessage(fauxText('Parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    const conversationId = conversation.conversationId;
+    const sendPromise = runtime.sendMessage(conversationId, 'Consult the researcher.');
+    let settled = false;
+    sendPromise.finally(() => { settled = true; }).catch(() => undefined);
+
+    const resolved = new Set<string>();
+    const attributions: Array<string | undefined> = [];
+    while (!settled) {
+      const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+        event.type === 'approval_request' && !resolved.has(event.requestId)
+      ));
+      if (approval) {
+        resolved.add(approval.requestId);
+        attributions.push(approval.request.requestedByAgentId);
+        await runtime.resolveApproval(conversationId, approval.requestId, false);
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await sendPromise;
+
+    expect(script.pendingCount()).toBe(0);
+    // The fork runs AS the consultee (researcher), so even though it is a fork it
+    // INHERITS researcher's attribution — its gated read is attributed to the
+    // consultee, never silently dropped (which would read as the TOP agent's own
+    // action in the parent conversation).
+    expect(attributions).toEqual([researcherAgentId]);
+  });
+
+  test('a consultee hard-denial notice is attributed to the consultee', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const researcherDir = await createAgent(localRoot, 'researcher', [
+      '---',
+      'description: Researches focused questions in isolation.',
+      'tools: ["*"]',
+      '---',
+      'RESEARCHER_AGENT_BODY.',
+    ].join('\n'));
+    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'consult researcher',
+            prompt: 'Inspect the local config.',
+            agent_type: 'researcher',
+          }, { id: 'tool-agent-consult' }),
+        ], { stopReason: 'toolUse' }),
+        // The consultee hits a redline-DENY capability (unknown shell) under its own
+        // permissions — surfaced as a tell-only permission notice, not an 'ask'.
+        fauxAssistantMessage([
+          fauxToolCall('bash', { command: '$(cat script.sh)' }, { id: 'tool-child-unknown-shell' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Consultee done.')),
+        fauxAssistantMessage(fauxText('Parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    // The notice is tell-only (non-blocking), so the run settles on its own.
+    await runtime.sendMessage(conversation.conversationId, 'Consult the researcher.');
+
+    expect(script.pendingCount()).toBe(0);
+    const notice = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request' && event.request.kind === 'permission_notice'
+    ));
+    // A consultee's denied action surfaces in the parent conversation attributed to
+    // it too — not only the 'ask' path.
+    expect(notice?.request.requestedByAgentId).toBe(researcherAgentId);
+  });
+
   test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-data-'));

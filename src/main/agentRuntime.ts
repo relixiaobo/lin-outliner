@@ -2539,14 +2539,11 @@ export class AgentRuntime {
     const thinkingLevel = input.effort
       ? resolveSkillEffortOverride(input.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
-    // A consulted agent (a fresh child run) is a DIFFERENT agent than the parent,
-    // so its gated/denied capabilities surface in the parent conversation
-    // attributed to it. A fork runs AS the parent's own agent (executingAgentId
-    // === parentAgentId) and has no consultee, so it stays unattributed like the
-    // parent's own actions. The card resolves the id to its canonical mention.
-    const requestedByAgentId = input.executingAgentId !== input.parentAgentId
-      ? input.executingAgentId
-      : undefined;
+    // Attribution for this run's gated/denied approvals, resolved at the delegation
+    // layer from the authoritative context mode (fresh consult → the consultee;
+    // fork → inherited; the user's own agent → undefined). The card resolves the id
+    // to its canonical mention; undefined leaves it unattributed.
+    const requestedByAgentId = input.requestedByAgentId;
     return createConfiguredAgent(input.conversationId, providerConfig, input.messages, this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: input.localWorkspace,
