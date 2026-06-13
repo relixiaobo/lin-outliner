@@ -728,6 +728,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Unified main-process JSON persistence into one store primitive (PR #226, codex-3)**
+  — the main process had three hand-rolled atomic-write implementations plus two
+  synchronous `writeFileSync` outliers (`agentSettings.ts` / `documentService.ts`
+  / `assetService.ts` / `appPreferences.ts` / `windowState.ts`), each re-deriving
+  temp-file + rename, mode handling, and read-modify-write locking. They now share
+  `src/main/jsonFileStore.ts`: `atomicWriteFile` (+ `writeJsonFileSync` for the two
+  synchronous callers), `readJsonOrDefault`, `writeJsonFile`, and a serialized
+  `updateJsonFile` read-modify-write under a per-path write lock. The lock map is
+  self-pruning (compare-and-delete the settled tail, so unique-path callers like
+  per-asset metadata don't accumulate entries), private-file mode is the single
+  exported `PRIVATE_JSON_FILE_OPTIONS` preset (0600 file / 0700 dir, no-op on
+  Windows), and a same-path nested write throws (`AsyncLocalStorage` guard) instead
+  of deadlocking. Preserves every on-disk format (file names, pretty vs compact,
+  trailing-newline, the plaintext-0600 secret/permission/provenance files) and the
+  secret data-loss guard (a corrupt blob still aborts the mutation rather than
+  overwriting). The asset sidecar write is now awaited before ingest resolves.
+  Zero on-disk format change. Gate (main): high-effort `/code-review` (6 findings,
+  all addressed in the fixup commit), typecheck + `test:core` (963/0) clean. Design
+  folded to `docs/plans/archive/main-json-store-unification.md`.
 - **TASKS.md is the single source of plan status (main, direct merge)** — plan
   status + priority previously lived in both plan-file frontmatter and
   `docs/TASKS.md`, and the two drifted whenever a plan shipped (e.g.

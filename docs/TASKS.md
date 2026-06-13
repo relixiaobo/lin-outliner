@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation runtime hygiene merged, PR #221) |
 | Codex | `lin-outliner-codex/` | — | idle (agent dock + channel config refinement merged, PR #217) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (Tana-style references merged, PR #208) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (main JSON store unification merged, PR #226) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -614,14 +614,6 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
-- **main-json-store-unification** (P2, plan file, **PM-ratified**) — collapse the main
-  process's three hand-rolled atomic-write implementations + two synchronous outliers
-  (`agentSettings.ts:685` / `documentService.ts:841` / `assetService.ts:133` /
-  `appPreferences.ts` / `windowState.ts`) into one shared JSON store primitive
-  (atomic write + per-path lock + optional mode), plus the two adjacent asset-coupling
-  holes (ingest awaits both files; delete invalidates `metaCache`). Zero on-disk format
-  change. **Queues behind PR #180** (same files). See
-  `docs/plans/main-json-store-unification.md`.
 - **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
   small renderer items in one PR: (1) `useWorkspaceLayout.ts:12,115,127` localStorage
   key says `:v3` but the persisted `version` int is `2` — align the int to 3, drop
@@ -635,6 +627,22 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **main-json-store-unification — one shared main-process JSON store primitive**
+  (codex-3, PR #226, plan-track) — collapsed the main process's three hand-rolled
+  atomic-write implementations + two synchronous outliers (`agentSettings.ts` /
+  `documentService.ts` / `assetService.ts` / `appPreferences.ts` / `windowState.ts`)
+  into `src/main/jsonFileStore.ts`: `atomicWriteFile` / `writeJsonFileSync` /
+  `readJsonOrDefault` / `writeJsonFile` + a serialized `updateJsonFile` under a
+  self-pruning per-path write lock (compare-and-delete the settled tail so
+  unique-path callers don't leak), one exported `PRIVATE_JSON_FILE_OPTIONS` (0600/
+  0700) preset, and an `AsyncLocalStorage` guard that throws on a same-path nested
+  write instead of deadlocking. Plus the two asset-coupling holes (ingest awaits the
+  sidecar; delete invalidates `metaCache`). Zero on-disk format change; secret
+  data-loss guard preserved. Gate (main): high-effort `/code-review` — 6 findings
+  (memory leak in the lock map, two sync→async durability regressions, 3× duplicated
+  private-mode helper, nested-write deadlock, redundant double-locking), **all
+  addressed in fixup `fdc83c0`**; re-verified typecheck + `test:core` 963/0 clean.
+  Plan archived `done` (`docs/plans/archive/main-json-store-unification.md`).
 - **Agent file outputs render as chips, not raw JSON (agent-file-model F1)**
   (cc, PR #224, plan-track) — a successful `file_write` / `file_edit` previously
   dumped its raw model-visible envelope (`{ ok, data: { filePath, structuredPatch }}`)
