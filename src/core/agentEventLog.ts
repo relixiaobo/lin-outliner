@@ -935,7 +935,12 @@ export type AgentNotificationKind =
   // user mid-execution, so there is deliberately no child-run→user needs_input trigger.
   | 'needs_input'
   // Reserved (no emitter yet): a cheap no-LLM progress post for a long task.
-  | 'status';
+  | 'status'
+  // A delivered in-Channel peer reply, raised only when the conversation is not
+  // being viewed. Badge-only: it folds into unread like any notification, but the
+  // runtime intentionally skips the OS notification (in-Channel chatter is a count,
+  // not a ding). Carries the speaking run as its source.
+  | 'channel_reply';
 
 /**
  * Provenance for a notification: the off-floor run whose terminal state (or

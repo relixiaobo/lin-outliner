@@ -956,7 +956,8 @@ export function AgentChatPanel({
   const {
     entries,
     error,
-    isStreaming,
+    dmRunActive,
+    channelRunsActive,
     clearSteer,
     editMessage,
     pendingToolCallIds,
@@ -973,7 +974,7 @@ export function AgentChatPanel({
     conversationId,
     conversationTitle,
     members,
-    activityEntries,
+    channelActivityEntries,
     povInspectors,
     steer: steerRuntime,
     childRuns,
@@ -986,6 +987,9 @@ export function AgentChatPanel({
     turnPhase,
     unreadByConversationId,
   } = useLinAgentRuntime();
+  // Any run in flight (DM streaming or Channel work): gates transcript rewrites
+  // (edit/regenerate/retry/branch), which stay blocked while the shared log moves.
+  const anyRunActive = dmRunActive || channelRunsActive;
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [steeringNote, setSteeringNote] = useState<string | null>(null);
@@ -1085,30 +1089,10 @@ export function AgentChatPanel({
   const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
   const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
   const selectedActivityEntry = selectedActivityEntryId
-    ? activityEntries.find((entry) => entry.id === selectedActivityEntryId) ?? null
+    ? channelActivityEntries.find((entry) => entry.id === selectedActivityEntryId) ?? null
     : null;
   const selectedPovInspector = selectedPovAgentId ? povInspectors[selectedPovAgentId] ?? null : null;
   const selectedPovMember = selectedPovAgentId ? memberByAgentId.get(selectedPovAgentId) ?? null : null;
-  // Multi-agent Channel activity drill-in: live in-flight entries are filtered
-  // out of the thread, but each activity item can still open its own detail.
-  const workingEntryByMessageId = useMemo(() => {
-    const byId = new Map<string, AgentMessageEntry>();
-    if (!isMultiAgentChannel) return byId;
-    for (const entry of entries) {
-      if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming) continue;
-      if (entry.nodeId) byId.set(entry.nodeId, entry);
-    }
-    return byId;
-  }, [entries, isMultiAgentChannel]);
-  const workingEntryByRunId = useMemo(() => {
-    const byId = new Map<string, AgentMessageEntry>();
-    if (!isMultiAgentChannel) return byId;
-    for (const entry of entries) {
-      if (entry.kind !== 'message' || entry.message.role !== 'assistant' || !entry.streaming || !entry.runId) continue;
-      byId.set(entry.runId, entry);
-    }
-    return byId;
-  }, [entries, isMultiAgentChannel]);
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -1295,7 +1279,7 @@ export function AgentChatPanel({
     if (!element || !stickToBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
     updateScrollMetrics(element);
-  }, [conversationRows.length, isStreaming, revision, updateScrollMetrics, virtualLayout.totalHeight]);
+  }, [conversationRows.length, dmRunActive, revision, updateScrollMetrics, virtualLayout.totalHeight]);
 
   useEffect(() => {
     rowHeightsRef.current.clear();
@@ -1331,20 +1315,21 @@ export function AgentChatPanel({
   }, [loadSlashCommands]);
 
   useEffect(() => {
-    if (!isStreaming) {
+    // Steering is a DM-only affordance; clear the note when the DM run settles.
+    if (!dmRunActive) {
       setSteeringNote(null);
     }
-  }, [isStreaming]);
+  }, [dmRunActive]);
 
   useEffect(() => {
     if (selectedChildRunId && !childRuns[selectedChildRunId]) setSelectedChildRunId(null);
   }, [selectedChildRunId, childRuns]);
 
   useEffect(() => {
-    if (selectedActivityEntryId && !activityEntries.some((entry) => entry.id === selectedActivityEntryId)) {
+    if (selectedActivityEntryId && !channelActivityEntries.some((entry) => entry.id === selectedActivityEntryId)) {
       setSelectedActivityEntryId(null);
     }
-  }, [activityEntries, selectedActivityEntryId]);
+  }, [channelActivityEntries, selectedActivityEntryId]);
 
   useEffect(() => {
     if (selectedPovAgentId && !povInspectors[selectedPovAgentId]) {
@@ -1511,7 +1496,10 @@ export function AgentChatPanel({
   }
 
   async function handleSelectConversation(targetConversationId: string) {
-    if (isStreaming || targetConversationId === conversationId) return;
+    // Switching away from an active Channel is allowed (Slack-like): only a busy
+    // DM (serial, steerable) blocks navigation. Channel runs continue in the
+    // background and surface unread via conversation_attention.
+    if (dmRunActive || targetConversationId === conversationId) return;
     setHistoryOpen(false);
     setRowActionMenu(null);
     await selectConversation(targetConversationId);
@@ -1597,7 +1585,7 @@ export function AgentChatPanel({
       <AgentMessageRow
         actorLabel={actorLabel}
         actorMention={actorMention}
-        busy={isStreaming}
+        busy={anyRunActive}
         contentKey={row.contentKey}
         entry={displayEntry}
         highlighted={rowMessageId !== null && rowMessageId === highlightedMessageId}
@@ -1765,7 +1753,7 @@ export function AgentChatPanel({
                   >
                     <ButtonControl
                       className="agent-conversation-select agent-conversation-compact-select"
-                      disabled={isStreaming}
+                      disabled={dmRunActive}
                       onClick={() => void handleSelectConversation(conversation.id)}
                     >
                       <AgentIdentityAvatar label={label} mention={mention} size="sm" />
@@ -1800,7 +1788,7 @@ export function AgentChatPanel({
               <span>{t.agent.chat.conversations}</span>
               <IconButton
                 className="agent-conversation-section-action"
-                disabled={isStreaming}
+                disabled={dmRunActive}
                 icon={AddIcon}
                 label={t.agent.chat.newConversation}
                 onClick={() => void handleNewConversation()}
@@ -1828,7 +1816,7 @@ export function AgentChatPanel({
                   }];
                 }) : [];
                 const channelActions: ConversationRowMenuAction[] = [{
-                  disabled: isStreaming,
+                  disabled: anyRunActive,
                   id: 'configure-channel',
                   label: t.agent.chat.configureChannel,
                   onSelect: () => handleConfigureChannel(conversation.id),
@@ -1840,7 +1828,7 @@ export function AgentChatPanel({
                   >
                     <ButtonControl
                       className="agent-conversation-select agent-conversation-compact-select"
-                      disabled={isStreaming}
+                      disabled={dmRunActive}
                       onClick={() => void handleSelectConversation(conversation.id)}
                     >
                       <HashIcon
@@ -1865,7 +1853,7 @@ export function AgentChatPanel({
                     <div className="agent-conversation-row-actions">
                       <ConversationRowMoreMenu
                         actions={channelActions}
-                        disabled={isStreaming && povActions.length === 0}
+                        disabled={dmRunActive && povActions.length === 0}
                         label={t.agent.chat.channelOptions}
                         menuLabel={t.agent.chat.channelOptions}
                         onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
@@ -1951,7 +1939,7 @@ export function AgentChatPanel({
         {isMultiAgentChannel ? (
           <AgentChannelActivityArea
             agentDefinitionById={agentDefinitionById}
-            entries={activityEntries}
+            entries={channelActivityEntries}
             memberByAgentId={memberByAgentId}
             onOpenEntry={setSelectedActivityEntryId}
             onStopEntry={(entry) => {
@@ -1965,7 +1953,7 @@ export function AgentChatPanel({
           currentNodeId={composerCurrentNodeId(userViewContext, index)}
           focusToken={composerFocusToken}
           index={index}
-          isStreaming={isStreaming}
+          isStreaming={dmRunActive}
           members={composerMembers}
           queueSends={isMultiAgentChannel}
           onNodeReferenceOpen={onOpenNodeReference}
@@ -1999,11 +1987,6 @@ export function AgentChatPanel({
       {selectedActivityEntry ? (() => {
         const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
         const stateLabel = activityStateLabel(selectedActivityEntry, t);
-        const selectedWorkingEntry = selectedActivityEntry.messageId
-          ? workingEntryByMessageId.get(selectedActivityEntry.messageId) ?? null
-          : selectedActivityEntry.runId
-            ? workingEntryByRunId.get(selectedActivityEntry.runId) ?? null
-            : null;
         return (
           <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
             <header className="agent-child-run-details-header">
@@ -2022,20 +2005,18 @@ export function AgentChatPanel({
               />
             </header>
             <div className="agent-child-run-details-body">
-              {selectedWorkingEntry ? (
-                <AgentMessageRow
-                  busy={isStreaming}
-                  entry={selectedWorkingEntry}
-                  index={index}
-                  onNodeReferenceOpen={onOpenNodeReference}
-                  onOpenChildRunTranscript={setSelectedChildRunId}
-                  pendingToolCallIds={pendingToolCallIds}
-                  conversationId={conversationId}
-                  streaming
-                  childRunsByParentToolCallId={childRunsByParentToolCallId}
-                  toolResults={toolResults}
-                  turnPhase={turnPhase}
-                />
+              {selectedActivityEntry.streamingText ? (
+                // The live token stream of the running Channel agent (PM-ratified
+                // 2026-06-13): retained per-run from message_update and surfaced
+                // ONLY here — never in the whole-utterance message flow. Tool-call
+                // progress shows in the header state label, not a transcript row.
+                <div className="agent-channel-run-live">
+                  <AgentMarkdown
+                    keyPrefix={`channel-run-live-${selectedActivityEntry.id}`}
+                    streaming
+                    text={selectedActivityEntry.streamingText}
+                  />
+                </div>
               ) : (
                 <div className="agent-child-run-empty">
                   {t.agent.chat.typingNoDetailYet}

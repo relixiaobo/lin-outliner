@@ -96,27 +96,60 @@ clean-cut, no migration).
     (`lastMessageId`), never to the conversation's shared `selectedLeafMessageId`;
     `parentMessageId` remains the regenerate/branch anchor. Hand-off routing is
     persisted on `assistant_message.completed.addressedTo`.
-  - **Delivery (typing model):** Channel replies are not streamed — a typing
-    indicator while the run is active (drill-in opens the run working-state
-    panel), the whole reply lands in the thread on completion. The thread shows
-    **utterances only** (final text; process blocks live behind the drill-in).
-  - **Parallel runtime (shipped in #202):** Channel execution tracks a set of
-    in-flight runs per conversation, capped by a small per-conversation
-    execution limit. Co-addressees dispatch immediately and independently;
-    excess addressed turns wait FIFO behind the cap, not behind a serialized
-    round. A user message sent while Channel runs are active is persisted and
-    routed immediately, with that message as each addressed run's context cut.
-    Replies append when they complete, so transcript order is completion order.
-    The independence cut remains the invariant: a run sees only the log through
-    the message that addressed it, plus its own later records; same-wave
-    co-addressees remain mutually invisible even when another run completes
-    first. DM behavior is untouched (streaming, steer, inline process).
+  - **Delivery (typing model, PM-ratified 2026-06-13):** the Channel **message
+    stream is whole-utterance only** — replies are never token-streamed into the
+    transcript; the whole reply lands in the thread on completion (process blocks
+    live behind the drill-in). The running agent's live `message_update` text is
+    **retained on the run and surfaced in the per-run detail view** (the activity
+    drill-in — "watch a Channel agent compose"), never discarded and never in the
+    message flow. It is kept transiently on the run (`assistantText`, exposed as
+    `channelActivityEntries[].streamingText`), not written to the shared log, so
+    concurrent runs never collide and the transcript stays whole-utterance.
+  - **Parallel runtime (shipped in #202; async view/command layer 2026-06-13):**
+    Channel execution tracks a set of in-flight runs per conversation, capped by a
+    small per-conversation execution limit. Co-addressees dispatch immediately and
+    independently; excess addressed turns wait FIFO behind the cap, not behind a
+    serialized round. **A Channel send/edit/retry returns on acceptance** — it
+    persists the user message and enqueues the addressed turns, then returns
+    without awaiting the runs; the runs drain asynchronously and a single detached
+    watcher (`scheduleChannelIdleEmit`) emits the final idle projection when the
+    Channel goes idle. The watcher is ownership-token-guarded: a conversation
+    reset/close/delete tears it down (`teardownChannelDraining` resolves its parked
+    waiter and bumps the token) instead of leaking it or emitting on a dead
+    conversation. (Tests that need a settled Channel call `drainChannelTurnsForTest`.) A user message sent while Channel runs are active
+    is persisted and routed immediately, with that message as each addressed run's
+    context cut. Replies append when they complete, so transcript order is
+    completion order. The independence cut remains the invariant: a run sees only
+    the log through the message that addressed it, plus its own later records;
+    same-wave co-addressees remain mutually invisible even when another run
+    completes first. DM behavior is untouched (streaming, steer, inline process).
+  - **Projection mode split (2026-06-13):** the renderer-facing projection
+    exposes mode-specific run state instead of one overloaded `isStreaming`:
+    `dmRunActive` + `dmStreaming` drive the DM (or single-agent) composer's
+    stop/steer; `channelRunsActive` + `channelActivityEntries` drive the Channel
+    activity surface. A multi-agent Channel keeps `dmRunActive` false, so its work
+    never turns the composer into Stop/Steer (the composer stays a pure message
+    composer — empty + active shows a disabled Send, never Stop). Conversation
+    `kind` is never stored; the split is derived (`isMultiAgentConversation`).
+    Navigation and unread continue while Channel runs work: switching away from an
+    active Channel is allowed (only a busy DM blocks it), and a completed peer reply
+    bumps unread for a **backgrounded** Channel through the existing
+    `notification.created` / `conversation_attention` fold (a `channel_reply`
+    notification, raised only when the conversation is not the one being viewed).
+    It is **badge-only**: no OS notification is delivered for in-Channel chatter
+    (a count, not a ding) — unlike off-floor task notifications.
   - **Stop scope:** Channel stop has two scopes. A per-run stop cancels exactly
     that run and leaves siblings in flight; a conversation stop cancels every
     active run, drops undispatched pending Channel turns, and preserves the
-    visible discarded-turns system trace. Edit/regenerate/retry gates are
-    set-based: transcript rewrites are blocked while any Channel run is active
-    in the conversation.
+    visible discarded-turns system trace. A send that arrives while a stopped round
+    is still draining resumes the Channel: the stop flag clears once the stopped
+    runs drain (it is *not* gated on pending being empty), so the new turn pumps
+    rather than deadlocking behind a flag that pending-emptiness would never clear.
+    Only per-run stop is exposed in the Channel UI today; a conversation-level
+    Channel "stop all" is deferred (the composer never becomes Stop in a Channel),
+    so a conversation stop in a Channel is reachable only programmatically.
+    Edit/regenerate/retry gates are set-based: transcript rewrites are blocked
+    while any Channel run is active in the conversation.
   - Each peer turn runs as that agent (own definition/model/skills/memory line,
     `actor` stamped on its messages) and reads the thread through the per-POV
     derivation (`agentChannel.ts` `deriveAgentPovProjection`, composed with the

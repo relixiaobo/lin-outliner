@@ -132,7 +132,7 @@ describe('agent runtime stop', () => {
 
     expect(receivedSignal?.aborted).toBe(true);
     expect(projection.activeRunId).toBe(null);
-    expect(projection.isStreaming).toBe(false);
+    expect(projection.dmRunActive).toBe(false);
     expect(projection.errorMessage).toBe(null);
     expect(message.role).toBe('assistant');
     expect(message.status).toBe('completed');

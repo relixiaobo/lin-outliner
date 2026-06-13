@@ -519,6 +519,16 @@
   color: var(--danger);
 }
 
+/* The per-run live token stream (a running Channel agent composing). The
+   enclosing .agent-child-run-details-body supplies padding + scroll; this rule
+   only sets content typography and wraps long unbroken token runs. */
+.agent-channel-run-live {
+  overflow-wrap: anywhere;
+  color: var(--text-default);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+}
+
 .agent-child-run-transcript-list {
   display: flex;
   min-width: 0;

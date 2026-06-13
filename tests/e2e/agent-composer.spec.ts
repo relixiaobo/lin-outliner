@@ -2014,6 +2014,67 @@ test.describe('agent composer controls', () => {
     expect(geometryAfter!.composerTop).toBeCloseTo(geometryBefore!.composerTop, 1);
   });
 
+  test('Channel composer stays Send — never Stop or Steer — while agents work', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Tenon Assistant',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+      ],
+      activityEntries: [
+        { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: null, addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300 },
+      ],
+    });
+
+    // Channel work is in flight (the activity overlay is shown)…
+    await expect(page.locator('.agent-channel-activity')).toBeVisible();
+    // …but the composer is a pure message composer: never Stop, never Steer.
+    await expect(page.getByRole('button', { name: 'Stop agent' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Steer agent' })).toHaveCount(0);
+    const send = page.getByRole('button', { name: 'Send message' });
+    await expect(send).toBeVisible();
+    await expect(send).toBeDisabled();
+    await page.getByLabel('Agent message').fill('queue another message');
+    await expect(send).toBeEnabled();
+  });
+
+  test('a running Channel agent\'s live text appears in the per-run detail view', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Tenon Assistant',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+      ],
+      activityEntries: [
+        { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: null, addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300, streamingText: 'Composing a live reply token by token.' },
+      ],
+    });
+
+    const activity = page.locator('.agent-channel-activity');
+    await expect(activity).toBeVisible();
+    // The live token stream is filtered from the message flow (whole-utterance
+    // only): it is not in the transcript and the detail view starts closed.
+    await expect(page.getByText('Composing a live reply token by token.')).toHaveCount(0);
+    // It is surfaced in the per-run detail view, reached from the activity entry.
+    await activity.hover();
+    await activity.getByRole('button', { name: 'Alpha using tools' }).click();
+    const details = page.getByRole('complementary', { name: 'View working state' });
+    await expect(details).toBeVisible();
+    await expect(details).toContainText('Composing a live reply token by token.');
+  });
+
   test('renders reply anchors only for non-adjacent addressed replies', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
       conversationTitle: 'Parallel Channel',

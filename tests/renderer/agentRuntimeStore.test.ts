@@ -105,11 +105,12 @@ function projection(
     revision: options.revision ?? 1,
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
-    activityEntries: [],
+    channelActivityEntries: [],
     povInspectors: {},
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
-    isStreaming: !!options.isStreaming,
+    dmRunActive: !!options.isStreaming,
+    channelRunsActive: false,
     model: { id: 'test-model', provider: 'test' },
     thinkingLevel: 'off',
     pendingToolCallIds: [],
@@ -139,7 +140,7 @@ function projection(
       dreams: options.dreams ?? {},
       tasks,
     },
-    streaming: options.streamingMessageId ? {
+    dmStreaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
       rowId: `assistant:${options.streamingMessageId}`,
       text: entries

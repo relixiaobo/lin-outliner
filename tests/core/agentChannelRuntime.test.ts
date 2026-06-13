@@ -21,6 +21,7 @@ import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import type { AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
+import { ASK_USER_QUESTION_TOOL_NAME } from '../../src/main/agentAskUserQuestionTool';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 
@@ -250,15 +251,19 @@ async function sendMessageApprovingAgent(
   runtime: {
     sendMessage: (conversationId: string, message: string) => Promise<unknown>;
     resolveApproval: (conversationId: string, requestId: string, approved: boolean) => Promise<unknown>;
+    drainChannelTurnsForTest: (conversationId: string) => Promise<void>;
   },
   conversationId: string,
   message: string,
   sink: ReturnType<typeof createWindowSink>,
 ) {
-  const sendPromise = runtime.sendMessage(conversationId, message);
+  // A Channel send returns on acceptance, so we approve against the explicit
+  // drain (which spans the addressed runs) rather than the send promise.
+  await runtime.sendMessage(conversationId, message);
+  const drainPromise = runtime.drainChannelTurnsForTest(conversationId);
   const resolved = new Set<string>();
   let settled = false;
-  sendPromise.finally(() => {
+  drainPromise.finally(() => {
     settled = true;
   }).catch(() => undefined);
 
@@ -274,7 +279,7 @@ async function sendMessageApprovingAgent(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
-  await sendPromise;
+  await drainPromise;
 }
 
 describe('agent channel runtime', () => {
@@ -335,6 +340,7 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Review work' });
     await runtime.sendMessage(channel.conversationId, '@reviewer please review the draft');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     // The peer ran as itself: member-voiced system prompt with its body, not the main prompt.
     expect(calls).toHaveLength(1);
@@ -416,6 +422,7 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Relay test' });
     await runtime.sendMessage(channel.conversationId, 'someone take a look');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     expect(calls).toHaveLength(4);
     expect(script.pendingCount()).toBe(0);
@@ -452,6 +459,7 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Independent takes' });
     await runtime.sendMessage(channel.conversationId, '@assistant @reviewer give me independent takes');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     expect(calls).toHaveLength(2);
     // Independence cut: the second addressee never sees its sibling's same-round reply.
@@ -508,11 +516,11 @@ describe('agent channel runtime', () => {
     const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Completion order' });
-    const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently') as Promise<void>;
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently');
     while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     control.complete('reviewer', 'REVIEWER_FAST');
     control.complete('main', 'MAIN_SLOW');
-    await send;
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     const events = await new AgentEventStore(dataRoot).readEvents(channel.conversationId);
     const completedTexts = events
@@ -535,6 +543,7 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Failure isolation' });
     await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both of you');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     expect(calls).toHaveLength(2);
     expect(calls[1]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
@@ -564,6 +573,7 @@ describe('agent channel runtime', () => {
     holder.channelId = channel.conversationId;
     await runtime.sendMessage(channel.conversationId, 'first message');
     await holder.secondSend;
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     // Two separate runs — the second message produced its own coordinator turn
     // immediately. Its context cuts at the second message, so it does not see
@@ -574,6 +584,43 @@ describe('agent channel runtime', () => {
     expect(calls[1]!.serialized).toContain('second message please');
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(Object.values(state.runs)).toHaveLength(2);
+  });
+
+  test('a Channel send resolves on acceptance, before the addressed run finishes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', [
+      '---',
+      'description: Reviews drafts with a critical eye.',
+      '---',
+      'REVIEWER_AGENT_BODY: always review thoroughly.',
+    ].join('\n'));
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    const control = controlledStream(calls);
+    const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Async send' });
+    // The send resolves even though the addressed run never produced a reply yet
+    // (the controlled stream is still open). This is the core async-bus contract:
+    // send returns when the message is accepted, not when the runs drain.
+    await runtime.sendMessage(channel.conversationId, '@reviewer take your time');
+    while (calls.length < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const inflight = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(Object.values(inflight.messages).some((record) => record.role === 'user')).toBe(true);
+    expect(Object.values(inflight.runs).some((run) => run.status === 'running')).toBe(true);
+    expect(Object.values(inflight.messages).some(
+      (record) => record.role === 'assistant' && record.status === 'completed',
+    )).toBe(false);
+
+    // Completing the run and draining settles the Channel as usual.
+    control.complete('reviewer', 'REVIEWER_REPLIED_LATER');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+    const settled = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const texts = Object.values(settled.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('REVIEWER_REPLIED_LATER');
   });
 
   test('conversation stop cancels in-flight Channel runs and discards capped pending turns with a trace', async () => {
@@ -653,11 +700,93 @@ describe('agent channel runtime', () => {
     expect(calls).toHaveLength(0);
 
     await runtime.sendMessage(channel.conversationId, 'after stop');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
     state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(Object.values(state.runs)).toHaveLength(1);
     expect(calls).toHaveLength(1);
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
     expect(texts).toContain('AFTER_STOP_OK');
+  });
+
+  test('a send that lands while a stopped round is still draining resumes the Channel (no deadlock)', async () => {
+    // Regression: async-accept means a Channel send can enqueue a pending turn
+    // WHILE channelStopRequested is still set (a stop whose runs have not finished
+    // draining). maybeClearChannelStopRequested must clear once the runs drain, NOT
+    // gate on pending being empty — otherwise the late send is pinned in
+    // pendingChannelTurns forever and the Channel deadlocks (channelRunsActive stuck
+    // true, no run ever launches). Deterministic: the provider gate holds the first
+    // turn in startup so the second send is provably enqueued before the stop drains.
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', '---\ndescription: r\n---\nbody');
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    const script = scriptedStream([fauxAssistantMessage(fauxText('RESUMED_OK'))], calls);
+    let releaseProvider!: () => void;
+    let holdProvider = true;
+    let providerRequests = 0;
+    const providerGate = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const { runtime } = await createRuntime(dataRoot, localRoot, script.streamFn, {
+      providerConfigLoader: async () => {
+        providerRequests += 1;
+        if (providerRequests > 1 && holdProvider) await providerGate;
+        return {
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        };
+      },
+    });
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Resume after stop' });
+    // First addressed turn parks in startup behind the provider gate.
+    void (runtime.sendMessage(channel.conversationId, '@reviewer first') as Promise<void>);
+    while (providerRequests < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    // Stop the round, then enqueue a NEW send while the stop is still draining.
+    // Awaiting the send (it resolves on acceptance) guarantees the pending turn is
+    // queued with channelStopRequested still set, before the held turn unwinds.
+    runtime.stopConversation(channel.conversationId);
+    await runtime.sendMessage(channel.conversationId, '@reviewer after stop');
+    // Release the held first turn: it bails on the stop flag; the flag must then
+    // clear (its run drained) so the pending second turn pumps and completes.
+    holdProvider = false;
+    releaseProvider();
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const completed = Object.values(state.runs).filter((run) => run.status === 'completed');
+    expect(completed).toHaveLength(1);
+    const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
+    expect(texts).toContain('RESUMED_OK');
+  });
+
+  test('a peer reply bumps unread for a backgrounded Channel, but not while it is viewed', async () => {
+    // Plan §5: switching away from an active Channel is allowed, and a completed
+    // reply increments unread for that conversation — via the existing
+    // notification.created / conversation_attention fold (badge-only, no OS ding).
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage(fauxText('Reply while backgrounded.')),
+      fauxAssistantMessage(fauxText('Reply while viewed.')),
+    ]);
+    const { runtime, reviewerAgentId, dataRoot } = fixture;
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Unread test' });
+
+    // Backgrounded (user is elsewhere / dock collapsed): the reply raises unread.
+    runtime.setViewedConversation(null);
+    await runtime.sendMessage(channel.conversationId, '@reviewer one');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.attentionByConversationId[channel.conversationId]?.unreadCount ?? 0).toBe(1);
+
+    // Viewed: a reply does NOT raise unread (the user is reading it) — still 1.
+    runtime.setViewedConversation(channel.conversationId);
+    await runtime.sendMessage(channel.conversationId, '@reviewer two');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.attentionByConversationId[channel.conversationId]?.unreadCount ?? 0).toBe(1);
   });
 
   test('per-run stop cancels one Channel run without stopping siblings', async () => {
@@ -676,13 +805,13 @@ describe('agent channel runtime', () => {
     const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Scoped stop' });
-    const send = runtime.sendMessage(channel.conversationId, '@assistant @reviewer both run') as Promise<void>;
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both run');
     while (calls.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const reviewerRun = Object.values(state.runs).find((run) => run.agentId === reviewerAgentId)!;
     expect(runtime.stopRun(channel.conversationId, reviewerRun.id)).toEqual({ stopped: true });
     control.complete('main', 'MAIN_STILL_COMPLETED');
-    await send;
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(state.runs[reviewerRun.id]?.status).toBe('cancelled');
@@ -690,6 +819,73 @@ describe('agent channel runtime', () => {
     expect(mainRun.status).toBe('completed');
     const texts = Object.values(state.messages).map((record) => JSON.stringify(record.content)).join('\n');
     expect(texts).toContain('MAIN_STILL_COMPLETED');
+  });
+
+  test('concurrent Channel runs keep run-scoped pending questions; stopping one clears only its own', async () => {
+    const askToolCall = (toolCallId: string) => fauxAssistantMessage([
+      fauxToolCall(ASK_USER_QUESTION_TOOL_NAME, {
+        questions: [{
+          id: 'direction',
+          type: 'single_choice',
+          header: 'Direction',
+          question: 'Which way?',
+          options: [
+            { id: 'left', label: 'Left' },
+            { id: 'right', label: 'Right' },
+          ],
+        }],
+      }, { id: toolCallId }),
+    ], { stopReason: 'toolUse' });
+    // Both co-addressed runs ask a question first (order-independent: each run
+    // shifts one of the two identical tool-call responses), then reply once their
+    // own question resolves.
+    const fixture = await setupChannelFixture([
+      askToolCall('ask-a'),
+      askToolCall('ask-b'),
+      fauxAssistantMessage(fauxText('REPLY_AFTER_ANSWER.')),
+      fauxAssistantMessage(fauxText('UNREACHED_AFTER_STOP.')),
+    ]);
+    const { runtime, sink, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Concurrent questions' });
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer both decide');
+
+    const questionEvents = () => sink.events.filter(
+      (event): event is Extract<AgentRuntimeEvent, { type: 'user_question_request' }> => event.type === 'user_question_request',
+    );
+    while (questionEvents().length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+    const questions = questionEvents();
+
+    // Both requests are retained, keyed by distinct runIds — neither run's
+    // pending question overwrote the other's.
+    expect(new Set(questions.map((event) => event.question.runId)).size).toBe(2);
+    expect(new Set(questions.map((event) => event.requestId)).size).toBe(2);
+
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    const reviewerRun = Object.values(state.runs).find((run) => run.agentId === reviewerAgentId)!;
+    const reviewerQuestion = questions.find((event) => event.question.runId === reviewerRun.id)!;
+    const survivingQuestion = questions.find((event) => event.question.runId !== reviewerRun.id)!;
+
+    // Stopping the reviewer run clears ONLY its pending question.
+    expect(runtime.stopRun(channel.conversationId, reviewerRun.id)).toEqual({ stopped: true });
+    const resolvedFor = (requestId: string) => sink.events.some(
+      (event) => event.type === 'user_question_resolved' && event.requestId === requestId,
+    );
+    for (let attempt = 0; attempt < 100 && !resolvedFor(reviewerQuestion.requestId); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(resolvedFor(reviewerQuestion.requestId)).toBe(true);
+    expect(resolvedFor(survivingQuestion.requestId)).toBe(false);
+
+    // The surviving run's question still resolves independently and lets it finish.
+    await runtime.resolveUserQuestion(channel.conversationId, survivingQuestion.requestId, {
+      outcome: 'discussed',
+      message: 'go left',
+    });
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+    const settled = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(settled.runs[reviewerRun.id]?.status).toBe('cancelled');
+    expect(Object.values(settled.runs).some((run) => run.status === 'completed')).toBe(true);
   });
 
   test('Channel peer delegation is parented to the peer run, not the coordinator', async () => {
@@ -736,10 +932,12 @@ describe('agent channel runtime', () => {
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Gate test' });
     holder.channelId = channel.conversationId;
     await runtime.sendMessage(channel.conversationId, '@reviewer take one');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const reviewerReply = Object.values(state.messages).find((record) => record.role === 'assistant')!;
     await runtime.regenerateMessage(channel.conversationId, reviewerReply.id);
     await holder.midSend;
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     expect(calls).toHaveLength(3);
     // The concurrent message does not wait for the regenerated reply.
@@ -826,6 +1024,7 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Edit and regenerate' });
     await runtime.sendMessage(channel.conversationId, '@reviewer please review');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
     expect(calls[0]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
 
     // Edit drops the mention: the replacement message re-resolves to the
@@ -833,6 +1032,7 @@ describe('agent channel runtime', () => {
     let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     const originalUser = Object.values(state.messages).find((record) => record.role === 'user')!;
     await runtime.editMessage(channel.conversationId, originalUser.id, 'actually, coordinator: summarize instead');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
     expect(calls).toHaveLength(2);
     expect(calls[1]!.systemPrompt).not.toContain('REVIEWER_AGENT_BODY');
     state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -849,6 +1049,7 @@ describe('agent channel runtime', () => {
     )!;
     await runtime.switchBranch(channel.conversationId, originalUser.id);
     await runtime.regenerateMessage(channel.conversationId, reviewerReply.id);
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
     expect(calls).toHaveLength(3);
     expect(calls[2]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
     state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -866,10 +1067,12 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId, observerAgentId], title: 'Fold test' });
     await runtime.sendMessage(channel.conversationId, '@reviewer say something');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
     await runtime.removeConversationMember(channel.conversationId, reviewerAgentId);
     // Later events carry no membership change: the fold must not resurrect the
     // removed member from ordinary event actors (finding #6).
     await runtime.sendMessage(channel.conversationId, 'carry on');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     const listed = await runtime.listConversations();
     const entry = listed.find((candidate) => candidate.id === channel.conversationId);

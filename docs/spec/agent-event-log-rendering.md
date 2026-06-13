@@ -807,14 +807,18 @@ interface AgentRenderProjection {
   revision: number;
   conversationTitle: string | null;
   activeRunId: string | null;
-  isStreaming: boolean;
+  // Mode-specific run state (replaces the old overloaded `isStreaming`): DM
+  // composer state vs. Channel work surface never share a flag.
+  dmRunActive: boolean;                              // DM/single-agent run in flight (composer stop/steer)
+  dmStreaming: AgentStreamingRenderState | null;     // DM streaming tail (null for multi-agent Channels)
+  channelRunsActive: boolean;                        // any addressed Channel run active or pending
+  channelActivityEntries: AgentRenderActivityEntry[]; // per-run Channel activity (overlay + per-run detail view)
   model: Record<string, unknown>;
   thinkingLevel: string;
   pendingToolCallIds: string[];
   errorMessage: string | null;
   rows: AgentRenderRow[];
   entities: AgentRenderEntities;
-  streaming: AgentStreamingRenderState | null;
 }
 ```
 
@@ -822,6 +826,14 @@ Rules:
 
 - Completed rows are immutable by identity.
 - Only the active streaming row changes during token streaming.
+- `dmRunActive`/`dmStreaming` and `channelRunsActive`/`channelActivityEntries` are
+  mode-specific: a multi-agent Channel keeps `dmRunActive` false so its work never
+  drives the composer's stop/steer, and a DM keeps the Channel fields empty. The
+  split is derived from membership (`isMultiAgentConversation`); conversation
+  `kind` is never stored.
+- A running Channel agent's live `message_update` text rides on
+  `channelActivityEntries[].streamingText` (the per-run detail view), never as a
+  transcript row — the Channel message stream is whole-utterance only.
 - Render flushes are coalesced to at most one per animation frame.
 - `compaction.completed` events become dedicated compaction rows keyed by the
   compact root message, with summary and trigger metadata in
