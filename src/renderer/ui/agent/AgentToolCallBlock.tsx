@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import { basenameForPath } from '../../../core/referenceMarkup';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
+import { InlineFileReference } from '../editor/InlineFileReference';
 import {
   AgentIcon,
   BrainIcon,
@@ -93,6 +95,7 @@ export function getToolIcon(toolCall: ToolCall) {
   if (toolCall.name === 'web_fetch') return UrlIcon;
   if (toolCall.name === 'bash') return TerminalIcon;
   if (toolCall.name === 'file_edit') return NodeEditToolIcon;
+  if (toolCall.name === 'file_write') return NodeCreateToolIcon;
   return WarningIcon;
 }
 
@@ -108,6 +111,13 @@ function pickSubject(args: Record<string, unknown>, ...keys: string[]): string |
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
+}
+
+// File tools address paths the model passes (often absolute); the summary line
+// only needs the basename — the full path stays available on the file chip.
+function fileSubjectLabel(subject: string | null): string | null {
+  if (!subject) return null;
+  return basenameForPath(subject) || subject;
 }
 
 type ToolCallLabels = Messages['agent']['toolCall'];
@@ -182,7 +192,11 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   }
   if (toolCall.name === 'file_edit') {
     const subject = pickSubject(args, 'path', 'file_path');
-    return withSubject(verbByStatus(verbs.editFile, status, labels), subject, labels);
+    return withSubject(verbByStatus(verbs.editFile, status, labels), fileSubjectLabel(subject), labels);
+  }
+  if (toolCall.name === 'file_write') {
+    const subject = pickSubject(args, 'file_path', 'path');
+    return withSubject(verbByStatus(verbs.writeFile, status, labels), fileSubjectLabel(subject), labels);
   }
   // Unknown tools fall back to the raw tool name (an identifier, not translatable);
   // only the trailing pending ellipsis is localized.
@@ -374,20 +388,25 @@ function isJsonText(text: string): boolean {
   }
 }
 
-// Read-only JSON surface for tool input/output. Renders plain text first, then
-// upgrades to the shared Shiki highlight once it resolves (json is preloaded).
-function HighlightedJson({ code }: { code: string }) {
+// Read-only highlighted code surface for tool input/output. Renders plain text
+// first, then upgrades to the shared Shiki highlight once the grammar resolves
+// (json is preloaded; diff loads lazily on first file-tool render).
+function HighlightedCode({ code, lang }: { code: string; lang: string }) {
   const [html, setHtml] = useState(() => plainCodeHtml(code));
   useEffect(() => {
     let cancelled = false;
-    void highlightCode(code, 'json').then((next) => {
+    void highlightCode(code, lang).then((next) => {
       if (!cancelled) setHtml(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, lang]);
   return <div className="agent-tool-code" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function HighlightedJson({ code }: { code: string }) {
+  return <HighlightedCode code={code} lang="json" />;
 }
 
 function jsonText(value: unknown): string {
@@ -396,6 +415,101 @@ function jsonText(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+interface FileDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+interface FileToolOutput {
+  path: string;
+  basename: string;
+  hunks: FileDiffHunk[];
+}
+
+// A successful file_write / file_edit reports the written path and a structured
+// patch in its model-visible content (the persisted text, so this survives a
+// reload — `details` does not). Reading it here lets the conversation render the
+// produced file as an inspectable chip + diff instead of a raw-JSON dump.
+function parseFileToolOutput(
+  toolCall: ToolCall,
+  result: AgentToolResultWithPayloads | undefined,
+): FileToolOutput | null {
+  if (toolCall.name !== 'file_write' && toolCall.name !== 'file_edit') return null;
+  if (!result || result.isError) return null;
+  const text = resultText(result);
+  if (!text) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.data)) return null;
+  const data = parsed.data;
+  if (typeof data.filePath !== 'string' || !data.filePath) return null;
+  return {
+    path: data.filePath,
+    basename: basenameForPath(data.filePath) || data.filePath,
+    hunks: parseDiffHunks(data.structuredPatch),
+  };
+}
+
+function parseDiffHunks(value: unknown): FileDiffHunk[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): FileDiffHunk[] => {
+    if (!isRecord(entry) || !Array.isArray(entry.lines)) return [];
+    return [{
+      oldStart: numberOr(entry.oldStart, 0),
+      oldLines: numberOr(entry.oldLines, 0),
+      newStart: numberOr(entry.newStart, 0),
+      newLines: numberOr(entry.newLines, 0),
+      lines: entry.lines.filter((line): line is string => typeof line === 'string'),
+    }];
+  });
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+// Reassemble a unified-diff text from the structured patch so Shiki's `diff`
+// grammar can color it — the same code-rendering path used for every other code
+// surface, no bespoke diff colors.
+function unifiedDiffText(hunks: FileDiffHunk[]): string {
+  return hunks
+    .map((hunk) => [
+      `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
+      ...hunk.lines,
+    ].join('\n'))
+    .join('\n');
+}
+
+// The produced file, shown as a local-file chip. The app-wide
+// `InlineFilePreviewLayer` gives it hover preview + click-to-open into the
+// FilePreviewPanel by matching the `data-inline-ref-kind="local-file"` attrs the
+// shared `InlineFileReference` emits — the same chip the agent's prose file
+// references render, so input and output read identically in the stream.
+function ToolResultFileChip({ output }: { output: FileToolOutput }) {
+  return (
+    <div className="agent-tool-file-output">
+      <InlineFileReference
+        className="agent-tool-file-chip"
+        file={{
+          entryKind: 'file',
+          kind: 'file',
+          mimeType: 'application/octet-stream',
+          name: output.basename,
+          path: output.path,
+          ref: output.basename,
+        }}
+      />
+    </div>
+  );
 }
 
 function getLoadedSkillDetails(
@@ -652,8 +766,12 @@ export function AgentToolCallBlock({
   const outputText = useMemo(() => resultText(result), [result]);
   const images = useMemo(() => resultImages(result), [result]);
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
+  const fileOutput = useMemo(() => parseFileToolOutput(toolCall, result), [toolCall, result]);
+  const diffText = useMemo(() => (fileOutput ? unifiedDiffText(fileOutput.hunks) : ''), [fileOutput]);
   const hasChildRunDetails = Boolean(childRun);
-  const hasDetails = hasChildRunDetails || inputText !== '{}' || outputText.length > 0;
+  const hasDetails = fileOutput
+    ? hasChildRunDetails || diffText.length > 0
+    : hasChildRunDetails || inputText !== '{}' || outputText.length > 0;
   const hasOutputDetails = outputText.length > 0;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
@@ -671,6 +789,7 @@ export function AgentToolCallBlock({
 
   return (
     <AgentToolCallDisclosure
+      attachments={fileOutput ? <ToolResultFileChip output={fileOutput} /> : null}
       expanded={isExpanded}
       hasDetails={hasDetails}
       images={<ToolResultImages images={images} />}
@@ -688,7 +807,16 @@ export function AgentToolCallBlock({
           childRun={childRun}
         />
       ) : null}
-      {!hasChildRunDetails && inputText !== '{}' ? (
+      {!hasChildRunDetails && fileOutput && diffText ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">{t.agent.toolCall.changes}</div>
+            <ToolCopyButton ariaLabel={t.agent.toolCall.copyOutput} text={diffText} />
+          </div>
+          <HighlightedCode code={diffText} lang="diff" />
+        </section>
+      ) : null}
+      {!hasChildRunDetails && !fileOutput && inputText !== '{}' ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.input}</div>
@@ -697,7 +825,7 @@ export function AgentToolCallBlock({
           <HighlightedJson code={inputText} />
         </section>
       ) : null}
-      {!hasChildRunDetails && result && hasOutputDetails ? (
+      {!hasChildRunDetails && !fileOutput && result && hasOutputDetails ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">

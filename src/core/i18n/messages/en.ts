@@ -1105,6 +1105,7 @@ commandPalette: {
     toolCall: {
       input: 'Input',
       output: 'Output',
+      changes: 'Changes',
       errorBadge: 'error',
       copyInput: 'Copy tool input',
       copyOutput: 'Copy tool output',
@@ -1140,6 +1141,7 @@ commandPalette: {
         fetchWeb: { base: 'fetch web', pending: 'Fetching web', done: 'Fetched web' },
         runBash: { base: 'run bash', pending: 'Running bash', done: 'Ran bash' },
         editFile: { base: 'edit file', pending: 'Editing file', done: 'Edited file' },
+        writeFile: { base: 'write file', pending: 'Writing file', done: 'Wrote file' },
       },
     },
     // The agent-task (delegated child run) details panel + inline details.

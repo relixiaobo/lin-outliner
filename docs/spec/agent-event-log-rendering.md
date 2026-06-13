@@ -633,6 +633,16 @@ ToolResultMessage(toolCallId, toolName, content)
 The render projection may group thinking, tool calls, and tool results under a
 single process block.
 
+A successful file-producing tool result (`file_write` / `file_edit`) renders the
+written path as a local-file chip — the same `InlineFileReference` the agent's
+prose file references use, so a produced file reads identically to a referenced
+one — plus an inspectable unified diff, instead of the raw model-visible JSON.
+The chip carries `data-inline-ref-kind="local-file"`, so the app-wide
+`InlineFilePreviewLayer` gives it hover preview and click-to-open into the
+`FilePreviewPanel`; the chip shows the basename while the full path stays on the
+preview/open path. (The working file is path-addressed; durability is what
+Save-to-outliner / Export are for — see `docs/plans/agent-file-artifact-model.md`.)
+
 ## Conversation vs Runtime Transcript Projections
 
 The on-disk store is physically split, and replay exposes two read seams:

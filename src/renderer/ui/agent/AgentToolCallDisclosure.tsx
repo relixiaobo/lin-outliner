@@ -4,6 +4,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 
 interface AgentToolCallDisclosureProps {
+  attachments?: ReactNode;
   children: ReactNode;
   expanded: boolean;
   hasDetails: boolean;
@@ -16,6 +17,7 @@ interface AgentToolCallDisclosureProps {
 }
 
 export function AgentToolCallDisclosure({
+  attachments,
   children,
   expanded,
   hasDetails,
@@ -45,6 +47,7 @@ export function AgentToolCallDisclosure({
         </ButtonControl>
       </div>
       {images}
+      {attachments}
       {expanded && hasDetails ? (
         <div className="agent-tool-call-panel">
           {children}

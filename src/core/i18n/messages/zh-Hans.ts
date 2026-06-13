@@ -1018,6 +1018,7 @@ commandPalette: {
     toolCall: {
       input: '输入',
       output: '输出',
+      changes: '变更',
       errorBadge: '错误',
       copyInput: '复制工具输入',
       copyOutput: '复制工具输出',
@@ -1052,6 +1053,7 @@ commandPalette: {
         fetchWeb: { base: '抓取网页', pending: '正在抓取网页', done: '已抓取网页' },
         runBash: { base: '运行 bash', pending: '正在运行 bash', done: '已运行 bash' },
         editFile: { base: '编辑文件', pending: '正在编辑文件', done: '已编辑文件' },
+        writeFile: { base: '写入文件', pending: '正在写入文件', done: '已写入文件' },
       },
     },
     childRun: {
