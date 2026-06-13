@@ -208,9 +208,11 @@ from polluting the file area.
 
 - Replace the single overloaded root with explicit roots resolved at startup:
   - `workdir` — app-owned, the agent's default cwd and `file_*` root. Default
-    `<userData>/agent-workdir` in **both dev and packaged**.
+    `<userData>/agent-workdir` in **both dev and packaged** (dev userData is
+    already per-clone isolated under `$HOME/.lin-outliner-<clone>`, so the workdir
+    inherits that isolation). The `cwd` default is dropped (Decision 1).
     `LIN_AGENT_LOCAL_ROOT` stays the explicit opt-in to point at a repo (for
-    dogfooding). *(Dev default change is an open question — see below.)*
+    dogfooding).
   - `scratch` — `<userData>/agent-scratch`. Move `tmp/agent-attachments`,
     `tmp/agent-web-fetch`, `tmp/agent-tool-outputs`, and PDF page-image extraction
     here (`agentAttachmentMaterialization.ts`, `agentTools.ts`,
@@ -227,10 +229,12 @@ Fix the lossy input path so that referencing a document file actually hands the
 agent its bytes.
 
 - When an image/attachment node (or other asset-backed content) is referenced into
-  a conversation, **materialize** the asset into the agent `workdir`:
+  a conversation, **materialize** the asset into the agent `workdir`, mirroring how
+  composer attachments already work (Decision 2): at send time,
   `assetService.pathFor(assetId)` → copy into `workdir` → expose to the agent as a
-  workdir-relative path, read with `file_read` (images additionally inlined as
-  base64 for vision, exactly as composer image attachments are today).
+  workdir-relative path read with `file_read`; images are additionally inlined as
+  base64 for vision. Size-capped via the existing `MAX_MATERIALIZED_ATTACHMENT_BYTES`
+  limit. No new lazy-on-read mechanism.
 - The renderer keeps the handle for its own display; only the agent-facing side
   gains a path. Reuse the existing materialization + TTL machinery
   (`agentAttachmentMaterialization.ts`), now rooted at `workdir`/`scratch`.
@@ -334,8 +338,8 @@ an agent-produced file and a user-added file are the same kind of node.
 
 Checked open PRs on 2026-06-13:
 
-- **#218** (`codex-2/agent-file-artifact-model`) — same topic; **this plan
-  supersedes it.** PM to close/redirect #218.
+- **#218** (`codex-2/agent-file-artifact-model`) — same topic; **superseded and
+  closed.** This plan ships as #220.
 - **#217** (`codex/agent-header-single-line`) — agent dock / channel config UI.
   F1 touches `AgentToolCallBlock` (tool-result rendering), a different area;
   re-check at F1 build time.
@@ -349,29 +353,31 @@ Checked open PRs on 2026-06-13:
   chip must degrade gracefully ("no longer available"); durability is what
   Save-to-outliner / Export are for.
 - **Materialize privacy/cost (F3).** Materializing referenced document files lets
-  the agent read whatever is embedded in the doc, and copies bytes. Gate by the
-  open question below.
-- **Dev workflow change (F2).** Flipping the dev default off `cwd` changes how dev
-  agents edit the repo. `LIN_AGENT_LOCAL_ROOT` must remain the clean opt-in.
+  the agent read whatever is embedded in the doc, and copies bytes. Bounded by
+  Decision 2: the user's explicit reference is the authorization, and the copy is
+  size-capped at send (no eager copy of unreferenced content).
+- **Dev workflow change (F2).** Dropping the dev `cwd` default (Decision 1) changes
+  how dev agents edit the repo. `LIN_AGENT_LOCAL_ROOT` must remain the clean opt-in.
 - **Terminology drift.** Existing tests/specs say "workspace root" / "local root";
   rename to `workdir` carefully and in one pass per feature.
 
-## Open questions (product decisions for the PM)
+## Decisions (ratified by the PM, 2026-06-13)
 
-1. **Dev default root.** Change dev from `cwd` to `<userData>/agent-workdir` (opt
-   into the repo via `LIN_AGENT_LOCAL_ROOT`)? *Recommendation: yes* — it removes
-   repo pollution at the root and makes dev match packaged.
-2. **Materialize policy (F3).** When a document file is referenced in, always
-   materialize its bytes into `workdir`, or on demand / by type / by size?
-   *Recommendation: on first agent read, size-capped, reusing the existing
-   attachment limits.*
-3. **Default lifecycle of an agent output (F4).** Stay `working` until the user
-   explicitly saves into the outliner, or auto-commit? *Recommendation: stay
-   working; saving is explicit* — avoids polluting the durable store with
-   throwaways and matches "export is explicit."
-4. **Persistence of the output reference.** Store a `workdir`-relative path in the
-   conversation log (resolve at render), or a logical handle? *Recommendation:
-   relative path* — simplest, location-independent, no new identity type.
+1. **Dev default root → internal.** Drop the dev `cwd` default; `workdir` is
+   `<userData>/agent-workdir` in both dev and packaged (dev inherits per-clone
+   userData isolation). `LIN_AGENT_LOCAL_ROOT` is the explicit opt-in to point at a
+   repo. Removes repo pollution at the root and makes dev match packaged.
+2. **Materialize = mirror composer attachments.** On reference-in, materialize at
+   send time (images base64 + path, other files path), size-capped via the existing
+   attachment limit; reuse the existing machinery. No lazy-on-read mechanism. The
+   user's explicit reference is the authorization.
+3. **Agent output stays `working` by default.** No auto-commit; promotion to a
+   durable asset is an explicit user action (Insert into outliner / Export). Avoids
+   polluting the durable store and matches "export is explicit." Working files are
+   GC'd with the conversation.
+4. **Persist a `workdir`-relative path.** Store the relative path in the
+   conversation log and resolve at render. No logical handle for working files —
+   that would reintroduce the dual-identity index this model deletes.
 
 ## Acceptance criteria
 
