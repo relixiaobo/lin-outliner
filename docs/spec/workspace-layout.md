@@ -74,7 +74,8 @@ Center — per-pane breadcrumb headers:
 
 Right corner — agent chrome:
 
-- The agent dock's header (`✦` brand mark + conversation title) when open.
+- The agent dock's header (DM identity avatar or Channel hash icon + title) when
+  open.
 - The agent toggle, pinned to the top-right corner as a fixed window-chrome
   control.
 

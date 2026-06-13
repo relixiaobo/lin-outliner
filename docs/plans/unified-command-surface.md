@@ -1,11 +1,3 @@
----
-status: draft
-priority: P2
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-04
----
-
 # Unified Command Surface
 
 ## Goal

@@ -731,7 +731,6 @@ describe('agent runtime skill integration', () => {
       '---',
       'description: Use when fork skill execution is requested.',
       'context: fork',
-      'agent: general',
       'allowed-tools: Bash(echo fork-ok*)',
       '---',
       'FORK_SKILL_BODY for $ARGUMENTS.',
@@ -799,7 +798,7 @@ describe('agent runtime skill integration', () => {
     expect(parentContexts.join('\n')).not.toContain('FORK_SKILL_BODY for target-doc.');
   });
 
-  test('fails context-fork skills with an explicit unknown agent instead of falling back to general', async () => {
+  test('fails context-fork skills with an explicit unknown agent instead of falling back to fork', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-unknown-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-unknown-data-'));
     roots.push(localRoot, dataRoot);

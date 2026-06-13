@@ -402,7 +402,7 @@ describe('agent render projection', () => {
         childRunId: 'sub-1',
         description: 'check Chengdu weather',
         prompt: 'Check the weather in Chengdu today.',
-        agentType: 'general',
+        agentType: 'researcher',
         contextMode: 'fork',
       },
       {
@@ -450,7 +450,7 @@ describe('agent render projection', () => {
         parentToolCallId: 'tc-1',
         description: 'do the subtask',
         prompt: 'Do the subtask.',
-        agentType: 'general',
+        agentType: 'researcher',
         contextMode: 'fork',
       },
       {

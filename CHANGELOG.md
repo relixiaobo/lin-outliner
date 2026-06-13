@@ -355,6 +355,39 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent dock + channel configuration refinement (PR #217, codex)** — refines the
+  agent dock header, conversation menu, DM/Channel rows, and unread/menu
+  affordances to the current design-system rules, and moves agent and channel
+  **create/edit** out of in-settings inline editors into dedicated native child
+  windows. New `AgentConfigWindow` / `ChannelConfigWindow` renderer surfaces are the
+  single authoring path (the Settings "Agent Profiles" pane is now a list of launch
+  points only); main-process window construction is unified behind one
+  `createConfigChildWindow` helper shared by the provider, agent, and channel
+  windows, all with the same A3-hardened `webPreferences` and `isLiveWindow`-guarded
+  parent/cleanup handling. The built-in **Tenon assistant** is now registered in the
+  delegation registry, so selecting it as a command/child `agent_type` resolves and
+  dispatches instead of throwing; and a persisted fresh child run whose agent
+  definition was deleted/renamed after it started now **recovers** by continuing
+  with the Tenon assistant rather than hard-erroring on resume (a durable recovery
+  path, not a generic dispatch fallback). Settings deep-links are fixed: `agent=<id>`
+  opens that agent's config window and creation uses a separate `agentMode=create`
+  param, removing the reserved-value collision that made an agent literally named
+  `create` un-editable. Creating a channel now navigates the main panel to the new
+  conversation (`agentNavigateToConversation` IPC), and `refreshAfterSettingsChange`
+  reloads agent definitions (concurrently) so a freshly authored agent's name/POV is
+  no longer stale until a conversation switch. Restores the Channel member POV
+  inspector entry from the Slack-style row menu. Removes the dead DM→Channel
+  escalation affordance and the Channel-creation `systemNotice` plumbing
+  (PM-ratified 2026-06-13: DM is strictly 1:1; any multi-party conversation is a
+  first-class named Channel, so there is no in-DM "upgrade to Channel" entry point).
+  Adds real Electron smoke coverage for the agent/channel config child-window
+  lifecycle (`tests/smoke/config-windows.smoke.ts`) and a draft plan
+  `docs/plans/channel-async-message-bus.md` for the next Channel-as-async-IM-bus
+  change (captured separately, not implemented here). Specs:
+  `docs/spec/agent-delegation-runtime.md`, `docs/spec/design-system.md`. Reviewed
+  via `/code-review high` (10 findings — all fixed in the follow-up commit, verified
+  by re-review with no new regressions).
+
 - **Agent UI glyph refresh (main, fast-track)** — the thinking indicator (thinking
   rows + the thinking-only process-block header) now uses a dedicated `ThinkingIcon`
   (lucide `Dices`) instead of the brain, and the skill glyph (the loaded-skill
@@ -666,6 +699,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **TASKS.md is the single source of plan status (main, direct merge)** — plan
+  status + priority previously lived in both plan-file frontmatter and
+  `docs/TASKS.md`, and the two drifted whenever a plan shipped (e.g.
+  `security-settings-ia-redesign` sat in the Backlog as "awaiting ratification"
+  after shipping as #215). Status is project-management state, not a property of a
+  design, so it now lives in exactly one place: `docs/TASKS.md` is the single
+  source of plan todo/status/priority and links out to each plan, and plan files
+  are pure design carrying **no frontmatter** (stripped from all 32 active plans;
+  `archive/` kept as historical record). New `bun run docs:check` guard
+  (`scripts/docs-check.ts`), wired into the "before marking ready" gate: C1 every
+  `docs/plans/…` link in TASKS resolves, C2 no active plan is missing from the
+  board — offline + deterministic; it caught 3 pre-existing dangling archive links
+  + 2 orphan plans on first run. `AGENTS.md` reverses the "catalog = frontmatter"
+  rule. Design: `docs/plans/plan-status-single-source.md`.
 - **File preview plan refreshed (PR #209, docs-only)** — rewrites
   `docs/plans/file-preview.md` (status stays `draft`) around a source-owned
   `PreviewTarget` model: `local-file`, `asset`, `agent-payload`, and `url` are

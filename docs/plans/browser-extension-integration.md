@@ -1,10 +1,3 @@
----
-status: draft
-owner: unassigned
-branch: (none yet)
-related: unified-command-surface.md, launcher-provider-expansion.md
----
-
 # Browser Extension / CDP Integration — One Backend, Two Tiers
 
 **Forward-looking design. RECORD ONLY — do not execute.** Captured from a PM

@@ -38,14 +38,15 @@ const NOOP = {
 
 function builtIn(): AgentDefinitionView {
   return {
-    agentId: 'built-in:tenon:general',
-    name: 'general',
+    agentId: 'built-in:tenon:assistant',
+    name: 'assistant',
+    displayName: 'Tenon Assistant',
     source: 'built-in',
     rootDir: 'built-in',
-    agentFile: 'built-in/general',
+    agentFile: 'built-in/assistant',
     writable: false,
-    description: 'General-purpose child run',
-    body: 'You are a focused child agent.',
+    description: 'Default Tenon assistant profile',
+    body: 'You are Tenon Assistant.',
   };
 }
 
@@ -84,21 +85,21 @@ function skill(name: string): SkillDefinition {
 }
 
 describe('AgentEditor', () => {
-  test('built-in renders through the same editor, read-only, with a Duplicate action', async () => {
+  test('built-in renders through the same editor, view-only, with a Duplicate action', async () => {
     let duplicated: AgentDefinitionView | null = null;
     const rendered = renderComponent(
       <AgentEditor agent={builtIn()} availableSkills={[]} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
     );
-    expect(rendered.container.textContent).toContain('Built-in agents are read-only');
+    expect(rendered.container.textContent).toContain('Built-in agents are view-only');
     // Same Form editor as a user agent — the Name field exists and is pre-filled;
     // the controls are read-only (the tool toggles render natively disabled).
     const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
-    expect(nameInput?.value).toBe('general');
+    expect(nameInput?.value).toBe('Tenon Assistant');
     expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
     // The only action is Duplicate (no Save / Delete).
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(false);
     await click(rendered, textButton(rendered, 'Duplicate to my agents'));
-    expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('built-in:tenon:general');
+    expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('built-in:tenon:assistant');
   });
 
   test('create mode is a pre-filled scaffold with a storage choice', async () => {

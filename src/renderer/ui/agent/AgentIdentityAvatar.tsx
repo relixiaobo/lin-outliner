@@ -1,4 +1,4 @@
-type AgentIdentityAvatarSize = 'sm' | 'md';
+type AgentIdentityAvatarSize = 'xs' | 'sm' | 'md';
 
 interface AgentIdentityAvatarProps {
   label: string;

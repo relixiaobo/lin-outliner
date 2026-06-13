@@ -1,11 +1,3 @@
----
-status: shelved
-priority: P2
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 > **Resolution (2026-06-05).** No model change. Prior art (Tana / nodex) and lin
 > already converge on "options / template items are plain nodes referenced by id;
 > no dedicated type" — option B is rejected as *more* machinery. The PM's actual

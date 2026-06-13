@@ -1,10 +1,3 @@
----
-status: meta
-owner: main
-created: 2026-06-10
-updated: 2026-06-10
----
-
 # Memory foundations — the academic model that binds our docs, prompts, and tools
 
 A standing reference (like `nodex-parity-decisions.md`), not a unit of work.

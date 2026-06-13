@@ -114,9 +114,9 @@ The old mutable chat snapshot store is no longer part of the runtime.
   event log; no separate metadata store is introduced.
 - The composer model chip is a display-and-navigation affordance. It shows the
   active provider/model and reasoning level from the projection/settings state.
-  Clicking it opens the owning settings surface (agent profile for authored
-  agents, provider config for the built-in assistant/global provider). The chat
-  surface does not mutate provider/model settings inline.
+  In a canonical agent DM it opens that agent's profile, including the view-only
+  built-in Tenon assistant profile. Otherwise it opens the owning provider
+  config. The chat surface does not mutate provider/model settings inline.
 
 ## Reference Analysis
 
@@ -427,8 +427,8 @@ through the same append-only rules.
 
 ### Notification + attention projection
 
-`notification.created` and `notification.read` carry the off-floor task plane's
-delivery + attention signal (M2 — [[agent-conversation-model]] §Background tasks).
+`notification.created` and `notification.read` carry the conversation list's
+unread delivery + attention signal (M2 — [[agent-conversation-model]] §Background tasks).
 A `notification.created` is **anchored to exactly one conversation**
 (`conversationId`, mandatory — there are no conversation-less notifications) and
 carries a `kind` (`task_completed` / `task_failed`; `needs_input` and `status` are

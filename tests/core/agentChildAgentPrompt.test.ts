@@ -8,11 +8,11 @@ import type { AgentDefinition } from '../../src/core/types';
 
 function def(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
-    name: 'general',
-    source: 'built-in',
-    rootDir: 'built-in',
-    agentFile: 'built-in/general',
-    description: 'General-purpose focused child run for research, analysis, and execution.',
+    name: 'researcher',
+    source: 'project',
+    rootDir: '/workspace/.agents/agents/researcher',
+    agentFile: '/workspace/.agents/agents/researcher/AGENT.md',
+    description: 'Focused child run for research, analysis, and execution.',
     body: '',
     ...overrides,
   };
@@ -25,7 +25,7 @@ describe('buildFreshAgentSystemPrompt', () => {
     expect(prompt).toContain('You are a Tenon child agent');
     expect(prompt).toContain('# Child run rules');
     expect(prompt).toContain('never ask the user questions');
-    expect(prompt).toContain('Agent type: general');
+    expect(prompt).toContain('Agent type: researcher');
     // The shared base capabilities (not a stripped-down persona).
     expect(prompt).toContain('# Outliner');
     expect(prompt).toContain('node_edit');
@@ -35,7 +35,7 @@ describe('buildFreshAgentSystemPrompt', () => {
     expect(prompt).not.toContain('# Memory');
   });
 
-  test('general carries no persona body, so it adds no Agent instructions block', () => {
+  test('an empty-body definition adds no Agent instructions block', () => {
     expect(buildFreshAgentSystemPrompt(def())).not.toContain('# Agent instructions');
   });
 

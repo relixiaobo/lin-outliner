@@ -1,11 +1,3 @@
----
-status: meta
-priority: —
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-05-25
----
-
 # nodex Parity Decisions
 
 A catalog of nodex features that lin **will not** port, plus the reason.

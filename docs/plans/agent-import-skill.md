@@ -1,9 +1,3 @@
----
-status: draft
-owner: unassigned
-created: 2026-06-04
----
-
 # Agent Data-Import Skill
 
 Give the in-app agent a first-class capability to import data from other products

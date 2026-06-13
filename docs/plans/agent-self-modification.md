@@ -1,11 +1,3 @@
----
-status: in-progress
-priority: P1
-owner: relixiaobo
-created: 2026-06-02
-updated: 2026-06-09
----
-
 # Agent Self-Modification
 
 **Part of the [[agent-program]].** Scope after the program reorg: this plan owns

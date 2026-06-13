@@ -350,6 +350,60 @@ describe('agent runtime childRuns', () => {
     expect(childContext).not.toContain('prefers amber planning notes');
   });
 
+  test('dispatches the built-in assistant when selected as a fresh child agent type', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-built-in-assistant-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-built-in-assistant-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'assistant child',
+            prompt: 'Handle this with the default assistant.',
+            agent_type: 'assistant',
+          }, { id: 'tool-agent-assistant' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          contexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Assistant child result.'));
+        },
+        (context) => {
+          contexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Parent received assistant child result.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use the built-in assistant as a child.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(contexts.join('\n')).toContain('Assistant child result.');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
   test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-data-'));
@@ -737,7 +791,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'large output',
             prompt: 'Run a large-output tool call, then continue.',
-            agent_type: 'general',
           }, { id: 'tool-agent-large-output' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -799,7 +852,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'compact sidechain',
             prompt: 'Run large tool output, then continue after compaction.',
-            agent_type: 'general',
           }, { id: 'tool-agent-compact-output' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(
@@ -877,7 +929,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'reactive compact',
             prompt: 'Run until a context error, then recover.',
-            agent_type: 'general',
           }, { id: 'tool-agent-reactive-compact' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([], {
@@ -1510,7 +1561,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background check',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'bg-check',
           }, { id: 'tool-agent-1' }),
@@ -1570,7 +1620,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background notify',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'bg-notify',
           }, { id: 'tool-agent-1' }),
@@ -1654,7 +1703,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background command',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'command-bg',
           }, { id: 'tool-agent-1' }),
@@ -1726,7 +1774,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'stoppable background',
             prompt: 'Run until stopped.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'stoppable-bg',
           }, { id: 'tool-agent-1' }),
@@ -1815,6 +1862,122 @@ describe('agent runtime childRuns', () => {
     releaseOriginalChild();
   });
 
+  test('continues a persisted fresh child run after its agent definition was deleted', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-deleted-definition-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-deleted-definition-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const deletedAgentDir = await createAgent(localRoot, 'temporary-agent', [
+      '---',
+      'description: Temporary agent that can disappear before a stopped run resumes.',
+      '---',
+      'TEMPORARY_AGENT_BODY: this file is deleted before continuation.',
+    ].join('\n'));
+
+    let releaseOriginalChild!: () => void;
+    const originalChildBlocked = new Promise<void>((resolve) => {
+      releaseOriginalChild = resolve;
+    });
+    const firstScript = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'temporary background',
+            prompt: 'Run until stopped.',
+            agent_type: 'temporary-agent',
+            run_in_background: true,
+            name: 'deleted-definition-bg',
+          }, { id: 'tool-agent-deleted-definition' }),
+        ], { stopReason: 'toolUse' }),
+        async () => {
+          await originalChildBlocked;
+          return fauxAssistantMessage(fauxText('Original deleted-definition result should not win.'));
+        },
+        fauxAssistantMessage(fauxText('Parent after temporary launch.')),
+        fauxAssistantMessage(fauxText('Parent saw temporary stopped notification.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const firstSink = createWindowSink();
+    const firstRuntime = new AgentRuntime(
+      () => firstSink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: firstScript.streamFn,
+      },
+    );
+
+    const conversation = await firstRuntime.restoreLatestConversation();
+    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a deletable child run.', firstSink);
+    const childRunId = latestProjection(firstSink.events)?.childRunIds[0]!;
+    const stopped = await firstRuntime.childRunStop(conversation.conversationId, childRunId);
+    expect(stopped).toMatchObject({
+      agent_id: childRunId,
+      status: 'stopped',
+    });
+    await waitFor(() => firstScript.pendingCount() === 1);
+    releaseOriginalChild();
+    await waitFor(() => firstScript.pendingCount() === 0);
+    firstRuntime.closeConversation(conversation.conversationId);
+    await rm(deletedAgentDir, { recursive: true, force: true });
+
+    const resumedContexts: string[] = [];
+    const secondScript = scriptedStream(
+      [
+        (context) => {
+          resumedContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Fallback assistant continued the deleted-definition run.'));
+        },
+        fauxAssistantMessage(fauxText('Parent saw deleted-definition continuation.')),
+      ],
+      () => undefined,
+    );
+    const secondSink = createWindowSink();
+    const secondRuntime = new AgentRuntime(
+      () => secondSink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: secondScript.streamFn,
+      },
+    );
+
+    await secondRuntime.restoreConversation(conversation.conversationId);
+    const queued = await secondRuntime.childRunSend(conversation.conversationId, childRunId, 'Continue after definition removal.');
+    expect(queued).toMatchObject({
+      agent_id: childRunId,
+      status: 'queued',
+    });
+    const status = await secondRuntime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(status).toMatchObject({
+      agent_id: childRunId,
+      result: 'Fallback assistant continued the deleted-definition run.',
+      status: 'completed',
+    });
+    await waitFor(() => secondScript.pendingCount() === 0);
+    expect(resumedContexts.join('\n')).toContain('Continue after definition removal.');
+    expect(secondSink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
   test('a conversation record whose ledger seed never landed stays resumable (register-empty path)', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-missing-ledger-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-missing-ledger-data-'));
@@ -1866,8 +2029,8 @@ describe('agent runtime childRuns', () => {
         memoryOwnerAgentId: 'built-in:tenon:assistant',
         description: 'lost seed run',
         prompt: 'Verify the deployment pipeline.',
-        agentType: 'general',
-        contextMode: 'fresh',
+        agentType: 'fork',
+        contextMode: 'fork',
       },
       {
         v: 1,
@@ -1918,7 +2081,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background restore',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'restored-bg',
           }, { id: 'tool-agent-1' }),
@@ -2035,7 +2197,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'interruptible background',
             prompt: 'Run until the app dies.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'interrupted-bg',
           }, { id: 'tool-agent-1' }),
@@ -2136,7 +2297,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'background seed',
             prompt: 'Run in background.',
-            agent_type: 'general',
             run_in_background: true,
             name: 'seed-bg',
           }, { id: 'tool-agent-1' }),

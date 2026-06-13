@@ -1,11 +1,3 @@
----
-status: in-progress
-priority: P1
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-12
----
-
 # Agent Conversation Model — Agents, Conversations, Memory
 
 How the agent talks to the user and to the document over time. This plan

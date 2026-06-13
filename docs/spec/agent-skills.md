@@ -40,7 +40,7 @@ Supported frontmatter fields:
 - `effort`: optional reasoning effort override for inline skills, or child-agent effort override for forked skills.
 - `shell`: optional shell for embedded command expansion. Lin currently supports `bash`.
 - `context: fork`: runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context.
-- `agent`: optional agent definition for `context: fork` skills. If omitted, Lin uses the built-in `general` agent. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
+- `agent`: optional agent definition for `context: fork` skills. If omitted, Lin forks the current conversation context. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
 - `paths`: path-conditional activation patterns.
 
 Mutable skill bodies are loaded with:
@@ -92,7 +92,7 @@ When the model calls the `skill` tool for a `context: fork` skill:
 
 1. `AgentSkillRuntime` resolves, validates, and renders the skill body.
 2. `AgentDelegationRuntime` starts a sidechain child run using the rendered skill body as the child prompt.
-3. The skill's `agent` field selects the agent definition; if absent, Lin uses `general`.
+3. The skill's `agent` field selects a real agent definition; if absent, Lin forks the current conversation context.
 4. The skill's `allowed-tools` rules are passed as child-run preapproval metadata.
 5. The skill's `model` and `effort` fields apply to the child agent run.
 6. The parent receives only the final child-run result or error as the `skill` tool result.

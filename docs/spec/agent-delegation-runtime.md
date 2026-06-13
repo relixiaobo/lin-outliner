@@ -395,8 +395,18 @@ Selection:
 
 - `agent_type` set: use that agent definition.
 - `agent_type` omitted: fork from the current conversation context.
-- Callers should pass `agent_type: "general"` when they want a fresh general
-  agent.
+- There is no built-in generic fallback. A fresh run always names a real agent
+  definition; generic isolated work should omit `agent_type` and fork from the
+  current context.
+
+Recovery:
+
+- A new fresh run with an unknown `agent_type` is rejected.
+- A persisted fresh run whose original definition was deleted or renamed after
+  it started remains resumable. On resume, if the stored run has no embedded
+  definition and the registry can no longer resolve its `agentType`, the runtime
+  continues it with the built-in Tenon assistant definition. This is a durable
+  recovery path for already-started work, not a generic dispatch fallback.
 
 #### System prompt — one agent, headless mode (not a separate persona)
 
@@ -414,13 +424,12 @@ persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
    agent's alone and are excluded;
 3. the definition's **persona body** as `# Agent instructions`, when non-empty.
 
-So the built-in **`general`** carries an **empty body** — it is just "the base
-agent, headless, zero persona" (the default fresh worker). A **user/project**
-definition specializes by adding a body; its body is purely additive on top of the
-shared base. This is the inverse of the earlier design where a fresh child run got
-a bespoke minimal prompt that discarded the base. (Cost: a fresh child run's system
-prompt grows from ~80 to ~1.2k tokens — normally provider-cached. Fork is
-unaffected; see below.)
+A **user/project** definition specializes by adding a body; its body is purely
+additive on top of the shared base. A definition with an empty body is still a
+real definition, not a built-in generic fallback. This is the inverse of the
+earlier design where a fresh child run got a bespoke minimal prompt that
+discarded the base. (Cost: a fresh child run's system prompt grows from ~80 to
+~1.2k tokens — normally provider-cached. Fork is unaffected; see below.)
 
 ### Fork Child run
 
@@ -675,6 +684,11 @@ shared for metrics or parent notification.
 ### `AgentDefinitionRegistry`
 
 Loads built-in, user, workspace, settings, and future plugin agent definitions.
+The built-in Tenon assistant is a real definition with stable id
+`built-in:tenon:assistant`, internal name `assistant`, display name
+`Tenon Assistant`, and a view-only profile body sourced from the main Tenon
+system prompt. It is visible in Agent Profiles / Agent Config but is never a
+write target.
 
 Layering should follow this order:
 
@@ -692,8 +706,9 @@ Later layers with the same `name` override earlier layers.
 
 Agent definitions are **user-authorable in-app** (the model never writes them —
 the write surface is user-driven only, mirroring the closed memory-write
-surface). The settings "Agent Profiles" pane exposes create / edit / duplicate /
-delete:
+surface). The settings "Agent Profiles" pane lists agents and opens the dedicated
+`AgentConfigWindow`; that child window is the single create / edit / duplicate /
+delete surface:
 
 - **Format layer** (`src/core/agentMarkdown.ts`, pure — `yaml` only, no fs):
   `serializeAgentMarkdown(AgentAuthoringInput) → AGENT.md` text and its inverses
@@ -721,8 +736,9 @@ delete:
   writable authoring roots such as `additionalAgentDirectories`) renders through
   this same editor but **read-only** (every control disabled; the mode toggle
   stays live so Raw is viewable; the only action is "Duplicate to my agents") —
-  so opening `general`, an external-directory agent, and opening a writable user
-  agent look identical, the difference is only editability. A **new** agent seeds a
+  so opening Tenon Assistant, an external-directory agent, and a writable user
+  agent use the same viewing surface; the difference is only editability. A
+  **new** agent seeds a
   **scaffold** (real defaults — `permission-mode: restricted`, `effort: medium`,
   `max-turns: 20`, a starter persona — plus all tools on and model inherit), so
   the Form starts populated and the Raw is a fill-in template rather than a bare
@@ -761,7 +777,8 @@ The skill path should:
 
 - load and render skill content;
 - run the rendered content as a sidechain child run prompt using the skill's
-  `agent` field, or the built-in `general` agent when no agent is set;
+  `agent` field, or by forking the current conversation context when no agent is
+  set;
 - pass `allowed-tools` as child-run preapproval metadata;
 - return only the final result/summary to the parent conversation.
 
@@ -970,7 +987,8 @@ Implemented in `src/main/agentDelegation.ts`.
 - Loads `~/.agents/agents`, `<workspace>/.agents/agents`, and configured
   additional agent directories.
 - Supports directory agents with `AGENT.md`.
-- Ships a built-in `general` profile.
+- Does not ship a built-in generic worker profile; generic isolation uses fork
+  mode by omitting `agent_type`.
 - Injects agent listing as turn state/reminders, not inside the `Agent` tool
   schema.
 
@@ -1123,7 +1141,8 @@ Reference-alignment tests:
 
 - `agent_type` set means fresh;
 - `agent_type` omitted means fork;
-- explicit `agent_type: "general"` means fresh general agent;
+- explicit `agent_type` must resolve to a real user/project agent definition;
+- omitted `agent_type` forks the current conversation context;
 - multiple `Agent` tool calls in one turn run independently;
 - agent listing changes do not mutate the `Agent` tool schema.
 
@@ -1132,4 +1151,5 @@ Reference-alignment tests:
 - Should `AgentStatus` ever return sidechain transcript excerpts, or should the
   transcript stay UI/payload-only?
 - Should background child runs always run with lower output budgets by default?
-- Which additional built-in profiles should exist besides `general`?
+- Should Tenon ship additional bundled profiles, or should all specialization
+  beyond the built-in assistant stay in user/project `AGENT.md` definitions?

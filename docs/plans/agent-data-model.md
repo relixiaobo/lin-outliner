@@ -1,11 +1,3 @@
----
-status: meta
-priority: P1
-owner: relixiaobo
-created: 2026-06-06
-updated: 2026-06-12
----
-
 # Agent Data Model — Persistence & Context Contract
 
 The **authoritative** shape of everything the agent subsystem persists, and how a

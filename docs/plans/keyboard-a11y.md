@@ -1,11 +1,3 @@
----
-status: draft
-priority: P2
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Keyboard Accessibility & Interaction Semantics
 
 Layer-3 behavioral a11y, from UI review report E (`tmp/ui-review/E-keyboard-a11y.md`).

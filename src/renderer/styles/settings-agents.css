@@ -49,7 +49,8 @@
 /* The editor's field labels are longer than the provider sheet's (e.g. "Model
    Override", "Permission Mode"), so widen the label column to keep them on one
    line instead of the 92px provider default that wrapped. */
-.settings-agents-section .settings-sheet-row-label {
+.settings-agents-section .settings-sheet-row-label,
+.agent-config-window .settings-sheet-row-label {
   width: 132px;
 }
 
@@ -105,6 +106,18 @@
   white-space: nowrap;
 }
 
+.agent-config-window .agent-editor {
+  margin-top: var(--space-5);
+}
+
+.agent-config-window .agent-editor-header {
+  justify-content: flex-end;
+}
+
+.agent-config-window .agent-editor-header .agent-profile-title {
+  display: none;
+}
+
 .agent-editor-raw {
   height: 340px;
   white-space: pre;
@@ -139,6 +152,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.agent-editor-actions-right {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-3);
 }
 

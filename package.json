@@ -22,6 +22,7 @@
     "build:native": "node-gyp rebuild --directory=native/window-corner --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers && node-gyp rebuild --directory=native/browser-tab --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers",
     "app:build": "bun run build:native && electron-vite build && electron-builder",
     "typecheck": "tsc --noEmit",
+    "docs:check": "bun scripts/docs-check.ts",
     "test:core": "bun test --path-ignore-patterns 'tmp/**' tests/core",
     "test:renderer": "bun test --path-ignore-patterns 'tmp/**' tests/renderer",
     "test:e2e": "playwright test",

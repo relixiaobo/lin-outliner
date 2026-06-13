@@ -1,11 +1,3 @@
----
-status: draft
-priority: P2
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Shared `<Button>` Primitive
 
 A styled text-button primitive that mirrors `IconButton`'s variant system, so

@@ -25,7 +25,8 @@ them in the same change rather than letting them drift.
 | Dev run (per clone) | `bun run dev:<main\|cc\|cc-2\|codex\|codex-2\|codex-3\|codex-4\|anti>` — isolates `userData` |
 | Packaged build | `bun run app:build` → unsigned `.dmg` in `release/` |
 
-Run `bun run typecheck` + the relevant tests before marking a PR ready. macOS is
+Run `bun run typecheck` + the relevant tests + `bun run docs:check` before marking
+a PR ready. macOS is
 the supported dev platform. `userData` isolation and packaging detail are under
 **Dev environment** below.
 
@@ -348,8 +349,8 @@ one question lives in one document; every document has a lifecycle.
 | Document | Answers | Lifecycle |
 |---|---|---|
 | `AGENTS.md` | How do we work together? | stable |
-| `docs/TASKS.md` | Who's doing what now? | updated continuously / on merge |
-| `docs/plans/<topic>.md` | How exactly is this change done? | ship → fold into `spec/` → `docs/plans/archive/` |
+| `docs/TASKS.md` | What's to do, and where does each item stand? (the single board) | updated continuously / on merge |
+| `docs/plans/<topic>.md` | How exactly is this change done? (design only — no status) | ship → fold design into `spec/` → `docs/plans/archive/` |
 | `docs/spec/*` | How does it work now? | rewritten, never deleted |
 | `CHANGELOG.md` | What changed, when? | append-only (`Internal` for throwaway) |
 | `README.md` | What is this project? | as needed |
@@ -359,27 +360,35 @@ one question lives in one document; every document has a lifecycle.
   `docs/spec/README.md` is the map. Update the spec in the SAME change as the
   behavior. `docs/spec/agent-progress.md` is the agent-integration checklist;
   detailed contracts go in `docs/spec/agent-tool-design.md`.
-- `docs/plans/` — forward-looking work. Each plan carries a YAML `status`. The
-  active-plan **catalog is the set of non-terminal `docs/plans/*.md` (read their
-  frontmatter)** — it is not hand-maintained anywhere; `docs/TASKS.md` Backlog is
-  the prioritized cut. Terminal plans move to `docs/plans/archive/`; we never
-  delete a plan.
+- `docs/plans/` — forward-looking work: **pure design, nothing else.** A plan
+  answers only *how is this built?* and carries **no status, priority, or
+  frontmatter** — those are project-management facts, not properties of a design,
+  and live solely in `docs/TASKS.md`, which points out to each plan by link.
+  `docs/TASKS.md` **is** the single active-work catalog. A shipped plan moves to
+  `docs/plans/archive/` for tidiness once its board item is `done`; we never delete
+  a plan. (Provenance — author, dates — is in git history.) The `bun run docs:check`
+  guard keeps the board and the plan files structurally consistent (every plan link
+  resolves; no active plan is missing from the board).
 
-**Plan status vocabulary** (frontmatter `status`):
+**Status vocabulary** (lives in `docs/TASKS.md`, never in the plan file):
 
 - `draft` — written down, not started.
-- `in-progress` — work has begun; track open subtasks inline.
-- `done` — shipped; its substance lives in `spec/`, the plan stays as history.
-- `superseded` — replaced by a different approach that shipped; kept to record
-  the path not taken.
+- `in-progress` — work has begun.
+- `done` — shipped; the plan's design is folded into `spec/` and the plan moves to
+  `docs/plans/archive/`.
+- `superseded` — replaced by a different approach that shipped; archived, the
+  path-not-taken kept.
 - `shelved` — explicitly decided not to do for now; keep the rationale.
 - `meta` — a standing reference (e.g. a decision catalog), not a unit of work.
 
-**Plan authoring.** Keep each plan single-file. Lead with **Goal** /
-**Non-goals**, then **Design**, then **Open questions**; sub-checklists last.
-When a plan is implemented, move its **Design** into the relevant `spec/`
-document, flip status to `done`, and move it to `archive/`. A plan is not a place
-for daily progress notes — those go in commit messages.
+A plan's lifecycle is the status of its board item; the plan file does not record it.
+
+**Plan authoring.** Keep each plan single-file and **frontmatter-free** — it is
+pure design. Lead with **Goal** / **Non-goals**, then **Design**, then **Open
+questions**; sub-checklists last. When a plan is implemented, fold its **Design**
+into the relevant `spec/` document, **mark its `docs/TASKS.md` item `done`**, and
+move the plan to `archive/`. A plan is not a place for daily progress notes —
+those go in commit messages.
 
 **Each PR ships a complete feature — no partial slices.** A plan's execution
 units must each be a complete, independently-verifiable thing — a refactor, an
