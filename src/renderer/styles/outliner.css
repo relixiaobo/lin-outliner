@@ -1524,7 +1524,9 @@
   width: 256px;
   overflow-y: auto;
   border-radius: var(--radius-overlay-sm);
-  background: var(--overlay-bg);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-6);
 }
