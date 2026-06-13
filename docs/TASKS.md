@@ -258,20 +258,33 @@ data-gated — see § memory above). The remaining *active* build work is the sk
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
-  `agent-conversation-model` §"Cross-agent help") — the **colleague model** is
-  PM-ratified (2026-06-13) and ~**85% already implemented** (fresh-child brief/result
-  exchange + the three non-crossing boundaries + depth/cycle/concurrency guards all
-  conform — audit-verified). **Active — `ungate-contact`:** flip `agent.delegate.spawn`
-  default `'ask'`→baseline-allow (contact is a team-level baseline, not a per-act gate;
-  safety stays on each agent's own *capability* permissions + the existing guards) and
-  attribute the consultee's permission prompts to the consultee. Touches
-  `src/core/agentPermissionModel.ts` + `docs/spec/agent-tool-permissions.md` + tests;
-  **security-sensitive → PM GO + `/security-review` at the gate**; **no new plan file**
-  (design = the §Cross-agent help "Build note"). **Backlog (deferred):** (a) *consultation
-  surfacing* — a `purpose` field (consult vs task), "consulted @B" rendering, and a
-  structured brief/result schema (makes today's implicit in-process contract explicit and
-  A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as the transport
-  only when consulting agents outside the trust domain. #233 closed, absorbed into the authority.
+  `agent-conversation-model` §"Cross-agent help" — read it for the *why*, this is the *what*) —
+  the **colleague model** is PM-ratified (2026-06-13) and ~**85% already implemented**
+  (fresh-child brief/result exchange + the three non-crossing boundaries + depth/cycle/concurrency
+  guards all conform — audit-verified). #233 closed, absorbed into the authority.
+  - **Active — `ungate-contact`** — ONE complete PR; **security-sensitive** (`/security-review`
+    + PM GO at the gate); **no new plan file** (the *why* = §Cross-agent help "Build note"). Steps:
+    1. `src/core/agentPermissionModel.ts` — change `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']`
+       (~:91) from `'ask'` → `'allow'` so cross-agent **contact** is ungated in *all* safety modes;
+       drop the now-redundant `agent.delegate.spawn` entry in `FULL_ACCESS_ALLOW_ACTIONS`. Leave
+       `delegate.status/send/stop` and the depth/cycle/concurrency guards untouched.
+    2. **Consultee approval attribution** — when a child run hits an `'ask'`-level *capability*, the
+       approval that surfaces in the parent conversation (the child-run `approvalHandler` → parent
+       `requestToolApproval` path in `agentRuntime.ts`) must be **attributed to the consultee**
+       (`executingAgentId`/`agentType`), not a generic "child run"; the approval card renders it.
+    3. Sync `docs/spec/agent-tool-permissions.md`: contact (`agent.delegate.spawn`) is baseline-allow
+       (not gated); the consultee runs under its **own** capability permissions, which still gate and
+       surface attributed to it.
+    4. Tests: spawning a fresh child no longer prompts in balanced/ask_first; the consultee's risky
+       action (e.g. `file.write`) still gates under its own permission + correct attribution;
+       depth/cycle/concurrency guards still fire.
+    - **Non-goals (do NOT scope-creep):** no `purpose` field, no "consulted @B" rendering, no
+      structured brief/result schema, no A2A — those are the backlog below; no new plan file; don't
+      re-open the world-view.
+  - **Backlog (deferred):** (a) *consultation surfacing* — a `purpose` field (consult vs task),
+    "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
+    contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
+    the transport only when consulting agents outside the trust domain.
 - **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
   completed; plan archived `done` in-PR. The global `AgentSafetyMode`
   (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
