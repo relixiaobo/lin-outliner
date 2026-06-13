@@ -285,6 +285,21 @@ data-gated — see § memory above). The remaining *active* build work is the sk
     "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
     contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
     the transport only when consulting agents outside the trust domain.
+- **research → agent + skill** (P1, **REDIRECT — PM-ratified 2026-06-13**) — research is
+  reframed from a read-only fork-skill into the worldview's capability/identity split:
+  **(R1) a read-only research SKILL** (bindable capability — *any* agent can equip it for its
+  own inline investigation; read-only enforced via the `READ_ONLY_ACTION_KINDS` catalog filter
+  the prior fork decision already designed) **+ (R2) a memory-bearing persistent `researcher`
+  agent** that binds R1 by default (research persona + its own memory line) and is **consulted**
+  (invisible sidechain) by other agents. The earlier "/research = read-only fork, *not* an
+  agent" call (#232) is **superseded**: the "no durable agent" worry was a workaround for
+  "agents can't consult" — `ungate-contact` removes it, and a consulted researcher is a
+  sidechain, not a Channel/DM participant. Read-only (world) and memory-bearing (own line, via
+  Dream) don't conflict. **Next:** codex-3 **redirects the #232 plan** (R1+R2 design) and syncs
+  the `agent-conversation-model` §"Cross-agent help → Relationship to /research" pointer in the
+  same PR; PM ratifies the redraft. **Sequence:** R1 (skill) is independent; **R2's
+  consult-by-others rides on `ungate-contact`**. cc-2.1 confirms research-as-agent (read-only
+  `Explore`, spawned + consulted) — but stateless; ours is deliberately memory-bearing.
 - **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
   completed; plan archived `done` in-PR. The global `AgentSafetyMode`
   (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
