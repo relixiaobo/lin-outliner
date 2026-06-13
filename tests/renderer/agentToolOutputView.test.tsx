@@ -226,6 +226,93 @@ describe('agent tool output view', () => {
     expect(text).toContain('Output');
     expect(text).toContain('Forked skill result.');
   });
+
+  // F1: a successful file_write must render the produced file as a previewable
+  // local-file chip (basename), never the raw model-visible JSON envelope.
+  test('renders a successful file_write as a local-file chip, not raw JSON', () => {
+    const path = '/home/agent-workdir/reports/report.md';
+    const modelVisible = {
+      ok: true,
+      data: { type: 'create', filePath: path, structuredPatch: [] },
+    };
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-file-write-1',
+      toolName: 'file_write',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: JSON.stringify(modelVisible, null, 2) }],
+    };
+
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-file-write-1', name: 'file_write', arguments: { file_path: path, content: '# Report' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+    );
+
+    const chip = rendered.container.querySelector('[data-inline-ref-kind="local-file"]');
+    expect(chip).not.toBeNull();
+    expect(chip?.getAttribute('data-inline-ref-path')).toBe(path);
+    expect(chip?.textContent).toContain('report.md');
+    // The reported bug: no raw-JSON envelope leaks into the conversation.
+    const text = rendered.container.textContent ?? '';
+    expect(text).not.toContain('filePath');
+    expect(text).not.toContain('structuredPatch');
+    expect(text).not.toContain('"ok"');
+  });
+
+  // F1: a file_edit keeps its diff inspectable (as a unified diff, not JSON)
+  // alongside the file chip.
+  test('renders a file_edit as a chip plus an inspectable diff', () => {
+    const path = '/home/agent-workdir/notes.md';
+    const modelVisible = {
+      ok: true,
+      data: {
+        filePath: path,
+        structuredPatch: [{
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: ['-stale heading', '+fresh heading'],
+        }],
+      },
+    };
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-file-edit-1',
+      toolName: 'file_edit',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: JSON.stringify(modelVisible, null, 2) }],
+    };
+
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-file-edit-1', name: 'file_edit', arguments: { file_path: path, old_string: 'stale heading', new_string: 'fresh heading' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+    );
+
+    const chip = rendered.container.querySelector('[data-inline-ref-kind="local-file"]');
+    expect(chip?.getAttribute('data-inline-ref-path')).toBe(path);
+    expect(chip?.textContent).toContain('notes.md');
+    const text = rendered.container.textContent ?? '';
+    // The diff content stays inspectable; the raw envelope does not appear.
+    expect(text).toContain('stale heading');
+    expect(text).toContain('fresh heading');
+    expect(text).not.toContain('filePath');
+    expect(text).not.toContain('structuredPatch');
+  });
 });
 
 function textButton(rendered: RenderedComponent, text: string): HTMLButtonElement {

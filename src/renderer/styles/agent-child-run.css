@@ -829,3 +829,11 @@
   line-height: var(--line-meta);
   padding: var(--space-1) 0;
 }
+
+/* A file produced by file_write / file_edit, shown always-visible under the tool
+   summary row (parallel to a captured screenshot). The chip itself is the shared
+   `.inline-ref` local-file mention — hover preview + click-to-open come from the
+   app-wide InlineFilePreviewLayer — so this only owns the row's placement. */
+.agent-tool-file-output {
+  margin: var(--space-2) 0 0 20px;
+}

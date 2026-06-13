@@ -171,7 +171,7 @@ independently verifiable, and delivers user value alone — none is scaffold for
 later one. Recommended order is by value and dependency, but F1 does not require
 F2 etc.
 
-### F1 — Render agent file outputs in the conversation *(the reported bug)*
+### F1 — Render agent file outputs in the conversation *(the reported bug)* — **shipped (`cc/agent-file-output-chips`)**
 
 Make a successful `file_write` / `file_edit` show a file the user can inspect,
 preview, and export — instead of raw JSON.
