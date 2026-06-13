@@ -189,23 +189,31 @@ function tagBoundaryStart(text: string, match: RegExpMatchArray, protectedRanges
   return metadataLeadStart(text, tokenStart);
 }
 
-function nextMetadataBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number {
-  let boundary = text.length;
+function metadataBoundaries(text: string, protectedRanges: ReadonlyArray<readonly [number, number]>): number[] {
+  const boundaries: number[] = [];
   for (const match of text.matchAll(FIELD_START_TOKEN)) {
     const start = fieldBoundaryStart(match, protectedRanges);
-    if (start !== null && start >= valueStart) boundary = Math.min(boundary, start);
+    if (start !== null) boundaries.push(start);
   }
   for (const match of matchTagTokens(text)) {
     const start = tagBoundaryStart(text, match, protectedRanges);
-    if (start !== null && start >= valueStart) boundary = Math.min(boundary, start);
+    if (start !== null) boundaries.push(start);
   }
-  return boundary;
+  return [...new Set(boundaries)].sort((left, right) => left - right);
+}
+
+function nextMetadataBoundary(boundaries: readonly number[], valueStart: number, fallback: number): number {
+  for (const boundary of boundaries) {
+    if (boundary >= valueStart) return boundary;
+  }
+  return fallback;
 }
 
 function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
   const tags: string[] = [];
   const fields: ParsedPasteField[] = [];
   const protectedRanges = harvestProtectedRanges(text);
+  const boundaries = metadataBoundaries(text, protectedRanges);
   // Collect harvest spans against the ORIGINAL text so positions stay valid;
   // fields before tags so a field value's words are never re-scanned as a tag.
   const removals: Array<{ start: number; end: number; lead: number }> = [];
@@ -216,7 +224,7 @@ function extractTagsAndFields(text: string): { text: string; tags: string[]; fie
     if (inAnyRange(tokenStart, protectedRanges)) continue;
     if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
     const valueStart = start + match[0].length;
-    const end = nextMetadataBoundary(text, valueStart, protectedRanges);
+    const end = nextMetadataBoundary(boundaries, valueStart, text.length);
     const value = text.slice(valueStart, end).trim();
     if (!value) continue;
     fields.push({ name: match[2] ?? '', value });
@@ -568,7 +576,7 @@ function looksLikeStrongMarkdown(text: string): boolean {
 }
 
 function treeHasContent(node: CreateNodeTree): boolean {
-  return node.content.text.trim().length > 0 || node.children.length > 0;
+  return node.content.text.trim().length > 0 || node.children.length > 0 || node.checkbox === true;
 }
 
 export function parseClipboardPaste(plain: string, html?: string | null): CreateNodeTree[] {

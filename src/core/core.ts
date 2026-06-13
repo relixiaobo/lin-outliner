@@ -2883,9 +2883,8 @@ export class Core {
   // Apply `#tag` / `name:: value` metadata harvested from a paste onto a node.
   // The parser runs in the renderer without state, so it emits names; here we
   // own the state and do find-or-create (PM decision 2026-06-04: auto-create to
-  // match nodex). Tag/field syntax itself is recognized renderer-side and today
-  // diverges from `agentOutlineParser` (ASCII vs Unicode `#tag`); unifying the
-  // two on one canonical grammar is docs/plans/outline-syntax-unification.md.
+  // match nodex). Tag tokens use the shared canonical grammar in
+  // `core/textSyntax`; inline field harvesting remains renderer-local.
   private applyPasteMetadataDirect(
     nodeId: string,
     tags: string[] | undefined,

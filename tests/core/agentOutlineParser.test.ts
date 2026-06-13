@@ -43,20 +43,21 @@ describe('agent outline parser', () => {
 
   test('uses the shared tag grammar and leaves bare hex colors as title text', () => {
     const parsed = parseLinOutline([
-      '- Palette #中文 [[#tag]] #[[multi word]] #[[needs \\] bracket]] #fff #fffff #fff-bug #office',
+      '- Palette #中文 [[#tag]] #[[multi word]] #[[needs \\] bracket]] #[[C:\\path]] #fff #fffff #fff-bug #office',
     ].join('\n'));
 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.document.roots[0]).toMatchObject({
       title: 'Palette #fff',
-      tags: ['中文', 'tag', 'multi word', 'needs ] bracket', 'fffff', 'fff-bug', 'office'],
+      tags: ['中文', 'tag', 'multi word', 'needs ] bracket', String.raw`C:\path`, 'fffff', 'fff-bug', 'office'],
     });
   });
 
   test('requires checkbox markers to be separated from body text', () => {
     const parsed = parseLinOutline([
       '- [x] shipped',
+      '- [ ]',
       '- [x]pending',
     ].join('\n'));
 
@@ -66,7 +67,11 @@ describe('agent outline parser', () => {
       title: 'shipped',
       checked: true,
     });
-    expect(parsed.document.roots[1]?.title).toBe('[x]pending');
-    expect(parsed.document.roots[1]?.checked).toBeUndefined();
+    expect(parsed.document.roots[1]).toMatchObject({
+      title: '(untitled)',
+      checked: false,
+    });
+    expect(parsed.document.roots[2]?.title).toBe('[x]pending');
+    expect(parsed.document.roots[2]?.checked).toBeUndefined();
   });
 });

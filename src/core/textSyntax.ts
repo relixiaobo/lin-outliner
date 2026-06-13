@@ -1,8 +1,8 @@
 const CSS_HEX_COLOR_BODY = /^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const BARE_TAG_BODY_CHARS = String.raw`\p{L}\p{N}_-`;
 const BARE_TAG_NAME = String.raw`[${BARE_TAG_BODY_CHARS}]+`;
-const BRACKET_TAG_NAME = String.raw`(?:\\[\\\]nrt]|[^\]\\\n])+`;
-const BARE_FORMAT_TAG_NAME = /^[\w-]+$/u;
+const BRACKET_TAG_NAME = String.raw`(?:\\[\\\]nrt]|[^\]\n])+`;
+const BARE_FORMAT_TAG_NAME = new RegExp(String.raw`^${BARE_TAG_NAME}$`, 'u');
 
 export const TAG_TOKEN_SOURCE = String.raw`\[\[#(${BRACKET_TAG_NAME})\]\]|#\[\[(${BRACKET_TAG_NAME})\]\]|#(${BARE_TAG_NAME})`;
 export const TAG_TRIGGER_QUERY_PATTERN = new RegExp(String.raw`#([${BARE_TAG_BODY_CHARS}]*)$`, 'u');
@@ -15,6 +15,10 @@ export function matchTagTokens(text: string): IterableIterator<RegExpMatchArray>
 export function isCssHexColorToken(value: string): boolean {
   const token = value.startsWith('#') ? value.slice(1) : value;
   return CSS_HEX_COLOR_BODY.test(token);
+}
+
+export function canWriteBareTagName(name: string): boolean {
+  return BARE_FORMAT_TAG_NAME.test(name) && !isCssHexColorToken(name);
 }
 
 export interface ParsedTagToken {
@@ -86,14 +90,14 @@ export function formatTag(name: string): string {
   if (!trimmed) {
     throw new Error('Cannot format an empty tag name.');
   }
-  if (trimmed && BARE_FORMAT_TAG_NAME.test(trimmed) && !isCssHexColorToken(trimmed)) {
+  if (canWriteBareTagName(trimmed)) {
     return `#${trimmed}`;
   }
   return `#[[${escapeBracketTagName(trimmed)}]]`;
 }
 
 export function parseCheckboxMarker(line: string): ParsedCheckboxMarker | null {
-  const match = /^\[([ xX])\]\s+(.+)$/u.exec(line);
+  const match = /^\[([ xX])\](?:\s+(.*))?$/u.exec(line);
   if (!match) return null;
   return {
     checked: (match[1] ?? '').toLowerCase() === 'x',

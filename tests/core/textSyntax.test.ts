@@ -8,8 +8,8 @@ import {
 
 describe('text syntax helpers', () => {
   test('extracts canonical tag forms and excludes bare CSS hex colors', () => {
-    expect(extractTags('Ship #中文 [[#tag]] #[[multi word]] #fff #fffff #fff-bug #office')).toEqual({
-      tags: ['中文', 'tag', 'multi word', 'fffff', 'fff-bug', 'office'],
+    expect(extractTags('Ship #中文 [[#tag]] #[[multi word]] #[[C:\\path]] #fff #fffff #fff-bug #office')).toEqual({
+      tags: ['中文', 'tag', 'multi word', String.raw`C:\path`, 'fffff', 'fff-bug', 'office'],
       rest: 'Ship #fff',
     });
   });
@@ -20,7 +20,7 @@ describe('text syntax helpers', () => {
 
     expect(formatted).toEqual([
       '#office',
-      '#[[中文]]',
+      '#中文',
       '#[[multi word]]',
       '#[[abc]]',
       '#[[112233]]',
@@ -46,8 +46,9 @@ describe('text syntax helpers', () => {
     expect(parseCheckboxMarker('[x] body')).toEqual({ checked: true, rest: 'body' });
     expect(parseCheckboxMarker('[X] body')).toEqual({ checked: true, rest: 'body' });
     expect(parseCheckboxMarker('[ ] body')).toEqual({ checked: false, rest: 'body' });
+    expect(parseCheckboxMarker('[x]')).toEqual({ checked: true, rest: '' });
+    expect(parseCheckboxMarker('[x] ')).toEqual({ checked: true, rest: '' });
+    expect(parseCheckboxMarker('[ ]')).toEqual({ checked: false, rest: '' });
     expect(parseCheckboxMarker('[x]body')).toBeNull();
-    expect(parseCheckboxMarker('[x]')).toBeNull();
-    expect(parseCheckboxMarker('[x] ')).toBeNull();
   });
 });
