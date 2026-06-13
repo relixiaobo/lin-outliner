@@ -2252,3 +2252,26 @@ describe('agent runtime childRuns', () => {
     expect(replayUnread).toBe(0);
   });
 });
+
+describe('extractPartialAssistantText (stop-salvage primitive)', () => {
+  // Lazy import: a static import would evaluate agentDelegation's transitive
+  // electron dependency before this file's `mock.module('electron', …)` lands.
+  const loadDelegation = () => import('../../src/main/agentDelegation');
+
+  test('returns the last non-empty assistant text so a stopped run keeps its partial work', async () => {
+    const { extractPartialAssistantText } = await loadDelegation();
+    const messages = [
+      fauxAssistantMessage(fauxText('first pass')),
+      fauxAssistantMessage(fauxText('partial progress before the stop')),
+    ] as Parameters<typeof extractPartialAssistantText>[0];
+    expect(extractPartialAssistantText(messages)).toBe('partial progress before the stop');
+  });
+
+  test('returns undefined when there is no assistant text yet (a stop then reports no salvaged result)', async () => {
+    const { extractPartialAssistantText } = await loadDelegation();
+    const messages = [
+      fauxAssistantMessage([fauxToolCall('Read', { path: 'x' }, { id: 't1' })], { stopReason: 'toolUse' }),
+    ] as Parameters<typeof extractPartialAssistantText>[0];
+    expect(extractPartialAssistantText(messages)).toBeUndefined();
+  });
+});

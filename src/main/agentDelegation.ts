@@ -594,6 +594,13 @@ export class AgentDelegationRuntime {
       run.status = 'stopped';
       run.completedAt = Date.now();
       run.updatedAt = run.completedAt;
+      // Salvage whatever the run produced before we abort, so the synchronous
+      // tool result and the terminal notification carry the partial work
+      // instead of an empty result (mirrors the completion path's salvage).
+      if (run.result === undefined && run.agent) {
+        const partial = extractPartialAssistantText(run.agent.state.messages as AgentMessage[]);
+        if (partial !== undefined) run.result = partial;
+      }
       run.agent?.abort();
       run.agent = undefined;
       await this.host.childRunStatusChanged(snapshotRun(run));
@@ -623,7 +630,6 @@ export class AgentDelegationRuntime {
     if (name && this.names.has(name)) throw new Error(`Agent name is already in use in this session: ${name}`);
 
     const runId = `child-${randomUUID()}`;
-    const childConversationId = `${this.hostConversationPrefix()}-${runId}`;
     const parentAgentId = this.host.getParentAgentId?.() ?? this.executingAgentId;
     const parentMemoryOwnerAgentId = this.host.getParentMemoryOwnerAgentId?.() ?? this.memoryOwnerAgentId;
     const executingAgentId = contextMode === 'fork'
@@ -633,50 +639,26 @@ export class AgentDelegationRuntime {
       ? parentMemoryOwnerAgentId
       : executingAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
-    let childRuntime: AgentDelegationRuntime;
-    const runtimeSettings = await this.host.getRuntimeSettings();
-    const skillRuntime = new AgentSkillRuntime({
-      localRoot: this.localRoot,
-      additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
-      provenanceStore: createAgentSkillProvenanceStore(),
-      conversationId: childConversationId,
-      executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
-        const data = await childRuntime.invokeSkillChildAgent({
-          skillName: skill.name,
-          description: skill.description,
-          renderedContent,
-          agent: skill.agent,
-          model: skill.model,
-          effort: skill.effort,
-          allowedTools: skill.allowedTools,
-        }, undefined, parentToolCallId);
-        return {
-          agentId: data.agent_id,
-          agentType: data.agent_type,
-          status: data.status,
-          result: data.result,
-          error: data.error,
-        };
-      },
-    });
-    skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
-    let childAgent: Agent | null = null;
     let run: AgentRunRecord | null = null;
-    childRuntime = new AgentDelegationRuntime({
-      conversationId: childConversationId,
+    const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
+      runId,
+      definition,
+      contextMode,
       executingAgentId,
+      parentAgentId,
       memoryOwnerAgentId,
-      localRoot: this.localRoot,
-      additionalAgentDirectories: this.additionalAgentDirectories,
-      depth: this.depth + 1,
-      maxDepth: this.maxDepth,
-      ancestry: [...this.ancestry, definition.name],
-      // A grandchild's parent run is THIS child run — the run tree chains.
-      host: this.buildChildHost(() => runId, () => childAgent),
+      memoryOriginWorkspace,
+      model: params.model,
+      effort: params.effort,
+      preapprovedToolRules: params.preapprovedToolRules,
+      unattended: params.unattended,
+      // The child consumes its prompt via `run.messages` + `runChildAgent`, not
+      // through the agent's seed messages.
+      initialMessages: [],
+      afterToolResult: (toolCallId, toolName, result, isError) => (
+        run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
+      ),
     });
-    childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const preloadMessages = await this.preloadAgentSkills(definition, skillRuntime);
     // The ledger seed split ([[agent-run-unification]]): inherited context (the
     // fork prefix) lands BEFORE `run.started` and is excluded from Dream
@@ -689,32 +671,6 @@ export class AgentDelegationRuntime {
       ? [createHiddenUserMessage(buildForkDirective(params.prompt))]
       : [...preloadMessages, createUserMessage(params.prompt)];
     const promptMessages = [...contextMessages, ...evidenceMessages];
-    const systemPrompt = contextMode === 'fork'
-      ? this.host.getParentSystemPrompt()
-      : buildFreshAgentSystemPrompt(definition);
-    childAgent = this.host.createChildAgent({
-      conversationId: childConversationId,
-      messages: [],
-      systemPrompt,
-      executingAgentId,
-      parentAgentId,
-      memoryOwnerAgentId,
-      memoryOriginWorkspace,
-      model: params.model ?? definition.model,
-      effort: params.effort ?? definition.effort,
-      permissionMode: definition.permissionMode,
-      maxTurns: definition.maxTurns,
-      skillRuntime,
-      localWorkspace,
-      delegationRuntime: childRuntime,
-      allowedTools: definition.tools,
-      disallowedTools: definition.disallowedTools,
-      preapprovedToolRules: params.preapprovedToolRules,
-      unattended: params.unattended,
-      afterToolResult: (toolCallId, toolName, result, isError) => (
-        run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
-      ),
-    });
 
     const background = params.run_in_background === true || definition.background === true;
     const now = Date.now();
@@ -770,6 +726,103 @@ export class AgentDelegationRuntime {
 
     await run.completion;
     return runToToolData(run);
+  }
+
+  /**
+   * Build the per-run agent harness — skill runtime, local workspace, nested
+   * delegation runtime, and the live `Agent` — shared by the spawn (`startAgent`)
+   * and resume (`ensureLiveAgent`) paths. One wiring means a setup step (e.g. the
+   * disabled-skill/agent gates) can never be applied on spawn and silently missed
+   * on resume — the fragile seam the run tree used to have.
+   */
+  private async buildChildAgentHarness(input: {
+    runId: string;
+    definition: AgentDefinition;
+    contextMode: 'fresh' | 'fork';
+    executingAgentId: string;
+    parentAgentId: string;
+    memoryOwnerAgentId: string;
+    memoryOriginWorkspace?: string;
+    model?: string;
+    effort?: string;
+    preapprovedToolRules?: string[];
+    unattended?: boolean;
+    initialMessages: AgentMessage[];
+    afterToolResult: AgentChildAgentCreateInput['afterToolResult'];
+  }): Promise<{
+    skillRuntime: AgentSkillRuntime;
+    localWorkspace: AgentLocalWorkspaceContext;
+    childRuntime: AgentDelegationRuntime;
+    childAgent: Agent;
+  }> {
+    const childConversationId = `${this.hostConversationPrefix()}-${input.runId}`;
+    const runtimeSettings = await this.host.getRuntimeSettings();
+    let childRuntime: AgentDelegationRuntime;
+    let childAgent: Agent | null = null;
+    const skillRuntime = new AgentSkillRuntime({
+      localRoot: this.localRoot,
+      additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      provenanceStore: createAgentSkillProvenanceStore(),
+      conversationId: childConversationId,
+      executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
+        const data = await childRuntime.invokeSkillChildAgent({
+          skillName: skill.name,
+          description: skill.description,
+          renderedContent,
+          agent: skill.agent,
+          model: skill.model,
+          effort: skill.effort,
+          allowedTools: skill.allowedTools,
+        }, undefined, parentToolCallId);
+        return {
+          agentId: data.agent_id,
+          agentType: data.agent_type,
+          status: data.status,
+          result: data.result,
+          error: data.error,
+        };
+      },
+    });
+    skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
+    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
+    childRuntime = new AgentDelegationRuntime({
+      conversationId: childConversationId,
+      executingAgentId: input.executingAgentId,
+      memoryOwnerAgentId: input.memoryOwnerAgentId,
+      localRoot: this.localRoot,
+      additionalAgentDirectories: this.additionalAgentDirectories,
+      depth: this.depth + 1,
+      maxDepth: this.maxDepth,
+      ancestry: [...this.ancestry, input.definition.name],
+      // A grandchild's parent run is THIS child run — the run tree chains.
+      host: this.buildChildHost(() => input.runId, () => childAgent),
+    });
+    childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
+    const systemPrompt = input.contextMode === 'fork'
+      ? this.host.getParentSystemPrompt()
+      : buildFreshAgentSystemPrompt(input.definition);
+    childAgent = this.host.createChildAgent({
+      conversationId: childConversationId,
+      messages: input.initialMessages,
+      systemPrompt,
+      executingAgentId: input.executingAgentId,
+      parentAgentId: input.parentAgentId,
+      memoryOwnerAgentId: input.memoryOwnerAgentId,
+      memoryOriginWorkspace: input.memoryOriginWorkspace,
+      model: input.model ?? input.definition.model,
+      effort: input.effort ?? input.definition.effort,
+      permissionMode: input.definition.permissionMode,
+      maxTurns: input.definition.maxTurns,
+      skillRuntime,
+      localWorkspace,
+      delegationRuntime: childRuntime,
+      allowedTools: input.definition.tools,
+      disallowedTools: input.definition.disallowedTools,
+      preapprovedToolRules: input.preapprovedToolRules,
+      unattended: input.unattended,
+      afterToolResult: input.afterToolResult,
+    });
+    return { skillRuntime, localWorkspace, childRuntime, childAgent };
   }
 
   private async resolveFreshAgent(agentType: string | undefined): Promise<AgentDefinition> {
@@ -1079,67 +1132,18 @@ export class AgentDelegationRuntime {
   private async ensureLiveAgent(run: AgentRunRecord): Promise<void> {
     if (run.agent) return;
     const definition = await this.resolveDefinitionForRun(run);
-    let childRuntime: AgentDelegationRuntime;
-    const skillRuntime = new AgentSkillRuntime({
-      localRoot: this.localRoot,
-      additionalSkillDirectories: (await this.host.getRuntimeSettings()).additionalSkillDirectories,
-      // Same acceptance gate as startAgent: omitting the store would fail closed
-      // and reject every workspace skill on the resume path (#185).
-      provenanceStore: createAgentSkillProvenanceStore(),
-      conversationId: `${this.hostConversationPrefix()}-${run.id}`,
-      executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
-        const data = await childRuntime.invokeSkillChildAgent({
-          skillName: skill.name,
-          description: skill.description,
-          renderedContent,
-          agent: skill.agent,
-          model: skill.model,
-          effort: skill.effort,
-          allowedTools: skill.allowedTools,
-        }, undefined, parentToolCallId);
-        return {
-          agentId: data.agent_id,
-          agentType: data.agent_type,
-          status: data.status,
-          result: data.result,
-          error: data.error,
-        };
-      },
-    });
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
-    let childAgent: Agent | null = null;
-    childRuntime = new AgentDelegationRuntime({
-      conversationId: `${this.hostConversationPrefix()}-${run.id}`,
-      executingAgentId: run.executingAgentId,
-      memoryOwnerAgentId: run.memoryOwnerAgentId,
-      localRoot: this.localRoot,
-      additionalAgentDirectories: this.additionalAgentDirectories,
-      depth: this.depth + 1,
-      maxDepth: this.maxDepth,
-      ancestry: [...this.ancestry, definition.name],
-      host: this.buildChildHost(() => run.id, () => childAgent),
-    });
-    const systemPrompt = run.contextMode === 'fork'
-      ? this.host.getParentSystemPrompt()
-      : buildFreshAgentSystemPrompt(definition);
-    childAgent = this.host.createChildAgent({
-      conversationId: `${this.hostConversationPrefix()}-${run.id}`,
-      messages: run.messages.map(cloneAgentMessage),
-      systemPrompt,
+    const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
+      runId: run.id,
+      definition,
+      contextMode: run.contextMode,
       executingAgentId: run.executingAgentId,
       parentAgentId: run.parentAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
       memoryOriginWorkspace: run.memoryOriginWorkspace,
-      model: definition.model,
-      effort: definition.effort,
-      permissionMode: definition.permissionMode,
-      maxTurns: definition.maxTurns,
-      skillRuntime,
-      localWorkspace,
-      delegationRuntime: childRuntime,
-      allowedTools: definition.tools,
-      disallowedTools: definition.disallowedTools,
       preapprovedToolRules: run.preapprovedToolRules,
+      // Resume continues from the run's restored transcript (the model + effort
+      // come from the run's resolved definition, not a fresh override).
+      initialMessages: run.messages.map(cloneAgentMessage),
       afterToolResult: (toolCallId, toolName, result, isError) => (
         this.afterRunToolResult(run, toolCallId, toolName, result, isError)
       ),
@@ -1711,7 +1715,13 @@ function withMemoryReminder(messages: AgentMessage[], memoryReminder: string | n
   return [createHiddenUserMessage(memoryReminder), ...messages.map(cloneAgentMessage)];
 }
 
-function extractFinalAssistantText(messages: readonly AgentMessage[]): string {
+/**
+ * The last non-empty assistant text in a transcript, or `undefined` when the run
+ * produced none. The salvage primitive: completion wraps it with a fallback
+ * string; a stop reads it raw so a killed run's partial work is preserved instead
+ * of a misleading "completed" fallback.
+ */
+export function extractPartialAssistantText(messages: readonly AgentMessage[]): string | undefined {
   for (const message of [...messages].reverse()) {
     if (message.role !== 'assistant') continue;
     const text = message.content
@@ -1721,7 +1731,11 @@ function extractFinalAssistantText(messages: readonly AgentMessage[]): string {
       .trim();
     if (text) return text;
   }
-  return 'Child run completed without a text result.';
+  return undefined;
+}
+
+function extractFinalAssistantText(messages: readonly AgentMessage[]): string {
+  return extractPartialAssistantText(messages) ?? 'Child run completed without a text result.';
 }
 
 function isRecordableAgentMessage(message: unknown): message is AgentMessage {
