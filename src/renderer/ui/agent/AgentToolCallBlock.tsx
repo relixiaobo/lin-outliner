@@ -23,6 +23,7 @@ import {
   UrlIcon,
   WarningIcon,
 } from '../icons';
+import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
@@ -314,14 +315,15 @@ function ChildRunInlineDetails({
         </section>
       ) : null}
       <div className="agent-child-run-inline-actions">
-        <ButtonControl
-          className="agent-child-run-transcript-button"
+        <Button
           disabled={!canOpenTranscript}
           onClick={() => onOpenTranscript?.(childRun.id)}
+          size="sm"
+          variant="ghost"
         >
           <FileTextIcon size={ICON_SIZE.menu} />
           <span>{t.agent.childRun.viewTranscript}</span>
-        </ButtonControl>
+        </Button>
         <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={childRun.id} />
       </div>
     </div>

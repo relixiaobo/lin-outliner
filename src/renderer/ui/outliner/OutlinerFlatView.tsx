@@ -25,6 +25,7 @@ import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
+import { OutlinerEmptyState } from './OutlinerEmptyState';
 
 // Flag-gated flat (windowed) renderer. Reads localStorage once at module load so
 // the choice is stable for the session (toggle then reload):
@@ -192,8 +193,10 @@ function FlatRowShell({
 export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const { index, ui } = props;
   const byId = index.byId;
+  const parent = byId.get(props.parentId);
   const selectionRootId = props.selectionRootId ?? props.rootId;
   const draftIdFor = useFlatDraftIds(byId);
+  const [rootSearchRefreshing, setRootSearchRefreshing] = useState(false);
 
   const trailingFocusedParentId = ui.focusSurface === 'trailing' && ui.focusedPanelId === props.panelId
     ? ui.focusedId
@@ -235,6 +238,10 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   );
 
   const virtualize = rows.length > VIRTUALIZE_MIN_ROWS;
+  const rootChildCount = useMemo(
+    () => rows.filter((row) => row.parentId === props.parentId && row.kind !== 'toolbar' && !(row.kind === 'content' && row.draft)).length,
+    [rows, props.parentId],
+  );
 
   // ── Measurement + layout ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -406,12 +413,24 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   const searchKey = searchParentIds.join('|');
   useEffect(() => {
-    for (const id of searchKey ? searchKey.split('|') : []) {
-      void api.refreshSearchNodeResults(id).catch((error) => {
-        console.error('Failed to refresh live search results', error);
-      });
+    const ids = searchKey ? searchKey.split('|') : [];
+    const rootSearchVisible = ids.includes(props.parentId);
+    if (!rootSearchVisible) setRootSearchRefreshing(false);
+    let active = true;
+    for (const id of ids) {
+      if (id === props.parentId) setRootSearchRefreshing(true);
+      void api.refreshSearchNodeResults(id)
+        .catch((error) => {
+          console.error('Failed to refresh live search results', error);
+        })
+        .finally(() => {
+          if (active && id === props.parentId) setRootSearchRefreshing(false);
+        });
     }
-  }, [searchKey, index.projection]);
+    return () => {
+      active = false;
+    };
+  }, [searchKey, index.projection, props.parentId]);
 
   const renderRow = (row: VisualRow): ReactNode => {
     switch (row.kind) {
@@ -509,21 +528,43 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   };
 
   if (!virtualize || renderIndices === null) {
-    return <>{rows.map((row) => <Fragment key={row.key}>{renderRow(row)}</Fragment>)}</>;
+    return (
+      <>
+        <OutlinerEmptyState
+          childCount={rootChildCount}
+          parent={parent}
+          parentId={props.parentId}
+          projection={index.projection}
+          rootLevel={props.parentId === props.rootId}
+          searchLoading={rootSearchRefreshing}
+        />
+        {rows.map((row) => <Fragment key={row.key}>{renderRow(row)}</Fragment>)}
+      </>
+    );
   }
 
   const containerStyle: CSSProperties = { height: layout.totalHeight };
   return (
-    <div className="outliner-flat" ref={listRef} style={containerStyle}>
-      {renderIndices.map((i) => {
-        const row = rows[i]!;
-        const item = layout.items[i]!;
-        return (
-          <FlatRowShell key={row.key} onMeasure={measureRow} rowKey={row.key} top={item.top}>
-            {renderRow(row)}
-          </FlatRowShell>
-        );
-      })}
-    </div>
+    <>
+      <OutlinerEmptyState
+        childCount={rootChildCount}
+        parent={parent}
+        parentId={props.parentId}
+        projection={index.projection}
+        rootLevel={props.parentId === props.rootId}
+        searchLoading={rootSearchRefreshing}
+      />
+      <div className="outliner-flat" ref={listRef} style={containerStyle}>
+        {renderIndices.map((i) => {
+          const row = rows[i]!;
+          const item = layout.items[i]!;
+          return (
+            <FlatRowShell key={row.key} onMeasure={measureRow} rowKey={row.key} top={item.top}>
+              {renderRow(row)}
+            </FlatRowShell>
+          );
+        })}
+      </div>
+    </>
   );
 }

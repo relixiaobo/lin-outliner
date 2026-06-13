@@ -5,7 +5,7 @@ import { autoInitStrategiesForFieldType } from '../../../core/autoInit';
 import { resolveFieldOptions } from '../interactions/fieldOptions';
 import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
 import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeValuePicker';
-import { NumberInputControl } from '../primitives/NumberInputControl';
+import { Input } from '../primitives/Input';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { TAG_COLOR_PRESETS } from '../tags/tagColors';
@@ -328,10 +328,12 @@ export function DefinitionNumberControl(props: {
   };
 
   return (
-    <NumberInputControl
+    <Input
       className="definition-text-input"
       label={props.label}
+      type="number"
       value={draft}
+      variant="bare"
       placeholder={t.definition.controls.none}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => commit(draft)}

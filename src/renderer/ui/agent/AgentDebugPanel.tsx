@@ -10,7 +10,8 @@ import type {
 import type { Messages } from '../../../core/i18n';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE } from '../icons';
+import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 
 type DebugLabels = Messages['agentDebug'];
@@ -307,7 +308,7 @@ export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
   if (!conversationId && !resolvedConversationId && loading) {
     return (
       <div className="agent-debug-panel">
-        <div className="agent-debug-empty">{labels.loadingConversation}</div>
+        <EmptyState className="agent-debug-empty" icon={LoaderIcon} loading role="status" title={labels.loadingConversation} />
       </div>
     );
   }
@@ -315,7 +316,7 @@ export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
   if (!conversationId && !resolvedConversationId) {
     return (
       <div className="agent-debug-panel">
-        <div className="agent-debug-empty">{labels.noConversation}</div>
+        <EmptyState className="agent-debug-empty" title={labels.noConversation} />
       </div>
     );
   }
@@ -337,8 +338,8 @@ export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
         />
       </header>
 
-      {loading && !latest ? <div className="agent-debug-card is-muted">{labels.loadingRuntime}</div> : null}
-      {error ? <div className="agent-debug-error">{error}</div> : null}
+      {loading && !latest ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRuntime} /> : null}
+      {error ? <ErrorState message={error} /> : null}
 
       {latest ? (
         <>

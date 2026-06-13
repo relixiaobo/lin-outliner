@@ -1,4 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { EmptyState } from '../primitives/FeedbackState';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 
@@ -89,7 +90,7 @@ export function PopoverListItem({
 }
 
 export function PopoverEmpty({ children }: { children: ReactNode }) {
-  return <div className="popover-empty">{children}</div>;
+  return <EmptyState className="popover-empty" size="inline" title={children} />;
 }
 
 export function PopoverBulletIcon() {

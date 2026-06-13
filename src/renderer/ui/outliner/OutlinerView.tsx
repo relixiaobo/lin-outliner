@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
@@ -12,6 +12,7 @@ import { insertTrailingDraftRow, resolveTrailingDraftAfterId } from '../../state
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
+import { OutlinerEmptyState } from './OutlinerEmptyState';
 
 interface OutlinerViewProps {
   panelId: string;
@@ -48,8 +49,13 @@ interface OutlinerViewProps {
   draftPlaceholder?: string;
 }
 
+function countRenderableChildRows(rows: readonly OutlinerRowItem[]): number {
+  return rows.filter((row) => row.type === 'content' && !row.draft).length;
+}
+
 export function OutlinerView(props: OutlinerViewProps) {
   const parent = props.index.byId.get(props.parentId);
+  const [searchRefreshing, setSearchRefreshing] = useState(false);
   const selectionRootId = props.selectionRootId ?? props.rootId;
   const view = readViewConfig(parent, props.index.byId);
   const builtRows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
@@ -88,10 +94,22 @@ export function OutlinerView(props: OutlinerViewProps) {
     : builtRows;
 
   useEffect(() => {
-    if (parent?.type !== 'search') return;
-    void api.refreshSearchNodeResults(props.parentId).catch((error) => {
-      console.error('Failed to refresh live search results', error);
-    });
+    if (parent?.type !== 'search') {
+      setSearchRefreshing(false);
+      return undefined;
+    }
+    let active = true;
+    setSearchRefreshing(true);
+    void api.refreshSearchNodeResults(props.parentId)
+      .catch((error) => {
+        console.error('Failed to refresh live search results', error);
+      })
+      .finally(() => {
+        if (active) setSearchRefreshing(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [parent?.type, props.parentId, props.index.projection]);
 
   return (
@@ -112,6 +130,14 @@ export function OutlinerView(props: OutlinerViewProps) {
           }}
         />
       )}
+      <OutlinerEmptyState
+        childCount={countRenderableChildRows(builtRows)}
+        parent={parent}
+        parentId={props.parentId}
+        projection={props.index.projection}
+        rootLevel={props.parentId === props.rootId && !props.fieldValue}
+        searchLoading={searchRefreshing}
+      />
       <RowHost
         rows={rows}
         renderGroup={(row) => (

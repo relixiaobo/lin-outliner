@@ -18,6 +18,8 @@ import {
 } from './providerCatalog';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
+import { EmptyState, ErrorState } from '../primitives/FeedbackState';
+import { LoaderIcon } from '../icons';
 
 // Root rendered in the dedicated per-provider config window (?surface=provider-config),
 // a modal child of the settings window. It fetches its own provider settings, derives
@@ -57,15 +59,15 @@ export function ProviderConfigWindow() {
 
   if (error) {
     return (
-      <main className="provider-config-window" aria-labelledby={titleId}>
-        <div className="agent-settings-empty" id={titleId}>{error}</div>
+      <main className="provider-config-window" aria-label={t.window.providerConfigTitle}>
+        <ErrorState message={error} />
       </main>
     );
   }
   if (!settings) {
     return (
-      <main className="provider-config-window" aria-labelledby={titleId}>
-        <div className="agent-settings-empty" id={titleId}>{t.common.loading}</div>
+      <main className="provider-config-window" aria-label={t.window.providerConfigTitle}>
+        <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
       </main>
     );
   }

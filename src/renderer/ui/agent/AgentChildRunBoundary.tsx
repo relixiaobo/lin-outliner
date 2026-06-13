@@ -11,6 +11,7 @@ import {
 } from '../icons';
 import { AgentMarkdown } from './AgentMarkdown';
 import { useT } from '../../i18n/I18nProvider';
+import { EmptyState } from '../primitives/FeedbackState';
 
 type BoundaryLabels = Messages['agent']['childRun']['boundary'];
 
@@ -86,7 +87,7 @@ export function AgentChildRunBoundary({
           {body ? (
             <AgentMarkdown keyPrefix={`child-run-${childRun.id}`} text={body} />
           ) : (
-            <p className="agent-child-run-empty">{labels.noResult}</p>
+            <EmptyState className="agent-child-run-empty" title={labels.noResult} />
           )}
           {canOpen ? (
             <button

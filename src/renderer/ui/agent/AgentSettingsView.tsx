@@ -23,6 +23,7 @@ import {
   CloseIcon,
   DatabaseIcon,
   ICON_SIZE,
+  LoaderIcon,
   PasswordIcon,
   PencilIcon,
   SettingsIcon,
@@ -41,13 +42,14 @@ import {
 } from '../../../core/agentPermissionModel';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { Button } from '../primitives/Button';
+import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
+import { Input } from '../primitives/Input';
 import { SegmentedControl } from '../primitives/SegmentedControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import {
   ProviderAvatar,
@@ -151,14 +153,15 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
           open={menuOpen}
         />
       ) : (
-        <button
+        <Button
           aria-label={t.settings.providers.configureNamed({ name })}
-          className="settings-row-button settings-provider-configure"
+          className="settings-provider-configure"
           onClick={() => handlers.onConfigure(provider.providerId)}
-          type="button"
+          size="sm"
+          variant="secondary"
         >
           {t.settings.providers.configure}
-        </button>
+        </Button>
       )}
     />
   );
@@ -833,7 +836,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         </div>
       </div>
       {loading ? (
-        <div className="agent-settings-empty">{t.settings.loading}</div>
+        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.settings.loading} />
       ) : (
         <div className="settings-layout">
           <aside className="settings-rail">
@@ -924,13 +927,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     label={t.settings.general.revealDiagnosticsLabel}
                     sublabel={t.settings.general.revealDiagnosticsSublabel}
                     trailing={(
-                      <ButtonControl
-                        className="agent-settings-secondary"
+                      <Button
                         disabled={diagnosticsBusy !== null}
                         onClick={() => void revealDiagnosticsLog()}
+                        variant="secondary"
                       >
                         {diagnosticsBusy === 'reveal' ? t.settings.general.diagnosticsWorking : t.settings.general.revealDiagnosticsAction}
-                      </ButtonControl>
+                      </Button>
                     )}
                     wrap
                   />
@@ -938,13 +941,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     label={t.settings.general.exportDiagnosticsLabel}
                     sublabel={t.settings.general.exportDiagnosticsSublabel}
                     trailing={(
-                      <ButtonControl
-                        className="agent-settings-secondary"
+                      <Button
                         disabled={diagnosticsBusy !== null}
                         onClick={() => void exportDiagnostics()}
+                        variant="secondary"
                       >
                         {diagnosticsBusy === 'export' ? t.settings.general.diagnosticsWorking : t.settings.general.exportDiagnosticsAction}
-                      </ButtonControl>
+                      </Button>
                     )}
                     wrap
                   />
@@ -986,6 +989,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   label={t.settings.permissions.trustLevelGroup}
                 >
                   <InsetRow
+                    className="settings-permission-mode-row"
                     label={permissionCustomCount > 0 ? (
                       <>
                         {t.settings.permissions.customModeLabel}
@@ -1011,12 +1015,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                           value={draft.safetyMode}
                         />
                         {permissionCustomCount > 0 ? (
-                          <ButtonControl
-                            className="settings-row-button"
+                          <Button
                             onClick={resetPermissionExceptions}
+                            size="sm"
+                            variant="ghost"
                           >
                             {t.settings.permissions.resetToMode({ mode: permissionModeLabel })}
-                          </ButtonControl>
+                          </Button>
                         ) : null}
                       </div>
                     )}
@@ -1048,12 +1053,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                           </>
                         )}
                         trailing={(
-                          <ButtonControl
-                            className="settings-row-button"
+                          <Button
                             onClick={() => revertPermissionException(exception.ruleValue)}
+                            size="sm"
+                            variant="ghost"
                           >
                             {t.settings.permissions.revertException}
-                          </ButtonControl>
+                          </Button>
                         )}
                         wrap
                       />
@@ -1116,13 +1122,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                         label={`/${skill.displayName || skill.name}`}
                         sublabel={t.settings.permissions.skillGrantSublabel}
                         trailing={(
-                          <ButtonControl
-                            className="settings-row-button"
+                          <Button
                             disabled={skillTrustBusy}
                             onClick={() => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name))}
+                            size="sm"
+                            variant="ghost"
                           >
                             {t.settings.permissions.revokeGrant}
-                          </ButtonControl>
+                          </Button>
                         )}
                         wrap
                       />
@@ -1152,9 +1159,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
             ) : category === 'memory' ? (
               <section className="agent-settings-section settings-memory-section" aria-label={t.settings.memory.sectionAriaLabel}>
                 {loadingMemory ? (
-                  <div className="agent-settings-empty">{t.settings.memory.loading}</div>
+                  <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.memory.loading} />
                 ) : memoryEntries.length === 0 ? (
-                  <div className="agent-settings-empty">{t.settings.memory.empty}</div>
+                  <EmptyState className="agent-settings-empty" size="inline" title={t.settings.memory.empty} />
                 ) : (
                   <InsetGroup ariaLabel={t.settings.memory.entriesAriaLabel} label={t.settings.memory.entriesGroup}>
                     {memoryEntries.map((entry) => {
@@ -1277,9 +1284,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                 </InsetGroup>
 
                 {loadingSkills ? (
-                  <div className="agent-settings-empty">{t.settings.skills.loadingInstalled}</div>
+                  <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.skills.loadingInstalled} />
                 ) : allSkills.length === 0 ? (
-                  <div className="agent-settings-empty">{t.settings.skills.noneInstalled}</div>
+                  <EmptyState className="agent-settings-empty" size="inline" title={t.settings.skills.noneInstalled} />
                 ) : (
                   <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
                     {allSkills.map((skill) => {
@@ -1325,15 +1332,16 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                           trailing={(
                             <>
                               {pending ? (
-                                <button
+                                <Button
                                   aria-label={t.settings.skills.acceptSkill({ name: skill.name })}
-                                  className="settings-row-button settings-skill-accept"
+                                  className="settings-skill-accept"
                                   disabled={skillTrustBusy}
                                   onClick={() => runSkillTrustAction(() => api.agentAcceptSkill(conversationId || 'workspace', skill.name, skill.contentHash ?? ''))}
-                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
                                 >
                                   {t.settings.skills.acceptButton}
-                                </button>
+                                </Button>
                               ) : null}
                               {trustActions.length > 0 ? (
                                 <SettingsRowMenu
@@ -1362,7 +1370,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
             ) : (
               <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.sectionAriaLabel}>
                 {loadingAgents ? (
-                  <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
+                  <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.agents.loadingProfiles} />
                 ) : (
                   <>
                     <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
@@ -1406,12 +1414,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                       <div className="inset-card" role="group">
                         <label className="settings-sheet-row settings-sheet-row-stack">
                           <span className="settings-sheet-row-label">{t.settings.agents.directoriesLabel}</span>
-                          <TextInputControl
+                          <Input
                             className="settings-sheet-row-input"
                             label={t.settings.agents.directoriesLabel}
                             onChange={(event) => setDraft((current) => ({ ...current, additionalAgentDirectoriesText: event.target.value }))}
                             placeholder={t.settings.agents.directoriesPlaceholder}
                             value={draft.additionalAgentDirectoriesText}
+                            variant="bare"
                           />
                         </label>
                       </div>
@@ -1438,12 +1447,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
               <footer className="agent-settings-footer">
                 <span />
                 <div className="agent-settings-footer-actions">
-                  <ButtonControl className="agent-settings-secondary" onClick={onClose}>
+                  <Button onClick={onClose} variant="ghost">
                     {t.settings.footer.cancel}
-                  </ButtonControl>
-                  <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
+                  </Button>
+                  <Button disabled={saving} onClick={save} variant="primary">
                     {saving ? t.settings.footer.saving : t.settings.footer.save}
-                  </ButtonControl>
+                  </Button>
                 </div>
               </footer>
             ) : null}

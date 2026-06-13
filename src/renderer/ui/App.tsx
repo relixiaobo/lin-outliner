@@ -133,6 +133,7 @@ export function App() {
     openPanel,
     openPreview,
     panels,
+    repairMissingOutlinerRoots,
     resizePanelPair,
     rootId,
   } = useWorkspaceLayout({
@@ -175,6 +176,12 @@ export function App() {
   useEffect(() => {
     indexRef.current = index;
   }, [index]);
+
+  useEffect(() => {
+    if (!index) return;
+    const repairedFocusRootId = repairMissingOutlinerRoots(index.projection, index.byId);
+    if (repairedFocusRootId) focusNode(repairedFocusRootId);
+  }, [focusNode, index, repairMissingOutlinerRoots]);
 
   useEffect(() => {
     void run(async () => {

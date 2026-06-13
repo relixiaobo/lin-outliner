@@ -563,6 +563,14 @@ commandPalette: {
   // node right-click context menu, read-only system-field values, and field-value
   // editing chrome (pickers, popovers, date picker, code block, images).
   outliner: {
+    emptyState: {
+      searchTitle: 'No results',
+      searchBody: 'No nodes match this search.',
+      trashTitle: 'Trash is empty',
+      trashBody: 'Deleted nodes will appear here.',
+      recentsTitle: 'No recent nodes',
+      recentsBody: 'Nodes you open will show up here.',
+    },
     // The view toolbar above a node's children: display fields, group-by, sort
     // rules, and the progressive filter editor.
     viewToolbar: {
@@ -1055,6 +1063,7 @@ commandPalette: {
       retryResponse: 'Retry response',
       regenerate: 'Regenerate',
       regenerateResponse: 'Regenerate response',
+      stopped: 'Stopped',
       details: 'Details',
       you: 'You',
       roleAssistant: 'Assistant',

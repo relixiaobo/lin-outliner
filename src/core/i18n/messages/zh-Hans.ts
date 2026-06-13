@@ -508,6 +508,14 @@ commandPalette: {
   // 中心大纲：视图工具栏（显示/分组/排序/筛选）、节点右键菜单、只读系统字段值，
   // 以及字段值编辑相关界面（选择器、弹出层、日期选择器、代码块、图片）。
   outliner: {
+    emptyState: {
+      searchTitle: '无结果',
+      searchBody: '没有节点匹配此搜索。',
+      trashTitle: '废纸篓为空',
+      trashBody: '删除的节点会显示在这里。',
+      recentsTitle: '暂无最近节点',
+      recentsBody: '你打开的节点会显示在这里。',
+    },
     // 节点子项上方的视图工具栏：显示字段、分组、排序规则与渐进式筛选编辑器。
     viewToolbar: {
       toolbarAriaLabel: '视图工具栏',
@@ -971,6 +979,7 @@ commandPalette: {
       retryResponse: '重试回复',
       regenerate: '重新生成',
       regenerateResponse: '重新生成回复',
+      stopped: '已停止',
       details: '详情',
       you: '你',
       roleAssistant: '助手',

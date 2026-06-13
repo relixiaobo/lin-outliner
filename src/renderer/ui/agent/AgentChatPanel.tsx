@@ -47,6 +47,7 @@ import {
   DebugIcon,
   HashIcon,
   ICON_SIZE,
+  LoaderIcon,
   MoreIcon,
   StopIcon,
   UsedToolsIcon,
@@ -65,7 +66,9 @@ import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 import { resolveUsableActiveProvider } from './providerCatalog';
+import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
@@ -900,17 +903,13 @@ function AgentPovInspectorPanel({
               <AgentMarkdown keyPrefix={`pov-memory-${view.agentId}`} text={view.memoryBriefing} />
             </div>
           ) : (
-            <div className="agent-child-run-empty agent-pov-inspector-empty">
-              {t.agent.chat.povInspectorNoMemory}
-            </div>
+            <EmptyState className="agent-child-run-empty agent-pov-inspector-empty" title={t.agent.chat.povInspectorNoMemory} />
           )}
         </section>
         <section className="agent-pov-inspector-section" aria-label={t.agent.chat.povInspectorMessages}>
           <div className="agent-pov-inspector-section-title">{t.agent.chat.povInspectorMessages}</div>
           {view.messages.length === 0 ? (
-            <div className="agent-child-run-empty agent-pov-inspector-empty">
-              {t.agent.chat.povInspectorNoMessages}
-            </div>
+            <EmptyState className="agent-child-run-empty agent-pov-inspector-empty" title={t.agent.chat.povInspectorNoMessages} />
           ) : (
             <div className="agent-pov-inspector-message-list">
               {view.messages.map((message, index) => (
@@ -1732,9 +1731,16 @@ export function AgentChatPanel({
             </div>
             <div className="agent-conversation-list">
               {conversationsLoading ? (
-                <div className="agent-conversation-empty">{t.common.loading}</div>
+                <EmptyState
+                  className="agent-conversation-empty"
+                  icon={LoaderIcon}
+                  loading
+                  role="status"
+                  size="inline"
+                  title={t.common.loading}
+                />
               ) : directMessageRows.length === 0 ? (
-                <div className="agent-conversation-empty">{t.agent.chat.noDirectMessages}</div>
+                <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noDirectMessages} />
               ) : directMessageRows.map((conversation) => {
                 const agentId = conversation.canonicalDmAgentId!;
                 const isCurrent = conversation.id === conversationId;
@@ -1797,8 +1803,17 @@ export function AgentChatPanel({
               />
             </div>
             <div className="agent-conversation-list">
-              {conversationsLoading ? null : channelRows.length === 0 ? (
-                <div className="agent-conversation-empty">{t.agent.chat.noConversations}</div>
+              {conversationsLoading ? (
+                <EmptyState
+                  className="agent-conversation-empty"
+                  icon={LoaderIcon}
+                  loading
+                  role="status"
+                  size="inline"
+                  title={t.common.loading}
+                />
+              ) : channelRows.length === 0 ? (
+                <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noConversations} />
               ) : channelRows.map((conversation) => {
                 const isCurrent = conversation.id === conversationId;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
@@ -1885,17 +1900,19 @@ export function AgentChatPanel({
         ) : null}
         {entries.length === 0 ? (
           <div className="agent-empty-state">
-            {!settingsLoaded || hasUsableProvider ? null : (
+            {!settingsLoaded ? (
+              <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
+            ) : hasUsableProvider ? null : (
               <div className="agent-onboarding" role="status">
                 <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
-                <ButtonControl
-                  className="agent-onboarding-cta"
+                <Button
                   onClick={() => {
                     void window.lin?.openSettings();
                   }}
+                  variant="primary"
                 >
                   {t.agent.chat.onboardingCta}
-                </ButtonControl>
+                </Button>
               </div>
             )}
           </div>
@@ -2018,9 +2035,7 @@ export function AgentChatPanel({
                   />
                 </div>
               ) : (
-                <div className="agent-child-run-empty">
-                  {t.agent.chat.typingNoDetailYet}
-                </div>
+                <EmptyState className="agent-child-run-empty" title={t.agent.chat.typingNoDetailYet} />
               )}
             </div>
           </aside>

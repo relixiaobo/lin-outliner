@@ -60,7 +60,7 @@ test.describe('command node fields', () => {
     const listbox = page.locator('.command-agent-popover');
     await expect(listbox).toBeVisible();
     // Main agent (the implicit empty choice) + every registry definition.
-    await expect(listbox.getByRole('option')).toHaveText(['Main agent', 'self']);
+    await expect(listbox.getByRole('option')).toHaveText(['Main agent', 'Tenon Assistant', 'self', 'reviewer']);
     // The stored agent is marked selected.
     await expect(listbox.getByRole('option', { name: 'self', exact: true })).toHaveAttribute('aria-selected', 'true');
 

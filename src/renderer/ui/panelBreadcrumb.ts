@@ -12,7 +12,6 @@ export function buildPanelBreadcrumb(rootNode: NodeProjection | undefined, index
 
   const hiddenAncestorIds = new Set<NodeId>([
     index.projection.workspaceId,
-    index.projection.rootId,
   ]);
   const chain: NodeProjection[] = [];
   const seen = new Set<NodeId>();

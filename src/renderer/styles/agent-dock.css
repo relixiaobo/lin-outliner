@@ -328,8 +328,6 @@ button.panel-resize-handle {
 
 .agent-conversation-empty {
   color: var(--text-faint);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
   padding: var(--space-5) var(--space-6);
 }
 

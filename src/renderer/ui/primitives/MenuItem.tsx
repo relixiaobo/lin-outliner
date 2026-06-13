@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { cx } from './cx';
 
 interface MenuItemProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
   active?: boolean;
@@ -24,10 +25,10 @@ export function MenuItem({
   type = 'button',
   ...buttonProps
 }: MenuItemProps) {
-  const classes = [
+  const classes = cx(
     className,
-    active ? activeClassName : '',
-  ].filter(Boolean).join(' ');
+    active && activeClassName,
+  );
 
   return (
     <button {...buttonProps} className={classes} type={type}>

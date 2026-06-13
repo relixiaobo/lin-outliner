@@ -158,6 +158,5 @@
 
 .popover-empty {
   color: var(--muted);
-  font-size: var(--font-ui-sm);
   padding: calc(var(--space-3) + var(--space-hairline)) var(--space-4);
 }

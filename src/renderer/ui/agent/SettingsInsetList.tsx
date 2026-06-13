@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react';
+import { cx } from '../primitives/cx';
 
 // The macOS System Settings *interaction* idiom, rendered in our own design
 // system (tokens + B-rules), not Apple's chrome: a section header above a rounded
@@ -22,7 +23,7 @@ interface InsetGroupProps {
 
 export function InsetGroup({ label, footnote, ariaLabel, className, children }: InsetGroupProps) {
   return (
-    <div className={['inset-group', className].filter(Boolean).join(' ')}>
+    <div className={cx('inset-group', className)}>
       {label ? <div className="inset-group-header">{label}</div> : null}
       <div aria-label={ariaLabel ?? label} className="inset-card" role="list">
         {children}
@@ -57,6 +58,7 @@ interface InsetRowProps {
    *  (for rows whose only interactive control lives in `trailing`). */
   onSelect?: () => void;
   ariaLabel?: string;
+  className?: string;
 }
 
 // Memoized so a selection change in a long provider/skill list only re-renders
@@ -72,11 +74,12 @@ export const InsetRow = memo(function InsetRow({
   dimmed = false,
   onSelect,
   ariaLabel,
+  className,
 }: InsetRowProps) {
   const body = (
     <>
       {leading ? <span className="inset-row-leading">{leading}</span> : null}
-      <span className={['inset-row-text', wrap ? 'is-wrap' : ''].filter(Boolean).join(' ')}>
+      <span className={cx('inset-row-text', wrap && 'is-wrap')}>
         <span className="inset-row-label">{label}</span>
         {sublabel ? <span className="inset-row-sublabel">{sublabel}</span> : null}
       </span>
@@ -85,9 +88,7 @@ export const InsetRow = memo(function InsetRow({
 
   return (
     <div
-      className={['inset-row', selected ? 'is-selected' : '', (disabled || dimmed) ? 'is-disabled' : '']
-        .filter(Boolean)
-        .join(' ')}
+      className={cx('inset-row', selected && 'is-selected', (disabled || dimmed) && 'is-disabled', className)}
       role="listitem"
     >
       {onSelect ? (
