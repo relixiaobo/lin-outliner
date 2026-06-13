@@ -123,6 +123,30 @@ describe('nodex outliner parity matrix', () => {
     ].join('\n'));
   });
 
+  test('clipboard serializes tag definitions through the canonical tag formatter', () => {
+    const byId = new Map<string, any>([
+      ['tag-multi', node('tag-multi', {
+        type: 'tagDef',
+        content: { text: 'multi word', marks: [], inlineRefs: [] },
+      })],
+      ['tag-hex', node('tag-hex', {
+        type: 'tagDef',
+        content: { text: 'fff', marks: [], inlineRefs: [] },
+      })],
+      ['tag-unicode', node('tag-unicode', {
+        type: 'tagDef',
+        content: { text: '中文', marks: [], inlineRefs: [] },
+      })],
+    ]);
+    const rows = ['tag-multi', 'tag-hex', 'tag-unicode'];
+
+    expect(serializeSelectedRows(rows, new Set(rows), byId)).toBe([
+      '- #[[multi word]]',
+      '- #[[fff]]',
+      '- #中文',
+    ].join('\n'));
+  });
+
   test('modifier row selection drops hidden root/title selections outside the visible row scope', () => {
     expect([...toggleVisibleSelection(
       ['first', 'second'],

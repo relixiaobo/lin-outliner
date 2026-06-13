@@ -1,4 +1,9 @@
 import type { CreateNodeTree, ParsedPasteField, RichText, TextMark, TextMarkKind } from '../../api/types';
+import {
+  matchTagTokens,
+  parseCheckboxMarker,
+  parseTagTokenMatch,
+} from '../../../core/textSyntax';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 
 export interface ParsedPasteNode {
@@ -140,13 +145,12 @@ function fenceLanguage(info: string): string {
 
 // `#tag` and `name:: value` metadata harvested from a line (nodex parity). The
 // guards stay conservative so code and URLs survive: a tag needs whitespace (or
-// start) before `#letter`; a field needs a DOUBLE colon followed by whitespace
-// (`name:: value`), which excludes `std::cout`, `http://…`, and `foo::bar`. The
-// field value stops before the next ` name:: ` or ` #tag` so several fit on one
-// line. Only same-line metadata is harvested (a lone `#tag` / `field::` line has
-// no name left and is dropped by `treeHasContent`).
-const TAG_TOKEN = /(^|\s)#([A-Za-z][\w-]*)/gu;
-const FIELD_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+(.+?)(?=\s+[A-Za-z][\w-]*::[ \t]|\s+#[A-Za-z]|$)/gu;
+// start) before the shared tag token; a field needs a DOUBLE colon followed by
+// whitespace (`name:: value`), which excludes `std::cout`, `http://…`, and
+// `foo::bar`. The field value stops before the next ` name:: ` or shared tag
+// token so several fit on one line. Only same-line metadata is harvested (a lone
+// `#tag` / `field::` line has no name left and is dropped by `treeHasContent`).
+const FIELD_START_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+/gu;
 
 // Link `[label](url)` and inline-code `` `code` `` spans are off-limits to the
 // tag / field scan: a `#frag` or `name::` inside them is link text, a URL
@@ -167,29 +171,75 @@ function inAnyRange(pos: number, ranges: ReadonlyArray<readonly [number, number]
   return ranges.some(([start, end]) => pos >= start && pos < end);
 }
 
+function metadataLeadStart(text: string, tokenStart: number): number | null {
+  if (tokenStart === 0) return 0;
+  return /\s/u.test(text[tokenStart - 1] ?? '') ? tokenStart - 1 : null;
+}
+
+function fieldBoundaryStart(match: RegExpMatchArray, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
+  const start = match.index ?? 0;
+  const lead = (match[1] ?? '').length;
+  const tokenStart = start + lead;
+  return inAnyRange(tokenStart, protectedRanges) ? null : start;
+}
+
+function tagBoundaryStart(text: string, match: RegExpMatchArray, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
+  const tokenStart = match.index ?? 0;
+  if (!parseTagTokenMatch(match) || inAnyRange(tokenStart, protectedRanges)) return null;
+  return metadataLeadStart(text, tokenStart);
+}
+
+function metadataBoundaries(text: string, protectedRanges: ReadonlyArray<readonly [number, number]>): number[] {
+  const boundaries: number[] = [];
+  for (const match of text.matchAll(FIELD_START_TOKEN)) {
+    const start = fieldBoundaryStart(match, protectedRanges);
+    if (start !== null) boundaries.push(start);
+  }
+  for (const match of matchTagTokens(text)) {
+    const start = tagBoundaryStart(text, match, protectedRanges);
+    if (start !== null) boundaries.push(start);
+  }
+  return [...new Set(boundaries)].sort((left, right) => left - right);
+}
+
+function nextMetadataBoundary(boundaries: readonly number[], valueStart: number, fallback: number): number {
+  for (const boundary of boundaries) {
+    if (boundary >= valueStart) return boundary;
+  }
+  return fallback;
+}
+
 function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
   const tags: string[] = [];
   const fields: ParsedPasteField[] = [];
   const protectedRanges = harvestProtectedRanges(text);
+  const boundaries = metadataBoundaries(text, protectedRanges);
   // Collect harvest spans against the ORIGINAL text so positions stay valid;
   // fields before tags so a field value's words are never re-scanned as a tag.
   const removals: Array<{ start: number; end: number; lead: number }> = [];
-  for (const match of text.matchAll(FIELD_TOKEN)) {
+  for (const match of text.matchAll(FIELD_START_TOKEN)) {
     const start = match.index ?? 0;
     const lead = (match[1] ?? '').length;
-    if (inAnyRange(start + lead, protectedRanges)) continue;
-    fields.push({ name: match[2], value: (match[3] ?? '').trim() });
-    removals.push({ start, end: start + match[0].length, lead });
+    const tokenStart = start + lead;
+    if (inAnyRange(tokenStart, protectedRanges)) continue;
+    if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
+    const valueStart = start + match[0].length;
+    const end = nextMetadataBoundary(boundaries, valueStart, text.length);
+    const value = text.slice(valueStart, end).trim();
+    if (!value) continue;
+    fields.push({ name: match[2] ?? '', value });
+    removals.push({ start, end, lead });
   }
-  for (const match of text.matchAll(TAG_TOKEN)) {
-    const start = match.index ?? 0;
-    const lead = (match[1] ?? '').length;
-    if (inAnyRange(start + lead, protectedRanges)) continue;
+  for (const match of matchTagTokens(text)) {
+    const tokenStart = match.index ?? 0;
+    const leadStart = metadataLeadStart(text, tokenStart);
+    const parsed = parseTagTokenMatch(match);
+    if (leadStart === null || !parsed || inAnyRange(tokenStart, protectedRanges)) continue;
     // A `#word` that sits inside an already-harvested field span is part of that
     // value (e.g. `color:: #fff`), not a separate tag.
-    if (removals.some((removal) => start + lead >= removal.start && start + lead < removal.end)) continue;
-    tags.push(match[2]);
-    removals.push({ start, end: start + match[0].length, lead });
+    if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
+    tags.push(parsed.name);
+    removals.push({ start: leadStart, end: tokenStart + match[0].length, lead: tokenStart - leadStart });
   }
   // Rebuild the line minus the harvested tokens, keeping each token's lead ws.
   removals.sort((a, b) => a.start - b.start);
@@ -208,8 +258,8 @@ function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
   let body = heading ? (heading[2] ?? '') : rawText;
   // GFM task list: `[ ]` is an unchecked checkbox, `[x]`/`[X]` a checked one.
-  const task = body.match(/^\[([ xX])\]\s+(.*)$/u);
-  if (task) body = task[2] ?? '';
+  const task = parseCheckboxMarker(body);
+  if (task) body = task.rest;
   const { text, tags, fields } = extractTagsAndFields(body);
   const parsed = parseInlineMarkdown(text);
   const tree: CreateNodeTree = {
@@ -220,7 +270,7 @@ function lineToTree(rawText: string): CreateNodeTree {
   if (fields.length > 0) tree.fields = fields;
   if (task) {
     tree.checkbox = true;
-    tree.done = task[1].toLowerCase() === 'x';
+    tree.done = task.checked;
   }
   return tree;
 }
@@ -526,7 +576,7 @@ function looksLikeStrongMarkdown(text: string): boolean {
 }
 
 function treeHasContent(node: CreateNodeTree): boolean {
-  return node.content.text.trim().length > 0 || node.children.length > 0;
+  return node.content.text.trim().length > 0 || node.children.length > 0 || node.checkbox === true;
 }
 
 export function parseClipboardPaste(plain: string, html?: string | null): CreateNodeTree[] {

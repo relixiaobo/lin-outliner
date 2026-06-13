@@ -283,16 +283,10 @@ third consumer, which raises (not lowers) the payoff.
 - **List markers stay per-parser (2026-06-13).** The agent accepts only `- `; a
   permissive shared `LIST_MARKER` would have exactly one consumer. It is
   structure, not token grammar — out of the shared surface.
-- **Checkbox marker whitespace (2026-06-13): pick one deliberately.** agent uses
-  `\s*` (zero+ trailing spaces), paste uses `\s+` (one+, plus a body). The shared
-  `parseCheckboxMarker` must choose, and the choice shifts the *other* side's
-  behavior slightly — so it is a small behavior change, not a no-op extraction.
-  **Dev-local, not a PM item:** the agent serializer always emits `[x] ` / `[ ] `
-  with a trailing space (`outlineNodeText` → `parts.join(' ')` in
-  `agentNodeToolRead.ts`), so `\s+` still accepts the agent's own output — the
-  round-trip is safe either way; the only difference is whether a spaceless
-  `[x]foo` parses. Recommended: `\s+` (matches paste; consistent with the agent's
-  strict-input design). Settle at build time. Low severity.
+- **Checkbox marker whitespace (2026-06-13): marker alone or separated.** The
+  shared parser accepts `[x] body`, `[ ] body`, and bare `[x]` / `[ ]` so agents
+  and paste can create an empty checkbox row. It still rejects `[x]body` so a
+  marker must be alone or separated from title text.
 - **Re-confirmed on the corrected premise (PM, 2026-06-13): both stand.** The
   hex-exclusion and bracket-form decisions were originally taken under the premise
   "neither parser excludes hex," which was wrong (agent + live-edit already exclude;
@@ -311,17 +305,11 @@ third consumer, which raises (not lowers) the payoff.
   hex). Whether the at-cursor trigger should also honor the bracket forms is a
   smaller UX call to settle during implementation — bracket forms mid-type are
   unusual, so the default is "character class only."
-- **`formatTag`'s canonical output + the round-trip contract.** `TAG_TOKEN`
-  accepts three inputs (`#tag` / `[[#tag]]` / `#[[tag]]`) for one name, so
-  `formatTag(name)` must emit exactly *one* form — and must bracket-wrap names that
-  cannot be written bare (spaces, etc.). The de-facto rule today is
-  `agentNodeToolProjection.ts:109 → tagLabel`:
-  `/^[\w-]+$/.test(name) ? '#'+name : '#[['+name+']]'` — and `[\w-]` is **ASCII**,
-  so a Unicode name like `中文` *already* serializes as `#[[中文]]` even though the
-  parser accepts bare `#中文`. The plan must decide whether bare Unicode tags
-  round-trip bare or get bracket-wrapped, and pin a `parse ∘ serialize` stability
-  test. The agent round-trip is the load-bearing contract; the first draft's
-  checklist only pinned parse accept/reject, never the round-trip.
+- **`formatTag`'s canonical output + the round-trip contract — resolved.**
+  `formatTag(name)` emits bare `#name` when the same Unicode bare-tag character
+  class can parse the name and the name is not a CSS hex color. Names with spaces,
+  hex-color shapes, `]`, backslashes, or newline-style characters serialize as
+  `#[[...]]`; bracket serializers escape `]`, backslash, `\n`, `\r`, and `\t`.
 - **How far does `FIELD_TOKEN`'s boundary widen?** Deriving it from the canonical
   tag-start is *required* for the `#中文`-after-a-field promise (Design). Whether it
   also treats the bracket forms as a field terminator is a smaller call for build.

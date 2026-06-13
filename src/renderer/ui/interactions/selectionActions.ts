@@ -1,6 +1,7 @@
 import type { NodeId, NodeProjection, RichText } from '../../api/types';
 import type { UiState } from '../../state/document';
 import { buildSelectableRows } from '../../state/selectableRows';
+import { formatTag } from '../../../core/textSyntax';
 
 export type SelectionDirection = 'up' | 'down';
 
@@ -184,7 +185,7 @@ function rowClipboardLabel(
     return `@${byId.get(node.targetId)?.content.text || node.targetId}`;
   }
   if (node.type === 'tagDef') {
-    return `#${node.content.text || 'Untitled'}`;
+    return formatTag(node.content.text || 'Untitled');
   }
   return node.content.text || 'Untitled';
 }

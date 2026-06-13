@@ -158,6 +158,16 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('harvests tags with the shared Unicode, bracket, and hex-color rules', () => {
+    expect(parseMarkdownBlocks('Ship #中文 [[#tag]] #[[multi word]] #[[needs \\] bracket]] #[[C:\\path]] #fff #fffff #fff-bug #office')).toEqual([
+      {
+        content: { text: 'Ship #fff', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['中文', 'tag', 'multi word', 'needs ] bracket', String.raw`C:\path`, 'fffff', 'fff-bug', 'office'],
+      },
+    ]);
+  });
+
   test('stops a field value before a following #tag', () => {
     expect(parseMarkdownBlocks('Fix bug status:: done #later')).toEqual([
       {
@@ -165,6 +175,44 @@ describe('parseMarkdownBlocks', () => {
         children: [],
         tags: ['later'],
         fields: [{ name: 'status', value: 'done' }],
+      },
+    ]);
+  });
+
+  test('stops a field value before shared Unicode and bracket tag forms', () => {
+    expect(parseMarkdownBlocks('Fix topic:: design #中文')).toEqual([
+      {
+        content: { text: 'Fix', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['中文'],
+        fields: [{ name: 'topic', value: 'design' }],
+      },
+    ]);
+    expect(parseMarkdownBlocks('Fix topic:: design [[#tag]]')).toEqual([
+      {
+        content: { text: 'Fix', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['tag'],
+        fields: [{ name: 'topic', value: 'design' }],
+      },
+    ]);
+    expect(parseMarkdownBlocks('Fix topic:: design #[[tag]]')).toEqual([
+      {
+        content: { text: 'Fix', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['tag'],
+        fields: [{ name: 'topic', value: 'design' }],
+      },
+    ]);
+  });
+
+  test('keeps bare hex colors inside field values while splitting later tags', () => {
+    expect(parseMarkdownBlocks('Fix color:: #fff #later')).toEqual([
+      {
+        content: { text: 'Fix', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['later'],
+        fields: [{ name: 'color', value: '#fff' }],
       },
     ]);
   });
@@ -199,10 +247,20 @@ describe('parseMarkdownBlocks', () => {
   });
 
   test('converts GFM task-list markers into checkbox rows', () => {
-    expect(parseMarkdownBlocks('- [x] shipped\n- [ ] pending\n- plain')).toEqual([
+    expect(parseMarkdownBlocks('- [x] shipped\n- [ ] pending\n- [x]\n- plain')).toEqual([
       { content: { text: 'shipped', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: true },
       { content: { text: 'pending', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: false },
+      { content: { text: '', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: true },
       { content: { text: 'plain', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+    expect(parseOutlinerPaste('- [ ]')).toEqual([
+      { content: { text: '', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: false },
+    ]);
+  });
+
+  test('leaves spaceless task markers as plain text', () => {
+    expect(parseMarkdownBlocks('- [x]pending')).toEqual([
+      { content: { text: '[x]pending', marks: [], inlineRefs: [] }, children: [] },
     ]);
   });
 
