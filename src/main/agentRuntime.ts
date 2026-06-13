@@ -113,6 +113,7 @@ import {
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import { sniffMimeType } from './assetService';
 import {
   buildReferencedFilesReminder,
   selectReferencedAssetNodes,
@@ -1619,9 +1620,12 @@ export class AgentRuntime {
         prompt = slashSkillPrompt;
       } else {
         // Materialize bridge: hand the agent the bytes of any outliner image /
-        // attachment node the user explicitly referenced (images also inline for vision).
+        // attachment node the user explicitly referenced (images also inline for
+        // vision). The composer images already in this turn count against the inline cap.
+        const composerInlineImages = attachments.reduce((count, a) => count + (a.kind === 'image' ? 1 : 0), 0);
         const referencedAssets = await this.materializeReferencedAssetNodes(
           normalizedUserViewContext?.referencedNodes,
+          composerInlineImages,
         );
         prompt = buildUserPromptMessage(messageText, [...attachments, ...referencedAssets.imageAttachments], {
           memoryReminder,
@@ -7184,6 +7188,7 @@ export class AgentRuntime {
   // `asset://` handle for its own display; only the agent-facing side gains a path.
   private async materializeReferencedAssetNodes(
     referencedNodes: ReadonlyArray<{ nodeId: string; title?: string }> | undefined,
+    alreadyInlinedImages = 0,
   ): Promise<{ imageAttachments: AgentImageAttachmentInput[]; files: MaterializedReferencedFile[] }> {
     const resolver = this.options.assetResolver;
     if (!resolver || !referencedNodes || referencedNodes.length === 0) {
@@ -7207,35 +7212,52 @@ export class AgentRuntime {
         const assetPath = await resolver.pathFor(ref.assetId);
         if (!assetPath) continue;
         const meta = await resolver.lookup(ref.assetId);
-        const mimeType = meta?.mimeType || ref.nodeMimeType || 'application/octet-stream';
-        const name = meta?.originalFilename || ref.title || 'attachment';
+        let mimeType = meta?.mimeType || ref.nodeMimeType || '';
+        const name = meta?.originalFilename || ref.nodeFileName || ref.title || 'attachment';
+        const sizeBytes = meta?.byteSize ?? ref.nodeFileSize ?? 0;
         // Copies into scratch; throws (and we skip) when the asset is larger than
         // MAX_MATERIALIZED_ATTACHMENT_BYTES, matching composer-attachment behavior.
         const scratchPath = await materializeAgentLocalPath(root, scratch, assetPath, name);
-        const sizeBytes = meta?.byteSize ?? 0;
+
+        // Inline images for vision — best-effort and bounded. The count cap (which
+        // includes composer images already in this turn) plus the per-image base64
+        // budget keep one turn from ballooning; the size pre-check avoids reading a
+        // large file we already know cannot fit. The path entry below is emitted
+        // regardless, so a skipped/failed inline still leaves the file readable.
         let inlineImage = false;
-        // Bound the base64 vision payload: every referenced file is still surfaced
-        // as a readable path below, but only the first N images are inlined so a
-        // turn that references many images cannot balloon the request.
-        const inlineMime = imageAttachments.length < MAX_REFERENCED_INLINE_IMAGES
-          ? normalizeInlineImageMimeType(mimeType)
-          : null;
-        if (inlineMime) {
-          const dataBase64 = (await readFile(scratchPath)).toString('base64');
-          if (dataBase64.length <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS) {
-            imageAttachments.push({
-              id: randomUUID(),
-              ref: name,
-              kind: 'image',
-              name,
-              mimeType: inlineMime,
-              sizeBytes,
-              dataBase64,
-              path: scratchPath,
-            });
-            inlineImage = true;
+        let inlineMime = normalizeInlineImageMimeType(mimeType);
+        const underCountCap = (alreadyInlinedImages + imageAttachments.length) < MAX_REFERENCED_INLINE_IMAGES;
+        if ((inlineMime || ref.isImageNode) && underCountCap && withinInlineByteBudget(sizeBytes)) {
+          try {
+            const bytes = await readFile(scratchPath);
+            // An image node whose metadata gave no canonical image mime: sniff the
+            // bytes — the node type already proves the asset is an image.
+            if (!inlineMime && ref.isImageNode) {
+              const sniffed = sniffMimeType(bytes, name);
+              if (sniffed) {
+                if (!mimeType) mimeType = sniffed;
+                inlineMime = normalizeInlineImageMimeType(sniffed);
+              }
+            }
+            const dataBase64 = bytes.toString('base64');
+            if (inlineMime && dataBase64.length <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS) {
+              imageAttachments.push({
+                id: randomUUID(),
+                ref: name,
+                kind: 'image',
+                name,
+                mimeType: inlineMime,
+                sizeBytes,
+                dataBase64,
+                path: scratchPath,
+              });
+              inlineImage = true;
+            }
+          } catch {
+            // Inlining is best-effort; fall through and still surface the path.
           }
         }
+        if (!mimeType) mimeType = 'application/octet-stream';
         files.push({ nodeId: ref.nodeId, title: ref.title, mimeType, sizeBytes, path: scratchPath, inlineImage });
       } catch {
         // A referenced asset that is missing, oversized, or unreadable is skipped
@@ -7248,6 +7270,13 @@ export class AgentRuntime {
 
 function isDirectoryAttachment(attachment: AgentPathBackedAttachment): boolean {
   return attachment.kind === 'file' && attachment.mimeType === 'inode/directory';
+}
+
+// Whether a known byte size could possibly fit the inline base64 budget (base64
+// length ≈ ceil(bytes / 3) * 4). A size of 0 means "unknown" — let the caller read
+// and check the real encoded length.
+function withinInlineByteBudget(sizeBytes: number): boolean {
+  return sizeBytes <= 0 || Math.ceil(sizeBytes / 3) * 4 <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS;
 }
 
 // The instruction text for a scheduled command fire: the brief, plus a bounded

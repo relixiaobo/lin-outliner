@@ -271,16 +271,17 @@ describe('agent runtime referenced asset materialization', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
-  test('an image whose metadata is missing is still materialized as a readable path (not inlined)', async () => {
+  test('an image node with missing metadata is recovered by sniffing the bytes and still inlined', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-data-'));
     const assetRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-store-'));
     roots.push(localRoot, dataRoot, assetRoot);
 
     const imagePath = path.join(assetRoot, 'asset-img.png');
-    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]));
-    // pathFor resolves the bytes, but lookup returns null (missing .meta sidecar) and
-    // an ImageNode carries no mimeType, so the bytes cannot be confirmed as an image.
+    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+    await writeFile(imagePath, imageBytes);
+    // pathFor resolves the bytes, but lookup returns null (missing .meta sidecar) and an
+    // ImageNode carries no mimeType — the bytes must be sniffed to confirm the image type.
     const assetResolver = {
       pathFor: async () => imagePath,
       lookup: async () => null,
@@ -304,13 +305,58 @@ describe('agent runtime referenced asset materialization', () => {
     );
 
     expect(contexts).toHaveLength(1);
+    const imageParts = userContentParts(contexts[0]!).filter((part) => part.type === 'image');
+    expect(imageParts).toHaveLength(1);
+    expect(imageParts[0].mimeType).toBe('image/png');
+    expect(imageParts[0].data).toBe(imageBytes.toString('base64'));
     const text = textFromContext(contexts[0]!);
-    // Surfaced as a readable path, no inline image block, no crash.
-    expect(text).toContain('<referenced-files>');
-    expect(text).toContain('node_id="img"');
-    expect(text).not.toContain('inline_image="true"');
-    expect(userContentParts(contexts[0]!).some((part) => part.type === 'image')).toBe(false);
+    expect(text).toContain('inline_image="true"');
     expect(await readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).toHaveLength(1);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
+  test('two nodes sharing one assetId are materialized once (deduped by asset)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-data-'));
+    const assetRoot = await mkdtemp(path.join(tmpdir(), 'lin-ref-asset-store-'));
+    roots.push(localRoot, dataRoot, assetRoot);
+
+    const imagePath = path.join(assetRoot, 'shared.png');
+    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 8, 7, 6]);
+    await writeFile(imagePath, imageBytes);
+    let pathForCalls = 0;
+    const assetResolver = {
+      pathFor: async () => {
+        pathForCalls += 1;
+        return imagePath;
+      },
+      lookup: async () => ({ id: 'shared', mimeType: 'image/png', byteSize: imageBytes.length, createdAt: 0 } as AssetMetadata),
+    };
+
+    const contexts: Context[] = [];
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostWithNodes([
+        node({ id: 'a', type: 'image', assetId: 'shared', content: plainText('Copy A') }),
+        node({ id: 'b', type: 'image', assetId: 'shared', content: plainText('Copy B') }),
+      ]),
+      defaultRuntimeOptions(localRoot, dataRoot, assetResolver, contexts),
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(
+      created.conversationId,
+      'Compare.',
+      [],
+      { referencedNodes: [{ nodeId: 'a', title: 'Copy A' }, { nodeId: 'b', title: 'Copy B' }] },
+    );
+
+    // One asset → one resolve, one scratch copy, one inline image block.
+    expect(pathForCalls).toBe(1);
+    expect(await readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).toHaveLength(1);
+    expect(userContentParts(contexts[0]!).filter((part) => part.type === 'image')).toHaveLength(1);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 });

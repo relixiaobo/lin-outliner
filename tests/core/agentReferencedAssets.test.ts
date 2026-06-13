@@ -24,18 +24,18 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
 }
 
 describe('selectReferencedAssetNodes', () => {
-  test('selects image and attachment nodes that carry an assetId', () => {
+  test('selects image and attachment nodes that carry an assetId, with type-specific fields', () => {
     const doc = projection([
-      node({ id: 'img', type: 'image', assetId: 'asset-1', content: plainText('Diagram') }),
-      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', mimeType: 'application/pdf', content: plainText('Report') }),
+      node({ id: 'img', type: 'image', assetId: 'asset-1', mediaAlt: 'A diagram', content: plainText('Diagram') }),
+      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', mimeType: 'application/pdf', originalFilename: 'report.pdf', fileSize: 4096, content: plainText('Report') }),
     ]);
     const selected = selectReferencedAssetNodes(doc, [
       { nodeId: 'img', title: 'Diagram' },
       { nodeId: 'pdf', title: 'Report' },
     ]);
     expect(selected).toEqual([
-      { nodeId: 'img', title: 'Diagram', assetId: 'asset-1', nodeMimeType: undefined },
-      { nodeId: 'pdf', title: 'Report', assetId: 'asset-2', nodeMimeType: 'application/pdf' },
+      { nodeId: 'img', assetId: 'asset-1', isImageNode: true, title: 'Diagram' },
+      { nodeId: 'pdf', assetId: 'asset-2', isImageNode: false, title: 'Report', nodeMimeType: 'application/pdf', nodeFileName: 'report.pdf', nodeFileSize: 4096 },
     ]);
   });
 
@@ -54,16 +54,28 @@ describe('selectReferencedAssetNodes', () => {
     expect(selected.map((s) => s.nodeId)).toEqual(['img']);
   });
 
-  test('falls back to the node content when the reference has no title, and de-dupes', () => {
+  test('de-dupes by assetId — the same node twice, or two nodes sharing one asset', () => {
     const doc = projection([
-      node({ id: 'img', type: 'image', assetId: 'asset-1', content: plainText('Stored title') }),
+      node({ id: 'img-a', type: 'image', assetId: 'shared', content: plainText('Copy A') }),
+      node({ id: 'img-b', type: 'image', assetId: 'shared', content: plainText('Copy B') }),
     ]);
     const selected = selectReferencedAssetNodes(doc, [
-      { nodeId: 'img' },
-      { nodeId: 'img', title: 'Stored title' },
+      { nodeId: 'img-a', title: 'Copy A' },
+      { nodeId: 'img-a', title: 'Copy A' },
+      { nodeId: 'img-b', title: 'Copy B' },
     ]);
     expect(selected).toHaveLength(1);
-    expect(selected[0].title).toBe('Stored title');
+    expect(selected[0].nodeId).toBe('img-a');
+  });
+
+  test('falls back to mediaAlt / originalFilename / content when the reference has no title, and compacts whitespace', () => {
+    const doc = projection([
+      node({ id: 'img', type: 'image', assetId: 'asset-1', mediaAlt: 'line one\nline two', content: plainText('Stored') }),
+      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', originalFilename: 'report.pdf', content: plainText('Stored') }),
+    ]);
+    const selected = selectReferencedAssetNodes(doc, [{ nodeId: 'img' }, { nodeId: 'pdf' }]);
+    expect(selected[0].title).toBe('line one line two');
+    expect(selected[1].title).toBe('report.pdf');
   });
 
   test('returns empty for empty or missing inputs', () => {

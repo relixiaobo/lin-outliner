@@ -11,12 +11,13 @@ export function escapeXml(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-// Serialize a leading `<tag<attrs> ...` attribute string for the reminder blocks.
-// Null / undefined / empty values are dropped; the rest are escaped. Newlines are
-// collapsed so a stray line break in a value can never break the single-line tag.
+// Serialize a leading ` key="value" ...` attribute string for the reminder blocks.
+// Null / undefined / empty values are dropped; the rest are escaped verbatim — values
+// where whitespace is significant (e.g. a file path) must not be collapsed here, so any
+// free-text attribute that must stay single-line is compacted by its caller.
 export function xmlAttrs(attrs: Record<string, string | null | undefined>): string {
   const serialized = Object.entries(attrs)
     .filter((entry): entry is [string, string] => entry[1] !== null && entry[1] !== undefined && entry[1] !== '')
-    .map(([key, value]) => `${key}="${escapeXml(value.replace(/\s+/g, ' '))}"`);
+    .map(([key, value]) => `${key}="${escapeXml(value)}"`);
   return serialized.length ? ` ${serialized.join(' ')}` : '';
 }

@@ -1,14 +1,16 @@
 import type { DocumentProjection } from '../core/types';
 import { xmlAttrs } from './agentReminderXml';
 
-// Outliner node types whose bytes live in the asset store and can be handed to the agent.
-const ASSET_NODE_TYPES = new Set(['image', 'attachment']);
-
 export interface ReferencedAssetNode {
   nodeId: string;
   title: string;
   assetId: string;
+  /** True for image nodes — their bytes are an image even when asset metadata is absent. */
+  isImageNode: boolean;
+  /** Attachment-node fallbacks used when the asset metadata sidecar is missing. */
   nodeMimeType?: string;
+  nodeFileName?: string;
+  nodeFileSize?: number;
 }
 
 export interface MaterializedReferencedFile {
@@ -22,12 +24,19 @@ export interface MaterializedReferencedFile {
   inlineImage: boolean;
 }
 
+// Collapse whitespace so a stray newline/tab in a free-text title can never break the
+// single-line `<file ... />` tag the reminder emits.
+function compactTitle(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Pick the user-referenced nodes whose bytes the agent can be given: image /
  * attachment nodes carrying an `assetId`. Only nodes the user explicitly
  * referenced are eligible — the explicit reference is the authorization, so an
  * asset that merely sits in the document (and was never referenced) is never
- * copied. Duplicates and non-asset references are dropped.
+ * copied. De-duped by `assetId` (so two nodes pointing at the same bytes, or one
+ * node referenced twice, are materialized once); non-asset references are dropped.
  */
 export function selectReferencedAssetNodes(
   projection: DocumentProjection,
@@ -35,21 +44,33 @@ export function selectReferencedAssetNodes(
 ): ReferencedAssetNode[] {
   if (!referencedNodes || referencedNodes.length === 0) return [];
   const byId = new Map(projection.nodes.map((node) => [node.id, node]));
-  const seen = new Set<string>();
+  const seenAssets = new Set<string>();
   const out: ReferencedAssetNode[] = [];
   for (const ref of referencedNodes) {
-    if (seen.has(ref.nodeId)) continue;
     const node = byId.get(ref.nodeId);
-    if (!node || !ASSET_NODE_TYPES.has(node.type ?? '')) continue;
-    const assetId = (node as { assetId?: string }).assetId;
-    if (!assetId) continue;
-    seen.add(ref.nodeId);
-    out.push({
-      nodeId: ref.nodeId,
-      title: (ref.title || node.content.text || '').trim(),
-      assetId,
-      nodeMimeType: (node as { mimeType?: string }).mimeType,
-    });
+    if (!node) continue;
+    if (node.type === 'image') {
+      if (!node.assetId || seenAssets.has(node.assetId)) continue;
+      seenAssets.add(node.assetId);
+      out.push({
+        nodeId: ref.nodeId,
+        assetId: node.assetId,
+        isImageNode: true,
+        title: compactTitle(ref.title || node.mediaAlt || node.content.text || ''),
+      });
+    } else if (node.type === 'attachment') {
+      if (!node.assetId || seenAssets.has(node.assetId)) continue;
+      seenAssets.add(node.assetId);
+      out.push({
+        nodeId: ref.nodeId,
+        assetId: node.assetId,
+        isImageNode: false,
+        title: compactTitle(ref.title || node.originalFilename || node.content.text || ''),
+        nodeMimeType: node.mimeType,
+        nodeFileName: node.originalFilename,
+        nodeFileSize: node.fileSize,
+      });
+    }
   }
   return out;
 }
