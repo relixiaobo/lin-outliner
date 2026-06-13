@@ -288,29 +288,21 @@ data-gated — see § memory above). The remaining *active* build work is the sk
     "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
     contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
     the transport only when consulting agents outside the trust domain.
-- **research → agent + skill** (P1, **REDIRECT — PM-ratified 2026-06-13**) — research is
-  reframed from a read-only fork-skill into the worldview's capability/identity split:
-  **(R1) a read-only research SKILL** (bindable capability — *any* agent can equip it for its
-  own inline investigation; read-only enforced via the `READ_ONLY_ACTION_KINDS` catalog filter
-  the prior fork decision already designed) **+ (R2) a memory-bearing persistent `researcher`
-  agent** that binds R1 by default (research persona + its own memory line) and is **consulted**
-  (invisible sidechain) by other agents. The earlier "/research = read-only fork, *not* an
-  agent" call (#232) is **superseded**: the "no durable agent" worry was a workaround for
-  "agents can't consult" — `ungate-contact` removes it, and a consulted researcher is a
-  sidechain, not a Channel/DM participant. Read-only (world) and memory-bearing (own line, via
-  Dream) don't conflict. **R1 SHIPPED — PR #235 (codex-3):** built-in `/research` as a
-  user/model-invocable `execution: isolated` skill (the `context: fork` DSL renamed to
-  `execution: isolated`), running as a same-agent read-only child run whose declared read
-  tools are filtered through the `AgentToolActionKind` read-only partition
-  (`readOnlyAgentToolNames`); the live permission classifier now derives every tool's action
-  kind from one `AGENT_TOOL_ACTION_KIND_PROFILES` source, and `operation_history` is
-  action-sensitive (`list`→`outline.read`, `undo`/`redo`→`outline.edit`). Gate: typecheck +
-  `test:core` 992/0 + `test:renderer` 443/0 + `docs:check`; `/code-review xhigh` (7 findings,
-  all fixed in-PR) + `/security-review` (no HIGH/MEDIUM). **Remaining = R2:** a memory-bearing
-  persistent `researcher` agent that binds R1 by default and is **consulted** (invisible
-  sidechain) — **R2's consult-by-others rides on `ungate-contact`**. cc-2.1 confirms
-  research-as-agent (read-only `Explore`, spawned + consulted) — but stateless; ours is
-  deliberately memory-bearing.
+- **research = a base read-only capability of every agent** (**PM + codex re-decided
+  2026-06-14; no separate agent**) — research is *not* a standalone agent; it is a
+  foundational read-only investigation capability that **all agents** share (like
+  read/grep). **SHIPPED — built-in `/research`, PR #235 (codex-3):** a user/model-invocable
+  `execution: isolated` same-agent read-only child run whose declared read tools are filtered
+  through the `AgentToolActionKind` read-only partition (`readOnlyAgentToolNames`); the live
+  permission classifier derives every tool's action kind from one
+  `AGENT_TOOL_ACTION_KIND_PROFILES` source. Gate green (`test:core` 992/0 · `test:renderer`
+  443/0 · `docs:check` · `/code-review xhigh` 7-findings-all-fixed · `/security-review` no
+  HIGH/MEDIUM). The 2026-06-13 "redirect to a memory-bearing `researcher` agent (R2)" idea was
+  **reconsidered and DROPPED** — research stays a baseline capability, not a consulted
+  specialist (consistent with `agent-conversation-model` §"Cross-agent help → Relationship to
+  /research": research = the agent's own capability, not a consultation). **#232** (the
+  read-only `/research` plan, draft) is now aligned but redundant with the shipped spec →
+  **close, or merge + archive `done`** (codex-3 / PM).
 - **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
   completed; plan archived `done` in-PR. The global `AgentSafetyMode`
   (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
