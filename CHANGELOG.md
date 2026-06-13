@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **PDF file preview (PR #227, codex)** — the file-preview panel now renders PDFs
+  to a canvas via `pdf.js`, for every byte-backed source (`local-file`, `asset`,
+  `agent-payload`). The renderer lazy-loads `pdfjs-dist` only when a PDF is opened
+  (a dynamic-import chunk, not in the main bundle), drives a **bundled same-origin**
+  worker (`pdf.worker.mjs?url`, resolved against `import.meta.url` into the app's
+  own `assets/` dir — so the packaged `file://` CSP permits it under
+  `worker-src` ← `script-src 'self'` with no policy relaxation), and shows compact
+  page-navigation + zoom (50–250 %) controls. Bytes are read only through the
+  existing `preview_read_bytes` API; XFA is disabled and parse/render failures fall
+  back to the metadata renderer. Adds the missing `--breadcrumb-height` design
+  token (also fixing the preview header's `min-height`) so the sticky PDF toolbar
+  offset resolves. Renderer + i18n (en/zh-Hans) + `pdfjs-dist` dependency; second
+  PR of `docs/plans/file-preview.md`. Spec: `docs/spec/workspace-layout.md`.
 - **Agent file outputs render as file chips, not raw JSON (PR #224, cc)** — a
   successful `file_write` / `file_edit` now shows an always-visible **local-file
   chip** (basename) below the tool summary — the same `InlineFileReference` the

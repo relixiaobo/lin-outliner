@@ -460,8 +460,9 @@ Standalone agent items (not part of the program):
   history to a discriminated `PanelView` (optionally a standalone PR 0
   refactor); then PR 1 = shell + web-native basics, PDF / media streaming /
   Office / URL reader follow as independent PRs. Media streaming (PR 3) also
-  retires the **media-types** whole-file-read limitation. See
-  `docs/plans/file-preview.md`.
+  retires the **media-types** whole-file-read limitation. **PR 1 shipped (#210,
+  shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining:
+  media streaming / Office / URL reader. See `docs/plans/file-preview.md`.
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
 
@@ -590,6 +591,26 @@ see Recently completed). Remaining Layer-2/3 lanes:
 
 ## Recently completed
 
+- **file-preview PR 2 — PDF renderer** (codex, PR #227, plan-track) — adds a
+  `pdf` entry to the `FilePreviewPanel` renderer registry for the three byte
+  sources (`local-file` / `asset` / `agent-payload`, all resolving through the
+  existing `preview_read_bytes` API). The renderer lazy-loads `pdfjs-dist` (a
+  dynamic `import()` — kept out of the main bundle as an 835 kB on-demand chunk)
+  with a **bundled same-origin** worker (`pdf.worker.mjs?url` → `new URL(…,
+  import.meta.url)` in the same `assets/` dir, so the packaged `file://` CSP's
+  `worker-src` ← `script-src 'self'` permits it with no CSP relaxation), renders
+  the selected page to a HiDPI canvas, and exposes compact page + zoom (50–250 %)
+  controls; parse/render failure falls back to the metadata renderer
+  (`enableXfa: false`, `stopAtErrors: true`). A late fix declared the
+  previously-undefined `--breadcrumb-height` token (`= --control-size-xl`, which
+  also repairs the header `min-height`) so the sticky toolbar's
+  `top: calc(…)` offset is valid. The `file-preview` plan stays `in-progress`
+  (media streaming / Office / URL renderers remain open). Gate (main): typecheck
+  + test:renderer (443 pass / 0 fail) + docs:check + file-attachments e2e (real
+  pdf.js canvas-ink assertion) green; light + dark visual verified; CSP/worker
+  resolution traced through the packaged build; rebased cleanly over #228's
+  concurrent `tokens.css` / `design-system.md` additions. `workspace-layout`
+  spec synced.
 - **UI quality L1 — composition-rhythm + design-system-consistency**
   (codex-2, PR #228, plan-track) — the two Layer-1 lanes of the UI-quality suite shipped as one
   CSS-only sweep (plus spec sync). Composition tokens centralised: `--reading-max` (720) split from
