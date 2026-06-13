@@ -44,9 +44,9 @@ build-readiness first:
 1. **`agent-file-model`** (P1, *Files & media*) — **no gate left**: the 4 decisions
    are PM-ratified (2026-06-13). Ships as a SET of independent PRs (F1→F4); **F1
    (render agent file outputs — the reported bug) shipped (#224)** — file outputs
-   now render as a previewable local-file chip + inspectable diff, not raw JSON.
-   F2/F3/F4 follow as independent PRs (F2 app-owned workdir next). → F2 ready to
-   dispatch now.
+   now render as a previewable local-file chip + inspectable diff, not raw JSON —
+   and **F2 (app-owned workdir + relocated scratch) shipped (#229)**. F3/F4 follow
+   as independent PRs (F3 materialize bridge next). → F3 ready to dispatch now.
 2. **`channel-async-message-bus`** (P1, *Agent capabilities*) — **RATIFIED
    2026-06-13, ready to build** (B's run-status convergence #225 laid the
    foundation). Whole-utterance in the **message stream** (no token streaming), but
@@ -432,8 +432,8 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **agent-file-model** (P1, plan file, **in-progress — F1 shipped (#224); F2–F4
-  remain. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
+- **agent-file-model** (P1, plan file, **in-progress — F1 (#224) + F2 (#229) shipped;
+  F3–F4 remain. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
   #220**) — give agent file
   handling one shape: the agent lives in a path-addressed working directory, the
   document in the handle-addressed asset store (`asset://`), joined by two symmetric
@@ -442,8 +442,8 @@ Standalone agent items (not part of the program):
   `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixes the lossy
   input path (a referenced outliner file reaches the agent today as a node with no
   readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
-  reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation ·
-  F3 materialize bridge · F4 ingest bridge — F2 next. See
+  reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation
+  (**shipped #229**) · F3 materialize bridge · F4 ingest bridge — F3 next. See
   `docs/plans/agent-file-artifact-model.md`.
 - **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
   (feature); see Recently completed. Plan archived `done`
@@ -737,6 +737,30 @@ see Recently completed). Remaining Layer-2/3 lanes:
   test:renderer 433/0, **visual verification light + dark** — chip + diff render at
   parity with the existing JSON tool-output surface in both themes, and the chip
   opens the `FilePreviewPanel`.
+- **Agent app-owned workdir + relocated scratch (agent-file-model F2)** (cc-2,
+  PR #229, plan-track) — splits the agent's single overloaded local-file root into
+  two app-owned roots resolved at startup: **workdir** (`<userData>/agent-workdir`
+  in both dev and packaged — the `process.cwd()` default is dropped, so a dev clone
+  is no longer the agent's file area; `LIN_AGENT_LOCAL_ROOT` stays the explicit
+  dogfooding opt-in) and **scratch** (`<userData>/agent-scratch`, a sibling holding
+  materialized attachments, web-fetch binaries, bash overflow logs, PDF page images).
+  The allowed file area becomes the two roots, **asymmetric by access**: the agent
+  may **read** workdir ∪ scratch but **write** only the workdir — enforced in both
+  the file-tool resolver (`resolveWorkspacePath`, keyed by `'read'`/`'write'`) and
+  the permission engine. Scratch never appears in `file_glob`/`file_grep` default
+  listings; it is reclaimed by a 7-day mtime TTL swept best-effort once per launch
+  (`pruneAgentScratch` over the whole scratch tree), **not** GC'd with the
+  conversation. Gate (main): **xhigh `/code-review` (security-adjacent)** — 9 finder
+  angles + adversarial verify surfaced 8 findings (scratch-lifecycle spec over-claim,
+  empty-string-`scratchRoot`→cwd footgun, missing `/`-root realpath guard, web-fetch
+  cwd fallback, two-layer spec inaccuracy, unconditional-startup-mkdir crash surface,
+  production-layout test gap); three high-severity security candidates (symlink-in-
+  scratch read, app-write path traversal, lexical-vs-realpath bypass) **verified and
+  REFUTED** (realpath backstop + filename sanitizers + ask-gate). All substantive
+  findings **addressed in fixup `e8c2df2`**; re-verified typecheck + `test:core`
+  980/2/0 clean. Spec: `docs/spec/agent-tool-permissions.md` +
+  `agent-tool-design.md`. F2 of the `agent-file-artifact-model` SET plan (F3–F4
+  remain).
 
 - **Delegation runtime hygiene — stop-salvage + shared child-agent harness**
   (cc-2, PR #221, plan-track) — two behavioral fixes in the delegation runtime.

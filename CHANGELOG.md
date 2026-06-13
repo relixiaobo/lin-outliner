@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent app-owned workdir + relocated scratch (PR #229, cc-2)** — the agent's
+  single overloaded local-file root is split into two app-owned roots resolved at
+  startup (`agentLocalRoot.ts`): a **workdir** (`<userData>/agent-workdir` in both
+  dev and packaged — the agent's cwd, `file_*` root, and where its own outputs land)
+  and a **scratch** sibling (`<userData>/agent-scratch` — materialized attachments,
+  web-fetch binaries, bash overflow logs, PDF page images). The `process.cwd()`
+  default is **dropped** (a dev clone is no longer the agent's file area, the source
+  of stray repo files; a packaged Finder launch can no longer make `/` the area);
+  `LIN_AGENT_LOCAL_ROOT` stays the explicit dogfooding opt-in. The allowed file area
+  is now the two roots, **asymmetric by access** — the agent may **read** workdir ∪
+  scratch but **write** only the workdir — enforced in both the file-tool resolver
+  (`resolveWorkspacePath`, keyed by a `'read'`/`'write'` access) and the permission
+  engine (a scratch read is `allowed_file_area`; a scratch write classifies outside).
+  Scratch never appears in `file_glob`/`file_grep` default listings; it is reclaimed
+  by a 7-day mtime TTL swept best-effort once per launch (`pruneAgentScratch`), not
+  GC'd with the conversation. Preview/open trusted roots and the user-attachment
+  staging dir include scratch. F2 of `docs/plans/agent-file-artifact-model.md`. Spec:
+  `docs/spec/agent-tool-permissions.md` + `agent-tool-design.md`.
 - **PDF file preview (PR #227, codex)** — the file-preview panel now renders PDFs
   to a canvas via `pdf.js`, for every byte-backed source (`local-file`, `asset`,
   `agent-payload`). The renderer lazy-loads `pdfjs-dist` only when a PDF is opened
