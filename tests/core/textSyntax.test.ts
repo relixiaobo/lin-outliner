@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  TAG_TOKEN,
   extractTags,
   formatTag,
   parseCheckboxMarker,
@@ -14,11 +15,31 @@ describe('text syntax helpers', () => {
   });
 
   test('formats tags so serialized names parse back to the same tag', () => {
-    const names = ['office', '中文', 'multi word', 'abc', '112233'];
+    const names = ['office', '中文', 'multi word', 'abc', '112233', 'needs ] bracket', String.raw`path \ tag`, 'line\nbreak'];
     const formatted = names.map(formatTag);
 
-    expect(formatted).toEqual(['#office', '#[[中文]]', '#[[multi word]]', '#[[abc]]', '#[[112233]]']);
+    expect(formatted).toEqual([
+      '#office',
+      '#[[中文]]',
+      '#[[multi word]]',
+      '#[[abc]]',
+      '#[[112233]]',
+      String.raw`#[[needs \] bracket]]`,
+      String.raw`#[[path \\ tag]]`,
+      String.raw`#[[line\nbreak]]`,
+    ]);
     expect(extractTags(formatted.join(' ')).tags).toEqual(names);
+  });
+
+  test('rejects empty tag names during formatting', () => {
+    expect(() => formatTag('')).toThrow('Cannot format an empty tag name.');
+    expect(() => formatTag('  ')).toThrow('Cannot format an empty tag name.');
+  });
+
+  test('does not let the exported tag matcher lastIndex affect helper scans', () => {
+    TAG_TOKEN.lastIndex = 9;
+    expect(extractTags('Ship #中文 [[#tag]]').tags).toEqual(['中文', 'tag']);
+    TAG_TOKEN.lastIndex = 0;
   });
 
   test('parses checkbox markers only when the marker is separated from body text', () => {

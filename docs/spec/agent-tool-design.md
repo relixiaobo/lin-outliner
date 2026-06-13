@@ -489,7 +489,10 @@ Rules:
 - `- title` creates or serializes a node title.
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
-- `#tag`, `#中文`, `[[#tag]]`, and `#[[multi word tag]]` apply tags.
+- `#tag`, `#中文`, `[[#tag]]`, and `#[[multi word tag]]` apply tags. Bracket
+  tag names escape `]`, backslash, and newline-style characters as `\]`, `\\`,
+  `\n`, `\r`, and `\t`; serializers must use this form for names that cannot be
+  written bare.
 - Bare CSS hex colors such as `#fff`, `#ffff`, `#112233`, and `#112233ff`
   are color text, not tags. Use explicit bracket syntax such as `#[[fff]]` if a
   tag name intentionally looks like a hex color.

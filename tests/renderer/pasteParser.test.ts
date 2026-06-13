@@ -159,11 +159,11 @@ describe('parseMarkdownBlocks', () => {
   });
 
   test('harvests tags with the shared Unicode, bracket, and hex-color rules', () => {
-    expect(parseMarkdownBlocks('Ship #中文 [[#tag]] #[[multi word]] #fff #fffff #fff-bug #office')).toEqual([
+    expect(parseMarkdownBlocks('Ship #中文 [[#tag]] #[[multi word]] #[[needs \\] bracket]] #fff #fffff #fff-bug #office')).toEqual([
       {
         content: { text: 'Ship #fff', marks: [], inlineRefs: [] },
         children: [],
-        tags: ['中文', 'tag', 'multi word', 'fffff', 'fff-bug', 'office'],
+        tags: ['中文', 'tag', 'multi word', 'needs ] bracket', 'fffff', 'fff-bug', 'office'],
       },
     ]);
   });
@@ -189,6 +189,14 @@ describe('parseMarkdownBlocks', () => {
       },
     ]);
     expect(parseMarkdownBlocks('Fix topic:: design [[#tag]]')).toEqual([
+      {
+        content: { text: 'Fix', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['tag'],
+        fields: [{ name: 'topic', value: 'design' }],
+      },
+    ]);
+    expect(parseMarkdownBlocks('Fix topic:: design #[[tag]]')).toEqual([
       {
         content: { text: 'Fix', marks: [], inlineRefs: [] },
         children: [],

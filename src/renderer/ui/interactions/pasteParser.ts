@@ -1,6 +1,6 @@
 import type { CreateNodeTree, ParsedPasteField, RichText, TextMark, TextMarkKind } from '../../api/types';
 import {
-  TAG_TOKEN,
+  matchTagTokens,
   parseCheckboxMarker,
   parseTagTokenMatch,
 } from '../../../core/textSyntax';
@@ -176,33 +176,30 @@ function metadataLeadStart(text: string, tokenStart: number): number | null {
   return /\s/u.test(text[tokenStart - 1] ?? '') ? tokenStart - 1 : null;
 }
 
-function nextFieldBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
-  for (const match of text.matchAll(FIELD_START_TOKEN)) {
-    const start = match.index ?? 0;
-    const lead = (match[1] ?? '').length;
-    const tokenStart = start + lead;
-    if (start < valueStart || inAnyRange(tokenStart, protectedRanges)) continue;
-    return start;
-  }
-  return null;
+function fieldBoundaryStart(match: RegExpMatchArray, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
+  const start = match.index ?? 0;
+  const lead = (match[1] ?? '').length;
+  const tokenStart = start + lead;
+  return inAnyRange(tokenStart, protectedRanges) ? null : start;
 }
 
-function nextTagBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
-  for (const match of text.matchAll(TAG_TOKEN)) {
-    const tokenStart = match.index ?? 0;
-    if (tokenStart < valueStart || !parseTagTokenMatch(match) || inAnyRange(tokenStart, protectedRanges)) continue;
-    const leadStart = metadataLeadStart(text, tokenStart);
-    if (leadStart === null || leadStart < valueStart) continue;
-    return leadStart;
-  }
-  return null;
+function tagBoundaryStart(text: string, match: RegExpMatchArray, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
+  const tokenStart = match.index ?? 0;
+  if (!parseTagTokenMatch(match) || inAnyRange(tokenStart, protectedRanges)) return null;
+  return metadataLeadStart(text, tokenStart);
 }
 
 function nextMetadataBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number {
-  return Math.min(
-    nextFieldBoundary(text, valueStart, protectedRanges) ?? text.length,
-    nextTagBoundary(text, valueStart, protectedRanges) ?? text.length,
-  );
+  let boundary = text.length;
+  for (const match of text.matchAll(FIELD_START_TOKEN)) {
+    const start = fieldBoundaryStart(match, protectedRanges);
+    if (start !== null && start >= valueStart) boundary = Math.min(boundary, start);
+  }
+  for (const match of matchTagTokens(text)) {
+    const start = tagBoundaryStart(text, match, protectedRanges);
+    if (start !== null && start >= valueStart) boundary = Math.min(boundary, start);
+  }
+  return boundary;
 }
 
 function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
@@ -225,7 +222,7 @@ function extractTagsAndFields(text: string): { text: string; tags: string[]; fie
     fields.push({ name: match[2] ?? '', value });
     removals.push({ start, end, lead });
   }
-  for (const match of text.matchAll(TAG_TOKEN)) {
+  for (const match of matchTagTokens(text)) {
     const tokenStart = match.index ?? 0;
     const leadStart = metadataLeadStart(text, tokenStart);
     const parsed = parseTagTokenMatch(match);
