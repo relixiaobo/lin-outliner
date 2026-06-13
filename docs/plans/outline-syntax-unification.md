@@ -6,7 +6,7 @@ created: 2026-06-04
 updated: 2026-06-13
 ---
 
-# Outline syntax: one canonical token grammar in `core`, not three copies
+# Outline syntax: one canonical token grammar in `core`, not four copies
 
 A proposal for how the outline parsers should relate. Two of them are full
 parsers — `src/main/agentOutlineParser.ts` (agent serialization) and
@@ -18,16 +18,21 @@ are in their final shape; this proposal refactors on top of what landed.
 
 This plan started as the question *"do we really need two parsers?"* The honest
 answer, after analysis, is **"two parsers — but they (and the live-edit trigger)
-must not own three different definitions of the same token."** What follows is the
+must not own four different definitions of the same token."** What follows is the
 evidence and the recommended shape, with the maximal "merge everything" option
 spelled out and deliberately rejected so the path-not-taken is on record.
+
+**Shape (AGENTS.md):** this is **(a) one complete feature in one PR** — the shared
+`core/textSyntax.ts` extension and the consumer swaps land together; there is no
+standalone partial slice.
 
 ## Goal
 
 - Settle the **architecture relationship** between the parsers so none of them
   silently redefines a shared concept (the live example: `#tag` recognition is
-  Unicode + bracket-aware on the agent side, ASCII-only on the paste side, and a
-  third character class again in the live `#`-trigger).
+  Unicode + bracket-aware on the agent side, ASCII-only on the paste side, a third
+  character class again in the live `#`-trigger, and a fourth hidden in paste's
+  field-value lookahead).
 - Establish a **single source of truth** for the token-level grammar every
   consumer agrees on: what is a tag (and, secondarily, what is a checkbox marker).
 - Do this at the **right size** — extract what is genuinely shared at the *token*
@@ -47,14 +52,14 @@ spelled out and deliberately rejected so the path-not-taken is on record.
 - Touching the `node_*` tool materialization path (`agentNodeTools.ts`) — it does
   not go through either parser for create, and is out of scope.
 
-## Background — why there are two parsers (and three tag definitions)
+## Background — why there are two parsers (and four tag definitions)
 
 | | `agentOutlineParser.ts` (main) | `pasteParser.ts` (renderer) |
 |---|---|---|
 | Direction | **Bidirectional** — parse *and* serialize (`agentNodeToolRead.ts`) | **Import only** — clipboard → nodes |
 | Consumers | `documentService`, `agentNodeTools`, `agentNodeToolSearch` | `RichTextEditor.tsx` |
 | Output | `OutlineNode` — **plain-string** `title`, `fields[]`, `tags[]`, `checked` | `CreateNodeTree` — **RichText** content (marks), `codeLanguage`, images |
-| On malformed input | **Throws** (tabs, odd indent, non-`- ` lines) — the LLM must round-trip cleanly | **Lenient** — best-effort, never throws; a human paste must always land *something* |
+| On malformed input | **Fails with a `Result`** (`{ ok: false, error }`) on tabs, odd indent, non-`- ` lines (`:77`/`:80`/`:84`) — the LLM must round-trip cleanly | **Lenient** — best-effort, always lands *something* |
 | Identity / refs | `%%node:id%%` markers, `[[node:id]]` references, `%%search/view%%` directives | none |
 | Field model | field is a **child line** (`- name:: value`) | field is **inline trailing** (`title name:: value`) |
 | Rich formatting | **none** — title is plain text | marks, code fences → `codeBlock`, bare URL → link, `<br>` split, HTML/DOM |
@@ -62,7 +67,7 @@ spelled out and deliberately rejected so the path-not-taken is on record.
 A third, lighter consumer also answers *"what is a tag"*: the live `#`-trigger in
 `rowInteractions.ts:22` (`/#([^\s#@]*)$/u`) that fires the tag autocomplete as you
 type. It is not a full parser, but it carries its own tag character class — a
-third copy of the definition.
+third consumer with its own copy.
 
 The reason there are two *parsers* is not "human input is messy, agent input is
 clean" (the shallow framing). The real reasons are structural and each is
@@ -82,7 +87,8 @@ load-bearing:
    line vs inline trailing. Neither is reducible to the other for free.
 
 So the parsers are *legitimately* two. What is **not** legitimate is that the
-token-level grammar has been copied into three places and the copies have
+token-level grammar has been copied across consumers (four copies of "what starts
+a tag": three consumers + one hidden in paste's field grammar) and the copies have
 **already drifted**:
 
 - `#tag` — three answers in one product:
@@ -98,10 +104,19 @@ token-level grammar has been copied into three places and the copies have
 
   The hex predicate is *already* extracted to `core/textSyntax.ts` and shared by
   two of the three consumers; paste is the lone holdout. The tag *matcher* itself
-  is still copied three times.
-- checkbox — agent (`agentOutlineParser.ts:150`) and paste (`pasteParser.ts:210`)
-  both read `[x]`/`[X]` as checked and `[ ]` as unchecked — the same meaning, two
-  regexes.
+  is still copied three times across the consumers — four, counting the hidden one
+  below.
+- `#tag` — **a fourth, hidden copy.** paste's `FIELD_TOKEN` (`pasteParser.ts:149`)
+  hardcodes `\s+#[A-Za-z]` into its field-value-terminator lookahead ("a field
+  value ends where the next ASCII tag begins"). So *"what starts a tag"* is defined
+  a **fourth** time, buried inside the field grammar — and this copy bites back the
+  moment the tag matcher widens (see Design → the `#中文`-after-a-field caveat).
+- checkbox — agent (`agentOutlineParser.ts:150`, `/^\[[ xX]\]\s*/`) and paste
+  (`pasteParser.ts:211`, `/^\[([ xX])\]\s+/`) both read `[x]`/`[X]` as checked and
+  `[ ]` as unchecked. *Almost* identical — agent allows zero trailing spaces
+  (`\s*`), paste requires one or more plus a body (`\s+`) — so a shared marker must
+  pick one and accept the small behavior shift on the other side. Not "same
+  meaning, two regexes" for free.
 
 That drift is the actual defect. The fix is not "one parser" — it is **one
 definition of each shared token in `core`, imported by every consumer.**
@@ -123,17 +138,20 @@ src/core/textSyntax.ts   (existing pure module — extend, don't replace)
   + parseCheckboxMarker(line): { checked: boolean; rest: string } | null   // `[x]`/`[ ]`
 ```
 
-`TAG_TOKEN` is the reconciled union of today's three copies: Unicode body
+`TAG_TOKEN` is the reconciled union of today's three consumer copies: Unicode body
 (`[\p{L}\p{N}_-]`) + the two bracket forms (`[[#tag]]`, `#[[tag]]`) + the
-`isCssHexColorToken` exclusion already living in the same module.
+`isCssHexColorToken` exclusion already living in the same module. The fourth copy —
+paste's `FIELD_TOKEN` boundary — then derives from this same matcher rather than
+re-stating it (see the paste-side couplings below).
 
 Then:
 
 - **`agentOutlineParser.ts`** imports `TAG_TOKEN`/`extractTags` instead of its
   private `TAG_TOKEN_PATTERN` (it already imports `isCssHexColorToken` from this
   module). Its strict structure layer (2-space indent, `- ` requirement,
-  error-on-malformed at `:79-86`), identity markers, references, directives, and
-  **field-as-child-line** parsing all **stay** — agent-only and correct.
+  failure-`Result`-on-malformed at `:79-86`), identity markers, references,
+  directives, and **field-as-child-line** parsing all **stay** — agent-only and
+  correct.
 - **`pasteParser.ts`** imports the same `TAG_TOKEN`/`extractTags` and
   `parseCheckboxMarker`. Its lenient structure layer (tab *or* 2-space,
   list-marker-derived depth, HTML/DOM walk, `<br>` split, markdown-vs-flat-HTML
@@ -142,16 +160,36 @@ Then:
   paste-only and correct. **List markers stay here too** — the agent deliberately
   accepts only `- `, so a shared permissive `LIST_MARKER` would have exactly one
   consumer and does not belong in `core`.
+
+  Two paste-side couplings make this **more than an import swap**, and both must be
+  handled or the promised behavior change does not land:
+  - **`FIELD_TOKEN`'s tag boundary must derive from the shared grammar too.** Its
+    value-terminator lookahead (`\s+#[A-Za-z]`) is the fourth tag definition. If
+    only `TAG_TOKEN` widens to Unicode/brackets but this lookahead stays ASCII,
+    then in `topic:: design #中文` the field value runs to end-of-line and swallows
+    `#中文`; the tag scan then *skips* it (it sits inside the harvested field
+    span), so the tag is **neither recognized nor separated**. Fix: build the field
+    boundary from the same canonical tag-start as `TAG_TOKEN`.
+  - **tag and field harvest are collaborative, not two independent passes.**
+    `extractTagsAndFields` shares one `removals` span list, harvests fields *before*
+    tags, and drops any tag that lands inside a field span. Pulling the tag
+    *matcher* into `core` while keeping field harvesting local means paste must
+    preserve this ordering across the seam — the shared surface exposes the
+    *matcher* (and a field-aware boundary), not a turnkey one-shot `extractTags`.
 - **`rowInteractions.ts`** (live `#`-trigger) adopts the canonical tag character
   class so "what counts as a tag character" agrees whether you type or paste. Its
   incremental at-cursor shape stays; only the character class is shared.
-- The serializer (`agentNodeToolRead.ts`) routes its tag formatting through
-  `formatTag` so parse and serialize can never disagree on tag syntax.
+- The serializer's tag formatting (`agentNodeToolProjection.ts:109 → tagLabel`,
+  consumed by `agentNodeToolRead.ts`'s `serializeOutline`) routes through
+  `formatTag` so parse and serialize can never disagree on tag syntax (the
+  canonical-form rule is an Open question below).
 
 **What this buys:** one answer to "what is a tag," enforced by the type system
 (every consumer imports the same symbol). The Unicode + bracket inconsistency is
 fixed as a side effect — paste begins to recognize `#中文` and `[[#tag]]`, and
-stops treating `#fff` as a tag, matching the agent and live-edit paths.
+stops treating `#fff` as a tag, matching the agent and live-edit paths *(provided
+`FIELD_TOKEN`'s boundary is reconciled too — see above; otherwise a tag right after
+an inline `name:: value` is still missed)*.
 
 **What this explicitly does not touch:** structure rules, list markers, field
 models, rich formatting, identity, error policy. Those are the
@@ -223,7 +261,7 @@ first time one side changes.
 | Behavior change | paste loses rich formatting **or** agent format gains formatting syntax | paste tag recognition widens to Unicode + bracket forms and gains the hex-color exclusion the other two already have | none |
 | Risk | **high** — agent round-trip + str-replace contract is load-bearing; any regression there breaks the agent | **low** — pure functions, covered by existing `pasteParser.test.ts` + agent parser tests; no protocol/command change | none |
 | Coordination | touches the agent format spec → cross-agent, plan-track | no protocol file → single PR | none |
-| Payoff | none over B (and a regression) | single source of truth for shared tokens; three-way drift fixed | drift persists and compounds |
+| Payoff | none over B (and a regression) | single source of truth for shared tokens; four-way drift fixed | drift persists and compounds |
 
 Option B is **not** a protocol change (`core/types.ts`, `core/commands.ts`
 untouched) — the shared module is pure helper code. That keeps it a normal
@@ -253,6 +291,16 @@ third consumer, which raises (not lowers) the payoff.
 - **List markers stay per-parser (2026-06-13).** The agent accepts only `- `; a
   permissive shared `LIST_MARKER` would have exactly one consumer. It is
   structure, not token grammar — out of the shared surface.
+- **Checkbox marker whitespace (2026-06-13): pick one deliberately.** agent uses
+  `\s*` (zero+ trailing spaces), paste uses `\s+` (one+, plus a body). The shared
+  `parseCheckboxMarker` must choose, and the choice shifts the *other* side's
+  behavior slightly — so it is a small behavior change, not a no-op extraction.
+  Settle the policy (and which side shifts) at build time. Low severity.
+- **Re-confirm the 2026-06-04 decisions on the corrected premise (PM).** The
+  hex-exclusion and bracket-form decisions were taken under the premise "neither
+  parser excludes hex." That premise was wrong (agent + live-edit already exclude;
+  see above). The conclusion (exclude everywhere) is *stronger* under the corrected
+  premise, but the PM should re-affirm both decisions still hold before build.
 
 ## Open questions
 
@@ -264,23 +312,47 @@ third consumer, which raises (not lowers) the payoff.
   hex). Whether the at-cursor trigger should also honor the bracket forms is a
   smaller UX call to settle during implementation — bracket forms mid-type are
   unusual, so the default is "character class only."
+- **`formatTag`'s canonical output + the round-trip contract.** `TAG_TOKEN`
+  accepts three inputs (`#tag` / `[[#tag]]` / `#[[tag]]`) for one name, so
+  `formatTag(name)` must emit exactly *one* form — and must bracket-wrap names that
+  cannot be written bare (spaces, etc.). The de-facto rule today is
+  `agentNodeToolProjection.ts:109 → tagLabel`:
+  `/^[\w-]+$/.test(name) ? '#'+name : '#[['+name+']]'` — and `[\w-]` is **ASCII**,
+  so a Unicode name like `中文` *already* serializes as `#[[中文]]` even though the
+  parser accepts bare `#中文`. The plan must decide whether bare Unicode tags
+  round-trip bare or get bracket-wrapped, and pin a `parse ∘ serialize` stability
+  test. The agent round-trip is the load-bearing contract; the first draft's
+  checklist only pinned parse accept/reject, never the round-trip.
+- **How far does `FIELD_TOKEN`'s boundary widen?** Deriving it from the canonical
+  tag-start is *required* for the `#中文`-after-a-field promise (Design). Whether it
+  also treats the bracket forms as a field terminator is a smaller call for build.
 
 ## Checklist (only if ratified to build)
 
 - [ ] Extend `src/core/textSyntax.ts` with canonical `TAG_TOKEN` / `extractTags` /
       `formatTag` / `parseCheckboxMarker` (alongside the existing
       `isCssHexColorToken`).
-- [ ] Reconcile the three tag definitions into one matcher (Unicode + brackets +
+- [ ] Reconcile the **four** tag definitions into one matcher (Unicode + brackets +
       hex exclusion); add a unit test pinning each accept/reject case
       (`#中文`, `[[#tag]]`, `#fff`, `#fffff`, `#fff-bug`, `#office`).
+- [ ] **Derive `pasteParser.ts`'s `FIELD_TOKEN` value-boundary from the shared
+      tag-start** (not a hardcoded `\s+#[A-Za-z]`); add regression cases
+      `topic:: design #中文` and `topic:: design [[#tag]]` proving the tag is split
+      out, not swallowed into the field value.
+- [ ] Define `formatTag`'s bare-vs-`[[#…]]` rule and add a `parse ∘ serialize`
+      round-trip test (Unicode name, name-with-spaces) — not just parse
+      accept/reject.
+- [ ] Choose `parseCheckboxMarker`'s whitespace policy (`\s+` vs `\s*`), note which
+      side's behavior shifts, and cover both `[x] body` and a trailing-space-less
+      `[x]`.
 - [ ] Swap `agentOutlineParser.ts` to import the shared tag helper (it already
       imports `isCssHexColorToken`); keep structure/identity/refs/fields/errors
       local. Re-run agent parser tests.
-- [ ] Swap `pasteParser.ts` to import the shared tag + checkbox helpers; keep
-      structure / list-markers / HTML / marks / inline-fields local. Re-run
-      `pasteParser.test.ts`.
+- [ ] Swap `pasteParser.ts` to import the shared tag + checkbox helpers **while
+      preserving the field-before-tag harvest collaboration**; keep structure /
+      list-markers / HTML / marks / inline-fields local. Re-run `pasteParser.test.ts`.
 - [ ] Point `rowInteractions.ts` at the shared tag character class. Re-run
       `rowInteractions.test.ts`.
-- [ ] Route the serializer's tag formatting through `formatTag`
-      (`agentNodeToolRead.ts`).
+- [ ] Route the serializer's tag formatting (`agentNodeToolProjection.ts → tagLabel`)
+      through `formatTag`.
 - [ ] `bun run typecheck` + `bun test tests/core tests/renderer` + the paste e2e.
