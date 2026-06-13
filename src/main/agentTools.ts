@@ -11,7 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
-import { createLocalTools, type AgentLocalWorkspaceContext } from './agentLocalTools';
+import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentDelegationTools, normalizeAgentToolNames, type AgentDelegationRuntime } from './agentDelegation';
 import { createRecallTool, type AgentRecallToolRuntime } from './agentRecallTool';
@@ -194,7 +194,7 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
   // scratch root, falling back to the workdir's default scratch sibling when no workspace
   // context is supplied (the runtime always supplies one in production).
   const scratchRoot = options.localWorkspace?.scratchRoot
-    ?? (options.localFileRoot != null ? path.join(path.resolve(options.localFileRoot), 'tmp') : undefined);
+    ?? (options.localFileRoot != null ? scratchRootForWorkdir(options.localFileRoot, undefined) : undefined);
   const tools = [
     ...(outliner ? createNodeTools(outliner, { localFileRoot: options.localFileRoot }) : []),
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),

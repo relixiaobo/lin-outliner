@@ -485,9 +485,9 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
 }
 
 export async function runLocalBashCommand(
-  options: { localRoot?: string; command: string; timeout?: number; signal?: AbortSignal },
+  options: { localRoot?: string; scratchRoot?: string; command: string; timeout?: number; signal?: AbortSignal },
 ): Promise<LocalBashRunResult> {
-  const workspace = createWorkspaceContext(options.localRoot);
+  const workspace = createWorkspaceContext(options.localRoot, options.scratchRoot);
   const params = normalizeBashParams({
     command: options.command,
     timeout: options.timeout,
@@ -508,11 +508,20 @@ export async function runLocalBashCommand(
   };
 }
 
+// Resolve the agent scratch root for a workdir. Production passes the explicit app-owned
+// `<userData>/agent-scratch`; when none is supplied (internal callers, tests) the fallback is
+// `<workdir>/tmp`, which keeps the legacy in-workdir layout and is always a sibling-or-child of
+// the workdir, so containment stays well-defined. Single source of this default so the four
+// callers that need scratch before a WorkspaceContext exists cannot drift.
+export function scratchRootForWorkdir(workdir: string | undefined, scratchRoot: string | undefined): string {
+  const root = path.resolve(workdir ?? process.cwd());
+  return path.resolve(scratchRoot ?? path.join(root, 'tmp'));
+}
+
 function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
-  const root = path.resolve(localRoot ?? process.cwd());
   return {
-    root,
-    scratchRoot: path.resolve(scratchRoot ?? path.join(root, 'tmp')),
+    root: path.resolve(localRoot ?? process.cwd()),
+    scratchRoot: scratchRootForWorkdir(localRoot, scratchRoot),
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
   };

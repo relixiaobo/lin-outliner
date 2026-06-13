@@ -19,7 +19,7 @@ import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
-import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
+import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
@@ -347,7 +347,7 @@ export class AgentDelegationRuntime {
   constructor(options: AgentDelegationRuntimeOptions) {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
-    this.scratchRoot = path.resolve(options.scratchRoot ?? path.join(this.localRoot, 'tmp'));
+    this.scratchRoot = scratchRootForWorkdir(this.localRoot, options.scratchRoot);
     this.additionalAgentDirectories = normalizeConfiguredDirectories(options.additionalAgentDirectories, this.localRoot);
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
@@ -775,6 +775,7 @@ export class AgentDelegationRuntime {
       executingAgentId: input.executingAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
       localRoot: this.localRoot,
+      scratchRoot: this.scratchRoot,
       additionalAgentDirectories: this.additionalAgentDirectories,
       depth: this.depth + 1,
       maxDepth: this.maxDepth,

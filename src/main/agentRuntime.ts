@@ -223,6 +223,7 @@ import {
 } from './agentPermissionEvents';
 import {
   createAgentLocalWorkspaceContext,
+  scratchRootForWorkdir,
   type AgentLocalWorkspaceContext,
 } from './agentLocalTools';
 import {
@@ -1323,6 +1324,7 @@ export class AgentRuntime {
       executingAgentId: this.agentIdentity.agentId,
       memoryOwnerAgentId: this.agentIdentity.agentId,
       localRoot: this.options.localFileRoot,
+      scratchRoot: this.scratchRoot(),
       host: {} as any,
     });
     return tempRuntime.listAllAgentDefinitions();
@@ -2066,6 +2068,7 @@ export class AgentRuntime {
             : undefined,
           command,
           localRoot: this.options.localFileRoot,
+          scratchRoot: this.scratchRoot(),
           permissionMode: this.options.permissionMode,
           safetyMode: activeSettings.safetyMode,
           allowedTools: skill.allowedTools,
@@ -6904,7 +6907,7 @@ export class AgentRuntime {
   // App-owned scratch sibling of the workdir. Defaults to `<workdir>/tmp` so a runtime built
   // with only a `localFileRoot` (e.g. in tests) keeps the legacy in-workdir scratch layout.
   private scratchRoot() {
-    return path.resolve(this.options.scratchRoot ?? path.join(this.localFileRoot(), 'tmp'));
+    return scratchRootForWorkdir(this.localFileRoot(), this.options.scratchRoot);
   }
 
   private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{

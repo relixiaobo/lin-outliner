@@ -45,6 +45,7 @@ export interface AgentSkillShellCommandInput {
   approvalHandler?: (input: AgentSkillShellApprovalInput, signal?: AbortSignal) => Promise<AgentSkillShellApprovalResolution>;
   command: string;
   localRoot?: string;
+  scratchRoot?: string;
   permissionMode?: AgentPermissionMode;
   safetyMode?: AgentSafetyMode;
   allowedTools?: readonly string[];
@@ -80,6 +81,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       mode: input.permissionMode,
       safetyMode: input.safetyMode,
       workspaceRoot: input.localRoot,
+      scratchRoot: input.scratchRoot,
       preapprovedToolRules: input.allowedTools ?? [],
       globalPermissions: input.globalPermissions,
     },
@@ -204,6 +206,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   try {
     result = await runLocalBashCommand({
       localRoot: input.localRoot,
+      scratchRoot: input.scratchRoot,
       command: input.command,
       signal: input.signal,
     });

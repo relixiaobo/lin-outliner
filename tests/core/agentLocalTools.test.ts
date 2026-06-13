@@ -7,6 +7,7 @@ import {
   createAgentLocalWorkspaceContext,
   createLocalTools,
   restorePostCompactReadFiles,
+  scratchRootForWorkdir,
   visibleBash,
   visibleFileGlob,
   visibleFileGrep,
@@ -112,6 +113,18 @@ function makePdf(pageTexts: string[]): string {
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
   return pdf;
 }
+
+describe('scratchRootForWorkdir', () => {
+  test('prefers the explicit scratch root and otherwise falls back to <workdir>/tmp', () => {
+    const workdir = path.join(path.parse(process.cwd()).root, 'work');
+    const explicit = path.join(path.parse(process.cwd()).root, 'data', 'agent-scratch');
+
+    // Explicit app-owned scratch wins, independent of the workdir.
+    expect(scratchRootForWorkdir(workdir, explicit)).toBe(path.resolve(explicit));
+    // Fallback keeps the legacy in-workdir layout for callers built with only a workdir.
+    expect(scratchRootForWorkdir(workdir, undefined)).toBe(path.join(path.resolve(workdir), 'tmp'));
+  });
+});
 
 describe('agent local tools', () => {
   test('file_read returns bounded text and records a full read for edits', async () => {
