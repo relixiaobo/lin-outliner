@@ -2251,6 +2251,69 @@ describe('agent runtime childRuns', () => {
     expect(indexEntry?.unreadCount).toBe(replayUnread);
     expect(replayUnread).toBe(0);
   });
+
+  test('a resumed run that fails does not surface the prior run\'s result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-fail-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-fail-data-'));
+    roots.push(localRoot, dataRoot);
+
+    // Content-dispatched (order-independent: the background child races the parent).
+    const streamFn = respondingStream((context) => {
+      const text = textFromContext(context);
+      if (text.includes('Now fail')) {
+        return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'resume boom' });
+      }
+      if (text.includes('Do the first pass')) {
+        return fauxAssistantMessage(fauxText('first result'));
+      }
+      if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'completes then fails on resume',
+            prompt: 'Do the first pass.',
+            agent_type: 'general',
+            run_in_background: true,
+            name: 'resume-fail',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('ack'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then fails.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+
+    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+
+    await runtime.childRunSend(conversation.conversationId, childRunId, 'Now fail.');
+    const failed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(failed).toMatchObject({ agent_id: childRunId, status: 'failed' });
+    expect((failed as { error?: string }).error).toBeDefined();
+    // The fix: send() clears run.result on resume, so the failed continuation
+    // cannot surface the completed first run's "first result".
+    expect((failed as { result?: string }).result).toBeUndefined();
+  });
 });
 
 describe('extractPartialAssistantText (stop-salvage primitive)', () => {

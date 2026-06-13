@@ -281,6 +281,10 @@ interface AgentRunRecord {
   turnCount: number;
   parentToolCallId?: string;
   preapprovedToolRules?: string[];
+  // In-memory only (not on the durable child-run record): lets a same-session
+  // resume rebuild the agent with the spawn's unattended flag. Cross-restart
+  // persistence needs a field on AgentChildRunRecord (agent-data-model scope).
+  unattended?: boolean;
   toolResultBudgetState: ToolResultBudgetState;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
@@ -572,6 +576,9 @@ export class AgentDelegationRuntime {
       }
       run.status = 'running';
       run.error = undefined;
+      // Clear the prior terminal's salvaged/completed result so a resumed run
+      // that stops or fails again cannot surface the previous run's stale output.
+      run.result = undefined;
       run.completedAt = undefined;
       run.detached = true;
       run.terminalNotificationSent = false;
@@ -596,8 +603,10 @@ export class AgentDelegationRuntime {
       run.updatedAt = run.completedAt;
       // Salvage whatever the run produced before we abort, so the synchronous
       // tool result and the terminal notification carry the partial work
-      // instead of an empty result (mirrors the completion path's salvage).
-      if (run.result === undefined && run.agent) {
+      // instead of an empty result. Overwrite unconditionally, like the
+      // completion path: a re-stop after a resume must report the LATEST partial,
+      // not a stale one (`send` clears `run.result` on resume).
+      if (run.agent) {
         const partial = extractPartialAssistantText(run.agent.state.messages as AgentMessage[]);
         if (partial !== undefined) run.result = partial;
       }
@@ -702,6 +711,7 @@ export class AgentDelegationRuntime {
       turnCount: 0,
       parentToolCallId,
       preapprovedToolRules: params.preapprovedToolRules,
+      unattended: params.unattended,
       toolResultBudgetState: createToolResultBudgetState(),
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
@@ -733,7 +743,9 @@ export class AgentDelegationRuntime {
    * delegation runtime, and the live `Agent` — shared by the spawn (`startAgent`)
    * and resume (`ensureLiveAgent`) paths. One wiring means a setup step (e.g. the
    * disabled-skill/agent gates) can never be applied on spawn and silently missed
-   * on resume — the fragile seam the run tree used to have.
+   * on resume — the fragile seam the run tree used to have. Resume therefore
+   * honors the CURRENT disabled-skill/agent settings by design: a run resumed
+   * after its skill/agent was disabled is denied that skill/agent (ratified).
    */
   private async buildChildAgentHarness(input: {
     runId: string;
@@ -752,7 +764,6 @@ export class AgentDelegationRuntime {
   }): Promise<{
     skillRuntime: AgentSkillRuntime;
     localWorkspace: AgentLocalWorkspaceContext;
-    childRuntime: AgentDelegationRuntime;
     childAgent: Agent;
   }> {
     const childConversationId = `${this.hostConversationPrefix()}-${input.runId}`;
@@ -822,7 +833,7 @@ export class AgentDelegationRuntime {
       unattended: input.unattended,
       afterToolResult: input.afterToolResult,
     });
-    return { skillRuntime, localWorkspace, childRuntime, childAgent };
+    return { skillRuntime, localWorkspace, childAgent };
   }
 
   private async resolveFreshAgent(agentType: string | undefined): Promise<AgentDefinition> {
@@ -1141,6 +1152,7 @@ export class AgentDelegationRuntime {
       memoryOwnerAgentId: run.memoryOwnerAgentId,
       memoryOriginWorkspace: run.memoryOriginWorkspace,
       preapprovedToolRules: run.preapprovedToolRules,
+      unattended: run.unattended,
       // Resume continues from the run's restored transcript (the model + effort
       // come from the run's resolved definition, not a fresh override).
       initialMessages: run.messages.map(cloneAgentMessage),
