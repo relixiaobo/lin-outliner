@@ -45,8 +45,9 @@ build-readiness first:
    are PM-ratified (2026-06-13). Ships as a SET of independent PRs (F1→F4); **F1
    (render agent file outputs — the reported bug) shipped (#224)** — file outputs
    now render as a previewable local-file chip + inspectable diff, not raw JSON —
-   and **F2 (app-owned workdir + relocated scratch) shipped (#229)**. F3/F4 follow
-   as independent PRs (F3 materialize bridge next). → F3 ready to dispatch now.
+   **F2 (app-owned workdir + relocated scratch) shipped (#229)**, and **F3
+   (materialize bridge — referenced outliner files become agent-readable) shipped
+   (#237)**. F4 (ingest bridge) follows as an independent PR. → F4 ready to dispatch now.
 2. ~~**`channel-async-message-bus`**~~ — **shipped (PR #231, cc)**; see Recently
    completed. Channel send now returns on acceptance; the `isStreaming`→mode-specific
    projection split (`dmRunActive`/`channelRunsActive` + per-run `streamingText`)
@@ -474,8 +475,8 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **agent-file-model** (P1, plan file, **in-progress — F1 (#224) + F2 (#229) shipped;
-  F3–F4 remain. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
+- **agent-file-model** (P1, plan file, **in-progress — F1 (#224) + F2 (#229) + F3 (#237)
+  shipped; F4 remains. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
   #220**) — give agent file
   handling one shape: the agent lives in a path-addressed working directory, the
   document in the handle-addressed asset store (`asset://`), joined by two symmetric
@@ -485,7 +486,7 @@ Standalone agent items (not part of the program):
   input path (a referenced outliner file reaches the agent today as a node with no
   readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
   reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation
-  (**shipped #229**) · F3 materialize bridge · F4 ingest bridge — F3 next. See
+  (**shipped #229**) · F3 materialize bridge (**shipped #237**) · F4 ingest bridge — F4 next. See
   `docs/plans/agent-file-artifact-model.md`.
 - **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
   (feature); see Recently completed. Plan archived `done`
@@ -633,6 +634,34 @@ see Recently completed). Remaining Layer-2/3 lanes:
 
 ## Recently completed
 
+- **Referenced outliner files become agent-readable (agent-file-model F3)** (cc-2,
+  PR #237, plan-track) — closes the lossy input path: an outliner image / attachment
+  node `@`-referenced into a conversation used to reach the agent as a node with **no
+  readable bytes**. At send time each explicitly-referenced (`referencedNodes`) image /
+  attachment node carrying an `assetId` now has its asset-store bytes **materialized**
+  (handle→path) into the agent **scratch** root via the same `materializeAgentLocalPath`
+  machinery as a composer attachment — a readable path the agent opens with `file_read`,
+  plus a native inline `ImageContent` block for vision. Read paths surface in a hidden
+  `<referenced-files>` reminder; the renderer keeps the `asset://` handle for display, so
+  only the agent-facing side gains a path. Authorization = the explicit reference (an
+  embedded-but-unreferenced asset is never copied). Bounded + best-effort: referenced and
+  composer images share one inline-image cap, a `byteSize` pre-check skips reading an image
+  that cannot fit the base64 budget, assets de-dupe by `assetId`, an image whose metadata
+  yields no canonical mime is recovered by sniffing the materialized bytes, and a missing /
+  oversized / unreadable asset (or a failed inline read) is skipped without failing the send
+  or dropping the readable path. The input mirror of F1's `file_write` output side. Scope:
+  composer send only — a `/slash`-skill or steer turn surfaces the reference marker but not
+  the bytes (documented no-op). Gate (main): **xhigh `/code-review`** — 9 finder angles +
+  adversarial verify surfaced 14 findings (5 correctness: `assetId`-vs-`nodeId` de-dupe,
+  inline cap ignoring composer images, `xmlAttrs` whitespace-collapse mangling a `path`,
+  image-with-missing-meta never inlined, a post-copy read failure dropping the path; plus
+  efficiency / reuse / altitude cleanups); two candidates (node-mime mislabel, empty-text
+  mislabel) **verified and REFUTED** (attachment mime cannot be `image/*` in core; a
+  referenced node always emits a `[[node:…]]` marker). All verified items **fixed in
+  `7bb3d7dc`**; re-verified typecheck + the two new test files (`agentReferencedAssets` +
+  `agentRuntimeReferencedAssets`, **12 pass / 0 fail**, incl. `assetId` de-dupe + missing-meta
+  sniff recovery) green on the merged state. Spec: `docs/spec/agent-tool-design.md`. F3 of the
+  `agent-file-artifact-model` SET plan (F4 ingest bridge remains).
 - **Skillify v2 — built-in skill-authoring workflow** (codex-3, PR #230,
   plan-track) — rewrites the built-in `/skillify` skill body from a 6-step note
   into a structured 7-step Tenon-native workflow: understand-before-asking (no

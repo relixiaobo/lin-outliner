@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Referenced outliner files become agent-readable (agent-file-model F3, PR #237, cc-2)** —
+  closes the lossy input path: an outliner image / attachment node `@`-referenced into a
+  conversation used to reach the agent as a node with **no readable bytes**. At send time each
+  explicitly-referenced (`referencedNodes`) image / attachment node carrying an `assetId` now has
+  its asset-store bytes **materialized** (handle→path) into the agent **scratch** root via the
+  same `materializeAgentLocalPath` machinery as a composer attachment — a readable path the agent
+  opens with `file_read`, plus a native inline `ImageContent` block for vision. The materialized
+  read paths are listed in a hidden `<referenced-files>` reminder
+  (`<file node_id title mime size_bytes path inline_image />`); the renderer keeps the `asset://`
+  handle for its own display, so only the agent-facing side gains a path. Authorization is the
+  explicit reference — an embedded-but-unreferenced asset is never copied. Bounded and
+  best-effort: referenced and composer images share one inline-image cap, a `byteSize` pre-check
+  skips reading an image that cannot fit the base64 budget, assets de-dupe by `assetId`, an image
+  whose metadata yields no canonical mime is recovered by sniffing the materialized bytes, and a
+  missing / oversized / unreadable asset (or a failed inline read) is skipped without failing the
+  send or dropping the readable path. The input mirror of F1's `file_write` output side. Scope:
+  composer send only — a `/slash`-skill or steer turn surfaces the reference marker but not the
+  bytes (documented no-op). F3 of `docs/plans/agent-file-artifact-model.md` (F4 ingest bridge
+  remains). Spec: `docs/spec/agent-tool-design.md`.
 - **Skillify v2 — built-in skill-authoring workflow (PR #230, codex-3)** — the
   built-in `/skillify` skill body is reworked from a short 6-step note into a
   structured 7-step Tenon-native workflow: understand-before-asking (no
