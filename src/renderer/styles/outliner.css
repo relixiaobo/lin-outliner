@@ -2252,11 +2252,9 @@
    instead of dropping to their own line. The chips are portaled in by OutlinerItem. */
 .row-inline-tag-slot {
   display: inline-flex;
-  /* Center the chip in a box exactly as tall as the text line, then top-align that
-     box to the line. Both the chip and the glyphs end up centred in the same
-     --line-content band, so the chip tracks the text line — unlike vertical-align:
-     middle, which centres on the Latin x-height and rides high over CJK glyphs. */
-  height: var(--line-content);
+  /* Single-line chips stay centered in the text line; wrapped chips expand the
+     row instead of overflowing over following rows. */
+  min-height: var(--line-content);
   align-items: center;
   vertical-align: top;
   white-space: normal;
@@ -2266,8 +2264,11 @@
 .tag-bar {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
   margin-left: 6px;
+  max-width: 100%;
   min-width: 0;
   vertical-align: middle;
 }

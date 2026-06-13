@@ -26,6 +26,7 @@ import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
 import { isNodeInTrash } from './interactions/nodeLocation';
 import { OUTLINER_NODE_DRAG_MIME, PINNED_NODE_REORDER_MIME } from './interactions/dragDrop';
+import { MAX_OUTLINE_INDENT_DEPTH } from './workspaceResponsiveLayout';
 
 const primaryNavItems = [
   { key: 'today', icon: CalendarIcon },
@@ -168,7 +169,7 @@ export function Sidebar(props: SidebarProps) {
               label,
             });
           }}
-          style={{ '--tree-depth': depth } as CSSProperties}
+          style={{ '--tree-depth': Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) } as CSSProperties}
         >
           <ButtonControl
             aria-label={expanded ? t.shell.sidebar.collapseNode({ label }) : t.shell.sidebar.expandNode({ label })}

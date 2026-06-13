@@ -390,6 +390,7 @@ export const zhHans: PartialMessages = {
       canvasAriaLabel: '工作区画布',
       resizePanelsLabel: '调整面板宽度',
       resizePanelsTitle: '调整面板宽度（双击重置）',
+      tooNarrowForNewPane: '窗口太窄，无法打开更多面板。',
     },
     panel: {
       closeLabel: '关闭面板',

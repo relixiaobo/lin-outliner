@@ -1,31 +1,30 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
+import {
+  DEFAULT_AGENT_WIDTH,
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_AGENT_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_AGENT_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  availablePanelWidth,
+  clampRailWidthsForPanelFloor,
+  clampRailWidthsToLimits,
+  panelCountFitsAtMinimumRails,
+  workspaceLayoutMetricsFromCanvas,
+  type RailWidths,
+  type ResponsiveRailState,
+  type WorkspaceLayoutMetrics,
+} from './workspaceResponsiveLayout';
 
-const DEFAULT_SIDEBAR_WIDTH = 196;
-const DEFAULT_AGENT_WIDTH = 344;
-const MIN_SIDEBAR_WIDTH = 152;
-const MAX_SIDEBAR_WIDTH = 280;
-const MIN_AGENT_WIDTH = 280;
-const MAX_AGENT_WIDTH = 520;
-const FALLBACK_PANEL_MIN_WIDTH = 360;
 const KEYBOARD_RESIZE_STEP = 16;
 const KEYBOARD_RESIZE_LARGE_STEP = 40;
 
+type RailKind = 'sidebar' | 'agent';
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
-}
-
-function panelGapPx(canvas: HTMLElement) {
-  const raw = getComputedStyle(canvas).getPropertyValue('--panel-gap');
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function panelMinWidthPx(canvas: HTMLElement) {
-  const raw = getComputedStyle(canvas).getPropertyValue('--outline-panel-min-width');
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) ? parsed : FALLBACK_PANEL_MIN_WIDTH;
 }
 
 function resizeKeyDelta(event: ReactKeyboardEvent<HTMLButtonElement>) {
@@ -35,7 +34,30 @@ function resizeKeyDelta(event: ReactKeyboardEvent<HTMLButtonElement>) {
   return null;
 }
 
+function sameRailWidths(left: RailWidths, right: RailWidths) {
+  return left.sidebarWidth === right.sidebarWidth && left.agentWidth === right.agentWidth;
+}
+
+function railWidthKey(kind: RailKind): keyof RailWidths {
+  return kind === 'sidebar' ? 'sidebarWidth' : 'agentWidth';
+}
+
+function railMin(kind: RailKind) {
+  return kind === 'sidebar' ? MIN_SIDEBAR_WIDTH : MIN_AGENT_WIDTH;
+}
+
+function railMax(kind: RailKind) {
+  return kind === 'sidebar' ? MAX_SIDEBAR_WIDTH : MAX_AGENT_WIDTH;
+}
+
+function railKeyboardWidth(kind: RailKind, current: number, delta: number | null, key: string) {
+  if (key === 'Home') return railMin(kind);
+  if (key === 'End') return railMax(kind);
+  return current + (kind === 'sidebar' ? delta ?? 0 : -(delta ?? 0));
+}
+
 interface UseResizableLayoutOptions {
+  agentOpen: boolean;
   panels: WorkspacePanelState[];
   resizePanelPair: (
     leftPanelId: string,
@@ -43,102 +65,204 @@ interface UseResizableLayoutOptions {
     leftSize: number,
     rightSize: number,
   ) => void;
+  sidebarOpen: boolean;
 }
 
-export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayoutOptions) {
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [agentWidth, setAgentWidth] = useState(DEFAULT_AGENT_WIDTH);
+export function useResizableLayout({
+  agentOpen,
+  panels,
+  resizePanelPair,
+  sidebarOpen,
+}: UseResizableLayoutOptions) {
+  const [preferredRails, setPreferredRails] = useState<RailWidths>({
+    sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+    agentWidth: DEFAULT_AGENT_WIDTH,
+  });
+  const [renderedRails, setRenderedRails] = useState<RailWidths>(preferredRails);
   const canvasRef = useRef<HTMLElement | null>(null);
+  const preferredRailsRef = useRef(preferredRails);
+  const renderedRailsRef = useRef(renderedRails);
+  const railOpenRef = useRef({ sidebarOpen, agentOpen });
+  const panelCount = Math.max(1, panels.length);
+  const panelCountRef = useRef(panelCount);
+
+  preferredRailsRef.current = preferredRails;
+  renderedRailsRef.current = renderedRails;
+  railOpenRef.current = { sidebarOpen, agentOpen };
+  panelCountRef.current = panelCount;
+
+  const railStateFrom = useCallback((widths: RailWidths): ResponsiveRailState => ({
+    ...widths,
+    sidebarOpen: railOpenRef.current.sidebarOpen,
+    agentOpen: railOpenRef.current.agentOpen,
+  }), []);
+
+  const renderedRailState = useCallback(() => railStateFrom(renderedRailsRef.current), [railStateFrom]);
+
+  const commitPreferredRails = useCallback((next: RailWidths) => {
+    const clamped = clampRailWidthsToLimits(next);
+    preferredRailsRef.current = clamped;
+    setPreferredRails((prev) => (sameRailWidths(prev, clamped) ? prev : clamped));
+    return clamped;
+  }, []);
+
+  const commitRenderedRails = useCallback((next: RailWidths) => {
+    renderedRailsRef.current = next;
+    setRenderedRails((prev) => (sameRailWidths(prev, next) ? prev : next));
+  }, []);
+
+  const renderedRailsForPreference = useCallback((
+    preference: RailWidths,
+    nextPanelCount: number,
+    metrics?: WorkspaceLayoutMetrics,
+  ) => {
+    const canvas = canvasRef.current;
+    const resolvedMetrics = metrics ?? (canvas ? workspaceLayoutMetricsFromCanvas(canvas) : null);
+    if (!resolvedMetrics) return clampRailWidthsToLimits(preference);
+    return clampRailWidthsForPanelFloor(
+      resolvedMetrics,
+      railStateFrom(preference),
+      Math.max(1, nextPanelCount),
+    );
+  }, [railStateFrom]);
+
+  const applyRailPreference = useCallback((
+    nextPreference: RailWidths,
+    options: { metrics?: WorkspaceLayoutMetrics; panelCount?: number } = {},
+  ) => {
+    const clampedPreference = commitPreferredRails(nextPreference);
+    commitRenderedRails(renderedRailsForPreference(
+      clampedPreference,
+      options.panelCount ?? panelCountRef.current,
+      options.metrics,
+    ));
+  }, [commitPreferredRails, commitRenderedRails, renderedRailsForPreference]);
+
+  const panelCountFitsCapacity = useCallback((nextPanelCount: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return true;
+    return panelCountFitsAtMinimumRails(
+      workspaceLayoutMetricsFromCanvas(canvas),
+      railStateFrom(preferredRailsRef.current),
+      Math.max(1, nextPanelCount),
+    );
+  }, [railStateFrom]);
+
+  const reflowRailsForPanelCount = useCallback((nextPanelCount = panelCountRef.current) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      commitRenderedRails(preferredRailsRef.current);
+      return true;
+    }
+    const metrics = workspaceLayoutMetricsFromCanvas(canvas);
+    const rails = railStateFrom(preferredRailsRef.current);
+    const clampedPanelCount = Math.max(1, nextPanelCount);
+    commitRenderedRails(clampRailWidthsForPanelFloor(metrics, rails, clampedPanelCount));
+    return panelCountFitsAtMinimumRails(metrics, rails, clampedPanelCount);
+  }, [commitRenderedRails, railStateFrom]);
+
+  useLayoutEffect(() => {
+    let frame = 0;
+    const scheduleReflow = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        reflowRailsForPanelCount();
+      });
+    };
+
+    scheduleReflow();
+    window.addEventListener('resize', scheduleReflow);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', scheduleReflow);
+    };
+  }, [reflowRailsForPanelCount]);
+
+  useLayoutEffect(() => {
+    reflowRailsForPanelCount(panelCount);
+  }, [agentOpen, panelCount, reflowRailsForPanelCount, sidebarOpen]);
+
+  const beginRailResize = useCallback((kind: RailKind, event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const key = railWidthKey(kind);
+    const startPreference = { ...preferredRailsRef.current };
+    const startWidth = startPreference[key];
+    const canvas = canvasRef.current;
+    const metrics = canvas ? workspaceLayoutMetricsFromCanvas(canvas) : undefined;
+    const panelCountAtStart = panelCountRef.current;
+    handle.classList.add('is-resizing');
+    document.body.classList.add('is-resizing-layout');
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = kind === 'sidebar'
+        ? moveEvent.clientX - startX
+        : startX - moveEvent.clientX;
+      applyRailPreference({
+        ...startPreference,
+        [key]: startWidth + delta,
+      }, { metrics, panelCount: panelCountAtStart });
+    };
+    const endResize = () => {
+      handle.classList.remove('is-resizing');
+      document.body.classList.remove('is-resizing-layout');
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', endResize);
+      window.removeEventListener('pointercancel', endResize);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', endResize);
+    window.addEventListener('pointercancel', endResize);
+  }, [applyRailPreference]);
 
   const beginSidebarResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-    handle.classList.add('is-resizing');
-    document.body.classList.add('is-resizing-layout');
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      setSidebarWidth(clamp(startWidth + moveEvent.clientX - startX, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
-    };
-    const endResize = () => {
-      handle.classList.remove('is-resizing');
-      document.body.classList.remove('is-resizing-layout');
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', endResize);
-      window.removeEventListener('pointercancel', endResize);
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', endResize);
-    window.addEventListener('pointercancel', endResize);
-  }, [sidebarWidth]);
+    beginRailResize('sidebar', event);
+  }, [beginRailResize]);
 
   const resetSidebarWidth = useCallback(() => {
-    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-  }, []);
+    applyRailPreference({
+      ...preferredRailsRef.current,
+      sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+    });
+  }, [applyRailPreference]);
+
+  const resizeRailWithKeyboard = useCallback((
+    kind: RailKind,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    const delta = resizeKeyDelta(event);
+    if (delta === null && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    event.stopPropagation();
+    const key = railWidthKey(kind);
+    applyRailPreference({
+      ...preferredRailsRef.current,
+      [key]: railKeyboardWidth(kind, preferredRailsRef.current[key], delta, event.key),
+    });
+  }, [applyRailPreference]);
 
   const resizeSidebarWithKeyboard = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    const delta = resizeKeyDelta(event);
-    if (delta === null && event.key !== 'Home' && event.key !== 'End') return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.key === 'Home') {
-      setSidebarWidth(MIN_SIDEBAR_WIDTH);
-      return;
-    }
-    if (event.key === 'End') {
-      setSidebarWidth(MAX_SIDEBAR_WIDTH);
-      return;
-    }
-    setSidebarWidth((width) => clamp(width + (delta ?? 0), MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
-  }, []);
+    resizeRailWithKeyboard('sidebar', event);
+  }, [resizeRailWithKeyboard]);
 
   const beginAgentResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    const startX = event.clientX;
-    const startWidth = agentWidth;
-    handle.classList.add('is-resizing');
-    document.body.classList.add('is-resizing-layout');
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      setAgentWidth(clamp(startWidth - (moveEvent.clientX - startX), MIN_AGENT_WIDTH, MAX_AGENT_WIDTH));
-    };
-    const endResize = () => {
-      handle.classList.remove('is-resizing');
-      document.body.classList.remove('is-resizing-layout');
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', endResize);
-      window.removeEventListener('pointercancel', endResize);
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', endResize);
-    window.addEventListener('pointercancel', endResize);
-  }, [agentWidth]);
+    beginRailResize('agent', event);
+  }, [beginRailResize]);
 
   const resetAgentWidth = useCallback(() => {
-    setAgentWidth(DEFAULT_AGENT_WIDTH);
-  }, []);
+    applyRailPreference({
+      ...preferredRailsRef.current,
+      agentWidth: DEFAULT_AGENT_WIDTH,
+    });
+  }, [applyRailPreference]);
 
   const resizeAgentWithKeyboard = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    const delta = resizeKeyDelta(event);
-    if (delta === null && event.key !== 'Home' && event.key !== 'End') return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.key === 'Home') {
-      setAgentWidth(MIN_AGENT_WIDTH);
-      return;
-    }
-    if (event.key === 'End') {
-      setAgentWidth(MAX_AGENT_WIDTH);
-      return;
-    }
-    setAgentWidth((width) => clamp(width - (delta ?? 0), MIN_AGENT_WIDTH, MAX_AGENT_WIDTH));
-  }, []);
+    resizeRailWithKeyboard('agent', event);
+  }, [resizeRailWithKeyboard]);
 
   const resizePanelPairByPixels = useCallback((
     leftPanelId: string,
@@ -148,22 +272,24 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     const canvas = canvasRef.current;
     if (panels.length === 0 || !canvas) return;
 
+    const metrics = workspaceLayoutMetricsFromCanvas(canvas);
     const sizeOf = (panelId: string) => panels.find((panel) => panel.id === panelId)?.size ?? 1;
     const totalSize = panels.reduce((sum, panel) => sum + panel.size, 0);
     const usableWidth = Math.max(
       1,
-      canvas.getBoundingClientRect().width - Math.max(0, panels.length - 1) * panelGapPx(canvas),
+      availablePanelWidth(metrics, renderedRailState())
+        - Math.max(0, panels.length - 1) * metrics.panelGap,
     );
     const sizePerPixel = totalSize / usableWidth;
     const leftStart = sizeOf(leftPanelId);
     const rightStart = sizeOf(rightPanelId);
     const pairTotal = leftStart + rightStart;
-    const minPanelSize = Math.min(pairTotal / 2, panelMinWidthPx(canvas) * sizePerPixel);
+    const minPanelSize = Math.min(pairTotal / 2, metrics.panelMinWidth * sizePerPixel);
     const deltaSize = deltaPixels * sizePerPixel;
     const nextLeft = clamp(leftStart + deltaSize, minPanelSize, pairTotal - minPanelSize);
     const nextRight = pairTotal - nextLeft;
     resizePanelPair(leftPanelId, rightPanelId, nextLeft, nextRight);
-  }, [panels, resizePanelPair]);
+  }, [panels, renderedRailState, resizePanelPair]);
 
   const beginPanelResize = useCallback((
     leftPanelId: string,
@@ -176,12 +302,27 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     const canvas = canvasRef.current;
     if (panels.length === 0 || !canvas) return;
 
+    const metrics = workspaceLayoutMetricsFromCanvas(canvas);
+    const sizeOf = (panelId: string) => panels.find((panel) => panel.id === panelId)?.size ?? 1;
+    const totalSize = panels.reduce((sum, panel) => sum + panel.size, 0);
+    const usableWidth = Math.max(
+      1,
+      availablePanelWidth(metrics, renderedRailState())
+        - Math.max(0, panels.length - 1) * metrics.panelGap,
+    );
+    const sizePerPixel = totalSize / usableWidth;
+    const leftStart = sizeOf(leftPanelId);
+    const rightStart = sizeOf(rightPanelId);
+    const pairTotal = leftStart + rightStart;
+    const minPanelSize = Math.min(pairTotal / 2, metrics.panelMinWidth * sizePerPixel);
     const startX = event.clientX;
     handle.classList.add('is-resizing');
     document.body.classList.add('is-resizing-layout');
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      resizePanelPairByPixels(leftPanelId, rightPanelId, moveEvent.clientX - startX);
+      const deltaSize = (moveEvent.clientX - startX) * sizePerPixel;
+      const nextLeft = clamp(leftStart + deltaSize, minPanelSize, pairTotal - minPanelSize);
+      resizePanelPair(leftPanelId, rightPanelId, nextLeft, pairTotal - nextLeft);
     };
     const endResize = () => {
       handle.classList.remove('is-resizing');
@@ -194,7 +335,7 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
-  }, [panels.length, resizePanelPairByPixels]);
+  }, [panels, renderedRailState, resizePanelPair]);
 
   const resetPanelPair = useCallback((leftPanelId: string, rightPanelId: string) => {
     if (panels.length === 0) return;
@@ -216,17 +357,19 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
   }, [resizePanelPairByPixels]);
 
   return {
-    agentWidth,
+    agentWidth: renderedRails.agentWidth,
     beginAgentResize,
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
+    panelCountFitsCapacity,
+    reflowRailsForPanelCount,
     resetAgentWidth,
     resetPanelPair,
     resetSidebarWidth,
     resizeAgentWithKeyboard,
     resizePanelPairWithKeyboard,
     resizeSidebarWithKeyboard,
-    sidebarWidth,
+    sidebarWidth: renderedRails.sidebarWidth,
   };
 }

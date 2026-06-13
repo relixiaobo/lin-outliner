@@ -214,7 +214,10 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
 }
 
 interface UseWorkspaceLayoutOptions {
+  canFitPanelCount?: (nextPanelCount: number) => boolean;
   focusNode: (nodeId: NodeId | null) => void;
+  onPanelOpenRejected?: () => void;
+  preparePanelCount?: (nextPanelCount: number) => void;
 }
 
 interface InitializedWorkspaceLayout {
@@ -222,7 +225,16 @@ interface InitializedWorkspaceLayout {
   outlinerRootIds: NodeId[];
 }
 
-export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
+function allowPanelAdd() {
+  return true;
+}
+
+export function useWorkspaceLayout({
+  canFitPanelCount = allowPanelAdd,
+  focusNode,
+  onPanelOpenRejected,
+  preparePanelCount = () => undefined,
+}: UseWorkspaceLayoutOptions) {
   const [panels, setPanels] = useState<WorkspacePanelState[]>([]);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const initializedRef = useRef(false);
@@ -281,10 +293,11 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setPanels((prev) => prev.map((panel) => (
         panel.id === targetPanel.id && isWorkspacePanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
       )));
-    } else if (panels.length < MAX_PERSISTED_PANELS) {
+    } else if (panels.length < MAX_PERSISTED_PANELS && canFitPanelCount(panels.length + 1)) {
       // No outliner pane (only debug panes) but room to add one: append rather
       // than replace the whole canvas, so the debug panes survive.
       const panelId = nextId('panel');
+      preparePanelCount(panels.length + 1);
       setActivePanelId(panelId);
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     } else {
@@ -298,7 +311,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       )));
     }
     focusNode(options?.focus === false ? null : nodeId);
-  }, [activePanelId, focusNode, panels]);
+  }, [activePanelId, canFitPanelCount, focusNode, panels, preparePanelCount]);
 
   const activatePanel = useCallback((panel: WorkspacePanelState) => {
     setActivePanelId(panel.id);
@@ -317,7 +330,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
-    if (panels.length >= MAX_PERSISTED_PANELS) {
+    if (panels.length >= MAX_PERSISTED_PANELS || !canFitPanelCount(panels.length + 1)) {
       const replacePanel = [...panels].reverse().find(isWorkspacePanel) ?? panels.at(-1);
       if (!replacePanel) return;
       keepActive(replacePanel.id);
@@ -330,11 +343,12 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       )));
     } else {
       const panelId = nextId('panel');
+      preparePanelCount(panels.length + 1);
       keepActive(panelId);
       setPanels((prev) => [...prev, filePreviewPanel(panelId, target)]);
     }
     focusNode(null);
-  }, [focusNode, panels]);
+  }, [canFitPanelCount, focusNode, panels, preparePanelCount]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
     if (options?.newPane) {
@@ -431,7 +445,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
-    if (panels.length >= MAX_PERSISTED_PANELS) {
+    if (panels.length >= MAX_PERSISTED_PANELS || !canFitPanelCount(panels.length + 1)) {
       // At the cap, repurpose an existing workspace pane (rightmost first) so a
       // debug conversation is never silently dropped — symmetric with how
       // openAgentDebugPanel reverse-finds a debug pane. Falls back to the last
@@ -444,11 +458,12 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       )));
     } else {
       const panelId = nextId('panel');
+      preparePanelCount(panels.length + 1);
       keepActive(panelId);
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     }
     focusNode(nodeId);
-  }, [focusNode, panels, rootId]);
+  }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
   const openAgentDebugPanel = useCallback((conversationId: string | null) => {
     const existing = panels.find((panel) => (
@@ -480,10 +495,16 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       return;
     }
 
+    if (!canFitPanelCount(panels.length + 1)) {
+      onPanelOpenRejected?.();
+      return;
+    }
+
     const panelId = nextId('panel');
+    preparePanelCount(panels.length + 1);
     setActivePanelId(panelId);
     setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId)]);
-  }, [panels]);
+  }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
   const resizePanelPair = useCallback((
     leftPanelId: string,
