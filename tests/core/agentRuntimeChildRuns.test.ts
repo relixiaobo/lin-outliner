@@ -2431,7 +2431,7 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'completes then fails on resume',
             prompt: 'Do the first pass.',
-            agent_type: 'general',
+            agent_type: 'assistant',
             run_in_background: true,
             name: 'resume-fail',
           }, { id: 'tool-agent-1' }),
@@ -2505,7 +2505,7 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'completes then is stopped on resume',
             prompt: 'Do the first pass.',
-            agent_type: 'general',
+            agent_type: 'assistant',
             run_in_background: true,
             name: 'resume-stop',
           }, { id: 'tool-agent-1' }),
