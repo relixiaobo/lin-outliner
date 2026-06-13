@@ -675,6 +675,14 @@ describe('row interaction resolvers', () => {
     });
   });
 
+  test('uses the shared tag character class for editor tag triggers', () => {
+    expect(resolveEditorTriggerText({ text: 'hello #中文', cursorOffset: 9 })).toMatchObject({
+      kind: '#',
+      query: '中文',
+    });
+    expect(resolveEditorTriggerText({ text: 'hello #ta.sk', cursorOffset: 12 })).toBeNull();
+  });
+
   test('opens slash commands only when the current node is otherwise empty', () => {
     expect(resolveEditorTriggerText({ text: '/', cursorOffset: 1 })).toEqual({
       kind: '/',

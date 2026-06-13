@@ -489,11 +489,12 @@ Rules:
 - `- title` creates or serializes a node title.
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
-- `#tag` and `#[[multi word tag]]` apply tags.
+- `#tag`, `#中文`, `[[#tag]]`, and `#[[multi word tag]]` apply tags.
 - Bare CSS hex colors such as `#fff`, `#ffff`, `#112233`, and `#112233ff`
   are color text, not tags. Use explicit bracket syntax such as `#[[fff]]` if a
   tag name intentionally looks like a hex color.
-- `[ ]`, `[x]`, and `[X]` at the start of a node set checkbox state.
+- `[ ]`, `[x]`, and `[X]` followed by whitespace at the start of a node set
+  checkbox state.
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
 - `Field::` without values clears that field in edit results.

@@ -1,4 +1,4 @@
-import { isCssHexColorToken } from '../../../core/textSyntax';
+import { TAG_TRIGGER_QUERY_PATTERN, isCssHexColorToken } from '../../../core/textSyntax';
 import type { TreeReferenceBlockReason } from './referenceRules';
 
 export type EditorTriggerKind = '#' | '@' | '/' | '>';
@@ -19,7 +19,7 @@ export function resolveEditorTriggerText(params: {
   const beforeCursor = text.slice(0, cursorOffset);
   const afterCursor = text.slice(cursorOffset);
 
-  const hashMatch = beforeCursor.match(/#([^\s#@]*)$/u);
+  const hashMatch = beforeCursor.match(TAG_TRIGGER_QUERY_PATTERN);
   if (hashMatch?.index !== undefined) {
     if (isCssHexColorToken(hashMatch[1] ?? '')) return null;
     return {

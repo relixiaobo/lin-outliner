@@ -12,6 +12,7 @@ import {
   type NodeProjection,
 } from '../core/types';
 import { formatNodeReferenceMarker, richTextToReferenceMarkup } from '../core/referenceMarkup';
+import { formatTag } from '../core/textSyntax';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { isInternalConfigNode } from '../core/configSchema';
 import { referencesForTarget, type ReferenceSource } from '../core/references';
@@ -110,7 +111,7 @@ export function tagLabel(node: NodeProjection | undefined): string | null {
   if (!node) return null;
   const name = node.content.text.trim();
   if (!name) return null;
-  return /^[\w-]+$/.test(name) ? `#${name}` : `#[[${name}]]`;
+  return formatTag(name);
 }
 
 export function nodeTitle(index: ProjectionIndex, node: NodeProjection): string {

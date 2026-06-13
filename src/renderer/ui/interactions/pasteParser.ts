@@ -1,4 +1,9 @@
 import type { CreateNodeTree, ParsedPasteField, RichText, TextMark, TextMarkKind } from '../../api/types';
+import {
+  TAG_TOKEN,
+  parseCheckboxMarker,
+  parseTagTokenMatch,
+} from '../../../core/textSyntax';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 
 export interface ParsedPasteNode {
@@ -140,13 +145,12 @@ function fenceLanguage(info: string): string {
 
 // `#tag` and `name:: value` metadata harvested from a line (nodex parity). The
 // guards stay conservative so code and URLs survive: a tag needs whitespace (or
-// start) before `#letter`; a field needs a DOUBLE colon followed by whitespace
-// (`name:: value`), which excludes `std::cout`, `http://…`, and `foo::bar`. The
-// field value stops before the next ` name:: ` or ` #tag` so several fit on one
-// line. Only same-line metadata is harvested (a lone `#tag` / `field::` line has
-// no name left and is dropped by `treeHasContent`).
-const TAG_TOKEN = /(^|\s)#([A-Za-z][\w-]*)/gu;
-const FIELD_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+(.+?)(?=\s+[A-Za-z][\w-]*::[ \t]|\s+#[A-Za-z]|$)/gu;
+// start) before the shared tag token; a field needs a DOUBLE colon followed by
+// whitespace (`name:: value`), which excludes `std::cout`, `http://…`, and
+// `foo::bar`. The field value stops before the next ` name:: ` or shared tag
+// token so several fit on one line. Only same-line metadata is harvested (a lone
+// `#tag` / `field::` line has no name left and is dropped by `treeHasContent`).
+const FIELD_START_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+/gu;
 
 // Link `[label](url)` and inline-code `` `code` `` spans are off-limits to the
 // tag / field scan: a `#frag` or `name::` inside them is link text, a URL
@@ -167,6 +171,40 @@ function inAnyRange(pos: number, ranges: ReadonlyArray<readonly [number, number]
   return ranges.some(([start, end]) => pos >= start && pos < end);
 }
 
+function metadataLeadStart(text: string, tokenStart: number): number | null {
+  if (tokenStart === 0) return 0;
+  return /\s/u.test(text[tokenStart - 1] ?? '') ? tokenStart - 1 : null;
+}
+
+function nextFieldBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
+  for (const match of text.matchAll(FIELD_START_TOKEN)) {
+    const start = match.index ?? 0;
+    const lead = (match[1] ?? '').length;
+    const tokenStart = start + lead;
+    if (start < valueStart || inAnyRange(tokenStart, protectedRanges)) continue;
+    return start;
+  }
+  return null;
+}
+
+function nextTagBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
+  for (const match of text.matchAll(TAG_TOKEN)) {
+    const tokenStart = match.index ?? 0;
+    if (tokenStart < valueStart || !parseTagTokenMatch(match) || inAnyRange(tokenStart, protectedRanges)) continue;
+    const leadStart = metadataLeadStart(text, tokenStart);
+    if (leadStart === null || leadStart < valueStart) continue;
+    return leadStart;
+  }
+  return null;
+}
+
+function nextMetadataBoundary(text: string, valueStart: number, protectedRanges: ReadonlyArray<readonly [number, number]>): number {
+  return Math.min(
+    nextFieldBoundary(text, valueStart, protectedRanges) ?? text.length,
+    nextTagBoundary(text, valueStart, protectedRanges) ?? text.length,
+  );
+}
+
 function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
   const tags: string[] = [];
   const fields: ParsedPasteField[] = [];
@@ -174,22 +212,29 @@ function extractTagsAndFields(text: string): { text: string; tags: string[]; fie
   // Collect harvest spans against the ORIGINAL text so positions stay valid;
   // fields before tags so a field value's words are never re-scanned as a tag.
   const removals: Array<{ start: number; end: number; lead: number }> = [];
-  for (const match of text.matchAll(FIELD_TOKEN)) {
+  for (const match of text.matchAll(FIELD_START_TOKEN)) {
     const start = match.index ?? 0;
     const lead = (match[1] ?? '').length;
-    if (inAnyRange(start + lead, protectedRanges)) continue;
-    fields.push({ name: match[2], value: (match[3] ?? '').trim() });
-    removals.push({ start, end: start + match[0].length, lead });
+    const tokenStart = start + lead;
+    if (inAnyRange(tokenStart, protectedRanges)) continue;
+    if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
+    const valueStart = start + match[0].length;
+    const end = nextMetadataBoundary(text, valueStart, protectedRanges);
+    const value = text.slice(valueStart, end).trim();
+    if (!value) continue;
+    fields.push({ name: match[2] ?? '', value });
+    removals.push({ start, end, lead });
   }
   for (const match of text.matchAll(TAG_TOKEN)) {
-    const start = match.index ?? 0;
-    const lead = (match[1] ?? '').length;
-    if (inAnyRange(start + lead, protectedRanges)) continue;
+    const tokenStart = match.index ?? 0;
+    const leadStart = metadataLeadStart(text, tokenStart);
+    const parsed = parseTagTokenMatch(match);
+    if (leadStart === null || !parsed || inAnyRange(tokenStart, protectedRanges)) continue;
     // A `#word` that sits inside an already-harvested field span is part of that
     // value (e.g. `color:: #fff`), not a separate tag.
-    if (removals.some((removal) => start + lead >= removal.start && start + lead < removal.end)) continue;
-    tags.push(match[2]);
-    removals.push({ start, end: start + match[0].length, lead });
+    if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
+    tags.push(parsed.name);
+    removals.push({ start: leadStart, end: tokenStart + match[0].length, lead: tokenStart - leadStart });
   }
   // Rebuild the line minus the harvested tokens, keeping each token's lead ws.
   removals.sort((a, b) => a.start - b.start);
@@ -208,8 +253,8 @@ function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
   let body = heading ? (heading[2] ?? '') : rawText;
   // GFM task list: `[ ]` is an unchecked checkbox, `[x]`/`[X]` a checked one.
-  const task = body.match(/^\[([ xX])\]\s+(.*)$/u);
-  if (task) body = task[2] ?? '';
+  const task = parseCheckboxMarker(body);
+  if (task) body = task.rest;
   const { text, tags, fields } = extractTagsAndFields(body);
   const parsed = parseInlineMarkdown(text);
   const tree: CreateNodeTree = {
@@ -220,7 +265,7 @@ function lineToTree(rawText: string): CreateNodeTree {
   if (fields.length > 0) tree.fields = fields;
   if (task) {
     tree.checkbox = true;
-    tree.done = task[1].toLowerCase() === 'x';
+    tree.done = task.checked;
   }
   return tree;
 }

@@ -5,6 +5,7 @@ import type {
   AgentUserViewPanelContext,
 } from '../../../core/agentTypes';
 import { formatNodeReferenceMarker, richTextToReferenceMarkup } from '../../../core/referenceMarkup';
+import { formatTag } from '../../../core/textSyntax';
 import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
@@ -162,7 +163,7 @@ function tagLabels(node: NodeProjection, index: DocumentIndex): string[] {
     .map((tagId) => {
       const tag = titleForNode(index.byId.get(tagId));
       if (!tag || tag === 'Untitled') return null;
-      return /^[\w-]+$/.test(tag) ? `#${tag}` : `#[[${tag}]]`;
+      return formatTag(tag);
     })
     .filter((tag): tag is string => Boolean(tag));
 }

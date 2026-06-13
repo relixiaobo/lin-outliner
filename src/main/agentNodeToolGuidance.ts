@@ -9,7 +9,7 @@ export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Outline format uses "- Title" lines with exactly 2 spaces per child level.',
-  'It supports "Title - description", #tags, #[[multi word tags]], Field:: value, references, nested children, search nodes, and [ ]/[x] checkbox state.',
+  'It supports "Title - description", #tags, #中文 tags, [[#tag]] / #[[multi word tags]], Field:: value, references, nested children, search nodes, and whitespace-separated [ ]/[x] checkbox state.',
   DATE_FIELD_VALUE_GUIDANCE,
   'Do not include %%node:id%% markers when creating new nodes; those markers belong to node_read/node_edit protocol.',
 ].join(' ');

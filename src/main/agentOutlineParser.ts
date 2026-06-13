@@ -1,4 +1,4 @@
-import { isCssHexColorToken } from '../core/textSyntax';
+import { extractTags, parseCheckboxMarker, removeTagTokens } from '../core/textSyntax';
 import { parseNodeReferenceMarkers, parseReferenceMarkers } from '../core/referenceMarkup';
 
 export interface OutlineDocument {
@@ -147,12 +147,13 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   text = text.replace(/%%view:[a-zA-Z0-9_-]+%%/g, '').trim();
 
   let checked: boolean | null | undefined;
-  if (/^\[[ xX]\]\s*/.test(text)) {
-    checked = /^\[[xX]\]/.test(text);
-    text = text.replace(/^\[[ xX]\]\s*/, '').trim();
+  const checkbox = parseCheckboxMarker(text);
+  if (checkbox) {
+    checked = checkbox.checked;
+    text = checkbox.rest.trim();
   }
 
-  const tags = extractTags(maskReferenceMarkers(text));
+  const tags = extractTags(maskReferenceMarkers(text)).tags;
   text = removeTagsOutsideReferenceMarkers(text).trim();
 
   const reference = parseReference(text);
@@ -231,26 +232,6 @@ function splitDescription(text: string): [string, string?] {
   return [text.slice(0, separator), text.slice(separator + 3)];
 }
 
-const TAG_TOKEN_PATTERN = /\[\[#([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\p{L}\p{N}_-]+)/gu;
-
-function extractTags(text: string): string[] {
-  const tags: string[] = [];
-  for (const match of text.matchAll(TAG_TOKEN_PATTERN)) {
-    const tag = (match[1] ?? match[2] ?? match[3] ?? '').trim();
-    if (match[3] && isCssHexColorToken(tag)) continue;
-    if (tag) tags.push(tag);
-  }
-  return [...new Set(tags)];
-}
-
-function removeTags(text: string): string {
-  return text
-    .replace(TAG_TOKEN_PATTERN, (match, _bracketTag: string | undefined, _hashBracketTag: string | undefined, bareTag: string | undefined) =>
-      bareTag && isCssHexColorToken(bareTag) ? match : '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function maskReferenceMarkers(text: string): string {
   const markers = parseReferenceMarkers(text);
   if (markers.length === 0) return text;
@@ -267,7 +248,7 @@ function maskReferenceMarkers(text: string): string {
 
 function removeTagsOutsideReferenceMarkers(text: string): string {
   const markers = parseReferenceMarkers(text);
-  if (markers.length === 0) return removeTags(text);
+  if (markers.length === 0) return removeTagTokens(text);
   const placeholders = new Map<string, string>();
   let protectedText = '';
   let cursor = 0;
@@ -279,7 +260,7 @@ function removeTagsOutsideReferenceMarkers(text: string): string {
     cursor = marker.end;
   }
   protectedText += text.slice(cursor);
-  let next = removeTags(protectedText);
+  let next = removeTagTokens(protectedText);
   for (const [placeholder, marker] of placeholders) {
     next = next.replace(placeholder, marker);
   }

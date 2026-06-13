@@ -40,4 +40,33 @@ describe('agent outline parser', () => {
       tags: ['todo'],
     });
   });
+
+  test('uses the shared tag grammar and leaves bare hex colors as title text', () => {
+    const parsed = parseLinOutline([
+      '- Palette #中文 [[#tag]] #[[multi word]] #fff #fffff #fff-bug #office',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: 'Palette #fff',
+      tags: ['中文', 'tag', 'multi word', 'fffff', 'fff-bug', 'office'],
+    });
+  });
+
+  test('requires checkbox markers to be separated from body text', () => {
+    const parsed = parseLinOutline([
+      '- [x] shipped',
+      '- [x]pending',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: 'shipped',
+      checked: true,
+    });
+    expect(parsed.document.roots[1]?.title).toBe('[x]pending');
+    expect(parsed.document.roots[1]?.checked).toBeUndefined();
+  });
 });
