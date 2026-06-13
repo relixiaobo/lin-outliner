@@ -225,6 +225,9 @@ Evaluated first; sourced from descriptors and the bash hard-deny rules
 3. **Safe-allowlist fast path** → `allow`, gated by `isSafeAutoAllowDescriptor`
    (tool in `SAFE_AUTO_ALLOW_TOOL_NAMES`, `!externalEffect && !highConsequence`,
    scope ∈ {allowed file area, none}).
+   `operation_history` is intentionally not in this tool-name allowlist because
+   one tool covers both `list` (`outline.read`) and `undo`/`redo`
+   (`outline.edit`); it is classified by action kind instead.
 4. **`classifierAutoAllowEligible` gate**: `false` → `needs_user`. Structural
    veto even when eligible: any `externalEffect`, `highConsequence`, sensitive
    local path, or an `unknown` action kind → `needs_user`.

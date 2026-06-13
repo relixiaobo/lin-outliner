@@ -886,7 +886,7 @@ export interface SkillDefinition {
   model?: string;
   effort?: string;
   shell?: string;
-  context: 'inline' | 'fork';
+  execution: 'inline' | 'isolated';
   agent?: string;
   paths?: string[];
   contentLength: number;

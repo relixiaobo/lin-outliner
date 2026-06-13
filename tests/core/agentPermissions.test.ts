@@ -290,7 +290,7 @@ describe('agent permissions', () => {
 
     expect(askFirstEdit).toMatchObject({
       behavior: 'ask',
-      code: 'file.edit.allowed_file_area',
+      code: 'file.write.allowed_file_area',
       permissionSource: 'safety_mode_profile',
     });
     expect(balancedEdit).toMatchObject({ behavior: 'allow', permissionSource: 'default' });
@@ -463,11 +463,47 @@ describe('agent permissions', () => {
     expect(decision).toMatchObject({
       behavior: 'allow',
       access: 'write',
-      descriptor: { actionKind: 'file.edit.allowed_file_area' },
+      descriptor: { actionKind: 'file.write.allowed_file_area' },
     });
     expect(globallyAllowed).toMatchObject({
       behavior: 'allow',
-      descriptor: { actionKind: 'file.edit.allowed_file_area' },
+      descriptor: { actionKind: 'file.write.allowed_file_area' },
+    });
+  });
+
+  test('operation_history list is read while undo and redo are outline edits', () => {
+    const workspaceRoot = '/tmp/workspace';
+    const list = evaluateAgentToolPermission({
+      toolName: 'operation_history',
+      args: { action: 'list' },
+      policy: { workspaceRoot, safetyMode: 'ask_first' },
+    });
+    const undo = evaluateAgentToolPermission({
+      toolName: 'operation_history',
+      args: { action: 'undo' },
+      policy: { workspaceRoot, safetyMode: 'ask_first' },
+    });
+    const redoRestricted = evaluateAgentToolPermission({
+      toolName: 'operation_history',
+      args: { action: 'redo' },
+      policy: { mode: 'restricted', workspaceRoot },
+    });
+
+    expect(list).toMatchObject({
+      behavior: 'allow',
+      access: 'read',
+      descriptor: { actionKind: 'outline.read' },
+    });
+    expect(undo).toMatchObject({
+      behavior: 'ask',
+      access: 'write',
+      code: 'outline.edit',
+      descriptor: { actionKind: 'outline.edit' },
+    });
+    expect(redoRestricted).toMatchObject({
+      behavior: 'deny',
+      code: 'tool_not_preapproved',
+      descriptors: [expect.objectContaining({ actionKind: 'outline.edit' })],
     });
   });
 

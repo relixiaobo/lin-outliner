@@ -770,8 +770,8 @@ stored shape switched directly with no migration — see
 
 ### `AgentSkillRuntime`
 
-Skill `context: fork` calls `AgentDelegationRuntime` instead of creating pi-mono agents
-directly.
+Skill `execution: isolated` calls `AgentDelegationRuntime` instead of creating
+pi-mono agents directly.
 
 The skill path should:
 
@@ -782,8 +782,22 @@ The skill path should:
 - pass `allowed-tools` as child-run preapproval metadata;
 - return only the final result/summary to the parent conversation.
 
-This mirrors the cc-2.1 `context: fork` skill path: the skill body is child-only
-execution context, not parent-visible steering content.
+Built-in skills may carry runtime-only fork policy that is not mutable
+`SKILL.md` frontmatter. The first such policy is `/research`: it has no `agent`
+override and asks for a read-only isolated run of the current agent. At spawn time,
+`AgentDelegationRuntime` filters the skill's declared `allowed-tools` through the
+read-only catalog derived from `AgentToolActionKind`, then reuses the same
+`tools` / `disallowedTools` filtering path as ordinary agent definitions. The
+child request therefore lacks mutating tools (`file_write`, `file_edit`, node
+mutations, `skill`, `Agent`, `AgentSend`, `AgentStop`, shell execution), instead
+of relying on prompt text or permission denial after the model has seen them.
+The same `allowed-tools` list remains run-scoped preapproval for the expected
+read calls.
+
+This mirrors the cc-2.1 isolated skill execution path while using Lin's cleaner
+public skill DSL: the skill body is child-only execution context, not parent-visible steering
+content. Legacy `context: fork` skill frontmatter is parsed as
+`execution: isolated`.
 
 ## Event Store
 
@@ -1021,6 +1035,10 @@ Implemented.
 - Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`, and
   Dream treats only the persisted fork boundary plus child-side transcript as new
   agent-run evidence.
+- A runtime-owned read-only isolated restriction can further narrow a child run
+  catalog. `/research` uses this to keep generic investigation inside the
+  current agent's DM/Channel identity while removing mutation and delegation
+  tools from the child model request.
 - Recursive fork attempts are rejected.
 - Child tool output stays in the sidechain transcript and does not pollute the
   parent context.
@@ -1055,9 +1073,9 @@ Implemented.
 
 Implemented.
 
-- Skill `context: fork` routing is implemented for model and slash skill
+- Skill `execution: isolated` routing is implemented for model and slash skill
   entrypoints.
-- Forked skill execution uses the sidechain child-run runtime, applies `agent`,
+- Isolated skill execution uses the sidechain child-run runtime, applies `agent`,
   `model`, `effort`, and `allowed-tools` to the child run, and returns only the
   child result to the parent.
 - Child run sidechain compaction restores loaded skill state, preserves recent
@@ -1135,7 +1153,9 @@ Core tests:
 - background child run completion creates a durable output reference and model
   notification;
 - background child run needing unavailable approval fails closed;
-- skill `context: fork` uses the child-run runtime.
+- skill `execution: isolated` uses the child-run runtime.
+- built-in `/research` creates a same-agent fork whose child model request omits
+  mutating, skill, and delegation-control tools.
 
 Reference-alignment tests:
 

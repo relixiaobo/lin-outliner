@@ -81,7 +81,7 @@ function additionalDirectoryAgent(): AgentDefinitionView {
 }
 
 function skill(name: string): SkillDefinition {
-  return { name, displayName: name, source: 'user', rootDir: '/s', skillFile: '/s/SKILL.md', description: '', hasUserSpecifiedDescription: false, userInvocable: true, modelInvocable: true, allowedTools: [], argumentNames: [], context: 'inline', contentLength: 0, body: '' };
+  return { name, displayName: name, source: 'user', rootDir: '/s', skillFile: '/s/SKILL.md', description: '', hasUserSpecifiedDescription: false, userInvocable: true, modelInvocable: true, allowedTools: [], argumentNames: [], execution: 'inline', contentLength: 0, body: '' };
 }
 
 describe('AgentEditor', () => {

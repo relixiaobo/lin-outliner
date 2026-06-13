@@ -49,6 +49,7 @@ import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
+import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
 
 export const AGENT_DELEGATE_TOOL_NAME = 'Agent';
 export const AGENT_STATUS_TOOL_NAME = 'AgentStatus';
@@ -304,6 +305,7 @@ interface AgentToolParams {
   effort?: string;
   run_in_background?: boolean;
   name?: string;
+  allowedTools?: string[];
   preapprovedToolRules?: string[];
   /**
    * Run with no interactive approval channel: a tool needing approval is denied
@@ -324,6 +326,7 @@ export interface AgentChildRunSkillInput {
   model?: string;
   effort?: string;
   allowedTools?: string[];
+  readOnlyIsolated?: boolean;
 }
 
 export class AgentDelegationRuntime {
@@ -493,6 +496,7 @@ export class AgentDelegationRuntime {
         model: input.model,
         effort: input.effort,
         run_in_background: false,
+        allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : undefined,
         preapprovedToolRules: input.allowedTools,
       }, releaseStartupSlot, signal, parentToolCallId);
     } catch (error) {
@@ -599,9 +603,10 @@ export class AgentDelegationRuntime {
     parentToolCallId?: string,
   ): Promise<AgentDelegateToolData> {
     const contextMode = params.agent_type ? 'fresh' : 'fork';
-    const definition = contextMode === 'fork'
+    const baseDefinition = contextMode === 'fork'
       ? createForkAgentDefinition()
       : await this.resolveFreshAgent(params.agent_type);
+    const definition = restrictAgentDefinitionTools(baseDefinition, params.allowedTools);
 
     if (contextMode !== 'fork' && this.disabledAgents.includes(agentDefinitionAgentId(definition))) {
       throw new Error(`Agent '${definition.name}' is currently disabled in settings.`);
@@ -749,7 +754,7 @@ export class AgentDelegationRuntime {
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
       conversationId: childConversationId,
-      executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
+      executeIsolatedSkill: async ({ skill, renderedContent, parentToolCallId, readOnlyIsolated }) => {
         const data = await childRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
@@ -758,6 +763,7 @@ export class AgentDelegationRuntime {
           model: skill.model,
           effort: skill.effort,
           allowedTools: skill.allowedTools,
+          readOnlyIsolated,
         }, undefined, parentToolCallId);
         return {
           agentId: data.agent_id,
@@ -1338,6 +1344,16 @@ export function normalizeAgentToolNames(rules: readonly string[] | undefined): s
     .map((rule) => normalizeToolRuleName(rule))
     .filter((name): name is string => Boolean(name));
   return names.includes('*') ? ['*'] : [...new Set(names)];
+}
+
+function restrictAgentDefinitionTools(definition: AgentDefinition, allowedTools: readonly string[] | undefined): AgentDefinition {
+  if (!allowedTools) return definition;
+  const allowed = normalizeAgentToolNames(allowedTools) ?? [];
+  const existing = normalizeAgentToolNames(definition.tools);
+  const tools = !existing || existing.includes('*')
+    ? allowed
+    : existing.filter((tool) => allowed.includes(tool));
+  return { ...definition, tools };
 }
 
 class AgentDefinitionRegistry {

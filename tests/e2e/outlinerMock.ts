@@ -413,7 +413,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       contentHash: 'hash-workspace-review-v1',
       allowedTools: [],
       argumentNames: [],
-      context: 'inline',
+      execution: 'inline',
       contentLength: 64,
       body: 'Review workspace conventions before automatic use.',
     }];

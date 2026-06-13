@@ -1,7 +1,12 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
 import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
-import { defaultActionDecision, effectiveActionDecision } from '../core/agentPermissionModel';
+import {
+  agentToolActionKindProfile,
+  defaultActionDecision,
+  effectiveActionDecision,
+  isReadOnlyActionKind,
+} from '../core/agentPermissionModel';
 import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
@@ -137,7 +142,6 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'task_stop',
   'node_read',
   'node_search',
-  'operation_history',
 ]);
 
 const TOOL_ALIASES = new Map<string, string>([
@@ -276,7 +280,7 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
 export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInput): AgentPermissionDecision {
   const policy = createAgentPermissionPolicy(input.policy);
   const toolName = normalizeToolName(input.toolName);
-  const access = classifyToolAccess(toolName);
+  const access = classifyToolAccess(toolName, input.args);
   const preapproved = policy.preapprovedToolRules.some((rule) => matchesAgentToolRule(rule, toolName, input.args));
 
   if (policy.denyTools.some((rule) => matchesToolNameRule(rule, toolName))) {
@@ -319,7 +323,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     );
   }
 
-  if (policy.mode === 'restricted' && !preapproved && !isRestrictedBaseAllowed(toolName)) {
+  if (policy.mode === 'restricted' && !preapproved && !isRestrictedBaseAllowed(toolName, input.args)) {
     return deny(
       'tool_not_preapproved',
       `Tool ${input.toolName} is not available for this run.`,
@@ -475,7 +479,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'web_search') {
-    return [descriptor(toolName, 'web.search', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'web.search'), {
       accessScope: 'external_system',
       title: 'web search',
       summary: 'Search external information.',
@@ -489,7 +493,7 @@ export function deriveAgentToolActionDescriptors(input: {
 
   if (toolName === 'web_fetch') {
     const url = getStringArg(input.args, 'url') ?? 'web page';
-    return [descriptor(toolName, 'web.fetch', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'web.fetch'), {
       accessScope: 'external_system',
       title: 'web fetch',
       summary: `Fetch external content from ${url}.`,
@@ -504,7 +508,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'recall') {
-    return [descriptor(toolName, 'agent.memory.recall', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.recall'), {
       accessScope: 'none',
       title: 'agent memory recall',
       summary: "Read the local agent's active distilled memory entries (cued retrieval).",
@@ -517,7 +521,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'dream') {
-    return [descriptor(toolName, 'agent.memory.dream', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.dream'), {
       accessScope: 'none',
       title: 'agent memory dream',
       summary: 'Request runtime-owned memory consolidation (Dream) for the current agent.',
@@ -532,7 +536,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'ask_user_question') {
-    return [descriptor(toolName, 'agent.user_question.ask', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.user_question.ask'), {
       accessScope: 'none',
       title: 'ask user question',
       summary: 'Pause the run to ask the user for structured input.',
@@ -545,7 +549,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'runtime_status') {
-    return [descriptor(toolName, 'agent.runtime.status', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.runtime.status'), {
       accessScope: 'none',
       title: 'runtime status',
       summary: 'Read redacted local agent runtime status.',
@@ -558,7 +562,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'doctor') {
-    return [descriptor(toolName, 'agent.doctor.run', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.doctor.run'), {
       accessScope: 'none',
       title: 'runtime doctor',
       summary: 'Run read-only local agent diagnostics.',
@@ -592,12 +596,14 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') {
-    return [descriptor(toolName, 'outline.read', {
+    const actionKind = firstActionKindForTool(toolName, input.args, 'outline.read');
+    const writes = actionKind === 'outline.edit';
+    return [descriptor(toolName, actionKind, {
       accessScope: 'allowed_file_area',
-      title: 'local document read',
-      summary: 'Read local outliner or agent history data.',
-      consequence: 'This reads local product data without changing it.',
-      reversible: true,
+      title: writes ? 'local document edit' : 'local document read',
+      summary: writes ? 'Undo or redo local outliner operations.' : 'Read local outliner or agent history data.',
+      consequence: writes ? 'This changes local documents inside Lin.' : 'This reads local product data without changing it.',
+      reversible: !writes,
       externalEffect: false,
       highConsequence: false,
       classifierAutoAllowEligible: false,
@@ -605,7 +611,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'node_create' || toolName === 'node_edit') {
-    return [descriptor(toolName, 'outline.edit', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.edit'), {
       accessScope: 'allowed_file_area',
       title: 'local document edit',
       summary: 'Edit local outliner content.',
@@ -618,7 +624,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'node_delete') {
-    return [descriptor(toolName, 'outline.delete', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.delete'), {
       accessScope: 'allowed_file_area',
       title: 'local document delete',
       summary: 'Delete local outliner content.',
@@ -632,7 +638,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'task_stop' || toolName === 'agent_stop') {
-    return [descriptor(toolName, toolName === 'agent_stop' ? 'agent.delegate.stop' : 'task.stop', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, toolName === 'agent_stop' ? 'agent.delegate.stop' : 'task.stop'), {
       accessScope: 'none',
       title: toolName === 'agent_stop' ? 'child run stop' : 'background task stop',
       summary: toolName === 'agent_stop' ? 'Stop a background child run.' : 'Stop a background task launched by the agent.',
@@ -645,7 +651,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'agent_status') {
-    return [descriptor(toolName, 'agent.delegate.status', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.status'), {
       accessScope: 'none',
       title: 'child run status',
       summary: 'Read the status of a background child run.',
@@ -658,7 +664,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'agent_send') {
-    return [descriptor(toolName, 'agent.delegate.send', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.send'), {
       accessScope: 'none',
       title: 'child run message',
       summary: 'Send a follow-up message to an existing child run.',
@@ -671,7 +677,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'agent') {
-    return [descriptor(toolName, 'agent.delegate.spawn', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.spawn'), {
       accessScope: 'none',
       title: 'child run spawn',
       summary: 'Start or message a child run.',
@@ -686,7 +692,7 @@ export function deriveAgentToolActionDescriptors(input: {
   }
 
   if (toolName === 'skill') {
-    return [descriptor(toolName, 'agent.skill.invoke', {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.skill.invoke'), {
       accessScope: 'none',
       title: 'skill invocation',
       summary: 'Invoke an installed agent skill.',
@@ -1358,8 +1364,21 @@ function fileActionKind(
   isWrite: boolean,
   scope: 'allowed_file_area' | 'outside_allowed_file_area' | 'sensitive_local_path',
 ): AgentToolActionKind {
-  if (isWrite) return scope === 'allowed_file_area' ? 'file.edit.allowed_file_area' : `file.write.${scope}` as AgentToolActionKind;
+  if (isWrite) {
+    if (scope === 'allowed_file_area') {
+      return toolName === 'file_write' ? 'file.write.allowed_file_area' : 'file.edit.allowed_file_area';
+    }
+    return `file.write.${scope}` as AgentToolActionKind;
+  }
   return `file.read.${scope}` as AgentToolActionKind;
+}
+
+function firstActionKindForTool(
+  toolName: string,
+  args: unknown,
+  fallback: AgentToolActionKind,
+): AgentToolActionKind {
+  return agentToolActionKindProfile(toolName, args)?.[0] ?? fallback;
 }
 
 function parseShellSegments(command: string): string[] | null {
@@ -1671,15 +1690,21 @@ function toolPathArgumentName(toolName: string): string | null {
   return null;
 }
 
-function classifyToolAccess(toolName: string): AgentPermissionAccess {
+function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor' || toolName === 'dream') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') return 'read';
+  if (toolName === 'operation_history') {
+    return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
+  }
+  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'node_read' || toolName === 'node_search') return 'read';
   return 'unknown';
 }
 
-function isRestrictedBaseAllowed(toolName: string): boolean {
+function isRestrictedBaseAllowed(toolName: string, args: unknown): boolean {
+  if (toolName === 'operation_history') {
+    return agentToolActionKindProfile(toolName, args)?.every(isReadOnlyActionKind) === true;
+  }
   return RESTRICTED_BASE_ALLOWED_TOOLS.has(toolName) || toolName.startsWith('node_');
 }
 
