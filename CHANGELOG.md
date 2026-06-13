@@ -545,6 +545,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Delegation runtime hygiene — stop-salvage + shared child-agent harness (PR
+  #221, cc-2)** — a `stop()`ped child run now keeps the last partial assistant
+  text it produced (surfaced in the synchronous tool result and terminal
+  notification) instead of reporting an empty result; spawn (`startAgent`) and
+  resume (`ensureLiveAgent`) build the child agent through one
+  `buildChildAgentHarness`, so a resumed run honors the **current**
+  disabled-skill/agent settings (the resume path previously skipped those gates)
+  and carries its `unattended` flag in-memory. The salvage is scoped to the
+  current live span via a `salvageFromIndex` floor (set at resume, reset at
+  compaction), so a run resumed after completing and then stopped before new
+  output no longer resurrects the prior round's result; `send()` rebuilds the
+  agent before mutating run state so a failed rebuild can't strand the run or
+  wipe its prior result. No protocol/`commands.ts`/`types.ts` change.
 - **Built-in skill path handling + skill-write permission simplification (PR
   #214, codex-2)** — code-registered built-in skills (currently `/skillify`) no
   longer render a fake `Base directory for this skill: built-in/<name>` header or

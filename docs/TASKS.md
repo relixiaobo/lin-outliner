@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (outline-syntax-unification plan merged as draft, PR #219) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation runtime hygiene merged, PR #221) |
 | Codex | `lin-outliner-codex/` | — | idle (agent dock + channel config refinement merged, PR #217) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (Tana-style references merged, PR #208) |
@@ -616,6 +616,26 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Delegation runtime hygiene — stop-salvage + shared child-agent harness**
+  (cc-2, PR #221, plan-track) — two behavioral fixes in the delegation runtime.
+  (1) A `stop()`ped child run now salvages the last partial assistant text into
+  `run.result` instead of discarding it (new `extractPartialAssistantText`;
+  `extractFinalAssistantText` wraps it). (2) `startAgent` (spawn) and
+  `ensureLiveAgent` (resume) now build the child agent/skill-runtime/workspace
+  through one `buildChildAgentHarness`, so resume honors the **current**
+  disabled-skill/agent gates (PM-ratified) and threads `unattended` (in-memory;
+  durable cross-restart persistence deferred to agent-data-model). Convergence
+  note (C1/C2/C3 sequencing for the delegation-record/run-status shape work) added
+  to `agent-program.md`. **xhigh `/code-review` (main) found 1 confirmed bug** —
+  `stop()` after a resume salvaged the prior round's stale result (it scanned the
+  reseeded transcript), defeating `send()`'s clear; fixed with a
+  `salvageFromIndex` floor (set at resume, reset at compaction) + reordered
+  `send()` to rebuild the agent before mutating run state + a new
+  stop-before-output regression test. Gate (main): merged main in (frontmatter
+  drop per the plan-status policy; the two resume tests re-pointed from the
+  refactored-away `general` agent to its `assistant` successor), typecheck +
+  docs:check clean, test:core 950/2 skip/0.
 
 - **Security Settings IA redesign — one honest trust model** (codex-3, PR #215,
   plan-track) — fixes the security-surface correctness bug where the page showed
