@@ -12,6 +12,7 @@ import {
   type AgentPrincipal,
   type AgentDreamCompletedChanges,
   type AgentChildRunRecord,
+  type AgentRunStatus,
 } from './agentEventLog';
 import {
   agentMentionToken,
@@ -120,7 +121,7 @@ export interface AgentRenderChildRunEntity {
   executingAgentId?: string;
   parentAgentId?: string;
   memoryOwnerAgentId?: string;
-  status: AgentChildRunRecord['status'];
+  status: AgentRenderTaskStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
@@ -203,6 +204,17 @@ export interface AgentRenderActiveDream {
 }
 
 export type AgentRenderTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+/**
+ * Project the canonical run-status vocabulary onto the renderer's presentation
+ * term: a user-cancelled run reads as `stopped` in the UI (the user pressed
+ * stop). The single translation seam between the data vocabulary (`cancelled`)
+ * and the renderer (`stopped`) — shared by every task/child-run render entity so
+ * components never see `cancelled`.
+ */
+export function renderTaskStatusFromRunStatus(status: AgentRunStatus): AgentRenderTaskStatus {
+  return status === 'cancelled' ? 'stopped' : status;
+}
 
 export interface AgentRenderChildRunTaskEntity {
   id: string;
@@ -710,14 +722,14 @@ function toRenderMessageEntity(
 }
 
 function toRenderChildRunEntity(run: AgentChildRunRecord): AgentRenderChildRunEntity {
-  return { ...run };
+  return { ...run, status: renderTaskStatusFromRunStatus(run.status) };
 }
 
 function toRenderChildRunTaskEntity(run: AgentChildRunRecord): AgentRenderChildRunTaskEntity {
   return {
     id: `child-run:${run.id}`,
     kind: 'child-run',
-    status: run.status,
+    status: renderTaskStatusFromRunStatus(run.status),
     title: run.description.trim() || run.name?.trim() || run.id,
     subtitle: `${run.contextMode} · ${run.agentType}`,
     startedAt: run.startedAt,

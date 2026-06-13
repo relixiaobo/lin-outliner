@@ -16,7 +16,7 @@ import {
 } from '../core/agentMarkdown';
 import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
-import type { AgentChildRunRecord, AgentChildRunStatus, AgentPayloadRef } from '../core/agentEventLog';
+import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
@@ -48,7 +48,6 @@ import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
-  resolveChildRunMemoryOwner,
 } from './agentDelegationIdentity';
 
 export const AGENT_DELEGATE_TOOL_NAME = 'Agent';
@@ -249,23 +248,13 @@ export interface AgentDelegationRuntimeOptions {
   host: AgentDelegationRuntimeHost;
 }
 
-interface AgentRunRecord {
-  id: string;
-  name?: string;
-  description: string;
-  prompt: string;
-  agentType: string;
-  contextMode: 'fresh' | 'fork';
+// The live runtime record: the canonical {@link DelegationDetail} (id, status,
+// the descriptive fields, the persisted `unattended` flag) plus the in-memory
+// execution state that never persists (the live agent, the message buffer, the
+// completion promise). The descriptive half is the SAME shape the durable record
+// and IPC snapshot derive from — the convergence's single source.
+interface AgentRunRecord extends DelegationDetail {
   definition: AgentDefinition | null;
-  executingAgentId: string;
-  parentAgentId: string;
-  parentRunId?: string;
-  memoryOwnerAgentId: string;
-  memoryOriginWorkspace?: string;
-  status: AgentChildRunStatus;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
   depth: number;
   agent?: Agent;
   messages: AgentMessage[];
@@ -275,7 +264,6 @@ interface AgentRunRecord {
    * (which it does; the old snapshot path double-recorded them).
    */
   ledgerSeededMessages: WeakSet<AgentMessage>;
-  result?: string;
   /**
    * Index into `agent.state.messages` marking where the CURRENT live span
    * begins — reset on resume (the restored history seed) and on compaction (the
@@ -285,17 +273,11 @@ interface AgentRunRecord {
    * the conversation's final answer, scans the whole array instead).
    */
   salvageFromIndex?: number;
-  error?: string;
   completion?: Promise<void>;
   detached: boolean;
   terminalNotificationSent: boolean;
   turnCount: number;
-  parentToolCallId?: string;
   preapprovedToolRules?: string[];
-  // In-memory only (not on the durable child-run record): lets a same-session
-  // resume rebuild the agent with the spawn's unattended flag. Cross-restart
-  // persistence needs a field on AgentChildRunRecord (agent-data-model scope).
-  unattended?: boolean;
   toolResultBudgetState: ToolResultBudgetState;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
@@ -306,26 +288,12 @@ interface AgentRunRecord {
 
 type RunningSlotReservation = () => void;
 
-export interface AgentChildRunSnapshot {
-  id: string;
-  name?: string;
-  description: string;
-  prompt: string;
-  agentType: string;
-  contextMode: 'fresh' | 'fork';
-  executingAgentId: string;
-  parentAgentId: string;
-  parentRunId?: string;
-  memoryOwnerAgentId: string;
-  memoryOriginWorkspace?: string;
-  status: AgentChildRunStatus;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  result?: string;
-  error?: string;
-  parentToolCallId?: string;
-}
+/**
+ * The IPC-facing view of a delegated run — the {@link DelegationDetail} verbatim
+ * (the runtime record's persistable half), carried to the host callbacks that
+ * write the conversation markers and notifications.
+ */
+export type AgentChildRunSnapshot = DelegationDetail;
 
 interface AgentToolParams {
   description: string;
@@ -473,40 +441,20 @@ export class AgentDelegationRuntime {
   restorePersistedRuns(records: readonly AgentChildRunRecord[]): void {
     for (const record of records) {
       if (this.runs.has(record.id)) continue;
-      const executingAgentId = record.executingAgentId ?? this.executingAgentId;
-      const parentAgentId = record.parentAgentId ?? this.executingAgentId;
-      const memoryOwnerAgentId = resolveChildRunMemoryOwner({
-        ...record,
-        executingAgentId,
-        parentAgentId,
-      }, this.memoryOwnerAgentId);
-      const memoryOriginWorkspace = record.memoryOriginWorkspace ?? memoryWorkspaceIdForRoot(this.localRoot);
+      // The descriptive half carries over verbatim — the durable record IS a
+      // DelegationDetail. Only `memoryOriginWorkspace` is re-derived when absent
+      // (older detached runs may predate the field) and the live execution state
+      // is initialized fresh (no agent, empty buffer; resume rebuilds it).
       const run: AgentRunRecord = {
-        id: record.id,
-        name: record.name,
-        description: record.description,
-        prompt: record.prompt,
-        agentType: record.agentType,
-        contextMode: record.contextMode,
+        ...record,
+        memoryOriginWorkspace: record.memoryOriginWorkspace ?? memoryWorkspaceIdForRoot(this.localRoot),
         definition: null,
-        executingAgentId,
-        parentAgentId,
-        parentRunId: record.parentRunId,
-        memoryOwnerAgentId,
-        memoryOriginWorkspace,
-        status: record.status,
-        startedAt: record.startedAt,
-        updatedAt: record.updatedAt,
-        completedAt: record.completedAt,
         depth: this.depth + 1,
         messages: [],
         ledgerSeededMessages: new WeakSet(),
-        result: record.result,
-        error: record.error,
         detached: false,
         terminalNotificationSent: true,
         turnCount: 0,
-        parentToolCallId: record.parentToolCallId,
         toolResultBudgetState: createToolResultBudgetState(),
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
@@ -574,7 +522,7 @@ export class AgentDelegationRuntime {
 
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
-      const wasStopped = run.status === 'stopped';
+      const wasStopped = run.status === 'cancelled';
       if (wasStopped) run.agent = undefined;
       // No live agent (restart restore, or a stopped run): rebuild the
       // continuation context from the run's OWN ledger and re-register its
@@ -617,7 +565,7 @@ export class AgentDelegationRuntime {
     const params = normalizeRunSelector(rawParams);
     const run = this.resolveRun(params);
     if (run.status === 'running') {
-      run.status = 'stopped';
+      run.status = 'cancelled';
       run.completedAt = Date.now();
       run.updatedAt = run.completedAt;
       // Salvage whatever the CURRENT live span produced before we abort, so the
@@ -947,7 +895,7 @@ export class AgentDelegationRuntime {
           if (run.agent !== agent) return;
         }
       }
-      if (run.status !== 'stopped') {
+      if (run.status !== 'cancelled') {
         const errorMessage = agent.state.errorMessage;
         if (errorMessage) {
           run.status = 'failed';
@@ -961,7 +909,7 @@ export class AgentDelegationRuntime {
       }
     } catch (error) {
       if (run.agent !== agent) return;
-      if (run.status !== 'stopped') {
+      if (run.status !== 'cancelled') {
         run.status = 'failed';
         run.error = error instanceof Error ? error.message : String(error);
         run.completedAt = Date.now();
@@ -1718,6 +1666,7 @@ function snapshotRun(run: AgentRunRecord): AgentChildRunSnapshot {
     result: run.result,
     error: run.error,
     parentToolCallId: run.parentToolCallId,
+    unattended: run.unattended,
   };
 }
 

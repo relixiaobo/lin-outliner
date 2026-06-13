@@ -1819,7 +1819,7 @@ describe('agent runtime childRuns', () => {
     const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
     expect(stopped).toMatchObject({
       agent_id: childRunId,
-      status: 'stopped',
+      status: 'cancelled',
     });
     await waitFor(() => script.pendingCount() === 2);
 
@@ -1924,7 +1924,7 @@ describe('agent runtime childRuns', () => {
     const stopped = await firstRuntime.childRunStop(conversation.conversationId, childRunId);
     expect(stopped).toMatchObject({
       agent_id: childRunId,
-      status: 'stopped',
+      status: 'cancelled',
     });
     await waitFor(() => firstScript.pendingCount() === 1);
     releaseOriginalChild();
@@ -2545,13 +2545,13 @@ describe('agent runtime childRuns', () => {
     await runtime.childRunSend(conversation.conversationId, childRunId, 'Stop me now before any new output.');
     await waitFor(() => resumePickEntered);
     const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
-    expect(stopped).toMatchObject({ agent_id: childRunId, status: 'stopped' });
+    expect(stopped).toMatchObject({ agent_id: childRunId, status: 'cancelled' });
 
     // The seeded history (carrying the completed "first result") sits below the
     // salvage floor, so the stop salvages nothing — result must NOT regress to
     // the prior round's text. This is the stop-side mirror of the resume→fail case.
     const after = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(after).toMatchObject({ agent_id: childRunId, status: 'stopped' });
+    expect(after).toMatchObject({ agent_id: childRunId, status: 'cancelled' });
     expect((after as { result?: string }).result).toBeUndefined();
 
     releaseResume();

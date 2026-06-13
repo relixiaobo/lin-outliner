@@ -5,12 +5,12 @@ import {
   AGENT_EVENT_VERSION,
   getAgentEventActivePath,
   type AgentActor,
-  type AgentChildRunStatus,
   type AgentEvent,
   type AgentEventReplayState,
   type AgentId,
   type AgentPersistedContent,
   type AgentRunKind,
+  type AgentRunStatus,
 } from '../core/agentEventLog';
 import type { AgentEventStore } from './agentEventStore';
 import { persistedContentModelText } from './agentToolOutputSlimming';
@@ -190,7 +190,7 @@ export class AgentRunLedgerWriter {
   /** Run lifecycle: terminal status (or a resume — `run.started` again). */
   async statusChanged(
     runId: string,
-    status: AgentChildRunStatus,
+    status: AgentRunStatus,
     options: { actor: AgentActor; errorMessage?: string; agentId: AgentId; parentRunId?: string },
   ): Promise<void> {
     const run = this.requireRun(runId);

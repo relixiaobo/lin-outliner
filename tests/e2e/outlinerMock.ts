@@ -2079,7 +2079,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_child_run_stop') {
           return clone({
-            status: 'stopped',
+            status: 'cancelled',
             agent_id: String(args.agentId),
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',

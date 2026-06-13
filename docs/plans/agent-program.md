@@ -358,23 +358,25 @@ surfaced is recorded here as sequencing; the **shapes themselves are owned by
 re-described in this doc or in code comments — agent-program owns only *when* the
 convergence lands.
 
-**Sequencing.** C1+C2 ship together as **one near-term convergence PR**; C3 is **not a
+**Sequencing.** C1+C2 shipped together as **one convergence PR**; C3 is **not a
 standalone PR** — it folds into the agent-program **M-series context-assembly** work.
 
-- **C1 — collapse the delegation-record triplet into one `DelegationDetail` view.** Three
-  near-duplicate records describe the same delegated run today: durable
-  `AgentChildRunRecord` (`src/core/agentEventLog.ts`), IPC `AgentChildRunSnapshot` and the
-  in-memory runtime `AgentRunRecord` (both `src/main/agentDelegation.ts`). Extract a single
-  canonical `DelegationDetail` per [[agent-data-model]]'s "shape changes here once"; the IPC
-  snapshot and the durable record both *derive* from it rather than re-spelling the fields.
-  **When: near-term** (the first convergence PR).
-- **C2 — collapse the dual run-status enums + persist `unattended` durably.**
-  `AgentRunStatus` (`…|'cancelled'`) and `AgentChildRunStatus` (`…|'stopped'`) reconcile to
-  the single vocabulary [[agent-data-model]] defines for `RunMeta.status`;
-  `renderTaskStatusFromRunStatus` becomes a pure projection (or disappears). Fold in the
-  `unattended` flag, which the hygiene PR carries **in-memory only** on `AgentRunRecord` —
-  a durable field on the record so a resumed run honors it across restart. **When: fold
-  into C1** (same PR — they touch the same records).
+- **C1 — collapse the delegation-record triplet into one `DelegationDetail` view — SHIPPED.**
+  The three near-duplicate records (durable `AgentChildRunRecord` in `src/core/agentEventLog.ts`,
+  IPC `AgentChildRunSnapshot` and the in-memory runtime `AgentRunRecord` in
+  `src/main/agentDelegation.ts`) now all derive from one canonical `DelegationDetail`
+  (`agentEventLog.ts`): the durable record and the IPC snapshot ARE a `DelegationDetail`; the
+  runtime record `extends` it with live execution state. The shared id fields became required
+  (the spawn writer always sets them) per [[agent-data-model]]'s "shape changes here once".
+- **C2 — collapse the dual run-status enums + persist `unattended` durably — SHIPPED.**
+  `AgentChildRunStatus` (`…|'stopped'`) is deleted; every data-layer surface (durable record,
+  IPC snapshot, runtime record, `child_run.*` events, run-ledger, the model-facing
+  `AgentChildRunActionResult`) now speaks the single `AgentRunStatus` (`…|'cancelled'`)
+  vocabulary [[agent-data-model]] defines for `RunMeta.status`. `renderTaskStatusFromRunStatus`
+  moved to core `agentRenderProjection.ts` as the one pure projection (`cancelled → stopped`)
+  the renderer presents through — so the UI keeps the user-facing word "stopped" while the data
+  is uniform. `unattended` is now a durable field (recorded on `child_run.started`,
+  projected onto the record) so a cross-restart resume rebuilds the agent with the same flag.
 - **C3 — unify run-context assembly behind one pipeline.** `buildChildAgentHarness` (this
   PR) is the minimal dedup of the *child* spawn/resume path only. The deeper convergence is
   one `RunContextPipeline` that assembles tool catalog / permissions / skill-runtime /
