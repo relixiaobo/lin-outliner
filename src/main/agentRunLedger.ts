@@ -5,12 +5,13 @@ import {
   AGENT_EVENT_VERSION,
   getAgentEventActivePath,
   type AgentActor,
-  type AgentChildRunStatus,
   type AgentEvent,
   type AgentEventReplayState,
   type AgentId,
   type AgentPersistedContent,
   type AgentRunKind,
+  type AgentRunLogEventType,
+  type AgentRunStatus,
 } from '../core/agentEventLog';
 import type { AgentEventStore } from './agentEventStore';
 import { persistedContentModelText } from './agentToolOutputSlimming';
@@ -28,6 +29,16 @@ import { persistedContentModelText } from './agentToolOutputSlimming';
 // Events after the FIRST `run.started` are consolidation evidence; the copied fork
 // prefix before it is inherited context (what `dreamEvidenceStartMessageIndex` used
 // to express positionally — now stable under rename and compaction).
+
+// Each terminal run status maps to exactly one run-ledger lifecycle event. The
+// `satisfies Record<Exclude<…,'running'>, …>` makes this exhaustive: adding a new
+// AgentRunStatus fails to compile here until it is mapped, instead of silently
+// falling through to `run.cancelled` (the hazard of the prior nested ternary).
+const TERMINAL_RUN_LIFECYCLE_EVENT = {
+  completed: 'run.completed',
+  failed: 'run.failed',
+  cancelled: 'run.cancelled',
+} as const satisfies Record<Exclude<AgentRunStatus, 'running'>, AgentRunLogEventType>;
 
 interface RunLedgerRunState {
   conversationId: string;
@@ -190,7 +201,7 @@ export class AgentRunLedgerWriter {
   /** Run lifecycle: terminal status (or a resume — `run.started` again). */
   async statusChanged(
     runId: string,
-    status: AgentChildRunStatus,
+    status: AgentRunStatus,
     options: { actor: AgentActor; errorMessage?: string; agentId: AgentId; parentRunId?: string },
   ): Promise<void> {
     const run = this.requireRun(runId);
@@ -206,7 +217,7 @@ export class AgentRunLedgerWriter {
             trigger: options.parentRunId ? { type: 'parent-run', parentRunId: options.parentRunId } : { type: 'system' },
           })
         : this.buildEvent(run, runId, {
-            type: status === 'completed' ? 'run.completed' : status === 'failed' ? 'run.failed' : 'run.cancelled',
+            type: TERMINAL_RUN_LIFECYCLE_EVENT[status],
             actor: options.actor,
             runId,
             errorMessage: options.errorMessage,

@@ -423,6 +423,37 @@ describe('agent render projection', () => {
     expect(projection.entities.childRuns['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
   });
 
+  test('projects a cancelled child run as the presentation status `stopped`', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Command delivery' },
+      {
+        ...base(2, 'child_run.started', agentActor),
+        childRunId: 'sub-1',
+        executingAgentId: 'built-in:tenon:researcher',
+        parentAgentId: 'built-in:tenon:assistant',
+        memoryOwnerAgentId: 'built-in:tenon:researcher',
+        description: 'check Chengdu weather',
+        prompt: 'Check the weather in Chengdu today.',
+        agentType: 'researcher',
+        contextMode: 'fork',
+      },
+      {
+        ...base(3, 'child_run.updated', agentActor),
+        childRunId: 'sub-1',
+        status: 'cancelled',
+        completedAt: 1_700_000_000_900,
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    // The data vocabulary is `cancelled`; the render projection is the one seam
+    // that maps it to the user-facing word `stopped`, on BOTH the entity and the
+    // task — so renderer components never see `cancelled`.
+    expect(projection.entities.childRuns['sub-1']?.status).toBe('stopped');
+    expect(projection.entities.tasks['child-run:sub-1']?.status).toBe('stopped');
+  });
+
   test('places a main-agent child run right after the turn that spawned it', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },

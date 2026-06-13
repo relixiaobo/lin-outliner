@@ -271,6 +271,7 @@ import {
 } from './agentSelfMaintenanceTools';
 import {
   buildAgentRenderProjection,
+  renderTaskStatusFromRunStatus,
   type AgentRenderActivityEntry,
   type AgentRenderActiveCompaction,
   type AgentRenderActiveDream,
@@ -2666,6 +2667,7 @@ export class AgentRuntime {
       prompt: snapshot.prompt,
       agentType: snapshot.agentType,
       contextMode: snapshot.contextMode,
+      unattended: snapshot.unattended,
     }]);
     this.emitProjection(conversationId, 'child_run.started', 'coalesce');
   }
@@ -2699,10 +2701,11 @@ export class AgentRuntime {
     snapshot: AgentChildRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
-    // A user-initiated stop is the user's own action — it raises no badge/OS
-    // banner (the durable notification below is for completion/failure only). The
-    // live model-injection still fires so a foreground agent learns its child stopped.
-    if (snapshot.status !== 'stopped') {
+    // A user-initiated stop (cancelled) is the user's own action — it raises no
+    // badge/OS banner (the durable notification below is for completion/failure
+    // only). The live model-injection still fires so a foreground agent learns
+    // its child stopped.
+    if (snapshot.status !== 'cancelled') {
       // Durable per-conversation delivery: emit the attention/OS signal as a
       // notification.created event anchored to the origin conversation. This is the
       // restart-safe record (the in-memory model-injection below is the live-conversation
@@ -3329,7 +3332,7 @@ export class AgentRuntime {
       });
     }
     if (data.status === 'failed' || data.error) throw new Error(data.error || 'The command run failed.');
-    if (data.status === 'stopped') throw new Error('The command run was stopped before completing.');
+    if (data.status === 'cancelled') throw new Error('The command run was stopped before completing.');
   }
 
   private queueScheduledDream(now: Date) {
@@ -8244,7 +8247,7 @@ function truncateNotificationBody(body: string): string {
 }
 
 function childRunNotificationKind(
-  // 'stopped' is gated out before this (a user-initiated stop raises no
+  // 'cancelled' is gated out before this (a user-initiated stop raises no
   // notification — see notifyChildRun), so only failed/completed reach here.
   status: 'failed' | 'completed',
 ): AgentNotificationKind {
@@ -8253,7 +8256,7 @@ function childRunNotificationKind(
 
 function childRunNotificationTitle(snapshot: AgentChildRunSnapshot): string {
   if (snapshot.status === 'failed') return `Agent task "${snapshot.description}" failed.`;
-  if (snapshot.status === 'stopped') return `Agent task "${snapshot.description}" was stopped.`;
+  if (snapshot.status === 'cancelled') return `Agent task "${snapshot.description}" was stopped.`;
   return `Agent task "${snapshot.description}" completed.`;
 }
 
@@ -8397,10 +8400,6 @@ function fallbackEpisodeGist(span: DreamMemoryExtractionSpan): string {
   return normalized.length <= maxChars
     ? normalized
     : `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
-}
-
-function renderTaskStatusFromRunStatus(status: AgentRunMeta['status']): AgentRenderTaskStatus {
-  return status === 'cancelled' ? 'stopped' : status;
 }
 
 function compareRenderTasks(left: AgentRenderTaskEntity, right: AgentRenderTaskEntity): number {

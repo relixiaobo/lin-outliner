@@ -16,7 +16,7 @@ import {
 } from '../core/agentMarkdown';
 import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
-import type { AgentChildRunRecord, AgentChildRunStatus, AgentPayloadRef } from '../core/agentEventLog';
+import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
@@ -48,7 +48,6 @@ import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
-  resolveChildRunMemoryOwner,
 } from './agentDelegationIdentity';
 
 export const AGENT_DELEGATE_TOOL_NAME = 'Agent';
@@ -249,23 +248,13 @@ export interface AgentDelegationRuntimeOptions {
   host: AgentDelegationRuntimeHost;
 }
 
-interface AgentRunRecord {
-  id: string;
-  name?: string;
-  description: string;
-  prompt: string;
-  agentType: string;
-  contextMode: 'fresh' | 'fork';
+// The live runtime record: the canonical {@link DelegationDetail} (id, status,
+// the descriptive fields, the persisted `unattended` flag) plus the in-memory
+// execution state that never persists (the live agent, the message buffer, the
+// completion promise). The descriptive half is the SAME shape the durable record
+// and IPC snapshot derive from — the convergence's single source.
+interface DelegationRunState extends DelegationDetail {
   definition: AgentDefinition | null;
-  executingAgentId: string;
-  parentAgentId: string;
-  parentRunId?: string;
-  memoryOwnerAgentId: string;
-  memoryOriginWorkspace?: string;
-  status: AgentChildRunStatus;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
   depth: number;
   agent?: Agent;
   messages: AgentMessage[];
@@ -275,7 +264,6 @@ interface AgentRunRecord {
    * (which it does; the old snapshot path double-recorded them).
    */
   ledgerSeededMessages: WeakSet<AgentMessage>;
-  result?: string;
   /**
    * Index into `agent.state.messages` marking where the CURRENT live span
    * begins — reset on resume (the restored history seed) and on compaction (the
@@ -285,17 +273,11 @@ interface AgentRunRecord {
    * the conversation's final answer, scans the whole array instead).
    */
   salvageFromIndex?: number;
-  error?: string;
   completion?: Promise<void>;
   detached: boolean;
   terminalNotificationSent: boolean;
   turnCount: number;
-  parentToolCallId?: string;
   preapprovedToolRules?: string[];
-  // In-memory only (not on the durable child-run record): lets a same-session
-  // resume rebuild the agent with the spawn's unattended flag. Cross-restart
-  // persistence needs a field on AgentChildRunRecord (agent-data-model scope).
-  unattended?: boolean;
   toolResultBudgetState: ToolResultBudgetState;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
@@ -306,26 +288,12 @@ interface AgentRunRecord {
 
 type RunningSlotReservation = () => void;
 
-export interface AgentChildRunSnapshot {
-  id: string;
-  name?: string;
-  description: string;
-  prompt: string;
-  agentType: string;
-  contextMode: 'fresh' | 'fork';
-  executingAgentId: string;
-  parentAgentId: string;
-  parentRunId?: string;
-  memoryOwnerAgentId: string;
-  memoryOriginWorkspace?: string;
-  status: AgentChildRunStatus;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  result?: string;
-  error?: string;
-  parentToolCallId?: string;
-}
+/**
+ * The IPC-facing view of a delegated run — the {@link DelegationDetail} verbatim
+ * (the runtime record's persistable half), carried to the host callbacks that
+ * write the conversation markers and notifications.
+ */
+export type AgentChildRunSnapshot = DelegationDetail;
 
 interface AgentToolParams {
   description: string;
@@ -368,7 +336,7 @@ export class AgentDelegationRuntime {
   private readonly executingAgentId: string;
   private readonly memoryOwnerAgentId: string;
   private readonly host: AgentDelegationRuntimeHost;
-  private readonly runs = new Map<string, AgentRunRecord>();
+  private readonly runs = new Map<string, DelegationRunState>();
   private readonly names = new Map<string, string>();
   private readonly listedAgents = new Map<string, string | null>();
   private reservedRunningSlots = 0;
@@ -473,40 +441,20 @@ export class AgentDelegationRuntime {
   restorePersistedRuns(records: readonly AgentChildRunRecord[]): void {
     for (const record of records) {
       if (this.runs.has(record.id)) continue;
-      const executingAgentId = record.executingAgentId ?? this.executingAgentId;
-      const parentAgentId = record.parentAgentId ?? this.executingAgentId;
-      const memoryOwnerAgentId = resolveChildRunMemoryOwner({
+      // The descriptive half carries over verbatim — the durable record IS a
+      // DelegationDetail. Only `memoryOriginWorkspace` is re-derived when absent
+      // (older detached runs may predate the field) and the live execution state
+      // is initialized fresh (no agent, empty buffer; resume rebuilds it).
+      const run: DelegationRunState = {
         ...record,
-        executingAgentId,
-        parentAgentId,
-      }, this.memoryOwnerAgentId);
-      const memoryOriginWorkspace = record.memoryOriginWorkspace ?? memoryWorkspaceIdForRoot(this.localRoot);
-      const run: AgentRunRecord = {
-        id: record.id,
-        name: record.name,
-        description: record.description,
-        prompt: record.prompt,
-        agentType: record.agentType,
-        contextMode: record.contextMode,
+        memoryOriginWorkspace: record.memoryOriginWorkspace ?? memoryWorkspaceIdForRoot(this.localRoot),
         definition: null,
-        executingAgentId,
-        parentAgentId,
-        parentRunId: record.parentRunId,
-        memoryOwnerAgentId,
-        memoryOriginWorkspace,
-        status: record.status,
-        startedAt: record.startedAt,
-        updatedAt: record.updatedAt,
-        completedAt: record.completedAt,
         depth: this.depth + 1,
         messages: [],
         ledgerSeededMessages: new WeakSet(),
-        result: record.result,
-        error: record.error,
         detached: false,
         terminalNotificationSent: true,
         turnCount: 0,
-        parentToolCallId: record.parentToolCallId,
         toolResultBudgetState: createToolResultBudgetState(),
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
@@ -574,7 +522,7 @@ export class AgentDelegationRuntime {
 
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
-      const wasStopped = run.status === 'stopped';
+      const wasStopped = run.status === 'cancelled';
       if (wasStopped) run.agent = undefined;
       // No live agent (restart restore, or a stopped run): rebuild the
       // continuation context from the run's OWN ledger and re-register its
@@ -617,7 +565,7 @@ export class AgentDelegationRuntime {
     const params = normalizeRunSelector(rawParams);
     const run = this.resolveRun(params);
     if (run.status === 'running') {
-      run.status = 'stopped';
+      run.status = 'cancelled';
       run.completedAt = Date.now();
       run.updatedAt = run.completedAt;
       // Salvage whatever the CURRENT live span produced before we abort, so the
@@ -671,7 +619,7 @@ export class AgentDelegationRuntime {
       ? parentMemoryOwnerAgentId
       : executingAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
-    let run: AgentRunRecord | null = null;
+    let run: DelegationRunState | null = null;
     const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
       runId,
       definition,
@@ -879,7 +827,7 @@ export class AgentDelegationRuntime {
     return messages;
   }
 
-  private subscribeToChild(run: AgentRunRecord): void {
+  private subscribeToChild(run: DelegationRunState): void {
     if (!run.agent) return;
     const subscribedAgent = run.agent;
     subscribedAgent.subscribe((event: AgentEvent) => {
@@ -924,7 +872,7 @@ export class AgentDelegationRuntime {
   }
 
   private async runChildAgent(
-    run: AgentRunRecord,
+    run: DelegationRunState,
     messages: AgentMessage[],
     signal: AbortSignal | undefined,
     detached: boolean,
@@ -947,7 +895,7 @@ export class AgentDelegationRuntime {
           if (run.agent !== agent) return;
         }
       }
-      if (run.status !== 'stopped') {
+      if (run.status !== 'cancelled') {
         const errorMessage = agent.state.errorMessage;
         if (errorMessage) {
           run.status = 'failed';
@@ -961,7 +909,7 @@ export class AgentDelegationRuntime {
       }
     } catch (error) {
       if (run.agent !== agent) return;
-      if (run.status !== 'stopped') {
+      if (run.status !== 'cancelled') {
         run.status = 'failed';
         run.error = error instanceof Error ? error.message : String(error);
         run.completedAt = Date.now();
@@ -976,20 +924,20 @@ export class AgentDelegationRuntime {
     }
   }
 
-  private async notifyTerminalRun(run: AgentRunRecord): Promise<void> {
+  private async notifyTerminalRun(run: DelegationRunState): Promise<void> {
     if (run.status === 'running') return;
     if (run.terminalNotificationSent) return;
     run.terminalNotificationSent = true;
     await this.host.notifyChildRun(snapshotRun(run));
   }
 
-  private installRunContextTransform(run: AgentRunRecord): void {
+  private installRunContextTransform(run: DelegationRunState): void {
     if (!run.agent) return;
     run.agent.transformContext = async (_messages, signal) => this.prepareRunModelContext(run, signal);
   }
 
   private async afterRunToolResult(
-    run: AgentRunRecord,
+    run: DelegationRunState,
     toolCallId: string,
     toolName: string,
     result: unknown,
@@ -1012,7 +960,7 @@ export class AgentDelegationRuntime {
     }
   }
 
-  private async prepareRunModelContext(run: AgentRunRecord, signal?: AbortSignal): Promise<AgentMessage[]> {
+  private async prepareRunModelContext(run: DelegationRunState, signal?: AbortSignal): Promise<AgentMessage[]> {
     throwIfAborted(signal);
     const source = ((run.agent?.state.messages as unknown[]) ?? run.messages)
       .filter(isRecordableAgentMessage)
@@ -1068,7 +1016,7 @@ export class AgentDelegationRuntime {
     return withMemoryReminder(await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages, memoryReminder);
   }
 
-  private async runMemoryReminder(run: AgentRunRecord): Promise<string | null> {
+  private async runMemoryReminder(run: DelegationRunState): Promise<string | null> {
     // The briefing is resident (query-independent), so the cache key is just the memory owner —
     // it stays warm across a long child run instead of thrashing on per-turn query text.
     const key = run.memoryOwnerAgentId;
@@ -1078,7 +1026,7 @@ export class AgentDelegationRuntime {
     return text;
   }
 
-  private async autoCompactRunIfNeeded(run: AgentRunRecord, messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[] | null> {
+  private async autoCompactRunIfNeeded(run: DelegationRunState, messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[] | null> {
     throwIfAborted(signal);
     if (run.autoCompactInProgress) return null;
     if (run.autoCompactConsecutiveFailures >= MAX_CHILD_RUN_AUTO_COMPACT_FAILURES) return null;
@@ -1096,7 +1044,7 @@ export class AgentDelegationRuntime {
   }
 
   private async compactRunMessages(
-    run: AgentRunRecord,
+    run: DelegationRunState,
     messages: AgentMessage[],
     trigger: 'auto' | 'reactive',
     signal?: AbortSignal,
@@ -1167,7 +1115,7 @@ export class AgentDelegationRuntime {
     }
   }
 
-  private async ensureLiveAgent(run: AgentRunRecord): Promise<void> {
+  private async ensureLiveAgent(run: DelegationRunState): Promise<void> {
     if (run.agent) return;
     const definition = await this.resolveDefinitionForRun(run);
     const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
@@ -1230,7 +1178,7 @@ export class AgentDelegationRuntime {
     };
   }
 
-  private async resolveDefinitionForRun(run: AgentRunRecord): Promise<AgentDefinition> {
+  private async resolveDefinitionForRun(run: DelegationRunState): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
     if (run.contextMode === 'fork') return createForkAgentDefinition();
     const definition = await this.registry.resolve(run.agentType);
@@ -1263,7 +1211,7 @@ export class AgentDelegationRuntime {
     return [...this.runs.values()].filter((run) => run.status === 'running').length;
   }
 
-  private resolveRun(selector: { agent_id?: string; name?: string }): AgentRunRecord {
+  private resolveRun(selector: { agent_id?: string; name?: string }): DelegationRunState {
     const id = selector.agent_id || (selector.name ? this.names.get(selector.name) : undefined);
     if (!id) throw new Error('Provide agent_id or name.');
     const run = this.runs.get(id);
@@ -1677,7 +1625,7 @@ export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
   return visible;
 }
 
-function runToToolData(run: AgentRunRecord): AgentDelegateToolData {
+function runToToolData(run: DelegationRunState): AgentDelegateToolData {
   return {
     status: run.status,
     agent_id: run.id,
@@ -1698,7 +1646,7 @@ function runToToolData(run: AgentRunRecord): AgentDelegateToolData {
   };
 }
 
-function snapshotRun(run: AgentRunRecord): AgentChildRunSnapshot {
+function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
   return {
     id: run.id,
     name: run.name,
@@ -1718,10 +1666,11 @@ function snapshotRun(run: AgentRunRecord): AgentChildRunSnapshot {
     result: run.result,
     error: run.error,
     parentToolCallId: run.parentToolCallId,
+    unattended: run.unattended,
   };
 }
 
-function childRunToolOutputPayloadId(run: AgentRunRecord, toolCallId: string): string {
+function childRunToolOutputPayloadId(run: DelegationRunState, toolCallId: string): string {
   return `${run.id}-${toolCallId}`;
 }
 

@@ -599,7 +599,6 @@ export type AgentContentDelta = AgentTextDelta;
 
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentMessageStatus = 'completed' | 'streaming' | 'failed';
-export type AgentChildRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
 export type AgentCompactionTrigger = 'manual' | 'auto' | 'reactive';
 
 export type AgentEventType =
@@ -1022,21 +1021,23 @@ export interface ChildRunStartedEvent extends AgentEventBase {
   /** The run that delegated this one — the parent side of the run tree. */
   parentRunId?: string;
   parentToolCallId?: string;
-  executingAgentId?: AgentId | string;
-  parentAgentId?: AgentId | string;
-  memoryOwnerAgentId?: AgentId | string;
+  executingAgentId: AgentId | string;
+  parentAgentId: AgentId | string;
+  memoryOwnerAgentId: AgentId | string;
   memoryOriginWorkspace?: string;
   name?: string;
   description: string;
   prompt: string;
   agentType: string;
   contextMode: 'fresh' | 'fork';
+  /** Persisted so a cross-restart resume honors the unattended approval policy. */
+  unattended?: boolean;
 }
 
 export interface ChildRunUpdatedEvent extends AgentEventBase {
   type: 'child_run.updated';
   childRunId: string;
-  status: AgentChildRunStatus;
+  status: AgentRunStatus;
   completedAt?: number;
   result?: string;
   error?: string;
@@ -1177,11 +1178,15 @@ export interface AgentRunRecord {
 }
 
 /**
- * Conversation-level record of a delegated (child) run — the projection the
- * boundary row + task panel read. The transcript is NOT here: it lives in the
- * child's own run ledger, replayed independently (run unification).
+ * The canonical descriptive shape of a delegated (child) run: what was delegated
+ * plus its current terminal state. The three near-duplicate run records all
+ * derive from this single shape ([[agent-data-model]] "shape changes here once"):
+ * the durable {@link AgentChildRunRecord} and the IPC `AgentChildRunSnapshot`
+ * ARE a `DelegationDetail`; the in-memory runtime record embeds it plus live
+ * execution state. The id fields are required — the spawn writer always sets
+ * them, so every persisted/transported detail carries them.
  */
-export interface AgentChildRunRecord {
+export interface DelegationDetail {
   id: string;
   name?: string;
   description: string;
@@ -1189,18 +1194,31 @@ export interface AgentChildRunRecord {
   agentType: string;
   contextMode: 'fresh' | 'fork';
   parentRunId?: string;
-  executingAgentId?: string;
-  parentAgentId?: string;
-  memoryOwnerAgentId?: string;
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
-  status: AgentChildRunStatus;
+  status: AgentRunStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
   result?: string;
   error?: string;
   parentToolCallId?: string;
+  /**
+   * Run with no interactive approval channel (a tool needing approval is denied
+   * instead of waiting for a human). Persisted durably on `child_run.started` so
+   * a cross-restart resume rebuilds the agent with the same flag.
+   */
+  unattended?: boolean;
 }
+
+/**
+ * Conversation-level record of a delegated (child) run — the projection the
+ * boundary row + task panel read. The transcript is NOT here: it lives in the
+ * child's own run ledger, replayed independently (run unification).
+ */
+export type AgentChildRunRecord = DelegationDetail;
 
 export interface AgentCompactionRecord {
   id: string;
@@ -1763,6 +1781,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
         parentToolCallId: event.parentToolCallId,
+        unattended: event.unattended,
       };
       return;
     case 'child_run.updated': {

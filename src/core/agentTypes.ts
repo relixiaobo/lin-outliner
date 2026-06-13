@@ -171,7 +171,7 @@ export type AgentToolResultWithPayloads = ToolResultMessage & {
 };
 
 export interface AgentChildRunActionResult {
-  status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'stopped';
+  status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
   agent_id: string;
   name?: string;
   description: string;

@@ -388,7 +388,7 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
       }
       if (cmd === 'agent_child_run_stop') {
         return {
-          status: 'stopped',
+          status: 'cancelled',
           agent_id: args.agentId,
           description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
@@ -478,6 +478,9 @@ function childRunEntity(): AgentRenderChildRunEntity {
     prompt: 'Inspect the current UI.',
     agentType: 'explorer',
     contextMode: 'fork',
+    executingAgentId: 'built-in:tenon:explorer',
+    parentAgentId: 'built-in:tenon:assistant',
+    memoryOwnerAgentId: 'built-in:tenon:assistant',
     status: 'completed',
     startedAt: 100,
     updatedAt: 260,

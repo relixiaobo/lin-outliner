@@ -1044,11 +1044,17 @@ describe('agent event log', () => {
         childRunId: 'child-1',
         parentRunId: 'run-parent',
         parentToolCallId: 'tool-agent-1',
+        executingAgentId: 'built-in:tenon:researcher',
+        parentAgentId: 'built-in:tenon:assistant',
+        memoryOwnerAgentId: 'built-in:tenon:researcher',
         name: 'research',
         description: 'research docs',
         prompt: 'Research this.',
         agentType: 'researcher',
         contextMode: 'fresh',
+        // Persisted on the start marker so a cross-restart resume rebuilds the
+        // agent with the same approval policy (C2 — durable, not in-memory only).
+        unattended: true,
       },
       {
         ...base(3, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
@@ -1068,9 +1074,14 @@ describe('agent event log', () => {
       name: 'research',
       agentType: 'researcher',
       parentRunId: 'run-parent',
+      executingAgentId: 'built-in:tenon:researcher',
+      memoryOwnerAgentId: 'built-in:tenon:researcher',
       status: 'completed',
       result: 'Done.',
       parentToolCallId: 'tool-agent-1',
+      // The start marker's unattended flag projects onto the durable record, so a
+      // restored run honors it (a `child_run.updated` later never overwrites it).
+      unattended: true,
     });
 
     // Markers apply in seq order: a LATER 'running' update is the resume of a

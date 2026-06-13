@@ -12,6 +12,7 @@ import {
   type AgentPrincipal,
   type AgentDreamCompletedChanges,
   type AgentChildRunRecord,
+  type AgentRunStatus,
 } from './agentEventLog';
 import {
   agentMentionToken,
@@ -117,10 +118,10 @@ export interface AgentRenderChildRunEntity {
   agentType: string;
   contextMode: AgentChildRunRecord['contextMode'];
   parentRunId?: string;
-  executingAgentId?: string;
-  parentAgentId?: string;
-  memoryOwnerAgentId?: string;
-  status: AgentChildRunRecord['status'];
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
+  status: AgentRenderTaskStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
@@ -203,6 +204,17 @@ export interface AgentRenderActiveDream {
 }
 
 export type AgentRenderTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+/**
+ * Project the canonical run-status vocabulary onto the renderer's presentation
+ * term: a user-cancelled run reads as `stopped` in the UI (the user pressed
+ * stop). The single translation seam between the data vocabulary (`cancelled`)
+ * and the renderer (`stopped`) — shared by every task/child-run render entity so
+ * components never see `cancelled`.
+ */
+export function renderTaskStatusFromRunStatus(status: AgentRunStatus): AgentRenderTaskStatus {
+  return status === 'cancelled' ? 'stopped' : status;
+}
 
 export interface AgentRenderChildRunTaskEntity {
   id: string;
@@ -709,15 +721,37 @@ function toRenderMessageEntity(
   };
 }
 
+// Built explicitly (not `{ ...run }`) so the render entity exposes ONLY its
+// declared fields: the durable record's `memoryOriginWorkspace`/`unattended` are
+// runtime/persistence metadata the renderer never reads and must not leak across
+// IPC. `status` is projected to the renderer's presentation vocabulary here.
 function toRenderChildRunEntity(run: AgentChildRunRecord): AgentRenderChildRunEntity {
-  return { ...run };
+  return {
+    id: run.id,
+    name: run.name,
+    description: run.description,
+    prompt: run.prompt,
+    agentType: run.agentType,
+    contextMode: run.contextMode,
+    parentRunId: run.parentRunId,
+    executingAgentId: run.executingAgentId,
+    parentAgentId: run.parentAgentId,
+    memoryOwnerAgentId: run.memoryOwnerAgentId,
+    status: renderTaskStatusFromRunStatus(run.status),
+    startedAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    completedAt: run.completedAt,
+    result: run.result,
+    error: run.error,
+    parentToolCallId: run.parentToolCallId,
+  };
 }
 
 function toRenderChildRunTaskEntity(run: AgentChildRunRecord): AgentRenderChildRunTaskEntity {
   return {
     id: `child-run:${run.id}`,
     kind: 'child-run',
-    status: run.status,
+    status: renderTaskStatusFromRunStatus(run.status),
     title: run.description.trim() || run.name?.trim() || run.id,
     subtitle: `${run.contextMode} · ${run.agentType}`,
     startedAt: run.startedAt,
