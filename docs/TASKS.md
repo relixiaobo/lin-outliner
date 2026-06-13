@@ -47,13 +47,14 @@ build-readiness first:
    now render as a previewable local-file chip + inspectable diff, not raw JSON.
    F2/F3/F4 follow as independent PRs (F2 app-owned workdir next). → F2 ready to
    dispatch now.
-2. **`channel-async-message-bus`** (P1, *Agent capabilities*) — **needs a one-minute
-   PM ratification** before code: confirm (a) the whole-utterance-delivery product
-   bet (Channels render replies on completion, no token streaming) and (b) the
-   `isStreaming`→mode-specific projection split. It is the async *view/command*
-   layer over the already-shipped M3 Channel + coordinator runtime
-   (#179/#200/#202/#212), not new architecture. ONE PR, broad-but-mechanical
-   renderer blast radius.
+2. **`channel-async-message-bus`** (P1, *Agent capabilities*) — **RATIFIED
+   2026-06-13, ready to build** (B's run-status convergence #225 laid the
+   foundation). Whole-utterance in the **message stream** (no token streaming), but
+   the **live stream stays visible in a per-run detail view** — runtime *retains*
+   `message_update`, routes it to the detail view, filters it from the transcript.
+   Plus the `isStreaming`→mode-specific projection split. Async *view/command* layer
+   over the shipped M3 Channel + coordinator runtime (#179/#200/#202/#212), not new
+   architecture. ONE PR, broad-but-mechanical renderer blast radius.
 3. ~~**`outline-syntax-unification`**~~ — **shipped (PR #222, codex)**; see Recently
    completed. The canonical `core/textSyntax.ts` token grammar now backs all
    consumers.
@@ -272,12 +273,14 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
-- **channel-async-message-bus** (P1, plan file, **draft — design recorded by #217,
-  not yet built; awaiting PM ratification before code**) — make Channels behave like
+- **channel-async-message-bus** (P1, plan file, **draft — RATIFIED 2026-06-13
+  (B #225 unblocked it), ready to build**) — make Channels behave like
   an async IM group instead of a special case of the single-run DM composer: send a
   new Channel message while agents are working; explicit `@agent` mentions dispatch
   independent per-agent runs (co-addressees don't share a turn group, append on
-  completion order); replies delivered as whole utterances (no token streaming);
+  completion order); replies delivered as whole utterances **in the message stream**
+  (no token streaming; the live stream stays visible in a **per-run detail view** —
+  runtime retains `message_update`, routes it there, filters it from the transcript);
   the Channel composer stays a pure message composer (Stop/Steer are DM-only,
   per-run stop lives in the activity overlay); navigation + unread continue while
   Channel runs proceed. Most of the runtime model already exists; the gap is the

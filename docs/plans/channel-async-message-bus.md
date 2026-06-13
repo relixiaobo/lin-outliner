@@ -15,8 +15,10 @@ coherent end to end.
 - Explicit `@agent` mentions dispatch independent per-agent runs. Co-addressees
   do not share a turn group, do not wait for each other, and append replies in
   completion order.
-- Channel agent replies are delivered as whole utterances on completion, never as
-  token-streamed transcript rows.
+- Channel agent replies are delivered as whole utterances on completion **in the
+  message stream** — never token-streamed transcript rows. The live token stream of
+  a running agent is visible only in a **per-run detail view**, never in the message
+  flow. [PM-ratified 2026-06-13]
 - Composer state remains message-entry state in Channels: send stays send; stop
   and steer belong to DM only.
 - Channel work state is shown through per-run activity entries with per-run stop.
@@ -39,8 +41,11 @@ The runtime already contains most of the Channel execution model:
 - Channel sends resolve `@` mentions into independent `ChannelTurnRequest`
   records.
 - Channel turns use concurrent active runs with `allowConcurrent: true`.
-- Channel `message_start` / `message_update` assistant events are ignored, and
-  the final assistant message is appended on `message_end`.
+- Channel `message_start` / `message_update` assistant events are *currently*
+  ignored, and the final assistant message is appended on `message_end`. **The
+  2026-06-13 ratification changes this**: the message stream still appends only the
+  final utterance, but `message_update` must now be **retained and routed to the
+  per-run detail view** (the live stream) rather than discarded — see §4.
 - Per-run activity entries exist and can carry a run id for scoped stop.
 
 The remaining mismatch is the view and command boundary:
@@ -121,6 +126,14 @@ The Channel transcript renders final utterances only:
 - adjacent assistant messages from different agents remain separate rows;
 - same-wave co-addressees remain mutually invisible through the independence cut.
 
+**The live stream lives in a per-run detail view, not the message flow**
+(PM-ratified 2026-06-13). The message stream is whole-utterance only, but a running
+agent's `message_update` text is **retained and surfaced in a per-run detail view**,
+reached from its activity entry. Reconcile that detail view with the existing
+per-run activity overlay and the #212 per-agent POV inspector — do **not** invent a
+parallel surface. So `message_update` is *routed to the detail view*, not discarded;
+it is only *filtered from the transcript*. (Per-run steer stays out of scope here.)
+
 The implementation must migrate both existing placeholder producers:
 
 - `src/renderer/agent/runtime.ts` `shouldAppendAssistantPlaceholder`, which
@@ -170,13 +183,13 @@ from stealing each other's user input.
 
 ## Open Questions
 
-- **Whole-utterance delivery is a product bet, not a technical constraint
-  (confirm at ratification).** Rendering Channel replies only on completion
-  (no token streaming) makes Channels deliberately feel less "live" than DMs —
-  the Slack-like model. This is a UX choice, and the runtime *could* stream
-  Channel runs the same way DMs do. Confirm it is intended before code, because
-  a later "watch a Channel agent compose" or per-run steer would have to revisit
-  the activity-vs-transcript cut in §4. Default: whole-utterance, as written.
+- **Whole-utterance delivery — RESOLVED (PM, 2026-06-13).** The **message stream**
+  shows whole utterances only (no token streaming) — the Slack-like model. The
+  **live token stream stays visible in a per-run detail view** (the "watch a Channel
+  agent compose" capability the original bet flagged — now an explicit requirement,
+  not a deferred maybe). Implication: the runtime **retains** `message_update` for
+  active Channel runs and routes it to the detail view (§4); it is *filtered from the
+  transcript*, never discarded. Per-run steer remains out of scope for this PR.
 - **Multi-request presentation depth.** §6 makes concurrent approval /
   `ask_user_question` requests run-scoped and queued (oldest-first, non-
   overwriting) — that correctness floor is in scope. A richer multi-request UX
