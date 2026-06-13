@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (authored outline-syntax-unification plan #219; built + shipped by codex as PR #222) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation-record-convergence C1+C2 merged, PR #225) |
 | Codex | `lin-outliner-codex/` | — | idle (outline-syntax-unification merged, PR #222) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (responsive-robustness merged, PR #223) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (main JSON store unification merged, PR #226) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -543,11 +543,6 @@ PR #120. `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract**
 (who owns which lines) and the three-layer build order. All nine were validated
 against `main` (post-#118) at the gate; findings are real with `file:line`.
 
-- **responsive-robustness** (P1, **pull first — ratified**) — real layout bugs, not
-  cosmetics: a pane silently crushes below the window min-width (no re-clamp on
-  resize), uncapped outliner/sidebar indentation, tag-bar overflow, width-blind
-  breadcrumb. Independent of the cosmetic layers and of #118. All 7 claimed bugs
-  confirmed at the gate. Needs a live resize smoke test. `docs/plans/responsive-robustness.md`.
 - **composition-rhythm** (P3, Layer 1) — cross-surface composition tokens: shared
   reading measure (720, kept distinct from #118's 920 settings cap), row-height
   tier, text-gutter alignment, heading scale, list-row idiom split, context-menu
@@ -596,6 +591,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **responsive-robustness — rails coupled to canvas width, pane capacity gating, capped indentation**
+  (codex-2, PR #223, plan-track) — first of the UI-quality suite's nine. Fixes real layout bugs at
+  small window widths where the canvas hides horizontal overflow and the reading pane silently
+  crushed. New shared `workspaceResponsiveLayout.ts` (metrics + pane-floor math). Rail widths now
+  split a **user preference** from a **rendered width**: drag/keyboard/reset set the preference;
+  resize, pane-count change, and rail reopen recompute only the rendered width against the pane
+  floor (agent yields first, then sidebar, neither below its min) — so a transient narrow window
+  never permanently ratchets a wider rail down. Pane creation is width-gated (splits repurpose an
+  existing pane when too narrow; agent-debug open reports a too-narrow message instead of silently
+  no-oping). Outline / sidebar-tree / preview-backlink indentation share one
+  `MAX_OUTLINE_INDENT_DEPTH` cap; tag bars wrap; breadcrumb protects the final segment. CSS
+  `min-width` backstop on single-pane only (multi-pane stays JS-gated by design). Gate (main):
+  `/code-review high` surfaced 10 findings (rail-width ratchet, single-rail agent-first ordering,
+  per-pointermove reflow, backlinks indent, silent debug no-op, side-effecting predicate, dead
+  exports, inline tag-slot wrap, …); codex-2 fixed all in a follow-up commit (preference/rendered
+  split, unified floor clamp, drag-start metrics snapshot, pure-predicate split) with new
+  renderer + e2e coverage; re-verified typecheck + unit tests + docs:check at the gate. Design
+  folded into `docs/spec/workspace-layout.md`; plan archived. Renderer-only, no protocol change.
 - **outline-syntax-unification — one canonical token grammar in `core/textSyntax.ts`**
   (codex, PR #222, plan-track) — collapsed the four-way `#tag` / checkbox drift into a
   single shared grammar. `src/core/textSyntax.ts` is now the canonical home for the

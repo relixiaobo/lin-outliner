@@ -371,6 +371,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Responsive workspace robustness — rails, pane capacity, indentation, tag/breadcrumb overflow (PR #223, codex-2)** —
+  at small window widths the floating sidebar and agent rail widths were independent and could
+  reserve more horizontal space than the window could host; because the canvas hides horizontal
+  overflow, the main reading pane would silently crush instead of exposing a rescue path. New
+  shared `src/renderer/ui/workspaceResponsiveLayout.ts` holds the layout metrics + floor math.
+  Rail widths now separate a **user preference** from a **rendered width**: drag / keyboard /
+  reset update the preference; window resize, pane-count changes, and rail reopen recompute only
+  the rendered width against the current pane floor (agent rail yields first, then sidebar,
+  neither below its minimum). The key consequence is the preference is never destroyed — a
+  transient narrow window no longer permanently ratchets a wider rail down. New pane creation is
+  gated by available width: root/file-preview splits repurpose an existing workspace pane when too
+  narrow, and an agent-debug open in a too-narrow window now reports "Window is too narrow to open
+  another pane." (en + zh-Hans) instead of silently no-oping. Deep outline, sidebar-tree, and
+  preview/backlink indentation all cap visual depth at one shared `MAX_OUTLINE_INDENT_DEPTH`
+  (document depth/keyboard structure unchanged). Tag bars wrap chips with row gaps (inline
+  plain-text-row slot expands the row instead of overflowing the next), and breadcrumb segments
+  carry width shares that protect the final current-context segment in narrow panes. A CSS
+  `min-width` backstop covers the single-pane canvas; multi-pane stays JS-gated by design (a hard
+  per-pane CSS floor would turn impossible-narrow states into canvas-level horizontal scroll).
+  `docs/spec/workspace-layout.md` updated. Gate (main): `/code-review high` (7 angles) surfaced 10
+  findings (top: a rail-width ratchet that lost the user's chosen width on transient resize; an
+  agent-first ordering violation on single-rail drag; a per-pointermove reflow on the drag hot
+  path); all fixed in the follow-up commit — preference/rendered split, unified floor clamp,
+  metrics snapshotted at drag start, pure capacity predicate split from the reflow side effect,
+  dead exports removed — with new renderer + e2e coverage. Renderer-only, no protocol change.
 - **Outline tag/checkbox syntax unified on one shared grammar (PR #222, codex)** —
   `src/core/textSyntax.ts` becomes the canonical home for the outline tag token,
   tag extraction/removal, canonical `formatTag` serialization, the live-`#`-trigger
