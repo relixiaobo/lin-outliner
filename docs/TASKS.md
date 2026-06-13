@@ -252,10 +252,26 @@ deferred by PM (2026-06-09):** the rest of self-mod M2 — prompt-only hooks · 
 skill curation — plus mid-run `needs-input`; escalate the capability boundary before building.
 The one un-started future item is the **deferred automatic associative retrieval** (memory,
 data-gated — see § memory above). The remaining *active* build work is the skills creative-UX
-(`agent-skills-authoring`: NL save-as-skill + diff/preview) and the standalone draft items below.
+(`agent-skills-authoring`: NL save-as-skill + diff/preview), **cross-agent consultation**
+(`ungate-contact` — see the agent-program list), and the standalone draft items below.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
+- **cross-agent consultation** (P1 active + backlog; design lives in
+  `agent-conversation-model` §"Cross-agent help") — the **colleague model** is
+  PM-ratified (2026-06-13) and ~**85% already implemented** (fresh-child brief/result
+  exchange + the three non-crossing boundaries + depth/cycle/concurrency guards all
+  conform — audit-verified). **Active — `ungate-contact`:** flip `agent.delegate.spawn`
+  default `'ask'`→baseline-allow (contact is a team-level baseline, not a per-act gate;
+  safety stays on each agent's own *capability* permissions + the existing guards) and
+  attribute the consultee's permission prompts to the consultee. Touches
+  `src/core/agentPermissionModel.ts` + `docs/spec/agent-tool-permissions.md` + tests;
+  **security-sensitive → PM GO + `/security-review` at the gate**; **no new plan file**
+  (design = the §Cross-agent help "Build note"). **Backlog (deferred):** (a) *consultation
+  surfacing* — a `purpose` field (consult vs task), "consulted @B" rendering, and a
+  structured brief/result schema (makes today's implicit in-process contract explicit and
+  A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as the transport
+  only when consulting agents outside the trust domain. #233 closed, absorbed into the authority.
 - **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
   completed; plan archived `done` in-PR. The global `AgentSafetyMode`
   (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
