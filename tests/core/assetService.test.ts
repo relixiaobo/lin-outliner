@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AssetService, imageDimensions, sniffMimeType } from '../../src/main/assetService';
@@ -77,6 +77,17 @@ describe('AssetService', () => {
     const entries = await readdir(root);
     expect(entries).toContain(`${meta.id}.png`);
     expect(entries).toContain(`${meta.id}.meta.json`);
+
+    // ingest resolves only after both files are durable, and the metadata sidecar
+    // keeps the existing pretty-without-trailing-newline format.
+    expect(await readFile(join(root, `${meta.id}.png`))).toEqual(Buffer.from(pngBytes(120, 80)));
+    const sidecar = await readFile(join(root, `${meta.id}.meta.json`), 'utf8');
+    expect(sidecar.endsWith('\n')).toBe(false);
+    expect(JSON.parse(sidecar)).toMatchObject({
+      id: meta.id,
+      mimeType: 'image/png',
+      originalFilename: 'shot.png',
+    });
   });
 
   test('lookup returns persisted metadata after a fresh service reads the sidecar', async () => {
@@ -115,6 +126,7 @@ describe('AssetService', () => {
 
   test('delete removes the bytes and sidecar', async () => {
     const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
+    expect(await service.lookup(meta.id)).toMatchObject({ id: meta.id });
     await service.delete(meta.id);
     expect(await service.lookup(meta.id)).toBeNull();
     expect(await readdir(root)).toHaveLength(0);

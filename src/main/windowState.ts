@@ -1,6 +1,8 @@
-import { app, screen, type BrowserWindow, type Rectangle } from 'electron';
-import { readFileSync, writeFileSync } from 'node:fs';
+import * as electron from 'electron';
+import type { BrowserWindow, Rectangle } from 'electron';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist the main window's size/position (and maximized state) across launches,
 // so the app reopens where the user left it instead of always at the default
@@ -17,9 +19,10 @@ interface RestoredWindowState {
 }
 
 const SAVE_DEBOUNCE_MS = 400;
+let getDisplayWorkAreas = () => electron.screen.getAllDisplays().map((display) => display.workArea);
 
 function stateFilePath(): string {
-  return join(app.getPath('userData'), 'window-state.json');
+  return join(electron.app.getPath('userData'), 'window-state.json');
 }
 
 export function loadWindowState(): RestoredWindowState {
@@ -44,7 +47,7 @@ export function trackWindowState(window: BrowserWindow): void {
       maximized: window.isMaximized(),
     };
     try {
-      writeFileSync(stateFilePath(), JSON.stringify(state));
+      writeJsonFileSync(stateFilePath(), state, { pretty: false, trailingNewline: false });
     } catch {
       // Best effort — losing window geometry is not worth surfacing an error.
     }
@@ -55,12 +58,16 @@ export function trackWindowState(window: BrowserWindow): void {
   window.on('close', save);
 }
 
+export function setWindowStateDisplayWorkAreasForTests(provider: (() => Rectangle[]) | null): void {
+  getDisplayWorkAreas = provider ?? (() => electron.screen.getAllDisplays().map((display) => display.workArea));
+}
+
 // Guard against restoring onto a monitor that's no longer connected: the saved
 // bounds must still overlap some display's work area, or the window could open
 // fully off-screen.
 function isVisibleOnSomeDisplay(bounds: Rectangle | undefined): bounds is Rectangle {
   if (!bounds || typeof bounds.x !== 'number' || typeof bounds.width !== 'number') return false;
-  return screen.getAllDisplays().some((display) => intersects(display.workArea, bounds));
+  return getDisplayWorkAreas().some((workArea) => intersects(workArea, bounds));
 }
 
 function intersects(a: Rectangle, b: Rectangle): boolean {

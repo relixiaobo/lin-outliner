@@ -11,12 +11,13 @@
 // surface — only the user, through the settings UI (see [[agent-authoring]]).
 
 import { existsSync, realpathSync } from 'node:fs';
-import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { access, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { serializeAgentMarkdown } from '../core/agentMarkdown';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import type { AgentDefinition } from '../core/types';
+import { atomicWriteFile } from './jsonFileStore';
 
 const AGENT_FILE_NAME = 'AGENT.md';
 
@@ -119,13 +120,8 @@ export function isAgentDefinitionWritable(agent: AgentDefinition, localRoot: str
 }
 
 async function writeAgentFile(rootDir: string, input: AgentAuthoringInput): Promise<WrittenAgentLocation> {
-  await mkdir(rootDir, { recursive: true });
   const agentFile = path.join(rootDir, AGENT_FILE_NAME);
-  // Atomic write: stage to a sibling temp file, then rename over the target so a
-  // reader never sees a half-written AGENT.md.
-  const tmpFile = path.join(rootDir, `.${AGENT_FILE_NAME}.tmp-${process.pid}`);
-  await writeFile(tmpFile, serializeAgentMarkdown(input), 'utf8');
-  await rename(tmpFile, agentFile);
+  await atomicWriteFile(agentFile, serializeAgentMarkdown(input));
   return { rootDir, agentFile };
 }
 

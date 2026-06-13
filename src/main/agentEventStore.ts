@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, writeFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   Usage,
@@ -58,6 +58,7 @@ import {
 import { nodeReferenceMarkersToText } from '../core/referenceMarkup';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
 import { AppendOnlySeqLog, serializeJsonl, type AppendOnlySeqLogTail } from './appendOnlySeqLog';
+import { atomicWriteFile } from './jsonFileStore';
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
@@ -3140,17 +3141,6 @@ function isPresent<T>(value: T | null | undefined): value is T {
 
 function cloneReplayState(state: AgentEventReplayState): AgentEventReplayState {
   return JSON.parse(JSON.stringify(state)) as AgentEventReplayState;
-}
-
-async function atomicWriteFile(filePath: string, data: string | Buffer) {
-  const tmpPath = `${filePath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(tmpPath, data);
-    await rename(tmpPath, filePath);
-  } catch (error) {
-    await rm(tmpPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }
 
 function normalizeCheckpoint(value: unknown, conversationId: string): AgentEventCheckpoint | null {

@@ -1,8 +1,8 @@
 import { app } from 'electron';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
 import { CoreError } from '../core/errors';
@@ -41,6 +41,7 @@ import type { CreateCaptureInput } from '../core/launcher/sources';
 import { parseLinOutline } from './agentOutlineParser';
 import { indexProjection } from './agentNodeToolProjection';
 import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
+import { atomicWriteFile } from './jsonFileStore';
 import { NodeRetrievalService } from './nodeRetrievalService';
 
 const WORKSPACE_FILE = 'workspace.loro.json';
@@ -824,9 +825,7 @@ export class DocumentService {
   }
 
   private async saveCore() {
-    const path = workspacePath();
-    await mkdir(dirname(path), { recursive: true });
-    await atomicWrite(path, this.core.serializeState());
+    await atomicWriteFile(workspacePath(), this.core.serializeState());
   }
 
   private emitProjectionChanged(origin: DocumentProjectionChangedEvent['origin']) {
@@ -847,12 +846,6 @@ function isInProjectionTrash(nodes: ReadonlyMap<string, NodeProjection>, nodeId:
 
 function workspacePath() {
   return join(app.getPath('userData'), WORKSPACE_FILE);
-}
-
-async function atomicWrite(path: string, data: string) {
-  const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(tmp, data);
-  await rename(tmp, path);
 }
 
 function isNotFound(error: unknown) {
