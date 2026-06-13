@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Async Channel message bus (PR #231, cc)** — multi-agent Channels now behave
+  like an IM group instead of a special case of the single-run DM composer. An
+  addressed `agent_send_message` **returns on acceptance** (the user message is
+  persisted and the `@agent` turns are enqueued + projected) rather than blocking
+  until the addressed runs finish; the runs drain asynchronously and one deduped
+  per-conversation watcher emits the final idle state. The Channel composer stays a
+  pure **Send** (Stop/Steer remain DM-only; per-run stop lives in the activity
+  overlay), you can navigate away from or leave a Channel while its runs proceed,
+  and a delivered in-Channel peer reply bumps the conversation's unread **badge
+  only** (new `channel_reply` notification kind — a count, not an OS ding). Each
+  running Channel agent's live composing text stays visible in a **per-run detail
+  view**, retained off the shared log so concurrent runs never interleave and the
+  transcript stays whole-utterance. Internally the overloaded projection
+  `isStreaming`/`streaming` splits into mode-specific `dmRunActive`/`dmStreaming`
+  (DM composer) vs `channelRunsActive`/`channelActivityEntries[].streamingText`
+  (N concurrent Channel runs). No DM behavior change. Spec:
+  `docs/spec/agent-architecture.md`, `agent-progress.md`,
+  `agent-event-log-rendering.md`, `commands.md`.
 - **Agent app-owned workdir + relocated scratch (PR #229, cc-2)** — the agent's
   single overloaded local-file root is split into two app-owned roots resolved at
   startup (`agentLocalRoot.ts`): a **workdir** (`<userData>/agent-workdir` in both

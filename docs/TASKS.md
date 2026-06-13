@@ -47,14 +47,10 @@ build-readiness first:
    now render as a previewable local-file chip + inspectable diff, not raw JSON —
    and **F2 (app-owned workdir + relocated scratch) shipped (#229)**. F3/F4 follow
    as independent PRs (F3 materialize bridge next). → F3 ready to dispatch now.
-2. **`channel-async-message-bus`** (P1, *Agent capabilities*) — **RATIFIED
-   2026-06-13, ready to build** (B's run-status convergence #225 laid the
-   foundation). Whole-utterance in the **message stream** (no token streaming), but
-   the **live stream stays visible in a per-run detail view** — runtime *retains*
-   `message_update`, routes it to the detail view, filters it from the transcript.
-   Plus the `isStreaming`→mode-specific projection split. Async *view/command* layer
-   over the shipped M3 Channel + coordinator runtime (#179/#200/#202/#212), not new
-   architecture. ONE PR, broad-but-mechanical renderer blast radius.
+2. ~~**`channel-async-message-bus`**~~ — **shipped (PR #231, cc)**; see Recently
+   completed. Channel send now returns on acceptance; the `isStreaming`→mode-specific
+   projection split (`dmRunActive`/`channelRunsActive` + per-run `streamingText`)
+   landed with the runtime async bus and the per-run detail live view.
 3. ~~**`outline-syntax-unification`**~~ — **shipped (PR #222, codex)**; see Recently
    completed. The canonical `core/textSyntax.ts` token grammar now backs all
    consumers.
@@ -273,8 +269,7 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
-- **channel-async-message-bus** (P1, plan file, **draft — RATIFIED 2026-06-13
-  (B #225 unblocked it), ready to build**) — make Channels behave like
+- **channel-async-message-bus** (P1, plan file, **DONE — shipped #231 (cc)**) — make Channels behave like
   an async IM group instead of a special case of the single-run DM composer: send a
   new Channel message while agents are working; explicit `@agent` mentions dispatch
   independent per-agent runs (co-addressees don't share a turn group, append on
@@ -288,7 +283,8 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   mode-specific fields, return from Channel send on acceptance (not on idle), and
   key concurrent approval/`ask_user_question` requests by `runId` so runs can't
   steal each other's input. ONE PR (runtime + projection + renderer + tests + spec).
-  No DM behavior change. See `docs/plans/channel-async-message-bus.md`.
+  No DM behavior change. Plan archived `done` at
+  `docs/plans/archive/channel-async-message-bus.md`.
 - **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
   durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
   daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
@@ -590,6 +586,30 @@ see Recently completed). Remaining Layer-2/3 lanes:
   no collision with #179/#180.
 
 ## Recently completed
+
+- **channel-async-message-bus** (cc, PR #231, plan-track) — Channels now behave
+  like an async IM group: an addressed `agent_send_message` **returns on
+  acceptance** (enqueue + project), not when the addressed run finishes, instead of
+  reusing the single-run DM composer path. Runtime detaches the final idle emit
+  onto one deduped per-conversation watcher (`scheduleChannelIdleEmit`, ownership
+  via `channelIdleEmitToken` + `teardownChannelDraining`); the projection's
+  overloaded `isStreaming`/`streaming` split into `dmRunActive`/`dmStreaming` (DM
+  composer) vs `channelRunsActive`/`channelActivityEntries[].streamingText` (N
+  concurrent Channel runs, each with its own live per-run detail text retained off
+  the shared log). Channel composer stays Send (Stop/Steer are DM-only); you can
+  leave an active Channel; a delivered peer reply bumps unread badge-only (new
+  `channel_reply` notification kind, no OS ding). Gate (main): an external
+  `/code-review xhigh` surfaced 9 findings (drain-wedge on a notification-write
+  throw, per-segment live-text blank, reset/idle-emit race, a discard-without-repump
+  stuck-send, plus reuse/altitude cleanups); **cc fixed all 9** (try/catch around
+  the drain bookkeeping with the release moved outside it; `message_start` no longer
+  blanks retained text; `persistAndEmitIdle` `emitGuard` re-checks ownership after
+  its awaits; discard re-pumps; `emitTaskNotification`/`channelFullyIdle` reuse;
+  streaming-tail scan skipped for Channels). Re-verified green: typecheck +
+  test:core (976 pass / 0 fail, +2 channel tests: async-accept ordering and
+  resume-after-stop-no-deadlock) + test:renderer (443 pass / 0 fail) + docs:check.
+  Spec synced in-change (agent-architecture / agent-progress /
+  agent-event-log-rendering / commands). Plan archived `done`.
 
 - **file-preview PR 2 — PDF renderer** (codex, PR #227, plan-track) — adds a
   `pdf` entry to the `FilePreviewPanel` renderer registry for the three byte
