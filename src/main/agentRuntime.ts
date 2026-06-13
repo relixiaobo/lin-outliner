@@ -31,6 +31,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
@@ -111,7 +112,12 @@ import {
 } from '../core/referenceMarkup';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
-import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import {
+  buildReferencedFilesReminder,
+  selectReferencedAssetNodes,
+  type MaterializedReferencedFile,
+} from './agentReferencedAssets';
 import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
@@ -256,6 +262,7 @@ import type {
   AgentConversationListMeta,
   AgentMemoryEntryView,
   AgentSlashCommandView,
+  AssetMetadata,
   DocumentProjection,
 } from '../core/types';
 import {
@@ -346,6 +353,15 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
 type CompleteSimpleFn = typeof completeSimple;
 type ErrorReporter = (report: ErrorReport) => void | Promise<void>;
 
+/**
+ * Narrow view of the asset store the runtime needs to materialize a referenced
+ * outliner file (handle → path) for the agent. `AssetService` satisfies it.
+ */
+export interface AgentAssetResolver {
+  pathFor(id: string): Promise<string | null>;
+  lookup(id: string): Promise<AssetMetadata | null>;
+}
+
 interface AgentRuntimeOptions {
   agentDataRoot?: string;
   agentIdentity?: AgentIdentityRecord;
@@ -353,6 +369,7 @@ interface AgentRuntimeOptions {
   completeSimpleFn?: CompleteSimpleFn;
   localFileRoot?: string;
   scratchRoot?: string;
+  assetResolver?: AgentAssetResolver;
   permissionMode?: AgentPermissionMode;
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
   providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
@@ -1562,11 +1579,18 @@ export class AgentRuntime {
         conversation.skillRuntime.resetRunPermissionRules();
         this.beginDebugQuery(conversation);
       }
+      const normalizedUserViewContext = normalizeAgentUserViewContext(userViewContextInput);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
         conversationId,
-        normalizeAgentUserViewContext(userViewContextInput),
+        normalizedUserViewContext,
       );
       const userViewReminderText = userViewContextReminder.reminder;
+      // Materialize bridge: hand the agent the bytes of any outliner image /
+      // attachment node the user explicitly referenced (images also inline for vision).
+      const referencedAssets = await this.materializeReferencedAssetNodes(
+        normalizedUserViewContext?.referencedNodes,
+      );
+      const referencedFilesReminder = buildReferencedFilesReminder(referencedAssets.files);
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
       // In a Channel the persisted user message stays reader-neutral: a memory
@@ -1591,10 +1615,11 @@ export class AgentRuntime {
       const agentListingReminder = slashSkillPrompt || multiAgent
         ? null
         : await this.buildAgentListingReminder(conversation);
-      const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, attachments, {
+      const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, [...attachments, ...referencedAssets.imageAttachments], {
         memoryReminder,
         outlinerContext,
         userViewContextReminder: userViewReminderText,
+        referencedFilesReminder,
         skillListingReminder,
         agentListingReminder,
       }, now);
@@ -7142,6 +7167,69 @@ export class AgentRuntime {
     }
     return { attachments: out, pathMap };
   }
+
+  // Materialize bridge (handle → path): when the user references outliner image /
+  // attachment nodes into a message, copy their asset-store bytes into the agent
+  // scratch root and hand them over the same way a composer attachment arrives —
+  // a readable path, plus a base64 image block for vision. The renderer keeps the
+  // `asset://` handle for its own display; only the agent-facing side gains a path.
+  private async materializeReferencedAssetNodes(
+    referencedNodes: ReadonlyArray<{ nodeId: string; title?: string }> | undefined,
+  ): Promise<{ imageAttachments: AgentImageAttachmentInput[]; files: MaterializedReferencedFile[] }> {
+    const resolver = this.options.assetResolver;
+    if (!resolver || !referencedNodes || referencedNodes.length === 0) {
+      return { imageAttachments: [], files: [] };
+    }
+    let projection: DocumentProjection;
+    try {
+      projection = this.outlinerToolHost.getProjection();
+    } catch {
+      return { imageAttachments: [], files: [] };
+    }
+    const selected = selectReferencedAssetNodes(projection, referencedNodes);
+    if (selected.length === 0) return { imageAttachments: [], files: [] };
+
+    const root = this.localFileRoot();
+    const scratch = this.scratchRoot();
+    const imageAttachments: AgentImageAttachmentInput[] = [];
+    const files: MaterializedReferencedFile[] = [];
+    for (const ref of selected) {
+      try {
+        const assetPath = await resolver.pathFor(ref.assetId);
+        if (!assetPath) continue;
+        const meta = await resolver.lookup(ref.assetId);
+        const mimeType = meta?.mimeType || ref.nodeMimeType || 'application/octet-stream';
+        const name = meta?.originalFilename || ref.title || 'attachment';
+        // Copies into scratch; throws (and we skip) when the asset is larger than
+        // MAX_MATERIALIZED_ATTACHMENT_BYTES, matching composer-attachment behavior.
+        const scratchPath = await materializeAgentLocalPath(root, scratch, assetPath, name);
+        const sizeBytes = meta?.byteSize ?? 0;
+        let inlineImage = false;
+        const inlineMime = normalizeInlineImageMimeType(mimeType);
+        if (inlineMime) {
+          const dataBase64 = (await readFile(scratchPath)).toString('base64');
+          if (dataBase64.length <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS) {
+            imageAttachments.push({
+              id: randomUUID(),
+              ref: name,
+              kind: 'image',
+              name,
+              mimeType: inlineMime,
+              sizeBytes,
+              dataBase64,
+              path: scratchPath,
+            });
+            inlineImage = true;
+          }
+        }
+        files.push({ nodeId: ref.nodeId, title: ref.title, mimeType, sizeBytes, path: scratchPath, inlineImage });
+      } catch {
+        // A referenced asset that is missing, oversized, or unreadable is skipped
+        // rather than failing the whole send.
+      }
+    }
+    return { imageAttachments, files };
+  }
 }
 
 function isDirectoryAttachment(attachment: AgentPathBackedAttachment): boolean {
@@ -7165,6 +7253,7 @@ function buildUserPromptMessage(
     memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
+    referencedFilesReminder?: string | null;
     skillListingReminder?: string | null;
     agentListingReminder?: string | null;
   } = {},
@@ -7305,6 +7394,7 @@ function buildTurnReminderBlocks(
     memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
+    referencedFilesReminder?: string | null;
     skillListingReminder?: string | null;
     agentListingReminder?: string | null;
   },
@@ -7316,6 +7406,7 @@ function buildTurnReminderBlocks(
     context.memoryReminder,
     context.outlinerContext,
     context.userViewContextReminder,
+    context.referencedFilesReminder,
     context.skillListingReminder,
     context.agentListingReminder,
   ]);
