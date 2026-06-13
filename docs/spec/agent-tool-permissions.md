@@ -73,13 +73,14 @@ Scratch is **always** `<userData>/agent-scratch`, independent of the workdir, so
 an env-pointed repo workdir never accumulates ephemeral files.
 
 Because scratch is app-owned and holds bytes the app deliberately places for the
-agent, a **read** of a scratch path counts as inside the allowed file area
-(`resolveWorkspacePath` accepts either root; the permission engine treats a
-scratch read as `allowed_file_area`). A **write** to scratch is still outside —
-the agent writes its own outputs to the workdir, never to scratch. `file_glob` /
-`file_grep` default to the workdir, so scratch never appears in the file area's
-default listings; the agent only ever reaches scratch through the absolute paths
-the app hands it.
+agent, the boundary is **asymmetric by access**: the agent may **read** the
+workdir ∪ scratch, but may **write** only the workdir. Both enforcement layers
+apply the identical rule — the file-tool resolver (`resolveWorkspacePath`, keyed
+by a `'read'`/`'write'` access) and the permission engine (a scratch read is
+`allowed_file_area`; a scratch write is classified outside). The agent writes its
+own outputs to the workdir, never to scratch. `file_glob` / `file_grep` default
+to the workdir, so scratch never appears in the file area's default listings; the
+agent only ever reaches scratch through the absolute paths the app hands it.
 
 This boundary does not loosen the sensitive-path redlines below. Paths outside
 both roots still deny or ask according to the descriptor defaults and global

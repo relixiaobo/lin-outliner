@@ -168,7 +168,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_read allows an absolute path under the scratch root when scratch sits outside the workdir', async () => {
+  test('scratch root is readable but not writable when it sits outside the workdir', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
       try {
@@ -187,8 +187,18 @@ describe('agent local tools', () => {
         expect(read.ok).toBe(true);
         expect(read.data!.file.content).toBe('attachment body');
 
-        // The same path is rejected when scratch is not declared, proving the allowance is the
-        // scratch root and not a loosened boundary.
+        // Scratch is read-only for the agent: a write to a scratch path is rejected even though
+        // reading it is allowed — the agent writes its own outputs to the workdir.
+        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+        const blockedWrite = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(scratchRoot, 'agent-attachments', 'sneaky.txt'),
+          content: 'no',
+        })).details as ToolEnvelope<unknown>;
+        expect(blockedWrite.ok).toBe(false);
+        expect(blockedWrite.error?.code).toBe('path_outside_local_root');
+
+        // The same read path is rejected when scratch is not declared, proving the allowance is
+        // the scratch root and not a loosened boundary.
         const sealed = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_read')!;
         const denied = (await (sealed.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<unknown>;
         expect(denied.ok).toBe(false);
