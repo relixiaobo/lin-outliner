@@ -473,6 +473,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Cross-agent contact is baseline-allow + consultee approval attribution (PR #236, cc)** —
+  `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']` flips `'ask'` → `'allow'`, so consulting another
+  agent is ungated in **every** safety mode (`ask_first` / `balanced` / `full_access`); safety stays on
+  each consultee's **own** capability permissions plus the unchanged depth/cycle/concurrency guards
+  (`agentDelegation.ts`), and the now-redundant `agent.delegate.spawn` entry is dropped from
+  `FULL_ACCESS_ALLOW_ACTIONS`. A consultee's own gated (`'ask'`) **or** hard-denied
+  (`permission_notice`) action that surfaces in the parent conversation is now **attributed to it** via
+  `AgentApprovalRequestView.requestedByAgentId`, resolved to the consultee's canonical mention token on
+  the approval card ("Requested by @researcher"); attribution is derived at the delegation layer from
+  the authoritative `contextMode` (a fresh consult → the consultee; a fork → the spawner's inherited
+  attribution, so a consultee's own fork stays the consultee's and the user's own fork stays
+  unattributed), not an id heuristic. The contradictory "Spawn child agents" Security rule and the
+  vestigial `allowable` mechanism (its only non-allowable rule) are removed. Spec:
+  `docs/spec/agent-tool-permissions.md`, `docs/spec/design-system.md`,
+  `docs/plans/agent-conversation-model.md` (Build note → shipped).
 - **UI quality Layer 1 — composition rhythm + design-system consistency (PR #228, codex-2)** —
   a CSS-only sweep (plus spec sync) shipping the two Layer-1 lanes of the UI-quality suite as one
   pass. Composition tokens are centralised in `tokens.css`: the reading measure `--reading-max`

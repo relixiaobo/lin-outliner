@@ -263,8 +263,10 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   the **colleague model** is PM-ratified (2026-06-13) and ~**85% already implemented**
   (fresh-child brief/result exchange + the three non-crossing boundaries + depth/cycle/concurrency
   guards all conform — audit-verified). #233 closed, absorbed into the authority.
-  - **Active — `ungate-contact`** — ONE complete PR; **security-sensitive** (`/security-review`
-    + PM GO at the gate); **no new plan file** (the *why* = §Cross-agent help "Build note"). Steps:
+  - **SHIPPED — `ungate-contact` (PR #236, cc, 2026-06-13)** — ONE complete PR; **security-sensitive** (`/security-review`
+    + PM GO at the gate); **no new plan file** (the *why* = §Cross-agent help "Build note"). **Shipped** (all steps below
+    done; consultee attribution resolved at the **delegation layer** from the authoritative `contextMode` — fresh consult →
+    the consultee, fork → the spawner's inherited attribution — not an id heuristic):
     1. `src/core/agentPermissionModel.ts` — change `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']`
        (~:91) from `'ask'` → `'allow'` so cross-agent **contact** is ungated in *all* safety modes;
        drop the now-redundant `agent.delegate.spawn` entry in `FULL_ACCESS_ALLOW_ACTIONS`. Leave
@@ -642,6 +644,23 @@ see Recently completed). Remaining Layer-2/3 lanes:
 
 ## Recently completed
 
+- **Cross-agent contact ungated + consultee approval attribution (`ungate-contact`)** (cc,
+  PR #236, plan-track) — cross-agent **contact** (`agent.delegate.spawn`) is now baseline-`allow`
+  in every safety mode (was `'ask'`); safety moves entirely onto each consultee's **own** capability
+  permissions + the unchanged depth/cycle/concurrency guards (`FULL_ACCESS_ALLOW_ACTIONS` drops its
+  now-redundant spawn entry). A consultee's own gated (`'ask'`) or hard-denied (`permission_notice`)
+  action surfacing in the parent conversation is **attributed to the consultee**
+  (`AgentApprovalRequestView.requestedByAgentId` → canonical mention token on the approval card),
+  derived at the **delegation layer** from the authoritative `contextMode` (fresh consult →
+  consultee; fork → the spawner's inherited attribution; the user's own agent → unattributed) — so a
+  consultee that forks itself keeps its attribution while the user's own forks stay unattributed. The
+  now-contradictory "Spawn child agents" Security rule + the vestigial `allowable` mechanism (its only
+  non-allowable rule) are removed. Gate (main): **xhigh `/code-review`** — 9 finder angles surfaced one
+  real attribution gap (fork-inside-consultee) plus altitude/cleanup; fixed in-PR by moving attribution
+  to the delegation layer (re-review clean). typecheck + `test:core` (incl. 4 attribution tests) +
+  `test:renderer` 443/0 green; `/security-review` no regression (guards independent of the permission
+  decision); PM GO. Spec: `agent-tool-permissions.md`, `design-system.md`, `agent-conversation-model`
+  Build note (→ shipped).
 - **Referenced outliner files become agent-readable (agent-file-model F3)** (cc-2,
   PR #237, plan-track) — closes the lossy input path: an outliner image / attachment
   node `@`-referenced into a conversation used to reach the agent as a node with **no
