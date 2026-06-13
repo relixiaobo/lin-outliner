@@ -20,7 +20,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
-| Codex | `lin-outliner-codex/` | — | idle (UX Feature A merged, PR #207) |
+| Codex | `lin-outliner-codex/` | — | idle (agent dock + channel config refinement merged, PR #217) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (Tana-style references merged, PR #208) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
@@ -28,13 +28,22 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 ## In progress
 
-**No PR is in flight (2026-06-12).** The queue is clear for the next batch.
+**No PR is in flight (2026-06-13).** The queue is clear for the next batch.
 
-**Just merged:** #215 Security Settings IA Redesign (codex-3), #216 Compact
-loaded-skill tool calls (codex-2 + main polish), #214 Skillify built-in path fix
-+ skill-write permission simplification (codex-2), #208 Tana-style references
-experience (codex-3), and #213 Agent authoring cleanups (codex-4) — see Recently
-completed.
+**Just merged:** #217 Agent dock + channel config refinement (codex — child-window
+agent/channel create-edit flows, deep-link fixes, built-in-assistant dispatch +
+deleted-definition recovery, config-window unification), #215 Security Settings IA
+Redesign (codex-3), #216 Compact loaded-skill tool calls (codex-2 + main polish),
+#214 Skillify built-in path fix + skill-write permission simplification (codex-2),
+#208 Tana-style references experience (codex-3), and #213 Agent authoring cleanups
+(codex-4) — see Recently completed.
+
+**Known-flaky core test (pre-existing, *not* a #217 regression; fast-track fix
+welcome):** `agentRuntimeSkillsIntegration.test.ts` › *"clears pending permission
+notices when the run stops"* times out on its 1000 ms `waitFor` under full-file
+load — fails ~2/3 on `main` (cdece24) and 3/3 on the #217 branch, yet passes 3/3
+in isolation, so it is a test-timing budget issue, not a product bug. Fix =
+raise that test's `waitFor` timeout (and/or trim per-test runtime setup).
 
 **Deferred follow-ups from #208** (non-blocking, surfaced by `/code-review high`;
 file as small fast-track items when a clone is free):
