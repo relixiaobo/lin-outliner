@@ -18,14 +18,12 @@ export type PermissionRuleId =
   | 'installDependencies'
   | 'publishGitRemotes'
   | 'deployPublish'
-  | 'networkWrite'
-  | 'spawnChildAgents';
+  | 'networkWrite';
 
 export interface CommonPermissionRule {
   id: PermissionRuleId;
   actionKind: AgentToolActionKind;
   ruleValue: string;
-  allowable: boolean;
 }
 
 export interface PermissionExceptionRow {
@@ -35,16 +33,15 @@ export interface PermissionExceptionRow {
 }
 
 export const COMMON_PERMISSION_RULES: readonly CommonPermissionRule[] = [
-  permissionRule('readOutsideArea', 'file.read.outside_allowed_file_area', true),
-  permissionRule('readSensitivePaths', 'file.read.sensitive_local_path', true),
-  permissionRule('fetchWeb', 'web.fetch', true),
-  permissionRule('deleteFiles', 'file.delete.allowed_file_area', true),
-  permissionRule('runProjectScripts', 'shell.project_script', true),
-  permissionRule('installDependencies', 'shell.dependency_install', true),
-  permissionRule('publishGitRemotes', 'git.publish_remote', true),
-  permissionRule('deployPublish', 'deploy.publish_remote', true),
-  permissionRule('networkWrite', 'shell.network_write', true),
-  permissionRule('spawnChildAgents', 'agent.delegate.spawn', false),
+  permissionRule('readOutsideArea', 'file.read.outside_allowed_file_area'),
+  permissionRule('readSensitivePaths', 'file.read.sensitive_local_path'),
+  permissionRule('fetchWeb', 'web.fetch'),
+  permissionRule('deleteFiles', 'file.delete.allowed_file_area'),
+  permissionRule('runProjectScripts', 'shell.project_script'),
+  permissionRule('installDependencies', 'shell.dependency_install'),
+  permissionRule('publishGitRemotes', 'git.publish_remote'),
+  permissionRule('deployPublish', 'deploy.publish_remote'),
+  permissionRule('networkWrite', 'shell.network_write'),
 ];
 
 const COMMON_PERMISSION_RULE_BY_VALUE = new Map(COMMON_PERMISSION_RULES.map((rule, index) => [
@@ -52,8 +49,8 @@ const COMMON_PERMISSION_RULE_BY_VALUE = new Map(COMMON_PERMISSION_RULES.map((rul
   { rule, index },
 ]));
 
-function permissionRule(id: PermissionRuleId, actionKind: AgentToolActionKind, allowable: boolean): CommonPermissionRule {
-  return { id, actionKind, ruleValue: actionKindRuleValue(actionKind), allowable };
+function permissionRule(id: PermissionRuleId, actionKind: AgentToolActionKind): CommonPermissionRule {
+  return { id, actionKind, ruleValue: actionKindRuleValue(actionKind) };
 }
 
 export function buildPermissionExceptionRows(

@@ -821,14 +821,15 @@ cap (`MAX_CONCURRENT_CHILD_RUNS = 4`) — are all in place
 (`agentDelegation.ts:1197-1228`). These guards are exactly what makes ungated
 contact safe.
 
-**Build note (the one divergence).** `agent.delegate.spawn` currently defaults to
-`'ask'` in `balanced`/`ask_first` (`agentPermissionModel.ts:91,151-163`) — contact
-is still gated per-act. The intended posture is **baseline-allow**; safety stays
-on each agent's own capability permissions + the guards above. This is a
-security-sensitive default change → its own small, PM-ratified PR. Surfacing
-polish (framing a run as "consulted @B" vs a generic task; a user-facing "consult
-@X" entry) is **deferred** — the Task Panel already makes consultations
-observable.
+**Build note (shipped — `ungate-contact`).** `agent.delegate.spawn` now defaults to
+`'allow'` in every safety mode (`agentPermissionModel.ts`) — contact is
+baseline-allow, not gated per-act; safety stays on each agent's own capability
+permissions + the guards above. A consultee's own gated *or* denied action that
+surfaces in the parent conversation is attributed to it
+(`AgentApprovalRequestView.requestedByAgentId`, resolved to its mention token);
+a fork runs AS the parent agent and stays unattributed. Further surfacing polish
+(framing a run as "consulted @B" vs a generic task; a user-facing "consult @X"
+entry) is **deferred** — the Task Panel already makes consultations observable.
 
 **Relationship to `/research`.** Generic research is the agent using its **own**
 capability (a read-only `context: fork`), not a consultation — no second

@@ -213,10 +213,6 @@ export const en = {
           label: 'Network write commands',
           description: 'Shell commands that send data outward or mutate network services.',
         },
-        spawnChildAgents: {
-          label: 'Spawn child agents',
-          description: 'Start another agent process. Global allow is intentionally unavailable.',
-        },
       },
     },
     memory: {
@@ -990,6 +986,8 @@ commandPalette: {
       showDetails: 'Show details',
       hideDetails: 'Hide details',
       alwaysAllowRule: 'Always allow rule',
+      // Attribution shown when a consulted agent (a child run) raises the approval.
+      approvalRequestedBy: ({ agent }: { agent: string }) => `Requested by @${agent}`,
       approveOnce: 'Approve once',
       alwaysAllow: 'Always allow',
       stopAsking: 'Hand everything to Lin, stop asking',

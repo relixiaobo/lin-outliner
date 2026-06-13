@@ -88,7 +88,11 @@ const DEFAULT_ACTION_DECISIONS = {
   'agent.config.write': 'ask',
   'agent.doctor.run': 'allow',
   'agent.skill.invoke': 'allow',
-  'agent.delegate.spawn': 'ask',
+  // Contact (consulting another agent) is a universal baseline, not a per-act
+  // privilege: safety lives on the consultee's OWN capability permissions plus
+  // the depth/cycle/concurrency guards, never on gating the act of reaching out.
+  // See agent-conversation-model "Cross-agent help".
+  'agent.delegate.spawn': 'allow',
   'agent.delegate.status': 'allow',
   'agent.delegate.send': 'allow',
   'agent.delegate.stop': 'allow',
@@ -226,7 +230,8 @@ const FULL_ACCESS_ALLOW_ACTIONS = new Set<AgentToolActionKind>([
   'shell.dependency_install',
   'shell.network_write',
   'git.publish_remote',
-  'agent.delegate.spawn',
+  // 'agent.delegate.spawn' omitted: its baseline default is now 'allow' in every
+  // safety mode (see DEFAULT_ACTION_DECISIONS), so a Full Access override is moot.
   'agent.memory.dream',
   'shell.background_process',
 ]);

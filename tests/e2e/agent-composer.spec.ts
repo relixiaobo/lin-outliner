@@ -410,6 +410,33 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('attributes a consulted agent\'s approval to the consultee', async ({ page }) => {
+    await emitAgentEvent(page, {
+      type: 'approval_request',
+      conversationId: 'mock-agent-conversation',
+      requestId: 'consultee-approval-e2e',
+      request: {
+        requestId: 'consultee-approval-e2e',
+        conversationId: 'mock-agent-conversation',
+        kind: 'tool_permission',
+        toolCallId: 'tool-consultee-e2e',
+        toolName: 'file_read',
+        title: 'Approve sensitive file read?',
+        target: '/work/.env',
+        reason: 'Reading a sensitive local path.',
+        details: [{ label: 'Permission kind', value: 'file.read.sensitive_local_path' }],
+        requestedByAgentId: 'project:abc123:researcher',
+      },
+      timestamp: 1_800_000_003_200,
+    });
+
+    const card = page.locator('.agent-approval-card');
+    await expect(card).toBeVisible();
+    await expect(card.getByText('Approve sensitive file read?')).toBeVisible();
+    // The consultee is named via its canonical mention token — the parent's own agent is not the requester.
+    await expect(card.locator('.agent-approval-attribution')).toHaveText('Requested by @researcher');
+  });
+
   test('pastes multi-line text as multiple lines instead of collapsing to one', async ({ page }) => {
     const input = page.getByLabel('Agent message');
     await input.click();

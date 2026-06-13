@@ -18,6 +18,7 @@ import {
   MAX_STAGED_ATTACHMENT_BYTES,
 } from '../../../core/agentAttachmentLimits';
 import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
+import { agentMentionToken } from '../../../core/agentChannel';
 import type {
   AgentModelOption,
   AgentProviderConfigView,
@@ -819,6 +820,13 @@ function AgentApprovalCard({
     <div className="agent-approval-card" role="group" aria-label={approval.title}>
       <div className="agent-approval-copy">
         <div className="agent-approval-title">{approval.title}</div>
+        {approval.requestedByAgentId ? (
+          <div className="agent-approval-attribution">
+            {t.agent.composer.approvalRequestedBy({
+              agent: agentMentionToken(approval.requestedByAgentId),
+            })}
+          </div>
+        ) : null}
         <div className="agent-approval-target" title={approval.target}>{approval.target}</div>
         <button
           aria-expanded={detailsOpen}

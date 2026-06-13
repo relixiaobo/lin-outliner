@@ -355,6 +355,15 @@ export interface AgentApprovalRequestView {
   reason: string;
   details: AgentApprovalRequestDetail[];
   alwaysAllowRule?: string;
+  /**
+   * Agent id, set when this approval/notice was raised by a CONSULTED agent — a
+   * fresh child run that is a different agent than the parent. The card attributes
+   * the request to that consultee via its canonical mention token. Unset for the
+   * conversation's own agent and for forks (which run AS the parent agent):
+   * contact is ungated, but the consultee's risky actions still gate under its OWN
+   * capability permissions and must surface as the consultee's.
+   */
+  requestedByAgentId?: string;
   skillTrust?: {
     name: string;
     displayName?: string;

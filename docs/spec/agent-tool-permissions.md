@@ -123,15 +123,29 @@ platform hard block.
   asks.
 - **Balanced** — the default. It preserves the pre-safety-mode practical
   behavior: local/outliner reads and edits are allowed; execution, deletes, web
-  fetch, external mutations, subagent spawn, config writes, Dream, sensitive
+  fetch, external mutations, config writes, Dream, sensitive
   reads, and outside-root access ask or deny according to descriptors.
 - **Full Access** — allows classified non-redline routine automation: allowed-root
   file/outliner edits and deletes, web fetch, local code/project script
-  execution, dependency install, network writes, git/GitHub mutation, subagent
-  spawn, Dream, and background processes. It still asks for deploy/publish,
+  execution, dependency install, network writes, git/GitHub mutation,
+  Dream, and background processes. It still asks for deploy/publish,
   sandbox override, config writes, sensitive local reads, and outside-root
   reads/writes; unknown shell, sensitive writes, exfiltration, host destruction,
   permission modification, and payment remain denied.
+
+**Contact is a universal baseline, not a per-act privilege.** Consulting another
+agent (`agent.delegate.spawn`) is allowed in **every** safety mode — it is not
+gated and has no per-pair "who-can-consult-whom" allow-list. Safety lives where
+it belongs: a consulted agent runs under **its own** identity, tools, and
+capability permissions, plus the depth/cycle/concurrency guards
+(`agentDelegation.ts`). The consultee's own risky actions still gate under its
+own permissions; when such an approval (or a hard-denial notice) surfaces in the
+consulting conversation it is **attributed to the consultee**
+(`AgentApprovalRequestView.requestedByAgentId`, resolved to its mention token),
+not the conversation's own agent — and a **fork** (a child that runs AS the
+parent agent) stays unattributed, like the parent's own actions.
+(`delegate.status/send/stop` are likewise baseline-allow.) See
+`agent-conversation-model` "Cross-agent help".
 
 Skill files follow the ordinary `file_write` / `file_edit` permission decision.
 After that decision, the file-tool gateway still validates skill content, records
@@ -318,9 +332,8 @@ move behind the same projection.
 - **Security center** — the **Security** category in `AgentSettingsView.tsx`
   exposes the global Default, the derived Custom state, an Exceptions list over
   action permission rules, and a collapsed Add an exception disclosure for
-  manual per-action overrides (`agent.delegate.spawn` is shown non-allowable for
-  `allow`). Accepted skill hashes are listed separately as skill trust, not as
-  default/action exceptions. It reads/writes via
+  manual per-action overrides. Accepted skill hashes are listed separately as
+  skill trust, not as default/action exceptions. It reads/writes via
   `agentGetToolPermissionSettings` and surfaces store diagnostics. There is no
   in-app raw-JSON editor (advanced users edit the file directly).
 - **Agent editor** — agent definitions can only *Follow global* or enter the

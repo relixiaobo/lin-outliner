@@ -1097,7 +1097,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                                 })}
                               </option>
                               <option value="ask">{t.settings.permissions.askOption}</option>
-                              {rule.allowable ? <option value="allow">{t.settings.permissions.allowOption}</option> : null}
+                              <option value="allow">{t.settings.permissions.allowOption}</option>
                               <option value="deny">{t.settings.permissions.denyOption}</option>
                             </SelectControl>
                           )}

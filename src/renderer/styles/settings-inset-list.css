@@ -192,9 +192,8 @@
   color: var(--text-tertiary);
 }
 
-/* Permission decisions include one non-allowable rule ("Spawn child agents"). Keep
-   every decision pop-up the same width so the transparent-at-rest chrome aligns
-   with the rows above even when the native select has fewer options. */
+/* Keep every permission decision pop-up the same width so the transparent-at-rest
+   chrome aligns across rows regardless of each native select's option text widths. */
 .settings-permissions-section .select-popup-input {
   min-width: 11rem;
 }

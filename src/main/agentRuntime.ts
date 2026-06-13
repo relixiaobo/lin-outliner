@@ -2578,6 +2578,11 @@ export class AgentRuntime {
     const thinkingLevel = input.effort
       ? resolveSkillEffortOverride(input.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
+    // Attribution for this run's gated/denied approvals, resolved at the delegation
+    // layer from the authoritative context mode (fresh consult → the consultee;
+    // fork → inherited; the user's own agent → undefined). The card resolves the id
+    // to its canonical mention; undefined leaves it unattributed.
+    const requestedByAgentId = input.requestedByAgentId;
     return createConfiguredAgent(input.conversationId, providerConfig, input.messages, this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: input.localWorkspace,
@@ -2603,7 +2608,7 @@ export class AgentRuntime {
       },
       permissionNoticeHandler: (noticeInput, signal) => {
         const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
-        return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal) : Promise.resolve();
+        return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal, requestedByAgentId) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
       allowedTools: input.allowedTools,
@@ -2619,7 +2624,9 @@ export class AgentRuntime {
         : (approvalInput, signal) => {
           const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
           if (!parentConversation) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
-          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal);
+          // Attribute a consultee's gated capability to it (undefined for forks /
+          // the parent's own agent — those stay unattributed).
+          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal, requestedByAgentId);
         },
       afterToolResult: input.afterToolResult,
     }, async (payload, modelForPayload) => {
@@ -5416,6 +5423,7 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     input: AgentToolApprovalInput,
     signal?: AbortSignal,
+    requestedByAgentId?: string,
   ): Promise<AgentToolApprovalResolution> {
     if (signal?.aborted) return { approved: false, deniedReason: 'run_aborted' };
 
@@ -5431,6 +5439,7 @@ export class AgentRuntime {
       reason: input.decision.reason,
       details: input.decision.request.details,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
+      requestedByAgentId,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
       request,
@@ -5545,6 +5554,7 @@ export class AgentRuntime {
       decision: AgentPermissionDenyDecision;
     },
     signal?: AbortSignal,
+    requestedByAgentId?: string,
   ): Promise<void> {
     if (signal?.aborted) return;
     await this.clearPendingPermissionNotices(conversationId, conversation);
@@ -5560,6 +5570,7 @@ export class AgentRuntime {
       target: notice.target,
       reason: input.decision.reason,
       details: notice.details,
+      requestedByAgentId,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
       request,

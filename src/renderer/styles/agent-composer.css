@@ -116,11 +116,20 @@
   overflow-wrap: anywhere;
 }
 
+/* The card's secondary meta lines share one type ramp; only color varies. */
+.agent-approval-attribution,
 .agent-approval-target {
-  color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
   overflow-wrap: anywhere;
+}
+
+.agent-approval-attribution {
+  color: var(--text-faint);
+}
+
+.agent-approval-target {
+  color: var(--text-soft);
 }
 
 .agent-approval-details-toggle {
