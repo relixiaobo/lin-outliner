@@ -26,7 +26,7 @@ import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import { useCommandRunner } from './shared';
 import { buildAgentUserViewContext, composerCurrentNodeId } from './agent/userViewContext';
-import { attachmentNodeInput } from './interactions/attachmentIngest';
+import { createAssetNode } from './interactions/attachmentIngest';
 import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
 import { onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
@@ -461,17 +461,15 @@ export function App() {
     // an old conversation): report not-inserted so the chip never falsely confirms.
     const asset = await api.ingestLocalFileToAsset(path);
     if (!asset) return false;
-    await bridge.run(
-      () => (asset.mimeType.startsWith('image/')
-        ? api.createImageNode(parentId, null, {
-            assetId: asset.id,
-            width: asset.imageWidth ?? null,
-            height: asset.imageHeight ?? null,
-            alt: asset.originalFilename ?? null,
-          })
-        : api.createAttachmentNode(parentId, null, attachmentNodeInput(asset))),
-      { applyFocus: false },
-    );
+    // run() swallows a failed command into a null result (it never rejects), so a
+    // create that fails mid-insert (e.g. the parent was deleted between resolve and
+    // now) would otherwise still report success. Confirm on a real CommandResult, and
+    // drop the now-orphaned asset on failure so ingest+create stays transactional.
+    const result = await createAssetNode(bridge.run, parentId, null, asset, { applyFocus: false });
+    if (!result) {
+      await api.deleteAsset(asset.id);
+      return false;
+    }
     return true;
   }), []);
 

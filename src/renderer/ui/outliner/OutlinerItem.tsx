@@ -35,7 +35,7 @@ import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from 
 import { selectVisibleRowsState } from '../interactions/selectionActions';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import {
-  attachmentNodeInput,
+  createAssetNode,
   dataTransferFiles,
   hasFileTransfer,
   ingestFiles,
@@ -658,11 +658,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const rowIndex = siblings.indexOf(props.nodeId);
     let insertIndex = rowIndex >= 0 ? rowIndex + 1 : null;
     for (const asset of assets) {
-      await props.run(() => api.createImageNode(props.parentId, insertIndex, {
-        assetId: asset.id,
-        width: asset.imageWidth,
-        height: asset.imageHeight,
-      }));
+      await createAssetNode(props.run, props.parentId, insertIndex, asset);
       if (insertIndex !== null) insertIndex += 1;
     }
   };
@@ -670,15 +666,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const insertAssetNodesAt = async (assets: AssetMetadata[], initialIndex: number | null) => {
     let insertIndex = initialIndex;
     for (const asset of assets) {
-      if (asset.mimeType.startsWith('image/')) {
-        await props.run(() => api.createImageNode(props.parentId, insertIndex, {
-          assetId: asset.id,
-          width: asset.imageWidth,
-          height: asset.imageHeight,
-        }));
-      } else {
-        await props.run(() => api.createAttachmentNode(props.parentId, insertIndex, attachmentNodeInput(asset)));
-      }
+      await createAssetNode(props.run, props.parentId, insertIndex, asset);
       if (insertIndex !== null) insertIndex += 1;
     }
   };

@@ -505,19 +505,26 @@ export function InsertIntoOutlinerButton({ path }: { path: string }) {
   const t = useT();
   const [state, setState] = useState<'idle' | 'inserting' | 'inserted'>('idle');
   const resetTimerRef = useRef<number | null>(null);
+  // A ref, not `state`, guards re-entry: the `disabled` attribute only lands on the
+  // next paint, so two clicks in the same frame both read a stale `state === 'idle'`
+  // and would double-insert.
+  const insertingRef = useRef(false);
 
   useEffect(() => () => {
     if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
   }, []);
 
   async function insert() {
-    if (state === 'inserting') return;
+    if (insertingRef.current) return;
+    insertingRef.current = true;
     setState('inserting');
     let inserted = false;
     try {
       inserted = await requestInsertFileIntoOutliner(path);
     } catch {
       inserted = false;
+    } finally {
+      insertingRef.current = false;
     }
     if (!inserted) {
       // Nothing was inserted (file gone / out of root, or the bridge failed): drop
