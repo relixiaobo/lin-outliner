@@ -772,6 +772,72 @@ reference vocabulary when we build it. Caution: neither cc-2.1 nor hermes actual
 built one clean bus — both fragmented into per-consumer registries; "design the event
 taxonomy once" is the cleaner target, but the fragmentation pressure is real.
 
+### Cross-agent help — consultation is a colleague call, not a privilege
+
+**DECIDED (PM, 2026-06-13): an agent is an autonomous colleague, not a sandboxed
+tool.** When an agent needs a specialist it follows the human-team model: it
+privately consults a colleague, gets a bounded result, and stays accountable for
+the final reply. Three rules keep this safe without making it bureaucratic.
+
+**1. Contact is a universal baseline; capability is per-agent.** Two permission
+axes that must never be conflated:
+
+- *Contact* — whether an agent may consult another agent — is **mutual and
+  ungated**, like any colleague being reachable. It is **not** a per-act,
+  user-approved privilege, and there is **no per-agent "who-can-consult-whom"
+  allow-list**.
+- *Capability* — what a given agent may **do** (its tools/permissions) —
+  legitimately **differs per agent**, and is where safety lives. A consulted
+  agent runs under **its own** identity, tools, permissions, memory and judgment
+  (`agentDelegation.ts:615-620`); the caller borrows nothing. A read-only agent
+  consulting a powerful one gains no power — it gets the powerful agent's
+  considered result, and that agent stays accountable for using its own
+  authority. The consultee's risky actions still gate through **its own**
+  permissions and surface to the user (today via the parent conversation's
+  approval UI — it should be attributed to the consultee). This is the
+  *permission-approval* surface, **not** a clarifying question: the 2026-06-08
+  "subagents never ask the user mid-execution" rule still holds.
+
+**2. Trust is set at the team level.** The user's configured agents are the team;
+within the team any agent may consult any agent. `disabledAgents` is the
+team-roster switch (an agent is on/off — `agentDelegation.ts:603-605`), **not** a
+per-pair gate. No allow-list machinery.
+
+**3. A consultation is a sidechain, not a membership change.** It is a fresh
+child run: the consulted agent does **not** join the conversation, speak in it,
+or get injected into the transcript; the DM stays 1:1 and the caller owns the
+reply. **Visible** participation is a different thing — that is a **Channel** (you
+add an agent to the room). A persistent agent↔agent relationship thread (a "DM
+between two agents") is not wrong under the colleague model, but it is a much
+larger build (it reopens membership, memory visibility, retention, search,
+list-surface) and is **deferred**; v1 consultation is one-shot runs — **no stored
+relationship and no new conversation `kind`**.
+
+**Already true (no build).** Fresh-child identity/permissions/memory-owner
+(`agentDelegation.ts:615-620`), per-principal Dream isolation, sidechain
+rendering + the Task Panel's observability, and the runaway guards — depth
+(`DEFAULT_MAX_DELEGATION_DEPTH = 3`), cycle detection (ancestry path), concurrency
+cap (`MAX_CONCURRENT_CHILD_RUNS = 4`) — are all in place
+(`agentDelegation.ts:1197-1228`). These guards are exactly what makes ungated
+contact safe.
+
+**Build note (the one divergence).** `agent.delegate.spawn` currently defaults to
+`'ask'` in `balanced`/`ask_first` (`agentPermissionModel.ts:91,151-163`) — contact
+is still gated per-act. The intended posture is **baseline-allow**; safety stays
+on each agent's own capability permissions + the guards above. This is a
+security-sensitive default change → its own small, PM-ratified PR. Surfacing
+polish (framing a run as "consulted @B" vs a generic task; a user-facing "consult
+@X" entry) is **deferred** — the Task Panel already makes consultations
+observable.
+
+**Relationship to `/research`.** Generic research is the agent using its **own**
+capability (a read-only `context: fork`), not a consultation — no second
+principal. Consultation is for when a real **specialist's** judgment is the point.
+(See the `research-skill` plan / #232.)
+
+This consolidates and supersedes the closed `agent-private-consultation`
+exploration (#233).
+
 ### What dissolves: Session
 
 Splits **three** ways (§Data structure): the **conversation log** (messages, persists,

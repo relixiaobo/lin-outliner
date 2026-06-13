@@ -67,7 +67,12 @@ clean-cut, no migration).
   `{seq, eventId}` evidence + watermark scheme everywhere; child compaction is
   event-sourced like a conversation's. The former entity-grade species
   (transcript payload snapshots, the `runId:message:N` codec, the positional
-  Dream cursor) is deleted.
+  Dream cursor) is deleted. **Consultation** — an agent privately asking a
+  colleague for help — is this delegation primitive used as a *colleague call*:
+  contact is an ungated team-level baseline, capability stays per-agent (the
+  consultee runs under its own authority), and the consultee is a sidechain,
+  never a conversation member. See `agent-conversation-model` §"Cross-agent help
+  — consultation is a colleague call, not a privilege".
 - **Peer agent (a Channel member)** — multiple agent Principals share one conversation
   with the user; routed by `addressedTo` (a run is produced iff a principal is addressed;
   coordinator = the default addressee, PM-ratified 2026-06-10). ✅ (M3-A #179,
