@@ -285,7 +285,6 @@ Use these default desktop tokens before adding component-specific values:
   --control-size-xs: 20px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
-  --row-h-compact: 22px;
   --row-h-dense: var(--line-content);
   --row-h-comfortable: 44px;
   --icon-size-xs: 12px;
@@ -694,10 +693,11 @@ scale font size with viewport width.
   left edge instead. Settings uses the distinct
   `--settings-content-max-width` (920px) utility cap because grouped control grids
   need more measure than prose.
-- **Row-height tier:** `--row-h-compact` (22px), `--row-h-dense` (26px), and
-  `--row-h-comfortable` (44px) are deliberate density steps. Outliner rows use the
-  dense step; Settings inset rows use the comfortable step; agent process rows
-  keep compact line/padding geometry.
+- **Row-height tier:** `--row-h-dense` (26px) and `--row-h-comfortable` (44px) are
+  the two consumed density steps. Outliner rows use the dense step; Settings inset
+  rows use the comfortable step; agent process rows stay compact through their own
+  line/padding geometry rather than a fixed row-height token, so the tier carries
+  no separate "compact" rung.
 - **Text gutters:** outliner, agent, and settings body text starts are intentionally
   tiered by each surface's affordance width. Do not flatten them into one x-offset;
   converge within a surface instead.
