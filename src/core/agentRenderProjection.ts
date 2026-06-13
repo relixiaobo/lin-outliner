@@ -339,17 +339,22 @@ export function buildAgentRenderProjection(
   const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
   const rows = buildActiveRows(state, activePath, entities);
   const transcriptRows = buildTranscriptRows(state, entities);
-  let streaming: AgentStreamingRenderState | null = null;
+  const multiAgent = isMultiAgentConversation(state.conversation.members);
 
-  for (const message of activePath) {
-    const rowId = `${message.role}:${message.id}`;
-    if (message.role === 'assistant' && message.status === 'streaming') {
-      streaming = {
-        messageId: message.id,
-        rowId,
-        text: textFromContent(message.content),
-        updatedAt: message.updatedAt,
-      };
+  // The streaming tail drives only the DM composer/transcript; a multi-agent
+  // Channel nulls dmStreaming, so skip the active-path scan there entirely.
+  let streaming: AgentStreamingRenderState | null = null;
+  if (!multiAgent) {
+    for (const message of activePath) {
+      const rowId = `${message.role}:${message.id}`;
+      if (message.role === 'assistant' && message.status === 'streaming') {
+        streaming = {
+          messageId: message.id,
+          rowId,
+          text: textFromContent(message.content),
+          updatedAt: message.updatedAt,
+        };
+      }
     }
   }
 
@@ -370,7 +375,6 @@ export function buildAgentRenderProjection(
   applyMessageAddressing(entities, options);
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
   const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
-  const multiAgent = isMultiAgentConversation(state.conversation.members);
 
   return {
     conversationId: state.conversation.id,
@@ -399,7 +403,8 @@ export function buildAgentRenderProjection(
     taskIds,
     childRunIds,
     entities,
-    dmStreaming: multiAgent ? null : streaming,
+    // Already null for multi-agent Channels (the scan above is skipped there).
+    dmStreaming: streaming,
   };
 }
 

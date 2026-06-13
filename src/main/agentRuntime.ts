@@ -2776,6 +2776,8 @@ export class AgentRuntime {
       body?: string;
       source?: AgentTaskSource;
       actor?: AgentActor;
+      /** Badge-only when false: fold unread but skip the OS notification (default true). */
+      deliverOs?: boolean;
     },
   ): Promise<void> {
     if (conversation.eventState.notifications[input.notificationId]) return;
@@ -2794,7 +2796,7 @@ export class AgentRuntime {
     // attention (the badge rides the dedicated conversation_attention event), so a
     // rebuild would produce byte-identical content. Attention is the only signal.
     this.emitConversationAttention(conversationId, conversation);
-    this.deliverOsNotification({ title: input.title, body, conversationId });
+    if (input.deliverOs !== false) this.deliverOsNotification({ title: input.title, body, conversationId });
   }
 
   private async flushChildRunNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
@@ -3027,10 +3029,15 @@ export class AgentRuntime {
   private async persistAndEmitIdle(
     conversationId: string,
     conversation: AgentConversationState,
-    options: { flushChildRunNotifications?: boolean } = {},
+    options: { flushChildRunNotifications?: boolean; emitGuard?: () => boolean } = {},
   ) {
     await this.flushPendingDreamFinishedEvents(conversationId, conversation);
     conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+    // The detached idle watcher passes a guard: a teardown (reset/close/delete)
+    // landing during the awaits above must abort the emit, or an `agent_idle`
+    // projection races/duplicates the `conversation_reset` emit (or fires on a
+    // closed conversation).
+    if (options.emitGuard && !options.emitGuard()) return;
     this.emitProjection(conversationId, 'agent_idle');
     if (options.flushChildRunNotifications !== false) {
       await this.flushChildRunNotifications(conversationId, conversation);
@@ -4091,11 +4098,7 @@ export class AgentRuntime {
   }
 
   private notifyChannelDrainWaiters(conversation: AgentConversationState): void {
-    if (
-      conversation.pendingChannelTurns.length > 0
-      || conversation.channelTurnStartsInProgress > 0
-      || this.activeChannelRuns(conversation).length > 0
-    ) return;
+    if (!this.channelFullyIdle(conversation)) return;
     const waiters = [...conversation.channelDrainWaiters];
     conversation.channelDrainWaiters.clear();
     for (const resolve of waiters) resolve();
@@ -6086,9 +6089,11 @@ export class AgentRuntime {
     void (async () => {
       try {
         await this.awaitChannelIdle(conversation);
-        // A teardown (reset/close/delete) supersedes this watcher; skip the emit
-        // so we never persist/emit on a conversation that is gone or restarted.
-        if (stillOwned()) await this.persistAndEmitIdle(conversationId, conversation);
+        // A teardown (reset/close/delete) supersedes this watcher; skip the emit so
+        // we never persist/emit on a conversation that is gone or restarted. The
+        // emitGuard re-checks ownership AFTER persistAndEmitIdle's internal awaits,
+        // closing the window where a teardown lands mid-emit.
+        if (stillOwned()) await this.persistAndEmitIdle(conversationId, conversation, { emitGuard: stillOwned });
       } catch (error) {
         this.emitError(conversationId, error instanceof Error ? error.message : String(error));
       } finally {
@@ -6143,6 +6148,12 @@ export class AgentRuntime {
       }
     } finally {
       this.maybeClearChannelStopRequested(conversation);
+      // Re-pump after clearing the stop flag, like finishChannelTurn does: a send
+      // that enqueued a turn during the await above had its pump bailed while the
+      // flag was still set, and nothing else would re-pump it (no active run to
+      // finish) — it would stick in pendingChannelTurns forever.
+      void this.pumpChannelTurns(conversationId, conversation)
+        .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
       this.notifyChannelDrainWaiters(conversation);
     }
   }
@@ -6203,24 +6214,35 @@ export class AgentRuntime {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     } finally {
       await runState.settled;
-      const run = conversation.eventState.runs[runState.id];
-      const assistantMessageId = latestAssistantMessageIdForRun(conversation.eventState, runState.id);
-      if (run?.status === 'completed' && assistantMessageId) {
-        // A delivered reply bumps unread for a backgrounded Channel (badge-only).
-        await this.raiseChannelReplyUnread(conversationId, conversation, runState, assistantMessageId);
-        if (!conversation.channelStopRequested) {
-          const reply = conversation.eventState.messages[assistantMessageId];
-          const handoffTurns = channelAgentMembers(reply?.addressedTo ?? [])
-            .filter((target) => target.agentId !== request.agentId)
-            .map((target): ChannelTurnRequest => ({
-              agentId: target.agentId,
-              addressedByMessageId: assistantMessageId,
-            }));
-          this.enqueueChannelTurns(conversationId, conversation, handoffTurns);
+      try {
+        const run = conversation.eventState.runs[runState.id];
+        const assistantMessageId = latestAssistantMessageIdForRun(conversation.eventState, runState.id);
+        if (run?.status === 'completed' && assistantMessageId) {
+          // Enqueue hand-off turns FIRST (synchronous) so channelRunsActive does not
+          // dip false between this run's agent_end projection and the next turn —
+          // before the awaited, backgrounded-only unread raise would widen that gap.
+          if (!conversation.channelStopRequested) {
+            const reply = conversation.eventState.messages[assistantMessageId];
+            const handoffTurns = channelAgentMembers(reply?.addressedTo ?? [])
+              .filter((target) => target.agentId !== request.agentId)
+              .map((target): ChannelTurnRequest => ({
+                agentId: target.agentId,
+                addressedByMessageId: assistantMessageId,
+              }));
+            this.enqueueChannelTurns(conversationId, conversation, handoffTurns);
+          }
+          // A delivered reply bumps unread for a backgrounded Channel (badge-only).
+          await this.raiseChannelReplyUnread(conversationId, conversation, runState, assistantMessageId);
         }
+        await this.flushPendingDreamFinishedEvents(conversationId, conversation);
+      } catch (error) {
+        // Best-effort: a notification / dream-flush write failure must NOT abort the
+        // drain release below, or the detached watcher and any drainChannelTurnsForTest
+        // park forever and the Channel wedges (channelRunsActive stuck) with no recovery.
+        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
       }
+      // Drain release — MUST run even if the bookkeeping above threw.
       this.maybeClearChannelStopRequested(conversation);
-      await this.flushPendingDreamFinishedEvents(conversationId, conversation);
       void this.pumpChannelTurns(conversationId, conversation)
         .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
       this.notifyChannelDrainWaiters(conversation);
@@ -6243,17 +6265,15 @@ export class AgentRuntime {
     assistantMessageId: string,
   ): Promise<void> {
     if (this.viewedConversationId === conversationId) return;
-    const notificationId = `channel-reply:${assistantMessageId}`;
-    if (conversation.eventState.notifications[notificationId]) return;
-    await this.appendConversationEvents(conversationId, conversation, [{
-      type: 'notification.created',
-      actor: systemActor(),
-      notificationId,
+    // Reuse the shared notification path (idempotency + notification.created +
+    // conversation_attention fold); badge-only — no OS ding for in-Channel chatter.
+    await this.emitTaskNotification(conversationId, conversation, {
+      notificationId: `channel-reply:${assistantMessageId}`,
       kind: 'channel_reply',
       title: `@${agentMentionToken(runState.executingAgentId)}`,
       source: { type: 'run', runId: runState.id },
-    }]);
-    this.emitConversationAttention(conversationId, conversation);
+      deliverOs: false,
+    });
   }
 
   private async createChannelTurnAgent(
@@ -6505,8 +6525,13 @@ export class AgentRuntime {
           // run so the per-run detail view can surface it, without writing
           // streaming deltas to the shared log (concurrent runs would interleave,
           // and off-active-path siblings never reach the transcript anyway). The
-          // final utterance is appended whole on message_end.
-          conversation.activeRun.assistantText = assistantVisibleText(event.message);
+          // final utterance is appended whole on message_end. Only update on
+          // NON-EMPTY text: each continuation segment opens with an empty
+          // message_start, which would otherwise blank the detail view mid-turn
+          // (and stay blank through a tool-only segment), defeating the
+          // cross-segment retention.
+          const visible = assistantVisibleText(event.message);
+          if (visible) conversation.activeRun.assistantText = visible;
           return;
         }
         await this.ensureAssistantStarted(conversationId, conversation, event.message);
