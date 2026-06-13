@@ -153,8 +153,6 @@ export interface AgentChildAgentCreateInput {
   messages: AgentMessage[];
   systemPrompt: string;
   executingAgentId: string;
-  /** The consultee's agent-definition name (its persona), used to attribute its approval cards. */
-  agentType?: string;
   parentAgentId: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
@@ -794,7 +792,6 @@ export class AgentDelegationRuntime {
       messages: input.initialMessages,
       systemPrompt,
       executingAgentId: input.executingAgentId,
-      agentType: input.definition.name,
       parentAgentId: input.parentAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
       memoryOriginWorkspace: input.memoryOriginWorkspace,

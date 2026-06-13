@@ -139,10 +139,13 @@ gated and has no per-pair "who-can-consult-whom" allow-list. Safety lives where
 it belongs: a consulted agent runs under **its own** identity, tools, and
 capability permissions, plus the depth/cycle/concurrency guards
 (`agentDelegation.ts`). The consultee's own risky actions still gate under its
-own permissions; when such an approval surfaces in the consulting conversation it
-is **attributed to the consultee** (`AgentApprovalRequestView.requestedByAgent`),
-not the conversation's own agent. (`delegate.status/send/stop` are likewise
-baseline-allow.) See `agent-conversation-model` "Cross-agent help".
+own permissions; when such an approval (or a hard-denial notice) surfaces in the
+consulting conversation it is **attributed to the consultee**
+(`AgentApprovalRequestView.requestedByAgentId`, resolved to its mention token),
+not the conversation's own agent — and a **fork** (a child that runs AS the
+parent agent) stays unattributed, like the parent's own actions.
+(`delegate.status/send/stop` are likewise baseline-allow.) See
+`agent-conversation-model` "Cross-agent help".
 
 Skill files follow the ordinary `file_write` / `file_edit` permission decision.
 After that decision, the file-tool gateway still validates skill content, records

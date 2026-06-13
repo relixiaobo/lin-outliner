@@ -820,11 +820,10 @@ function AgentApprovalCard({
     <div className="agent-approval-card" role="group" aria-label={approval.title}>
       <div className="agent-approval-copy">
         <div className="agent-approval-title">{approval.title}</div>
-        {approval.requestedByAgent ? (
+        {approval.requestedByAgentId ? (
           <div className="agent-approval-attribution">
             {t.agent.composer.approvalRequestedBy({
-              agent: approval.requestedByAgent.agentType
-                ?? agentMentionToken(approval.requestedByAgent.agentId),
+              agent: agentMentionToken(approval.requestedByAgentId),
             })}
           </div>
         ) : null}

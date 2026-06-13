@@ -425,7 +425,7 @@ test.describe('agent composer controls', () => {
         target: '/work/.env',
         reason: 'Reading a sensitive local path.',
         details: [{ label: 'Permission kind', value: 'file.read.sensitive_local_path' }],
-        requestedByAgent: { agentId: 'project:abc123:researcher', agentType: 'researcher' },
+        requestedByAgentId: 'project:abc123:researcher',
       },
       timestamp: 1_800_000_003_200,
     });
@@ -433,7 +433,7 @@ test.describe('agent composer controls', () => {
     const card = page.locator('.agent-approval-card');
     await expect(card).toBeVisible();
     await expect(card.getByText('Approve sensitive file read?')).toBeVisible();
-    // The consultee's persona is named — the parent's own agent is not the requester.
+    // The consultee is named via its canonical mention token — the parent's own agent is not the requester.
     await expect(card.locator('.agent-approval-attribution')).toHaveText('Requested by @researcher');
   });
 

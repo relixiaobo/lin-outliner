@@ -467,14 +467,14 @@ describe('agent runtime childRuns', () => {
     sendPromise.finally(() => { settled = true; }).catch(() => undefined);
 
     const resolved = new Set<string>();
-    const attributions: Array<{ agentId: string; agentType?: string } | undefined> = [];
+    const attributions: Array<string | undefined> = [];
     while (!settled) {
       const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
         event.type === 'approval_request' && !resolved.has(event.requestId)
       ));
       if (approval) {
         resolved.add(approval.requestId);
-        attributions.push(approval.request.requestedByAgent);
+        attributions.push(approval.request.requestedByAgentId);
         // Deny so the sensitive read never touches disk; the run still completes.
         await runtime.resolveApproval(conversationId, approval.requestId, false);
         continue;
@@ -484,9 +484,83 @@ describe('agent runtime childRuns', () => {
     await sendPromise;
 
     expect(script.pendingCount()).toBe(0);
-    // The consultee's gated read surfaced in the parent conversation, attributed
-    // to the consultee (its agent id + persona) — never the parent's own agent.
-    expect(attributions).toContainEqual({ agentId: researcherAgentId, agentType: 'researcher' });
+    // EXACTLY one approval surfaced — the consultee's sensitive read — attributed to
+    // the consultee (resolved to its canonical mention by the card). The ungated
+    // spawn raised none, and the parent's own agent is never the requester.
+    expect(attributions).toEqual([researcherAgentId]);
+  });
+
+  test('a fork sub-run (no agent_type) leaves its gated approval unattributed', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-fork-attribution-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-fork-attribution-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        // Parent forks its OWN context (no agent_type) — the fork runs AS the parent agent.
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'fork to inspect config',
+            prompt: 'Inspect the local config.',
+          }, { id: 'tool-agent-fork' }),
+        ], { stopReason: 'toolUse' }),
+        // The fork hits an 'ask'-level capability (sensitive read).
+        fauxAssistantMessage([
+          fauxToolCall('file_read', { file_path: path.join(localRoot, '.env') }, { id: 'tool-fork-read' }),
+        ], { stopReason: 'toolUse' }),
+        // The fork wraps up after its read is denied, then the parent's final turn.
+        fauxAssistantMessage(fauxText('Fork done.')),
+        fauxAssistantMessage(fauxText('Parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    const conversationId = conversation.conversationId;
+    const sendPromise = runtime.sendMessage(conversationId, 'Fork and inspect.');
+    let settled = false;
+    sendPromise.finally(() => { settled = true; }).catch(() => undefined);
+
+    const resolved = new Set<string>();
+    const attributions: Array<string | undefined> = [];
+    while (!settled) {
+      const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+        event.type === 'approval_request' && !resolved.has(event.requestId)
+      ));
+      if (approval) {
+        resolved.add(approval.requestId);
+        attributions.push(approval.request.requestedByAgentId);
+        await runtime.resolveApproval(conversationId, approval.requestId, false);
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await sendPromise;
+
+    expect(script.pendingCount()).toBe(0);
+    // A fork executes under the parent's OWN identity (executingAgentId ===
+    // parentAgentId), so it is NOT a consultee — its approval stays unattributed,
+    // never rendered as a phantom "@fork" persona.
+    expect(attributions).toEqual([undefined]);
   });
 
   test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {

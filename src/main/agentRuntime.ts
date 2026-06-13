@@ -2539,6 +2539,14 @@ export class AgentRuntime {
     const thinkingLevel = input.effort
       ? resolveSkillEffortOverride(input.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
+    // A consulted agent (a fresh child run) is a DIFFERENT agent than the parent,
+    // so its gated/denied capabilities surface in the parent conversation
+    // attributed to it. A fork runs AS the parent's own agent (executingAgentId
+    // === parentAgentId) and has no consultee, so it stays unattributed like the
+    // parent's own actions. The card resolves the id to its canonical mention.
+    const requestedByAgentId = input.executingAgentId !== input.parentAgentId
+      ? input.executingAgentId
+      : undefined;
     return createConfiguredAgent(input.conversationId, providerConfig, input.messages, this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: input.localWorkspace,
@@ -2564,7 +2572,7 @@ export class AgentRuntime {
       },
       permissionNoticeHandler: (noticeInput, signal) => {
         const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
-        return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal) : Promise.resolve();
+        return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal, requestedByAgentId) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
       allowedTools: input.allowedTools,
@@ -2580,12 +2588,9 @@ export class AgentRuntime {
         : (approvalInput, signal) => {
           const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
           if (!parentConversation) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
-          // A consulted agent's gated capability surfaces in the parent's approval
-          // UI — attribute it to the consultee, not the parent conversation's agent.
-          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal, {
-            agentId: input.executingAgentId,
-            agentType: input.agentType,
-          });
+          // Attribute a consultee's gated capability to it (undefined for forks /
+          // the parent's own agent — those stay unattributed).
+          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal, requestedByAgentId);
         },
       afterToolResult: input.afterToolResult,
     }, async (payload, modelForPayload) => {
@@ -5382,7 +5387,7 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     input: AgentToolApprovalInput,
     signal?: AbortSignal,
-    requestedByAgent?: { agentId: string; agentType?: string },
+    requestedByAgentId?: string,
   ): Promise<AgentToolApprovalResolution> {
     if (signal?.aborted) return { approved: false, deniedReason: 'run_aborted' };
 
@@ -5398,7 +5403,7 @@ export class AgentRuntime {
       reason: input.decision.reason,
       details: input.decision.request.details,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
-      requestedByAgent,
+      requestedByAgentId,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
       request,
@@ -5513,6 +5518,7 @@ export class AgentRuntime {
       decision: AgentPermissionDenyDecision;
     },
     signal?: AbortSignal,
+    requestedByAgentId?: string,
   ): Promise<void> {
     if (signal?.aborted) return;
     await this.clearPendingPermissionNotices(conversationId, conversation);
@@ -5528,6 +5534,7 @@ export class AgentRuntime {
       target: notice.target,
       reason: input.decision.reason,
       details: notice.details,
+      requestedByAgentId,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
       request,
