@@ -11,7 +11,6 @@ mock.module('electron', () => ({
 }));
 
 const {
-  flushWindowStateWrites,
   loadWindowState,
   setWindowStateDisplayWorkAreasForTests,
   trackWindowState,
@@ -28,11 +27,10 @@ afterEach(async () => {
 });
 
 describe('window state persistence', () => {
-  test('writes compact JSON asynchronously and restores visible bounds', async () => {
+  test('writes compact JSON synchronously and restores visible bounds', async () => {
     const window = new FakeWindow();
     trackWindowState(window as never);
     window.emit('close');
-    await flushWindowStateWrites();
 
     const raw = await readFile(path.join(userData, 'window-state.json'), 'utf8');
     expect(raw).toBe('{"bounds":{"x":20,"y":30,"width":900,"height":700},"maximized":true}');

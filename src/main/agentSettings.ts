@@ -24,7 +24,7 @@ import type {
   AgentProviderSettingsView,
   ProviderAuthView,
 } from '../core/types';
-import { readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
+import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
 
 const PROVIDERS_FILE = 'agent-providers.json';
@@ -617,7 +617,7 @@ async function readSecretsWithStatus(): Promise<{ secrets: SecretFile; readable:
 
 async function writeSecretFile(file: SecretFile) {
   const envelope: SecretEnvelope = { credentials: file.credentials };
-  await writeJsonFile(secretPath(), envelope, privateJsonFileOptions());
+  await writeJsonFile(secretPath(), envelope, PRIVATE_JSON_FILE_OPTIONS);
 }
 
 /**
@@ -628,7 +628,7 @@ async function writeSecretFile(file: SecretFile) {
 async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<SecretFile> {
   return updateJsonFile(secretPath(), { credentials: {} }, normalizeSecretFile, (file) => {
     mutator(file);
-  }, privateJsonFileOptions());
+  }, PRIVATE_JSON_FILE_OPTIONS);
 }
 
 function normalizeSecretFile(value: unknown): SecretFile {
@@ -637,10 +637,6 @@ function normalizeSecretFile(value: unknown): SecretFile {
     : {};
   const credentials = envelope.credentials;
   return { credentials: credentials && typeof credentials === 'object' ? credentials : {} };
-}
-
-function privateJsonFileOptions() {
-  return process.platform === 'win32' ? {} : { mode: 0o600, directoryMode: 0o700 };
 }
 
 function providerPath() {

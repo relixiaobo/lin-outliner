@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { atomicWriteFile, readJsonOrDefault, updateJsonFile, writeJsonFile } from '../../src/main/jsonFileStore';
+import {
+  atomicWriteFile,
+  getJsonFileWriteLockCountForTests,
+  readJsonOrDefault,
+  updateJsonFile,
+  writeJsonFile,
+} from '../../src/main/jsonFileStore';
 
 let root = '';
 
@@ -70,6 +76,27 @@ describe('json file store', () => {
 
     expect(['first', 'second', 'third']).toContain(await readFile(filePath, 'utf8'));
   });
+
+  test('releases settled write locks so unique paths do not accumulate permanently', async () => {
+    await Promise.all(Array.from({ length: 20 }, (_, index) => {
+      return writeJsonFile(path.join(root, `unique-${index}.json`), { index });
+    }));
+
+    expect(getJsonFileWriteLockCountForTests()).toBe(0);
+  });
+
+  test('rejects nested writes to the same path instead of hanging', async () => {
+    const filePath = path.join(root, 'nested.json');
+
+    await expect(updateJsonFile(
+      filePath,
+      { value: 0 },
+      parseValue,
+      async () => {
+        await writeJsonFile(filePath, { value: 1 });
+      },
+    )).rejects.toThrow('Nested JSON file write lock');
+  });
 });
 
 function parseCounter(value: unknown): { values: string[] } {
@@ -77,4 +104,9 @@ function parseCounter(value: unknown): { values: string[] } {
   return {
     values: Array.isArray(raw.values) ? raw.values.filter((item): item is string => typeof item === 'string') : [],
   };
+}
+
+function parseValue(value: unknown): { value: number } {
+  const raw = value && typeof value === 'object' ? value as { value?: unknown } : {};
+  return { value: typeof raw.value === 'number' ? raw.value : 0 };
 }

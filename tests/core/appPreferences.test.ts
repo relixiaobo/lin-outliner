@@ -10,7 +10,6 @@ mock.module('electron', () => ({
 }));
 
 const {
-  flushAppPreferenceWrites,
   loadAppPreferences,
   resetAppPreferencesForTests,
   saveLanguagePreference,
@@ -28,11 +27,10 @@ afterEach(async () => {
 });
 
 describe('app preferences persistence', () => {
-  test('keeps sync reads and async atomic writes byte-compatible', async () => {
+  test('keeps sync reads and sync atomic writes byte-compatible', async () => {
     saveThemePreference('dark');
     saveLanguagePreference('zh-Hans');
     saveOsNotificationsPreference(true);
-    await flushAppPreferenceWrites();
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
     expect(raw).toBe('{"theme":"dark","language":"zh-Hans","osNotificationsEnabled":true}');

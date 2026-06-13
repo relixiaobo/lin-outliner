@@ -58,7 +58,7 @@ export class AssetService {
       ? await this.derivePdfThumbnail(assetPath, originalFilename)
       : undefined;
     if (thumbnailAssetId) metadata.thumbnailAssetId = thumbnailAssetId;
-    await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, assetMetadataJsonOptions());
+    await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, { trailingNewline: false });
     this.metaCache.set(id, metadata);
     return metadata;
   }
@@ -188,7 +188,7 @@ export class AssetService {
         ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
       };
       await atomicWriteFile(join(this.root, `${id}.png`), pngBytes);
-      await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, assetMetadataJsonOptions());
+      await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, { trailingNewline: false });
       this.metaCache.set(id, metadata);
       return id;
     } finally {
@@ -199,10 +199,6 @@ export class AssetService {
 
 function notFoundResponse(): Response {
   return new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
-}
-
-function assetMetadataJsonOptions() {
-  return { trailingNewline: false };
 }
 
 function nanoid(size = 21): string {

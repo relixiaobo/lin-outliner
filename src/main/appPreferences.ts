@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
-import { atomicWriteFile } from './jsonFileStore';
+import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
 // already per-clone isolated). The appearance/theme preference and the display
@@ -28,7 +28,6 @@ const DEFAULTS: PersistedAppPreferences = {
 };
 
 let currentPreferences: PersistedAppPreferences | null = null;
-let pendingPreferenceWrite: Promise<void> = Promise.resolve();
 
 function preferencesFilePath(): string {
   return join(app.getPath('userData'), 'app-preferences.json');
@@ -64,13 +63,8 @@ export function saveOsNotificationsPreference(enabled: boolean): void {
   savePreferences({ osNotificationsEnabled: enabled });
 }
 
-export async function flushAppPreferenceWrites(): Promise<void> {
-  await pendingPreferenceWrite;
-}
-
 export function resetAppPreferencesForTests(): void {
   currentPreferences = null;
-  pendingPreferenceWrite = Promise.resolve();
 }
 
 // Read-modify-write a subset of preferences, preserving the rest. Best effort —
@@ -79,7 +73,9 @@ export function resetAppPreferencesForTests(): void {
 function savePreferences(patch: Partial<PersistedAppPreferences>): void {
   const next: PersistedAppPreferences = { ...(currentPreferences ?? loadAppPreferences()), ...patch };
   currentPreferences = next;
-  pendingPreferenceWrite = pendingPreferenceWrite
-    .then(() => atomicWriteFile(preferencesFilePath(), JSON.stringify(next)))
-    .catch(() => undefined);
+  try {
+    writeJsonFileSync(preferencesFilePath(), next, { pretty: false, trailingNewline: false });
+  } catch {
+    // ignore — see note above
+  }
 }

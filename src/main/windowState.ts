@@ -2,7 +2,7 @@ import * as electron from 'electron';
 import type { BrowserWindow, Rectangle } from 'electron';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { atomicWriteFile } from './jsonFileStore';
+import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist the main window's size/position (and maximized state) across launches,
 // so the app reopens where the user left it instead of always at the default
@@ -19,7 +19,6 @@ interface RestoredWindowState {
 }
 
 const SAVE_DEBOUNCE_MS = 400;
-let pendingWindowStateWrite: Promise<void> = Promise.resolve();
 let getDisplayWorkAreas = () => electron.screen.getAllDisplays().map((display) => display.workArea);
 
 function stateFilePath(): string {
@@ -47,18 +46,16 @@ export function trackWindowState(window: BrowserWindow): void {
       bounds: window.getNormalBounds(),
       maximized: window.isMaximized(),
     };
-    pendingWindowStateWrite = pendingWindowStateWrite
-      .then(() => atomicWriteFile(stateFilePath(), JSON.stringify(state)))
-      .catch(() => undefined);
+    try {
+      writeJsonFileSync(stateFilePath(), state, { pretty: false, trailingNewline: false });
+    } catch {
+      // Best effort — losing window geometry is not worth surfacing an error.
+    }
   };
   const saveSoon = debounce(save, SAVE_DEBOUNCE_MS);
   window.on('resize', saveSoon);
   window.on('move', saveSoon);
   window.on('close', save);
-}
-
-export async function flushWindowStateWrites(): Promise<void> {
-  await pendingWindowStateWrite;
 }
 
 export function setWindowStateDisplayWorkAreasForTests(provider: (() => Rectangle[]) | null): void {

@@ -6,7 +6,7 @@ import {
   type GlobalToolPermissionConfig,
   type GlobalToolPermissionSettings,
 } from './agentToolPermissionRules';
-import { readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
+import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 
 const AGENT_TOOL_PERMISSIONS_FILE = 'agent-tool-permissions.json';
 
@@ -24,7 +24,7 @@ export async function readAgentToolPermissionSettingsView() {
 
 export async function writeAgentToolPermissionSettings(settings: GlobalToolPermissionSettings): Promise<GlobalToolPermissionConfig> {
   const config = parseGlobalToolPermissionSettings(settings);
-  await writeJsonFile(permissionPath(), globalToolPermissionConfigToSettings(config), privateJsonFileOptions());
+  await writeJsonFile(permissionPath(), globalToolPermissionConfigToSettings(config), PRIVATE_JSON_FILE_OPTIONS);
   return config;
 }
 
@@ -50,7 +50,7 @@ export async function appendAgentToolPermissionAllowRule(ruleValue: string): Pro
       if (!permissions.allow.includes(ruleValue)) permissions.allow.push(ruleValue);
       return globalToolPermissionConfigToSettings(parseGlobalToolPermissionSettings({ permissions }));
     },
-    privateJsonFileOptions(),
+    PRIVATE_JSON_FILE_OPTIONS,
   );
   return parseGlobalToolPermissionSettings(nextSettings);
 }
@@ -69,10 +69,6 @@ function normalizedRuleList(value: unknown): string[] {
 
 function parsePermissionSettings(value: unknown): Required<GlobalToolPermissionSettings> {
   return globalToolPermissionConfigToSettings(parseGlobalToolPermissionSettings(value));
-}
-
-function privateJsonFileOptions() {
-  return process.platform === 'win32' ? {} : { mode: 0o600, directoryMode: 0o700 };
 }
 
 function permissionPath() {

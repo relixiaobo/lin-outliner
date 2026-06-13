@@ -82,9 +82,8 @@ import {
 import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
-import { flushWindowStateWrites, loadWindowState, trackWindowState } from './windowState';
+import { loadWindowState, trackWindowState } from './windowState';
 import {
-  flushAppPreferenceWrites,
   loadAppPreferences,
   saveLanguagePreference,
   saveOsNotificationsPreference,
@@ -2605,8 +2604,6 @@ if (!app.requestSingleInstanceLock()) {
       Promise.allSettled([
         documentService.flushPendingChanges(),
         agentRuntime.drainPendingWrites(),
-        flushAppPreferenceWrites(),
-        flushWindowStateWrites(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2500)),
     ]).finally(() => app.exit(0));

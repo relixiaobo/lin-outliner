@@ -5,7 +5,7 @@ import type {
   AgentSkillProvenanceRecord,
   AgentSkillProvenanceStore,
 } from './agentSkills';
-import { readJsonOrDefault, updateJsonFile } from './jsonFileStore';
+import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile } from './jsonFileStore';
 
 const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
 
@@ -34,7 +34,7 @@ export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
             entries[skillFile] = record;
           }
         },
-        privateJsonFileOptions(),
+        PRIVATE_JSON_FILE_OPTIONS,
       );
     },
   };
@@ -70,10 +70,6 @@ function parsePreviousVersion(value: unknown): AgentSkillPreviousVersion | null 
     content: raw.content,
     ...(typeof raw.agentHash === 'string' ? { agentHash: raw.agentHash } : {}),
   };
-}
-
-function privateJsonFileOptions() {
-  return process.platform === 'win32' ? {} : { mode: 0o600, directoryMode: 0o700 };
 }
 
 function provenancePath() {
