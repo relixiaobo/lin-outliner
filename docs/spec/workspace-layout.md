@@ -301,7 +301,7 @@ resolve it through the preload preview API:
 - `preview_resolve_source` returns source metadata and never exposes raw payload
   filesystem paths to the renderer.
 - `preview_read_text` is capped to bounded text reads.
-- `preview_read_bytes` is capped to bounded binary reads for image preview.
+- `preview_read_bytes` is capped to bounded binary reads for image/PDF previews.
 - `preview_list_directory` lists trusted local-file directories with a capped
   result set.
 

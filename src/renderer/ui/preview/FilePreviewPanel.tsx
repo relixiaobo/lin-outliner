@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -477,13 +477,16 @@ function PdfPageCanvas({
     | { status: 'ready' }
     | { status: 'error'; error?: string }
   >({ status: 'rendering' });
-  const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
-    if (!canvas) return;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
     let cancelled = false;
     let renderTask: RenderTask | null = null;
     setState({ status: 'rendering' });
 
     void (async () => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('canvas-unavailable');
       const page = await document.getPage(pageNumber);
       try {
         if (cancelled) return;
