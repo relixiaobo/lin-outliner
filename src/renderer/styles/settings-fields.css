@@ -34,8 +34,8 @@
   padding: 0 var(--space-6);
 }
 
-.agent-settings-field input:focus,
-.agent-settings-field select:focus {
+.agent-settings-field input:focus-visible,
+.agent-settings-field select:focus-visible {
   border-color: var(--focus-border);
   background: var(--fill-3);
 }
@@ -223,4 +223,3 @@
   padding: var(--space-8);
   text-align: center;
 }
-

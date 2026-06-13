@@ -346,9 +346,12 @@ button.panel-resize-handle {
   min-height: 36px;
 }
 
-.agent-conversation-row:hover,
-.agent-conversation-row.is-current {
+.agent-conversation-row:hover {
   background: var(--control-hover);
+}
+
+.agent-conversation-row.is-current {
+  background: var(--selection-bg);
 }
 
 .agent-conversation-select {

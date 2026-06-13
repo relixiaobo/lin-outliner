@@ -399,6 +399,7 @@
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   padding: 0 var(--space-4);
+  user-select: none;
 }
 
 .agent-child-run-tab:hover,
@@ -440,8 +441,9 @@
   padding: var(--space-3) var(--space-4);
 }
 
-.agent-child-run-followup textarea:focus {
-  border-color: color-mix(in srgb, var(--agent-accent) 44%, var(--border-subtle));
+.agent-child-run-followup textarea:focus-visible {
+  border-color: var(--focus-ring);
+  box-shadow: var(--outline-focus);
   outline: none;
 }
 

@@ -87,8 +87,9 @@ Authority: `docs/spec/design-system.md`. The load-bearing rules:
   alpha-on-ink (`--ink` + `--text-*` / `--fill-*`). Dark mode flips `--ink`. No
   raw hex outside token declarations.
 - **B2 — Dark mode targets `@media (prefers-color-scheme)` +
-  `color-scheme: light dark`.** The current `[data-theme]` + JS bridge is interim
-  only; don't deepen reliance on it.
+  `color-scheme: light dark`.** The in-app theme override drives
+  `nativeTheme.themeSource`; do not add renderer `[data-theme]` theming or a
+  renderer JS theme bridge.
 - **B3 — Functional state is neutral.** Selection, hover, active, and focus use
   the neutral `--fill-*` ladder + a neutral focus ring — never a brand or system
   accent.

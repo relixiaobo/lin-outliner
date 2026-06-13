@@ -145,12 +145,13 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-6);
+  user-select: none;
 }
 
 .agent-settings-section-header h3 {
   margin: 0;
   color: var(--text-strong);
-  font-size: var(--font-ui-sm);
+  font-size: var(--title-group);
   font-weight: 600;
   line-height: var(--line-ui-sm-tight);
 }

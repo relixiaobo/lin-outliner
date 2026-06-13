@@ -275,17 +275,16 @@
   height: var(--control-size-xl);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-row);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--muted);
 }
 
-.view-toolbar-pill:hover,
-.view-toolbar-pill.is-active {
-  background: var(--control-hover);
+.view-toolbar-pill:hover {
   color: var(--text);
 }
 
+.view-toolbar-pill.is-active,
 .view-toolbar-pill.is-open {
   background: var(--control-active);
   color: var(--text);
@@ -317,8 +316,10 @@
   z-index: var(--z-popover);
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-3);
 }
@@ -727,12 +728,11 @@
   flex: 0 0 26px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-row);
+  border-radius: var(--radius-pill);
   color: var(--muted);
 }
 
 .search-query-refresh-button:hover:not(:disabled) {
-  background: var(--row-hover);
   color: var(--text);
 }
 
@@ -837,7 +837,7 @@
 .row {
   position: relative;
   display: grid;
-  min-height: 26px;
+  min-height: var(--row-h-dense);
   grid-template-columns: var(--row-leading-width) 1fr auto;
   align-items: start;
   border-radius: var(--radius-row);
@@ -1190,9 +1190,9 @@
   text-decoration: line-through;
 }
 
-.field-name-input:focus {
+.field-name-input:focus-visible {
   background: transparent;
-  box-shadow: none;
+  box-shadow: var(--underline-focus-shadow);
 }
 
 .field-value-node-preview {
@@ -1471,7 +1471,7 @@
   color: color-mix(in srgb, var(--text) 28%, transparent);
 }
 
-.typed-field-input:focus {
+.typed-field-input:focus-visible {
   box-shadow: var(--underline-focus-shadow);
 }
 
@@ -1490,7 +1490,7 @@
   align-items: center;
   gap: var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -1500,9 +1500,13 @@
 }
 
 .typed-field-date-trigger:hover,
-.typed-field-date-trigger:focus-visible,
+.typed-field-date-trigger:focus-visible {
+  color: var(--text-strong);
+}
+
 .typed-field-date-trigger[aria-expanded="true"] {
-  background: var(--control-hover);
+  background: var(--control-active);
+  color: var(--text-strong);
 }
 
 .typed-field-date-trigger.empty {
@@ -2012,9 +2016,9 @@
   opacity: 1;
 }
 
-.node-description:focus {
+.node-description:focus-visible {
   color: var(--text-sub);
-  box-shadow: none;
+  box-shadow: var(--underline-focus-shadow);
 }
 
 .panel-title-editor .node-description {
@@ -2032,7 +2036,7 @@
   block-size: var(--content-control-height);
   min-inline-size: 16px;
   min-block-size: var(--content-control-height);
-  margin-right: 5px;
+  margin-right: var(--space-3);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-row);
@@ -2057,7 +2061,7 @@
 
 .panel-title-editor > .done-checkbox {
   height: 36px;
-  margin-right: 7px;
+  margin-right: var(--space-4);
 }
 
 .row-content-line > .row-editor {
@@ -2396,8 +2400,10 @@
   position: fixed;
   z-index: var(--z-popover);
   min-width: 190px;
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-2);
 }
@@ -2408,8 +2414,10 @@
   min-width: 210px;
   max-width: 320px;
   overflow-y: auto;
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: calc(var(--space-2) + var(--space-hairline));
 }
@@ -2481,8 +2489,10 @@
   width: 280px;
   max-height: 330px;
   overflow: hidden;
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-3);
 }
