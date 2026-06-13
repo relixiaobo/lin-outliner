@@ -67,6 +67,7 @@ type E2EWindow = Window & {
     openAgentConfig?: (params: { agentId?: string; mode: string }) => Promise<void>;
     openChannelConfig?: (params: { conversationId?: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
+    agentNavigateToConversation?: (conversationId: string) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     closeAgentConfig?: () => Promise<void>;
     closeChannelConfig?: () => Promise<void>;
@@ -1716,6 +1717,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       // the onboarding CTA can be asserted (it deep-links to Providers).
       openSettings: async (target?: unknown) => {
         calls.push({ cmd: 'open_settings', args: clone(target ?? {}) });
+      },
+      agentNavigateToConversation: async (conversationId: string) => {
+        calls.push({ cmd: 'agent_navigate_conversation', args: { conversationId } });
       },
       closeProviderConfig: async () => {},
       closeAgentConfig: async () => {},

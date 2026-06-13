@@ -249,6 +249,8 @@ const api = {
   // dock is collapsed — used to suppress an OS banner only when truly looking at it.
   agentSetViewedConversation: (conversationId: string | null) =>
     ipcRenderer.invoke('lin:agent-set-viewed-conversation', conversationId) as Promise<void>,
+  agentNavigateToConversation: (conversationId: string) =>
+    ipcRenderer.invoke('lin:agent-navigate-conversation', conversationId) as Promise<void>,
   // The user clicked an OS notification banner — route the agent panel to the
   // originating conversation.
   onNavigateToConversation: (listener: (conversationId: string) => void) => {

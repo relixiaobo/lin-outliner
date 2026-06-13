@@ -304,6 +304,10 @@ test.describe('agent composer controls', () => {
       title: 'Release blockers',
       agentIds: ['user:mock:self'],
     });
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_navigate_conversation')?.args.conversationId;
+    }).toMatch(/^mock-agent-channel-created-/);
   });
 
   test('adds a member from the channel config window', async ({ page }) => {

@@ -399,6 +399,15 @@ Selection:
   definition; generic isolated work should omit `agent_type` and fork from the
   current context.
 
+Recovery:
+
+- A new fresh run with an unknown `agent_type` is rejected.
+- A persisted fresh run whose original definition was deleted or renamed after
+  it started remains resumable. On resume, if the stored run has no embedded
+  definition and the registry can no longer resolve its `agentType`, the runtime
+  continues it with the built-in Tenon assistant definition. This is a durable
+  recovery path for already-started work, not a generic dispatch fallback.
+
 #### System prompt — one agent, headless mode (not a separate persona)
 
 A fresh child run is the **same Tenon agent in headless mode**, not a stripped-down
@@ -697,8 +706,9 @@ Later layers with the same `name` override earlier layers.
 
 Agent definitions are **user-authorable in-app** (the model never writes them —
 the write surface is user-driven only, mirroring the closed memory-write
-surface). The settings "Agent Profiles" pane exposes create / edit / duplicate /
-delete:
+surface). The settings "Agent Profiles" pane lists agents and opens the dedicated
+`AgentConfigWindow`; that child window is the single create / edit / duplicate /
+delete surface:
 
 - **Format layer** (`src/core/agentMarkdown.ts`, pure — `yaml` only, no fs):
   `serializeAgentMarkdown(AgentAuthoringInput) → AGENT.md` text and its inverses

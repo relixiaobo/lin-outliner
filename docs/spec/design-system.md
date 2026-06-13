@@ -1285,13 +1285,9 @@ not Apple chrome. We borrow the interaction, not the chrome.
     decision width, so non-allowable rows do not collapse to a different-looking
     control; the row sublabel stays human-readable and does not expose raw rule strings),
     Agent Profiles' selectable profile list — all are `InsetRow`s. Agent Profiles
-    is hierarchical: the category page shows the profile list only, and rows are
-    pure drill-down rows with a trailing chevron. Do NOT combine a switch and a
-    drill-down chevron in the same row. Clicking a profile row pushes an
-    `agent-detail` route onto the Settings history stack. The detail route uses the
-    same toolbar back/forward capsule, shows the enable/disable switch as its own
-    settings row, and shows the persona card as the next level, not as flat content
-    below or beside the list.
+    rows are launch points: clicking a row opens the dedicated Agent config child
+    window, while each writable row keeps the enable/disable switch in the trailing
+    slot. Do NOT combine inline authoring forms with the list.
   - **One secondary button.** Filled neutral `--fill-2`, no border
     (`.agent-settings-secondary` / `.settings-sheet-secondary`) — the native push
     button, pairing with the filled-strong primary; never a ghost outline.

@@ -17,6 +17,7 @@ export interface SettingsOpenTarget {
 
 export const SETTINGS_CATEGORY_PARAM = 'category';
 export const SETTINGS_AGENT_PARAM = 'agent';
+export const SETTINGS_AGENT_MODE_PARAM = 'agentMode';
 export const SETTINGS_AGENT_CREATE_VALUE = 'create';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 
@@ -42,10 +43,11 @@ export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget
   const params = new URLSearchParams(search);
   const category = params.get(SETTINGS_CATEGORY_PARAM);
   const agentParam = params.get(SETTINGS_AGENT_PARAM)?.trim();
+  const agentMode = params.get(SETTINGS_AGENT_MODE_PARAM);
   return {
     ...(isSettingsCategoryTarget(category) ? { category } : {}),
-    ...(agentParam === SETTINGS_AGENT_CREATE_VALUE ? { agentCreate: true } : {}),
-    ...(agentParam && agentParam !== SETTINGS_AGENT_CREATE_VALUE ? { agentId: agentParam } : {}),
+    ...(agentMode === SETTINGS_AGENT_CREATE_VALUE ? { agentCreate: true } : {}),
+    ...(agentParam ? { agentId: agentParam } : {}),
   };
 }
 

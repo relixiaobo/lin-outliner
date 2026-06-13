@@ -1008,6 +1008,7 @@ export function AgentChatPanel({
   const providerSettingsRequestRef = useRef(0);
   const conversationsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
+  const agentDefinitionsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
@@ -1261,6 +1262,24 @@ export function AgentChatPanel({
     }
   }, [conversationId]);
 
+  const loadAgentDefinitions = useCallback(async () => {
+    const requestId = agentDefinitionsRequestRef.current + 1;
+    agentDefinitionsRequestRef.current = requestId;
+    if (!conversationId) {
+      setAgentDefinitions([]);
+      return null;
+    }
+    try {
+      const next = await api.agentListAllDefinitions(conversationId);
+      if (!mountedRef.current || requestId !== agentDefinitionsRequestRef.current) return null;
+      setAgentDefinitions(next);
+      return next;
+    } catch {
+      if (mountedRef.current && requestId === agentDefinitionsRequestRef.current) setAgentDefinitions([]);
+      return null;
+    }
+  }, [conversationId]);
+
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return undefined;
@@ -1303,6 +1322,7 @@ export function AgentChatPanel({
       providerSettingsRequestRef.current += 1;
       conversationsRequestRef.current += 1;
       slashCommandsRequestRef.current += 1;
+      agentDefinitionsRequestRef.current += 1;
     };
   }, [loadProviderSettings]);
 
@@ -1350,22 +1370,8 @@ export function AgentChatPanel({
   }, [historyOpen]);
 
   useEffect(() => {
-    if (!conversationId) {
-      setAgentDefinitions([]);
-      return;
-    }
-    let cancelled = false;
-    void api.agentListAllDefinitions(conversationId)
-      .then((definitions) => {
-        if (!cancelled) setAgentDefinitions(definitions);
-      })
-      .catch(() => {
-        if (!cancelled) setAgentDefinitions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId]);
+    void loadAgentDefinitions();
+  }, [loadAgentDefinitions]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -1405,10 +1411,13 @@ export function AgentChatPanel({
   }
 
   async function refreshAfterSettingsChange() {
-    await loadProviderSettings();
-    await loadConversations();
-    await loadSlashCommands();
-    await reloadConversation();
+    await Promise.all([
+      loadProviderSettings(),
+      loadConversations(),
+      loadSlashCommands(),
+      loadAgentDefinitions(),
+      reloadConversation(),
+    ]);
   }
 
   // Settings now live in a separate window; when it applies changes the main

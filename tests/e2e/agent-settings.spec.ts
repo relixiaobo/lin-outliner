@@ -258,13 +258,31 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.locator('.agent-editor')).toHaveCount(0);
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
   });
 
   test('new-agent settings deep links resolve to the Agent Profiles list', async ({ page }) => {
-    const settings = await openSettings(page, '&category=agents&agent=create');
+    const settings = await openSettings(page, '&category=agents&agentMode=create');
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.locator('.agent-editor')).toHaveCount(0);
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ mode: 'create' });
+  });
+
+  test('settings deep links treat create as an agent id unless agentMode requests creation', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agents&agent=create');
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.locator('.agent-editor')).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
+    }).toMatchObject({ agentId: 'create', mode: 'configure' });
   });
 
   test('renders additional-directory agent profiles as read-only', async ({ page }) => {

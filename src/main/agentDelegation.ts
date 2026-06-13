@@ -1194,9 +1194,7 @@ export class AgentDelegationRuntime {
     if (run.definition) return run.definition;
     if (run.contextMode === 'fork') return createForkAgentDefinition();
     const definition = await this.registry.resolve(run.agentType);
-    if (definition) return definition;
-    const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
-    throw new Error(`Agent definition '${run.agentType}' not found. Available agents: ${names || 'none'}`);
+    return definition ?? createTenonAssistantAgentDefinition();
   }
 
   private async resolveSkillAgentType(agentName: string | undefined): Promise<string | undefined> {
@@ -1405,6 +1403,7 @@ class AgentDefinitionRegistry {
     this.loaded = true;
     this.agents.clear();
     this.seenAgentFileIds.clear();
+    await this.addLoadedAgent(createTenonAssistantAgentDefinition());
     for (const { dir, source } of agentSearchDirs(this.localRoot, this.includeUserAgents, this.additionalAgentDirectories)) {
       for (const agent of await loadAgentsFromDir(dir, source)) {
         await this.addLoadedAgent(agent);

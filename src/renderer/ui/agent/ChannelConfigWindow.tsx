@@ -121,16 +121,19 @@ export function ChannelConfigWindow() {
     setSaving(true);
     setError(null);
     try {
+      let createdConversationId: string | null = null;
       if (mode === 'create') {
-        await api.agentCreateConversation({
+        const created = await api.agentCreateConversation({
           title: trimmed,
           ...(selectedAgentIds.length > 0 ? { agentIds: selectedAgentIds } : {}),
           ...(seedText.trim() ? { seedText: seedText.trim() } : {}),
         });
+        createdConversationId = created.conversationId;
       } else {
         await api.agentRenameConversation(conversationId, trimmed);
       }
       await window.lin?.notifySettingsChanged?.();
+      if (createdConversationId) await window.lin?.agentNavigateToConversation?.(createdConversationId);
       close();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -145,7 +148,7 @@ export function ChannelConfigWindow() {
     try {
       await api.agentAddConversationMember(conversationId, agentId);
       await window.lin?.notifySettingsChanged?.();
-      await reload();
+      setConversations(await api.agentListConversations());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
