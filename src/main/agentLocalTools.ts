@@ -514,8 +514,17 @@ export async function runLocalBashCommand(
 // the workdir, so containment stays well-defined. Single source of this default so the four
 // callers that need scratch before a WorkspaceContext exists cannot drift.
 export function scratchRootForWorkdir(workdir: string | undefined, scratchRoot: string | undefined): string {
-  const root = path.resolve(workdir ?? process.cwd());
-  return path.resolve(scratchRoot ?? path.join(root, 'tmp'));
+  const root = path.resolve(nonBlank(workdir) ?? process.cwd());
+  const explicit = nonBlank(scratchRoot);
+  return path.resolve(explicit ?? path.join(root, 'tmp'));
+}
+
+// Treat a blank/whitespace path as unset (mirrors agentLocalRoot's env handling). Without this,
+// `path.resolve('')` is `process.cwd()`, which would silently make the whole cwd a scratch root.
+function nonBlank(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
@@ -2366,7 +2375,11 @@ function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
 
 function safeRealPath(target: string): string | null {
   try {
-    return realpathSync.native(path.resolve(target));
+    const resolved = realpathSync.native(path.resolve(target));
+    // A root that resolves to the filesystem root would make the whole disk "inside" it; treat
+    // it as no root (mirrors localFileReferenceSecurity.trustedRootRealPath).
+    if (path.parse(resolved).root === resolved) return null;
+    return resolved;
   } catch {
     return null;
   }

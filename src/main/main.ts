@@ -95,7 +95,7 @@ import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
+import { agentAttachmentDir, pruneAgentScratch, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -247,11 +247,26 @@ const agentLocalFileRoot = resolveAgentWorkdir({
 const agentScratchRoot = resolveAgentScratchRoot({ userDataPath: app.getPath('userData') });
 // The default workdir is app-owned (`<userData>/agent-workdir`), so create it; an explicit
 // `LIN_AGENT_LOCAL_ROOT` is the user's own directory and must already exist. Scratch is always
-// app-owned, so always create it.
-if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
-  mkdirSync(agentLocalFileRoot, { recursive: true });
+// app-owned, so always create it. Both are best-effort: the agent tools mkdir lazily before each
+// write, so a startup failure (e.g. an unwritable userData) degrades the agent file area rather
+// than aborting the whole app at module load.
+function ensureAgentDir(dir: string): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    console.error(`[agent] failed to create directory ${dir} at startup`, error);
+  }
 }
-mkdirSync(agentScratchRoot, { recursive: true });
+if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
+  ensureAgentDir(agentLocalFileRoot);
+}
+ensureAgentDir(agentScratchRoot);
+// Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
+// bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
+// are swallowed so cleanup never blocks startup.
+void pruneAgentScratch(agentScratchRoot).catch((error) => {
+  console.error('[agent] failed to prune scratch root at startup', error);
+});
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,

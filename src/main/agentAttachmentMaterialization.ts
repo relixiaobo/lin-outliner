@@ -6,6 +6,8 @@ import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
 export const AGENT_ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// The whole scratch root is bounded by the same age as attachments; nothing in it is durable.
+export const AGENT_SCRATCH_TTL_MS = AGENT_ATTACHMENT_TTL_MS;
 
 export interface PathBackedAttachment {
   name: string;
@@ -71,17 +73,41 @@ export async function pruneOldAgentAttachments(
   now = Date.now(),
   ttlMs = AGENT_ATTACHMENT_TTL_MS,
 ): Promise<void> {
-  const attachmentDir = agentAttachmentDir(scratchRoot);
-  let entries: string[];
+  await pruneDirEntriesByTtl(agentAttachmentDir(scratchRoot), now, ttlMs);
+}
+
+// Bound the whole scratch root by age. Scratch is app-owned ephemeral data (materialized
+// attachments, web-fetch binaries, bash overflow logs, PDF page images); none of it is durable,
+// so anything untouched past the TTL is removed. Pruning the entries WITHIN each scratch subdir
+// (by per-entry mtime) rather than the subdirs themselves keeps actively-written areas intact
+// while still reclaiming stale files. Best-effort; called once at startup.
+export async function pruneAgentScratch(
+  scratchRoot: string,
+  now = Date.now(),
+  ttlMs = AGENT_SCRATCH_TTL_MS,
+): Promise<void> {
+  const root = path.resolve(scratchRoot);
+  let subdirs: string[];
   try {
-    entries = await readdir(attachmentDir);
+    subdirs = await readdir(root);
   } catch (error) {
     if (isNodeError(error) && error.code === 'ENOENT') return;
     throw error;
   }
+  await Promise.all(subdirs.map((entry) => pruneDirEntriesByTtl(path.join(root, entry), now, ttlMs)));
+}
+
+async function pruneDirEntriesByTtl(dir: string, now: number, ttlMs: number): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (error) {
+    if (isNodeError(error) && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return;
+    throw error;
+  }
 
   await Promise.all(entries.map(async (entry) => {
-    const entryPath = path.join(attachmentDir, entry);
+    const entryPath = path.join(dir, entry);
     try {
       const entryStat = await lstat(entryPath);
       if (now - entryStat.mtimeMs <= ttlMs) return;
@@ -112,7 +138,11 @@ export function isPathInside(root: string, candidate: string): boolean {
 
 async function safeRealPath(target: string): Promise<string | null> {
   try {
-    return await realpath(path.resolve(target));
+    const resolved = await realpath(path.resolve(target));
+    // A root that resolves to the filesystem root makes the whole disk "inside" it; treat it
+    // as no root (mirrors localFileReferenceSecurity.trustedRootRealPath).
+    if (path.parse(resolved).root === resolved) return null;
+    return resolved;
   } catch {
     return null;
   }

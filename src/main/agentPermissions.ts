@@ -263,7 +263,8 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     mode: input.mode ?? 'trusted',
     safetyMode: input.safetyMode ?? 'balanced',
     workspaceRoot: path.resolve(input.workspaceRoot ?? process.cwd()),
-    scratchRoot: input.scratchRoot != null ? path.resolve(input.scratchRoot) : undefined,
+    // A blank scratch root is "unset", not the cwd (`path.resolve('')` === cwd).
+    scratchRoot: input.scratchRoot && input.scratchRoot.trim() ? path.resolve(input.scratchRoot) : undefined,
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
     allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,

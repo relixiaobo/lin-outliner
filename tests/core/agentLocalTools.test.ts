@@ -18,6 +18,7 @@ import {
   type TaskStopData,
 } from '../../src/main/agentLocalTools';
 import { AgentSkillRuntime } from '../../src/main/agentSkills';
+import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
@@ -205,6 +206,42 @@ describe('agent local tools', () => {
         expect(denied.error?.code).toBe('path_outside_local_root');
       } finally {
         await rm(scratchRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
+    // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
+    // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.
+    // This proves the materializer's target dir and the file tool's trusted-roots set agree when
+    // scratch genuinely sits OUTSIDE the workdir — the round-trip the two-root model relies on.
+    await withWorkspace(async (workspaceRoot) => {
+      const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
+      const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-source-'));
+      try {
+        const sourcePath = path.join(sourceRoot, 'report.txt');
+        await writeFile(sourcePath, 'materialized body', 'utf8');
+
+        // The app materializes an out-of-area attachment exactly as production does.
+        const attachment = await materializePathBackedAttachment(workspaceRoot, scratchRoot, {
+          name: 'report.txt',
+          path: sourcePath,
+        });
+        expect(attachment.path).toStartWith(agentAttachmentDir(scratchRoot));
+        expect(attachment.path).not.toStartWith(path.resolve(workspaceRoot));
+
+        // The agent can then read that materialized path back through file_read.
+        const fileRead = createLocalTools({ localRoot: workspaceRoot, scratchRoot })
+          .find((tool) => tool.name === 'file_read')!;
+        const read = (await (fileRead.execute as any)('call', { file_path: attachment.path })).details as ToolEnvelope<{
+          type: 'text';
+          file: { content: string };
+        }>;
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.content).toBe('materialized body');
+      } finally {
+        await rm(scratchRoot, { recursive: true, force: true });
+        await rm(sourceRoot, { recursive: true, force: true });
       }
     });
   });

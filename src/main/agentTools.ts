@@ -191,10 +191,10 @@ export interface AgentToolsOptions {
 
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
   // Web-fetch binaries are scratch, not workspace output: prefer the workspace's resolved
-  // scratch root, falling back to the workdir's default scratch sibling when no workspace
-  // context is supplied (the runtime always supplies one in production).
+  // scratch root, otherwise derive it through the single-source default (never re-deriving a
+  // cwd fallback locally — that is the one polluting path F2 removes).
   const scratchRoot = options.localWorkspace?.scratchRoot
-    ?? (options.localFileRoot != null ? scratchRootForWorkdir(options.localFileRoot, undefined) : undefined);
+    ?? scratchRootForWorkdir(options.localFileRoot, undefined);
   const tools = [
     ...(outliner ? createNodeTools(outliner, { localFileRoot: options.localFileRoot }) : []),
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
@@ -224,7 +224,7 @@ function filterAgentTools(
   });
 }
 
-function createWebFetchTool(scratchRoot?: string): AgentTool<any, ToolEnvelope<WebFetchData>> {
+function createWebFetchTool(scratchRoot: string): AgentTool<any, ToolEnvelope<WebFetchData>> {
   return {
     name: 'web_fetch',
     label: 'Web Fetch',
@@ -243,7 +243,7 @@ function createWebFetchTool(scratchRoot?: string): AgentTool<any, ToolEnvelope<W
 
       const params = normalized.params;
       try {
-        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, signal, scratchRoot));
+        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, scratchRoot, signal));
       } catch (error) {
         if (error instanceof WebToolFailure && error.hint) {
           return webFetchToolResult(webFetchHintEnvelope(params, error, started));
@@ -264,11 +264,11 @@ function webFetchToolResult(envelope: ToolEnvelope<WebFetchData>) {
 async function fetchWebFetchEnvelope(
   params: NormalizedWebFetchParams,
   started: number,
+  scratchRoot: string,
   signal?: AbortSignal,
-  scratchRoot?: string,
 ): Promise<ToolEnvelope<WebFetchData>> {
   try {
-    const fetched = await fetchText(params.url, signal, scratchRoot);
+    const fetched = await fetchText(params.url, scratchRoot, signal);
     const page = await extractFetchedPageContent(fetched, params);
     const decision = assessWebFetchFallback(fetched, params, page);
     if (decision.shouldFallback) {
@@ -467,7 +467,7 @@ function webSearchToolResult(envelope: ToolEnvelope<WebSearchData>) {
   return agentToolResult(envelope, envelope.data ? webSearchModelData(envelope.data) : undefined);
 }
 
-async function fetchText(url: string, signal?: AbortSignal, scratchRoot?: string): Promise<FetchTextResult> {
+async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
   const startedUrl = url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -495,7 +495,7 @@ async function fetchTextWithPermittedRedirects(
   currentUrl: string,
   startedUrl: string,
   signal: AbortSignal,
-  scratchRoot?: string,
+  scratchRoot: string,
   depth = 0,
 ): Promise<FetchTextResult> {
   if (depth > WEB_FETCH_MAX_REDIRECTS) {
@@ -655,7 +655,7 @@ async function persistWebFetchBinary(
   bytes: Uint8Array,
   contentType: string,
   finalUrl: string,
-  scratchRoot?: string,
+  scratchRoot: string,
 ): Promise<WebFetchBinaryFile> {
   const mimeType = normalizeMimeType(contentType);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -671,8 +671,8 @@ async function persistWebFetchBinary(
   };
 }
 
-function webFetchOutputDir(scratchRoot?: string): string {
-  return path.join(path.resolve(scratchRoot ?? path.join(process.cwd(), 'tmp')), 'agent-web-fetch');
+function webFetchOutputDir(scratchRoot: string): string {
+  return path.join(path.resolve(scratchRoot), 'agent-web-fetch');
 }
 
 function normalizeMimeType(contentType: string): string {

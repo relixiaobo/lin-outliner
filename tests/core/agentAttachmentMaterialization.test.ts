@@ -5,8 +5,10 @@ import path from 'node:path';
 import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../../src/core/agentAttachmentLimits';
 import {
   AGENT_ATTACHMENT_TTL_MS,
+  AGENT_SCRATCH_TTL_MS,
   agentAttachmentDir,
   materializePathBackedAttachment,
+  pruneAgentScratch,
   pruneOldAgentAttachments,
 } from '../../src/main/agentAttachmentMaterialization';
 
@@ -116,6 +118,34 @@ describe('agent attachment materialization', () => {
     await pruneOldAgentAttachments(scratchRoot, now);
 
     expect(await readdir(attachmentDir)).toEqual(['fresh.txt']);
+  });
+
+  test('prunes expired entries across every scratch subdir, leaving fresh ones and the dirs intact', async () => {
+    const scratchRoot = await mkdtempRoot('lin-agent-scratch-');
+    const now = Date.now();
+    const expiredSeconds = (now - AGENT_SCRATCH_TTL_MS - 1000) / 1000;
+    // Two distinct scratch areas (attachments + web-fetch), each with one stale and one fresh file.
+    for (const subdir of ['agent-attachments', 'agent-web-fetch']) {
+      const dir = path.join(scratchRoot, subdir);
+      await mkdir(dir, { recursive: true });
+      const expiredPath = path.join(dir, 'expired.bin');
+      await writeFile(expiredPath, 'old');
+      await writeFile(path.join(dir, 'fresh.bin'), 'new');
+      await utimes(expiredPath, expiredSeconds, expiredSeconds);
+    }
+    // A stray top-level file must not crash the sweep (readdir on it raises ENOTDIR).
+    await writeFile(path.join(scratchRoot, 'stray.txt'), 'stray');
+
+    await pruneAgentScratch(scratchRoot, now);
+
+    for (const subdir of ['agent-attachments', 'agent-web-fetch']) {
+      expect(await readdir(path.join(scratchRoot, subdir))).toEqual(['fresh.bin']);
+    }
+  });
+
+  test('pruneAgentScratch is a no-op when the scratch root does not exist', async () => {
+    const scratchRoot = path.join(await mkdtempRoot('lin-agent-scratch-'), 'never-created');
+    await expect(pruneAgentScratch(scratchRoot)).resolves.toBeUndefined();
   });
 
   async function mkdtempRoot(prefix: string): Promise<string> {

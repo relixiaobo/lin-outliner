@@ -55,7 +55,9 @@ document, secrets, or event store:
   delete redlines below.
 - **scratch** — `<userData>/agent-scratch`, an app-owned ephemeral sibling of the
   workdir holding materialized attachments, web-fetch binaries, bash overflow
-  logs, and PDF page images (7-day TTL prune; GC'd with the conversation).
+  logs, and PDF page images. Entries are reclaimed by a 7-day mtime TTL, swept
+  best-effort once per launch (`pruneAgentScratch`); the lifetime is the TTL, not
+  the conversation — scratch is **not** garbage-collected when a conversation ends.
 
 Resolution of the **workdir**:
 
@@ -75,10 +77,12 @@ an env-pointed repo workdir never accumulates ephemeral files.
 Because scratch is app-owned and holds bytes the app deliberately places for the
 agent, the boundary is **asymmetric by access**: the agent may **read** the
 workdir ∪ scratch, but may **write** only the workdir. Both enforcement layers
-apply the identical rule — the file-tool resolver (`resolveWorkspacePath`, keyed
-by a `'read'`/`'write'` access) and the permission engine (a scratch read is
-`allowed_file_area`; a scratch write is classified outside). The agent writes its
-own outputs to the workdir, never to scratch. `file_glob` / `file_grep` default
+enforce that one policy, each by its own mechanism: the file-tool resolver
+(`resolveWorkspacePath`, keyed by a `'read'`/`'write'` access) admits scratch to
+the allowed-roots set for reads via realpath containment, while the permission
+engine pre-screens lexically (a scratch read classifies as `allowed_file_area`; a
+scratch write falls outside). The agent writes its own outputs to the workdir,
+never to scratch. `file_glob` / `file_grep` default
 to the workdir, so scratch never appears in the file area's default listings; the
 agent only ever reaches scratch through the absolute paths the app hands it.
 
