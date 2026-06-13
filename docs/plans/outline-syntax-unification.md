@@ -295,12 +295,19 @@ third consumer, which raises (not lowers) the payoff.
   `\s*` (zero+ trailing spaces), paste uses `\s+` (one+, plus a body). The shared
   `parseCheckboxMarker` must choose, and the choice shifts the *other* side's
   behavior slightly — so it is a small behavior change, not a no-op extraction.
-  Settle the policy (and which side shifts) at build time. Low severity.
-- **Re-confirm the 2026-06-04 decisions on the corrected premise (PM).** The
-  hex-exclusion and bracket-form decisions were taken under the premise "neither
-  parser excludes hex." That premise was wrong (agent + live-edit already exclude;
-  see above). The conclusion (exclude everywhere) is *stronger* under the corrected
-  premise, but the PM should re-affirm both decisions still hold before build.
+  **Dev-local, not a PM item:** the agent serializer always emits `[x] ` / `[ ] `
+  with a trailing space (`outlineNodeText` → `parts.join(' ')` in
+  `agentNodeToolRead.ts`), so `\s+` still accepts the agent's own output — the
+  round-trip is safe either way; the only difference is whether a spaceless
+  `[x]foo` parses. Recommended: `\s+` (matches paste; consistent with the agent's
+  strict-input design). Settle at build time. Low severity.
+- **Re-confirmed on the corrected premise (PM, 2026-06-13): both stand.** The
+  hex-exclusion and bracket-form decisions were originally taken under the premise
+  "neither parser excludes hex," which was wrong (agent + live-edit already exclude;
+  see above). On the corrected premise — paste is the lone holdout and the canonical
+  `TAG_TOKEN` brings it in line — the PM **re-affirmed both**: exclude hex-color
+  literals everywhere, and paste accepts the bracket forms (`[[#tag]]` / `#[[tag]]`)
+  plus Unicode tags. No PM decision remains open; build still needs a separate GO.
 
 ## Open questions
 

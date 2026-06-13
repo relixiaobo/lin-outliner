@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (Dream failure backoff merged, PR #189) |
+| Claude Code | `lin-outliner-cc/` | — | idle (outline-syntax-unification plan merged as draft, PR #219) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (run unification merged, PR #184) |
 | Codex | `lin-outliner-codex/` | — | idle (agent dock + channel config refinement merged, PR #217) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
@@ -37,6 +37,13 @@ Redesign (codex-3), #216 Compact loaded-skill tool calls (codex-2 + main polish)
 #214 Skillify built-in path fix + skill-write permission simplification (codex-2),
 #208 Tana-style references experience (codex-3), and #213 Agent authoring cleanups
 (codex-4) — see Recently completed.
+
+**Draft plan catalogued (2026-06-13):** #219 `outline-syntax-unification` (cc) —
+reviewed (plan pass: 5 findings + 2 process notes folded in & verified against the
+code), PM **re-affirmed** the two paste tag-behavior decisions (exclude hex-color
+literals everywhere; paste accepts bracket forms + Unicode). Stays `status: draft`,
+`priority: low`; **build needs a separate PM GO** — the checklist is gated. Plan:
+`docs/plans/outline-syntax-unification.md`.
 
 **Known-flaky core test (pre-existing, *not* a #217 regression; fast-track fix
 welcome):** `agentRuntimeSkillsIntegration.test.ts` › *"clears pending permission
