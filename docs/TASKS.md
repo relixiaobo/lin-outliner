@@ -397,6 +397,17 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
+- **agent-file-model** (P1, plan file, **draft — PM-ratified 4 decisions 2026-06-13,
+  ready to build; supersedes the closed #218, ships via #220**) — give agent file
+  handling one shape: the agent lives in a path-addressed working directory, the
+  document in the handle-addressed asset store (`asset://`), joined by two symmetric
+  bridges (materialize handle→path on reference-in, ingest path→handle on
+  save-to-outliner). Deletes #218's parallel `<userData>/artifacts` store +
+  `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixes the lossy
+  input path (a referenced outliner file reaches the agent today as a node with no
+  readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
+  reported bug) · F2 app-owned workdir + scratch relocation · F3 materialize bridge ·
+  F4 ingest bridge — F1 first. See `docs/plans/agent-file-artifact-model.md`.
 - **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
   (feature); see Recently completed. Plan archived `done`
   (`docs/plans/archive/file-attachments.md`).
