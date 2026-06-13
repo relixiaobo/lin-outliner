@@ -1610,6 +1610,15 @@ export class AgentRuntime {
         // the addressed turns are enqueued and projected (above). The runs drain
         // asynchronously; scheduleChannelIdleEmit emits the final idle state. A
         // settled Channel for tests uses drainChannelTurnsForTest.
+        //
+        // DISPATCH CONTRACT (keep in sync): this accept-and-return shape is
+        // mirrored in editMessage and rerunSettledTurn (the latter enqueues a
+        // single owner turn, with a different guard). A change to the contract — a
+        // new ChannelTurnRequest field, an extra accept-time step — must land in
+        // ALL THREE or one entry point silently diverges (an edit/retry-only bug).
+        // Deliberately NOT unified into one dispatchTurn: the three differ enough
+        // (addressing source, continue verb, guard) that a careless merge would
+        // itself reintroduce that entry-point-specific divergence.
         return;
       } else {
         await this.appendUserPromptEvent(conversationId, conversation, prompt);
@@ -1672,6 +1681,8 @@ export class AgentRuntime {
         );
         // Returns on acceptance like a Channel send: the edited addressing message
         // is persisted and re-dispatched; the runs drain asynchronously.
+        // (Channel-dispatch sibling of sendMessage / rerunSettledTurn — keep the
+        // dispatch contract synced; see the DISPATCH CONTRACT note in sendMessage.)
         return;
       }
       startedRunId = await this.startRun(conversationId, conversation);
@@ -1765,6 +1776,9 @@ export class AgentRuntime {
       }]);
       // Returns on acceptance: the re-run turn is enqueued and projected; it
       // drains asynchronously via scheduleChannelIdleEmit.
+      // (Channel-dispatch sibling of sendMessage / editMessage, but a SINGLE owner
+      // turn and a wider guard — keep the dispatch contract synced; see the
+      // DISPATCH CONTRACT note in sendMessage.)
       return;
     }
     let startedRunId: string | null = null;
