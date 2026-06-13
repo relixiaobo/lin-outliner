@@ -118,9 +118,9 @@ export interface AgentRenderChildRunEntity {
   agentType: string;
   contextMode: AgentChildRunRecord['contextMode'];
   parentRunId?: string;
-  executingAgentId?: string;
-  parentAgentId?: string;
-  memoryOwnerAgentId?: string;
+  executingAgentId: string;
+  parentAgentId: string;
+  memoryOwnerAgentId: string;
   status: AgentRenderTaskStatus;
   startedAt: number;
   updatedAt: number;
@@ -721,8 +721,30 @@ function toRenderMessageEntity(
   };
 }
 
+// Built explicitly (not `{ ...run }`) so the render entity exposes ONLY its
+// declared fields: the durable record's `memoryOriginWorkspace`/`unattended` are
+// runtime/persistence metadata the renderer never reads and must not leak across
+// IPC. `status` is projected to the renderer's presentation vocabulary here.
 function toRenderChildRunEntity(run: AgentChildRunRecord): AgentRenderChildRunEntity {
-  return { ...run, status: renderTaskStatusFromRunStatus(run.status) };
+  return {
+    id: run.id,
+    name: run.name,
+    description: run.description,
+    prompt: run.prompt,
+    agentType: run.agentType,
+    contextMode: run.contextMode,
+    parentRunId: run.parentRunId,
+    executingAgentId: run.executingAgentId,
+    parentAgentId: run.parentAgentId,
+    memoryOwnerAgentId: run.memoryOwnerAgentId,
+    status: renderTaskStatusFromRunStatus(run.status),
+    startedAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    completedAt: run.completedAt,
+    result: run.result,
+    error: run.error,
+    parentToolCallId: run.parentToolCallId,
+  };
 }
 
 function toRenderChildRunTaskEntity(run: AgentChildRunRecord): AgentRenderChildRunTaskEntity {
