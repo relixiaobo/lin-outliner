@@ -573,8 +573,41 @@ describe('agent skills', () => {
     const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
     expect(text).not.toContain('Base directory for this skill:');
     expect(text).not.toContain('built-in/skillify/SKILL.md');
-    expect(text).toContain('Skill authoring workflow');
-    expect(text).toContain('start unratified');
+    expect(text).toContain('Skillify v2 workflow');
+    expect(text).toContain('born unratified');
+  });
+
+  test('pins skillify v2 Tenon authoring invariants', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-skillify-v2-'));
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    const skill = await runtime.getSkill('skillify');
+    const body = skill?.body ?? '';
+
+    expect(body).toContain('Skillify v2 workflow');
+    expect(body).toContain('~/.agents/skills/<skill-name>/SKILL.md');
+    expect(body).toContain('<workspace>/.agents/skills/<skill-name>/SKILL.md');
+    expect(body).toContain('lowercase `skill` tool semantics');
+    expect(body).toContain('Do not write `name:` frontmatter');
+    expect(body).not.toContain('.claude');
+    expect(body).not.toContain('Teammate');
+
+    expect(body).toContain('resolve and read the current `SKILL.md` first');
+    expect(body).toContain('Prefer a focused `file_edit` patch');
+    expect(body).toContain('Show the complete `SKILL.md`');
+    expect(body).toContain('focused diff for updates');
+    expect(body).toContain('ask_user_question');
+    expect(body).toContain('Save, revise, or cancel choices');
+
+    expect(body).toContain('Separate authoring tools from runtime tools');
+    expect(body).toContain('Omit `allowed-tools` when the future workflow does not need preapproval');
+    expect(body).toContain('Flag broad `allowed-tools` in the preview summary');
+    expect(body).toContain('Default to inline execution');
+    expect(body).toContain('Use `context: fork` only for self-contained work');
+
+    expect(body).toContain('born unratified');
+    expect(body).toContain('slash invocation works immediately');
+    expect(body).toContain('automatic model invocation waits');
+    expect(body).toContain('Do not write executable or binary support files');
   });
 
   test('records built-in skill invocations without surfacing pseudo file paths', async () => {
@@ -583,7 +616,7 @@ describe('agent skills', () => {
 
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.renderedContent).toContain('Skill authoring workflow');
+    expect(invocation.renderedContent).toContain('Skillify v2 workflow');
     expect(invocation.renderedContent).not.toContain('Base directory for this skill:');
     expect(invocation.renderedContent).not.toContain('built-in/skillify/SKILL.md');
 
