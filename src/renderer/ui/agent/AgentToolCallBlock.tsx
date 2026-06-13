@@ -7,6 +7,7 @@ import { api } from '../../api/client';
 import { InlineFileReference } from '../editor/InlineFileReference';
 import {
   AgentIcon,
+  AddChildIcon,
   BrainIcon,
   CheckIcon,
   CopyIcon,
@@ -29,6 +30,7 @@ import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import { requestInsertFileIntoOutliner } from '../../agent/agentFileInsert';
 import {
   AgentInlineReferenceText,
   type AgentNodeReferenceOpenHandler,
@@ -489,7 +491,66 @@ function ToolResultFileChip({ output }: { output: FileToolOutput }) {
           ref: output.basename,
         }}
       />
+      <InsertIntoOutlinerButton path={output.path} />
     </div>
+  );
+}
+
+// The ingest bridge trigger (agent-file-model F4): promote a working file into the
+// outliner as a first-class image/attachment node. The bridge (App) does the
+// path->asset ingest + node creation; this only fires the request and shows a
+// transient confirmation. Re-clicking inserts again (a fresh copy+freeze) -- the
+// document references a snapshot, so "save the newer version" is just another click.
+export function InsertIntoOutlinerButton({ path }: { path: string }) {
+  const t = useT();
+  const [state, setState] = useState<'idle' | 'inserting' | 'inserted'>('idle');
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+  }, []);
+
+  async function insert() {
+    if (state === 'inserting') return;
+    setState('inserting');
+    let inserted = false;
+    try {
+      inserted = await requestInsertFileIntoOutliner(path);
+    } catch {
+      inserted = false;
+    }
+    if (!inserted) {
+      // Nothing was inserted (file gone / out of root, or the bridge failed): drop
+      // back to the actionable state rather than show a false confirmation.
+      setState('idle');
+      return;
+    }
+    setState('inserted');
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(() => {
+      setState('idle');
+      resetTimerRef.current = null;
+    }, 1200);
+  }
+
+  const label = state === 'inserted'
+    ? t.agent.toolCall.insertedIntoOutliner
+    : t.agent.toolCall.insertIntoOutliner;
+  const StateIcon = state === 'inserted' ? CheckIcon : state === 'inserting' ? LoaderIcon : AddChildIcon;
+  return (
+    <ButtonControl
+      aria-label={label}
+      className="agent-tool-file-insert"
+      disabled={state === 'inserting'}
+      onClick={() => void insert()}
+      title={label}
+    >
+      <StateIcon
+        aria-hidden="true"
+        className={state === 'inserting' ? 'agent-tool-call-spinner' : undefined}
+        size={ICON_SIZE.menu}
+      />
+    </ButtonControl>
   );
 }
 

@@ -25,7 +25,9 @@ import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import { useCommandRunner } from './shared';
-import { buildAgentUserViewContext } from './agent/userViewContext';
+import { buildAgentUserViewContext, composerCurrentNodeId } from './agent/userViewContext';
+import { attachmentNodeInput } from './interactions/attachmentIngest';
+import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
 import { onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
@@ -438,6 +440,40 @@ export function App() {
       ui,
     });
   }, [activePanelId, index, panels, ui]);
+
+  // The ingest bridge (agent-file-model F4): a file chip deep in the agent tree asks
+  // to save its working file into the outliner. Resolve the target node the way the
+  // composer does (composerCurrentNodeId) so the file lands where the conversation is
+  // anchored, ingest the path into a committed asset in main, then create the
+  // matching image/attachment node -- identical to a user-added file. Focus stays in
+  // the agent panel (applyFocus: false). A ref keeps the bridge reading the latest
+  // doc state while registering once (mirrors how indexRef is kept current).
+  const insertFileBridgeRef = useRef({ index, agentUserViewContext, run });
+  useEffect(() => {
+    insertFileBridgeRef.current = { index, agentUserViewContext, run };
+  }, [index, agentUserViewContext, run]);
+  useEffect(() => onInsertFileIntoOutlinerRequest(async (path) => {
+    const bridge = insertFileBridgeRef.current;
+    if (!bridge.index) return false;
+    const parentId = composerCurrentNodeId(bridge.agentUserViewContext, bridge.index);
+    if (!parentId) return false;
+    // Null when the file is gone or outside the trusted roots (e.g. a stale chip in
+    // an old conversation): report not-inserted so the chip never falsely confirms.
+    const asset = await api.ingestLocalFileToAsset(path);
+    if (!asset) return false;
+    await bridge.run(
+      () => (asset.mimeType.startsWith('image/')
+        ? api.createImageNode(parentId, null, {
+            assetId: asset.id,
+            width: asset.imageWidth ?? null,
+            height: asset.imageHeight ?? null,
+            alt: asset.originalFilename ?? null,
+          })
+        : api.createAttachmentNode(parentId, null, attachmentNodeInput(asset))),
+      { applyFocus: false },
+    );
+    return true;
+  }), []);
 
   if (!index) {
     return (

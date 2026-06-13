@@ -1551,6 +1551,39 @@ output are both a workdir/scratch path the agent reads with `file_read`.
   a run is active, carrying only text) surface the reference marker but not the bytes.
   Referencing an asset on those paths is a documented no-op for the bytes, not an error.
 
+### Saving a conversation file into the outliner (the ingest bridge)
+
+The inverse of materialize. A file the agent produced (`file_write` / `file_edit`,
+rendered as a local-file chip in the transcript) is a **working** file: a workdir
+path, mutable, GC'd with the conversation. The *ingest* bridge promotes it to a
+**committed** outliner node — `working → committed`, a copy + freeze — so an
+agent-produced file becomes the same kind of node as a user-added one.
+
+- **Trigger.** A user action: the "Insert into outliner" button on the file chip
+  (`AgentToolCallBlock` → `InsertIntoOutlinerButton`). Explicit, matching "export is
+  explicit"; the agent has no auto-commit and (today) no ingest tool. Re-clicking
+  inserts again — the document references a snapshot, so saving a newer version is
+  just another click.
+- **Path → asset (main).** The chip fires `requestInsertFileIntoOutliner(path)` on the
+  decoupled `agentFileInsert` channel (the chip is deep in the message tree, with no
+  path to App's document state — mirrors `agentReveal`). App's registered bridge calls
+  the `ingest_local_file` command, which resolves the path through
+  `resolveTrustedLocalFileReference` against the agent **workdir/scratch** roots — the
+  same gate that backs previewing these chips — then `assetService.ingest({ kind:
+  'path' })`. The renderer can only ingest a file it could already preview, so this is
+  **not** the arbitrary-local-file read primitive that `ingest_asset`'s buffer-only
+  rule guards against; directories and GC'd/out-of-root paths return null.
+- **Asset → node (renderer).** The node **type is derived from the sniffed mimeType**
+  (`image/*` → `create_image_node`, else `create_attachment_node`), never chosen by
+  the user; attachment metadata reuses the same `attachmentNodeInput` shape as a
+  user-added file. The node lands under the conversation's current node
+  (`composerCurrentNodeId` — the focused node, else the active panel root, else today),
+  appended; focus is **not** stolen from the agent panel (`applyFocus: false`).
+- **Symmetry.** Ingest and materialize are inverses over the one workdir↔asset-store
+  boundary: a file saved out becomes the same `asset://` handle a user attachment has,
+  and referenced back in becomes a workdir path again (materialize). The document only
+  ever stores handles; the agent only ever sees paths.
+
 ### `file_read`
 
 Read a file with bounded output. This is the only tool that should inspect file

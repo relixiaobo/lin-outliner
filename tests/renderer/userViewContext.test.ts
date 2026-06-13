@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { buildIndex, type UiState } from '../../src/renderer/state/document';
-import { buildAgentUserViewContext } from '../../src/renderer/ui/agent/userViewContext';
+import { buildAgentUserViewContext, composerCurrentNodeId } from '../../src/renderer/ui/agent/userViewContext';
 import type { DocumentProjection, NodeProjection } from '../../src/core/types';
 
 function node(id: string, text: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -137,5 +137,47 @@ describe('agent user view context', () => {
         visibleOutlineTruncated: false,
       },
     ]);
+  });
+});
+
+// composerCurrentNodeId is the shared resolver for "the node this conversation is
+// about" -- used by the composer (what the agent is told) and the ingest bridge
+// (where an inserted file lands). Its fallback order is the F4 insertion target.
+describe('composerCurrentNodeId', () => {
+  const index = buildIndex(projection([
+    node('workspace', 'Workspace', { children: ['root'] }),
+    node('root', 'Library', { parentId: 'workspace', children: ['daily-notes'] }),
+    node('daily-notes', 'Daily Notes', { parentId: 'root', children: ['today'] }),
+    node('today', '2026-05-19', { parentId: 'daily-notes', children: ['child-1'] }),
+    node('child-1', 'Focused task', { parentId: 'today' }),
+  ]));
+
+  function contextFor(input: { activePanelId: string | null; focusedId?: string | null }) {
+    return buildAgentUserViewContext({
+      activePanelId: input.activePanelId,
+      panels: [
+        { id: 'panel-1', type: 'workspace', view: { kind: 'outliner', rootId: 'today' }, size: 1, backStack: [], forwardStack: [] },
+        { id: 'panel-2', type: 'workspace', view: { kind: 'outliner', rootId: 'root' }, size: 1, backStack: [], forwardStack: [] },
+      ],
+      index,
+      ui: ui(input.focusedId ? { focusedId: input.focusedId, focusedPanelId: 'panel-1', focusSurface: 'row' } : {}),
+    });
+  }
+
+  test('prefers the focused node', () => {
+    expect(composerCurrentNodeId(contextFor({ activePanelId: 'panel-1', focusedId: 'child-1' }), index)).toBe('child-1');
+  });
+
+  test('falls back to the active panel root when nothing is focused', () => {
+    expect(composerCurrentNodeId(contextFor({ activePanelId: 'panel-2' }), index)).toBe('root');
+  });
+
+  test('falls back to the first panel root when no panel is active', () => {
+    expect(composerCurrentNodeId(contextFor({ activePanelId: null }), index)).toBe('today');
+  });
+
+  test('falls back to today when there are no outliner panels', () => {
+    const context = buildAgentUserViewContext({ activePanelId: null, panels: [], index, ui: ui() });
+    expect(composerCurrentNodeId(context, index)).toBe('today');
   });
 });

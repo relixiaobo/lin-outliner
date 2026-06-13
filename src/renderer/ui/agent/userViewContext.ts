@@ -18,6 +18,19 @@ const MAX_CONTEXT_TITLE_LENGTH = 160;
 const MAX_VISIBLE_OUTLINE_NODES = 80;
 const MAX_VISIBLE_OUTLINE_DEPTH = 5;
 
+// The node a conversation is "about", resolved the same way for the composer (what
+// the agent is told the user is looking at) and the ingest bridge (where an inserted
+// file lands): the focused node, else the active panel root, else the first panel
+// root, else today. A single resolver keeps "insert into outliner" landing exactly
+// where the conversation is anchored.
+export function composerCurrentNodeId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
+  return context.focusedNode?.nodeId
+    ?? context.nodePanels.find((panel) => panel.active)?.rootNodeId
+    ?? context.nodePanels[0]?.rootNodeId
+    ?? index.projection.todayId
+    ?? null;
+}
+
 export function buildAgentUserViewContext(input: {
   activePanelId: string | null;
   panels: WorkspacePanelState[];
