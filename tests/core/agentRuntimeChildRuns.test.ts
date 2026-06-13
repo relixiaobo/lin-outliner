@@ -404,6 +404,91 @@ describe('agent runtime childRuns', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
+  test('a consulted child run attributes its gated approval to the consultee', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-attribution-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-attribution-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const researcherDir = await createAgent(localRoot, 'researcher', [
+      '---',
+      'description: Researches focused questions in isolation.',
+      'tools: [file_read]',
+      '---',
+      'RESEARCHER_AGENT_BODY.',
+    ].join('\n'));
+    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
+
+    const script = scriptedStream(
+      [
+        // Parent consults the researcher (contact is ungated → spawning never asks).
+        fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'consult researcher',
+            prompt: 'Inspect the local config.',
+            agent_type: 'researcher',
+          }, { id: 'tool-agent-consult' }),
+        ], { stopReason: 'toolUse' }),
+        // The consultee hits an 'ask'-level capability under its OWN permissions:
+        // a sensitive-path read asks in every safety mode.
+        fauxAssistantMessage([
+          fauxToolCall('file_read', { file_path: path.join(localRoot, '.env') }, { id: 'tool-child-read' }),
+        ], { stopReason: 'toolUse' }),
+        // The consultee wraps up after its read is denied.
+        fauxAssistantMessage(fauxText('Consultee done.')),
+        // The parent's final turn.
+        fauxAssistantMessage(fauxText('Parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    const conversationId = conversation.conversationId;
+    const sendPromise = runtime.sendMessage(conversationId, 'Consult the researcher.');
+    let settled = false;
+    sendPromise.finally(() => { settled = true; }).catch(() => undefined);
+
+    const resolved = new Set<string>();
+    const attributions: Array<{ agentId: string; agentType?: string } | undefined> = [];
+    while (!settled) {
+      const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+        event.type === 'approval_request' && !resolved.has(event.requestId)
+      ));
+      if (approval) {
+        resolved.add(approval.requestId);
+        attributions.push(approval.request.requestedByAgent);
+        // Deny so the sensitive read never touches disk; the run still completes.
+        await runtime.resolveApproval(conversationId, approval.requestId, false);
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await sendPromise;
+
+    expect(script.pendingCount()).toBe(0);
+    // The consultee's gated read surfaced in the parent conversation, attributed
+    // to the consultee (its agent id + persona) — never the parent's own agent.
+    expect(attributions).toContainEqual({ agentId: researcherAgentId, agentType: 'researcher' });
+  });
+
   test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-dream-data-'));

@@ -309,6 +309,25 @@ describe('agent permissions', () => {
     });
   });
 
+  test('contact (agent spawn) is baseline-allow in every safety mode', () => {
+    const workspaceRoot = '/tmp/workspace';
+    for (const safetyMode of ['ask_first', 'balanced', 'full_access'] as const) {
+      const decision = evaluateAgentToolPermission({
+        toolName: 'agent',
+        args: { description: 'Consult a specialist', agent_type: 'researcher' },
+        policy: { workspaceRoot, safetyMode },
+      });
+      // Contact is ungated everywhere: it resolves to the baseline 'allow' default,
+      // never reshaped by the mode profile. Safety lives on the consultee's OWN
+      // capability permissions plus the depth/cycle/concurrency guards.
+      expect(decision).toMatchObject({
+        behavior: 'allow',
+        permissionSource: 'default',
+        descriptor: { actionKind: 'agent.delegate.spawn' },
+      });
+    }
+  });
+
   test('agent self-maintenance tools have pinned default decisions', () => {
     const workspaceRoot = '/tmp/workspace';
     const runtimeStatus = evaluateAgentToolPermission({
@@ -536,8 +555,9 @@ describe('agent permissions', () => {
 
     expect(gitPush.behavior === 'ask' ? gitPush.request.alwaysAllowRule : undefined)
       .toBe('Action(git.publish_remote)');
-    expect(childRun.behavior === 'ask' ? childRun.request.alwaysAllowRule : undefined)
-      .toBeUndefined();
+    // Contact is baseline-allow: spawning a child no longer asks, so there is no
+    // ask-request (and thus no always-allow rule) for it to expose.
+    expect(childRun.behavior).toBe('allow');
   });
 
   test('asks for sensitive local paths and blocks sensitive network exfiltration', () => {

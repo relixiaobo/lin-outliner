@@ -182,10 +182,6 @@ export const zhHans: PartialMessages = {
           label: '网络写入命令',
           description: '向外发送数据或更改网络服务的 Shell 命令。',
         },
-        spawnChildAgents: {
-          label: '启动子智能体',
-          description: '启动另一个智能体进程。全局允许有意不提供。',
-        },
       },
     },
     memory: {
@@ -915,6 +911,8 @@ commandPalette: {
       showDetails: '显示详情',
       hideDetails: '隐藏详情',
       alwaysAllowRule: '始终允许规则',
+      // Attribution shown when a consulted agent (a child run) raises the approval.
+      approvalRequestedBy: ({ agent }: { agent: string }) => `来自 @${agent} 的请求`,
       approveOnce: '允许一次',
       alwaysAllow: '始终允许',
       stopAsking: '把所有事情交给 Lin，不再询问',

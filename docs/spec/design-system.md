@@ -1311,8 +1311,8 @@ not Apple chrome. We borrow the interaction, not the chrome.
     lives in the `trailing` slot (native macOS — toggles sit on the right). General's
     Theme/Language, Skills' behaviour switches + installed-skill toggles, Permissions'
     common actions (a compact transparent-at-rest decision pop-up with a stable
-    decision width, so non-allowable rows do not collapse to a different-looking
-    control; the row sublabel stays human-readable and does not expose raw rule strings),
+    decision width, so rows stay aligned regardless of each select's option text;
+    the row sublabel stays human-readable and does not expose raw rule strings),
     Agent Profiles' selectable profile list — all are `InsetRow`s. Agent Profiles
     rows are launch points: clicking a row opens the dedicated Agent config child
     window, while each writable row keeps the enable/disable switch in the trailing

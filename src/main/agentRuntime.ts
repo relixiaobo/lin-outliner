@@ -2580,7 +2580,12 @@ export class AgentRuntime {
         : (approvalInput, signal) => {
           const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
           if (!parentConversation) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
-          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal);
+          // A consulted agent's gated capability surfaces in the parent's approval
+          // UI — attribute it to the consultee, not the parent conversation's agent.
+          return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal, {
+            agentId: input.executingAgentId,
+            agentType: input.agentType,
+          });
         },
       afterToolResult: input.afterToolResult,
     }, async (payload, modelForPayload) => {
@@ -5377,6 +5382,7 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     input: AgentToolApprovalInput,
     signal?: AbortSignal,
+    requestedByAgent?: { agentId: string; agentType?: string },
   ): Promise<AgentToolApprovalResolution> {
     if (signal?.aborted) return { approved: false, deniedReason: 'run_aborted' };
 
@@ -5392,6 +5398,7 @@ export class AgentRuntime {
       reason: input.decision.reason,
       details: input.decision.request.details,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
+      requestedByAgent,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
       request,
