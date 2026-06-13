@@ -3,7 +3,7 @@ status: meta
 priority: P1
 owner: relixiaobo
 created: 2026-06-05
-updated: 2026-06-12
+updated: 2026-06-13
 ---
 
 # Agent Program — Foundation, Dependency Graph, Release Milestones
@@ -355,6 +355,47 @@ reinvent.
 - The remaining plans (**ask-user-question, generative-ui, scheduled-routines,
   import-skill, permissions-hardening**) stay as feature plans; their event additions
   are reconciled into the taxonomy above; their build slots into the milestones.
+
+## Convergence: delegation run record → agent-data-model contract
+
+The delegation-runtime **hygiene** pass (`cc-2/agent-delegation-hygiene` — stop-salvage
+of partial assistant text + one shared `buildChildAgentHarness` for spawn & resume) fixed
+the two behavioral bugs but deliberately **did not** touch shape. The shape work it
+surfaced is recorded here as sequencing; the **shapes themselves are owned by
+[[agent-data-model]]** (`RunMeta` + the run-status vocabulary) and must not be
+re-described in this doc or in code comments — agent-program owns only *when* the
+convergence lands.
+
+**Sequencing.** C1+C2 ship together as **one near-term convergence PR**; C3 is **not a
+standalone PR** — it folds into the agent-program **M-series context-assembly** work.
+
+- **C1 — collapse the delegation-record triplet into one `DelegationDetail` view.** Three
+  near-duplicate records describe the same delegated run today: durable
+  `AgentChildRunRecord` (`src/core/agentEventLog.ts`), IPC `AgentChildRunSnapshot` and the
+  in-memory runtime `AgentRunRecord` (both `src/main/agentDelegation.ts`). Extract a single
+  canonical `DelegationDetail` per [[agent-data-model]]'s "shape changes here once"; the IPC
+  snapshot and the durable record both *derive* from it rather than re-spelling the fields.
+  **When: near-term** (the first convergence PR).
+- **C2 — collapse the dual run-status enums + persist `unattended` durably.**
+  `AgentRunStatus` (`…|'cancelled'`) and `AgentChildRunStatus` (`…|'stopped'`) reconcile to
+  the single vocabulary [[agent-data-model]] defines for `RunMeta.status`;
+  `renderTaskStatusFromRunStatus` becomes a pure projection (or disappears). Fold in the
+  `unattended` flag, which the hygiene PR carries **in-memory only** on `AgentRunRecord` —
+  a durable field on the record so a resumed run honors it across restart. **When: fold
+  into C1** (same PR — they touch the same records).
+- **C3 — unify run-context assembly behind one pipeline.** `buildChildAgentHarness` (this
+  PR) is the minimal dedup of the *child* spawn/resume path only. The deeper convergence is
+  one `RunContextPipeline` that assembles tool catalog / permissions / skill-runtime /
+  ledger for **any** run kind (`turn | background | delegation | scheduled | reflective`)
+  instead of per-kind branches. **When: with the M-series context-assembly rewrite — not a
+  standalone PR.**
+
+**Why C3 is deferred.** Context assembly is exactly what the M-series (L1/L2 single-agent
+capability — memory, skills, config) rewrites. Building a separate `RunContextPipeline` now
+would be an interim mechanism we'd redo when that work lands (A7 — don't write against an
+interim mechanism you're about to replace). The hygiene PR's shared harness is the smallest
+dedup that removes the live duplication **without** pre-committing the pipeline's shape, so
+the M-series is free to design it.
 
 ## Open questions (program-level)
 
