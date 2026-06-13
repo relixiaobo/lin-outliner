@@ -7,6 +7,7 @@ import {
   createAgentLocalWorkspaceContext,
   createLocalTools,
   restorePostCompactReadFiles,
+  scratchRootForWorkdir,
   visibleBash,
   visibleFileGlob,
   visibleFileGrep,
@@ -17,6 +18,7 @@ import {
   type TaskStopData,
 } from '../../src/main/agentLocalTools';
 import { AgentSkillRuntime } from '../../src/main/agentSkills';
+import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
@@ -113,6 +115,18 @@ function makePdf(pageTexts: string[]): string {
   return pdf;
 }
 
+describe('scratchRootForWorkdir', () => {
+  test('prefers the explicit scratch root and otherwise falls back to <workdir>/tmp', () => {
+    const workdir = path.join(path.parse(process.cwd()).root, 'work');
+    const explicit = path.join(path.parse(process.cwd()).root, 'data', 'agent-scratch');
+
+    // Explicit app-owned scratch wins, independent of the workdir.
+    expect(scratchRootForWorkdir(workdir, explicit)).toBe(path.resolve(explicit));
+    // Fallback keeps the legacy in-workdir layout for callers built with only a workdir.
+    expect(scratchRootForWorkdir(workdir, undefined)).toBe(path.join(path.resolve(workdir), 'tmp'));
+  });
+});
+
 describe('agent local tools', () => {
   test('file_read returns bounded text and records a full read for edits', async () => {
     await withWorkspace(async (workspaceRoot) => {
@@ -151,6 +165,83 @@ describe('agent local tools', () => {
         expect(read.error?.code).toBe('path_outside_local_root');
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('scratch root is readable but not writable when it sits outside the workdir', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
+      try {
+        // A materialized attachment / fetched binary lands in scratch (a sibling of the workdir).
+        const scratchFile = path.join(scratchRoot, 'agent-attachments', 'doc.txt');
+        await mkdir(path.dirname(scratchFile), { recursive: true });
+        await writeFile(scratchFile, 'attachment body', 'utf8');
+
+        const tools = createLocalTools({ localRoot: workspaceRoot, scratchRoot });
+        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+        const read = (await (fileRead.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<{
+          type: 'text';
+          file: { content: string };
+        }>;
+
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.content).toBe('attachment body');
+
+        // Scratch is read-only for the agent: a write to a scratch path is rejected even though
+        // reading it is allowed — the agent writes its own outputs to the workdir.
+        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+        const blockedWrite = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(scratchRoot, 'agent-attachments', 'sneaky.txt'),
+          content: 'no',
+        })).details as ToolEnvelope<unknown>;
+        expect(blockedWrite.ok).toBe(false);
+        expect(blockedWrite.error?.code).toBe('path_outside_local_root');
+
+        // The same read path is rejected when scratch is not declared, proving the allowance is
+        // the scratch root and not a loosened boundary.
+        const sealed = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_read')!;
+        const denied = (await (sealed.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<unknown>;
+        expect(denied.ok).toBe(false);
+        expect(denied.error?.code).toBe('path_outside_local_root');
+      } finally {
+        await rm(scratchRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
+    // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
+    // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.
+    // This proves the materializer's target dir and the file tool's trusted-roots set agree when
+    // scratch genuinely sits OUTSIDE the workdir — the round-trip the two-root model relies on.
+    await withWorkspace(async (workspaceRoot) => {
+      const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
+      const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-source-'));
+      try {
+        const sourcePath = path.join(sourceRoot, 'report.txt');
+        await writeFile(sourcePath, 'materialized body', 'utf8');
+
+        // The app materializes an out-of-area attachment exactly as production does.
+        const attachment = await materializePathBackedAttachment(workspaceRoot, scratchRoot, {
+          name: 'report.txt',
+          path: sourcePath,
+        });
+        expect(attachment.path).toStartWith(agentAttachmentDir(scratchRoot));
+        expect(attachment.path).not.toStartWith(path.resolve(workspaceRoot));
+
+        // The agent can then read that materialized path back through file_read.
+        const fileRead = createLocalTools({ localRoot: workspaceRoot, scratchRoot })
+          .find((tool) => tool.name === 'file_read')!;
+        const read = (await (fileRead.execute as any)('call', { file_path: attachment.path })).details as ToolEnvelope<{
+          type: 'text';
+          file: { content: string };
+        }>;
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.content).toBe('materialized body');
+      } finally {
+        await rm(scratchRoot, { recursive: true, force: true });
+        await rm(sourceRoot, { recursive: true, force: true });
       }
     });
   });
@@ -223,7 +314,7 @@ describe('agent local tools', () => {
         },
         resolveSkillTarget: () => null,
       };
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime as any);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime as any);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -491,7 +582,7 @@ describe('agent local tools', () => {
   test('file_write validates agent-authored skills and hot-reloads the registry', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'draft-skill', 'SKILL.md');
@@ -530,7 +621,7 @@ describe('agent local tools', () => {
   test('file_edit hot-reloads existing user-only skill content', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -564,7 +655,7 @@ describe('agent local tools', () => {
   test('agent skill writes are born unratified: model path gated, slash path works', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'guarded-skill', 'SKILL.md');
@@ -618,7 +709,7 @@ describe('agent local tools', () => {
   test('gateway-captured previous content powers single-step undo of an agent edit', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -658,7 +749,7 @@ describe('agent local tools', () => {
   test('skill validation lets agents repair broken previous frontmatter', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -698,7 +789,7 @@ describe('agent local tools', () => {
   test('file_edit on a CRLF/BOM skill still records matching provenance (no fail-open)', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -739,7 +830,7 @@ describe('agent local tools', () => {
   test('agent-authored allowed-tools cannot reach the model path (ratification gate)', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'risky-skill', 'SKILL.md');
 

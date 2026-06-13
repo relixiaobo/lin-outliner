@@ -1446,7 +1446,13 @@ interface ValidationReport {
 
 ## Local File Tools
 
-File tools are for local files under the configured local file root. They must not mutate the outliner
+File tools are for local files under the configured local file root (the **workdir**:
+the agent's cwd, the default `file_glob`/`file_grep` root, and where `file_write`
+output lands). The app-owned **scratch** sibling (materialized attachments, web-fetch
+binaries, bash overflow logs, PDF pages) is read-accessible by absolute path but is
+never the default listing root — see
+[`agent-tool-permissions.md` → Allowed file area](./agent-tool-permissions.md#allowed-file-area)
+for the two-root model. They must not mutate the outliner
 document. The design keeps dedicated tools for each local file role:
 
 - `file_read` inspects file content.

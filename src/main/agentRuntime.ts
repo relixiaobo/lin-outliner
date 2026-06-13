@@ -223,6 +223,7 @@ import {
 } from './agentPermissionEvents';
 import {
   createAgentLocalWorkspaceContext,
+  scratchRootForWorkdir,
   type AgentLocalWorkspaceContext,
 } from './agentLocalTools';
 import {
@@ -351,6 +352,7 @@ interface AgentRuntimeOptions {
   domainEvents?: AgentDomainEventBus;
   completeSimpleFn?: CompleteSimpleFn;
   localFileRoot?: string;
+  scratchRoot?: string;
   permissionMode?: AgentPermissionMode;
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
   providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
@@ -1322,6 +1324,7 @@ export class AgentRuntime {
       executingAgentId: this.agentIdentity.agentId,
       memoryOwnerAgentId: this.agentIdentity.agentId,
       localRoot: this.options.localFileRoot,
+      scratchRoot: this.scratchRoot(),
       host: {} as any,
     });
     return tempRuntime.listAllAgentDefinitions();
@@ -2065,6 +2068,7 @@ export class AgentRuntime {
             : undefined,
           command,
           localRoot: this.options.localFileRoot,
+          scratchRoot: this.scratchRoot(),
           permissionMode: this.options.permissionMode,
           safetyMode: activeSettings.safetyMode,
           allowedTools: skill.allowedTools,
@@ -2104,12 +2108,13 @@ export class AgentRuntime {
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, skillRuntime);
+    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
     const delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: defaultAgentId,
       memoryOwnerAgentId: defaultAgentId,
       localRoot: this.options.localFileRoot,
+      scratchRoot: this.scratchRoot(),
       additionalAgentDirectories: runtimeSettings.additionalAgentDirectories,
       host: {
         createChildAgent: (input) => {
@@ -6899,6 +6904,12 @@ export class AgentRuntime {
     return path.resolve(this.options.localFileRoot ?? process.cwd());
   }
 
+  // App-owned scratch sibling of the workdir. Defaults to `<workdir>/tmp` so a runtime built
+  // with only a `localFileRoot` (e.g. in tests) keeps the legacy in-workdir scratch layout.
+  private scratchRoot() {
+    return scratchRootForWorkdir(this.localFileRoot(), this.options.scratchRoot);
+  }
+
   private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{
     attachments: AgentMessageAttachmentInput[];
     pathMap: Map<string, string>;
@@ -6916,7 +6927,7 @@ export class AgentRuntime {
         continue;
       }
       const originalPath = attachment.path;
-      const materialized = await materializePathBackedAttachment(root, attachment);
+      const materialized = await materializePathBackedAttachment(root, this.scratchRoot(), attachment);
       out.push(materialized);
       if (materialized.path !== originalPath) {
         pathMap.set(originalPath, materialized.path);
@@ -7962,6 +7973,7 @@ function createConfiguredAgent(
           mode: options.permissionMode,
           safetyMode: runtimeSettings?.safetyMode,
           workspaceRoot: localFileRoot,
+          scratchRoot: options.localWorkspace?.scratchRoot,
           globalPermissions,
           preapprovedToolRules: [
             ...(skillRuntime?.getActivePermissionRules() ?? []),

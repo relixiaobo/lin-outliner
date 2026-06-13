@@ -19,7 +19,7 @@ import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
-import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
+import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
@@ -240,6 +240,7 @@ export interface AgentDelegationRuntimeOptions {
   executingAgentId: string;
   memoryOwnerAgentId?: string;
   localRoot?: string;
+  scratchRoot?: string;
   additionalAgentDirectories?: string[];
   includeUserAgents?: boolean;
   depth?: number;
@@ -329,6 +330,7 @@ export class AgentDelegationRuntime {
   private readonly registry: AgentDefinitionRegistry;
   private readonly conversationId: string;
   private readonly localRoot: string;
+  private readonly scratchRoot: string;
   private additionalAgentDirectories: string[];
   private readonly depth: number;
   private readonly maxDepth: number;
@@ -345,6 +347,7 @@ export class AgentDelegationRuntime {
   constructor(options: AgentDelegationRuntimeOptions) {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
+    this.scratchRoot = scratchRootForWorkdir(this.localRoot, options.scratchRoot);
     this.additionalAgentDirectories = normalizeConfiguredDirectories(options.additionalAgentDirectories, this.localRoot);
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
@@ -766,12 +769,13 @@ export class AgentDelegationRuntime {
       },
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
+    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
     childRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
       executingAgentId: input.executingAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
       localRoot: this.localRoot,
+      scratchRoot: this.scratchRoot,
       additionalAgentDirectories: this.additionalAgentDirectories,
       depth: this.depth + 1,
       maxDepth: this.maxDepth,

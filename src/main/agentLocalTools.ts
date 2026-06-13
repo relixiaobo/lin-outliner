@@ -20,12 +20,19 @@ import {
 
 interface LocalToolOptions {
   localRoot?: string;
+  scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
 }
 
 export interface AgentLocalWorkspaceContext {
+  // The agent's file area (cwd + file_* root + relative-path base). Its own outputs land here.
   root: string;
+  // App-owned ephemeral area for materialized attachments / web-fetch / tool-outputs / PDF
+  // pages. A sibling of `root`, so it never appears in the file area's default listings, yet
+  // it is a co-trusted read root (see `resolveWorkspacePath`) so the agent can read what the
+  // app places there. Defaults to `<root>/tmp` when no explicit scratch root is supplied.
+  scratchRoot: string;
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
 }
@@ -465,7 +472,7 @@ const TASK_STOP_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.skillRuntime);
+  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
   return [
     createFileReadTool(workspace),
     createFileGlobTool(workspace),
@@ -478,9 +485,9 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
 }
 
 export async function runLocalBashCommand(
-  options: { localRoot?: string; command: string; timeout?: number; signal?: AbortSignal },
+  options: { localRoot?: string; scratchRoot?: string; command: string; timeout?: number; signal?: AbortSignal },
 ): Promise<LocalBashRunResult> {
-  const workspace = createWorkspaceContext(options.localRoot);
+  const workspace = createWorkspaceContext(options.localRoot, options.scratchRoot);
   const params = normalizeBashParams({
     command: options.command,
     timeout: options.timeout,
@@ -501,16 +508,36 @@ export async function runLocalBashCommand(
   };
 }
 
-function createWorkspaceContext(localRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
+// Resolve the agent scratch root for a workdir. Production passes the explicit app-owned
+// `<userData>/agent-scratch`; when none is supplied (internal callers, tests) the fallback is
+// `<workdir>/tmp`, which keeps the legacy in-workdir layout and is always a sibling-or-child of
+// the workdir, so containment stays well-defined. Single source of this default so the four
+// callers that need scratch before a WorkspaceContext exists cannot drift.
+export function scratchRootForWorkdir(workdir: string | undefined, scratchRoot: string | undefined): string {
+  const root = path.resolve(nonBlank(workdir) ?? process.cwd());
+  const explicit = nonBlank(scratchRoot);
+  return path.resolve(explicit ?? path.join(root, 'tmp'));
+}
+
+// Treat a blank/whitespace path as unset (mirrors agentLocalRoot's env handling). Without this,
+// `path.resolve('')` is `process.cwd()`, which would silently make the whole cwd a scratch root.
+function nonBlank(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
   return {
     root: path.resolve(localRoot ?? process.cwd()),
+    scratchRoot: scratchRootForWorkdir(localRoot, scratchRoot),
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
   };
 }
 
-export function createAgentLocalWorkspaceContext(localRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, skillRuntime);
+export function createAgentLocalWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
+  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
 }
 
 export async function restorePostCompactReadFiles(
@@ -637,7 +664,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       const started = Date.now();
       try {
         const params = normalizeFileReadParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        const filePath = resolveWorkspacePath(workspace, params.file_path, 'read');
         const fileStat = await stat(filePath);
         if (fileStat.isDirectory()) {
           throw new LocalToolFailure('is_directory', `Path is a directory: ${filePath}`, 'Use file_glob to discover files under a directory.');
@@ -816,7 +843,7 @@ function createFileGlobTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       const started = Date.now();
       try {
         const params = normalizeFileGlobParams(rawParams);
-        const searchRoot = params.path ? resolveWorkspacePath(workspace, params.path) : workspace.root;
+        const searchRoot = params.path ? resolveWorkspacePath(workspace, params.path, 'read') : workspace.root;
         const matcher = createGlobMatcher(params.pattern, searchRoot);
         const candidates = await collectFileGlobCandidates(searchRoot, params.pattern);
         const matched = candidates.files.filter((file) => matcher(file));
@@ -886,7 +913,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       const started = Date.now();
       try {
         const params = normalizeFileEditParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
         if (path.extname(filePath).toLowerCase() === '.ipynb') {
           throw new LocalToolFailure(
             'notebook_edit_required',
@@ -986,7 +1013,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
       const started = Date.now();
       try {
         const params = normalizeFileWriteParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
         let original: TextFileRead | null = null;
         try {
           original = await readWorkspaceText(filePath);
@@ -1213,7 +1240,7 @@ function normalizeTaskStopParams(rawParams: unknown): TaskStopParams {
 }
 
 async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
-  const target = params.path ? resolveWorkspacePath(workspace, params.path) : workspace.root;
+  const target = params.path ? resolveWorkspacePath(workspace, params.path, 'read') : workspace.root;
   const targetStat = await stat(target).catch((error: unknown) => {
     throw localFsError(error, target);
   });
@@ -2101,7 +2128,7 @@ function taskOutputPath(workspace: WorkspaceContext, id: string): string {
 }
 
 function toolOutputDir(workspace: WorkspaceContext): string {
-  return path.join(workspace.root, 'tmp', 'agent-tool-outputs');
+  return path.join(workspace.scratchRoot, 'agent-tool-outputs');
 }
 
 function pruneBackgroundTasks(now = Date.now()) {
@@ -2299,22 +2326,63 @@ function countOccurrences(content: string, needle: string): number {
   }
 }
 
-function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): string {
+// The allowed file area is asymmetric: the agent may WRITE only under the workdir, but may READ
+// the workdir AND the app-owned scratch root (materialized attachments, fetched binaries,
+// overflow logs the app places there). `access` selects which rule applies, so both this layer
+// and the permission engine (`agentPermissions.ts`) enforce the same "write→workdir, read→
+// workdir∪scratch" boundary.
+type FileAccess = 'read' | 'write';
+
+function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, access: FileAccess): string {
+  // Relative paths always resolve against the workdir (`root`); the agent only ever targets
+  // scratch with the absolute paths the app hands it, so scratch is an additional *read* root,
+  // never the base for relative resolution.
   const root = path.resolve(workspace.root);
   const rootRealPath = realpathSync.native(root);
+  const allowedRoots = allowedRealRoots(workspace, rootRealPath, access);
   const expanded = expandHome(inputPath);
   const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
   const existingPath = nearestExistingPath(requestedPath);
   const existingRealPath = realpathSync.native(existingPath);
-  if (!isResolvedPathInside(rootRealPath, existingRealPath)) {
+  if (!isInsideAnyRoot(allowedRoots, existingRealPath)) {
     throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
   const suffix = path.relative(existingPath, requestedPath);
   const resolvedPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  if (!isResolvedPathInside(rootRealPath, resolvedPath)) {
+  if (!isInsideAnyRoot(allowedRoots, resolvedPath)) {
     throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
   return requestedPath;
+}
+
+// The real paths a file tool may touch for the given access: the workdir always, plus — for
+// reads — the scratch root when it resolves to a distinct, existing location (scratch is
+// `<root>/tmp` by default, already covered by the workdir).
+function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, access: FileAccess): string[] {
+  const roots = [rootRealPath];
+  if (access === 'read') {
+    const scratchReal = safeRealPath(workspace.scratchRoot);
+    if (scratchReal && !isResolvedPathInside(rootRealPath, scratchReal)) {
+      roots.push(scratchReal);
+    }
+  }
+  return roots;
+}
+
+function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
+  return roots.some((root) => isResolvedPathInside(root, candidate));
+}
+
+function safeRealPath(target: string): string | null {
+  try {
+    const resolved = realpathSync.native(path.resolve(target));
+    // A root that resolves to the filesystem root would make the whole disk "inside" it; treat
+    // it as no root (mirrors localFileReferenceSecurity.trustedRootRealPath).
+    if (path.parse(resolved).root === resolved) return null;
+    return resolved;
+  } catch {
+    return null;
+  }
 }
 
 function nearestExistingPath(inputPath: string): string {

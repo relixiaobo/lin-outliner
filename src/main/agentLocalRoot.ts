@@ -1,11 +1,14 @@
 import path from 'node:path';
 
-export const PACKAGED_AGENT_LOCAL_ROOT_DIR = 'agent-local-root';
+// Two app-owned roots, both leaf directories under userData (per clone in dev):
+//   workdir — the agent's default cwd + file_* root; the place its own outputs land.
+//   scratch — ephemeral materialized attachments / web-fetch / tool-outputs / PDF pages.
+// They are siblings, never nested, so scratch never pollutes the (possibly repo) workdir.
+export const AGENT_WORKDIR_DIR = 'agent-workdir';
+export const AGENT_SCRATCH_DIR = 'agent-scratch';
 
-export interface ResolveAgentLocalFileRootInput {
+export interface ResolveAgentWorkdirInput {
   envLocalRoot?: string;
-  cwd: string;
-  isPackaged: boolean;
   userDataPath: string;
 }
 
@@ -19,13 +22,20 @@ export function hasExplicitAgentLocalRoot(envLocalRoot: string | undefined): boo
   return explicitAgentLocalRoot(envLocalRoot) != null;
 }
 
-export function resolveAgentLocalFileRoot(input: ResolveAgentLocalFileRootInput): string {
+// The agent workdir. `LIN_AGENT_LOCAL_ROOT` is the explicit opt-in to point the agent
+// at a real directory (e.g. a repo clone for dogfooding). With no override the workdir is
+// the dedicated `<userData>/agent-workdir` in BOTH dev and packaged — never `process.cwd()`,
+// which in dev is the repo clone (the source of stray agent files) and packaged can be `/`.
+export function resolveAgentWorkdir(input: ResolveAgentWorkdirInput): string {
   const envLocalRoot = explicitAgentLocalRoot(input.envLocalRoot);
   if (envLocalRoot) {
     return path.resolve(envLocalRoot);
   }
-  if (input.isPackaged) {
-    return path.join(path.resolve(input.userDataPath), PACKAGED_AGENT_LOCAL_ROOT_DIR);
-  }
-  return path.resolve(input.cwd);
+  return path.join(path.resolve(input.userDataPath), AGENT_WORKDIR_DIR);
+}
+
+// The agent scratch root is always app-owned under userData, independent of the workdir, so
+// an env-pointed repo workdir never accumulates ephemeral scratch files.
+export function resolveAgentScratchRoot(input: { userDataPath: string }): string {
+  return path.join(path.resolve(input.userDataPath), AGENT_SCRATCH_DIR);
 }

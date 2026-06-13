@@ -95,7 +95,7 @@ import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
+import { agentAttachmentDir, pruneAgentScratch, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -128,7 +128,8 @@ import type { ExternalContext } from '../core/launcher/context';
 import type { SearchHit } from '../core/types';
 import {
   hasExplicitAgentLocalRoot,
-  resolveAgentLocalFileRoot,
+  resolveAgentScratchRoot,
+  resolveAgentWorkdir,
 } from './agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
 
@@ -239,17 +240,36 @@ const localFileIconCache = new Map<string, string | null>();
 const localFileThumbnailCache = new Map<string, string | null>();
 const pendingLocalFileIconLoads = new Map<string, Promise<string | null>>();
 const pendingLocalFileThumbnailLoads = new Map<string, Promise<string | null>>();
-const agentLocalFileRoot = resolveAgentLocalFileRoot({
+const agentLocalFileRoot = resolveAgentWorkdir({
   envLocalRoot: process.env.LIN_AGENT_LOCAL_ROOT,
-  cwd: process.cwd(),
-  isPackaged: app.isPackaged,
   userDataPath: app.getPath('userData'),
 });
-if (app.isPackaged && !hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
-  mkdirSync(agentLocalFileRoot, { recursive: true });
+const agentScratchRoot = resolveAgentScratchRoot({ userDataPath: app.getPath('userData') });
+// The default workdir is app-owned (`<userData>/agent-workdir`), so create it; an explicit
+// `LIN_AGENT_LOCAL_ROOT` is the user's own directory and must already exist. Scratch is always
+// app-owned, so always create it. Both are best-effort: the agent tools mkdir lazily before each
+// write, so a startup failure (e.g. an unwritable userData) degrades the agent file area rather
+// than aborting the whole app at module load.
+function ensureAgentDir(dir: string): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    console.error(`[agent] failed to create directory ${dir} at startup`, error);
+  }
 }
+if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
+  ensureAgentDir(agentLocalFileRoot);
+}
+ensureAgentDir(agentScratchRoot);
+// Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
+// bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
+// are swallowed so cleanup never blocks startup.
+void pruneAgentScratch(agentScratchRoot).catch((error) => {
+  console.error('[agent] failed to prune scratch root at startup', error);
+});
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
+  scratchRoot: agentScratchRoot,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
@@ -1182,7 +1202,7 @@ function registerIpc() {
       if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
       if (isPreviewCommand(command)) {
         return handlePreviewCommand(command, args ?? {}, {
-          agentLocalFileRoot,
+          agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
           agentRuntime,
           assetService,
           inferMimeType,
@@ -1557,13 +1577,13 @@ function registerIpc() {
   });
 
   ipcMain.handle('lin:preview-local-file-reference', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot]);
+    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot, agentScratchRoot]);
     if (!file) return { file: null };
     return { file: await localFileReferencePreview(file) };
   });
 
   ipcMain.handle('lin:open-local-file', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot]);
+    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot, agentScratchRoot]);
     if (!file || !isSafeLocalFileOpenTarget(file)) return { opened: false };
     const error = await shell.openPath(file.path);
     return { opened: error.length === 0 };
@@ -1586,8 +1606,8 @@ function registerIpc() {
       ? rawOptions.mimeType.trim()
       : 'application/octet-stream';
     const name = safeAttachmentFileName(rawName);
-    await pruneOldAgentAttachments(agentLocalFileRoot);
-    const attachmentDir = agentAttachmentDir(agentLocalFileRoot);
+    await pruneOldAgentAttachments(agentScratchRoot);
+    const attachmentDir = agentAttachmentDir(agentScratchRoot);
     await mkdir(attachmentDir, { recursive: true });
     const filePath = join(attachmentDir, `${randomUUID()}-${name}`);
     await writeFile(filePath, bytes);
