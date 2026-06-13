@@ -1,14 +1,14 @@
 # Research Skill
 
-Give Tenon a first-class research/explore capability without making the product
-model lie about who is in a DM or Channel. Research is a **skill**: a capability
-available to the current agent. When it needs isolation, it runs as a read-only
-fork of the current agent, not as a hidden named agent that has not joined the
-conversation.
+Give Tenon a first-class research/explore capability as a skill of the current
+agent. When generic research needs isolation, it runs as a read-only fork of the
+current agent.
 
-This replaces the earlier "researcher agent + skill wrapper" shape. That shape is
-technically possible, but it is not intuitive in Tenon's IM model: agents are
-participants; skills are capabilities.
+This plan does **not** decide the whole agent-to-agent communication model. Tenon
+should support explicit private agent consultation as a separate architecture
+primitive: an agent can ask another specialist agent for help, then bring the
+result back to the original conversation. That is different from making generic
+research secretly invoke a named non-member agent by default.
 
 ## Goal
 
@@ -24,16 +24,19 @@ The capability should work from:
 - a command node, as a reusable research step in the command's prompt;
 - a Channel, where the addressed member uses the skill as its own capability.
 
-The user-facing concept is **Research as a skill**. The execution boundary is
-**a read-only fork of the current agent**.
+The user-facing concept for this capability is **Research as a skill**. The
+execution boundary is **a read-only fork of the current agent**.
 
 ## Non-goals
 
 - No built-in `researcher` agent in this execution unit.
-- No hidden non-member agent invocation from a DM or Channel.
+- No implicit non-member `researcher` invocation as the default implementation of
+  generic research.
 - No long-lived research participant, independent memory line, or Channel member.
   If that product need appears later, it should be designed as a separate
   explicit Channel agent.
+- No global ban on agent-to-agent private consultation. That belongs in the
+  broader delegation architecture, not in this research skill execution unit.
 - No browser automation. Web research stays limited to existing `web_search` /
   `web_fetch`; logged-in browser control remains gated by the browser integration.
 - No MCP/plugin/remote agent lifecycle.
@@ -43,6 +46,33 @@ The user-facing concept is **Research as a skill**. The execution boundary is
   shell commands, or spawn child agents.
 
 ## Design
+
+### 0. Architectural stance: three different primitives
+
+Tenon should keep three concepts separate:
+
+| Primitive | What it means | Best for |
+|---|---|---|
+| Skill fork | The current agent uses one of its own capabilities in an isolated child run. | Generic research, verify, summarize, format, inspect. |
+| Private consultation | The current agent asks another specialist agent for help off-thread, receives a result, and remains accountable for the final reply. | Security review, design critique, domain expertise, specialist memory/tools. |
+| Channel invitation | Another agent becomes a visible member of the shared conversation. | Multi-party discussion, visible disagreement, ongoing collaboration. |
+
+This plan chooses the first primitive for generic `/research`. It should not be
+read as an argument against the second primitive. The Slack-like model is valid:
+an agent can privately contact a specialist and bring the answer back. The
+important product distinction is that this is a consultation record, not a claim
+that the specialist joined the original DM or Channel.
+
+Private consultation should have its own future design with explicit audit and
+visibility rules:
+
+- the caller declares which agent it consulted;
+- the private transcript is inspectable through the run/task trace, not injected
+  into the original conversation as if the specialist spoke there;
+- the target agent's own tools, skills, and memory line apply;
+- the caller owns the final answer and may accept, reject, or summarize the
+  specialist's result;
+- recursion, cost, permission, and memory-write behavior are bounded.
 
 ### 1. Add a built-in `/research` skill
 
@@ -86,13 +116,13 @@ The skill body briefs the child run to:
 cover explore, inspect, survey, map, and verify. Add an alias later only if usage
 data shows that users consistently look for it.
 
-### 2. Run as a fork of the current agent, not another participant
+### 2. For generic research, run as a fork of the current agent
 
 The skill uses `context: fork` with no `agent:` override. That means the child run
 inherits the current agent's role and conversation context, then works in an
 isolated execution transcript whose final report returns to the caller.
 
-This preserves the DM/Channel mental model:
+This preserves the DM/Channel mental model for the generic research capability:
 
 - In a DM, the user asked the current agent to use a research capability.
 - In a Channel, the addressed member used one of its skills.
@@ -102,8 +132,9 @@ This preserves the DM/Channel mental model:
 
 If the product later needs a long-lived researcher personality with its own
 memory, that is a different feature: an explicit agent definition that the user
-adds to a Channel or opens a DM with. It should not be smuggled in as the default
-implementation of research.
+adds to a Channel, opens a DM with, or lets another agent privately consult under
+the broader delegation rules. It should not be smuggled in as the default
+implementation of generic research.
 
 ### 3. Make read-only safety structural
 
@@ -186,7 +217,8 @@ The key differences:
   outliner nodes, specs, files, agent memory, and optionally web.
 - cc-2.1 can expose a specialist agent because Claude Code does not have Tenon's
   DM/Channel participant model. In Tenon, a named agent implies a durable
-  participant. A hidden non-member researcher is therefore surprising.
+  participant or an explicit private consultation. Generic `/research` should not
+  hide that distinction.
 - cc-2.1 `Plan` is software-architecture-specific. Tenon's first capability is
   research/explore only. Planning remains the caller's responsibility unless a
   later `/plan` skill is justified.
@@ -246,6 +278,10 @@ Expected implementation files:
 - Should Tenon later add an explicit researcher agent? Recommendation: defer. Add
   it only when users want a durable research participant with its own memory and
   Channel presence.
+- Should Tenon add an explicit private consultation primitive for agent-to-agent
+  help? Recommendation: yes, as a separate architecture plan. It should model the
+  Slack-like "ask a specialist privately, then bring back the result" workflow,
+  rather than forcing every cross-agent interaction into a shared Channel.
 
 ## Collision check (2026-06-13)
 
