@@ -14,16 +14,21 @@ export interface PathBackedAttachment {
 
 export async function materializePathBackedAttachment<T extends PathBackedAttachment>(
   localRoot: string,
+  scratchRoot: string,
   attachment: T,
 ): Promise<T> {
   return {
     ...attachment,
-    path: await materializeAgentLocalPath(localRoot, attachment.path, attachment.name),
+    path: await materializeAgentLocalPath(localRoot, scratchRoot, attachment.path, attachment.name),
   };
 }
 
+// Containment is checked against the workdir (`localRoot`): a source already readable by the
+// agent is returned as-is. Everything copied in lands in the scratch root (`scratchRoot`),
+// which sits outside the workdir so materialized bytes never show up in the agent's file area.
 export async function materializeAgentLocalPath(
   localRoot: string,
+  scratchRoot: string,
   inputPath: string,
   label = 'attachment',
 ): Promise<string> {
@@ -31,7 +36,12 @@ export async function materializeAgentLocalPath(
   const rootRealPath = await realpath(root);
   const sourcePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(root, inputPath));
   const sourceRealPath = await realpath(sourcePath);
+  // A source the agent can already read in place — the workdir or the app-owned scratch root
+  // (e.g. a user-staged attachment already written into scratch) — is returned as-is rather
+  // than copied again.
+  const scratchRealPath = await safeRealPath(scratchRoot);
   if (isPathInside(rootRealPath, sourceRealPath)) return sourceRealPath;
+  if (scratchRealPath && isPathInside(scratchRealPath, sourceRealPath)) return sourceRealPath;
 
   const sourceStat = await stat(sourceRealPath);
   if (sourceStat.isDirectory()) {
@@ -44,24 +54,24 @@ export async function materializeAgentLocalPath(
     throw new Error(`Attachment is larger than ${formatBytes(MAX_MATERIALIZED_ATTACHMENT_BYTES)} and cannot be materialized for agent access.`);
   }
 
-  await pruneOldAgentAttachments(root);
-  const attachmentDir = agentAttachmentDir(root);
+  await pruneOldAgentAttachments(scratchRoot);
+  const attachmentDir = agentAttachmentDir(scratchRoot);
   await mkdir(attachmentDir, { recursive: true });
   const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(label || path.basename(sourceRealPath))}`);
   await copyFile(sourceRealPath, targetPath);
   return targetPath;
 }
 
-export function agentAttachmentDir(localRoot: string): string {
-  return path.join(path.resolve(localRoot), 'tmp', AGENT_ATTACHMENT_DIR);
+export function agentAttachmentDir(scratchRoot: string): string {
+  return path.join(path.resolve(scratchRoot), AGENT_ATTACHMENT_DIR);
 }
 
 export async function pruneOldAgentAttachments(
-  localRoot: string,
+  scratchRoot: string,
   now = Date.now(),
   ttlMs = AGENT_ATTACHMENT_TTL_MS,
 ): Promise<void> {
-  const attachmentDir = agentAttachmentDir(localRoot);
+  const attachmentDir = agentAttachmentDir(scratchRoot);
   let entries: string[];
   try {
     entries = await readdir(attachmentDir);
@@ -98,6 +108,14 @@ function formatBytes(bytes: number): string {
 export function isPathInside(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+async function safeRealPath(target: string): Promise<string | null> {
+  try {
+    return await realpath(path.resolve(target));
+  } catch {
+    return null;
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

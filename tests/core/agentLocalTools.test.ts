@@ -155,6 +155,37 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read allows an absolute path under the scratch root when scratch sits outside the workdir', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
+      try {
+        // A materialized attachment / fetched binary lands in scratch (a sibling of the workdir).
+        const scratchFile = path.join(scratchRoot, 'agent-attachments', 'doc.txt');
+        await mkdir(path.dirname(scratchFile), { recursive: true });
+        await writeFile(scratchFile, 'attachment body', 'utf8');
+
+        const tools = createLocalTools({ localRoot: workspaceRoot, scratchRoot });
+        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+        const read = (await (fileRead.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<{
+          type: 'text';
+          file: { content: string };
+        }>;
+
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.content).toBe('attachment body');
+
+        // The same path is rejected when scratch is not declared, proving the allowance is the
+        // scratch root and not a loosened boundary.
+        const sealed = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_read')!;
+        const denied = (await (sealed.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<unknown>;
+        expect(denied.ok).toBe(false);
+        expect(denied.error?.code).toBe('path_outside_local_root');
+      } finally {
+        await rm(scratchRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   test('file_glob rejects symlinked directories that resolve outside the local root', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
@@ -223,7 +254,7 @@ describe('agent local tools', () => {
         },
         resolveSkillTarget: () => null,
       };
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime as any);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime as any);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -491,7 +522,7 @@ describe('agent local tools', () => {
   test('file_write validates agent-authored skills and hot-reloads the registry', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'draft-skill', 'SKILL.md');
@@ -530,7 +561,7 @@ describe('agent local tools', () => {
   test('file_edit hot-reloads existing user-only skill content', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -564,7 +595,7 @@ describe('agent local tools', () => {
   test('agent skill writes are born unratified: model path gated, slash path works', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'guarded-skill', 'SKILL.md');
@@ -618,7 +649,7 @@ describe('agent local tools', () => {
   test('gateway-captured previous content powers single-step undo of an agent edit', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -658,7 +689,7 @@ describe('agent local tools', () => {
   test('skill validation lets agents repair broken previous frontmatter', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -698,7 +729,7 @@ describe('agent local tools', () => {
   test('file_edit on a CRLF/BOM skill still records matching provenance (no fail-open)', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const tools = createLocalTools({ workspace });
       const fileRead = tools.find((tool) => tool.name === 'file_read')!;
       const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -739,7 +770,7 @@ describe('agent local tools', () => {
   test('agent-authored allowed-tools cannot reach the model path (ratification gate)', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
-      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime);
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'risky-skill', 'SKILL.md');
 

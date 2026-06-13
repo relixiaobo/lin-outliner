@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readdir, rm, truncate, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../../src/core/agentAttachmentLimits';
@@ -18,50 +18,92 @@ describe('agent attachment materialization', () => {
     roots.length = 0;
   });
 
-  test('copies trusted out-of-root file attachments under localRoot', async () => {
+  test('copies trusted out-of-root file attachments into the scratch root, not the workdir', async () => {
     const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
+    const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
     const sourceRoot = await mkdtempRoot('lin-agent-attachment-source-');
     const sourcePath = path.join(sourceRoot, 'report.pdf');
     await writeFile(sourcePath, 'report body');
 
-    const attachment = await materializePathBackedAttachment(localRoot, {
+    const attachment = await materializePathBackedAttachment(localRoot, scratchRoot, {
       name: '../report.pdf',
       path: sourcePath,
     });
 
-    expect(attachment.path).toStartWith(agentAttachmentDir(localRoot));
+    // Lands in scratch (a sibling of the workdir), never inside the agent's file area.
+    expect(attachment.path).toStartWith(agentAttachmentDir(scratchRoot));
+    expect(attachment.path).not.toStartWith(path.resolve(localRoot));
     expect(attachment.path).not.toBe(sourcePath);
     expect(path.basename(attachment.path)).not.toContain('..');
     expect(await readFile(attachment.path, 'utf8')).toBe('report body');
   });
 
+  test('returns an already-in-workdir source as-is without copying into scratch', async () => {
+    const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
+    const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
+    const sourcePath = path.join(localRoot, 'inside.txt');
+    await writeFile(sourcePath, 'inside body');
+
+    const attachment = await materializePathBackedAttachment(localRoot, scratchRoot, {
+      name: 'inside.txt',
+      path: sourcePath,
+    });
+
+    // The source is already readable in the workdir, so it is returned in place (as its real
+    // path) and nothing is copied into scratch.
+    expect(attachment.path).toBe(await realpath(sourcePath));
+    expect(attachment.path).not.toStartWith(path.resolve(scratchRoot));
+    await expect(readdir(agentAttachmentDir(scratchRoot))).rejects.toThrow();
+  });
+
+  test('returns an already-in-scratch source as-is without copying it again', async () => {
+    const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
+    const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
+    // A user-staged attachment already lives in the scratch attachment dir.
+    const stagedDir = agentAttachmentDir(scratchRoot);
+    await mkdir(stagedDir, { recursive: true });
+    const stagedPath = path.join(stagedDir, 'staged.txt');
+    await writeFile(stagedPath, 'staged body');
+
+    const attachment = await materializePathBackedAttachment(localRoot, scratchRoot, {
+      name: 'staged.txt',
+      path: stagedPath,
+    });
+
+    expect(attachment.path).toBe(await realpath(stagedPath));
+    // No second copy was made alongside the original.
+    expect(await readdir(stagedDir)).toEqual(['staged.txt']);
+  });
+
   test('rejects oversized trusted file attachments before copying', async () => {
     const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
+    const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
     const sourceRoot = await mkdtempRoot('lin-agent-attachment-source-');
     const sourcePath = path.join(sourceRoot, 'huge.bin');
     await writeFile(sourcePath, '');
     await truncate(sourcePath, MAX_MATERIALIZED_ATTACHMENT_BYTES + 1);
 
-    await expect(materializePathBackedAttachment(localRoot, {
+    await expect(materializePathBackedAttachment(localRoot, scratchRoot, {
       name: 'huge.bin',
       path: sourcePath,
     })).rejects.toThrow('larger');
-    await expect(readdir(agentAttachmentDir(localRoot))).rejects.toThrow();
+    await expect(readdir(agentAttachmentDir(scratchRoot))).rejects.toThrow();
   });
 
   test('rejects out-of-root directory attachments instead of symlinking them', async () => {
     const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
+    const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
     const sourceRoot = await mkdtempRoot('lin-agent-attachment-source-');
 
-    await expect(materializePathBackedAttachment(localRoot, {
+    await expect(materializePathBackedAttachment(localRoot, scratchRoot, {
       name: 'outside-dir',
       path: sourceRoot,
     })).rejects.toThrow('Directory attachments outside the allowed file area');
   });
 
   test('prunes expired staged attachments', async () => {
-    const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
-    const attachmentDir = agentAttachmentDir(localRoot);
+    const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
+    const attachmentDir = agentAttachmentDir(scratchRoot);
     await mkdir(attachmentDir, { recursive: true });
     const expiredPath = path.join(attachmentDir, 'expired.txt');
     const freshPath = path.join(attachmentDir, 'fresh.txt');
@@ -71,7 +113,7 @@ describe('agent attachment materialization', () => {
     const expiredSeconds = (now - AGENT_ATTACHMENT_TTL_MS - 1000) / 1000;
     await utimes(expiredPath, expiredSeconds, expiredSeconds);
 
-    await pruneOldAgentAttachments(localRoot, now);
+    await pruneOldAgentAttachments(scratchRoot, now);
 
     expect(await readdir(attachmentDir)).toEqual(['fresh.txt']);
   });

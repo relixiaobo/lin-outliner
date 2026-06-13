@@ -45,23 +45,45 @@ the original broad plan.
 
 ## Allowed file area
 
-The runtime passes one resolved local file root into the permission engine as
-`workspaceRoot`; file tools and bash path classifiers treat that directory as the
-allowed file area.
+The agent lives in two app-owned roots, both resolved at startup
+(`agentLocalRoot.ts`) and both leaf directories so containment can never reach the
+document, secrets, or event store:
 
-- A non-empty `LIN_AGENT_LOCAL_ROOT` environment variable is an explicit override
-  and resolves with normal `path.resolve` semantics.
-- Source/dev runs with no override keep using `process.cwd()`. The clone-specific
-  `dev:*` scripts run from the repo clone, so local file tools stay repo-bound in
-  development.
-- Packaged runs with no override never use `process.cwd()`. Finder and OS
-  launches may report `/` as the process cwd, which would make the whole disk
-  look like the allowed file area. The packaged fallback is the dedicated
-  `<userData>/agent-local-root` directory, created at startup.
+- **workdir** — the agent's default cwd and `file_*` root; the place its own
+  outputs land. The permission engine receives it as `workspaceRoot`, and it is
+  the base for relative-path resolution, bash cwd, and the sensitive-path / root-
+  delete redlines below.
+- **scratch** — `<userData>/agent-scratch`, an app-owned ephemeral sibling of the
+  workdir holding materialized attachments, web-fetch binaries, bash overflow
+  logs, and PDF page images (7-day TTL prune; GC'd with the conversation).
+
+Resolution of the **workdir**:
+
+- A non-empty `LIN_AGENT_LOCAL_ROOT` environment variable is the explicit opt-in
+  to point the agent at a real directory (e.g. a repo clone for dogfooding) and
+  resolves with normal `path.resolve` semantics.
+- With no override, both dev and packaged use the dedicated
+  `<userData>/agent-workdir` directory, created at startup. It is **never**
+  `process.cwd()` — in dev that is the repo clone (the source of stray agent
+  files), and a packaged Finder/OS launch may report `/`, which would make the
+  whole disk look like the file area. Dev userData is already per-clone isolated
+  (`$HOME/.lin-outliner-<clone>`), so the workdir inherits that isolation.
+
+Scratch is **always** `<userData>/agent-scratch`, independent of the workdir, so
+an env-pointed repo workdir never accumulates ephemeral files.
+
+Because scratch is app-owned and holds bytes the app deliberately places for the
+agent, a **read** of a scratch path counts as inside the allowed file area
+(`resolveWorkspacePath` accepts either root; the permission engine treats a
+scratch read as `allowed_file_area`). A **write** to scratch is still outside —
+the agent writes its own outputs to the workdir, never to scratch. `file_glob` /
+`file_grep` default to the workdir, so scratch never appears in the file area's
+default listings; the agent only ever reaches scratch through the absolute paths
+the app hands it.
 
 This boundary does not loosen the sensitive-path redlines below. Paths outside
-the allowed file area still deny or ask according to the descriptor defaults and
-global permission rules.
+both roots still deny or ask according to the descriptor defaults and global
+permission rules.
 
 ## Evaluation pipeline
 

@@ -190,11 +190,16 @@ export interface AgentToolsOptions {
 }
 
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
+  // Web-fetch binaries are scratch, not workspace output: prefer the workspace's resolved
+  // scratch root, falling back to the workdir's default scratch sibling when no workspace
+  // context is supplied (the runtime always supplies one in production).
+  const scratchRoot = options.localWorkspace?.scratchRoot
+    ?? (options.localFileRoot != null ? path.join(path.resolve(options.localFileRoot), 'tmp') : undefined);
   const tools = [
     ...(outliner ? createNodeTools(outliner, { localFileRoot: options.localFileRoot }) : []),
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
     createWebSearchTool(),
-    createWebFetchTool(options.localFileRoot),
+    createWebFetchTool(scratchRoot),
     ...(options.recall ? [createRecallTool(options.recall)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
     ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
@@ -219,7 +224,7 @@ function filterAgentTools(
   });
 }
 
-function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<WebFetchData>> {
+function createWebFetchTool(scratchRoot?: string): AgentTool<any, ToolEnvelope<WebFetchData>> {
   return {
     name: 'web_fetch',
     label: 'Web Fetch',
@@ -238,7 +243,7 @@ function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<Web
 
       const params = normalized.params;
       try {
-        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, signal, localRoot));
+        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, signal, scratchRoot));
       } catch (error) {
         if (error instanceof WebToolFailure && error.hint) {
           return webFetchToolResult(webFetchHintEnvelope(params, error, started));
@@ -260,10 +265,10 @@ async function fetchWebFetchEnvelope(
   params: NormalizedWebFetchParams,
   started: number,
   signal?: AbortSignal,
-  localRoot?: string,
+  scratchRoot?: string,
 ): Promise<ToolEnvelope<WebFetchData>> {
   try {
-    const fetched = await fetchText(params.url, signal, localRoot);
+    const fetched = await fetchText(params.url, signal, scratchRoot);
     const page = await extractFetchedPageContent(fetched, params);
     const decision = assessWebFetchFallback(fetched, params, page);
     if (decision.shouldFallback) {
@@ -462,7 +467,7 @@ function webSearchToolResult(envelope: ToolEnvelope<WebSearchData>) {
   return agentToolResult(envelope, envelope.data ? webSearchModelData(envelope.data) : undefined);
 }
 
-async function fetchText(url: string, signal?: AbortSignal, localRoot?: string): Promise<FetchTextResult> {
+async function fetchText(url: string, signal?: AbortSignal, scratchRoot?: string): Promise<FetchTextResult> {
   const startedUrl = url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -470,7 +475,7 @@ async function fetchText(url: string, signal?: AbortSignal, localRoot?: string):
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetchTextWithPermittedRedirects(startedUrl, startedUrl, controller.signal, localRoot);
+    return await fetchTextWithPermittedRedirects(startedUrl, startedUrl, controller.signal, scratchRoot);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -490,7 +495,7 @@ async function fetchTextWithPermittedRedirects(
   currentUrl: string,
   startedUrl: string,
   signal: AbortSignal,
-  localRoot?: string,
+  scratchRoot?: string,
   depth = 0,
 ): Promise<FetchTextResult> {
   if (depth > WEB_FETCH_MAX_REDIRECTS) {
@@ -517,7 +522,7 @@ async function fetchTextWithPermittedRedirects(
       });
     }
     if (isPermittedWebFetchRedirect(currentUrl, redirectUrl)) {
-      return await fetchTextWithPermittedRedirects(redirectUrl, startedUrl, signal, localRoot, depth + 1);
+      return await fetchTextWithPermittedRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1);
     }
     throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
   }
@@ -552,7 +557,7 @@ async function fetchTextWithPermittedRedirects(
 
   const bytesResult = await readBoundedBytes(response, MAX_FETCH_BYTES);
   if (isBinaryContentType(contentType)) {
-    const binaryFile = await persistWebFetchBinary(bytesResult.bytes, contentType, finalUrl, localRoot);
+    const binaryFile = await persistWebFetchBinary(bytesResult.bytes, contentType, finalUrl, scratchRoot);
     return {
       requestedUrl: startedUrl,
       finalUrl,
@@ -650,12 +655,12 @@ async function persistWebFetchBinary(
   bytes: Uint8Array,
   contentType: string,
   finalUrl: string,
-  localRoot?: string,
+  scratchRoot?: string,
 ): Promise<WebFetchBinaryFile> {
   const mimeType = normalizeMimeType(contentType);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const extension = binaryExtension(mimeType, finalUrl);
-  const filePath = path.join(webFetchOutputDir(localRoot), `webfetch-${Date.now()}-${randomUUID()}${extension}`);
+  const filePath = path.join(webFetchOutputDir(scratchRoot), `webfetch-${Date.now()}-${randomUUID()}${extension}`);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, bytes);
   return {
@@ -666,8 +671,8 @@ async function persistWebFetchBinary(
   };
 }
 
-function webFetchOutputDir(localRoot?: string): string {
-  return path.join(localRoot ?? process.cwd(), 'tmp', 'agent-web-fetch');
+function webFetchOutputDir(scratchRoot?: string): string {
+  return path.join(path.resolve(scratchRoot ?? path.join(process.cwd(), 'tmp')), 'agent-web-fetch');
 }
 
 function normalizeMimeType(contentType: string): string {

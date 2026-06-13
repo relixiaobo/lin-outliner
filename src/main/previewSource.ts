@@ -34,7 +34,9 @@ export interface LocalFilePreviewMetadata {
 }
 
 export interface PreviewCommandContext {
-  agentLocalFileRoot: string;
+  // The app-owned roots a local-file preview may resolve under: the agent workdir and its
+  // scratch sibling (materialized attachments / web-fetch outputs live in scratch).
+  agentLocalFileRoots: readonly string[];
   agentRuntime: Pick<AgentRuntime, 'previewPayload' | 'previewPayloadBytes'>;
   assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
   inferMimeType: (filePath: string) => string;
@@ -77,7 +79,7 @@ async function previewSourceForTarget(
   context: PreviewCommandContext,
 ): Promise<PreviewSourceDescriptor | null> {
   if (target.kind === 'local-file') {
-    const file = await resolveTrustedLocalFileReference(target.path, [context.agentLocalFileRoot]);
+    const file = await resolveTrustedLocalFileReference(target.path, context.agentLocalFileRoots);
     if (!file) return null;
     const metadata = await context.localFileReferencePreview(file);
     const normalizedTarget: PreviewTarget = {
@@ -183,7 +185,7 @@ async function previewBytesBufferForTarget(
   context: PreviewCommandContext,
 ): Promise<{ bytes: Buffer; mimeType: string; error?: never } | { bytes?: never; mimeType?: never; error: string }> {
   if (target.kind === 'local-file') {
-    const file = await resolveTrustedLocalFileReference(target.path, [context.agentLocalFileRoot]);
+    const file = await resolveTrustedLocalFileReference(target.path, context.agentLocalFileRoots);
     if (!file) return { error: 'missing' };
     if (file.entryKind !== 'file') return { error: 'unsupported-entry-kind' };
     if (file.stats.size > limitBytes) return { error: 'too-large' };
@@ -226,7 +228,7 @@ async function previewDirectoryEntriesForTarget(
   context: PreviewCommandContext,
 ): Promise<PreviewListDirectoryResult> {
   if (target.kind !== 'local-file') return { entries: null, error: 'unsupported-target' };
-  const file = await resolveTrustedLocalFileReference(target.path, [context.agentLocalFileRoot]);
+  const file = await resolveTrustedLocalFileReference(target.path, context.agentLocalFileRoots);
   if (!file) return { entries: null, error: 'missing' };
   if (file.entryKind !== 'directory') return { entries: null, error: 'unsupported-entry-kind' };
 
@@ -243,7 +245,7 @@ async function previewDirectoryEntriesForTarget(
       truncated = true;
       break;
     }
-    const child = await resolveTrustedLocalFileReference(join(file.path, dirent.name), [context.agentLocalFileRoot]);
+    const child = await resolveTrustedLocalFileReference(join(file.path, dirent.name), context.agentLocalFileRoots);
     if (!child) continue;
     const mimeType = child.entryKind === 'directory' ? 'inode/directory' : context.inferMimeType(child.path);
     entries.push({

@@ -43,6 +43,10 @@ export interface AgentPermissionPolicy {
   mode: AgentPermissionMode;
   safetyMode: AgentSafetyMode;
   workspaceRoot: string;
+  // App-owned ephemeral scratch root (materialized attachments / web-fetch / tool-outputs),
+  // a sibling of the workdir. The app places agent-readable bytes here, so a *read* of a
+  // scratch path counts as inside the allowed file area; writes are still treated as outside.
+  scratchRoot?: string;
   denyTools: readonly string[];
   preapprovedToolRules: readonly string[];
   allowOutsideWorkspaceRead: boolean;
@@ -54,6 +58,7 @@ export interface AgentPermissionPolicyInput {
   mode?: AgentPermissionMode;
   safetyMode?: AgentSafetyMode;
   workspaceRoot?: string;
+  scratchRoot?: string;
   denyTools?: readonly string[];
   preapprovedToolRules?: readonly string[];
   allowOutsideWorkspaceRead?: boolean;
@@ -258,6 +263,7 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     mode: input.mode ?? 'trusted',
     safetyMode: input.safetyMode ?? 'balanced',
     workspaceRoot: path.resolve(input.workspaceRoot ?? process.cwd()),
+    scratchRoot: input.scratchRoot != null ? path.resolve(input.scratchRoot) : undefined,
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
     allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,
@@ -730,7 +736,11 @@ function derivePathToolActionDescriptor(
   }
 
   const resolved = resolvePermissionPath(policy.workspaceRoot, rawPath);
-  const isInsideWorkspace = isPathInside(policy.workspaceRoot, resolved);
+  // Scratch is app-owned: a read of a path the app placed there (a materialized attachment,
+  // a fetched binary, an overflow log) is inside the allowed file area. Writes to scratch stay
+  // outside — the agent writes its own outputs to the workdir, never to scratch.
+  const isInsideWorkspace = isPathInside(policy.workspaceRoot, resolved)
+    || (!isWrite && policy.scratchRoot != null && isPathInside(policy.scratchRoot, resolved));
   const outsideAllowed = isWrite ? policy.allowOutsideWorkspaceWrite : policy.allowOutsideWorkspaceRead;
 
   if (!isInsideWorkspace && !outsideAllowed) {

@@ -148,6 +148,40 @@ describe('agent permissions', () => {
     expect(decision.code).toBe('path_outside_workspace');
   });
 
+  test('scratch root is a co-trusted read root but not writable', () => {
+    const workspaceRoot = '/tmp/workspace';
+    const scratchRoot = '/tmp/scratch';
+
+    // A read of an app-placed scratch file (e.g. a materialized attachment) is inside the
+    // allowed file area — never a hard-blocked outside read.
+    const scratchRead = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: path.join(scratchRoot, 'agent-attachments', 'doc.txt') },
+      policy: { workspaceRoot, scratchRoot },
+    });
+    expect(scratchRead.behavior).toBe('allow');
+    expect(scratchRead.access).toBe('read');
+
+    // Without a scratch root the same read is hard-blocked as outside the area, proving the
+    // allowance comes from the scratch policy and nothing else.
+    const noScratch = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: path.join(scratchRoot, 'agent-attachments', 'doc.txt') },
+      policy: { workspaceRoot },
+    });
+    expect(noScratch.behavior).toBe('deny');
+    expect(noScratch.code).toBe('path_outside_workspace');
+
+    // Writes to scratch stay outside the area — the agent writes its own outputs to the workdir.
+    const scratchWrite = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: path.join(scratchRoot, 'sneaky.txt'), content: 'no' },
+      policy: { workspaceRoot, scratchRoot },
+    });
+    expect(scratchWrite.behavior).toBe('deny');
+    expect(scratchWrite.code).toBe('path_outside_workspace');
+  });
+
   test('outside workspace reads ask unless a global rule allows them', () => {
     const asked = evaluateAgentToolPermission({
       toolName: 'file_read',

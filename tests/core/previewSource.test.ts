@@ -140,7 +140,7 @@ describe('preview source commands', () => {
 
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
     return {
-      agentLocalFileRoot: root,
+      agentLocalFileRoots: [root],
       agentRuntime: {
         previewPayload: async () => null,
         previewPayloadBytes: async () => null,
