@@ -1,12 +1,3 @@
----
-status: draft
-priority: P2
-owner: unassigned
-created: 2026-06-04
-updated: 2026-06-04
-related: unified-command-surface.md, browser-extension-integration.md
----
-
 # Launcher Provider Expansion
 
 > **Re-scoped (2026-06-04):** this is the **capture-provider-breadth** track —

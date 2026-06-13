@@ -1,11 +1,3 @@
----
-status: in-progress
-priority: P2
-owner: relixiaobo
-created: 2026-06-03
-updated: 2026-06-12
----
-
 # File Preview Pane
 
 Open any file-shaped reference in a workspace panel and inspect it inside Lin.

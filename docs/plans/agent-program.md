@@ -1,11 +1,3 @@
----
-status: meta
-priority: P1
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-12
----
-
 # Agent Program — Foundation, Dependency Graph, Release Milestones
 
 The umbrella for the agent-subsystem rebuild. It does **not** describe a feature; it

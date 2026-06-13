@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Icon Semantics — action↔icon collision fixes
 
 The renderer's icon layer is already strong and single-sourced: every product

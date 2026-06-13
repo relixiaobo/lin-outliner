@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-06-03
-updated: 2026-06-03
----
-
 # Agent Generative UI
 
 ## Goal

@@ -1,11 +1,3 @@
----
-status: draft
-priority: P1
-owner: relixiaobo
-created: 2026-06-13
-updated: 2026-06-13
----
-
 # Channel Async Message Bus
 
 Make Channels behave like an IM group with independent addressed agent work, not

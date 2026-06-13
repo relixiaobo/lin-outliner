@@ -1,11 +1,3 @@
----
-status: draft
-priority: P2
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Feedback states — `<EmptyState>` / `<ErrorState>` primitives + outliner empty states
 
 Layer 2 (primitives + feature gaps) of the UI-quality roadmap

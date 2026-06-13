@@ -699,6 +699,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **TASKS.md is the single source of plan status (main, direct merge)** — plan
+  status + priority previously lived in both plan-file frontmatter and
+  `docs/TASKS.md`, and the two drifted whenever a plan shipped (e.g.
+  `security-settings-ia-redesign` sat in the Backlog as "awaiting ratification"
+  after shipping as #215). Status is project-management state, not a property of a
+  design, so it now lives in exactly one place: `docs/TASKS.md` is the single
+  source of plan todo/status/priority and links out to each plan, and plan files
+  are pure design carrying **no frontmatter** (stripped from all 32 active plans;
+  `archive/` kept as historical record). New `bun run docs:check` guard
+  (`scripts/docs-check.ts`), wired into the "before marking ready" gate: C1 every
+  `docs/plans/…` link in TASKS resolves, C2 no active plan is missing from the
+  board — offline + deterministic; it caught 3 pre-existing dangling archive links
+  + 2 orphan plans on first run. `AGENTS.md` reverses the "catalog = frontmatter"
+  rule. Design: `docs/plans/plan-status-single-source.md`.
 - **File preview plan refreshed (PR #209, docs-only)** — rewrites
   `docs/plans/file-preview.md` (status stays `draft`) around a source-owned
   `PreviewTarget` model: `local-file`, `asset`, `agent-payload`, and `url` are

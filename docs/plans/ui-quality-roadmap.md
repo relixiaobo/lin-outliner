@@ -1,11 +1,3 @@
----
-status: meta
-priority: P2
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # UI Quality Roadmap
 
 Index + organizing logic for the UI-consistency work that came out of the

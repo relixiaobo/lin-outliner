@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Dark-mode Contrast Pass
 
 The dark-mode token mechanism is sound — the static review (`tmp/ui-review/A-dark-mode-visual-risk.md`)

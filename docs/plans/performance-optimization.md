@@ -1,11 +1,3 @@
----
-status: in-progress
-priority: P0
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-04
----
-
 # Performance Optimization Program
 
 Scope: the document data flow across the `core → IPC → renderer` seam, the

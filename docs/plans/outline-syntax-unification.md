@@ -1,11 +1,3 @@
----
-status: draft
-priority: low
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-13
----
-
 # Outline syntax: one canonical token grammar in `core`, not four copies
 
 A proposal for how the outline parsers should relate. Two of them are full

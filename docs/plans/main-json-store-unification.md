@@ -1,11 +1,3 @@
----
-status: draft
-priority: P2
-owner: unassigned
-created: 2026-06-10
-updated: 2026-06-10
----
-
 # Main-process JSON persistence unification: one store primitive
 
 **Shape: (a) ONE complete feature in one PR.** A pure structural refactor —

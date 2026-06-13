@@ -1,11 +1,3 @@
----
-status: draft
-priority: P1
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Responsive Robustness
 
 Layer 3 of the UI-quality roadmap (see `docs/plans/ui-quality-roadmap.md` — this

@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-05-25
----
-
 # Embed Strategy
 
 The schema in `src/core/types.ts` still carries `embedType` and `embedId` for

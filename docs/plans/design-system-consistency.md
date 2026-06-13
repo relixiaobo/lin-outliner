@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-05
----
-
 # Design-System Consistency Sweep
 
 A CSS-only pass that closes the **semantic** consistency gaps a full design-system

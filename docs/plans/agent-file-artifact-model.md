@@ -1,11 +1,3 @@
----
-status: draft
-priority: P1
-owner: relixiaobo
-created: 2026-06-13
-updated: 2026-06-13
----
-
 # Agent File Model — paths for the agent, handles for the document
 
 > **Supersedes the draft in PR #218** (`codex-2/agent-file-artifact-model`). That

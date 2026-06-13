@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-05-25
----
-
 # Floating Toolbar Polish
 
 Two small additions to `src/renderer/ui/editor/FloatingEditorToolbar.tsx`

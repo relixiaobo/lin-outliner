@@ -1,11 +1,3 @@
----
-status: draft
-priority: P3
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-05
----
-
 # Composition Rhythm — cross-surface foundation tokens (Layer 1)
 
 The 2026-06-04/05 design-system review found that the three primary content

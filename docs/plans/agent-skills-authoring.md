@@ -1,11 +1,3 @@
----
-status: in-progress
-priority: P1
-owner: relixiaobo
-created: 2026-06-05
-updated: 2026-06-12
----
-
 # Agent Skills — Structure & Governed Self-Authoring
 
 Owns the skill subsystem's **structure** (where skills live, how they bind to an
