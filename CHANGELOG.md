@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **UI quality L2 — shared Button / Input / Field / FeedbackState primitives (PR #234, codex)** —
+  the three Layer-2 lanes of the UI-quality suite (`button-primitive` + `input-primitive` +
+  `feedback-states`). Adds a `<Button variant>` (primary/secondary/ghost/danger, sm/md, solid danger
+  tone) consolidating ~20 hand-rolled text-button stylings; `<Input>/<Textarea>/<Field>` plus
+  `SelectControl` `boxed`/`bare` variants as one tokenized control skin (`FormField` collapsed into
+  `Field`); and `FeedbackState` (`<EmptyState>/<ErrorState>` with an explicit `loading` prop and
+  reduced-motion spin) routing settings empty/loading states and new outliner whole-panel empty states
+  (search no-results, empty Trash/Recents) through one quiet idiom. Aborted agent turns now show a
+  "Stopped" marker. Editable empty outline pages keep the trailing editor (no centered empty block);
+  empty node pages keep the standard title slot with visible breadcrumb context (workspace root no
+  longer force-hidden); a pane whose root id no longer exists is repaired to a real fallback root
+  instead of an orphan Untitled shell. Per-component focus rules retire onto the neutral
+  `:focus-visible` ring; new `primitives/cx.ts` className helper. Spec: `docs/spec/design-system.md`,
+  `docs/spec/ui-behavior.md`.
+
 - **Built-in `/research` read-only isolated skill (PR #235, codex-3)** — adds a user- and
   model-invocable `/research` built-in that runs bounded investigation as a same-agent
   **isolated read-only child run**: it inherits the current agent's conversation context and

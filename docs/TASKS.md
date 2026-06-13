@@ -600,15 +600,10 @@ PR #120. `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract**
 (who owns which lines) and the three-layer build order. All nine were validated
 against `main` (post-#118) at the gate; findings are real with `file:line`.
 
-Layer 1 shipped together in PR #228 (`composition-rhythm` + `design-system-consistency`,
-see Recently completed). Remaining Layer-2/3 lanes:
+Layer 1 shipped together in PR #228 (`composition-rhythm` + `design-system-consistency`)
+and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` +
+`feedback-states`) — see Recently completed. Remaining Layer-3 lanes:
 
-- **button-primitive** (P2, Layer 2, **PM-ratified**) — a `<Button variant>`
-  consolidating ~20 hand-rolled text-button stylings.
-- **input-primitive** (P2, Layer 2) — `<Input>/<Textarea>/<Select>/<Field>`;
-  fixes the `--agent-accent` focus B3/B4 leak (owned with design-system §3).
-- **feedback-states** (P2, Layer 2) — `<EmptyState>/<ErrorState>` + outliner empty
-  states + loading/skeleton policy + surfacing aborted agent turns.
 - **keyboard-a11y** (P2, Layer 3, can run in parallel) — menu focus-trap/restore
   hook, context-menu keyboard nav, outliner tree ARIA, calendar grid, role fixes.
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
@@ -644,6 +639,28 @@ see Recently completed). Remaining Layer-2/3 lanes:
 
 ## Recently completed
 
+- **UI quality L2 — button-primitive + input-primitive + feedback-states**
+  (codex, PR #234, plan-track) — the three Layer-2 lanes of the UI-quality suite shipped together as
+  shared renderer primitives. `<Button variant>` (primary/secondary/ghost/danger + sm/md, solid danger
+  tone) consolidates ~20 hand-rolled text-button stylings (confirm-dialog, settings-sheet,
+  agent-settings, provider/OAuth, search-builder, launcher, command palette); `<Input>/<Textarea>/
+  <Field>` plus `SelectControl` `boxed`/`bare` variants give one tokenized control skin (`FormField`
+  collapsed into `Field`, legacy `TextInputControl`/`NumberInputControl` retained only for unmigrated
+  sites), retiring per-component focus rules onto the neutral `:focus-visible` ring; `FeedbackState`
+  (`<EmptyState>/<ErrorState>`, explicit `loading` prop with reduced-motion spin) routes settings
+  empty/loading states and the new outliner whole-panel empty states (search no-results, empty
+  Trash/Recents) through one quiet idiom, and aborted agent turns now surface a "Stopped" marker.
+  Editable empty outline pages keep the trailing-editor focus (no centered empty block); empty node
+  pages keep the standard title slot with visible breadcrumb context (workspace `rootId` no longer
+  force-hidden), and a pane whose root id vanished from the projection is repaired to a real fallback
+  root (`useWorkspaceLayout.repairMissingOutlinerRoots`, O(1) `byId.has` + early-exit on the hot path)
+  instead of rendering an orphan Untitled shell. New `primitives/cx.ts` className util. Gate (main):
+  **`/code-review high`** surfaced 7 findings (definition number-control boxed regression, un-migrated
+  `.agent-child-run-empty` geometry loss, add-field redundant chevron, empty-state child-count
+  inconsistency, repair-effect O(n)-per-mutation, fragile `Icon === LoaderIcon` spin check, duplicated
+  className idiom) — codex fixed all 7 (+ two new e2e guards) and the re-review confirmed each resolved;
+  typecheck green. Design folded into `docs/spec/design-system.md` + `ui-behavior.md`; all three plans
+  archived.
 - **Cross-agent contact ungated + consultee approval attribution (`ungate-contact`)** (cc,
   PR #236, plan-track) — cross-agent **contact** (`agent.delegate.spawn`) is now baseline-`allow`
   in every safety mode (was `'ask'`); safety moves entirely onto each consultee's **own** capability
