@@ -1,31 +1,26 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
+import {
+  DEFAULT_AGENT_WIDTH,
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_AGENT_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_AGENT_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  clampRailWidthForPanelFloor,
+  clampRailWidthsForPanelFloor,
+  availablePanelWidth,
+  panelCountFitsAtMinimumRails,
+  workspaceLayoutMetricsFromCanvas,
+  type ResponsiveRailState,
+} from './workspaceResponsiveLayout';
 
-const DEFAULT_SIDEBAR_WIDTH = 196;
-const DEFAULT_AGENT_WIDTH = 344;
-const MIN_SIDEBAR_WIDTH = 152;
-const MAX_SIDEBAR_WIDTH = 280;
-const MIN_AGENT_WIDTH = 280;
-const MAX_AGENT_WIDTH = 520;
-const FALLBACK_PANEL_MIN_WIDTH = 360;
 const KEYBOARD_RESIZE_STEP = 16;
 const KEYBOARD_RESIZE_LARGE_STEP = 40;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
-}
-
-function panelGapPx(canvas: HTMLElement) {
-  const raw = getComputedStyle(canvas).getPropertyValue('--panel-gap');
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function panelMinWidthPx(canvas: HTMLElement) {
-  const raw = getComputedStyle(canvas).getPropertyValue('--outline-panel-min-width');
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) ? parsed : FALLBACK_PANEL_MIN_WIDTH;
 }
 
 function resizeKeyDelta(event: ReactKeyboardEvent<HTMLButtonElement>) {
@@ -36,6 +31,7 @@ function resizeKeyDelta(event: ReactKeyboardEvent<HTMLButtonElement>) {
 }
 
 interface UseResizableLayoutOptions {
+  agentOpen: boolean;
   panels: WorkspacePanelState[];
   resizePanelPair: (
     leftPanelId: string,
@@ -43,12 +39,94 @@ interface UseResizableLayoutOptions {
     leftSize: number,
     rightSize: number,
   ) => void;
+  sidebarOpen: boolean;
 }
 
-export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayoutOptions) {
+export function useResizableLayout({
+  agentOpen,
+  panels,
+  resizePanelPair,
+  sidebarOpen,
+}: UseResizableLayoutOptions) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [agentWidth, setAgentWidth] = useState(DEFAULT_AGENT_WIDTH);
   const canvasRef = useRef<HTMLElement | null>(null);
+  const panelCount = Math.max(1, panels.length);
+
+  const railState = useCallback((overrides: Partial<ResponsiveRailState> = {}): ResponsiveRailState => ({
+    sidebarWidth,
+    agentWidth,
+    sidebarOpen,
+    agentOpen,
+    ...overrides,
+  }), [agentOpen, agentWidth, sidebarOpen, sidebarWidth]);
+
+  const clampSidebarWidth = useCallback((width: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return clamp(width, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+    return clampRailWidthForPanelFloor(
+      workspaceLayoutMetricsFromCanvas(canvas),
+      railState({ sidebarWidth: width }),
+      'sidebar',
+      width,
+      panelCount,
+    );
+  }, [panelCount, railState]);
+
+  const clampAgentWidth = useCallback((width: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return clamp(width, MIN_AGENT_WIDTH, MAX_AGENT_WIDTH);
+    return clampRailWidthForPanelFloor(
+      workspaceLayoutMetricsFromCanvas(canvas),
+      railState({ agentWidth: width }),
+      'agent',
+      width,
+      panelCount,
+    );
+  }, [panelCount, railState]);
+
+  const clampRailsToPanelFloor = useCallback((nextPanelCount = panelCount) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const next = clampRailWidthsForPanelFloor(
+      workspaceLayoutMetricsFromCanvas(canvas),
+      railState(),
+      Math.max(1, nextPanelCount),
+    );
+    if (next.sidebarWidth !== sidebarWidth) setSidebarWidth(next.sidebarWidth);
+    if (next.agentWidth !== agentWidth) setAgentWidth(next.agentWidth);
+  }, [agentWidth, panelCount, railState, sidebarWidth]);
+
+  const ensurePanelCapacity = useCallback((nextPanelCount: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return true;
+    const metrics = workspaceLayoutMetricsFromCanvas(canvas);
+    const rails = railState();
+    const clampedPanelCount = Math.max(1, nextPanelCount);
+    if (!panelCountFitsAtMinimumRails(metrics, rails, clampedPanelCount)) return false;
+    const next = clampRailWidthsForPanelFloor(metrics, rails, clampedPanelCount);
+    if (next.sidebarWidth !== sidebarWidth) setSidebarWidth(next.sidebarWidth);
+    if (next.agentWidth !== agentWidth) setAgentWidth(next.agentWidth);
+    return true;
+  }, [agentWidth, railState, sidebarWidth]);
+
+  useLayoutEffect(() => {
+    let frame = 0;
+    const scheduleClamp = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        clampRailsToPanelFloor();
+      });
+    };
+
+    scheduleClamp();
+    window.addEventListener('resize', scheduleClamp);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', scheduleClamp);
+    };
+  }, [clampRailsToPanelFloor]);
 
   const beginSidebarResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -60,7 +138,7 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     document.body.classList.add('is-resizing-layout');
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      setSidebarWidth(clamp(startWidth + moveEvent.clientX - startX, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
+      setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX));
     };
     const endResize = () => {
       handle.classList.remove('is-resizing');
@@ -73,11 +151,11 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
-  }, [sidebarWidth]);
+  }, [clampSidebarWidth, sidebarWidth]);
 
   const resetSidebarWidth = useCallback(() => {
-    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
-  }, []);
+    setSidebarWidth(clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH));
+  }, [clampSidebarWidth]);
 
   const resizeSidebarWithKeyboard = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const delta = resizeKeyDelta(event);
@@ -85,15 +163,15 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     event.preventDefault();
     event.stopPropagation();
     if (event.key === 'Home') {
-      setSidebarWidth(MIN_SIDEBAR_WIDTH);
+      setSidebarWidth(clampSidebarWidth(MIN_SIDEBAR_WIDTH));
       return;
     }
     if (event.key === 'End') {
-      setSidebarWidth(MAX_SIDEBAR_WIDTH);
+      setSidebarWidth(clampSidebarWidth(MAX_SIDEBAR_WIDTH));
       return;
     }
-    setSidebarWidth((width) => clamp(width + (delta ?? 0), MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
-  }, []);
+    setSidebarWidth((width) => clampSidebarWidth(width + (delta ?? 0)));
+  }, [clampSidebarWidth]);
 
   const beginAgentResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -105,7 +183,7 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     document.body.classList.add('is-resizing-layout');
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      setAgentWidth(clamp(startWidth - (moveEvent.clientX - startX), MIN_AGENT_WIDTH, MAX_AGENT_WIDTH));
+      setAgentWidth(clampAgentWidth(startWidth - (moveEvent.clientX - startX)));
     };
     const endResize = () => {
       handle.classList.remove('is-resizing');
@@ -118,11 +196,11 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
-  }, [agentWidth]);
+  }, [agentWidth, clampAgentWidth]);
 
   const resetAgentWidth = useCallback(() => {
-    setAgentWidth(DEFAULT_AGENT_WIDTH);
-  }, []);
+    setAgentWidth(clampAgentWidth(DEFAULT_AGENT_WIDTH));
+  }, [clampAgentWidth]);
 
   const resizeAgentWithKeyboard = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const delta = resizeKeyDelta(event);
@@ -130,15 +208,15 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     event.preventDefault();
     event.stopPropagation();
     if (event.key === 'Home') {
-      setAgentWidth(MIN_AGENT_WIDTH);
+      setAgentWidth(clampAgentWidth(MIN_AGENT_WIDTH));
       return;
     }
     if (event.key === 'End') {
-      setAgentWidth(MAX_AGENT_WIDTH);
+      setAgentWidth(clampAgentWidth(MAX_AGENT_WIDTH));
       return;
     }
-    setAgentWidth((width) => clamp(width - (delta ?? 0), MIN_AGENT_WIDTH, MAX_AGENT_WIDTH));
-  }, []);
+    setAgentWidth((width) => clampAgentWidth(width - (delta ?? 0)));
+  }, [clampAgentWidth]);
 
   const resizePanelPairByPixels = useCallback((
     leftPanelId: string,
@@ -148,22 +226,24 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     const canvas = canvasRef.current;
     if (panels.length === 0 || !canvas) return;
 
+    const metrics = workspaceLayoutMetricsFromCanvas(canvas);
     const sizeOf = (panelId: string) => panels.find((panel) => panel.id === panelId)?.size ?? 1;
     const totalSize = panels.reduce((sum, panel) => sum + panel.size, 0);
     const usableWidth = Math.max(
       1,
-      canvas.getBoundingClientRect().width - Math.max(0, panels.length - 1) * panelGapPx(canvas),
+      availablePanelWidth(metrics, railState())
+        - Math.max(0, panels.length - 1) * metrics.panelGap,
     );
     const sizePerPixel = totalSize / usableWidth;
     const leftStart = sizeOf(leftPanelId);
     const rightStart = sizeOf(rightPanelId);
     const pairTotal = leftStart + rightStart;
-    const minPanelSize = Math.min(pairTotal / 2, panelMinWidthPx(canvas) * sizePerPixel);
+    const minPanelSize = Math.min(pairTotal / 2, metrics.panelMinWidth * sizePerPixel);
     const deltaSize = deltaPixels * sizePerPixel;
     const nextLeft = clamp(leftStart + deltaSize, minPanelSize, pairTotal - minPanelSize);
     const nextRight = pairTotal - nextLeft;
     resizePanelPair(leftPanelId, rightPanelId, nextLeft, nextRight);
-  }, [panels, resizePanelPair]);
+  }, [panels, railState, resizePanelPair]);
 
   const beginPanelResize = useCallback((
     leftPanelId: string,
@@ -221,6 +301,7 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
+    ensurePanelCapacity,
     resetAgentWidth,
     resetPanelPair,
     resetSidebarWidth,

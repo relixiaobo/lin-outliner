@@ -142,8 +142,17 @@
 
 .panel-breadcrumb-segment {
   display: inline-flex;
+  flex: 0 1 auto;
+  max-width: min(34%, 16rem);
   min-width: 0;
   align-items: center;
+}
+
+.panel-breadcrumb-segment:last-child,
+.panel-breadcrumb-current {
+  flex: 1 1 auto;
+  max-width: none;
+  min-width: min(12rem, 46%);
 }
 
 .panel-breadcrumb-divider {
@@ -154,6 +163,7 @@
 
 .panel-breadcrumb-button {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: inherit;
   font-weight: 500;
@@ -187,4 +197,3 @@
   background: color-mix(in srgb, var(--text) 11%, transparent);
   color: var(--text-soft);
 }
-

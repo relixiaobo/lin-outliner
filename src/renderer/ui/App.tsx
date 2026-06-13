@@ -105,6 +105,10 @@ export function App() {
       );
     });
   }, [setUi]);
+  const canAddPanelRef = useRef<(nextPanelCount: number) => boolean>(() => true);
+  const canAddPanel = useCallback((nextPanelCount: number) => (
+    canAddPanelRef.current(nextPanelCount)
+  ), []);
 
   const {
     activeOutlinerPanel,
@@ -124,7 +128,7 @@ export function App() {
     panels,
     resizePanelPair,
     rootId,
-  } = useWorkspaceLayout({ focusNode });
+  } = useWorkspaceLayout({ canAddPanel, focusNode });
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
   // history. Debug panes still no-op instead of navigating an unrelated pane.
   const pageHistoryPanel = activeWorkspacePanel;
@@ -135,6 +139,7 @@ export function App() {
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
+    ensurePanelCapacity,
     resetAgentWidth,
     resetPanelPair,
     resetSidebarWidth,
@@ -142,7 +147,13 @@ export function App() {
     resizePanelPairWithKeyboard,
     resizeSidebarWithKeyboard,
     sidebarWidth,
-  } = useResizableLayout({ panels, resizePanelPair });
+  } = useResizableLayout({
+    agentOpen,
+    panels,
+    resizePanelPair,
+    sidebarOpen,
+  });
+  canAddPanelRef.current = ensurePanelCapacity;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
 
   useDragSelection({ rootId, index, ui, setUi });

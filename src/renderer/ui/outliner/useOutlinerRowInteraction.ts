@@ -34,6 +34,7 @@ import {
 } from '../focus/focusModel';
 import { buildOutlinerRows } from './row-model';
 import { trailingDraftPlacementEquals } from '../../state/trailingDraftPlacement';
+import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
 
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
@@ -475,7 +476,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     }
   }, [clearDropState, dropPosition, resolveDropMove, run, setUi]);
 
-  const wrapStyle: CSSProperties = { marginLeft: depth * 28 };
+  const wrapStyle: CSSProperties = { marginLeft: Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) * 28 };
 
   return {
     expanded,

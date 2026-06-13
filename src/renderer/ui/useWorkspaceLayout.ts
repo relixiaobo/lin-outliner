@@ -214,6 +214,7 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
 }
 
 interface UseWorkspaceLayoutOptions {
+  canAddPanel?: (nextPanelCount: number) => boolean;
   focusNode: (nodeId: NodeId | null) => void;
 }
 
@@ -222,7 +223,14 @@ interface InitializedWorkspaceLayout {
   outlinerRootIds: NodeId[];
 }
 
-export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
+function allowPanelAdd() {
+  return true;
+}
+
+export function useWorkspaceLayout({
+  canAddPanel = allowPanelAdd,
+  focusNode,
+}: UseWorkspaceLayoutOptions) {
   const [panels, setPanels] = useState<WorkspacePanelState[]>([]);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const initializedRef = useRef(false);
@@ -281,7 +289,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setPanels((prev) => prev.map((panel) => (
         panel.id === targetPanel.id && isWorkspacePanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
       )));
-    } else if (panels.length < MAX_PERSISTED_PANELS) {
+    } else if (panels.length < MAX_PERSISTED_PANELS && canAddPanel(panels.length + 1)) {
       // No outliner pane (only debug panes) but room to add one: append rather
       // than replace the whole canvas, so the debug panes survive.
       const panelId = nextId('panel');
@@ -298,7 +306,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       )));
     }
     focusNode(options?.focus === false ? null : nodeId);
-  }, [activePanelId, focusNode, panels]);
+  }, [activePanelId, canAddPanel, focusNode, panels]);
 
   const activatePanel = useCallback((panel: WorkspacePanelState) => {
     setActivePanelId(panel.id);
@@ -317,7 +325,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
-    if (panels.length >= MAX_PERSISTED_PANELS) {
+    if (panels.length >= MAX_PERSISTED_PANELS || !canAddPanel(panels.length + 1)) {
       const replacePanel = [...panels].reverse().find(isWorkspacePanel) ?? panels.at(-1);
       if (!replacePanel) return;
       keepActive(replacePanel.id);
@@ -334,7 +342,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setPanels((prev) => [...prev, filePreviewPanel(panelId, target)]);
     }
     focusNode(null);
-  }, [focusNode, panels]);
+  }, [canAddPanel, focusNode, panels]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
     if (options?.newPane) {
@@ -431,7 +439,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
-    if (panels.length >= MAX_PERSISTED_PANELS) {
+    if (panels.length >= MAX_PERSISTED_PANELS || !canAddPanel(panels.length + 1)) {
       // At the cap, repurpose an existing workspace pane (rightmost first) so a
       // debug conversation is never silently dropped — symmetric with how
       // openAgentDebugPanel reverse-finds a debug pane. Falls back to the last
@@ -448,7 +456,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     }
     focusNode(nodeId);
-  }, [focusNode, panels, rootId]);
+  }, [canAddPanel, focusNode, panels, rootId]);
 
   const openAgentDebugPanel = useCallback((conversationId: string | null) => {
     const existing = panels.find((panel) => (
@@ -480,10 +488,12 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       return;
     }
 
+    if (!canAddPanel(panels.length + 1)) return;
+
     const panelId = nextId('panel');
     setActivePanelId(panelId);
     setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId)]);
-  }, [panels]);
+  }, [canAddPanel, panels]);
 
   const resizePanelPair = useCallback((
     leftPanelId: string,

@@ -358,23 +358,58 @@ Rules:
 
 - Panes are laid out from left to right.
 - Panes have minimum and maximum widths.
-- Panes resize proportionally according to their persisted `size` ratios while
-  every pane can satisfy the minimum width defined in
-  [`design-system.md#foundations`](./design-system.md#foundations).
-- If pane minimum widths exceed the available canvas width, horizontal scrolling
-  is allowed inside the workspace canvas. Do not shrink panes below the minimum
-  just to avoid scrolling.
+- Panes resize proportionally according to their persisted `size` ratios, using
+  the panel floor defined in [`design-system.md#foundations`](./design-system.md#foundations)
+  whenever the current window and rail state can satisfy it.
+- The workspace canvas never uses a horizontal scrollbar as a rescue path. It
+  stays `overflow-x: hidden`; responsive guards keep the layout inside the
+  canvas instead of exposing sideways scroll.
+- Sidebar and agent rail widths are coupled to the live canvas width. Drag,
+  keyboard resize, reset, rail reopen, pane-count changes, and window resize all
+  re-clamp the rails against the current pane floor. The agent rail gives up
+  width first, then the sidebar, and neither rail shrinks below its own minimum.
+- At the native 760px window floor, both rails at their minimums still cannot
+  always leave a full 360px single-pane floor. In that impossible case the rails
+  stay at their minimums and the pane degrades inside the available width rather
+  than introducing canvas-level horizontal scroll.
 - Pane resize handles sit between panes.
-- Opening a pane appends it next to the current pane or at the end, capped at
-  `MAX_PERSISTED_PANELS` (4). At the cap, opening repurposes an existing
-  workspace pane (rightmost first) rather than adding a fifth pane — never a debug
-  pane, so an agent-debug session is not silently dropped.
+- Opening a pane appends it next to the current pane or at the end only when the
+  resulting pane count can fit after rail re-clamping. The hard cap remains
+  `MAX_PERSISTED_PANELS` (4). At the count cap, or when a root/file-preview split
+  cannot fit at the current width, opening repurposes an existing workspace pane
+  (rightmost first) rather than adding another pane. Agent-debug panes are added
+  only when the resulting count fits; a too-narrow window does not drop an
+  existing workspace pane just to show debug chrome.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
   nearest remaining pane, and clears when that pane is an agent-debug pane (which
   carries no node to focus).
 
 Avoid making every pane independent `position:absolute` — the product does not do
 freeform window management.
+
+## Responsive Constraints
+
+Responsive behavior is conservative and local to the existing floating-rail /
+padded-canvas model:
+
+- The sidebar and agent dock widths are stateful, but their persisted state is
+  never allowed to exceed what the current window can host for the active pane
+  count. Window resize uses a requestAnimationFrame-coalesced clamp so resize
+  ticks do not force redundant shell renders.
+- The available pane width is computed from the canvas border-box width minus
+  the open rails and their shell gaps, then compared with
+  `paneCount × --outline-panel-min-width` plus inter-pane gaps.
+- Deep outliner indentation is capped before it reaches CSS: outline rows and
+  sidebar tree rows both clamp their visual depth to a shared
+  `MAX_OUTLINE_INDENT_DEPTH` value. The underlying document depth and keyboard
+  structure are unchanged.
+- Tag bars wrap chips with row gaps. Plain-text row tags still live in the
+  editor inline slot; non-plain rows and the page-title toolbar use the same wrap
+  behavior to avoid horizontal spill.
+- Breadcrumb segments stay in a single row, but middle/earlier segments carry
+  tighter max-widths while the final current-context segment is allowed the
+  largest share. This keeps narrow panes from reducing every segment to a bare
+  ellipsis.
 
 ## Sidebar Boundary
 

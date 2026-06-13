@@ -158,6 +158,63 @@ test.describe('workspace layout resizing', () => {
     expect(narrowCanvasOverflow.scrollWidth).toBeLessThanOrEqual(narrowCanvasOverflow.clientWidth + 1);
   });
 
+  test('narrow windows re-clamp rails and gate additional panes without horizontal overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 900 });
+
+    await expect.poll(async () => Math.round((await page.locator('.sidebar-dock').boundingBox())?.width ?? 0))
+      .toBe(152);
+    await expect.poll(async () => Math.round((await page.locator('.agent-dock').boundingBox())?.width ?? 0))
+      .toBe(280);
+
+    const canvasOverflow = await page.locator('.workspace-canvas').evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      overflowX: getComputedStyle(element).overflowX,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(canvasOverflow.overflowX).toBe('hidden');
+    expect(canvasOverflow.scrollWidth).toBeLessThanOrEqual(canvasOverflow.clientWidth + 1);
+
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(1);
+    await page.keyboard.press('Meta+M');
+    await expect(panels).toHaveCount(1);
+  });
+
+  test('page title tag bars wrap instead of overflowing in narrow windows', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.evaluate(async (todayId) => {
+      const win = window as typeof window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+      };
+      let projection: unknown = null;
+      for (let index = 1; index <= 10; index += 1) {
+        const tag = await win.lin!.invoke<{ update: { projection: unknown }; focus?: { nodeId: string } }>('create_tag', {
+          name: `responsive-${index}`,
+        });
+        const applied = await win.lin!.invoke<{ update: { projection: unknown } }>('apply_tag', {
+          nodeId: todayId,
+          tagId: tag.focus!.nodeId,
+        });
+        projection = applied.update.projection;
+      }
+      win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection });
+    }, ids.today);
+
+    const tagBar = page.locator('.panel-title-toolbar-row .tag-bar');
+    await expect(tagBar.locator('.tag-badge')).toHaveCount(11);
+    const metrics = await tagBar.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        clientWidth: element.clientWidth,
+        height: rect.height,
+        scrollWidth: element.scrollWidth,
+      };
+    });
+    expect(metrics.height).toBeGreaterThan(20);
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  });
+
   test('window chrome toggles align to the traffic lights and stay icon-only', async ({ page }) => {
     const sidebarToggle = page.getByTitle('Collapse sidebar');
 
@@ -769,6 +826,7 @@ test.describe('workspace layout resizing', () => {
   });
 
   test('panes open from keyboard and sidebar option-click up to the cap', async ({ page }) => {
+    await page.setViewportSize({ width: 2300, height: 900 });
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(1);
 
