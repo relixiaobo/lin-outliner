@@ -1,7 +1,7 @@
 const CSS_HEX_COLOR_BODY = /^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const BARE_TAG_BODY_CHARS = String.raw`\p{L}\p{N}_-`;
 const BARE_TAG_NAME = String.raw`[${BARE_TAG_BODY_CHARS}]+`;
-const BRACKET_TAG_NAME = String.raw`(?:\\[\\\]nrt]|[^\]\n])+`;
+const BRACKET_TAG_NAME = String.raw`(?:\\[^\n]|[^\]\\\n])+`;
 const BARE_FORMAT_TAG_NAME = new RegExp(String.raw`^${BARE_TAG_NAME}$`, 'u');
 
 export const TAG_TOKEN_SOURCE = String.raw`\[\[#(${BRACKET_TAG_NAME})\]\]|#\[\[(${BRACKET_TAG_NAME})\]\]|#(${BARE_TAG_NAME})`;

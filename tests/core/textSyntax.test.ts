@@ -31,6 +31,18 @@ describe('text syntax helpers', () => {
     expect(extractTags(formatted.join(' ')).tags).toEqual(names);
   });
 
+  test('scans malformed bracket tags with long backslash runs in linear time', () => {
+    const malformed = `Ship #[[${'\\'.repeat(40)}]x still text`;
+    const start = performance.now();
+
+    expect(extractTags(malformed)).toEqual({
+      tags: [],
+      rest: malformed,
+    });
+
+    expect(performance.now() - start).toBeLessThan(100);
+  });
+
   test('rejects empty tag names during formatting', () => {
     expect(() => formatTag('')).toThrow('Cannot format an empty tag name.');
     expect(() => formatTag('  ')).toThrow('Cannot format an empty tag name.');
