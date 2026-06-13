@@ -353,6 +353,13 @@ describe('agent channel runtime', () => {
     // M3-B: agent co-member pools are visible by membership; non-member pools are not.
     expect(calls[0]!.serialized).toContain('Assistant tracks architecture seams for handoffs.');
     expect(calls[0]!.serialized).not.toContain('Outsider memory must not enter member briefings.');
+    // Channel framing + communication norms ride the per-turn environment
+    // reminder, never the identity-only system prompt (kept cacheable across DM
+    // and Channel).
+    expect(calls[0]!.systemPrompt).not.toContain('# Channel rules');
+    expect(calls[0]!.systemPrompt).not.toContain('shared multi-agent conversation');
+    expect(calls[0]!.serialized).toContain('conversation-environment');
+    expect(calls[0]!.serialized).toContain('Only your final message is shared with the other members');
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(state.conversation?.members).toEqual([
@@ -1132,11 +1139,16 @@ describe('agent channel runtime', () => {
     await runtime.sendMessage(dm.conversationId, 'hello @reviewer');
 
     expect(calls).toHaveLength(1);
+    // Identity stays in the system prompt; DM framing moves to the per-turn
+    // environment reminder, so the prompt is identical (and cacheable) in a DM
+    // and a Channel.
     expect(calls[0]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
-    expect(calls[0]!.systemPrompt).toContain('# Direct message rules');
-    expect(calls[0]!.systemPrompt).toContain('direct 1:1 conversation');
+    expect(calls[0]!.systemPrompt).not.toContain('# Direct message rules');
+    expect(calls[0]!.systemPrompt).not.toContain('direct 1:1 conversation');
     expect(calls[0]!.systemPrompt).not.toContain('# Channel rules');
     expect(calls[0]!.systemPrompt).not.toContain('shared multi-agent conversation');
+    expect(calls[0]!.serialized).toContain('conversation-environment');
+    expect(calls[0]!.serialized).toContain('direct 1:1 conversation with the user');
     expect(calls[0]!.serialized).not.toContain('the human user) said:');
 
     const state = await new AgentEventStore(dataRoot).replay(dm.conversationId);

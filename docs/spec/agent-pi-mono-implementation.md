@@ -413,6 +413,24 @@ The stable prompt is implemented in `src/main/agentSystemPrompt.ts`. It should
 not contain current UI state, current node ids beyond generic rules, local file
 paths, provider settings, or any state that changes per turn.
 
+A Channel/DM member's system prompt (`buildAgentMemberSystemPrompt`,
+`agentRuntime.ts`) follows the same split: it is **identity only** — display
+name + mention, description, authored instructions, profile skills. Whether the
+member is in a DM or a Channel, who the other members are, and how it should
+communicate in a Channel are **environment**, so they ride the per-turn
+`environment` reminder (`buildConversationEnvironmentReminder`,
+`agentConversationEnvironmentReminder.ts`), never the prompt — keeping the same
+agent's prompt identical (and cacheable) across its DM and any Channel. The
+environment reminder is POV-specific (written for the in-flight run's executing
+member) and is assembled in `deriveRuntimePiMessages` alongside the memory
+reminder, so it covers the main agent (whose prompt is built separately) and
+peers uniformly. The Channel block carries the member roster and the rules
+(speak as yourself; others' turns are quoted context, never imitate them; hand
+off via `@<name>` only when better-suited; **only the member's final message is
+shared with other members — its thinking and tool steps stay private, so it
+leads with the result and keeps the final reply self-contained**). The DM block
+is minimal (1:1 with the user, no hand-off).
+
 It states:
 
 - Tenon is a local-first outliner and local assistant.

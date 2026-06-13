@@ -167,6 +167,7 @@ import {
 import { appendAgentToolPermissionAllowRule, readAgentToolPermissionConfig } from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
+import { buildConversationEnvironmentReminder } from './agentConversationEnvironmentReminder';
 import {
   AgentSkillRuntime,
   createSlashSkillPrompt,
@@ -2259,12 +2260,8 @@ export class AgentRuntime {
     });
     delegationRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     delegationRuntime.restoreListedAgentsFromMessages(activePath);
-    const directMessageAgentId = this.directMessageAgentId(eventState);
     const defaultAgentProfile = providerConfig && defaultAgentId !== this.agentIdentity.agentId
-      ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, {
-          mode: directMessageAgentId === defaultAgentId ? 'dm' : 'channel',
-          providerConfig,
-        })
+      ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, { providerConfig })
       : null;
     if (defaultAgentProfile) {
       await this.getEventStore().writeAgentIdentity(defaultAgentProfile.identity);
@@ -6420,7 +6417,7 @@ export class AgentRuntime {
     systemPrompt: string;
     definition: AgentDefinition;
   }> {
-    return this.resolveAgentProfile(agentId, conversation.delegationRuntime, conversation.skillRuntime, { mode: 'channel' });
+    return this.resolveAgentProfile(agentId, conversation.delegationRuntime, conversation.skillRuntime);
   }
 
   private async resolveAgentProfile(
@@ -6428,7 +6425,6 @@ export class AgentRuntime {
     delegationRuntime: AgentDelegationRuntime,
     skillRuntime: AgentSkillRuntime,
     options: {
-      mode?: 'channel' | 'dm';
       providerConfig?: AgentProviderRuntimeConfig;
     } = {},
   ): Promise<{
@@ -6451,9 +6447,7 @@ export class AgentRuntime {
       ? resolveSkillEffortOverride(definition.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
     const skillSections = await this.channelPeerSkillSections(skillRuntime, definition);
-    const systemPrompt = options.mode === 'dm'
-      ? buildDirectMessageAgentSystemPrompt(definition, agentMentionToken(agentId), skillSections)
-      : buildChannelPeerSystemPrompt(definition, agentMentionToken(agentId), skillSections);
+    const systemPrompt = buildAgentMemberSystemPrompt(definition, agentMentionToken(agentId), skillSections);
     const identity: AgentIdentityRecord = {
       agentId: agentId as AgentId,
       displayName: agentDefinitionDisplayName(definition),
@@ -6903,26 +6897,61 @@ export class AgentRuntime {
     // linear derivation stands.
     const conversation = scopedConversation ?? this.conversations.get(conversationId);
     const activeRun = conversation?.activeRun;
-    if (
-      conversation
-      && conversation.eventState === eventState
-      && activeRun
-      && this.requiresChannelPov(eventState, activeRun.executingAgentId)
-    ) {
-      const memoryReminder = await this.buildMemoryReminder(activeRun.executingAgentId, conversation);
-      return this.deriveChannelPiMessages(
+    const liveConversation = conversation && conversation.eventState === eventState ? conversation : null;
+    let messages: AgentMessage[];
+    if (liveConversation && activeRun && this.requiresChannelPov(eventState, activeRun.executingAgentId)) {
+      const memoryReminder = await this.buildMemoryReminder(activeRun.executingAgentId, liveConversation);
+      messages = await this.deriveChannelPiMessages(
         conversationId,
-        conversation,
+        liveConversation,
         activeRun.executingAgentId,
         memoryReminder,
         activeRun.addressedByMessageId,
       );
+    } else {
+      messages = [];
+      for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
+        messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
+      }
     }
-    const messages: AgentMessage[] = [];
-    for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
-      messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
+    // Channel/DM environment reminder (the reminder-stack `environment` slot):
+    // the member system prompt is identity-only, so DM-vs-Channel framing + the
+    // member roster + Channel communication norms ride here instead. POV-correct
+    // (written for the executing member) and uniform across the main agent
+    // (whose prompt is built separately) and peers. Keyed off membership, not
+    // the POV branch above — a fresh Channel where only this member has spoken
+    // still takes the linear branch yet is a Channel. Only on a real reply run;
+    // restore/Dream/compaction have no activeRun.
+    if (liveConversation && activeRun) {
+      const environment = buildConversationEnvironmentReminder({
+        members: liveConversation.eventState.conversation?.members ?? [],
+        povAgentId: activeRun.executingAgentId,
+        channelName: liveConversation.eventState.conversation?.goal ?? null,
+        displayNames: liveConversation.memberDisplayNames,
+      });
+      if (environment) this.appendTrailingSystemReminder(messages, environment);
     }
     return messages;
+  }
+
+  /**
+   * Append a `<system-reminder>` to the tail of the assembled context, coalescing
+   * onto the trailing user block when there is one (else a fresh user block) —
+   * the same placement the memory reminder uses, keeping reminders near the
+   * current turn and off the cacheable prefix.
+   */
+  private appendTrailingSystemReminder(messages: AgentMessage[], reminder: string): void {
+    const reminderText = systemReminder(reminder);
+    const last = messages.at(-1);
+    if (last?.role === 'user' && Array.isArray(last.content)) {
+      last.content = [...last.content, { type: 'text', text: reminderText }];
+    } else {
+      messages.push({
+        role: 'user',
+        content: [{ type: 'text', text: reminderText }],
+        timestamp: Date.now(),
+      } satisfies UserMessage);
+    }
   }
 
   /**
@@ -8067,16 +8096,21 @@ function hashJson(value: unknown): string {
 /** Cap on inlined profile-skill bodies in a Channel peer's system prompt. */
 const CHANNEL_PEER_SKILL_PROMPT_BUDGET = 24_000;
 
-/**
- * A Channel member speaks in the shared thread as itself — this is NOT the
- * child run prompt (a peer is a conversation participant, not a headless worker
- * reporting to a parent).
- */
 function agentDefinitionDisplayName(definition: AgentDefinition): string {
   return definition.displayName?.trim() || definition.name;
 }
 
-function buildChannelPeerSystemPrompt(
+/**
+ * A Channel/DM member's stable system prompt is **identity only** — description,
+ * authored instructions, profile skills. DM-vs-Channel framing, the member
+ * roster, and the Channel communication norms are dynamic environment and ride
+ * the per-turn reminder stack (`buildConversationEnvironmentReminder`), never
+ * the prompt — so the same agent's prompt is identical (and cacheable) in a DM
+ * and a Channel. A member speaks in the shared thread as itself: this is NOT the
+ * child run prompt (a peer is a conversation participant, not a headless worker
+ * reporting to a parent).
+ */
+function buildAgentMemberSystemPrompt(
   definition: AgentDefinition,
   mention: string,
   skillSections: readonly string[],
@@ -8084,35 +8118,8 @@ function buildChannelPeerSystemPrompt(
   const displayName = agentDefinitionDisplayName(definition);
   return [
     [
-      `You are "${displayName}" (@${mention}), an agent member of a shared multi-agent conversation (a Channel) with the user and other members.`,
+      `You are "${displayName}" (@${mention}).`,
       `Agent description: ${definition.description}`,
-      '',
-      '# Channel rules',
-      '- Speak as yourself. Your reply is posted to the shared thread under your name.',
-      '- Other members\' turns appear as quoted context with an identity preamble; never imitate another member or speak on their behalf.',
-      '- To hand off to another agent member, mention them as @<name> in your reply — only when they are clearly better suited. Every mention routes a turn and there is no relay limit, so mention deliberately and do not create mention loops; the user can stop the round at any time.',
-      '- Stay within your description and instructions; defer outside work to better-suited members.',
-    ].join('\n'),
-    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
-    skillSections.length > 0 ? `# Profile skills\n${skillSections.join('\n\n')}` : null,
-  ].filter(Boolean).join('\n\n');
-}
-
-function buildDirectMessageAgentSystemPrompt(
-  definition: AgentDefinition,
-  mention: string,
-  skillSections: readonly string[],
-): string {
-  const displayName = agentDefinitionDisplayName(definition);
-  return [
-    [
-      `You are "${displayName}" (@${mention}), in a direct 1:1 conversation with the user.`,
-      `Agent description: ${definition.description}`,
-      '',
-      '# Direct message rules',
-      '- Speak as yourself. Your reply is posted to this DM under your name.',
-      '- There are no other agent members in this DM. Do not mention or hand off to another agent as a routing instruction.',
-      '- Stay within your description and instructions; if the user needs a broader room, suggest creating a Channel.',
     ].join('\n'),
     definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
     skillSections.length > 0 ? `# Profile skills\n${skillSections.join('\n\n')}` : null,
