@@ -711,6 +711,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     ];
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const previewPdfBytes = () => {
+      const base64 = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggNDMgPj4Kc3RyZWFtCkJUIC9GMSAyNCBUZiA3MiA3MjAgVGQgKFByZXZpZXcgUERGKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwMzExIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNiAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNDAzCiUlRU9GCg==';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes.buffer;
+    };
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
       let next = clone(content);
       for (const op of patch.ops) {
@@ -2212,7 +2219,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (target?.kind === 'local-file') return clone({ text: `# ${target.path?.split('/').pop() ?? 'file'}\n\nMock preview text.` }) as T;
           return clone({ text: 'Mock asset preview text.' }) as T;
         }
-        if (cmd === 'preview_read_bytes') return clone({ bytes: new ArrayBuffer(0), mimeType: 'application/octet-stream' }) as T;
+        if (cmd === 'preview_read_bytes') {
+          const target = args.target as { kind?: string; assetId?: string; path?: string; payloadId?: string } | undefined;
+          if (
+            (target?.kind === 'asset' && target.assetId && assets.get(target.assetId)?.mimeType === 'application/pdf')
+            || (target?.kind === 'local-file' && target.path?.toLowerCase().endsWith('.pdf'))
+            || (target?.kind === 'agent-payload' && target.payloadId?.toLowerCase().endsWith('pdf'))
+          ) {
+            return { bytes: previewPdfBytes(), mimeType: 'application/pdf' } as T;
+          }
+          return { bytes: new ArrayBuffer(0), mimeType: 'application/octet-stream' } as T;
+        }
         if (cmd === 'preview_list_directory') {
           const target = args.target as { kind?: string; path?: string } | undefined;
           const base = target?.path ?? '/mock/local-root/tmp/agent-attachments';

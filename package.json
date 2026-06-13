@@ -37,6 +37,7 @@
     "loro-crdt": "^1.10.6",
     "lucide-react": "^0.575.0",
     "marked": "^17.0.4",
+    "pdfjs-dist": "^6.0.227",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-model": "^1.25.4",
     "prosemirror-state": "^1.4.4",

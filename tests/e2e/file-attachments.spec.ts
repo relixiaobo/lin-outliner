@@ -43,6 +43,13 @@ test.describe('file attachments', () => {
     await attachmentRow.locator('.outliner-attachment-main').click();
     const previewPanel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
     await expect(previewPanel.locator('.file-preview-title-text')).toContainText('picked-report.pdf');
+    await expect(previewPanel.locator('.file-preview-pdf-toolbar')).toContainText('1 / 1');
+    const pdfCanvas = previewPanel.locator('.file-preview-pdf-canvas');
+    await expect(pdfCanvas).toBeVisible();
+    await expect.poll(async () => pdfCanvas.evaluate((canvas) => ({
+      height: (canvas as HTMLCanvasElement).height,
+      width: (canvas as HTMLCanvasElement).width,
+    }))).toEqual({ height: 792, width: 612 });
     await previewPanel.getByRole('button', { name: 'Previous page' }).click();
     await expect(attachmentRow.locator('.outliner-attachment')).toBeVisible();
 
