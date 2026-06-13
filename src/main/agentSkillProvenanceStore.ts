@@ -1,11 +1,11 @@
 import { app } from 'electron';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type {
   AgentSkillPreviousVersion,
   AgentSkillProvenanceRecord,
   AgentSkillProvenanceStore,
 } from './agentSkills';
+import { readJsonOrDefault, updateJsonFile } from './jsonFileStore';
 
 const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
 
@@ -20,29 +20,34 @@ const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
 export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
   return {
     async load(): Promise<Record<string, AgentSkillProvenanceRecord>> {
-      const parsed = await readJsonOrDefault<unknown>(provenancePath(), {});
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-      const entries: Record<string, AgentSkillProvenanceRecord> = {};
-      for (const [skillFile, value] of Object.entries(parsed)) {
-        const record = parseProvenanceRecord(value);
-        if (record) entries[skillFile] = record;
-      }
-      return entries;
+      return readJsonOrDefault(provenancePath(), {}, parseProvenanceEntries);
     },
     async save(skillFile: string, record: AgentSkillProvenanceRecord | null): Promise<void> {
-      // load→mutate→write is racy across concurrent store instances (child runs share
-      // the same userData file and tmp name). Accepted: acceptance is a user-paced
-      // settings action, and a lost record only narrows to the in-memory guard for
-      // that live conversation.
-      const entries = await this.load();
-      if (record === null) {
-        delete entries[skillFile];
-      } else {
-        entries[skillFile] = record;
-      }
-      await writeJsonFile(provenancePath(), entries);
+      await updateJsonFile(
+        provenancePath(),
+        {},
+        parseProvenanceEntries,
+        (entries) => {
+          if (record === null) {
+            delete entries[skillFile];
+          } else {
+            entries[skillFile] = record;
+          }
+        },
+        privateJsonFileOptions(),
+      );
     },
   };
+}
+
+function parseProvenanceEntries(value: unknown): Record<string, AgentSkillProvenanceRecord> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const entries: Record<string, AgentSkillProvenanceRecord> = {};
+  for (const [skillFile, raw] of Object.entries(value)) {
+    const record = parseProvenanceRecord(raw);
+    if (record) entries[skillFile] = record;
+  }
+  return entries;
 }
 
 function parseProvenanceRecord(value: unknown): AgentSkillProvenanceRecord | null {
@@ -67,27 +72,8 @@ function parsePreviousVersion(value: unknown): AgentSkillPreviousVersion | null 
   };
 }
 
-async function readJsonOrDefault<T>(filePath: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await readFile(filePath, 'utf8')) as T;
-  } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return fallback;
-    throw error;
-  }
-}
-
-async function writeJsonFile(filePath: string, value: unknown) {
-  const parent = dirname(filePath);
-  await mkdir(parent, { recursive: true });
-  if (process.platform !== 'win32') await chmod(parent, 0o700);
-  await atomicWrite(filePath, `${JSON.stringify(value, null, 2)}\n`);
-  if (process.platform !== 'win32') await chmod(filePath, 0o600);
-}
-
-async function atomicWrite(filePath: string, data: string) {
-  const tmp = `${filePath}.tmp`;
-  await writeFile(tmp, data);
-  await rename(tmp, filePath);
+function privateJsonFileOptions() {
+  return process.platform === 'win32' ? {} : { mode: 0o600, directoryMode: 0o700 };
 }
 
 function provenancePath() {

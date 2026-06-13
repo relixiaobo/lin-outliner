@@ -141,6 +141,8 @@ describe('secret file at rest', () => {
     expect(await getProviderApiKey('openai')).toBe('sk-secret');
 
     const raw = await readFile(secretPath(), 'utf8');
+    expect(raw.endsWith('\n')).toBe(true);
+    expect(raw).toContain('  "credentials": {');
     const onDisk = JSON.parse(raw) as { enc?: string; credentials?: Record<string, unknown> };
     expect(onDisk.enc).toBeUndefined();
     expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-secret' });

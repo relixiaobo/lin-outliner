@@ -9,8 +9,7 @@ import {
 } from '@earendil-works/pi-ai';
 import type { Api, KnownProvider, Model, OAuthCredentials, OAuthProviderId, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { getOAuthApiKey, getOAuthProvider } from '@earendil-works/pi-ai/oauth';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type {
   AgentModelOption,
   AgentProviderAuthKind,
@@ -25,6 +24,7 @@ import type {
   AgentProviderSettingsView,
   ProviderAuthView,
 } from '../core/types';
+import { readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
 
 const PROVIDERS_FILE = 'agent-providers.json';
@@ -579,7 +579,7 @@ async function readProviderFile(): Promise<ProviderConfigFile> {
 }
 
 async function writeProviderFile(file: ProviderConfigFile) {
-  await writeJsonFile(providerPath(), file, false);
+  await writeJsonFile(providerPath(), file);
 }
 
 async function readSecretFile(): Promise<SecretFile> {
@@ -617,23 +617,7 @@ async function readSecretsWithStatus(): Promise<{ secrets: SecretFile; readable:
 
 async function writeSecretFile(file: SecretFile) {
   const envelope: SecretEnvelope = { credentials: file.credentials };
-  await writeJsonFile(secretPath(), envelope, true);
-}
-
-// Per-path write serialization. Every secret-file mutation is read-modify-write,
-// and `getProviderApiKey` may persist a rotated token concurrently with a login
-// save or another provider's refresh. Without serialization each writer serializes
-// the WHOLE map, so the last write silently drops the other's just-saved update
-// (and both race on the same temp file). `mutateSecretFile` runs read→mutate→write
-// under a per-path lock so each mutation merges against the latest on-disk state.
-const fileWriteChains = new Map<string, Promise<unknown>>();
-
-function withFileLock<T>(path: string, task: () => Promise<T>): Promise<T> {
-  const prior = fileWriteChains.get(path) ?? Promise.resolve();
-  const run = prior.then(task, task);
-  // Keep the stored tail from rejecting — a failed task must not poison the lock.
-  fileWriteChains.set(path, run.then(() => undefined, () => undefined));
-  return run;
+  await writeJsonFile(secretPath(), envelope, privateJsonFileOptions());
 }
 
 /**
@@ -642,56 +626,21 @@ function withFileLock<T>(path: string, task: () => Promise<T>): Promise<T> {
  * instead of overwriting it (the #5 data-loss guard).
  */
 async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<SecretFile> {
-  return withFileLock(secretPath(), async () => {
-    const file = await readSecretFile();
+  return updateJsonFile(secretPath(), { credentials: {} }, normalizeSecretFile, (file) => {
     mutator(file);
-    await writeSecretFile(file);
-    return file;
-  });
+  }, privateJsonFileOptions());
 }
 
-function normalizeSecretFile(value: SecretEnvelope): SecretFile {
-  const credentials = value.credentials;
+function normalizeSecretFile(value: unknown): SecretFile {
+  const envelope = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as SecretEnvelope
+    : {};
+  const credentials = envelope.credentials;
   return { credentials: credentials && typeof credentials === 'object' ? credentials : {} };
 }
 
-async function readJsonOrDefault<T>(path: string, fallback: T): Promise<T> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8')) as T;
-  } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return fallback;
-    throw error;
-  }
-}
-
-async function writeJsonFile(path: string, value: unknown, privateFile: boolean) {
-  const parent = dirname(path);
-  await mkdir(parent, { recursive: true });
-  const privateMode = privateFile && process.platform !== 'win32';
-  if (privateMode) await chmod(parent, 0o700);
-  // Create the temp file 0600 from the start (not only after the rename) so the
-  // plaintext secret is never even briefly world-readable, and a crash between
-  // rename and the post-rename chmod can never leave a 0644 file behind. The
-  // post-rename chmod stays as a belt-and-suspenders guarantee against an
-  // unusual umask. Windows cannot set POSIX modes — secrets there rely on the
-  // user-profile ACL (tracked as a follow-up).
-  await atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`, privateMode ? 0o600 : undefined);
-  if (privateMode) await chmod(path, 0o600);
-}
-
-let atomicWriteCounter = 0;
-
-async function atomicWrite(path: string, data: string, mode?: number) {
-  // Unique temp name per write so two in-flight writes to the same path never
-  // clobber each other's temp file (defense in depth alongside the write lock).
-  const tmp = `${path}.${process.pid}.${++atomicWriteCounter}.tmp`;
-  try {
-    await writeFile(tmp, data, mode === undefined ? undefined : { mode });
-    await rename(tmp, path);
-  } catch (error) {
-    await rm(tmp, { force: true });
-    throw error;
-  }
+function privateJsonFileOptions() {
+  return process.platform === 'win32' ? {} : { mode: 0o600, directoryMode: 0o700 };
 }
 
 function providerPath() {

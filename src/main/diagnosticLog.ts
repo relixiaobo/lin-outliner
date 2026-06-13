@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   diagnosticSourceLabel,
@@ -13,6 +12,7 @@ import {
   type ErrorSeverity,
 } from '../core/errorObservability';
 import { AppendOnlySeqLog, serializeJsonl } from './appendOnlySeqLog';
+import { atomicWriteFile } from './jsonFileStore';
 
 const DIAGNOSTICS_DIR = 'diagnostics';
 const DIAGNOSTIC_LOG_FILE = 'errors.jsonl';
@@ -112,8 +112,7 @@ export class DiagnosticLogStore {
       environment,
       records: await this.readRecords(),
     };
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    await atomicWriteFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`);
     return filePath;
   }
 
@@ -294,18 +293,6 @@ function normalizeDiagnosticLogRecord(value: unknown): DiagnosticLogRecord | nul
     message: value.message,
     ...(context ? { context } : {}),
   };
-}
-
-async function atomicWriteFile(filePath: string, data: string | Buffer) {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(tmpPath, data);
-    await rename(tmpPath, filePath);
-  } catch (error) {
-    await rm(tmpPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }
 
 function isPositiveInteger(value: unknown): value is number {

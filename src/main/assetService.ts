@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
 import { isPathInside } from './agentAttachmentMaterialization';
+import { atomicWriteFile, writeJsonFile } from './jsonFileStore';
 
 const META_SUFFIX = '.meta.json';
 // Lowercase + digits only: ids land in `asset://<id>` URLs whose hostname
@@ -52,12 +53,12 @@ export class AssetService {
     };
     await mkdir(this.root, { recursive: true });
     const assetPath = join(this.root, `${id}${ext}`);
-    await this.atomicWrite(assetPath, bytes);
+    await atomicWriteFile(assetPath, bytes);
     const thumbnailAssetId = mimeType === 'application/pdf'
       ? await this.derivePdfThumbnail(assetPath, originalFilename)
       : undefined;
     if (thumbnailAssetId) metadata.thumbnailAssetId = thumbnailAssetId;
-    await this.atomicWrite(join(this.root, `${id}${META_SUFFIX}`), Buffer.from(JSON.stringify(metadata, null, 2)));
+    await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, assetMetadataJsonOptions());
     this.metaCache.set(id, metadata);
     return metadata;
   }
@@ -159,12 +160,6 @@ export class AssetService {
     return entries.find((name) => name === safeId || (name.startsWith(`${safeId}.`) && !name.endsWith(META_SUFFIX))) ?? null;
   }
 
-  private async atomicWrite(path: string, data: Buffer) {
-    const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tmp, data);
-    await rename(tmp, path);
-  }
-
   private async derivePdfThumbnail(pdfPath: string, originalFilename: string | undefined): Promise<string | undefined> {
     const tempDir = await mkdtemp(join(this.root, '.pdf-thumb-'));
     try {
@@ -192,8 +187,8 @@ export class AssetService {
         originalFilename: `${originalFilename ?? 'attachment.pdf'} thumbnail.png`,
         ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
       };
-      await this.atomicWrite(join(this.root, `${id}.png`), pngBytes);
-      await this.atomicWrite(join(this.root, `${id}${META_SUFFIX}`), Buffer.from(JSON.stringify(metadata, null, 2)));
+      await atomicWriteFile(join(this.root, `${id}.png`), pngBytes);
+      await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, assetMetadataJsonOptions());
       this.metaCache.set(id, metadata);
       return id;
     } finally {
@@ -204,6 +199,10 @@ export class AssetService {
 
 function notFoundResponse(): Response {
   return new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+}
+
+function assetMetadataJsonOptions() {
+  return { trailingNewline: false };
 }
 
 function nanoid(size = 21): string {

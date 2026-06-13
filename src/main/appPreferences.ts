@@ -1,8 +1,9 @@
 import { app } from 'electron';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
+import { atomicWriteFile } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
 // already per-clone isolated). The appearance/theme preference and the display
@@ -26,22 +27,29 @@ const DEFAULTS: PersistedAppPreferences = {
   osNotificationsEnabled: false,
 };
 
+let currentPreferences: PersistedAppPreferences | null = null;
+let pendingPreferenceWrite: Promise<void> = Promise.resolve();
+
 function preferencesFilePath(): string {
   return join(app.getPath('userData'), 'app-preferences.json');
 }
 
 export function loadAppPreferences(): PersistedAppPreferences {
+  if (currentPreferences) return { ...currentPreferences };
+  let loaded: PersistedAppPreferences;
   try {
     const parsed = JSON.parse(readFileSync(preferencesFilePath(), 'utf8')) as Partial<PersistedAppPreferences>;
-    return {
+    loaded = {
       theme: isThemeMode(parsed.theme) ? parsed.theme : DEFAULTS.theme,
       language: isLocale(parsed.language) ? parsed.language : DEFAULTS.language,
       osNotificationsEnabled: parsed.osNotificationsEnabled === true,
     };
   } catch {
     // No prior preferences, or the file is unreadable/invalid — fall back to defaults.
-    return { ...DEFAULTS };
+    loaded = { ...DEFAULTS };
   }
+  currentPreferences = loaded;
+  return { ...loaded };
 }
 
 export function saveThemePreference(theme: ThemeMode): void {
@@ -56,14 +64,22 @@ export function saveOsNotificationsPreference(enabled: boolean): void {
   savePreferences({ osNotificationsEnabled: enabled });
 }
 
+export async function flushAppPreferenceWrites(): Promise<void> {
+  await pendingPreferenceWrite;
+}
+
+export function resetAppPreferencesForTests(): void {
+  currentPreferences = null;
+  pendingPreferenceWrite = Promise.resolve();
+}
+
 // Read-modify-write a subset of preferences, preserving the rest. Best effort —
 // failing to persist a UI preference is not worth surfacing an error; the in-memory
 // state (nativeTheme.themeSource / the broadcast locale) still applies this session.
 function savePreferences(patch: Partial<PersistedAppPreferences>): void {
-  const next: PersistedAppPreferences = { ...loadAppPreferences(), ...patch };
-  try {
-    writeFileSync(preferencesFilePath(), JSON.stringify(next));
-  } catch {
-    // ignore — see note above
-  }
+  const next: PersistedAppPreferences = { ...(currentPreferences ?? loadAppPreferences()), ...patch };
+  currentPreferences = next;
+  pendingPreferenceWrite = pendingPreferenceWrite
+    .then(() => atomicWriteFile(preferencesFilePath(), JSON.stringify(next)))
+    .catch(() => undefined);
 }
