@@ -26,6 +26,7 @@ import {
   ICON_SIZE,
   PencilIcon,
   RedoIcon,
+  StopIcon,
 } from '../icons';
 import {
   AgentProcessBlock,
@@ -817,6 +818,7 @@ export function AgentMessageRow({
   }
 
   const hasError = !!message.errorMessage && message.stopReason !== 'aborted';
+  const stopped = message.stopReason === 'aborted';
   const displayError = hasError ? parseAgentErrorMessage(message.errorMessage ?? '') : '';
   const copyText = textFromAssistant(message);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
@@ -841,7 +843,7 @@ export function AgentMessageRow({
   // A sealed assistant turn whose only content was a child run spawn renders no
   // blocks (the run is shown as the boundary that follows) — skip the empty bubble
   // entirely rather than leave a blank frame.
-  if (assistantBlocks.length === 0 && !hasError && !turnActive) return null;
+  if (assistantBlocks.length === 0 && !hasError && !turnActive && !stopped) return null;
 
   return (
     <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
@@ -873,6 +875,12 @@ export function AgentMessageRow({
         ) : null}
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
+        {stopped && !turnActive ? (
+          <div className="agent-message-stopped">
+            <StopIcon size={ICON_SIZE.menu} aria-hidden />
+            <span>{t.agent.message.stopped}</span>
+          </div>
+        ) : null}
         {turnActive ? <AgentStreamingIndicator /> : null}
         {showToolbar ? (
           <AgentMessageActions assistant>

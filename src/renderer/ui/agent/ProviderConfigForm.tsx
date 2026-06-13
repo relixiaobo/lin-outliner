@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentModelOption, AgentReasoningLevel } from '../../api/types';
-import { HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
+import { CheckIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { Button } from '../primitives/Button';
+import { ErrorState } from '../primitives/FeedbackState';
+import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { coerceReasoningLevel } from './settingsReasoning';
 
 // The draft committed by Save. `apiKey` empty means "leave the saved key
@@ -218,13 +219,14 @@ export function ProviderConfigForm({
           {isCustom ? (
             <label className="settings-sheet-row">
               <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
-              <TextInputControl
+              <Input
                 className="settings-sheet-row-input"
                 label={t.providerConfig.providerIdLabel}
                 onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
                 placeholder={t.providerConfig.providerIdPlaceholder}
                 ref={firstFieldRef}
                 value={providerId}
+                variant="bare"
               />
             </label>
           ) : null}
@@ -232,7 +234,7 @@ export function ProviderConfigForm({
             <div className="settings-sheet-row">
               <div className="settings-sheet-key">
                 <PasswordIcon size={ICON_SIZE.menu} />
-                <TextInputControl
+                <Input
                   className="settings-sheet-row-input"
                   label={t.providerConfig.apiKeyLabel}
                   onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
@@ -240,6 +242,7 @@ export function ProviderConfigForm({
                   ref={isCustom ? undefined : firstFieldRef}
                   type={reveal ? 'text' : 'password'}
                   value={apiKey}
+                  variant="bare"
                 />
                 <button
                   aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
@@ -256,12 +259,13 @@ export function ProviderConfigForm({
           {isCustom ? (
             <label className="settings-sheet-row">
               <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
-              <TextInputControl
+              <Input
                 className="settings-sheet-row-input"
                 label={t.providerConfig.modelLabel}
                 onChange={(event) => { setModelId(event.target.value); clearResult(); }}
                 placeholder={t.providerConfig.modelPlaceholder}
                 value={modelId}
+                variant="bare"
               />
             </label>
           ) : modelOptions.length > 0 ? (
@@ -298,12 +302,13 @@ export function ProviderConfigForm({
           ) : null}
           <label className="settings-sheet-row">
             <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
-            <TextInputControl
+            <Input
               className="settings-sheet-row-input"
               label={t.providerConfig.baseUrlLabel}
               onChange={(event) => { setBaseUrl(event.target.value); clearResult(); }}
               placeholder={defaultBaseUrl || baseUrlPlaceholder}
               value={baseUrl}
+              variant="bare"
             />
           </label>
         </div>
@@ -314,46 +319,51 @@ export function ProviderConfigForm({
           </button>
         ) : null}
 
-        {status !== 'idle' && status !== 'saving' ? (
-          <div className={`settings-sheet-result is-${status}`} role="status">
-            {validating ? (
-              <>
-                <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} />
-                <span className="settings-sheet-result-text">{t.providerConfig.validating}</span>
-                <button className="settings-sheet-cancel-test" onClick={cancelValidate} type="button">{t.providerConfig.cancel}</button>
-              </>
-            ) : status === 'success' ? (
-              <span className="settings-sheet-result-text">✓ {message || t.providerConfig.connectionSuccessful}</span>
-            ) : (
-              <span className="settings-sheet-result-text">✗ {message || t.providerConfig.validationFailed}</span>
-            )}
+        {validating ? (
+          <div className="settings-sheet-result" role="status">
+            <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} />
+            <span className="settings-sheet-result-text">{t.providerConfig.validating}</span>
+            <Button onClick={cancelValidate} size="sm" variant="ghost">{t.providerConfig.cancel}</Button>
           </div>
+        ) : status === 'success' ? (
+          <div className="settings-sheet-result is-success" role="status">
+            <span className="settings-sheet-result-text">
+              <CheckIcon size={ICON_SIZE.menu} aria-hidden />
+              <span>{message || t.providerConfig.connectionSuccessful}</span>
+            </span>
+          </div>
+        ) : status !== 'idle' && status !== 'saving' ? (
+          <ErrorState
+            className="settings-sheet-result"
+            message={message || t.providerConfig.validationFailed}
+            size="inline"
+          />
         ) : null}
       </div>
 
       <div className="settings-sheet-actions">
         <div className="settings-sheet-actions-left">
           {onRemoveProvider ? (
-            <ButtonControl className="settings-sheet-danger" disabled={busy} onClick={onRemoveProvider}>
+            <Button disabled={busy} onClick={onRemoveProvider} variant="danger">
               {t.providerConfig.removeProvider}
-            </ButtonControl>
+            </Button>
           ) : null}
           {onSetActive && !isActive ? (
-            <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onSetActive}>
+            <Button disabled={busy} onClick={onSetActive} variant="secondary">
               {t.providerConfig.setActive}
-            </ButtonControl>
+            </Button>
           ) : null}
         </div>
         <div className="settings-sheet-actions-right">
-          <ButtonControl className="settings-sheet-secondary" disabled={saving} onClick={onClose}>
+          <Button disabled={saving} onClick={onClose} variant="ghost">
             {t.providerConfig.cancel}
-          </ButtonControl>
-          <ButtonControl className="settings-sheet-secondary" disabled={!canValidate} onClick={runValidate}>
+          </Button>
+          <Button disabled={!canValidate} onClick={runValidate} variant="secondary">
             {validating ? t.providerConfig.validating : t.providerConfig.validate}
-          </ButtonControl>
-          <ButtonControl className="settings-sheet-primary" disabled={!canSave} onClick={runSave}>
+          </Button>
+          <Button disabled={!canSave} onClick={runSave} variant="primary">
             {saving ? t.providerConfig.saving : t.providerConfig.save}
-          </ButtonControl>
+          </Button>
         </div>
       </div>
     </>

@@ -6,6 +6,9 @@ import type { LauncherItem, LauncherItemAction } from './launcherModel';
 import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
 import { useT } from '../i18n/I18nProvider';
 import { APP_NAME } from '../../core/brand';
+import { Button } from '../ui/primitives/Button';
+import { EmptyState } from '../ui/primitives/FeedbackState';
+import { Input } from '../ui/primitives/Input';
 
 // Raycast-style launcher: ONE always-focused input that is simultaneously a
 // command filter, a live node search, AND a live capture draft (no "pick New
@@ -194,20 +197,20 @@ export function LauncherApp() {
     <div className="launcher" role="dialog" aria-label={t.launcher.rootAriaLabel({ app: APP_NAME })} onKeyDown={onKeyDown}>
       <div className="launcher-inputrow">
         <LauncherInputIcon className="launcher-input-icon" size={18} strokeWidth={1.75} aria-hidden="true" />
-        <input
+        <Input
           ref={inputRef}
           className="launcher-input"
-          type="text"
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t.launcher.placeholder}
-          aria-label={t.launcher.queryAriaLabel}
+          label={t.launcher.queryAriaLabel}
           role="combobox"
           aria-expanded={navItems.length > 0}
           aria-controls="launcher-results"
           aria-autocomplete="list"
           aria-activedescendant={activeItem ? `launcher-row-${rowKey(activeItem)}` : undefined}
+          variant="bare"
         />
       </div>
 
@@ -233,7 +236,7 @@ export function LauncherApp() {
               onClick={() => void runAction(item, item.actions[0])}
             />
           ))}
-          {navItems.length === 0 ? <div className="launcher-empty">{t.launcher.emptyState}</div> : null}
+          {navItems.length === 0 ? <EmptyState className="launcher-empty" size="inline" title={t.launcher.emptyState} /> : null}
         </div>
       </div>
 
@@ -242,16 +245,17 @@ export function LauncherApp() {
             preventDefault on mousedown keeps the always-on input focused. */}
         <span className="launcher-actionbar-hints">
           {primaryLabel ? (
-            <button
-              type="button"
+            <Button
               className="launcher-actionbar-item launcher-actionbar-primary"
               disabled={busy}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => void runAction(activeItem, activeItem?.actions[0])}
+              size="sm"
+              variant="ghost"
             >
               {primaryLabel}
               <kbd className="launcher-kbd">↵</kbd>
-            </button>
+            </Button>
           ) : null}
         </span>
       </div>

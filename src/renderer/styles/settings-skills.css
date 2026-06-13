@@ -9,10 +9,8 @@
   line-height: var(--line-meta);
 }
 
-/* "Accept" on a pending-acceptance skill row — the shared .settings-row-button
-   recipe (settings-base.css), but always visible: accepting is the row's call to
-   action, not a shortcut for something the row click already does, so it must not
-   hide behind hover. This variant only adds the in-flight disabled state. */
+/* Pending skill acceptance uses the shared Button skin; this variant only adds
+   the in-flight disabled state. */
 .settings-skill-accept:disabled {
   color: var(--text-tertiary);
 }

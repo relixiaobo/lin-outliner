@@ -1,0 +1,124 @@
+:root {
+  --input-height: var(--control-size-xl);
+  --input-pad-x: var(--space-4);
+  --input-radius: var(--radius-sm);
+  --input-border: var(--border);
+  --input-bg: var(--fill-2);
+  --input-placeholder: var(--text-faint);
+}
+
+.input-control {
+  min-width: 0;
+  color: var(--text-primary);
+  font: inherit;
+  transition: background var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.input-control::placeholder {
+  color: var(--input-placeholder);
+}
+
+.input-control:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.input-boxed {
+  width: 100%;
+  border: 1px solid var(--input-border);
+  border-radius: var(--input-radius);
+  background: var(--input-bg);
+  color: var(--text-primary);
+}
+
+.input-md {
+  min-height: var(--input-height);
+  padding: 0 var(--input-pad-x);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.input-sm {
+  min-height: var(--control-size-md);
+  padding: 0 var(--space-3);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.input-bare {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.input-bare:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.textarea-control {
+  min-height: 72px;
+  resize: vertical;
+  padding-block: var(--space-3);
+}
+
+.input-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: calc(var(--input-pad-x) + var(--control-size-sm));
+}
+
+.input-select-shell {
+  position: relative;
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  color: inherit;
+}
+
+.input-select-shell-bare .input-select {
+  padding-right: var(--control-size-sm);
+}
+
+.input-select-chevron {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  pointer-events: none;
+  color: var(--text-faint);
+  transform: translateY(-50%);
+}
+
+.input-select-shell-bare .input-select-chevron {
+  color: currentColor;
+  opacity: 0.55;
+}
+
+.field-control {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-control-label,
+.field-control-meta,
+.field-control-error {
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.field-control-label {
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.field-control-meta {
+  color: var(--text-faint);
+}
+
+.field-control-error {
+  color: var(--status-danger);
+}

@@ -3,6 +3,7 @@ import { addLocalDays, isoLocalDate } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 import { ButtonControl } from './ButtonControl';
+import { cx } from './cx';
 
 export interface CalendarMonthDay {
   date: Date;
@@ -43,7 +44,7 @@ export function CalendarMonthGrid({
   const selectedDates = useMemo(() => new Set(selectedIsoDates.filter(Boolean)), [selectedIsoDates]);
 
   return (
-    <div className={['calendar-month', className].filter(Boolean).join(' ')}>
+    <div className={cx('calendar-month', className)}>
       <div className="calendar-month-header">
         <ButtonControl
           aria-label={t.calendar.previousMonth}
@@ -77,13 +78,13 @@ export function CalendarMonthGrid({
           return (
             <ButtonControl
               aria-label={getDayAriaLabel?.(day) ?? t.calendar.selectDate({ isoDate: day.isoDate })}
-              className={[
+              className={cx(
                 'calendar-month-day',
-                day.inMonth ? '' : 'is-outside-month',
-                day.isoDate === todayIsoDate ? 'is-today' : '',
-                selectedDates.has(day.isoDate) ? 'is-selected' : '',
-                getDayClassName?.(day) ?? '',
-              ].filter(Boolean).join(' ')}
+                !day.inMonth && 'is-outside-month',
+                day.isoDate === todayIsoDate && 'is-today',
+                selectedDates.has(day.isoDate) && 'is-selected',
+                getDayClassName?.(day),
+              )}
               key={day.isoDate}
               onClick={() => onSelectDate(day.isoDate)}
               onMouseEnter={handleMouseEnter}

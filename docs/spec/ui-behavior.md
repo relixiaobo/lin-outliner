@@ -10,6 +10,12 @@ keyboard or pointer change should be checked against this matrix.
 - Panel breadcrumb stays pinned to the top of the panel scroll container.
 - Breadcrumb uses the panel left inset. The main outline content can remain
   centered independently on wide panels.
+- Breadcrumb never renders as an empty path for a real node page: the internal
+  workspace container is hidden, but the user-visible workspace root remains a
+  breadcrumb ancestor when it is the only available context.
+- If a pane root points at a node that no longer exists in the current projection,
+  the workspace layout repairs that pane to a real fallback root instead of
+  rendering an orphan untitled page shell.
 - When the page title scrolls under the pinned breadcrumb, the current page
   title appears as the final breadcrumb segment.
 - Breadcrumb back navigates the current panel to its previous node page. It does

@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent } from 'react';
+import { cx } from './cx';
 
 export interface SegmentedControlOption<T extends string> {
   value: T;
@@ -58,7 +59,7 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       aria-label={label}
-      className={`segmented-control${className ? ` ${className}` : ''}`}
+      className={cx('segmented-control', className)}
       role="radiogroup"
     >
       {options.map((option, index) => {
@@ -66,7 +67,7 @@ export function SegmentedControl<T extends string>({
         return (
           <button
             aria-checked={selected}
-            className={`segmented-control-option${selected ? ' is-selected' : ''}`}
+            className={cx('segmented-control-option', selected && 'is-selected')}
             disabled={disabled}
             key={option.value}
             onClick={() => select(option.value)}

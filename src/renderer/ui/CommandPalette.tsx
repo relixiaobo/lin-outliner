@@ -13,10 +13,10 @@ import {
   type AppIcon,
 } from './icons';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
-import { ButtonControl } from './primitives/ButtonControl';
+import { Button } from './primitives/Button';
 import { Dialog } from './primitives/Dialog';
 import { MenuItem } from './primitives/MenuItem';
-import { TextInputControl } from './primitives/TextInputControl';
+import { Input } from './primitives/Input';
 import type { CommandRunner } from './shared';
 import { useT } from '../i18n/I18nProvider';
 
@@ -187,13 +187,14 @@ export function CommandPalette(props: CommandPaletteProps) {
       onEscapeKeyDown={props.onClose}
       surfaceClassName="command-palette"
     >
-      <TextInputControl
+      <Input
         ref={inputRef}
         aria-activedescendant={selectedItemId}
         aria-controls="command-palette-list"
         className="command-input"
         label={t.commandPalette.inputLabel}
         value={query}
+        variant="bare"
         placeholder={t.commandPalette.inputPlaceholder}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
@@ -246,10 +247,10 @@ export function CommandPalette(props: CommandPaletteProps) {
       </div>
       {selected && (
         <div className="command-action-bar">
-          <ButtonControl className="command-action-button" onClick={selected.action}>
+          <Button className="command-action-button" onClick={selected.action} size="sm" variant="ghost">
             <span>{actionLabel(selected.kind)}</span>
             <span className="kbd">↵</span>
-          </ButtonControl>
+          </Button>
         </div>
       )}
     </Dialog>

@@ -1,0 +1,63 @@
+.feedback-state {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.feedback-state-panel {
+  min-height: 140px;
+  padding: var(--space-6);
+}
+
+.feedback-state-inline {
+  min-height: var(--control-size-xl);
+  padding: var(--space-3) var(--space-4);
+}
+
+.feedback-state-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.feedback-state-title {
+  color: inherit;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.feedback-state-body {
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.feedback-state-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.feedback-state.is-error {
+  color: var(--status-danger);
+}
+
+.feedback-state.is-loading svg {
+  animation: feedback-state-spin 0.9s linear infinite;
+}
+
+@keyframes feedback-state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feedback-state.is-loading svg {
+    animation: none;
+  }
+}

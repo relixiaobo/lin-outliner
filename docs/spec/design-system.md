@@ -83,7 +83,7 @@ paper palettes, or feature concepts Tenon does not own.
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx` | Textarea, attachments, model display/navigation chip, send/stop slot. |
 | Attachment rows | `AttachmentRow.tsx`, `BlockNodeRow.tsx`, `inlineFileIcon.tsx` | File attachment block rows, PDF thumbnails, file-kind glyphs, media controls, and safe system-action buttons. |
 | Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `AgentConfigWindow.tsx`, `ChannelConfigWindow.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + right-pane toolbar title, constrained inset grouped content, per-row `⋯` menu, and provider / agent / Channel configuration as their own native child windows. See "Settings window" below. |
-| Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
+| Primitives | `Button.tsx`, `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `SelectControl.tsx`, `FeedbackState.tsx` | Shared semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
 ## Foundations
 
@@ -795,10 +795,12 @@ and non-goals; product behavior stays with the owning surface.
 | `AnchoredOverlay` | `AnchoredOverlay.tsx` | Viewport-aware anchored positioning and outside dismissal wiring. Does not own menu contents or commands. |
 | `PopoverListbox` | `PopoverList.tsx`, trigger/option/tag/reference/slash popovers | Listbox shell and option item structure. Active index and filtering remain caller-owned. |
 | `Dialog` | `Dialog.tsx`, `AgentSettingsDialog.tsx`, `CommandPalette.tsx` | Modal shell with label linkage, Escape handling, focus trap, initial focus, and focus restoration. |
-| `ButtonControl` | `ButtonControl.tsx` | Native button wrapper with default `type="button"` and ref forwarding. Visual variants stay class-owned. |
-| `SelectControl` | `SelectControl.tsx` | Native select wrapper. Options and value coercion stay caller-owned. |
-| `TextInputControl` | `TextInputControl.tsx` | Native input wrapper. Draft, validation, and commit behavior stay caller-owned. |
-| `NumberInputControl` | `NumberInputControl.tsx` | Native number input wrapper. Parsing and empty-value semantics stay caller-owned. |
+| `Button` | `Button.tsx`, `styles/button.css` | Shared text/action button primitive. `primary` is the neutral filled-default idiom (`--surface-inverse` + `--panel-bg`), `secondary` is neutral filled, `ghost` is transparent until hover, and `danger` carries danger text or a solid danger fill only for destructive confirmation. It owns visual state and default `type="button"`; callers own command behavior. |
+| `ButtonControl` | `ButtonControl.tsx` | Low-level native button wrapper with default `type="button"` and ref forwarding. Use it for icon-only or highly custom controls whose visual contract is owned by the surrounding component. |
+| `Input` / `Textarea` / `Field` | `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `styles/input.css` | Shared form-control skin. `boxed` is the tokenized neutral control surface, `bare` inherits the surrounding inset-row focus model. `Field` is the single label/control wrapper: it can provide the default field stack, or accept caller layout classes for inset rows. Helper text, parsing, draft/commit behavior, and validation stay caller-owned. |
+| `SelectControl` | `SelectControl.tsx` | Native select wrapper. `plain` stays caller-styled, `popup` is the compact settings pop-up control, and `boxed` / `bare` share the `Input` visual skin with a passive chevron affordance. Options and value coercion stay caller-owned. |
+| `FeedbackState` | `FeedbackState.tsx`, `styles/feedback-state.css` | Shared quiet empty/loading/error state. It reserves a stable inline or panel slot, uses muted neutral text by default, spins only for loading, honors reduced motion, and pairs error color with text/icon/action rather than color alone. |
+| `TextInputControl` / `NumberInputControl` | `TextInputControl.tsx`, `NumberInputControl.tsx` | Legacy thin native wrappers retained for specialized call sites during migration. New shared form surfaces use `Input` / `Textarea`. |
 | `PanelSurface` | `WorkspacePanelSurface.tsx` | Opaque content pane (`--bg-content`), flush within the content base — no card radius, no gap. Panes are divided by a 1px `--separator` (the resize handle), not a per-pane border. Active pane indication is a subtle neutral control-state cue, never a box outline. |
 | `ResizeHandle` | `ResizeHandle.tsx` | Shared resize button structure. Pointer behavior stays in `useResizableLayout`. |
 | `AppliedTag` | `AppliedTag.tsx` | Fixed measured tag pill using tag palette background/text colors. Hover/focus must not shift row width. |
@@ -1317,16 +1319,15 @@ not Apple chrome. We borrow the interaction, not the chrome.
     rows are launch points: clicking a row opens the dedicated Agent config child
     window, while each writable row keeps the enable/disable switch in the trailing
     slot. Do NOT combine inline authoring forms with the list.
-  - **One secondary button.** Filled neutral `--fill-2`, no border
-    (`.agent-settings-secondary` / `.settings-sheet-secondary`) — the native push
-    button, pairing with the filled-strong primary; never a ghost outline.
+  - **One secondary button.** `Button variant="secondary"` uses filled neutral
+    `--fill-2`, no border — the native push button, pairing with the filled-strong
+    primary; never a ghost outline.
   - **One chip.** `.settings-chip` — `--radius-xs`, `--control-hover`, sentence case
     (no uppercase) — for quiet metadata such as skill source, ignored-rule
     diagnostics, and agent tool tags. Do not duplicate a trailing control's current
     value with an inline chip.
-  - **One empty / loading state.** Plain muted text (`.agent-settings-empty`), no
-    dashed box (native, not a web drop-zone); a `.is-centered` variant fills a
-    detail pane.
+  - **One empty / loading state.** Use `FeedbackState` for plain muted text, no
+    dashed box (native, not a web drop-zone); panel-sized states fill a detail pane.
   - **One notice / banner.** Neutral `--fill-1` box with the status colour on TEXT
     only (`.agent-settings-alert` / `.settings-sheet-result`), never a status-tinted
     fill (B4).
@@ -1385,12 +1386,12 @@ not Apple chrome. We borrow the interaction, not the chrome.
 - **Status colour for status only (B4).** Validation success/failure uses
   `--status-success` / `--status-danger`; the primary action (Save / Sign in /
   Continue) is a genuinely strong NEUTRAL fill — the native "filled default button"
-  idiom on `--surface-inverse` (shared with `.agent-settings-primary` and the
+  idiom on `--surface-inverse` (shared with `Button variant="primary"` and the
   composer send button), never a system-blue accent (B4). The earlier `--fill-3`
-  tint read weaker than the bordered secondary; the solid fill makes the main action
-  unmistakable. Secondary is the bordered surface button; danger (`--status-danger`
-  text) is reserved for genuinely destructive actions (Sign out / Remove provider),
-  so exactly one button per footer reads as primary.
+  tint read weaker than the secondary; the solid fill makes the main action
+  unmistakable. Secondary is the filled neutral surface button; danger
+  (`--status-danger` text) is reserved for genuinely destructive actions (Sign out /
+  Remove provider), so exactly one button per footer reads as primary.
 
 ## Patterns
 
@@ -1446,8 +1447,15 @@ nested cards.
   shows a quiet onboarding line + a neutral CTA that opens Settings › Providers, and
   the composer send is disabled (neutral, with a tooltip) — gated on the loaded
   state so a key-holding user never sees the onboarding flash during the async load.
+  Whole-panel empty results (search with no matches, an empty Trash/Recents view)
+  use `FeedbackState` so the hint is centered in a reserved slot, muted, and
+  icon-supported without becoming an illustrated card. Editable empty outline
+  pages do **not** get a centered empty-state block; the trailing editor line is
+  the action point.
 - **Loading:** prefer an in-place reserved slot or skeleton over a spinner that
-  shifts layout. The first frame is the working surface, not a splash.
+  shifts layout. When a spinner is necessary, render it through `FeedbackState`
+  so reduced motion can disable the spin. The first frame is the working surface,
+  not a splash.
 - **Error / offline:** surface errors inline near their cause; reserve full
   surfaces for genuine whole-view failures. Status color is used sparingly and
   always paired with text or an icon, never color alone.

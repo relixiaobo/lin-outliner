@@ -199,6 +199,20 @@
   min-width: 11rem;
 }
 
+.settings-permission-mode-row {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.settings-permission-mode-row .inset-row-main {
+  flex: 1 1 22rem;
+}
+
+.settings-permission-mode-row .inset-row-trailing {
+  flex: 0 1 auto;
+  padding: var(--space-2) var(--space-4) var(--space-4) var(--space-5);
+}
+
 .settings-permission-mode-controls {
   display: inline-flex;
   flex-wrap: wrap;

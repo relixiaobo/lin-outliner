@@ -15,8 +15,9 @@ import {
   SearchIcon,
   type AppIcon,
 } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { Button } from '../primitives/Button';
 import { IconButton } from '../primitives/IconButton';
+import { Textarea } from '../primitives/Textarea';
 import type { CommandRunner } from '../shared';
 
 type SearchQueryChipKind = 'field' | 'logic' | 'reference' | 'tag' | 'text';
@@ -151,9 +152,9 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
           />
         </div>
       </div>
-      <textarea
+      <Textarea
         className="search-query-builder-textarea"
-        aria-label={builder.queryAriaLabel}
+        label={builder.queryAriaLabel}
         value={draft}
         rows={rows}
         readOnly={readOnly}
@@ -167,23 +168,25 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
           {localError ?? (readOnly ? builder.statusLocked : dirty ? builder.statusUnsaved : builder.statusSaved)}
         </span>
         <div className="search-query-builder-buttons">
-          <ButtonControl
-            className="search-query-builder-button"
+          <Button
             disabled={readOnly || !dirty || saving}
             onClick={() => {
               setDraft(initialText);
               setLocalError(null);
             }}
+            size="sm"
+            variant="ghost"
           >
             {builder.reset}
-          </ButtonControl>
-          <ButtonControl
-            className="search-query-builder-button search-query-builder-save"
+          </Button>
+          <Button
             disabled={readOnly || !dirty || saving || !draft.trim()}
             onClick={() => void save()}
+            size="sm"
+            variant="primary"
           >
             {saving ? builder.saving : builder.save}
-          </ButtonControl>
+          </Button>
         </div>
       </div>
     </section>

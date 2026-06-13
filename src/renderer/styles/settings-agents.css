@@ -160,9 +160,3 @@
   align-items: center;
   gap: var(--space-3);
 }
-
-@media (max-width: 560px) {
-  .agent-settings-grid {
-    grid-template-columns: 1fr;
-  }
-}

@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { ICON_SIZE, type AppIcon } from '../icons';
+import { cx } from './cx';
 
 type IconButtonVariant =
   | 'chrome'
@@ -39,7 +40,7 @@ export function IconButton({
   variant = 'chrome',
   ...buttonProps
 }: IconButtonProps) {
-  const classes = ['icon-button', `icon-button-${variant}`, className].filter(Boolean).join(' ');
+  const classes = cx('icon-button', `icon-button-${variant}`, className);
 
   return (
     <button

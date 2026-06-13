@@ -24,7 +24,10 @@ import {
   WarningIcon,
 } from '../icons';
 import { IconButton } from '../primitives/IconButton';
+import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { EmptyState, ErrorState } from '../primitives/FeedbackState';
+import { Textarea } from '../primitives/Textarea';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
@@ -305,23 +308,28 @@ function TranscriptTimeline({
   const t = useT();
   if (loading && messages.length === 0) {
     return (
-      <div className="agent-child-run-empty">
-        <LoaderIcon className="agent-tool-call-spinner" size={ICON_SIZE.menu} />
-        <span>{t.agent.childRun.loadingTranscript}</span>
-      </div>
+      <EmptyState
+        className="agent-child-run-empty"
+        icon={LoaderIcon}
+        iconClassName="agent-tool-call-spinner"
+        loading
+        role="status"
+        title={t.agent.childRun.loadingTranscript}
+      />
     );
   }
   if (error) {
     return (
-      <div className="agent-child-run-empty is-error">
-        <WarningIcon size={ICON_SIZE.menu} />
-        <span>{error}</span>
-        <ButtonControl className="agent-child-run-small-button" onClick={reload}>{t.agent.childRun.retry}</ButtonControl>
-      </div>
+      <ErrorState
+        className="agent-child-run-empty"
+        message={error}
+        onRetry={reload}
+        retryLabel={t.agent.childRun.retry}
+      />
     );
   }
   if (messages.length === 0) {
-    return <div className="agent-child-run-empty">{t.agent.childRun.noTranscriptMessages}</div>;
+    return <EmptyState className="agent-child-run-empty" title={t.agent.childRun.noTranscriptMessages} />;
   }
 
   const assistantToolCallIds = new Set<string>();
@@ -516,8 +524,9 @@ export function AgentChildRunDetailsPanel({
       </nav>
       <section className="agent-child-run-actions" aria-label={t.agent.childRun.actionsAriaLabel}>
         <div className="agent-child-run-followup">
-          <textarea
-            aria-label={t.agent.childRun.followUpAriaLabel}
+          <Textarea
+            className="agent-child-run-followup-input"
+            label={t.agent.childRun.followUpAriaLabel}
             disabled={!canSendFollowUp || actionPending !== null}
             onChange={(event) => setFollowUpDraft(event.target.value)}
             onInput={(event) => setFollowUpDraft(event.currentTarget.value)}
@@ -533,21 +542,23 @@ export function AgentChildRunDetailsPanel({
           />
           <div className="agent-child-run-action-buttons">
             {canStop ? (
-              <ButtonControl
-                className="agent-child-run-stop-button"
+              <Button
                 disabled={actionPending !== null}
                 onClick={() => void stopChildRun()}
+                size="sm"
+                variant="danger"
               >
                 {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
-              </ButtonControl>
+              </Button>
             ) : null}
-            <ButtonControl
-              className="agent-child-run-send-button"
+            <Button
               disabled={!canSendFollowUp || !followUpDraft.trim() || actionPending !== null}
               onClick={() => void sendFollowUp()}
+              size="sm"
+              variant="primary"
             >
               {actionPending === 'send' ? t.agent.childRun.sending : t.agent.childRun.send}
-            </ButtonControl>
+            </Button>
           </div>
         </div>
         {actionError ? (

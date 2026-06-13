@@ -133,7 +133,7 @@ test.describe('cursor affordances', () => {
         return getComputedStyle(element).cursor;
       };
       return {
-        primary: cursor('.settings-sheet-primary'),
+        primary: cursor('.settings-sheet-actions-right .button-primary'),
         reveal: cursor('.settings-sheet-reveal'),
       };
     });

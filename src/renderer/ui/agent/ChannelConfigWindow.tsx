@@ -4,11 +4,13 @@ import { agentMentionToken } from '../../../core/agentChannel';
 import { channelConfigParamsFromSearch } from '../../../core/settingsWindow';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { Button } from '../primitives/Button';
 import { CheckboxControl } from '../primitives/CheckboxControl';
-import { FormField } from '../primitives/FormField';
-import { TextInputControl } from '../primitives/TextInputControl';
-import { HashIcon, ICON_SIZE, WarningIcon } from '../icons';
+import { EmptyState } from '../primitives/FeedbackState';
+import { Field } from '../primitives/Field';
+import { Input } from '../primitives/Input';
+import { Textarea } from '../primitives/Textarea';
+import { HashIcon, ICON_SIZE, LoaderIcon, WarningIcon } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 
@@ -175,32 +177,35 @@ export function ChannelConfigWindow() {
       </header>
 
       {loading ? (
-        <div className="agent-settings-empty">{t.common.loading}</div>
+        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.common.loading} />
       ) : mode === 'configure' && !conversation ? (
-        <div className="agent-settings-empty">{t.agent.chat.noConversations}</div>
+        <EmptyState className="agent-settings-empty" title={t.agent.chat.noConversations} />
       ) : (
         <form className="channel-config-form" onSubmit={(event) => void submit(event)}>
           <div className="settings-sheet-body">
             <div className="inset-card" role="group">
-              <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.agent.chat.channelName}</span>}>
-                <TextInputControl
+              <Field as="label" className="settings-sheet-row" label={t.agent.chat.channelName} labelClassName="settings-sheet-row-label">
+                <Input
                   className="settings-sheet-row-input"
                   label={t.agent.chat.channelName}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder={t.agent.chat.channelNamePlaceholder}
                   value={title}
+                  variant="bare"
                 />
-              </FormField>
+              </Field>
               {mode === 'create' ? (
-                <FormField as="label" className="settings-sheet-row settings-sheet-row-stack" label={<span className="settings-sheet-row-label">{t.agent.chat.channelSeed}</span>}>
-                  <textarea
+                <Field as="label" className="settings-sheet-row settings-sheet-row-stack" label={t.agent.chat.channelSeed} labelClassName="settings-sheet-row-label">
+                  <Textarea
                     className="settings-sheet-row-input channel-config-seed"
+                    label={t.agent.chat.channelSeed}
                     onChange={(event) => setSeedText(event.target.value)}
                     placeholder={t.agent.chat.channelSeedPlaceholder}
                     rows={3}
                     value={seedText}
+                    variant="bare"
                   />
-                </FormField>
+                </Field>
               ) : null}
             </div>
 
@@ -254,13 +259,14 @@ export function ChannelConfigWindow() {
                     label={label}
                     sublabel={`@${mention}`}
                     trailing={(
-                      <ButtonControl
-                        className="settings-row-button"
+                      <Button
                         disabled={addingAgentId !== null}
                         onClick={() => void addMember(agent.agentId)}
+                        size="sm"
+                        variant="secondary"
                       >
                         {addingAgentId === agent.agentId ? t.common.loading : t.agent.chat.addAgentMember({ name: label })}
-                      </ButtonControl>
+                      </Button>
                     )}
                     wrap
                   />
@@ -279,12 +285,12 @@ export function ChannelConfigWindow() {
           <div className="settings-sheet-actions">
             <div className="settings-sheet-actions-left" />
             <div className="settings-sheet-actions-right">
-              <ButtonControl className="settings-sheet-secondary" onClick={close}>
+              <Button onClick={close} variant="ghost">
                 {t.agent.chat.cancel}
-              </ButtonControl>
-              <ButtonControl className="settings-sheet-primary" disabled={!title.trim() || saving} type="submit">
+              </Button>
+              <Button disabled={!title.trim() || saving} type="submit" variant="primary">
                 {saving ? t.common.loading : (mode === 'create' ? t.agent.chat.createChannel : t.agent.chat.saveChannelName)}
-              </ButtonControl>
+              </Button>
             </div>
           </div>
         </form>

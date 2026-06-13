@@ -10,14 +10,14 @@ import type {
 import { parseAgentAuthoringInput, serializeAgentMarkdown } from '../../../core/agentMarkdown';
 import { TOOL_CATALOG } from '../../../core/agentToolCatalog';
 import { useT } from '../../i18n/I18nProvider';
-import { ButtonControl } from '../primitives/ButtonControl';
-import { FormField } from '../primitives/FormField';
-import { NumberInputControl } from '../primitives/NumberInputControl';
+import { Button } from '../primitives/Button';
+import { EmptyState } from '../primitives/FeedbackState';
+import { Field } from '../primitives/Field';
+import { Input } from '../primitives/Input';
 import { SegmentedControl } from '../primitives/SegmentedControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 // The create / edit / view surface for an agent definition. ONE abstraction for
@@ -143,7 +143,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
       {isBuiltIn ? <p className="agent-editor-hint">{t.builtInReadOnly}</p> : null}
 
       {mode === 'raw' ? (
-        <FormField as="label" className="agent-editor-persona" label={<span className="agent-profile-field-label">{t.rawLabel}</span>}>
+        <Field as="label" className="agent-editor-persona" label={t.rawLabel} labelClassName="agent-profile-field-label">
           <textarea
             aria-label={t.rawLabel}
             className="agent-profile-prompt-editor agent-editor-raw"
@@ -152,26 +152,26 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
             spellCheck={false}
             value={rawText}
           />
-        </FormField>
+        </Field>
       ) : (
         <>
           <div className="inset-card agent-editor-fields" role="group">
-            <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.nameLabel}</span>}>
-              <TextInputControl className="settings-sheet-row-input" label={t.nameLabel} onChange={(e) => update('name', e.target.value)} placeholder={t.namePlaceholder} readOnly={readOnly} value={form.name} />
-            </FormField>
-            <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.descriptionLabel}</span>}>
-              <TextInputControl className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} readOnly={readOnly} value={form.description} />
-            </FormField>
-            <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.modelOverride}</span>}>
-              <TextInputControl className="settings-sheet-row-input" label={t.modelOverride} onChange={(e) => update('model', e.target.value)} placeholder={t.modelPlaceholder} readOnly={readOnly} value={form.model} />
-            </FormField>
-            <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.thinkingLevel}</span>}>
+            <Field as="label" className="settings-sheet-row" label={t.nameLabel} labelClassName="settings-sheet-row-label">
+              <Input className="settings-sheet-row-input" label={t.nameLabel} onChange={(e) => update('name', e.target.value)} placeholder={t.namePlaceholder} readOnly={readOnly} value={form.name} variant="bare" />
+            </Field>
+            <Field as="label" className="settings-sheet-row" label={t.descriptionLabel} labelClassName="settings-sheet-row-label">
+              <Input className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} readOnly={readOnly} value={form.description} variant="bare" />
+            </Field>
+            <Field as="label" className="settings-sheet-row" label={t.modelOverride} labelClassName="settings-sheet-row-label">
+              <Input className="settings-sheet-row-input" label={t.modelOverride} onChange={(e) => update('model', e.target.value)} placeholder={t.modelPlaceholder} readOnly={readOnly} value={form.model} variant="bare" />
+            </Field>
+            <Field as="label" className="settings-sheet-row" label={t.thinkingLevel} labelClassName="settings-sheet-row-label">
               <SelectControl className="settings-sheet-row-input" disabled={readOnly} label={t.thinkingLevel} onChange={(e) => update('effort', e.target.value)} value={form.effort} variant="popup">
                 <option value="">{t.effortDefault}</option>
                 {REASONING_OPTIONS.map((level) => <option key={level} value={level}>{level}</option>)}
               </SelectControl>
-            </FormField>
-            <FormField as="div" className="settings-sheet-row settings-sheet-row-control" label={<span className="settings-sheet-row-label">{t.permissionMode}</span>}>
+            </Field>
+            <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.permissionMode} labelClassName="settings-sheet-row-label">
               <SegmentedControl<'' | AgentDelegationPermissionMode>
                 disabled={readOnly}
                 label={t.permissionMode}
@@ -182,10 +182,10 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
                 ]}
                 value={form.permissionMode}
               />
-            </FormField>
-            <FormField as="label" className="settings-sheet-row" label={<span className="settings-sheet-row-label">{t.maxTurns}</span>}>
-              <NumberInputControl className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} readOnly={readOnly} value={form.maxTurns} />
-            </FormField>
+            </Field>
+            <Field as="label" className="settings-sheet-row" label={t.maxTurns} labelClassName="settings-sheet-row-label">
+              <Input className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} readOnly={readOnly} type="number" value={form.maxTurns} variant="bare" />
+            </Field>
             <div className="settings-sheet-row settings-sheet-row-switch">
               <div className="settings-sheet-row-text">
                 <span className="settings-sheet-row-label">{t.backgroundLabel}</span>
@@ -218,14 +218,14 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
             toggleLabel={(name) => t.toggleSkill({ name })}
           />
 
-          <FormField as="label" className="agent-editor-persona" label={<span className="agent-profile-field-label">{t.personaPromptLabel}</span>}>
+          <Field as="label" className="agent-editor-persona" label={t.personaPromptLabel} labelClassName="agent-profile-field-label">
             <textarea aria-label={t.personaPromptLabel} className="agent-profile-prompt-editor" onChange={(e) => update('body', e.target.value)} placeholder={t.personaPlaceholder} readOnly={readOnly} value={form.body} />
-          </FormField>
+          </Field>
         </>
       )}
 
       {!agent ? (
-        <FormField as="div" className="settings-sheet-row settings-sheet-row-control" label={<span className="settings-sheet-row-label">{t.storageLabel}</span>}>
+        <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.storageLabel} labelClassName="settings-sheet-row-label">
           <SegmentedControl<AgentStorageLocation>
             label={t.storageLabel}
             onChange={setStorage}
@@ -235,7 +235,7 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
             ]}
             value={storage}
           />
-        </FormField>
+        </Field>
       ) : null}
 
       {localError ? <div className="agent-settings-alert" role="alert"><span>{localError}</span></div> : null}
@@ -244,43 +244,43 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
         {readOnly && agent ? (
           <>
             {onCancel ? (
-              <ButtonControl className="agent-settings-secondary" disabled={busy} onClick={onCancel}>
+              <Button disabled={busy} onClick={onCancel} variant="ghost">
                 {messages.dialog.cancel}
-              </ButtonControl>
+              </Button>
             ) : <span />}
             <span className="agent-editor-actions-right">
-              <ButtonControl className="agent-settings-primary" disabled={busy} onClick={() => onDuplicate(agent)}>
+              <Button disabled={busy} onClick={() => onDuplicate(agent)} variant="primary">
                 {t.duplicateToMine}
-              </ButtonControl>
+              </Button>
             </span>
           </>
         ) : agent ? (
           <>
-            <ButtonControl className="agent-settings-secondary agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)}>
+            <Button className="agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)} variant="danger">
               {t.deleteAgent}
-            </ButtonControl>
+            </Button>
             <span className="agent-editor-actions-right">
               {onCancel ? (
-                <ButtonControl className="agent-settings-secondary" disabled={busy} onClick={onCancel}>
+                <Button disabled={busy} onClick={onCancel} variant="ghost">
                   {messages.dialog.cancel}
-                </ButtonControl>
+                </Button>
               ) : null}
-              <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
+              <Button disabled={busy} onClick={submit} variant="primary">
                 {t.saveAgent}
-              </ButtonControl>
+              </Button>
             </span>
           </>
         ) : (
           <>
             {onCancel ? (
-              <ButtonControl className="agent-settings-secondary" disabled={busy} onClick={onCancel}>
+              <Button disabled={busy} onClick={onCancel} variant="ghost">
                 {messages.dialog.cancel}
-              </ButtonControl>
+              </Button>
             ) : <span />}
             <span className="agent-editor-actions-right">
-              <ButtonControl className="agent-settings-primary" disabled={busy} onClick={submit}>
+              <Button disabled={busy} onClick={submit} variant="primary">
                 {t.createAgent}
-              </ButtonControl>
+              </Button>
             </span>
           </>
         )}
@@ -304,7 +304,7 @@ function ToggleList({ ariaLabel, label, items, footnote, emptyText, disabled, on
   if (items.length === 0 && emptyText) {
     return (
       <InsetGroup ariaLabel={ariaLabel} label={label} footnote={footnote}>
-        <div className="agent-settings-empty">{emptyText}</div>
+        <EmptyState className="agent-settings-empty" size="inline" title={emptyText} />
       </InsetGroup>
     );
   }

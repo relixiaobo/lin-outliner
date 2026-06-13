@@ -3,8 +3,9 @@ import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { CheckIcon, ICON_SIZE, LoaderIcon, OpenIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
-import { ButtonControl } from '../primitives/ButtonControl';
-import { TextInputControl } from '../primitives/TextInputControl';
+import { Button } from '../primitives/Button';
+import { ErrorState } from '../primitives/FeedbackState';
+import { Input } from '../primitives/Input';
 import {
   formatCountdown,
   formatRelativeExpiry,
@@ -151,13 +152,13 @@ function ReplyStep({ pending, onRespond }: {
         <p className="settings-sheet-oauth-step-label">{pending.message}</p>
         <div className="settings-sheet-oauth-options">
           {pending.options.map((option) => (
-            <ButtonControl
-              className="settings-sheet-secondary"
+            <Button
               key={option.id}
               onClick={() => onRespond(option.id)}
+              variant="secondary"
             >
               {option.label}
-            </ButtonControl>
+            </Button>
           ))}
         </div>
       </div>
@@ -173,7 +174,7 @@ function ReplyStep({ pending, onRespond }: {
     >
       <label className="settings-sheet-oauth-step-label" htmlFor={fieldId}>{label}</label>
       <div className="settings-sheet-oauth-reply">
-        <TextInputControl
+        <Input
           autoFocus
           className="settings-sheet-row-input"
           id={fieldId}
@@ -181,10 +182,11 @@ function ReplyStep({ pending, onRespond }: {
           onChange={(event) => setValue(event.target.value)}
           placeholder={placeholder}
           value={value}
+          variant="bare"
         />
-        <ButtonControl className="settings-sheet-primary" disabled={!value.trim()} type="submit">
+        <Button disabled={!value.trim()} type="submit" variant="primary">
           {t.providerOAuth.continue}
-        </ButtonControl>
+        </Button>
       </div>
     </form>
   );
@@ -308,57 +310,59 @@ export function ProviderOAuthForm({
         )}
 
         {flow.status === 'error' && flow.error ? (
-          <div className="settings-sheet-result is-error" role="status">
-            <span className="settings-sheet-result-text">✗ {flow.error}</span>
-          </div>
+          <ErrorState
+            className="settings-sheet-result"
+            message={flow.error}
+            size="inline"
+          />
         ) : null}
       </div>
 
       <div className="settings-sheet-actions">
         <div className="settings-sheet-actions-left">
           {connected && !running ? (
-            <ButtonControl className="settings-sheet-danger" disabled={busy} onClick={signOut}>
+            <Button disabled={busy} onClick={signOut} variant="danger">
               {t.providerOAuth.signOut}
-            </ButtonControl>
+            </Button>
           ) : null}
           {connected && !running && onSetActive && !isActive ? (
-            <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onSetActive}>
+            <Button disabled={busy} onClick={onSetActive} variant="secondary">
               {t.providerOAuth.setActive}
-            </ButtonControl>
+            </Button>
           ) : null}
           {onUseApiKey && !running ? (
-            <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onUseApiKey}>
+            <Button disabled={busy} onClick={onUseApiKey} variant="secondary">
               {t.providerOAuth.useApiKeyInstead}
-            </ButtonControl>
+            </Button>
           ) : null}
         </div>
         <div className="settings-sheet-actions-right">
           {running ? (
-            <ButtonControl className="settings-sheet-secondary" onClick={cancel}>
+            <Button onClick={cancel} variant="ghost">
               {t.providerOAuth.cancelSignIn}
-            </ButtonControl>
+            </Button>
           ) : connected ? (
             // Connected: finishing is the main action, so Done is the (rightmost)
             // primary; re-authenticating is a rare maintenance action and steps back
             // to secondary. Without this the strong-neutral primary sat on
             // Re-authenticate, reading as "you must sign in again".
             <>
-              <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={signIn}>
+              <Button disabled={busy} onClick={signIn} variant="secondary">
                 {t.providerOAuth.reauthenticate}
-              </ButtonControl>
-              <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={onClose}>
+              </Button>
+              <Button disabled={busy} onClick={onClose} variant="primary">
                 {t.providerOAuth.done}
-              </ButtonControl>
+              </Button>
             </>
           ) : (
             // Disconnected: signing in is the main action.
             <>
-              <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onClose}>
+              <Button disabled={busy} onClick={onClose} variant="ghost">
                 {t.providerOAuth.cancel}
-              </ButtonControl>
-              <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={signIn}>
+              </Button>
+              <Button disabled={busy} onClick={signIn} variant="primary">
                 {t.providerOAuth.signInTo({ provider: providerName })}
-              </ButtonControl>
+              </Button>
             </>
           )}
         </div>

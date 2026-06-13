@@ -134,11 +134,9 @@
   color: var(--text-tertiary);
 }
 
-/* "Configure" button on the trailing edge of a single-action row — the macOS Wi-Fi
-   "Connect" / "Details…" idiom: the shared .settings-row-button recipe
-   (settings-base.css), hidden at rest and revealed on row hover / keyboard focus
-   because clicking the row does the same thing. Its reveal IS the row's hover
-   locator (the row carries no fill of its own). */
+/* Single-action provider configure button: shared Button skin, hidden at rest and
+   revealed on row hover / keyboard focus because clicking the row does the same
+   thing. Its reveal is the row's hover locator. */
 .settings-provider-configure {
   opacity: 0;
 }

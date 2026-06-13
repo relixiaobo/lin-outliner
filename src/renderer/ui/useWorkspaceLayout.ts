@@ -17,6 +17,8 @@ const STORAGE_KEY = 'lin-outliner:workspace-layout:v4';
 const MAX_PERSISTED_PANELS = 4;
 const MAX_PANEL_PAGE_HISTORY = 50;
 
+type NodeLookup = Pick<ReadonlyMap<NodeId, unknown>, 'has'>;
+
 function nextId(prefix: string) {
   nextWorkspaceId += 1;
   return `${prefix}-${nextWorkspaceId}`;
@@ -211,6 +213,27 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
   } catch {
     // Best-effort UI state only.
   }
+}
+
+function fallbackOutlinerRootId(projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null {
+  for (const nodeId of [projection.todayId, projection.libraryId, projection.rootId]) {
+    if (nodeIds.has(nodeId)) return nodeId;
+  }
+  return projection.nodes[0]?.id ?? null;
+}
+
+function hasMissingOutlinerRoot(panels: readonly WorkspacePanelState[], nodeIds: NodeLookup): boolean {
+  for (const panel of panels) {
+    if (!isWorkspacePanel(panel)) continue;
+    if (isOutlinerView(panel.view) && !nodeIds.has(panel.view.rootId)) return true;
+    for (const view of panel.backStack) {
+      if (isOutlinerView(view) && !nodeIds.has(view.rootId)) return true;
+    }
+    for (const view of panel.forwardStack) {
+      if (isOutlinerView(view) && !nodeIds.has(view.rootId)) return true;
+    }
+  }
+  return false;
 }
 
 interface UseWorkspaceLayoutOptions {
@@ -506,6 +529,39 @@ export function useWorkspaceLayout({
     setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId)]);
   }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
+  const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
+    if (!initializedRef.current || panels.length === 0) return null;
+    if (!hasMissingOutlinerRoot(panels, nodeIds)) return null;
+    const fallbackRootId = fallbackOutlinerRootId(projection, nodeIds);
+    if (!fallbackRootId) return null;
+
+    let changed = false;
+    let repairedActiveRootId: NodeId | null = null;
+    const nextPanels = panels.map((panel) => {
+      if (!isWorkspacePanel(panel)) return panel;
+
+      const backStack = panel.backStack.filter((view) => !isOutlinerView(view) || nodeIds.has(view.rootId));
+      const forwardStack = panel.forwardStack.filter((view) => !isOutlinerView(view) || nodeIds.has(view.rootId));
+      let view = panel.view;
+      let panelChanged = backStack.length !== panel.backStack.length
+        || forwardStack.length !== panel.forwardStack.length;
+
+      if (isOutlinerView(view) && !nodeIds.has(view.rootId)) {
+        view = outlinerView(fallbackRootId);
+        panelChanged = true;
+        if (panel.id === activePanelId) repairedActiveRootId = fallbackRootId;
+      }
+
+      if (!panelChanged) return panel;
+      changed = true;
+      return { ...panel, view, backStack, forwardStack };
+    });
+
+    if (!changed) return null;
+    setPanels(nextPanels);
+    return repairedActiveRootId;
+  }, [activePanelId, panels]);
+
   const resizePanelPair = useCallback((
     leftPanelId: string,
     rightPanelId: string,
@@ -536,6 +592,7 @@ export function useWorkspaceLayout({
     openPanel,
     openPreview,
     panels,
+    repairMissingOutlinerRoots,
     resizePanelPair,
     rootId,
   };

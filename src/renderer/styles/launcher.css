@@ -82,9 +82,6 @@ body {
 .launcher-input {
   flex: 1 1 auto;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
   color: var(--text);
   padding: 0;
   font-size: var(--font-heading-lg);
@@ -95,7 +92,7 @@ body {
 }
 
 .launcher-input::placeholder {
-  color: var(--muted-2);
+  color: var(--input-placeholder);
 }
 
 /* Capture-degraded remediation hint (Lazy's "noJXA" equivalent): a quiet, NEUTRAL
@@ -237,10 +234,9 @@ body {
 }
 
 .launcher-empty {
-  padding: var(--space-8);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
+  justify-content: flex-start;
   color: var(--text-secondary);
+  text-align: left;
 }
 
 /* Persistent footer: every keyboard hint lives in ONE cluster on the right — the
@@ -272,35 +268,8 @@ body {
  * Real <button>s with a reset; hover/focus get a subtle NEUTRAL fill (B3), no hand
  * cursor (B10, not a link). Keyboard focus shows the neutral ring (B8). */
 .launcher-actionbar-item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
   white-space: nowrap;
-  border: none;
-  background: transparent;
   color: inherit;
-  font: inherit;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  cursor: default;
-  transition: background var(--motion-fast), color var(--motion-fast);
-}
-
-button.launcher-actionbar-item:hover:not(:disabled) {
-  background: var(--fill-2);
-}
-
-button.launcher-actionbar-item:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-shadow);
-}
-
-button.launcher-actionbar-item:disabled {
-  color: var(--text-tertiary);
-}
-
-button.launcher-actionbar-item:disabled .launcher-kbd {
-  color: var(--text-tertiary);
 }
 
 .launcher-actionbar-primary {
@@ -308,6 +277,10 @@ button.launcher-actionbar-item:disabled .launcher-kbd {
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.launcher-actionbar-item:disabled .launcher-kbd {
+  color: var(--text-tertiary);
 }
 
 .launcher-kbd {

@@ -9,8 +9,9 @@ import {
   targetIdsForRows,
 } from '../interactions/contextMenuSelection';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { EmptyState } from '../primitives/FeedbackState';
+import { Input } from '../primitives/Input';
 import { MenuItem } from '../primitives/MenuItem';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { selectedRootIds } from '../interactions/selectionActions';
 import { idsEnabledForSelectionAction } from '../interactions/selectionBatchActions';
 import { clampTagSelectorIndex, tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
@@ -123,7 +124,7 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
     >
       <div className="batch-tag-selector" data-preserve-selection>
         <div className="batch-tag-heading">{tc.applyTagToNodes(targetIds.length)}</div>
-        <TextInputControl
+        <Input
           ref={inputRef}
           className="batch-tag-input"
           label={tc.searchOrCreateTag}
@@ -157,7 +158,7 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
           }}
         />
         <div ref={listRef} className="batch-tag-list">
-          {items.length === 0 && <div className="popover-empty">{tc.noTags}</div>}
+          {items.length === 0 && <EmptyState className="popover-empty" size="inline" title={tc.noTags} />}
           {items.map((item, index) => {
             const active = index === selectedIndex;
             const label = tagSelectorItemLabel(item);

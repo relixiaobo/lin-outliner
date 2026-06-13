@@ -268,7 +268,10 @@
 }
 
 .settings-sheet-result-text {
+  display: inline-flex;
   flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -290,19 +293,6 @@
   to { transform: rotate(360deg); }
 }
 
-.settings-sheet-cancel-test {
-  flex: 0 0 auto;
-  border-radius: var(--radius-sm);
-  color: var(--link);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-  padding: var(--space-1) var(--space-2);
-}
-
-.settings-sheet-cancel-test:hover {
-  text-decoration: underline;
-}
-
 .settings-sheet-actions {
   display: flex;
   flex: 0 0 auto;
@@ -317,62 +307,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-.settings-sheet-secondary,
-.settings-sheet-primary,
-.settings-sheet-danger {
-  height: 30px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  padding: 0 var(--space-6);
-}
-
-/* One secondary language across panes and sheets: a filled neutral --fill-2
-   button (no border), matching .agent-settings-secondary and pairing with the
-   filled-strong primary — the native macOS push-button look, not a ghost outline. */
-.settings-sheet-secondary {
-  background: var(--fill-2);
-  border-color: transparent;
-  color: var(--text-soft);
-}
-
-.settings-sheet-secondary:hover:not(:disabled) {
-  background: var(--control-hover);
-  color: var(--text-strong);
-}
-
-/* Primary = a genuinely STRONG neutral fill: the native "filled default button"
-   idiom, but neutral (--surface-inverse), never a system-blue accent (B4). The
-   old --fill-3 tint (~1.7:1) read weaker than the bordered secondary; this solid
-   dark-on-light (light-on-dark in dark mode) fill makes the main action — Sign in
-   / Save / Continue — unmistakable. Matches .agent-settings-primary / the composer
-   send button, so the app has one primary-button language. */
-.settings-sheet-primary {
-  background: var(--surface-inverse);
-  border-color: transparent;
-  color: var(--panel-bg);
-}
-
-.settings-sheet-primary:hover:not(:disabled) {
-  background: var(--surface-inverse-strong);
-}
-
-.settings-sheet-danger {
-  background: var(--surface);
-  color: var(--status-danger);
-}
-
-.settings-sheet-danger:hover:not(:disabled) {
-  background: var(--control-hover);
-}
-
-.settings-sheet-secondary:disabled,
-.settings-sheet-primary:disabled,
-.settings-sheet-danger:disabled {
-  opacity: 0.5;
 }
 
 /* ── OAuth sign-in surface ──────────────────────────────────────────────────

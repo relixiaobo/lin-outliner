@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import {
   ids,
   nodeById,
@@ -6,19 +6,33 @@ import {
   row,
 } from './outlinerMock';
 
-async function openSchema(page: import('@playwright/test').Page) {
+async function openSchema(page: Page) {
   await page.locator('.sidebar-primary-nav')
     .getByRole('button', { name: 'Schema', exact: true })
     .click();
 }
 
 async function chooseConfigOption(
-  page: import('@playwright/test').Page,
+  page: Page,
   label: string,
   option: string,
 ) {
   await page.getByLabel(label).click();
   await page.getByRole('option', { name: option, exact: true }).click();
+}
+
+async function showViewToolbar(page: Page, nodeId: string) {
+  await page.evaluate(async (targetNodeId) => {
+    const win = window as typeof window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+    };
+    const outcome = await win.lin!.invoke<{ update: { projection: unknown } }>('set_view_toolbar_visible', {
+      nodeId: targetNodeId,
+      visible: true,
+    });
+    win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection: outcome.update.projection });
+  }, nodeId);
 }
 
 test.describe('definition configuration parity', () => {
@@ -57,9 +71,14 @@ test.describe('definition configuration parity', () => {
     await row(page, ids.statusField).getByRole('button', { name: 'Open' }).click();
 
     await chooseConfigOption(page, 'Field type', 'number');
-    await expect(page.getByLabel('Minimum value')).toBeVisible();
-    await page.getByLabel('Minimum value').fill('1');
-    await page.getByLabel('Minimum value').blur();
+    const minValue = page.getByLabel('Minimum value');
+    await expect(minValue).toBeVisible();
+    await expect(minValue).toHaveClass(/input-bare/);
+    await expect(minValue).not.toHaveClass(/input-boxed/);
+    await expect(minValue).toHaveCSS('height', '28px');
+    await expect(minValue).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await minValue.fill('1');
+    await minValue.blur();
     await page.getByLabel('Maximum value').fill('5');
     await page.getByLabel('Maximum value').blur();
     // Auto-initialize is a multi-select picker (a field can carry several
@@ -118,6 +137,23 @@ test.describe('definition configuration parity', () => {
       minValue: undefined,
       maxValue: undefined,
     });
+  });
+
+  test('view toolbar add-field select stays compact and chevron-free', async ({ page }) => {
+    await showViewToolbar(page, ids.library);
+    await page.locator('.sidebar-primary-nav')
+      .getByRole('button', { name: 'Library', exact: true })
+      .click();
+    const toolbar = page.locator('.view-toolbar');
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByRole('button', { name: 'Sort by' }).click();
+
+    const addField = page.locator('.view-toolbar-add-field').last();
+    await expect(addField).toBeVisible();
+    await expect(addField.locator('svg')).toHaveCount(1);
+    await expect(addField.locator('.input-select-shell')).toHaveCount(0);
+    await expect(addField.locator('.input-select-chevron')).toHaveCount(0);
+    await expect(addField.locator('select')).toHaveCSS('height', '24px');
   });
 
   // An empty Default-content / Pre-determined-options block used to read as an

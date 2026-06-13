@@ -35,8 +35,8 @@ import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOpti
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
+import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { collectViewFieldChoices, type ViewConfig } from './row-model';
@@ -492,7 +492,9 @@ function SortSection({
           <span className="view-toolbar-rule-label">{index === 0 ? tv.sortBy : tv.thenBy}</span>
           <SelectControl
             label={tv.sortFieldLabel}
+            size="sm"
             value={rule.field}
+            variant="boxed"
             onChange={(event) => {
               void run(() => api.updateSortRule(rule.id, event.currentTarget.value, rule.direction));
             }}
@@ -605,12 +607,15 @@ function FilterSection({
 
   return (
     <div className="view-toolbar-filter">
-      <input
+      <Input
         autoFocus
         className="view-toolbar-filter-search"
+        label={tv.filterFieldPlaceholder}
         placeholder={tv.filterFieldPlaceholder}
+        size="sm"
         spellCheck={false}
         value={query}
+        variant="boxed"
         onChange={(event) => setQuery(event.target.value)}
       />
       <div className="view-toolbar-options">
@@ -769,7 +774,9 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
     <div className="view-toolbar-rule view-toolbar-rule-filter">
       <SelectControl
         label={tv.filterOperatorLabel}
+        size="sm"
         value={rule.operator}
+        variant="boxed"
         onChange={(event) => {
           void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
         }}
@@ -779,20 +786,24 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
         ))}
       </SelectControl>
       {needsValue && kind === 'date' ? (
-        <input
-          aria-label={tv.filterDateLabel}
+        <Input
+          label={tv.filterDateLabel}
           className="view-toolbar-date-input"
+          size="sm"
           type="date"
           value={dateValue}
+          variant="boxed"
           onChange={(event) => {
             void run(() => api.updateFilterRule(rule.id, { values: event.currentTarget.value ? [event.currentTarget.value] : [] }));
           }}
         />
       ) : needsValue ? (
-        <TextInputControl
+        <Input
           defaultValue={rule.values.join(', ')}
           label={tv.filterValuesLabel}
           placeholder={tv.filterValuePlaceholder}
+          size="sm"
+          variant="boxed"
           onBlur={(event) => {
             void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
           }}

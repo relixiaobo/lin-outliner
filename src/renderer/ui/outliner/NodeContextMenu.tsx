@@ -40,10 +40,10 @@ import {
   SupertagIcon,
   TrashIcon,
 } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { Button } from '../primitives/Button';
+import { Input } from '../primitives/Input';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import type { CommandRunner, NavigateRootOptions } from '../shared';
@@ -336,10 +336,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderTagMode = () => (
     <>
       <div className="node-context-subhead">
-        <ButtonControl onClick={() => setMode('main')}>{tc.back}</ButtonControl>
+        <Button onClick={() => setMode('main')} size="sm" variant="ghost">{tc.back}</Button>
         <span>{tc.addTagTitle}</span>
       </div>
-      <TextInputControl
+      <Input
         className="node-context-search"
         label={tc.tagNameLabel}
         value={query}
@@ -384,10 +384,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderMoveMode = () => (
     <>
       <div className="node-context-subhead">
-        <ButtonControl onClick={() => setMode('main')}>{tc.back}</ButtonControl>
+        <Button onClick={() => setMode('main')} size="sm" variant="ghost">{tc.back}</Button>
         <span>{tc.moveTo}</span>
       </div>
-      <TextInputControl
+      <Input
         className="node-context-search"
         label={tc.nodeNameLabel}
         value={query}

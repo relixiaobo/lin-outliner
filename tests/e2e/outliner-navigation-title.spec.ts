@@ -56,6 +56,80 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(page.locator('.outline-panel-surface.active-panel .row-editor .ProseMirror-focused')).toHaveCount(0);
   });
 
+  test('empty editable outline pages use the trailing editor instead of a centered empty state', async ({ page }) => {
+    await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Library' }).click();
+
+    const panel = page.locator('.outline-panel-surface.active-panel');
+    await expect(panel.locator('.panel-title-editor')).toContainText('Library');
+    await expect(panel.locator('.outliner-empty-state')).toHaveCount(0);
+    await expect(trailingEditor(page, ids.library)).toBeVisible();
+  });
+
+  test('empty node pages keep the standard title slot and visible breadcrumb context', async ({ page }) => {
+    const measureTitleTop = async () => page.locator('.outline-panel-surface').first().evaluate((panel) => {
+      const titleRow = panel.querySelector('.panel-title-row')?.getBoundingClientRect();
+      const panelBox = panel.getBoundingClientRect();
+      if (!titleRow) throw new Error('missing title row');
+      return titleRow.top - panelBox.top;
+    });
+
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    const alphaTitleTop = await measureTitleTop();
+
+    const emptyRootChildId = await page.evaluate(async (rootId) => {
+      const win = window as typeof window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+      };
+      const outcome = await win.lin!.invoke<{ update: { projection: unknown }; focus?: { nodeId: string } }>('create_node', {
+        parentId: rootId,
+        index: null,
+        text: '',
+      });
+      win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection: outcome.update.projection });
+      return outcome.focus!.nodeId;
+    }, ids.root);
+
+    await page.getByRole('button', { name: 'Open Root' }).click();
+    await row(page, emptyRootChildId).getByRole('button', { name: 'Open' }).click();
+
+    const panel = page.locator('.outline-panel-surface').first();
+    const breadcrumb = panel.getByRole('navigation', { name: 'Panel breadcrumb' });
+    const titleEditor = panel.locator('.panel-title-editor .row-editor').first();
+    await expect(titleEditor).toHaveAttribute('data-placeholder', 'Untitled');
+    await expect(titleEditor).toHaveClass(/is-empty/);
+    await expect(panel.locator('[data-current-page-title]')).toHaveCount(0);
+    await expect(breadcrumb).toContainText('Root');
+    expectClose(await measureTitleTop(), alphaTitleTop);
+  });
+
+  test('missing panel roots are repaired instead of rendering orphan Untitled titles', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+
+    await page.evaluate((removedId) => {
+      const win = window as typeof window & {
+        __LIN_E2E__?: {
+          emitDocumentEvent: (event: unknown) => void;
+          projection: () => { nodes: Array<{ id: string; children?: string[] }> };
+        };
+      };
+      const projection = win.__LIN_E2E__!.projection();
+      projection.nodes = projection.nodes
+        .filter((node) => node.id !== removedId)
+        .map((node) => ({
+          ...node,
+          children: node.children?.filter((childId) => childId !== removedId) ?? [],
+        }));
+      win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
+    }, ids.alpha);
+
+    const panel = page.locator('.outline-panel-surface').first();
+    await expect(panel.locator('.panel-title-editor')).toContainText('May 13');
+    await expect(panel.locator('.panel-title-editor')).not.toContainText('Untitled');
+    await expect(row(page, ids.beta)).toBeVisible();
+  });
+
   test('panel breadcrumb back returns to the previous page without undoing document edits', async ({ page }) => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
@@ -367,11 +441,13 @@ test.describe('outliner navigation and page title parity', () => {
 
     const breadcrumb = page.locator('.outline-panel-surface').first()
       .getByRole('navigation', { name: 'Panel breadcrumb' });
-    await expect(breadcrumb.getByRole('button', { name: /Show 2 hidden breadcrumb levels/ })).toBeVisible();
+    await expect(breadcrumb.getByRole('button', { name: /Show 3 hidden breadcrumb levels/ })).toBeVisible();
+    await expect(breadcrumb).toContainText('Root');
     await expect(breadcrumb).not.toContainText('Ancestor 1');
 
-    await breadcrumb.getByRole('button', { name: /Show 2 hidden breadcrumb levels/ }).click();
+    await breadcrumb.getByRole('button', { name: /Show 3 hidden breadcrumb levels/ }).click();
 
+    await expect(breadcrumb).toContainText('Daily Notes');
     await expect(breadcrumb).toContainText('Ancestor 1');
     await expect(breadcrumb).toContainText('2026-05-13');
     await breadcrumb.getByRole('button', { name: 'Ancestor 1' }).click();
@@ -469,20 +545,25 @@ test.describe('outliner navigation and page title parity', () => {
       getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
 
     const radii = await page.evaluate(() => {
-      const selectors = [
-        '.panel-date-nav-button',
-        '.panel-date-nav-today',
-        '.panel-date-picker-button',
-        '.calendar-month-nav',
-        '.panel-date-calendar-day',
-      ];
-      return selectors.map((selector) => {
+      const radius = (selector: string) => {
         const element = document.querySelector(selector);
         if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
         return Number.parseFloat(getComputedStyle(element).borderTopLeftRadius);
-      });
+      };
+      return {
+        calendarDay: radius('.panel-date-calendar-day'),
+        pillControls: [
+          radius('.panel-date-nav-button'),
+          radius('.panel-date-nav-today'),
+          radius('.panel-date-picker-button'),
+          radius('.calendar-month-nav'),
+        ],
+      };
     });
-    for (const radius of radii) {
+    for (const radius of radii.pillControls) {
+      expect(radius).toBeGreaterThan(20);
+    }
+    for (const radius of [radii.calendarDay]) {
       expect(radius).toBeGreaterThanOrEqual(6);
       expect(radius).toBeLessThanOrEqual(8);
     }

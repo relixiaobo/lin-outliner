@@ -1,6 +1,6 @@
 import { useId, useRef } from 'react';
 import { useT } from '../../i18n/I18nProvider';
-import { ButtonControl } from './ButtonControl';
+import { Button } from './Button';
 import { Dialog } from './Dialog';
 
 interface ConfirmDialogProps {
@@ -48,16 +48,17 @@ export function ConfirmDialog({
       <h2 className="confirm-dialog-title" id={titleId}>{title}</h2>
       {message ? <p className="confirm-dialog-message">{message}</p> : null}
       <div className="confirm-dialog-actions">
-        <ButtonControl ref={cancelRef} className="confirm-dialog-cancel" onClick={onCancel}>
+        <Button ref={cancelRef} onClick={onCancel} variant="ghost">
           {resolvedCancelLabel}
-        </ButtonControl>
-        <ButtonControl
+        </Button>
+        <Button
           ref={confirmRef}
-          className={danger ? 'confirm-dialog-confirm is-danger' : 'confirm-dialog-confirm'}
           onClick={onConfirm}
+          tone={danger ? 'solid' : 'subtle'}
+          variant={danger ? 'danger' : 'primary'}
         >
           {resolvedConfirmLabel}
-        </ButtonControl>
+        </Button>
       </div>
     </Dialog>
   );

@@ -10,7 +10,8 @@ import { agentConfigParamsFromSearch } from '../../../core/settingsWindow';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
-import { WarningIcon, ICON_SIZE } from '../icons';
+import { EmptyState } from '../primitives/FeedbackState';
+import { WarningIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { AgentEditor } from './AgentEditor';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 
@@ -135,9 +136,9 @@ export function AgentConfigWindow() {
       </header>
 
       {loading ? (
-        <div className="agent-settings-empty">{t.common.loading}</div>
+        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.common.loading} />
       ) : mode === 'configure' && !selectedAgent ? (
-        <div className="agent-settings-empty">{t.settings.agents.profileNotFound}</div>
+        <EmptyState className="agent-settings-empty" title={t.settings.agents.profileNotFound} />
       ) : (
         <AgentEditor
           key={selectedAgent?.agentId ?? 'agent-create-new'}

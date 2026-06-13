@@ -182,6 +182,20 @@ test.describe('agent settings window', () => {
     await expect(settings.getByText('Based on Full Access')).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Exceptions' })
       .locator('.inset-row', { hasText: 'Read outside allowed area' })).toBeVisible();
+    const modeRowMetrics = await settings.locator('.settings-permission-mode-row').evaluate((row) => {
+      const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
+      if (!sublabel) {
+        return null;
+      }
+      const sublabelBox = sublabel.getBoundingClientRect();
+      return {
+        sublabelHeight: sublabelBox.height,
+        sublabelWidth: sublabelBox.width,
+      };
+    });
+    expect(modeRowMetrics).not.toBeNull();
+    expect(modeRowMetrics!.sublabelWidth).toBeGreaterThanOrEqual(300);
+    expect(modeRowMetrics!.sublabelHeight).toBeLessThan(48);
 
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {

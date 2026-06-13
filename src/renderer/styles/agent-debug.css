@@ -629,12 +629,7 @@
 }
 
 .agent-debug-empty {
-  display: flex;
   min-height: 100%;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-soft);
-  font-size: var(--font-ui-sm);
 }
 
 @media (max-width: 1200px) {
@@ -642,4 +637,3 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-
