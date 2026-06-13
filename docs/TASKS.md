@@ -231,6 +231,20 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
+- **channel-async-message-bus** (P1, plan file, **draft — design recorded by #217,
+  not yet built; awaiting PM ratification before code**) — make Channels behave like
+  an async IM group instead of a special case of the single-run DM composer: send a
+  new Channel message while agents are working; explicit `@agent` mentions dispatch
+  independent per-agent runs (co-addressees don't share a turn group, append on
+  completion order); replies delivered as whole utterances (no token streaming);
+  the Channel composer stays a pure message composer (Stop/Steer are DM-only,
+  per-run stop lives in the activity overlay); navigation + unread continue while
+  Channel runs proceed. Most of the runtime model already exists; the gap is the
+  view/command boundary — split the overloaded projection `isStreaming` into
+  mode-specific fields, return from Channel send on acceptance (not on idle), and
+  key concurrent approval/`ask_user_question` requests by `runId` so runs can't
+  steal each other's input. ONE PR (runtime + projection + renderer + tests + spec).
+  No DM behavior change. See `docs/plans/channel-async-message-bus.md`.
 - **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
   durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
   daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
