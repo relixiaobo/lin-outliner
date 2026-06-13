@@ -763,6 +763,32 @@ describe('agent channel runtime', () => {
     expect(texts).toContain('RESUMED_OK');
   });
 
+  test('a peer reply bumps unread for a backgrounded Channel, but not while it is viewed', async () => {
+    // Plan §5: switching away from an active Channel is allowed, and a completed
+    // reply increments unread for that conversation — via the existing
+    // notification.created / conversation_attention fold (badge-only, no OS ding).
+    const fixture = await setupChannelFixture([
+      fauxAssistantMessage(fauxText('Reply while backgrounded.')),
+      fauxAssistantMessage(fauxText('Reply while viewed.')),
+    ]);
+    const { runtime, reviewerAgentId, dataRoot } = fixture;
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Unread test' });
+
+    // Backgrounded (user is elsewhere / dock collapsed): the reply raises unread.
+    runtime.setViewedConversation(null);
+    await runtime.sendMessage(channel.conversationId, '@reviewer one');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.attentionByConversationId[channel.conversationId]?.unreadCount ?? 0).toBe(1);
+
+    // Viewed: a reply does NOT raise unread (the user is reading it) — still 1.
+    runtime.setViewedConversation(channel.conversationId);
+    await runtime.sendMessage(channel.conversationId, '@reviewer two');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.attentionByConversationId[channel.conversationId]?.unreadCount ?? 0).toBe(1);
+  });
+
   test('per-run stop cancels one Channel run without stopping siblings', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));

@@ -6205,15 +6205,19 @@ export class AgentRuntime {
       await runState.settled;
       const run = conversation.eventState.runs[runState.id];
       const assistantMessageId = latestAssistantMessageIdForRun(conversation.eventState, runState.id);
-      if (!conversation.channelStopRequested && run?.status === 'completed' && assistantMessageId) {
-        const reply = conversation.eventState.messages[assistantMessageId];
-        const handoffTurns = channelAgentMembers(reply?.addressedTo ?? [])
-          .filter((target) => target.agentId !== request.agentId)
-          .map((target): ChannelTurnRequest => ({
-            agentId: target.agentId,
-            addressedByMessageId: assistantMessageId,
-          }));
-        this.enqueueChannelTurns(conversationId, conversation, handoffTurns);
+      if (run?.status === 'completed' && assistantMessageId) {
+        // A delivered reply bumps unread for a backgrounded Channel (badge-only).
+        await this.raiseChannelReplyUnread(conversationId, conversation, runState, assistantMessageId);
+        if (!conversation.channelStopRequested) {
+          const reply = conversation.eventState.messages[assistantMessageId];
+          const handoffTurns = channelAgentMembers(reply?.addressedTo ?? [])
+            .filter((target) => target.agentId !== request.agentId)
+            .map((target): ChannelTurnRequest => ({
+              agentId: target.agentId,
+              addressedByMessageId: assistantMessageId,
+            }));
+          this.enqueueChannelTurns(conversationId, conversation, handoffTurns);
+        }
       }
       this.maybeClearChannelStopRequested(conversation);
       await this.flushPendingDreamFinishedEvents(conversationId, conversation);
@@ -6222,6 +6226,34 @@ export class AgentRuntime {
       this.notifyChannelDrainWaiters(conversation);
       this.emitProjection(conversationId, 'channel_turn_finished');
     }
+  }
+
+  /**
+   * A delivered in-Channel peer reply bumps the conversation's unread badge when
+   * the user is not viewing it — reusing the existing `notification.created` /
+   * `conversation_attention` fold (the only unread mechanism; see the reducer).
+   * Badge-only by design: no OS notification is delivered for in-Channel chatter
+   * (a count, not a ding). Skipped for the viewed conversation (nothing unread to
+   * raise) and idempotent on the reply's message id.
+   */
+  private async raiseChannelReplyUnread(
+    conversationId: string,
+    conversation: AgentConversationState,
+    runState: AgentActiveRunState,
+    assistantMessageId: string,
+  ): Promise<void> {
+    if (this.viewedConversationId === conversationId) return;
+    const notificationId = `channel-reply:${assistantMessageId}`;
+    if (conversation.eventState.notifications[notificationId]) return;
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'notification.created',
+      actor: systemActor(),
+      notificationId,
+      kind: 'channel_reply',
+      title: `@${agentMentionToken(runState.executingAgentId)}`,
+      source: { type: 'run', runId: runState.id },
+    }]);
+    this.emitConversationAttention(conversationId, conversation);
   }
 
   private async createChannelTurnAgent(

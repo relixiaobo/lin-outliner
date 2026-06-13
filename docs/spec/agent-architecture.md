@@ -126,13 +126,13 @@ clean-cut, no migration).
     never turns the composer into Stop/Steer (the composer stays a pure message
     composer — empty + active shows a disabled Send, never Stop). Conversation
     `kind` is never stored; the split is derived (`isMultiAgentConversation`).
-    Navigation continues while Channel runs work: switching away from an active
-    Channel is allowed (only a busy DM blocks it). Backgrounded-Channel unread is
-    meant to ride the existing `conversation_attention` path, but it is **not yet
-    raised on an in-Channel peer reply** — no `notification.created` is emitted for
-    one (the reducer folds unread only from `notification.created`, which today has
-    only off-floor-task emitters). Whether, and how loudly, in-Channel replies
-    should notify is an open product decision.
+    Navigation and unread continue while Channel runs work: switching away from an
+    active Channel is allowed (only a busy DM blocks it), and a completed peer reply
+    bumps unread for a **backgrounded** Channel through the existing
+    `notification.created` / `conversation_attention` fold (a `channel_reply`
+    notification, raised only when the conversation is not the one being viewed).
+    It is **badge-only**: no OS notification is delivered for in-Channel chatter
+    (a count, not a ding) — unlike off-floor task notifications.
   - **Stop scope:** Channel stop has two scopes. A per-run stop cancels exactly
     that run and leaves siblings in flight; a conversation stop cancels every
     active run, drops undispatched pending Channel turns, and preserves the
