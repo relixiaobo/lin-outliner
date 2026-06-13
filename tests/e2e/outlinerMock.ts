@@ -1679,11 +1679,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         members: renderMembers(agentIds),
         activeRunId: null,
         activeRuns: [],
-        activityEntries: [],
+        channelActivityEntries: [],
         povInspectors: povInspectorsForConversation(conversationId),
         activeCompaction: null,
         activeDream: null,
-        isStreaming: false,
+        dmRunActive: false,
+        channelRunsActive: false,
         model: { id: 'gpt-5.4', provider: 'openai' },
         thinkingLevel: 'medium',
         pendingToolCallIds: [],
@@ -1693,7 +1694,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         taskIds: [],
         childRunIds: [],
         entities: { messages, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
-        streaming: null,
+        dmStreaming: null,
       };
     };
     const restoreAgentConversation = (conversationId: string) => ({
@@ -3230,6 +3231,18 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     else childRunRows.splice(insertAt, 0, row);
   }
 
+  const projectionMembers = state.members ?? [
+    { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+    {
+      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+      mention: 'assistant',
+      displayName: 'Tenon Assistant',
+      coordinator: true,
+    },
+  ];
+  const projectionMultiAgent = projectionMembers
+    .filter((member: any) => member.principal?.type === 'agent').length >= 2;
+  const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
   await emitAgentEvent(page, {
     type: 'projection',
     conversationId,
@@ -3239,20 +3252,18 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       conversationId,
       revision,
       conversationTitle: state.conversationTitle ?? null,
-      members: state.members ?? [
-        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-        {
-          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-          mention: 'assistant',
-          displayName: 'Tenon Assistant',
-          coordinator: true,
-        },
-      ],
+      members: projectionMembers,
       activeRunId: state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null),
-      activityEntries: state.activityEntries ?? [],
+      channelActivityEntries: projectionChannelActivity,
       povInspectors: state.povInspectors ?? {},
       activeCompaction: state.activeCompaction ?? null,
-      isStreaming: !!state.isStreaming,
+      activeDream: state.activeDream ?? null,
+      // Mode-specific run state (mirrors the real projection split): isStreaming
+      // in a single-agent (DM) conversation drives the composer; in a multi-agent
+      // Channel the work shows as activity entries, never the composer.
+      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionMultiAgent),
+      channelRunsActive: state.channelRunsActive
+        ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionMultiAgent)),
       model: state.model ?? {},
       thinkingLevel: state.thinkingLevel ?? 'off',
       pendingToolCallIds: state.pendingToolCallIds ?? [],
@@ -3262,7 +3273,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       taskIds,
       childRunIds,
       entities: { messages: entities, childRuns, compactions, tasks },
-      streaming,
+      dmStreaming: projectionMultiAgent ? null : streaming,
     },
     timestamp: Date.now(),
   });

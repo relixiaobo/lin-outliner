@@ -295,6 +295,15 @@ removed, and removal is blocked while a run is active.
 `agent_clear_follow_up`, `agent_steer_conversation`, `agent_clear_steer`,
 `agent_stop_conversation`.
 
+In a **DM**, `agent_send_message` resolves when the serial run settles (the
+command spans the turn). In a **multi-agent Channel** it **resolves on
+acceptance**: it persists the user message and enqueues the addressed turns, then
+returns without awaiting them — the runs drain asynchronously (`scheduleChannelIdleEmit`
+emits the final idle projection on drain). `agent_edit_message`/`agent_regenerate_message`/
+`agent_retry_message` follow the same DM-vs-Channel contract. `agent_steer_conversation`
+is DM-only; Channels have no steer (a send while runs work dispatches a new addressed
+turn). See `agent-architecture.md` (Channel runtime).
+
 ### Agent — delegated child runs
 `agent_child_run_status`, `agent_child_run_send`, `agent_child_run_stop`,
 `agent_child_run_transcript` (the drill-in transcript, replayed from the run's own ledger).

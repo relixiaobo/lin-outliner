@@ -140,6 +140,14 @@ export interface AgentRenderActivityEntry {
   addressedByMessageId: string;
   state: AgentRenderActivityState;
   updatedAt: number;
+  /**
+   * The running agent's live composing text for this run — retained for the
+   * per-run detail view (the "watch a Channel agent compose" live stream,
+   * PM-ratified 2026-06-13). It is filtered from the message stream: the
+   * transcript shows only the final utterance on completion. Undefined for
+   * pending turns and while a run is between tool segments.
+   */
+  streamingText?: string;
 }
 
 export type AgentPovInspectorMessageRole = 'user' | 'assistant' | 'toolResult';
@@ -264,12 +272,25 @@ export interface AgentRenderProjection {
   members: AgentRenderMemberView[];
   activeRuns: AgentRenderActiveRun[];
   activeRunId: string | null;
-  /** Channel activity entries: one addressed agent per unfinished addressing message. */
-  activityEntries: AgentRenderActivityEntry[];
+  /**
+   * Per-run Channel activity: one entry per active or pending addressed run.
+   * This is the async Channel work surface (the floating overlay + per-run
+   * detail view) — never the DM composer's run state.
+   */
+  channelActivityEntries: AgentRenderActivityEntry[];
   povInspectors: Record<string, AgentPovInspectorView>;
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
-  isStreaming: boolean;
+  /**
+   * DM (or single-agent) composer run state: a serial run is in flight, so the
+   * composer may show stop/steer. Always false for a multi-agent Channel — its
+   * work lives in {@link channelActivityEntries}, not the composer. Replaces the
+   * old overloaded `isStreaming` so DM composer state is never derived from
+   * Channel runs.
+   */
+  dmRunActive: boolean;
+  /** True while any addressed Channel run is active or pending (Slack-like async work). */
+  channelRunsActive: boolean;
   model: Record<string, unknown>;
   thinkingLevel: string;
   pendingToolCallIds: string[];
@@ -279,7 +300,8 @@ export interface AgentRenderProjection {
   taskIds: string[];
   childRunIds: string[];
   entities: AgentRenderEntities;
-  streaming: AgentStreamingRenderState | null;
+  /** The DM streaming tail (the token stream rendered in the transcript). Null for multi-agent Channels. */
+  dmStreaming: AgentStreamingRenderState | null;
 }
 
 export interface BuildAgentRenderProjectionOptions {
@@ -287,12 +309,13 @@ export interface BuildAgentRenderProjectionOptions {
   activeRuns?: AgentRenderActiveRun[];
   activeRunId?: string | null;
   activeRunAddressedByMessageId?: string | null;
-  activityEntries?: readonly AgentRenderActivityEntry[];
+  channelActivityEntries?: readonly AgentRenderActivityEntry[];
   povInspectorMemoryByAgentId?: Record<string, string | null>;
   messageAddressedByMessageIds?: Record<string, string | null | undefined>;
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
-  isStreaming?: boolean;
+  dmRunActive?: boolean;
+  channelRunsActive?: boolean;
   model?: Record<string, unknown>;
   thinkingLevel?: string;
   pendingToolCallIds?: string[];
@@ -347,6 +370,7 @@ export function buildAgentRenderProjection(
   applyMessageAddressing(entities, options);
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
   const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
+  const multiAgent = isMultiAgentConversation(state.conversation.members);
 
   return {
     conversationId: state.conversation.id,
@@ -355,13 +379,17 @@ export function buildAgentRenderProjection(
     members: state.conversation.members.map((principal) => toRenderMemberView(principal, options)),
     activeRuns: options.activeRuns ?? [],
     activeRunId,
-    activityEntries: options.activityEntries
-      ? options.activityEntries.map((entry) => ({ ...entry }))
+    channelActivityEntries: options.channelActivityEntries
+      ? options.channelActivityEntries.map((entry) => ({ ...entry }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),
     povInspectors: buildPovInspectors(state, options),
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
-    isStreaming: options.isStreaming ?? !!streaming,
+    // DM composer state never derives from Channel runs: a multi-agent Channel's
+    // work is surfaced through channelActivityEntries, so dmRunActive stays false
+    // there and the streaming tail is suppressed in the transcript.
+    dmRunActive: options.dmRunActive ?? (!multiAgent && !!streaming),
+    channelRunsActive: options.channelRunsActive ?? false,
     model: options.model ?? {},
     thinkingLevel: options.thinkingLevel ?? 'off',
     pendingToolCallIds,
@@ -371,7 +399,7 @@ export function buildAgentRenderProjection(
     taskIds,
     childRunIds,
     entities,
-    streaming,
+    dmStreaming: multiAgent ? null : streaming,
   };
 }
 

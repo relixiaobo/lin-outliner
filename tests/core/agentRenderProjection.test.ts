@@ -51,7 +51,7 @@ describe('agent render projection', () => {
     const projection = buildAgentRenderProjection(state, {
       revision: 7,
       activeRunId: 'run-1',
-      isStreaming: true,
+      dmRunActive: true,
     });
 
     expect(projection.rows).toEqual([
@@ -60,7 +60,7 @@ describe('agent render projection', () => {
     ]);
     expect(projection.transcriptRows).toEqual(projection.rows);
     expect(projection.entities.messages['assistant-1']?.status).toBe('streaming');
-    expect(projection.streaming).toMatchObject({
+    expect(projection.dmStreaming).toMatchObject({
       messageId: 'assistant-1',
       rowId: 'assistant:assistant-1',
       text: 'Partial answer',
@@ -548,7 +548,7 @@ describe('agent render projection', () => {
       pendingToolCallIds: ['tool-call-2'],
     });
 
-    expect(projection.activityEntries).toEqual([
+    expect(projection.channelActivityEntries).toEqual([
       {
         id: 'user-channel:agent-2',
         agentId: 'agent-2',
@@ -614,7 +614,7 @@ describe('agent render projection', () => {
       activeRunAddressedByMessageId: 'user-channel',
     });
 
-    expect(projection.activityEntries.map((entry) => entry.agentId)).toEqual(['agent-2', 'agent-3']);
+    expect(projection.channelActivityEntries.map((entry) => entry.agentId)).toEqual(['agent-2', 'agent-3']);
   });
 
   test('accepts explicit message addressing for reply-anchor rendering', () => {
@@ -725,10 +725,10 @@ describe('agent render projection', () => {
 
     const projection = buildAgentRenderProjection(state, {
       revision: 1,
-      activityEntries,
+      channelActivityEntries: activityEntries,
     });
 
-    expect(projection.activityEntries).toEqual(activityEntries);
-    expect(projection.activityEntries).not.toBe(activityEntries);
+    expect(projection.channelActivityEntries).toEqual(activityEntries);
+    expect(projection.channelActivityEntries).not.toBe(activityEntries);
   });
 });

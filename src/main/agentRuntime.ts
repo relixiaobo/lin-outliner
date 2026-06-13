@@ -478,6 +478,13 @@ interface AgentConversationState {
   channelTurnStartsInProgress: number;
   channelStopRequested: boolean;
   channelDrainWaiters: Set<() => void>;
+  /**
+   * Guards a single background watcher that emits the final idle projection once
+   * the Channel drains. A Channel send returns on acceptance (it does not await
+   * the addressed runs), so the idle emit is detached from the send call — but at
+   * most one watcher runs per conversation so the drain emits exactly once.
+   */
+  channelIdleEmitInFlight: boolean;
   unsubscribe: (() => void) | null;
 }
 
@@ -1590,7 +1597,10 @@ export class AgentRuntime {
             .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
             .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId })),
         );
-        await this.waitForChannelIdle(conversationId, conversation);
+        // Channel send returns on acceptance: the user message is persisted and
+        // the addressed turns are enqueued and projected (above). The runs drain
+        // asynchronously; scheduleChannelIdleEmit emits the final idle state. A
+        // settled Channel for tests uses drainChannelTurnsForTest.
         return;
       } else {
         await this.appendUserPromptEvent(conversationId, conversation, prompt);
@@ -1651,12 +1661,13 @@ export class AgentRuntime {
             .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
             .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId })),
         );
-        await this.waitForChannelIdle(conversationId, conversation);
-      } else {
-        startedRunId = await this.startRun(conversationId, conversation);
-        await conversation.agent.continue();
-        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+        // Returns on acceptance like a Channel send: the edited addressing message
+        // is persisted and re-dispatched; the runs drain asynchronously.
+        return;
       }
+      startedRunId = await this.startRun(conversationId, conversation);
+      await conversation.agent.continue();
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       await this.recoverFromRunError(conversationId, startedRunId);
@@ -1682,8 +1693,9 @@ export class AgentRuntime {
       this.emitProjection(conversationId, 'message_regenerate_started');
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
+      // rerunSettledTurn emits idle for the synchronous DM path; the Channel path
+      // returns on acceptance and drains asynchronously.
       await this.rerunSettledTurn(conversationId, conversation, target, parentId);
-      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       // Run recovery happens inside rerunSettledTurn (it knows the run it
       // started); this catch only surfaces the error.
@@ -1708,8 +1720,9 @@ export class AgentRuntime {
       this.emitProjection(conversationId, 'message_retry_started');
       conversation.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(conversation);
+      // rerunSettledTurn emits idle for the synchronous DM path; the Channel path
+      // returns on acceptance and drains asynchronously.
       await this.rerunSettledTurn(conversationId, conversation, target, parentId);
-      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       // Run recovery happens inside rerunSettledTurn (it knows the run it
       // started); this catch only surfaces the error.
@@ -1741,7 +1754,8 @@ export class AgentRuntime {
         agentId: ownerAgentId,
         addressedByMessageId: parentId,
       }]);
-      await this.waitForChannelIdle(conversationId, conversation);
+      // Returns on acceptance: the re-run turn is enqueued and projected; it
+      // drains asynchronously via scheduleChannelIdleEmit.
       return;
     }
     let startedRunId: string | null = null;
@@ -1749,6 +1763,9 @@ export class AgentRuntime {
       startedRunId = await this.startRun(conversationId, conversation);
       await continueFromActivePath(conversation.agent);
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+      // DM rerun is synchronous: emit idle here once the run settles. The Channel
+      // branch returned early and drains via scheduleChannelIdleEmit instead.
+      await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       // Free the slot of the run THIS rerun started, then let the caller's
       // catch surface the error.
@@ -2284,6 +2301,7 @@ export class AgentRuntime {
       channelTurnStartsInProgress: 0,
       channelStopRequested: false,
       channelDrainWaiters: new Set(),
+      channelIdleEmitInFlight: false,
       unsubscribe: null,
     };
     conversationRef.current = conversation;
@@ -4153,6 +4171,9 @@ export class AgentRuntime {
   }
 
   private renderProjection(conversation: AgentConversationState) {
+    const members = conversation.eventState.conversation?.members ?? [];
+    const multiAgent = isMultiAgentConversation(members);
+    const hasActiveRuns = this.hasActiveRuns(conversation);
     const projection = buildAgentRenderProjection(conversation.eventState, {
       revision: conversation.revision,
       activeRunId: this.activeRunId(conversation),
@@ -4163,10 +4184,14 @@ export class AgentRuntime {
         startedAt: run.startedAt,
       })),
       activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
-      activityEntries: this.channelActivityEntries(conversation),
+      channelActivityEntries: this.channelActivityEntries(conversation),
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
-      isStreaming: this.hasActiveRuns(conversation),
+      // Mode-specific run state: a multi-agent Channel never drives the DM
+      // composer (its async work shows in channelActivityEntries), and pending
+      // (not-yet-launched) addressed turns count as Channel work in flight.
+      dmRunActive: !multiAgent && hasActiveRuns,
+      channelRunsActive: multiAgent && (hasActiveRuns || conversation.pendingChannelTurns.length > 0),
       model: clone(conversation.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: conversation.agent.state.thinkingLevel,
       pendingToolCallIds: uniqueStrings([
@@ -4202,6 +4227,10 @@ export class AgentRuntime {
         addressedByMessageId: run.addressedByMessageId,
         state: pendingToolCalls.size > 0 ? 'using_tools' : 'thinking',
         updatedAt: persistedRun?.updatedAt ?? run.startedAt,
+        // The live composing text for the per-run detail view; retained on the
+        // run (not the shared log) so concurrent runs never collide and the
+        // transcript stays whole-utterance.
+        streamingText: run.assistantText || undefined,
       };
       entries.set(entry.id, entry);
     }
@@ -5962,6 +5991,9 @@ export class AgentRuntime {
     }
     conversation.pendingChannelTurns.push(...turns);
     this.emitProjection(conversationId, 'channel_turns_enqueued');
+    // Detach the final idle emit from the (now non-blocking) send: the work is
+    // accepted and projected above; this watcher emits idle once it all drains.
+    this.scheduleChannelIdleEmit(conversationId, conversation);
     void this.pumpChannelTurns(conversationId, conversation)
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
   }
@@ -5987,17 +6019,41 @@ export class AgentRuntime {
     this.notifyChannelDrainWaiters(conversation);
   }
 
+  private channelFullyIdle(conversation: AgentConversationState): boolean {
+    return conversation.pendingChannelTurns.length === 0
+      && conversation.channelTurnStartsInProgress === 0
+      && this.activeChannelRuns(conversation).length === 0;
+  }
+
   private async waitForChannelIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    while (
-      conversation.pendingChannelTurns.length > 0
-      || conversation.channelTurnStartsInProgress > 0
-      || this.activeChannelRuns(conversation).length > 0
-    ) {
+    while (!this.channelFullyIdle(conversation)) {
       await new Promise<void>((resolve) => {
         conversation.channelDrainWaiters.add(resolve);
       });
     }
     await this.persistAndEmitIdle(conversationId, conversation);
+  }
+
+  /**
+   * Emit the final idle projection once the Channel drains, WITHOUT blocking the
+   * caller. A Channel send/edit/retry returns on acceptance — the addressed runs
+   * drain asynchronously — so the idle finalization is detached here. At most one
+   * watcher runs per conversation; it re-arms if fresh work (a follow-up send or a
+   * hand-off turn) arrives during the emit, so the drain always emits exactly once.
+   */
+  private scheduleChannelIdleEmit(conversationId: string, conversation: AgentConversationState): void {
+    if (conversation.channelIdleEmitInFlight || this.channelFullyIdle(conversation)) return;
+    conversation.channelIdleEmitInFlight = true;
+    void (async () => {
+      try {
+        await this.waitForChannelIdle(conversationId, conversation);
+      } catch (error) {
+        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      } finally {
+        conversation.channelIdleEmitInFlight = false;
+        if (!this.channelFullyIdle(conversation)) this.scheduleChannelIdleEmit(conversationId, conversation);
+      }
+    })();
   }
 
   async drainChannelTurnsForTest(conversationId: string): Promise<void> {
@@ -6349,7 +6405,16 @@ export class AgentRuntime {
   private async handlePiAgentEvent(conversationId: string, conversation: AgentConversationState, event: PiAgentEvent) {
     if (event.type === 'message_start' || event.type === 'message_update') {
       if (isAssistantMessage(event.message)) {
-        if (conversation.activeRun?.channelTurn) return;
+        if (conversation.activeRun?.channelTurn) {
+          // Channel turns are not token-streamed into the transcript (the message
+          // stream is whole-utterance only). Retain the live composing text on the
+          // run so the per-run detail view can surface it, without writing
+          // streaming deltas to the shared log (concurrent runs would interleave,
+          // and off-active-path siblings never reach the transcript anyway). The
+          // final utterance is appended whole on message_end.
+          conversation.activeRun.assistantText = assistantVisibleText(event.message);
+          return;
+        }
         await this.ensureAssistantStarted(conversationId, conversation, event.message);
         await this.appendAssistantDelta(conversationId, conversation, event.message);
       }

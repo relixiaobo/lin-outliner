@@ -91,21 +91,42 @@ clean-cut, no migration).
     (`lastMessageId`), never to the conversation's shared `selectedLeafMessageId`;
     `parentMessageId` remains the regenerate/branch anchor. Hand-off routing is
     persisted on `assistant_message.completed.addressedTo`.
-  - **Delivery (typing model):** Channel replies are not streamed — a typing
-    indicator while the run is active (drill-in opens the run working-state
-    panel), the whole reply lands in the thread on completion. The thread shows
-    **utterances only** (final text; process blocks live behind the drill-in).
-  - **Parallel runtime (shipped in #202):** Channel execution tracks a set of
-    in-flight runs per conversation, capped by a small per-conversation
-    execution limit. Co-addressees dispatch immediately and independently;
-    excess addressed turns wait FIFO behind the cap, not behind a serialized
-    round. A user message sent while Channel runs are active is persisted and
-    routed immediately, with that message as each addressed run's context cut.
-    Replies append when they complete, so transcript order is completion order.
-    The independence cut remains the invariant: a run sees only the log through
-    the message that addressed it, plus its own later records; same-wave
-    co-addressees remain mutually invisible even when another run completes
-    first. DM behavior is untouched (streaming, steer, inline process).
+  - **Delivery (typing model, PM-ratified 2026-06-13):** the Channel **message
+    stream is whole-utterance only** — replies are never token-streamed into the
+    transcript; the whole reply lands in the thread on completion (process blocks
+    live behind the drill-in). The running agent's live `message_update` text is
+    **retained on the run and surfaced in the per-run detail view** (the activity
+    drill-in — "watch a Channel agent compose"), never discarded and never in the
+    message flow. It is kept transiently on the run (`assistantText`, exposed as
+    `channelActivityEntries[].streamingText`), not written to the shared log, so
+    concurrent runs never collide and the transcript stays whole-utterance.
+  - **Parallel runtime (shipped in #202; async view/command layer 2026-06-13):**
+    Channel execution tracks a set of in-flight runs per conversation, capped by a
+    small per-conversation execution limit. Co-addressees dispatch immediately and
+    independently; excess addressed turns wait FIFO behind the cap, not behind a
+    serialized round. **A Channel send/edit/retry returns on acceptance** — it
+    persists the user message and enqueues the addressed turns, then returns
+    without awaiting the runs; the runs drain asynchronously and a single detached
+    watcher (`scheduleChannelIdleEmit`) emits the final idle projection when the
+    Channel goes idle. (Tests that need a settled Channel call
+    `drainChannelTurnsForTest`.) A user message sent while Channel runs are active
+    is persisted and routed immediately, with that message as each addressed run's
+    context cut. Replies append when they complete, so transcript order is
+    completion order. The independence cut remains the invariant: a run sees only
+    the log through the message that addressed it, plus its own later records;
+    same-wave co-addressees remain mutually invisible even when another run
+    completes first. DM behavior is untouched (streaming, steer, inline process).
+  - **Projection mode split (2026-06-13):** the renderer-facing projection
+    exposes mode-specific run state instead of one overloaded `isStreaming`:
+    `dmRunActive` + `dmStreaming` drive the DM (or single-agent) composer's
+    stop/steer; `channelRunsActive` + `channelActivityEntries` drive the Channel
+    activity surface. A multi-agent Channel keeps `dmRunActive` false, so its work
+    never turns the composer into Stop/Steer (the composer stays a pure message
+    composer — empty + active shows a disabled Send, never Stop). Conversation
+    `kind` is never stored; the split is derived (`isMultiAgentConversation`).
+    Navigation and unread continue while Channel runs work: switching away from an
+    active Channel is allowed (only a busy DM blocks it), and a completed reply
+    increments unread through the existing `conversation_attention` path.
   - **Stop scope:** Channel stop has two scopes. A per-run stop cancels exactly
     that run and leaves siblings in flight; a conversation stop cancels every
     active run, drops undispatched pending Channel turns, and preserves the

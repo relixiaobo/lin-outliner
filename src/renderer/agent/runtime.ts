@@ -112,11 +112,12 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   members: [],
   activeRuns: [],
   activeRunId: null,
-  activityEntries: [],
+  channelActivityEntries: [],
   povInspectors: {},
   activeCompaction: null,
   activeDream: null,
-  isStreaming: false,
+  dmRunActive: false,
+  channelRunsActive: false,
   model: {},
   thinkingLevel: 'off',
   pendingToolCallIds: [],
@@ -126,7 +127,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   taskIds: [],
   childRunIds: [],
   entities: { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
-  streaming: null,
+  dmStreaming: null,
 };
 
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
@@ -212,7 +213,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
     if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) continue;
-    const streaming = projection.streaming?.messageId === entity.id;
+    const streaming = projection.dmStreaming?.messageId === entity.id;
     const message = conversationMessageFromEntity(entity);
     entries.push({
       id: streaming && entity.role === 'assistant' ? activeAssistantEntryId(entries, projection) : row.id,
@@ -249,7 +250,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   const streamingEntry = entries.find((entry): entry is AgentMessageEntry => (
     entry.kind === 'message' && entry.streaming && entry.message.role === 'assistant'
   ));
-  if (projection.isStreaming) {
+  if (projection.dmRunActive) {
     if (streamingEntry?.message.role === 'assistant') {
       turnPhase = assistantHasText(streamingEntry.message) ? 'streaming_text' : 'resuming_after_tool';
     } else {
@@ -266,7 +267,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   const lastEntry = entries[entries.length - 1];
   const shouldAppendAssistantPlaceholder = !projection.activeCompaction
     && !projection.activeDream
-    && projection.isStreaming
+    && projection.dmRunActive
     && (
       !lastEntry
       || lastEntry.kind !== 'message'
@@ -511,7 +512,10 @@ export interface AgentRuntimeClient {
 export interface LinAgentRuntimeView {
   entries: AgentConversationEntry[];
   error: string | null;
-  isStreaming: boolean;
+  /** DM (or single-agent) composer run state: drives the composer's stop/steer affordance. Always false in a multi-agent Channel. */
+  dmRunActive: boolean;
+  /** True while any addressed Channel run is active or pending (the async work surface). */
+  channelRunsActive: boolean;
   modelId: string | null;
   providerId: string | null;
   pendingToolCallIds: Set<string>;
@@ -522,8 +526,8 @@ export interface LinAgentRuntimeView {
   conversationCost: number;
   /** Conversation members (user + agents); Channel rows are named rooms, DMs are canonical one-agent rows. */
   members: AgentRenderMemberView[];
-  /** Channel activity entries: one addressed agent per unfinished addressing message. */
-  activityEntries: AgentRenderActivityEntry[];
+  /** Per-run Channel activity: one entry per active or pending addressed run (the async work surface). */
+  channelActivityEntries: AgentRenderActivityEntry[];
   /** Read-only per-agent Channel POV projections keyed by agentId. */
   povInspectors: Record<string, AgentPovInspectorView>;
   /** Folded per-conversation unread count for conversation-list badges. */
@@ -1076,7 +1080,8 @@ export class AgentRuntimeStore {
     return {
       entries,
       error: this.error,
-      isStreaming: this.projection.isStreaming,
+      dmRunActive: this.projection.dmRunActive,
+      channelRunsActive: this.projection.channelRunsActive,
       modelId: projectionModelValue(this.projection, 'id'),
       providerId: projectionModelValue(this.projection, 'provider'),
       pendingToolCallIds: new Set(this.projection.pendingToolCallIds),
@@ -1090,7 +1095,7 @@ export class AgentRuntimeStore {
       // The shared empty constants keep the reference stable across rebuilds so
       // member-derived memos don't recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
-      activityEntries: this.projection.activityEntries ?? EMPTY_ACTIVITY_ENTRIES,
+      channelActivityEntries: this.projection.channelActivityEntries ?? EMPTY_ACTIVITY_ENTRIES,
       povInspectors: this.projection.povInspectors ?? EMPTY_POV_INSPECTORS,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
