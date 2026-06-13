@@ -105,10 +105,17 @@ export function App() {
       );
     });
   }, [setUi]);
-  const canAddPanelRef = useRef<(nextPanelCount: number) => boolean>(() => true);
-  const canAddPanel = useCallback((nextPanelCount: number) => (
-    canAddPanelRef.current(nextPanelCount)
+  const panelCountFitsRef = useRef<(nextPanelCount: number) => boolean>(() => true);
+  const reflowPanelCountRef = useRef<(nextPanelCount: number) => boolean>(() => true);
+  const canFitPanelCount = useCallback((nextPanelCount: number) => (
+    panelCountFitsRef.current(nextPanelCount)
   ), []);
+  const preparePanelCount = useCallback((nextPanelCount: number) => {
+    reflowPanelCountRef.current(nextPanelCount);
+  }, []);
+  const notifyPanelOpenRejected = useCallback(() => {
+    setError(t.shell.workspace.tooNarrowForNewPane);
+  }, [t.shell.workspace.tooNarrowForNewPane]);
 
   const {
     activeOutlinerPanel,
@@ -128,7 +135,12 @@ export function App() {
     panels,
     resizePanelPair,
     rootId,
-  } = useWorkspaceLayout({ canAddPanel, focusNode });
+  } = useWorkspaceLayout({
+    canFitPanelCount,
+    focusNode,
+    onPanelOpenRejected: notifyPanelOpenRejected,
+    preparePanelCount,
+  });
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
   // history. Debug panes still no-op instead of navigating an unrelated pane.
   const pageHistoryPanel = activeWorkspacePanel;
@@ -139,7 +151,8 @@ export function App() {
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
-    ensurePanelCapacity,
+    panelCountFitsCapacity,
+    reflowRailsForPanelCount,
     resetAgentWidth,
     resetPanelPair,
     resetSidebarWidth,
@@ -153,7 +166,8 @@ export function App() {
     resizePanelPair,
     sidebarOpen,
   });
-  canAddPanelRef.current = ensurePanelCapacity;
+  panelCountFitsRef.current = panelCountFitsCapacity;
+  reflowPanelCountRef.current = reflowRailsForPanelCount;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
 
   useDragSelection({ rootId, index, ui, setUi });

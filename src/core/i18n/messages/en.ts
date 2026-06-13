@@ -428,6 +428,7 @@ export const en = {
       canvasAriaLabel: 'Workspace canvas',
       resizePanelsLabel: 'Resize panels',
       resizePanelsTitle: 'Resize panels (double-click to reset)',
+      tooNarrowForNewPane: 'Window is too narrow to open another pane.',
     },
     panel: {
       closeLabel: 'Close panel',

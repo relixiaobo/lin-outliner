@@ -214,8 +214,10 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
 }
 
 interface UseWorkspaceLayoutOptions {
-  canAddPanel?: (nextPanelCount: number) => boolean;
+  canFitPanelCount?: (nextPanelCount: number) => boolean;
   focusNode: (nodeId: NodeId | null) => void;
+  onPanelOpenRejected?: () => void;
+  preparePanelCount?: (nextPanelCount: number) => void;
 }
 
 interface InitializedWorkspaceLayout {
@@ -228,8 +230,10 @@ function allowPanelAdd() {
 }
 
 export function useWorkspaceLayout({
-  canAddPanel = allowPanelAdd,
+  canFitPanelCount = allowPanelAdd,
   focusNode,
+  onPanelOpenRejected,
+  preparePanelCount = () => undefined,
 }: UseWorkspaceLayoutOptions) {
   const [panels, setPanels] = useState<WorkspacePanelState[]>([]);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
@@ -289,10 +293,11 @@ export function useWorkspaceLayout({
       setPanels((prev) => prev.map((panel) => (
         panel.id === targetPanel.id && isWorkspacePanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
       )));
-    } else if (panels.length < MAX_PERSISTED_PANELS && canAddPanel(panels.length + 1)) {
+    } else if (panels.length < MAX_PERSISTED_PANELS && canFitPanelCount(panels.length + 1)) {
       // No outliner pane (only debug panes) but room to add one: append rather
       // than replace the whole canvas, so the debug panes survive.
       const panelId = nextId('panel');
+      preparePanelCount(panels.length + 1);
       setActivePanelId(panelId);
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     } else {
@@ -306,7 +311,7 @@ export function useWorkspaceLayout({
       )));
     }
     focusNode(options?.focus === false ? null : nodeId);
-  }, [activePanelId, canAddPanel, focusNode, panels]);
+  }, [activePanelId, canFitPanelCount, focusNode, panels, preparePanelCount]);
 
   const activatePanel = useCallback((panel: WorkspacePanelState) => {
     setActivePanelId(panel.id);
@@ -325,7 +330,7 @@ export function useWorkspaceLayout({
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
-    if (panels.length >= MAX_PERSISTED_PANELS || !canAddPanel(panels.length + 1)) {
+    if (panels.length >= MAX_PERSISTED_PANELS || !canFitPanelCount(panels.length + 1)) {
       const replacePanel = [...panels].reverse().find(isWorkspacePanel) ?? panels.at(-1);
       if (!replacePanel) return;
       keepActive(replacePanel.id);
@@ -338,11 +343,12 @@ export function useWorkspaceLayout({
       )));
     } else {
       const panelId = nextId('panel');
+      preparePanelCount(panels.length + 1);
       keepActive(panelId);
       setPanels((prev) => [...prev, filePreviewPanel(panelId, target)]);
     }
     focusNode(null);
-  }, [canAddPanel, focusNode, panels]);
+  }, [canFitPanelCount, focusNode, panels, preparePanelCount]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
     if (options?.newPane) {
@@ -439,7 +445,7 @@ export function useWorkspaceLayout({
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
-    if (panels.length >= MAX_PERSISTED_PANELS || !canAddPanel(panels.length + 1)) {
+    if (panels.length >= MAX_PERSISTED_PANELS || !canFitPanelCount(panels.length + 1)) {
       // At the cap, repurpose an existing workspace pane (rightmost first) so a
       // debug conversation is never silently dropped — symmetric with how
       // openAgentDebugPanel reverse-finds a debug pane. Falls back to the last
@@ -452,11 +458,12 @@ export function useWorkspaceLayout({
       )));
     } else {
       const panelId = nextId('panel');
+      preparePanelCount(panels.length + 1);
       keepActive(panelId);
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     }
     focusNode(nodeId);
-  }, [canAddPanel, focusNode, panels, rootId]);
+  }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
   const openAgentDebugPanel = useCallback((conversationId: string | null) => {
     const existing = panels.find((panel) => (
@@ -488,12 +495,16 @@ export function useWorkspaceLayout({
       return;
     }
 
-    if (!canAddPanel(panels.length + 1)) return;
+    if (!canFitPanelCount(panels.length + 1)) {
+      onPanelOpenRejected?.();
+      return;
+    }
 
     const panelId = nextId('panel');
+    preparePanelCount(panels.length + 1);
     setActivePanelId(panelId);
     setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId)]);
-  }, [canAddPanel, panels]);
+  }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
   const resizePanelPair = useCallback((
     leftPanelId: string,

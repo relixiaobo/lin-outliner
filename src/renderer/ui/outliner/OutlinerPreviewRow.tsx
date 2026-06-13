@@ -1,6 +1,7 @@
 import type { CSSProperties, HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { RowLeading, type RowLeadingVariant } from './RowLeading';
+import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
 
 interface OutlinerPreviewRowProps {
   nodeId: string;
@@ -37,8 +38,9 @@ export function OutlinerPreviewRow({
   onDrillDown,
   children,
 }: OutlinerPreviewRowProps) {
+  const cappedDepth = Math.min(depth, MAX_OUTLINE_INDENT_DEPTH);
   const wrapStyle = {
-    '--outliner-preview-indent': `calc(${depth} * var(--row-depth))`,
+    '--outliner-preview-indent': `calc(${cappedDepth} * var(--row-depth))`,
   } as CSSProperties;
   const wrapProps = {
     'data-node-id': nodeId,

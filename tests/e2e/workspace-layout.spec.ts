@@ -180,6 +180,60 @@ test.describe('workspace layout resizing', () => {
     await expect(panels).toHaveCount(1);
   });
 
+  test('sidebar dragging in the deficit band keeps the sidebar intent and shrinks the agent first', async ({ page }) => {
+    await page.setViewportSize({ width: 980, height: 900 });
+    const sidebar = page.locator('.sidebar-dock');
+    const agent = page.locator('.agent-dock');
+    const sidebarHandle = page.getByRole('button', { name: 'Resize sidebar' });
+    const sidebarHandleBox = await sidebarHandle.boundingBox();
+    expect(sidebarHandleBox).toBeTruthy();
+
+    await page.mouse.move(
+      sidebarHandleBox!.x + sidebarHandleBox!.width / 2,
+      sidebarHandleBox!.y + sidebarHandleBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(sidebarHandleBox!.x + 130, sidebarHandleBox!.y + sidebarHandleBox!.height / 2);
+    await page.mouse.up();
+
+    await expect.poll(async () => Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(280);
+    await expect.poll(async () => Math.round((await agent.boundingBox())?.width ?? 0)).toBe(308);
+  });
+
+  test('rail resize preference survives narrow window reclamps', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const agent = page.locator('.agent-dock');
+    const agentHandle = page.getByRole('button', { name: 'Resize agent' });
+    const agentHandleBox = await agentHandle.boundingBox();
+    expect(agentHandleBox).toBeTruthy();
+
+    await page.mouse.move(
+      agentHandleBox!.x + agentHandleBox!.width / 2,
+      agentHandleBox!.y + agentHandleBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(agentHandleBox!.x - 90, agentHandleBox!.y + agentHandleBox!.height / 2);
+    await page.mouse.up();
+
+    await expect.poll(async () => Math.round((await agent.boundingBox())?.width ?? 0)).toBeGreaterThan(400);
+    const preferredWidth = Math.round((await agent.boundingBox())!.width);
+
+    await page.setViewportSize({ width: 760, height: 900 });
+    await expect.poll(async () => Math.round((await agent.boundingBox())?.width ?? 0)).toBe(280);
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect.poll(async () => Math.round((await agent.boundingBox())?.width ?? 0))
+      .toBeGreaterThanOrEqual(preferredWidth - 1);
+  });
+
+  test('debug panel capacity failures show feedback instead of silently no-oping', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.getByRole('button', { name: 'Open agent debug' }).click();
+
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
+    await expect(page.locator('.error')).toContainText('Window is too narrow to open another pane.');
+  });
+
   test('page title tag bars wrap instead of overflowing in narrow windows', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 900 });
     await page.evaluate(async (todayId) => {
@@ -213,6 +267,49 @@ test.describe('workspace layout resizing', () => {
     });
     expect(metrics.height).toBeGreaterThan(20);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  });
+
+  test('inline row tag bars wrap without overflowing plain text rows', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.evaluate(async (nodeId) => {
+      const win = window as typeof window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+      };
+      let projection: unknown = null;
+      for (let index = 1; index <= 10; index += 1) {
+        const tag = await win.lin!.invoke<{ update: { projection: unknown }; focus?: { nodeId: string } }>('create_tag', {
+          name: `inline-responsive-${index}`,
+        });
+        const applied = await win.lin!.invoke<{ update: { projection: unknown } }>('apply_tag', {
+          nodeId,
+          tagId: tag.focus!.nodeId,
+        });
+        projection = applied.update.projection;
+      }
+      win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection });
+    }, ids.alpha);
+
+    const inlineTagBar = row(page, ids.alpha).locator('.row-inline-tag-slot .tag-bar').first();
+    await expect(inlineTagBar.locator('.tag-badge')).toHaveCount(10);
+    const metrics = await inlineTagBar.evaluate((element, betaId) => {
+      const rect = element.getBoundingClientRect();
+      const nextRowRect = document.querySelector(`[data-node-id="${betaId}"] > .row`)?.getBoundingClientRect();
+      const rowRect = element.closest('[data-node-id]')?.getBoundingClientRect();
+      return {
+        bottom: rect.bottom,
+        clientWidth: element.clientWidth,
+        height: rect.height,
+        nextRowTop: nextRowRect?.top ?? rect.bottom,
+        right: rect.right,
+        rowRight: rowRect?.right ?? rect.right,
+        scrollWidth: element.scrollWidth,
+      };
+    }, ids.beta);
+    expect(metrics.height).toBeGreaterThan(20);
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+    expect(metrics.right).toBeLessThanOrEqual(metrics.rowRight + 1);
+    expect(metrics.bottom).toBeLessThanOrEqual(metrics.nextRowTop + 1);
   });
 
   test('window chrome toggles align to the traffic lights and stay icon-only', async ({ page }) => {

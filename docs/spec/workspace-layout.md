@@ -364,10 +364,14 @@ Rules:
 - The workspace canvas never uses a horizontal scrollbar as a rescue path. It
   stays `overflow-x: hidden`; responsive guards keep the layout inside the
   canvas instead of exposing sideways scroll.
-- Sidebar and agent rail widths are coupled to the live canvas width. Drag,
-  keyboard resize, reset, rail reopen, pane-count changes, and window resize all
-  re-clamp the rails against the current pane floor. The agent rail gives up
-  width first, then the sidebar, and neither rail shrinks below its own minimum.
+- The CSS pane min-width backstop is limited to single-pane canvases. Multi-pane
+  capacity is enforced before adding panes because a hard per-pane CSS `min-width`
+  would turn impossible narrow states into canvas-level horizontal overflow.
+- Sidebar and agent rail widths keep a user preference separate from their
+  rendered width. Drag, keyboard resize, and reset update the preference; rail
+  reopen, pane-count changes, and window resize re-compute only the rendered
+  width against the current pane floor. The agent rail gives up width first, then
+  the sidebar, and neither rail shrinks below its own minimum.
 - At the native 760px window floor, both rails at their minimums still cannot
   always leave a full 360px single-pane floor. In that impossible case the rails
   stay at their minimums and the pane degrades inside the available width rather
@@ -378,8 +382,8 @@ Rules:
   `MAX_PERSISTED_PANELS` (4). At the count cap, or when a root/file-preview split
   cannot fit at the current width, opening repurposes an existing workspace pane
   (rightmost first) rather than adding another pane. Agent-debug panes are added
-  only when the resulting count fits; a too-narrow window does not drop an
-  existing workspace pane just to show debug chrome.
+  only when the resulting count fits; a too-narrow window reports the capacity
+  failure and does not drop an existing workspace pane just to show debug chrome.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
   nearest remaining pane, and clears when that pane is an agent-debug pane (which
   carries no node to focus).
@@ -392,15 +396,15 @@ freeform window management.
 Responsive behavior is conservative and local to the existing floating-rail /
 padded-canvas model:
 
-- The sidebar and agent dock widths are stateful, but their persisted state is
-  never allowed to exceed what the current window can host for the active pane
-  count. Window resize uses a requestAnimationFrame-coalesced clamp so resize
-  ticks do not force redundant shell renders.
+- The sidebar and agent dock width preferences are stateful and stay independent
+  from responsive clamping. Window resize uses a requestAnimationFrame-coalesced
+  reflow so resize ticks do not force redundant shell renders or ratchet a user's
+  wider rail preference down permanently.
 - The available pane width is computed from the canvas border-box width minus
   the open rails and their shell gaps, then compared with
   `paneCount × --outline-panel-min-width` plus inter-pane gaps.
-- Deep outliner indentation is capped before it reaches CSS: outline rows and
-  sidebar tree rows both clamp their visual depth to a shared
+- Deep outliner indentation is capped before it reaches CSS: outline rows,
+  sidebar tree rows, and preview/backlink rows all clamp their visual depth to a shared
   `MAX_OUTLINE_INDENT_DEPTH` value. The underlying document depth and keyboard
   structure are unchanged.
 - Tag bars wrap chips with row gaps. Plain-text row tags still live in the

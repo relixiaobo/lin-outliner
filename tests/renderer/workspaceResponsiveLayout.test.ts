@@ -4,7 +4,6 @@ import {
   MAX_SIDEBAR_WIDTH,
   MIN_AGENT_WIDTH,
   MIN_SIDEBAR_WIDTH,
-  clampRailWidthForPanelFloor,
   clampRailWidthsForPanelFloor,
   panelCountFitsAtMinimumRails,
   type ResponsiveRailState,
@@ -51,16 +50,16 @@ describe('workspace responsive layout', () => {
     });
   });
 
-  test('clamps the rail being resized against the other rail and the pane floor', () => {
-    const nextSidebar = clampRailWidthForPanelFloor(
-      baseMetrics,
-      openRails,
-      'sidebar',
-      MAX_SIDEBAR_WIDTH,
-      1,
-    );
+  test('keeps the dragged sidebar at its preference while the agent yields first', () => {
+    const next = clampRailWidthsForPanelFloor(baseMetrics, {
+      ...openRails,
+      sidebarWidth: MAX_SIDEBAR_WIDTH,
+    }, 1);
 
-    expect(nextSidebar).toBe(244);
+    expect(next).toEqual({
+      sidebarWidth: MAX_SIDEBAR_WIDTH,
+      agentWidth: 308,
+    });
   });
 
   test('rejects additional panes when even minimum rails cannot host the pane floor', () => {

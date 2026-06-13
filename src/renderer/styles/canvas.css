@@ -87,6 +87,7 @@
    not a per-surface inset shadow — so panes need no own separator. */
 
 .workspace-canvas.single-panel .outline-panel-surface {
+  min-width: min(100%, var(--outline-panel-min-width));
   max-width: none;
 }
 
@@ -142,4 +143,3 @@
   overflow: hidden;
   background: var(--surface);
 }
-
