@@ -2411,4 +2411,172 @@ describe('agent runtime childRuns', () => {
     expect(indexEntry?.unreadCount).toBe(replayUnread);
     expect(replayUnread).toBe(0);
   });
+
+  test('a resumed run that fails does not surface the prior run\'s result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-fail-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-fail-data-'));
+    roots.push(localRoot, dataRoot);
+
+    // Content-dispatched (order-independent: the background child races the parent).
+    const streamFn = respondingStream((context) => {
+      const text = textFromContext(context);
+      if (text.includes('Now fail')) {
+        return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'resume boom' });
+      }
+      if (text.includes('Do the first pass')) {
+        return fauxAssistantMessage(fauxText('first result'));
+      }
+      if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'completes then fails on resume',
+            prompt: 'Do the first pass.',
+            agent_type: 'assistant',
+            run_in_background: true,
+            name: 'resume-fail',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('ack'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then fails.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+
+    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+
+    await runtime.childRunSend(conversation.conversationId, childRunId, 'Now fail.');
+    const failed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(failed).toMatchObject({ agent_id: childRunId, status: 'failed' });
+    expect((failed as { error?: string }).error).toBeDefined();
+    // The fix: send() clears run.result on resume, so the failed continuation
+    // cannot surface the completed first run's "first result".
+    expect((failed as { result?: string }).result).toBeUndefined();
+  });
+
+  test('a resumed run stopped before it produces new output does not salvage the prior result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-stop-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-stop-data-'));
+    roots.push(localRoot, dataRoot);
+
+    // The resumed continuation blocks on this barrier, so the test can stop it
+    // while it is in-flight — BEFORE it has produced any new assistant text.
+    let releaseResume!: () => void;
+    const resumeBlocked = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    let resumePickEntered = false;
+
+    // Content-dispatched (order-independent: the background child races the parent).
+    // The resume context contains BOTH 'Do the first pass' and 'Stop me now', so
+    // the resume branch must be checked first (cf. the resume-fail test above).
+    const streamFn = respondingStream((context) => {
+      const text = textFromContext(context);
+      if (text.includes('Stop me now')) {
+        resumePickEntered = true;
+        return resumeBlocked.then(() => fauxAssistantMessage(fauxText('late result after release')));
+      }
+      if (text.includes('Do the first pass')) {
+        return fauxAssistantMessage(fauxText('first result'));
+      }
+      if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'completes then is stopped on resume',
+            prompt: 'Do the first pass.',
+            agent_type: 'assistant',
+            run_in_background: true,
+            name: 'resume-stop',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('ack'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then is stopped.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+
+    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+
+    // Resume, then stop once the continuation is genuinely in-flight (its model
+    // call entered) but before it appends any new assistant text.
+    await runtime.childRunSend(conversation.conversationId, childRunId, 'Stop me now before any new output.');
+    await waitFor(() => resumePickEntered);
+    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
+    expect(stopped).toMatchObject({ agent_id: childRunId, status: 'stopped' });
+
+    // The seeded history (carrying the completed "first result") sits below the
+    // salvage floor, so the stop salvages nothing — result must NOT regress to
+    // the prior round's text. This is the stop-side mirror of the resume→fail case.
+    const after = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(after).toMatchObject({ agent_id: childRunId, status: 'stopped' });
+    expect((after as { result?: string }).result).toBeUndefined();
+
+    releaseResume();
+  });
+});
+
+describe('extractPartialAssistantText (stop-salvage primitive)', () => {
+  // Lazy import: a static import would evaluate agentDelegation's transitive
+  // electron dependency before this file's `mock.module('electron', …)` lands.
+  const loadDelegation = () => import('../../src/main/agentDelegation');
+
+  test('returns the last non-empty assistant text so a stopped run keeps its partial work', async () => {
+    const { extractPartialAssistantText } = await loadDelegation();
+    const messages = [
+      fauxAssistantMessage(fauxText('first pass')),
+      fauxAssistantMessage(fauxText('partial progress before the stop')),
+    ] as Parameters<typeof extractPartialAssistantText>[0];
+    expect(extractPartialAssistantText(messages)).toBe('partial progress before the stop');
+  });
+
+  test('returns undefined when there is no assistant text yet (a stop then reports no salvaged result)', async () => {
+    const { extractPartialAssistantText } = await loadDelegation();
+    const messages = [
+      fauxAssistantMessage([fauxToolCall('Read', { path: 'x' }, { id: 't1' })], { stopReason: 'toolUse' }),
+    ] as Parameters<typeof extractPartialAssistantText>[0];
+    expect(extractPartialAssistantText(messages)).toBeUndefined();
+  });
 });
