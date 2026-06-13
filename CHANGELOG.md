@@ -371,6 +371,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Delegation run records + run-status converge onto one shape (C1+C2) (PR #225, cc-2)** —
+  the three near-duplicate records describing a delegated (child) run now derive from one
+  canonical `DelegationDetail` (`src/core/agentEventLog.ts`): the durable
+  `AgentChildRunRecord` and the IPC `AgentChildRunSnapshot` ARE a `DelegationDetail`, and the
+  in-memory runtime record (`AgentRunRecord` → `DelegationRunState`) `extends` it with
+  live-execution state only. The shared id fields
+  (`executingAgentId`/`parentAgentId`/`memoryOwnerAgentId`) became **required** — the spawn
+  writer always sets them — so `restorePersistedRuns` carries the descriptive half verbatim
+  and the defensive fallbacks drop out (C1). The dual run-status enums collapse:
+  `AgentChildRunStatus` (`…|stopped`) is **deleted**; every data-layer surface (durable
+  record, IPC snapshot, runtime record, `child_run.*` events, run ledger, and the
+  model-facing `AgentChildRunActionResult`) now speaks the single `AgentRunStatus`
+  (`…|cancelled`) vocabulary. `renderTaskStatusFromRunStatus` moves to core
+  `agentRenderProjection.ts` as the **one** pure projection (`cancelled → stopped`) every
+  task/child-run render entity flows through — the renderer keeps the user-facing word
+  "stopped" while the data is uniform (render components unchanged). `unattended` is now
+  **durable** — recorded on `child_run.started` and projected onto the record — so a
+  cross-restart resume rebuilds the agent with the same approval policy (was in-memory
+  only). The run ledger's terminal-status → lifecycle-event mapping is now an exhaustive
+  `satisfies`-checked table instead of a nested ternary. C3 (run-context assembly) stays
+  folded into the M-series context-assembly rewrite (A7). No `commands.ts`/`types.ts`
+  change. Design folded into `docs/plans/agent-program.md` § Convergence.
 - **Agent dock + channel configuration refinement (PR #217, codex)** — refines the
   agent dock header, conversation menu, DM/Channel rows, and unread/menu
   affordances to the current design-system rules, and moves agent and channel

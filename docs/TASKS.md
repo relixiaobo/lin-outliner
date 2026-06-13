@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (outline-syntax-unification plan merged as draft, PR #219) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation runtime hygiene merged, PR #221) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation-record-convergence C1+C2 merged, PR #225) |
 | Codex | `lin-outliner-codex/` | — | idle (agent dock + channel config refinement merged, PR #217) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (main JSON store unification merged, PR #226) |
@@ -294,21 +294,6 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   key concurrent approval/`ask_user_question` requests by `runId` so runs can't
   steal each other's input. ONE PR (runtime + projection + renderer + tests + spec).
   No DM behavior change. See `docs/plans/channel-async-message-bus.md`.
-- **delegation-record-convergence (C1+C2)** (P1, *no separate plan file — design in
-  `docs/plans/agent-program.md` § Convergence + `docs/plans/agent-data-model.md`
-  shapes*) — surfaced by **PR #221**'s delegation hygiene pass (which fixed behavior
-  but deliberately left shape). **C1**: collapse the three near-duplicate run records
-  (`AgentChildRunRecord` durable / `AgentChildRunSnapshot` IPC / `AgentRunRecord`
-  in-memory, `src/main/agentDelegation.ts` + `src/core/agentEventLog.ts`) into one
-  canonical `DelegationDetail` the IPC + durable shapes derive from. **C2**: unify the
-  dual run-status enums (`AgentRunStatus` `…|cancelled` vs `AgentChildRunStatus`
-  `…|stopped`, both in `src/core/agentEventLog.ts`) onto the single `RunMeta.status`
-  vocabulary, and persist `unattended` durably (today in-memory only). Ships as **ONE
-  near-term PR** (C1+C2 together); shapes owned by `agent-data-model`. **Foundation
-  for `channel-async-message-bus`** (A7) — it consumes run-status via
-  `agentRuntime.ts`, so land this first so channel-async builds on the unified
-  vocabulary, not the dual enums. C3 (run-context assembly) is **not** standalone —
-  it folds into the M-series context-assembly rewrite. Needs a dev build one-pager → GO.
 - **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
   durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
   daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
@@ -627,6 +612,30 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **delegation-record-convergence — one `DelegationDetail`, one run-status vocabulary (C1+C2)**
+  (cc-2, PR #225, plan-track) — surfaced by **PR #221**'s hygiene pass, which fixed behavior
+  but deliberately left shape. **C1**: the three near-duplicate delegated-run records now
+  derive from one canonical `DelegationDetail` (`src/core/agentEventLog.ts`) — the durable
+  `AgentChildRunRecord` and the IPC `AgentChildRunSnapshot` ARE a `DelegationDetail`; the
+  in-memory runtime record (`AgentRunRecord` → `DelegationRunState`) `extends` it with
+  live-execution state only. The shared id fields
+  (`executingAgentId`/`parentAgentId`/`memoryOwnerAgentId`) became **required** (the spawn
+  writer always sets them), so `restorePersistedRuns` carries the descriptive half verbatim
+  (`...record`) and the defensive fallbacks drop out. **C2**: `AgentChildRunStatus`
+  (`…|stopped`) is **deleted**; every data-layer surface (durable record, IPC snapshot,
+  runtime record, `child_run.*` events, run ledger, model-facing
+  `AgentChildRunActionResult`) now speaks the single `AgentRunStatus` (`…|cancelled`)
+  vocabulary. `renderTaskStatusFromRunStatus` moves to core `agentRenderProjection.ts` as the
+  **one** pure projection (`cancelled → stopped`) every render entity flows through — the
+  renderer keeps "stopped" while the data is uniform. `unattended` is now **durable**
+  (recorded on `child_run.started`, projected onto the record), so a cross-restart resume
+  rebuilds the agent with the same approval policy (was in-memory only — a real fix, not just
+  a rename). Run-ledger terminal-status mapping is now an exhaustive `satisfies`-checked
+  table. C3 (run-context assembly) stays folded into the M-series context-assembly rewrite
+  (A7). Design folded into `agent-program.md` § Convergence. Gate (main): medium
+  `/code-review` multi-angle — **0 correctness bugs**; durable-`unattended` round-trip and
+  the required-id write-site invariant verified by hand; typecheck clean, test:core 951/0,
+  test:renderer 433/0 (post-merge integration with #224 re-verified).
 - **main-json-store-unification — one shared main-process JSON store primitive**
   (codex-3, PR #226, plan-track) — collapsed the main process's three hand-rolled
   atomic-write implementations + two synchronous outliers (`agentSettings.ts` /
