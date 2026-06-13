@@ -43,7 +43,7 @@ execution boundary is **a read-only fork of the current agent**.
 - No new model-facing "research" tool. Use the existing skill invocation path.
 - No mutation capability in the research child run. Research reads, searches, and
   reports; it does not edit files, mutate outliner nodes, change config, run
-  shell commands, or spawn child agents.
+  side-effecting shell commands, or spawn child agents.
 
 ## Design
 
@@ -102,6 +102,10 @@ allowed-tools:
   - recall
 ```
 
+The `allowed-tools` list above is only a no-prompt convenience for expected read
+operations. It is not the safety boundary. The read-only boundary is the
+catalog-narrowing mechanism described in §3.
+
 The skill body briefs the child run to:
 
 - restate the concrete question and scope before searching;
@@ -140,44 +144,64 @@ implementation of generic research.
 
 The current `allowed-tools` skill field is a run-scoped preapproval list; it must
 not be treated as the only safety boundary. A research fork needs an actual
-subtractive tool profile so the child cannot call mutating tools even if the
-prompt drifts.
+catalog restriction so the child cannot call mutating tools even if the prompt
+drifts.
 
-Add a small skill-runtime extension for `context: fork` skills:
+The implementation should reuse the existing agent tool catalog filter:
 
-- `tools` or equivalent internal tool narrowing may subtract tools from the
-  parent agent's tool set.
-- It may never add a tool the parent agent does not already have.
-- It applies to the child run's actual available tool catalog, not only to
-  permission preapproval.
-- It is limited to forked skill runs in this PR; normal agent definitions keep
-  their existing tool binding semantics.
+- `AgentDefinition.tools` / `disallowedTools` already narrow the real tool catalog.
+- `createAgentTools(...)` already applies that catalog narrowing before the model
+  sees tools.
+- The research fork should enter the same path with an internal read-only
+  restriction at fork spawn. Do not write a second filter.
 
-Recommended first implementation: expose the narrowing as supported skill
-frontmatter for forked skills, then have `/research` use it. If the reviewer wants
-a smaller protocol surface, implement the same narrowing as a built-in-only
-internal profile for `/research`, but keep the design subtractive and structural.
+The read-only set should be derived from `AgentToolActionKind`, not hand-listed by
+tool name. Add a `READ_ONLY_ACTION_KINDS` partition, or an equivalent per-kind
+flag, beside the existing default action decision table in
+`src/core/agentPermissionModel.ts`. The `satisfies Record<AgentToolActionKind, ...>`
+pattern keeps the partition exhaustive: every future action kind must be
+classified as read-only or side-effecting before typecheck passes.
 
-The research allow-list should include read/search tools only:
+Read-only action kinds include status, recall, search, fetch, read, and diagnostic
+operations such as:
 
-- `node_search`
-- `node_read`
-- `file_read`
-- `file_glob`
-- `file_grep`
-- `web_search`
-- `web_fetch`
-- `recall` if available in the current runtime
+- `file.read.*`
+- `outline.read`
+- `web.search`
+- `web.fetch`
+- `shell.read_search`
+- `agent.memory.recall`
+- `agent.runtime.status`
+- `agent.config.read`
+- `agent.doctor.run`
+- `agent.delegate.status`
 
-It must exclude mutation and delegation:
+Side-effecting action kinds must be excluded from the research child catalog:
 
-- `node_create`, `node_edit`, `node_delete`
-- `file_write`, `file_edit`
-- `bash`
-- `skill`
-- `agent`
-- browser-control tools
-- deploy, config, or credential tools
+- file edit/write/delete
+- outline edit/delete
+- side-effecting shell execution
+- remote publish/deploy
+- external message send
+- config write
+- skill invocation
+- agent delegate spawn/send/stop
+- memory Dream/write-like actions
+- permission modification
+- payment/purchase
+
+The built-in `/research` registration should carry an internal read-only fork
+flag, for example `readOnlyFork: true`, that is not part of mutable
+`SkillDefinition` frontmatter in v1. When that flag is present, skill invocation
+passes read-only catalog narrowing into `AgentDelegationRuntime.invokeSkillChildAgent`.
+The forked child then receives the parent's normal context, but only the tools
+whose action-kind profile is read-only. The resulting catalog must omit mutating
+tools entirely; tests should assert absence from the child model request, not
+mere permission denial at call time.
+
+Do not add a general skill `tools` field in this feature. If a second built-in
+read-only fork skill later proves the need, expose a single `readOnly: true`-style
+capability rather than per-skill tool arrays.
 
 ### 4. Report shape
 
@@ -227,35 +251,42 @@ The key differences:
 
 Expected implementation files:
 
-- `src/main/agentSkills.ts` - register the built-in `/research` skill and parse
-  any new forked-skill tool narrowing fields if they are exposed as frontmatter.
-- `src/core/types.ts` - only if tool narrowing becomes part of the typed
-  `SkillDefinition` protocol surface. If the reviewer chooses a built-in-only
-  internal profile, this file should not change.
+- `src/core/agentPermissionModel.ts` - add the exhaustive read-only action-kind
+  partition or equivalent per-kind flag.
+- `src/main/agentSkills.ts` - register the built-in `/research` skill with its
+  internal read-only fork flag. Do not add mutable `SkillDefinition` frontmatter
+  for tool narrowing in v1.
 - `src/main/agentRuntime.ts` and/or `src/main/agentDelegation.ts` - apply the
-  forked skill's narrowed tool set when creating the child run.
+  built-in skill's read-only fork flag at fork spawn by reusing the existing
+  `tools` / `disallowedTools` catalog-narrowing path.
+- `src/main/agentTools.ts` - only if a small exported helper is needed to share
+  the existing catalog filter; do not duplicate the filter logic.
 - `docs/spec/agent-skills.md` - document `/research`, read-only fork behavior,
-  and the distinction between `allowed-tools` preapproval and structural tool
-  narrowing.
+  and the distinction between `allowed-tools` preapproval and catalog restriction.
 - `docs/spec/agent-delegation-runtime.md` - document that this capability uses a
-  same-agent fork, not a separate agent definition.
+  same-agent fork with a read-only catalog restriction, not a separate agent
+  definition.
 - Tests under `tests/core/agentSkills.test.ts`,
   `tests/core/agentRuntimeChildRuns.test.ts`, and/or a focused integration test:
   - `/research` appears as a built-in skill;
   - the skill creates a forked same-agent child run;
-  - the child run receives read/search tools only;
-  - mutating tools, `skill`, and `agent` are unavailable in the child;
+  - the child request's catalog includes read/search/status/diagnostic tools
+    derived from read-only action kinds;
+  - mutating tools, `skill`, and `agent` spawn/send/stop are absent from the child
+    catalog, not merely denied by permission;
   - the parent receives only the final child result;
   - disabled skill gates still apply.
 
 ## Risks
 
-- **Protocol surface creep.** A general skill `tools` field is useful beyond
-  research, but it touches the skill definition contract. If this is too broad for
-  the first PR, use a built-in-only internal narrowing profile and keep the spec
-  explicit about the narrower scope.
+- **Tool taxonomy mistakes.** The read-only partition becomes security-sensitive.
+  Keep it exhaustive with TypeScript and test representative side-effecting tools
+  so new action kinds cannot drift into the research catalog silently.
 - **Prompt-only safety.** The implementation must not rely on "do not edit" text
   alone. Tests should pin that mutating tools are absent from the child catalog.
+- **Allowed-tools confusion.** `allowed-tools` is useful to avoid prompts for
+  expected read operations, but it must stay documented as preapproval only.
+  Safety comes from catalog restriction.
 - **Over-browsing.** Research can waste time and introduce stale or irrelevant web
   material. Default local-first; use web only when the task is current, external,
   or impossible to answer from local context.
@@ -266,10 +297,10 @@ Expected implementation files:
 
 ## Open questions
 
-- Should forked skill tool narrowing be a general frontmatter feature or a
-  built-in-only internal profile for `/research`? Recommendation: general
-  subtractive frontmatter for `context: fork` skills, because future skills such
-  as verify/audit can reuse the same safety boundary.
+- Should forked skill tool narrowing become a general frontmatter feature later?
+  Recommendation: no for v1. Keep `/research` built-in-only. If a later verify or
+  audit skill needs the same boundary, expose a single `readOnly: true` capability
+  rather than per-skill tool arrays.
 - Should web tools be included by default? Recommendation: include them but make
   the skill local-first and require the report to disclose when web was used.
 - Should the UI expose a visible child-run affordance for `/research`? Recommendation:
@@ -299,8 +330,8 @@ Open PRs reviewed:
 
 No blocking overlap. The implementation PR should re-run the collision check
 against `src/main/agentSkills.ts`, `src/main/agentRuntime.ts`,
-`src/main/agentDelegation.ts`, `src/core/types.ts`, and the agent specs before
-claiming work.
+`src/main/agentDelegation.ts`, `src/core/agentPermissionModel.ts`, and the agent
+specs before claiming work.
 
 ## Verification
 
@@ -315,8 +346,12 @@ For the implementation PR:
 
 ## Build checklist
 
-- [ ] PM/main review decides whether to board this as a new active plan.
+- [ ] Main boards the implementation PR; this plan-only branch does not edit
+      `docs/TASKS.md`.
+- [ ] Add exhaustive read-only action-kind partition.
+- [ ] Add fork-spawn catalog restriction by reusing existing
+      `tools` / `disallowedTools` filtering.
 - [ ] Register built-in `/research`.
-- [ ] Add structural read-only tool narrowing for the research fork.
+- [ ] Wire `/research` to consume the internal read-only fork restriction.
 - [ ] Add tests for listing, fork routing, tool narrowing, and disabled gates.
 - [ ] Sync `agent-skills.md` and `agent-delegation-runtime.md` in the same change.
