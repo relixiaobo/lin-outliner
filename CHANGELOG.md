@@ -371,6 +371,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Outline tag/checkbox syntax unified on one shared grammar (PR #222, codex)** —
+  `src/core/textSyntax.ts` becomes the canonical home for the outline tag token,
+  tag extraction/removal, canonical `formatTag` serialization, the live-`#`-trigger
+  query, and checkbox-marker parsing. The agent outline parser, paste metadata
+  harvest, live `#` trigger, agent projection, user-view context, and clipboard
+  serialization all import the shared helpers instead of four drifting local
+  regexes. User-visible changes: `formatTag` now bracket-escapes tag names
+  containing `]`, backslash, or newline-style characters (`\]`/`\\`/`\n`/`\r`/`\t`)
+  so such names round-trip, and emits bare `#中文` for Unicode names (one shared
+  bare-name class for parse and format); checkbox markers are recognized when the
+  marker is alone or whitespace-separated (`[x] body`, bare `[x]`/`[ ]`) while
+  `[x]body` stays literal text; empty tag names fail fast. Bracket tag names accept
+  raw backslashes. Pure refactor, no protocol change. Spec:
+  `docs/spec/agent-tool-design.md`, `docs/spec/ui-behavior.md`.
 - **Delegation run records + run-status converge onto one shape (C1+C2) (PR #225, cc-2)** —
   the three near-duplicate records describing a delegated (child) run now derive from one
   canonical `DelegationDetail` (`src/core/agentEventLog.ts`): the durable

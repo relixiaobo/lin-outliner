@@ -19,9 +19,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (outline-syntax-unification plan merged as draft, PR #219) |
+| Claude Code | `lin-outliner-cc/` | — | idle (authored outline-syntax-unification plan #219; built + shipped by codex as PR #222) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation-record-convergence C1+C2 merged, PR #225) |
-| Codex | `lin-outliner-codex/` | — | idle (agent dock + channel config refinement merged, PR #217) |
+| Codex | `lin-outliner-codex/` | — | idle (outline-syntax-unification merged, PR #222) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (M3-C per-agent POV inspector merged, PR #212) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (main JSON store unification merged, PR #226) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
@@ -54,21 +54,20 @@ build-readiness first:
    layer over the already-shipped M3 Channel + coordinator runtime
    (#179/#200/#202/#212), not new architecture. ONE PR, broad-but-mechanical
    renderer blast radius.
-3. **`outline-syntax-unification`** (low, *Outliner & UI polish*) — reviewed; PM
-   re-affirmed the two tag decisions; **needs a separate build GO**. Smallest blast
-   radius (pure `core/textSyntax.ts` token-grammar refactor, no protocol change).
+3. ~~**`outline-syntax-unification`**~~ — **shipped (PR #222, codex)**; see Recently
+   completed. The canonical `core/textSyntax.ts` token grammar now backs all
+   consumers.
 
-**Collision map — no blocking overlap.** The only shared file is
-`agentNodeToolProjection.ts` (agent-file F3's asset projection vs
-outline-syntax's `tagLabel → formatTag`) — different functions; whoever lands
-second rebases. `channel-async-message-bus` touches a disjoint renderer set. All
-three can run in parallel on separate clones.
+**Collision map — no blocking overlap.** `channel-async-message-bus` touches a
+disjoint renderer set. (`outline-syntax-unification` already landed; its only
+shared file `agentNodeToolProjection.ts` `tagLabel → formatTag` is now on `main`,
+so agent-file F3's asset projection rebases on top.) The remaining lanes can run
+in parallel on separate clones.
 
 **Recommended sequence (WIP cap = 2 significant in review):** `agent-file-model`
 (F1 first) + `channel-async-message-bus` (after ratify) as the two significant
-lanes; `outline-syntax-unification` + boarded fast-tracks
-(`focus-and-selection-polish`, `renderer-state-hygiene`) as uncapped background
-fill. Clone assignment is the PM's dispatch call.
+lanes; boarded fast-tracks (`focus-and-selection-polish`, `renderer-state-hygiene`)
+as uncapped background fill. Clone assignment is the PM's dispatch call.
 
 **Just merged:** #217 Agent dock + channel config refinement (codex — child-window
 agent/channel create-edit flows, deep-link fixes, built-in-assistant dispatch +
@@ -77,13 +76,6 @@ Redesign (codex-3), #216 Compact loaded-skill tool calls (codex-2 + main polish)
 #214 Skillify built-in path fix + skill-write permission simplification (codex-2),
 #208 Tana-style references experience (codex-3), and #213 Agent authoring cleanups
 (codex-4) — see Recently completed.
-
-**Draft plan catalogued (2026-06-13):** #219 `outline-syntax-unification` (cc) —
-reviewed (plan pass: 5 findings + 2 process notes folded in & verified against the
-code), PM **re-affirmed** the two paste tag-behavior decisions (exclude hex-color
-literals everywhere; paste accepts bracket forms + Unicode). Stays `status: draft`,
-`priority: low`; **build needs a separate PM GO** — the checklist is gated. Plan:
-`docs/plans/outline-syntax-unification.md`.
 
 **Known-flaky core test (pre-existing, *not* a #217 regression; fast-track fix
 welcome):** `agentRuntimeSkillsIntegration.test.ts` › *"clears pending permission
@@ -476,14 +468,6 @@ Standalone agent items (not part of the program):
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
   `docs/spec/outliner-parity-matrix.md`. See `docs/plans/nodex-parity-decisions.md`.
-- **outline-syntax-unification** (low, plan file, **draft — reviewed; PM
-  re-affirmed both tag decisions; needs a separate build GO**) — one canonical
-  token grammar in `src/core/textSyntax.ts` (tag + checkbox) imported by all three
-  consumers (agent parser, paste parser, live `#`-trigger), fixing the four-way
-  `#tag` drift; each parser keeps its divergent structure/format layer. Pure
-  refactor, no protocol change, ONE PR. Minor coordination with `agent-file-model`
-  F3 on `agentNodeToolProjection.ts` (`tagLabel → formatTag`). See
-  `docs/plans/outline-syntax-unification.md`.
 - **focus-and-selection-polish** (P2, *fast-track, no plan file* — diagnosis is the
   contract, rules PM-ratified 2026-06-10; ONE renderer-only PR, four small complete
   behaviors):
@@ -612,6 +596,32 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **outline-syntax-unification — one canonical token grammar in `core/textSyntax.ts`**
+  (codex, PR #222, plan-track) — collapsed the four-way `#tag` / checkbox drift into a
+  single shared grammar. `src/core/textSyntax.ts` is now the canonical home for the
+  tag token (`TAG_TOKEN_SOURCE` over `#tag` / `#中文` / `[[#tag]]` / `#[[multi word]]`),
+  tag extraction/removal (`matchTagTokens` / `extractTags` / `removeTagTokens`),
+  canonical serialization (`formatTag` + the shared `canWriteBareTagName` predicate,
+  so bare-parse and bare-format use ONE Unicode class — `#中文` round-trips bare),
+  the live-`#`-trigger query (`TAG_TRIGGER_QUERY_PATTERN`), and checkbox-marker parsing
+  (`parseCheckboxMarker`). The agent outline parser, paste metadata harvest, live `#`
+  trigger, agent projection (`tagLabel`), user-view context (`tagLabels`), and clipboard
+  serialization (`rowClipboardLabel`) all import the shared helpers; each consumer keeps
+  only its own structure/format layer. New: escaped-bracket tag names so `formatTag`
+  round-trips names with `]`, backslash, and newline-style chars (`\]`/`\\`/`\n`/`\r`/`\t`);
+  empty tag names now fail fast; checkbox markers parse when alone or whitespace-separated
+  (`[x] body` / bare `[x]`), while `[x]body` stays literal. Pure refactor, no protocol
+  change. Gate (main): `/code-review high` (7 angles) — surfaced 7 issues, all fixed by
+  codex across two follow-up commits: a missed third tag serializer (`rowClipboardLabel`
+  now uses `formatTag`), a stale divergence comment, the empty-checkbox regression, the
+  formatTag ASCII/Unicode asymmetry, and an O(N·text) field-boundary rescan; the
+  raw-backslash fix briefly introduced a **catastrophic-backtracking ReDoS** in
+  `BRACKET_TAG_NAME` (ambiguous `\`-overlap between the escape and raw branches — ~2ⁿ on a
+  backslash run), caught at the gate and fixed with an unambiguous `(?:\\[^\n]|[^\]\\\n])+`
+  (now linear at n=20000) plus a guard test. Design folded into
+  `docs/spec/agent-tool-design.md` + `docs/spec/ui-behavior.md`; plan archived. Typecheck
+  clean, test:core 972/0, test:renderer 439/0, docs:check OK (post-merge integration on
+  current `main` re-verified — no file overlap with #224/#225/#226).
 - **delegation-record-convergence — one `DelegationDetail`, one run-status vocabulary (C1+C2)**
   (cc-2, PR #225, plan-track) — surfaced by **PR #221**'s hygiene pass, which fixed behavior
   but deliberately left shape. **C1**: the three near-duplicate delegated-run records now
