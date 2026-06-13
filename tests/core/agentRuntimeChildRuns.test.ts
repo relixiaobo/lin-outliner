@@ -2314,6 +2314,88 @@ describe('agent runtime childRuns', () => {
     // cannot surface the completed first run's "first result".
     expect((failed as { result?: string }).result).toBeUndefined();
   });
+
+  test('a resumed run stopped before it produces new output does not salvage the prior result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-stop-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-resume-stop-data-'));
+    roots.push(localRoot, dataRoot);
+
+    // The resumed continuation blocks on this barrier, so the test can stop it
+    // while it is in-flight — BEFORE it has produced any new assistant text.
+    let releaseResume!: () => void;
+    const resumeBlocked = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    let resumePickEntered = false;
+
+    // Content-dispatched (order-independent: the background child races the parent).
+    // The resume context contains BOTH 'Do the first pass' and 'Stop me now', so
+    // the resume branch must be checked first (cf. the resume-fail test above).
+    const streamFn = respondingStream((context) => {
+      const text = textFromContext(context);
+      if (text.includes('Stop me now')) {
+        resumePickEntered = true;
+        return resumeBlocked.then(() => fauxAssistantMessage(fauxText('late result after release')));
+      }
+      if (text.includes('Do the first pass')) {
+        return fauxAssistantMessage(fauxText('first result'));
+      }
+      if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'completes then is stopped on resume',
+            prompt: 'Do the first pass.',
+            agent_type: 'general',
+            run_in_background: true,
+            name: 'resume-stop',
+          }, { id: 'tool-agent-1' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('ack'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then is stopped.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+
+    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+
+    // Resume, then stop once the continuation is genuinely in-flight (its model
+    // call entered) but before it appends any new assistant text.
+    await runtime.childRunSend(conversation.conversationId, childRunId, 'Stop me now before any new output.');
+    await waitFor(() => resumePickEntered);
+    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
+    expect(stopped).toMatchObject({ agent_id: childRunId, status: 'stopped' });
+
+    // The seeded history (carrying the completed "first result") sits below the
+    // salvage floor, so the stop salvages nothing — result must NOT regress to
+    // the prior round's text. This is the stop-side mirror of the resume→fail case.
+    const after = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(after).toMatchObject({ agent_id: childRunId, status: 'stopped' });
+    expect((after as { result?: string }).result).toBeUndefined();
+
+    releaseResume();
+  });
 });
 
 describe('extractPartialAssistantText (stop-salvage primitive)', () => {

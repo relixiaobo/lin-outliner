@@ -274,6 +274,15 @@ interface AgentRunRecord {
    */
   ledgerSeededMessages: WeakSet<AgentMessage>;
   result?: string;
+  /**
+   * Index into `agent.state.messages` marking where the CURRENT live span
+   * begins — reset on resume (the restored history seed) and on compaction (the
+   * folded-away span). `stop` salvages partial assistant text only from here on,
+   * so a resumed run that is stopped before it produces NEW output cannot report
+   * the previous round's text (the completion path, which legitimately returns
+   * the conversation's final answer, scans the whole array instead).
+   */
+  salvageFromIndex?: number;
   error?: string;
   completion?: Promise<void>;
   detached: boolean;
@@ -574,6 +583,10 @@ export class AgentDelegationRuntime {
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
       }
+      // Rebuild the live agent BEFORE mutating run state: if the harness build
+      // throws, the run keeps its prior terminal (result + status) instead of
+      // being stranded as `running` with no agent and its result wiped.
+      await this.ensureLiveAgent(run);
       run.status = 'running';
       run.error = undefined;
       // Clear the prior terminal's salvaged/completed result so a resumed run
@@ -583,7 +596,10 @@ export class AgentDelegationRuntime {
       run.detached = true;
       run.terminalNotificationSent = false;
       run.updatedAt = Date.now();
-      await this.ensureLiveAgent(run);
+      // The restored history is the continuation seed, not this run's output:
+      // salvage on a later `stop` starts after it (the new prompt + response
+      // appended by `runChildAgent` below come after this floor).
+      run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
       await this.host.childRunStatusChanged(snapshotRun(run));
       releaseStartupSlot();
       run.completion = this.runChildAgent(run, [message], undefined, true);
@@ -601,13 +617,17 @@ export class AgentDelegationRuntime {
       run.status = 'stopped';
       run.completedAt = Date.now();
       run.updatedAt = run.completedAt;
-      // Salvage whatever the run produced before we abort, so the synchronous
-      // tool result and the terminal notification carry the partial work
-      // instead of an empty result. Overwrite unconditionally, like the
-      // completion path: a re-stop after a resume must report the LATEST partial,
-      // not a stale one (`send` clears `run.result` on resume).
+      // Salvage whatever the CURRENT live span produced before we abort, so the
+      // synchronous tool result and the terminal notification carry the partial
+      // work instead of an empty result. Scan only from `salvageFromIndex` (the
+      // resume/compaction floor) so a resumed run stopped before it produces new
+      // output reports nothing stale — the prior round's text sits below the
+      // floor. Overwrite unconditionally when there IS a new partial, like the
+      // completion path.
       if (run.agent) {
-        const partial = extractPartialAssistantText(run.agent.state.messages as AgentMessage[]);
+        const since = run.salvageFromIndex ?? 0;
+        const liveSpan = (run.agent.state.messages as AgentMessage[]).slice(since);
+        const partial = extractPartialAssistantText(liveSpan);
         if (partial !== undefined) run.result = partial;
       }
       run.agent?.abort();
@@ -1119,6 +1139,10 @@ export class AgentDelegationRuntime {
       run.messages = compactedMessages.map(cloneAgentMessage);
       if (run.agent) run.agent.state.messages = compactedMessages as never;
       run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(compactedMessages);
+      // The folded-away span is below the new floor: a stale pre-compaction
+      // index would otherwise either hide real post-compaction output (index >
+      // new length) or salvage the summary root. Only NEW output counts now.
+      run.salvageFromIndex = compactedMessages.length;
       run.autoCompactConsecutiveFailures = 0;
       run.updatedAt = Date.now();
       // Event-sourced ([[agent-run-unification]] Design 4): the ledger appends a
