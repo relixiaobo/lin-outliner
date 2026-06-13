@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent file outputs render as file chips, not raw JSON (PR #224, cc)** — a
+  successful `file_write` / `file_edit` now shows an always-visible **local-file
+  chip** (basename) below the tool summary — the same `InlineFileReference` the
+  agent's prose file references use, so hover-preview and click-to-open into the
+  `FilePreviewPanel` come for free from the app-wide `InlineFilePreviewLayer` (a
+  produced file reads identically to a referenced one) — plus an **inspectable
+  unified diff** in the expand panel, rendered through the shared Shiki `diff`
+  grammar. Previously the raw model-visible envelope
+  (`{ ok, data: { filePath, structuredPatch } }`) was dumped into the conversation.
+  The chip path is read from the persisted model-visible content (not
+  `result.details`, which the render projection drops), so it survives a reload.
+  `file_write` gains an icon (`FilePlus2`) and verb; raw input/output JSON is hidden
+  for successful file tools (error results keep it). Renderer + i18n (en/zh-Hans)
+  only — no tool-protocol or permission change. Implements F1 of
+  `docs/plans/agent-file-artifact-model.md`. Spec:
+  `docs/spec/agent-event-log-rendering.md`.
 - **Tana-style References experience (PR #208, codex-3)** — every `NodePanel`
   whose root node has at least one linked reference or unlinked textual mention
   now shows a bottom **References** footer (collapsed by default, hidden when

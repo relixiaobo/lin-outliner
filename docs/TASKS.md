@@ -43,9 +43,10 @@ build-readiness first:
 
 1. **`agent-file-model`** (P1, *Files & media*) — **no gate left**: the 4 decisions
    are PM-ratified (2026-06-13). Ships as a SET of independent PRs (F1→F4); **F1
-   (render agent file outputs — the reported bug) is shippable today** — its only
-   dependency, file-preview PR-1 local-file preview, is confirmed merged (#210).
-   F2/F3/F4 follow as independent PRs. → ready to dispatch now.
+   (render agent file outputs — the reported bug) shipped (#224)** — file outputs
+   now render as a previewable local-file chip + inspectable diff, not raw JSON.
+   F2/F3/F4 follow as independent PRs (F2 app-owned workdir next). → F2 ready to
+   dispatch now.
 2. **`channel-async-message-bus`** (P1, *Agent capabilities*) — **needs a one-minute
    PM ratification** before code: confirm (a) the whole-utterance-delivery product
    bet (Channels render replies on completion, no token streaming) and (b) the
@@ -451,8 +452,9 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **agent-file-model** (P1, plan file, **draft — PM-ratified 4 decisions 2026-06-13,
-  ready to build; supersedes the closed #218, ships via #220**) — give agent file
+- **agent-file-model** (P1, plan file, **in-progress — F1 shipped (#224); F2–F4
+  remain. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
+  #220**) — give agent file
   handling one shape: the agent lives in a path-addressed working directory, the
   document in the handle-addressed asset store (`asset://`), joined by two symmetric
   bridges (materialize handle→path on reference-in, ingest path→handle on
@@ -460,8 +462,9 @@ Standalone agent items (not part of the program):
   `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixes the lossy
   input path (a referenced outliner file reaches the agent today as a node with no
   readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
-  reported bug) · F2 app-owned workdir + scratch relocation · F3 materialize bridge ·
-  F4 ingest bridge — F1 first. See `docs/plans/agent-file-artifact-model.md`.
+  reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation ·
+  F3 materialize bridge · F4 ingest bridge — F2 next. See
+  `docs/plans/agent-file-artifact-model.md`.
 - **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
   (feature); see Recently completed. Plan archived `done`
   (`docs/plans/archive/file-attachments.md`).
@@ -631,6 +634,28 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   no collision with #179/#180.
 
 ## Recently completed
+
+- **Agent file outputs render as chips, not raw JSON (agent-file-model F1)**
+  (cc, PR #224, plan-track) — a successful `file_write` / `file_edit` previously
+  dumped its raw model-visible envelope (`{ ok, data: { filePath, structuredPatch }}`)
+  into the conversation. It now renders an always-visible **local-file chip**
+  (basename) — the same `InlineFileReference` the agent's prose file references use,
+  so hover-preview + click-to-open into the `FilePreviewPanel` come for free from
+  the app-wide `InlineFilePreviewLayer` (a produced file reads identically to a
+  referenced one) — plus an **inspectable unified diff** in the expand panel,
+  rendered through the shared Shiki `diff` grammar (no bespoke diff colors). The
+  parser reads the path + `structuredPatch` from the **persisted model-visible
+  content**, not `result.details` (dropped by the render projection), so it survives
+  a reload. New optional `attachments` slot on `AgentToolCallDisclosure`; `file_write`
+  gains an icon (`FilePlus2`) + verb; raw input/output JSON hidden for successful
+  file tools (error results keep it). Renderer + i18n (en/zh-Hans) only — no tool
+  protocol or permission change. Spec: `docs/spec/agent-event-log-rendering.md`. F1
+  of the `agent-file-artifact-model` SET plan (F2–F4 remain). Gate (main): manual
+  correctness review (parser verified against the real `visibleFileEdit` /
+  `visibleFileWrite` model-visible projections), typecheck + docs:check clean,
+  test:renderer 433/0, **visual verification light + dark** — chip + diff render at
+  parity with the existing JSON tool-output surface in both themes, and the chip
+  opens the `FilePreviewPanel`.
 
 - **Delegation runtime hygiene — stop-salvage + shared child-agent harness**
   (cc-2, PR #221, plan-track) — two behavioral fixes in the delegation runtime.
