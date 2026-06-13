@@ -371,6 +371,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **UI quality Layer 1 — composition rhythm + design-system consistency (PR #228, codex-2)** —
+  a CSS-only sweep (plus spec sync) shipping the two Layer-1 lanes of the UI-quality suite as one
+  pass. Composition tokens are centralised in `tokens.css`: the reading measure `--reading-max`
+  (720px) is split from the `--settings-content-max-width` (920px) utility cap, with
+  `--panel-content-max` aliased onto the reading measure; a `--title-display/-section/-group`
+  heading scale and a `--row-h-dense/-comfortable` row-height tier alias the existing values, so
+  these are tokenizations with no visual change. Visible alignments: the outliner / agent / panel
+  context menus, the agent-composer image preview, and the date popovers now use the shared glass
+  material (`--material-popover` + `--material-backdrop`, which carry the
+  `prefers-reduced-transparency` / high-contrast opaque fallback for free) on the
+  `--radius-overlay-sm` (10px) overlay radius rung; icon-only chrome controls (breadcrumb close,
+  page-back, panel close, view-toolbar pill, panel more-button) drop their box for pill geometry and
+  colour-only hover (B6); `:focus` becomes `:focus-visible` across fields and triggers with the
+  neutral focus ring, retiring the `--agent-accent` focus leak in the subagent follow-up textarea
+  (B3); chrome captions are `user-select: none` (B10); and the current agent conversation row uses
+  `--selection-bg` so it reads distinctly from hover. Spec corrections folded in: the product icon
+  library is documented as `lucide-react` (the prior "hand-curated inline-SVG set" description was
+  stale), and the design-system B2 one-liner now reflects that in-app theming drives
+  `nativeTheme.themeSource` with no renderer `[data-theme]` bridge. A post-merge cleanup dropped the
+  unconsumed `--row-h-compact` rung the lane had declared (agent rows stay compact via line/padding
+  geometry, not a fixed row height) and re-synced the spec. Design folded into
+  `docs/spec/design-system.md`.
 - **Responsive workspace robustness — rails, pane capacity, indentation, tag/breadcrumb overflow (PR #223, codex-2)** —
   at small window widths the floating sidebar and agent rail widths were independent and could
   reserve more horizontal space than the window could host; because the canvas hides horizontal

@@ -546,13 +546,9 @@ PR #120. `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract**
 (who owns which lines) and the three-layer build order. All nine were validated
 against `main` (post-#118) at the gate; findings are real with `file:line`.
 
-- **composition-rhythm** (P3, Layer 1) — cross-surface composition tokens: shared
-  reading measure (720, kept distinct from #118's 920 settings cap), row-height
-  tier, text-gutter alignment, heading scale, list-row idiom split, context-menu
-  glass/radius alignment. Land its tokens before the Layer-2 primitives (A7).
-- **design-system-consistency** (P3, Layer 1, **PM-ratified**) — icon shape/fill,
-  overlay radius (8→10), accent-focus neutrality, focus-visible, user-select,
-  spacing/z-index, spec sync (icons + the AGENTS.md B2 one-liner).
+Layer 1 shipped together in PR #228 (`composition-rhythm` + `design-system-consistency`,
+see Recently completed). Remaining Layer-2/3 lanes:
+
 - **button-primitive** (P2, Layer 2, **PM-ratified**) — a `<Button variant>`
   consolidating ~20 hand-rolled text-button stylings.
 - **input-primitive** (P2, Layer 2) — `<Input>/<Textarea>/<Select>/<Field>`;
@@ -594,6 +590,27 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **UI quality L1 — composition-rhythm + design-system-consistency**
+  (codex-2, PR #228, plan-track) — the two Layer-1 lanes of the UI-quality suite shipped as one
+  CSS-only sweep (plus spec sync). Composition tokens centralised: `--reading-max` (720) split from
+  the `--settings-content-max-width` (920) utility cap and `--panel-content-max` aliased onto the
+  reading measure; a `--title-display/-section/-group` heading scale and a `--row-h-dense/-comfortable`
+  row-height tier, all aliasing existing values (no visual shift). Visible alignments: outliner /
+  agent / panel context menus, the agent-composer image preview, and the date popovers converted to
+  the shared glass material (`--material-popover` + `--material-backdrop`, with the a11y opaque
+  fallback for free) on the `--radius-overlay-sm` (10px) overlay rung; icon-only chrome (breadcrumb
+  close, page-back, panel close, view-toolbar pill, more-button) dropped its box for pill geometry +
+  colour-only hover (B6); `:focus`→`:focus-visible` everywhere with the neutral focus ring, retiring
+  the `--agent-accent` focus leak (B3); chrome captions made `user-select: none` (B10); the current
+  agent conversation row uses `--selection-bg` so it stays distinct from hover. Spec corrections
+  folded in (A6): icon delivery is `lucide-react` (not a hand-curated SVG set) and the AGENTS.md B2
+  one-liner now reflects `nativeTheme.themeSource` (no renderer `[data-theme]` bridge). Gate (main):
+  typecheck + 443 renderer tests + 38 design-system guard e2e specs (typography-tokens,
+  window-material, workspace-layout, cursor-affordances) + docs:check all green; light + dark visual
+  verified on the workspace and the glass context menu. Design folded into
+  `docs/spec/design-system.md`; both plans archived. One post-merge fast-track cleanup dropped an
+  unconsumed `--row-h-compact` rung the lane had declared (no consumer; agent rows stay compact by
+  line/padding geometry) and re-synced the spec.
 - **responsive-robustness — rails coupled to canvas width, pane capacity gating, capped indentation**
   (codex-2, PR #223, plan-track) — first of the UI-quality suite's nine. Fixes real layout bugs at
   small window widths where the canvas hides horizontal overflow and the reading pane silently
