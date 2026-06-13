@@ -2168,9 +2168,9 @@ export class AgentRuntime {
           toolCallId: `skill-shell-${randomUUID()}`,
         });
       },
-      executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
+      executeIsolatedSkill: async ({ skill, renderedContent, parentToolCallId, readOnlyIsolated }) => {
         const current = this.currentRuntimeConversation(conversationRef.current);
-        if (!current) throw new Error('Cannot run forked skill before the agent conversation is ready.');
+        if (!current) throw new Error('Cannot run isolated skill before the agent conversation is ready.');
         const data = await current.delegationRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
@@ -2179,6 +2179,7 @@ export class AgentRuntime {
           model: skill.model,
           effort: skill.effort,
           allowedTools: skill.allowedTools,
+          readOnlyIsolated,
         }, undefined, parentToolCallId);
         return {
           agentId: data.agent_id,

@@ -53,10 +53,10 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Never edit built-in skills.',
     '',
     '3. Draft the supported `SKILL.md` shape.',
-    '   - Use YAML frontmatter only for supported fields: `description`, `when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context: fork`, `agent`, and `paths`.',
+    '   - Use YAML frontmatter only for supported fields: `description`, `when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `execution`, `agent`, and `paths`.',
     '   - Write a concise `description` and a precise `when_to_use` that includes positive examples and negative guidance for when not to auto-invoke.',
     '   - Add arguments only when future invocations need variable input.',
-    '   - Default to inline execution. Use `context: fork` only for self-contained work that benefits from isolation, and set `agent` only when a specific agent definition is essential.',
+    '   - Default to `execution: inline`. Use `execution: isolated` only for self-contained work that benefits from context isolation, and set `agent` only when a specific agent definition is essential.',
     '   - Keep instructions step-by-step with success criteria, expected artifacts, hard rules, and human checkpoints where they matter.',
     '',
     '4. Keep creation and update paths distinct.',
@@ -72,7 +72,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '',
     '6. Preview and confirm before writing.',
     '   - Show the complete `SKILL.md` for creation, or a focused diff for updates.',
-    '   - Include a short review summary: storage target, slash invocation form, model invocation state, future `allowed-tools`, inline or forked execution, and trust state.',
+    '   - Include a short review summary: storage target, slash invocation form, model invocation state, future `allowed-tools`, inline or isolated execution, and trust state.',
     '   - Ask "Save this skill?" with Save, revise, or cancel choices through `ask_user_question` when available. File permission only answers whether a write may happen; Skillify confirmation answers whether the reusable process is right.',
     '',
     '7. Write, report, and explain trust.',
@@ -82,6 +82,69 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - If validation fails, repair the draft and show the corrected preview again when the change is material.',
     '',
     'Do not write executable or binary support files in this workflow. Do not copy secrets into skills.',
+  ].join('\n'),
+}, {
+  name: 'research',
+  description: 'Research or explore a question in an isolated read-only child run.',
+  whenToUse: 'Use when the user asks to research, explore, inspect, map, survey, or verify context before deciding or editing. Examples: "research this area", "explore how backlinks work", "verify this assumption", "find the relevant files". Do not use for direct implementation or edits.',
+  argumentHint: '<question or area to research>',
+  argumentNames: ['question'],
+  execution: 'isolated',
+  readOnlyIsolated: true,
+  allowedTools: [
+    'node_search',
+    'node_read',
+    'file_read',
+    'file_glob',
+    'file_grep',
+    'web_search',
+    'web_fetch',
+    'recall',
+  ],
+  body: [
+    'You are a codebase research specialist running in an isolated child run of the current Tenon agent. You excel at thoroughly navigating and exploring existing context.',
+    '',
+    '=== CRITICAL: READ-ONLY MODE - NO MODIFICATIONS ===',
+    'This is a read-only exploration task. You are strictly prohibited from:',
+    '- Creating new files or support artifacts anywhere, including temporary files',
+    '- Modifying, deleting, moving, or copying existing files or outliner nodes',
+    '- Changing settings, installing dependencies, committing, or running shell commands',
+    '- Invoking skills or spawning, messaging, or stopping child agents',
+    '',
+    'Your role is exclusively to search, read, analyze, and report. The runtime also narrows your tool catalog to read-only tools; if a task needs edits, report the relevant findings and stop.',
+    '',
+    'Your strengths:',
+    '- Rapidly finding relevant files, nodes, specs, tests, and prior context',
+    '- Searching code and text with multiple keyword, symbol, and naming strategies',
+    '- Reading and connecting several files or nodes to understand architecture and behavior',
+    '- Investigating complex questions that require multi-step exploration',
+    '',
+    'Guidelines:',
+    '1. Restate the concrete research question and scope before searching.',
+    '2. Prefer local evidence first: node_search/node_read for outline context, file_glob for broad file pattern matching, file_grep for content and regex search, file_read when you know the specific path, and recall for relevant memory.',
+    '3. Start broad and narrow down. Use multiple search strategies if the first one does not find the right files; check related names, conventions, tests, specs, and call sites.',
+    '4. Adapt thoroughness to the caller: quick means basic targeted searches; medium means moderate exploration across likely locations; very thorough means comprehensive analysis across multiple locations and naming conventions.',
+    '5. Make efficient use of read/search tools. When independent searches or reads do not depend on each other, issue them in parallel.',
+    '6. Use web_search/web_fetch only when the question needs current or external information, or cannot be answered from local context.',
+    '7. Distinguish direct evidence from inference. Cite file paths, node references, memory references, or web URLs for every important finding.',
+    '8. Keep the result compact and useful to the caller. Do not include a tool-by-tool diary.',
+    '',
+    'Return this shape:',
+    '',
+    'Findings',
+    '- ...',
+    '',
+    'Evidence',
+    '- ...',
+    '',
+    'Confidence',
+    '- High/medium/low, with the reason.',
+    '',
+    'Open questions',
+    '- ...',
+    '',
+    'Next probes',
+    '- ...',
   ].join('\n'),
 }];
 
@@ -119,7 +182,7 @@ export interface SkillLoadOptions {
   conversationId?: string;
   permissionScopeProvider?: () => string | null;
   executeSkillShell?: SkillShellExecutor;
-  executeForkedSkill?: SkillForkExecutor;
+  executeIsolatedSkill?: SkillIsolatedExecutor;
   skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   provenanceStore?: AgentSkillProvenanceStore;
 }
@@ -173,9 +236,10 @@ export interface BuiltInSkillInput {
   version?: string;
   model?: string;
   effort?: string;
-  context?: 'inline' | 'fork';
+  execution?: 'inline' | 'isolated';
   agent?: string;
   paths?: string[];
+  readOnlyIsolated?: boolean;
 }
 
 export interface SkillShellExecutionInput {
@@ -200,15 +264,16 @@ interface InvokeSkillInput {
   signal?: AbortSignal;
 }
 
-export interface SkillForkExecutionInput {
+export interface SkillIsolatedExecutionInput {
   skill: SkillDefinition;
   renderedContent: string;
   args: string;
   trigger: 'agent' | 'slash';
   parentToolCallId?: string;
+  readOnlyIsolated?: boolean;
 }
 
-export interface SkillForkExecutionResult {
+export interface SkillIsolatedExecutionResult {
   agentId: string;
   agentType: string;
   status: string;
@@ -216,7 +281,7 @@ export interface SkillForkExecutionResult {
   error?: string;
 }
 
-export type SkillForkExecutor = (input: SkillForkExecutionInput) => Promise<SkillForkExecutionResult>;
+export type SkillIsolatedExecutor = (input: SkillIsolatedExecutionInput) => Promise<SkillIsolatedExecutionResult>;
 
 export interface SkillListingReservation {
   text: string;
@@ -232,11 +297,11 @@ export interface SkillListingStateEntry {
 type SkillInvocationResult =
   | {
     ok: true;
-    execution: 'inline' | 'fork';
+    execution: 'inline' | 'isolated';
     skill: SkillDefinition;
     renderedContent: string;
     message: UserMessage;
-    forked?: SkillForkExecutionResult;
+    isolated?: SkillIsolatedExecutionResult;
   }
   | {
     ok: false;
@@ -248,7 +313,7 @@ type SkillInvocationResult =
 export interface SkillToolData {
   success: boolean;
   skill: string;
-  status?: 'loaded' | 'forked';
+  status?: 'loaded' | 'isolated';
   allowedTools?: string[];
   model?: string;
   effort?: string;
@@ -321,7 +386,7 @@ export class AgentSkillRuntime {
   private readonly conversationId: string;
   private readonly permissionScopeProvider?: () => string | null;
   private readonly executeSkillShell?: SkillShellExecutor;
-  private readonly executeForkedSkill?: SkillForkExecutor;
+  private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
@@ -336,7 +401,7 @@ export class AgentSkillRuntime {
     this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
     this.permissionScopeProvider = options.permissionScopeProvider;
     this.executeSkillShell = options.executeSkillShell;
-    this.executeForkedSkill = options.executeForkedSkill;
+    this.executeIsolatedSkill = options.executeIsolatedSkill;
     this.skillTrustApprovalHandler = options.skillTrustApprovalHandler;
   }
 
@@ -563,36 +628,37 @@ export class AgentSkillRuntime {
       };
     }
 
-    if (skill.context === 'fork') {
-      if (!this.executeForkedSkill) {
+    if (skill.execution === 'isolated') {
+      if (!this.executeIsolatedSkill) {
         return {
           ok: false,
-          code: 'fork_not_supported',
-          message: `Skill ${skill.name} requests forked execution, but no fork executor is available in this runtime.`,
+          code: 'isolated_execution_not_supported',
+          message: `Skill ${skill.name} requests isolated execution, but no isolated executor is available in this runtime.`,
           skill,
         };
       }
       try {
-        const forked = await this.executeForkedSkill({
+        const isolated = await this.executeIsolatedSkill({
           skill,
           renderedContent,
           args: input.args ?? '',
           trigger: input.trigger,
           parentToolCallId: input.parentToolCallId,
+          readOnlyIsolated: this.registry.isBuiltInReadOnlyIsolatedSkill(skill),
         });
         return {
           ok: true,
-          execution: 'fork',
+          execution: 'isolated',
           skill,
           renderedContent,
-          message: createForkedSkillResultMessage(skill, forked, input.trigger === 'slash'),
-          forked,
+          message: createIsolatedSkillResultMessage(skill, isolated, input.trigger === 'slash'),
+          isolated,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
           ok: false,
-          code: 'skill_fork_failed',
+          code: 'isolated_execution_failed',
           message,
           skill,
         };
@@ -747,17 +813,17 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       const data: SkillToolData = {
         success: true,
         skill: invocation.skill.name,
-        status: invocation.execution === 'fork' ? 'forked' : 'loaded',
+        status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
         allowedTools: invocation.skill.allowedTools.length > 0 ? invocation.skill.allowedTools : undefined,
         model: invocation.skill.model,
         effort: invocation.skill.effort,
-        agent_id: invocation.forked?.agentId,
-        agent_type: invocation.forked?.agentType,
-        result: invocation.forked?.result,
-        error: invocation.forked?.error,
+        agent_id: invocation.isolated?.agentId,
+        agent_type: invocation.isolated?.agentType,
+        result: invocation.isolated?.result,
+        error: invocation.isolated?.error,
       };
-      if (invocation.execution === 'fork') {
-        const text = formatForkedSkillToolResult(invocation.skill, invocation.forked);
+      if (invocation.execution === 'isolated') {
+        const text = formatIsolatedSkillToolResult(invocation.skill, invocation.isolated);
         return {
           content: [{ type: 'text', text }],
           details: successEnvelope(SKILL_TOOL_NAME, data),
@@ -809,6 +875,7 @@ class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
   private readonly builtInSkills: BuiltInSkillInput[];
+  private readonly builtInReadOnlyIsolatedSkills: Set<string>;
   private additionalSkillDirectories: string[];
   private loaded = false;
   private readonly skills = new Map<string, SkillDefinition>();
@@ -825,8 +892,17 @@ class SkillRegistry {
     this.root = path.resolve(options.localRoot ?? process.cwd());
     this.includeUserSkills = options.includeUserSkills ?? true;
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
+    this.builtInReadOnlyIsolatedSkills = new Set(
+      this.builtInSkills
+        .filter((skill) => skill.readOnlyIsolated === true)
+        .map((skill) => normalizeSkillName(skill.name)),
+    );
     this.additionalSkillDirectories = normalizeAdditionalSkillDirectories(options.additionalSkillDirectories, this.root);
     this.provenanceStore = options.provenanceStore;
+  }
+
+  isBuiltInReadOnlyIsolatedSkill(skill: SkillDefinition): boolean {
+    return skill.source === 'built-in' && this.builtInReadOnlyIsolatedSkills.has(normalizeSkillName(skill.name));
   }
 
   async recordAgentSkillWrite(
@@ -1279,16 +1355,20 @@ async function loadSkillsFromDir(
       continue;
     }
 
-    const parsed = parseSkillMarkdown(raw);
-    skills.push(createSkillDefinition({
-      name: entry.name,
-      rootDir,
-      skillFile,
-      source,
-      body: parsed.body,
-      frontmatter: parsed.frontmatter,
-      contentHash: skillContentHash(raw),
-    }));
+    try {
+      const parsed = parseSkillMarkdown(raw);
+      skills.push(createSkillDefinition({
+        name: entry.name,
+        rootDir,
+        skillFile,
+        source,
+        body: parsed.body,
+        frontmatter: parsed.frontmatter,
+        contentHash: skillContentHash(raw),
+      }));
+    } catch (error) {
+      console.warn(`Skipping invalid skill ${skillFile}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   return skills;
 }
@@ -1347,7 +1427,7 @@ function createSkillDefinition(input: {
       : coerceString(input.frontmatter.model),
     effort: coerceString(input.frontmatter.effort),
     shell: coerceString(input.frontmatter.shell),
-    context: coerceString(input.frontmatter.context) === 'fork' ? 'fork' : 'inline',
+    execution: parseSkillExecutionFrontmatter(input.frontmatter),
     agent: coerceString(input.frontmatter.agent),
     paths: parsePathsFrontmatter(input.frontmatter.paths),
     contentLength: input.body.length,
@@ -1367,7 +1447,7 @@ function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition
     ...(input.version ? { version: input.version } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
-    ...(input.context === 'fork' ? { context: 'fork' } : {}),
+    ...(input.execution === 'isolated' ? { execution: 'isolated' } : {}),
     ...(input.agent ? { agent: input.agent } : {}),
     ...(input.paths?.length ? { paths: input.paths } : {}),
   };
@@ -1509,9 +1589,9 @@ function createSkillLoadedMessage(skill: SkillDefinition, renderedContent: strin
   return createHiddenUserMessage(`${metadata}\n\n${renderedContent}`);
 }
 
-function createForkedSkillResultMessage(
+function createIsolatedSkillResultMessage(
   skill: SkillDefinition,
-  result: SkillForkExecutionResult,
+  result: SkillIsolatedExecutionResult,
   includeMetadata: boolean,
 ): UserMessage {
   const metadata = includeMetadata
@@ -1534,9 +1614,9 @@ function createForkedSkillResultMessage(
   return createHiddenUserMessage(body);
 }
 
-function formatForkedSkillToolResult(
+function formatIsolatedSkillToolResult(
   skill: SkillDefinition,
-  result: SkillForkExecutionResult | undefined,
+  result: SkillIsolatedExecutionResult | undefined,
 ): string {
   if (!result) return `Skill ${skill.name} completed in an isolated child run.`;
   return [
@@ -1787,6 +1867,20 @@ function normalizeSkillName(name: string): string {
 
 function parseBooleanFrontmatter(value: unknown, fallback: boolean): boolean {
   return parseBoolean(value) ?? fallback;
+}
+
+function parseSkillExecutionFrontmatter(frontmatter: Record<string, unknown>): SkillDefinition['execution'] {
+  const rawExecution = coerceString(frontmatter.execution);
+  const execution = rawExecution?.toLowerCase();
+  if (execution === 'isolated') return 'isolated';
+  if (execution === 'inline') return 'inline';
+  if (rawExecution !== undefined) {
+    throw new Error(`Invalid skill execution value "${rawExecution}". Use "inline" or "isolated".`);
+  }
+  // Legacy alias retained for existing skills authored before the public DSL
+  // described skill execution as `context: fork`.
+  if (coerceString(frontmatter.context) === 'fork') return 'isolated';
+  return 'inline';
 }
 
 function parseArgumentNames(value: unknown): string[] {

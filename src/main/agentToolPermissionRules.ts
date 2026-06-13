@@ -160,7 +160,6 @@ export const SAFE_AUTO_ALLOW_TOOL_NAMES: readonly string[] = [
   'file_grep',
   'node_read',
   'node_search',
-  'operation_history',
   'recall',
   'task_stop',
   'web_search',
@@ -198,6 +197,7 @@ const KNOWN_TOOL_NAMES = new Set<string>([
   'node_create',
   'node_delete',
   'node_edit',
+  'operation_history',
   'skill',
   'web_fetch',
 ]);

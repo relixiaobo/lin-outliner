@@ -4,6 +4,9 @@ import {
   actionKindRuleValue,
   defaultActionDecision,
   effectiveActionDecision,
+  agentToolActionKindProfile,
+  isReadOnlyActionKind,
+  readOnlyAgentToolNames,
   safetyModeDefaultActionDecision,
   type AgentToolActionKind,
 } from '../../src/core/agentPermissionModel';
@@ -45,6 +48,49 @@ describe('agent permission model', () => {
     expect(effectiveActionDecision('shell.unknown', 'full_access', EMPTY_OVERRIDES)).toBe('deny');
   });
 
+  test('partitions read-only action kinds and derives safe catalog tools', () => {
+    for (const actionKind of SUPPORTED_AGENT_TOOL_ACTION_KINDS) {
+      expect(typeof isReadOnlyActionKind(actionKind)).toBe('boolean');
+    }
+
+    expect(isReadOnlyActionKind('file.read.allowed_file_area')).toBe(true);
+    expect(isReadOnlyActionKind('web.search')).toBe(true);
+    expect(isReadOnlyActionKind('agent.delegate.status')).toBe(true);
+    expect(isReadOnlyActionKind('file.edit.allowed_file_area')).toBe(false);
+    expect(isReadOnlyActionKind('agent.skill.invoke')).toBe(false);
+    expect(isReadOnlyActionKind('agent.delegate.spawn')).toBe(false);
+
+    const tools = readOnlyAgentToolNames();
+    expect(tools).toEqual(expect.arrayContaining([
+      'file_read',
+      'file_glob',
+      'file_grep',
+      'node_read',
+      'node_search',
+      'web_search',
+      'web_fetch',
+      'recall',
+      'AgentStatus',
+    ]));
+    expect(tools).not.toContain('file_write');
+    expect(tools).not.toContain('file_edit');
+    expect(tools).not.toContain('node_edit');
+    expect(tools).not.toContain('operation_history');
+    expect(tools).not.toContain('bash');
+    expect(tools).not.toContain('skill');
+    expect(tools).not.toContain('Agent');
+    expect(tools).not.toContain('AgentSend');
+    expect(tools).not.toContain('AgentStop');
+    expect(tools).not.toContain('config');
+
+    expect(readOnlyAgentToolNames(['file_read', 'file_write', 'AgentStatus'])).toEqual([
+      'file_read',
+      'AgentStatus',
+    ]);
+    expect(agentToolActionKindProfile('operation_history', { action: 'list' })).toEqual(['outline.read']);
+    expect(agentToolActionKindProfile('operation_history', { action: 'undo' })).toEqual(['outline.edit']);
+  });
+
   test('explicit exceptions take precedence over mode defaults', () => {
     expect(effectiveActionDecision('web.fetch', 'full_access', {
       allow: [actionKindRuleValue('web.fetch')],
@@ -71,7 +117,7 @@ describe('agent permission model', () => {
         args: { url: 'https://example.com' },
       },
       {
-        actionKind: 'file.edit.allowed_file_area',
+        actionKind: 'file.write.allowed_file_area',
         toolName: 'file_write',
         args: { file_path: `${WORKSPACE_ROOT}/a.txt`, content: 'a' },
       },

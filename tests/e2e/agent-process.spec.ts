@@ -464,7 +464,7 @@ test.describe('agent process disclosure', () => {
     await expect(page.getByText('3 matches: Agent System')).toBeVisible();
   });
 
-  test('renders loaded skill calls as a compact light and dark affordance while forked skills stay expandable', async ({ page }) => {
+  test('renders loaded skill calls as a compact light and dark affordance while isolated skills stay expandable', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     const loadedAssistant = {
       role: 'assistant',
@@ -481,7 +481,7 @@ test.describe('agent process disclosure', () => {
         arguments: { skill: 'review-pr', args: '214 --focus rendering' },
       }],
     };
-    const forkedAssistant = {
+    const isolatedAssistant = {
       role: 'assistant',
       api: 'responses',
       provider: 'openai',
@@ -491,7 +491,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_200,
       content: [{
         type: 'toolCall',
-        id: 'tool-skill-forked-e2e',
+        id: 'tool-skill-isolated-e2e',
         name: 'skill',
         arguments: { skill: 'investigate', args: 'render regression' },
       }],
@@ -512,12 +512,12 @@ test.describe('agent process disclosure', () => {
           isError: false,
           timestamp: 1_800_000_001_101,
         },
-        forkedAssistant,
+        isolatedAssistant,
         {
           role: 'toolResult',
-          toolCallId: 'tool-skill-forked-e2e',
+          toolCallId: 'tool-skill-isolated-e2e',
           toolName: 'skill',
-          content: [{ type: 'text', text: 'Forked skill result.' }],
+          content: [{ type: 'text', text: 'Isolated skill result.' }],
           isError: false,
           timestamp: 1_800_000_001_201,
         },
@@ -527,8 +527,8 @@ test.describe('agent process disclosure', () => {
         message: loadedAssistant,
         branches: null,
       }, {
-        nodeId: 'assistant-node-forked-skill',
-        message: forkedAssistant,
+        nodeId: 'assistant-node-isolated-skill',
+        message: isolatedAssistant,
         branches: null,
       }],
       streamingMessage: null,
@@ -553,12 +553,12 @@ test.describe('agent process disclosure', () => {
     expect(light.argsColor).toBe(light.iconColor);
     expect(light.argsColor).not.toBe(light.color);
 
-    const forkedToggle = page.locator('.agent-tool-call-toggle').filter({ hasText: 'skill' });
-    await expect(forkedToggle).toHaveCount(1);
-    await forkedToggle.click();
+    const isolatedToggle = page.locator('.agent-tool-call-toggle').filter({ hasText: 'skill' });
+    await expect(isolatedToggle).toHaveCount(1);
+    await isolatedToggle.click();
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Input' })).toBeVisible();
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
-    await expect(page.getByText('Forked skill result.')).toBeVisible();
+    await expect(page.getByText('Isolated skill result.')).toBeVisible();
 
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect.poll(async () => (await loadedSkillMetrics(loaded)).color).not.toBe(light.color);

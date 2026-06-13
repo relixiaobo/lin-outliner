@@ -185,14 +185,14 @@ describe('agent tool output view', () => {
     expect(rendered.container.querySelector('.agent-loaded-skill-args')?.getAttribute('title')).toBe('123 --diff');
   });
 
-  test('keeps forked skill calls on the standard input and output disclosure path', () => {
+  test('keeps isolated skill calls on the standard input and output disclosure path', () => {
     const result: AgentToolResultWithPayloads = {
       role: 'toolResult',
-      toolCallId: 'tool-skill-forked',
+      toolCallId: 'tool-skill-isolated',
       toolName: 'skill',
       timestamp: 1,
       isError: false,
-      content: [{ type: 'text', text: 'Forked skill result.' }],
+      content: [{ type: 'text', text: 'Isolated skill result.' }],
       details: {
         ok: true,
         tool: 'skill',
@@ -201,8 +201,8 @@ describe('agent tool output view', () => {
         data: {
           success: true,
           skill: 'investigate',
-          status: 'forked',
-          result: 'Forked skill result.',
+          status: 'isolated',
+          result: 'Isolated skill result.',
         },
       },
     };
@@ -213,7 +213,7 @@ describe('agent tool output view', () => {
         pendingToolCallIds={new Set()}
         result={result}
         conversationId="conversation-1"
-        toolCall={{ type: 'toolCall', id: 'tool-skill-forked', name: 'skill', arguments: { skill: 'investigate', args: 'regression' } } satisfies ToolCall}
+        toolCall={{ type: 'toolCall', id: 'tool-skill-isolated', name: 'skill', arguments: { skill: 'investigate', args: 'regression' } } satisfies ToolCall}
         turnActive={false}
       />,
     );
@@ -224,7 +224,7 @@ describe('agent tool output view', () => {
     expect(rendered.container.querySelector('.agent-tool-call-panel')).not.toBeNull();
     expect(text).toContain('Input');
     expect(text).toContain('Output');
-    expect(text).toContain('Forked skill result.');
+    expect(text).toContain('Isolated skill result.');
   });
 
   // F1: a successful file_write must render the produced file as a previewable

@@ -722,18 +722,18 @@ describe('agent runtime skill integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
-  test('runs context-fork skills through a sidechain child run and returns only the result to the parent', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-data-'));
+  test('runs isolated-execution skills through a sidechain child run and returns only the result to the parent', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-isolated-skill-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-isolated-skill-data-'));
     roots.push(localRoot, dataRoot);
 
-    await createSkill(localRoot, 'fork-skill', [
+    await createSkill(localRoot, 'isolated-skill', [
       '---',
-      'description: Use when fork skill execution is requested.',
-      'context: fork',
-      'allowed-tools: Bash(echo fork-ok*)',
+      'description: Use when isolated skill execution is requested.',
+      'execution: isolated',
+      'allowed-tools: Bash(echo isolated-ok*)',
       '---',
-      'FORK_SKILL_BODY for $ARGUMENTS.',
+      'ISOLATED_SKILL_BODY for $ARGUMENTS.',
     ].join('\n'));
 
     const childContexts: string[] = [];
@@ -742,26 +742,26 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('skill', {
-            skill: 'fork-skill',
+            skill: 'isolated-skill',
             args: 'target-doc',
-          }, { id: 'tool-skill-fork' }),
+          }, { id: 'tool-skill-isolated' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
           childContexts.push(JSON.stringify(context.messages));
           return fauxAssistantMessage([
             fauxToolCall('bash', {
-              command: 'echo fork-ok',
-              description: 'Print fork skill permission marker',
-            }, { id: 'tool-fork-bash' }),
+              command: 'echo isolated-ok',
+              description: 'Print isolated skill permission marker',
+            }, { id: 'tool-isolated-bash' }),
           ], { stopReason: 'toolUse' });
         },
         (context) => {
           childContexts.push(JSON.stringify(context.messages));
-          return fauxAssistantMessage(fauxText('Forked skill result.'));
+          return fauxAssistantMessage(fauxText('Isolated skill result.'));
         },
         (context) => {
           parentContexts.push(JSON.stringify(context.messages));
-          return fauxAssistantMessage(fauxText('Parent consumed forked skill result.'));
+          return fauxAssistantMessage(fauxText('Parent consumed isolated skill result.'));
         },
       ],
       () => undefined,
@@ -788,25 +788,114 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    await acceptRuntimeSkill(runtime, created.conversationId, 'fork-skill');
-    await runtime.sendMessage(created.conversationId, 'Use the fork skill.');
+    await acceptRuntimeSkill(runtime, created.conversationId, 'isolated-skill');
+    await runtime.sendMessage(created.conversationId, 'Use the isolated skill.');
 
     expect(script.pendingCount()).toBe(0);
-    expect(childContexts.join('\n')).toContain('FORK_SKILL_BODY for target-doc.');
-    expect(childContexts.join('\n')).toContain('fork-ok');
-    expect(parentContexts.join('\n')).toContain('Forked skill result.');
-    expect(parentContexts.join('\n')).not.toContain('FORK_SKILL_BODY for target-doc.');
+    expect(childContexts.join('\n')).toContain('ISOLATED_SKILL_BODY for target-doc.');
+    expect(childContexts.join('\n')).toContain('isolated-ok');
+    expect(parentContexts.join('\n')).toContain('Isolated skill result.');
+    expect(parentContexts.join('\n')).not.toContain('ISOLATED_SKILL_BODY for target-doc.');
   });
 
-  test('fails context-fork skills with an explicit unknown agent instead of falling back to fork', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-unknown-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-skill-unknown-data-'));
+  test('runs built-in research skill as a read-only isolated run with mutating tools absent from the child catalog', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-skill-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-skill-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childToolNames: string[][] = [];
+    const parentContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('skill', {
+            skill: 'research',
+            args: 'map the agent skill runtime',
+          }, { id: 'tool-skill-research' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          childToolNames.push(context.tools?.map((tool) => tool.name) ?? []);
+          return fauxAssistantMessage(fauxText([
+            'Findings',
+            '- Research child inspected available context.',
+            '',
+            'Evidence',
+            '- Local runtime request.',
+            '',
+            'Confidence',
+            '- High, based on visible tool catalog.',
+          ].join('\n')));
+        },
+        (context) => {
+          parentContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage(fauxText('Parent consumed research result.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        permissionMode: 'restricted',
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Use research on the skill runtime.');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(childToolNames).toHaveLength(1);
+    const childTools = childToolNames[0] ?? [];
+    expect([...childTools].sort()).toEqual([
+      'file_read',
+      'file_glob',
+      'file_grep',
+      'web_search',
+      'web_fetch',
+      'node_read',
+      'node_search',
+      'recall',
+    ].sort());
+    expect(childTools).not.toContain('file_write');
+    expect(childTools).not.toContain('file_edit');
+    expect(childTools).not.toContain('runtime_status');
+    expect(childTools).not.toContain('doctor');
+    expect(childTools).not.toContain('node_create');
+    expect(childTools).not.toContain('node_edit');
+    expect(childTools).not.toContain('node_delete');
+    expect(childTools).not.toContain('operation_history');
+    expect(childTools).not.toContain('bash');
+    expect(childTools).not.toContain('skill');
+    expect(childTools).not.toContain('Agent');
+    expect(childTools).not.toContain('AgentStatus');
+    expect(childTools).not.toContain('AgentSend');
+    expect(childTools).not.toContain('AgentStop');
+    expect(parentContexts.join('\n')).toContain('Research child inspected available context.');
+  });
+
+  test('fails isolated-execution skills with an explicit unknown agent instead of falling back to fork', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-isolated-skill-unknown-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-isolated-skill-unknown-data-'));
     roots.push(localRoot, dataRoot);
 
     await createSkill(localRoot, 'unknown-agent-skill', [
       '---',
-      'description: Use when an unknown fork skill agent is requested.',
-      'context: fork',
+      'description: Use when an unknown isolated skill agent is requested.',
+      'execution: isolated',
       'agent: missing-specialist',
       '---',
       'UNKNOWN_AGENT_SKILL_BODY.',
@@ -849,7 +938,7 @@ describe('agent runtime skill integration', () => {
 
     const created = await runtime.restoreLatestConversation();
     await acceptRuntimeSkill(runtime, created.conversationId, 'unknown-agent-skill');
-    await runtime.sendMessage(created.conversationId, 'Use the unknown agent fork skill.');
+    await runtime.sendMessage(created.conversationId, 'Use the unknown agent isolated skill.');
 
     expect(script.pendingCount()).toBe(0);
     const parentText = parentContexts.join('\n');

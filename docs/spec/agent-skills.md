@@ -6,14 +6,25 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 
 Code-registered `built-in` skills load first. They are immutable, ship with the
 app, and cannot be shadowed by mutable local skills with the same name. The
-current built-in skill is `/skillify`, a user- and model-invocable workflow for
-creating or updating local skills through normal file tools. Its Skillify v2
-body analyzes the current conversation, chooses a Tenon skill path, drafts a
-complete `SKILL.md` or focused update diff, previews it in the assistant message,
-and confirms through `ask_user_question` when that interaction is available.
-Its `when_to_use` gates it to explicit user save/update requests, so a
-conversational "save this as a skill" routes through curated guidance instead
-of ad-hoc file writes.
+current built-in skills are `/skillify` and `/research`.
+
+`/skillify` is a user- and model-invocable workflow for creating or updating
+local skills through normal file tools. Its Skillify v2 body analyzes the current
+conversation, chooses a Tenon skill path, drafts a complete `SKILL.md` or focused
+update diff, previews it in the assistant message, and confirms through
+`ask_user_question` when that interaction is available. Its `when_to_use` gates
+it to explicit user save/update requests, so a conversational "save this as a
+skill" routes through curated guidance instead of ad-hoc file writes.
+
+`/research` is a user- and model-invocable `execution: isolated` workflow for
+bounded investigation. It starts an isolated child run of the current agent with
+no `agent` override and uses an internal built-in-only read-only
+isolated-execution flag, so the child receives the inherited conversation context
+but a narrowed read-only tool catalog. Its prompt tracks
+cc-2.1 Explore's research loop: strict no-modification framing, broad-to-narrow
+codebase search, explicit file/nodes/read tool selection, caller-scaled
+thoroughness (`quick`, `medium`, `very thorough`), parallel independent
+read/search calls, and a compact evidence-backed report.
 Built-ins are code-registered instructions, not local `SKILL.md` files. Like
 cc-2.1 bundled skills, they only receive a `Base directory` prefix when they have
 real extracted reference files. Current built-ins have no extracted files, so
@@ -40,12 +51,20 @@ Supported frontmatter fields:
 - `argument-hint`: user-facing hint for slash skill usage.
 - `disable-model-invocation`: prevents automatic model invocation through the `skill` tool.
 - `user-invocable`: controls slash skill usage.
-- `model`: optional model override for inline skills, or child-agent model override for forked skills.
-- `effort`: optional reasoning effort override for inline skills, or child-agent effort override for forked skills.
+- `model`: optional model override for inline skills, or child-run model override for isolated skills.
+- `effort`: optional reasoning effort override for inline skills, or child-run effort override for isolated skills.
 - `shell`: optional shell for embedded command expansion. Lin currently supports `bash`.
-- `context: fork`: runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context.
-- `agent`: optional agent definition for `context: fork` skills. If omitted, Lin forks the current conversation context. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
+- `execution`: `inline` by default; `isolated` runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context.
+- `agent`: optional agent definition for `execution: isolated` skills. If omitted, Lin forks the current conversation context. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
 - `paths`: path-conditional activation patterns.
+
+`execution` is the skill-level execution mode. `inline` means the rendered body
+is injected into the parent model turn; `isolated` means the rendered body is
+sent to a sidechain child run and only the final result returns to the parent.
+The actual fork remains the Agent/child-run runtime implementation for
+same-agent isolated skills. Legacy `context: fork` frontmatter is still accepted
+as an alias for `execution: isolated`, but Skillify and built-ins no longer
+author it.
 
 Mutable skill bodies are loaded with:
 
@@ -92,7 +111,7 @@ ellipsis-truncate, with the full value available on hover). It does not show the
 generic Input/Output disclosure card because the real work is the steering message
 injected into the next model turn, not a user-inspectable tool output.
 
-When the model calls the `skill` tool for a `context: fork` skill:
+When the model calls the `skill` tool for an `execution: isolated` skill:
 
 1. `AgentSkillRuntime` resolves, validates, and renders the skill body.
 2. `AgentDelegationRuntime` starts a sidechain child run using the rendered skill body as the child prompt.
@@ -102,10 +121,20 @@ When the model calls the `skill` tool for a `context: fork` skill:
 6. The parent receives only the final child-run result or error as the `skill` tool result.
 7. The rendered skill body is not injected into the parent context and is not recorded as an invoked parent skill for compact restore.
 
-Forked skill results stay on the normal tool-call disclosure path because they
+The built-in `/research` skill adds one internal restriction to that flow:
+`readOnlyIsolated: true`. This is not mutable `SKILL.md` frontmatter and is not part
+of `SkillDefinition`. At child-run spawn, `AgentDelegationRuntime` narrows the child
+definition's catalog to the skill's declared `allowed-tools` after filtering those
+tools through the exhaustive `AgentToolActionKind` read-only partition in
+`src/core/agentPermissionModel.ts`, then reuses the existing `tools` /
+`disallowedTools` path used by agent definitions and `createAgentTools`. Mutating
+tools are absent from the child model request rather than merely denied by
+permission at call time.
+
+Isolated skill results stay on the normal tool-call disclosure path because they
 carry a real child-run result or error for the parent turn.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
 
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
 
@@ -243,12 +272,15 @@ are supplemental references for safety, recovery, provenance, and curation.
 - user slash invocation for user-invocable skills;
 - `allowed-tools` as run-scoped permission metadata;
 - `model` and `effort` as one-turn overrides;
-- `context: fork` through a sidechain agent;
+- `execution: isolated` through a sidechain child run, with legacy `context: fork`
+  accepted only as a parser alias;
 - path-conditional activation and dynamic nested skill discovery;
 - post-compact restoration of invoked skill content;
 - Skillify-style authoring through ordinary `file_write` / `file_edit`, with
   preview and confirmation carried by instructions rather than a dedicated skill
   CRUD tool.
+- a built-in `/research` skill implemented as a current-agent isolated child run
+  whose declared read tools are filtered through the read-only catalog.
 
 Lin intentionally uses `.agents/skills` and the lowercase `skill` tool name
 instead of cc-2.1's `.claude/skills` and `Skill` tool name. This is a product
@@ -269,6 +301,13 @@ skill is not acceptance for automatic model use; agent-written and
 project-source skills remain slash-invocable immediately and model-invocable
 only after exact-byte acceptance.
 
+`/research` borrows cc-2.1 Explore's read-only boundary discipline without
+borrowing its agent-shaped product grammar. cc-2.1 makes Explore safe by
+restricting the agent catalog with `disallowedTools`; Lin keeps generic research
+as a skill of the current DM or Channel member, then applies catalog narrowing at
+fork spawn. `allowed-tools` remains the same preapproval mechanism on both sides:
+it reduces prompts for expected read calls but is not the safety boundary.
+
 ## Compatibility Decisions
 
 Lin follows the stable local skill invocation path from the reference
@@ -285,13 +324,14 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
-| `context: fork` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Forked skill bodies run in a sidechain child run and return only the final result to the parent. |
+| `execution: isolated` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Isolated skill bodies run in a sidechain child run and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts the exact bytes from the in-flow `skill_trust` card or Settings. User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
+| `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated child run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 
@@ -389,5 +429,5 @@ Agent settings expose only a narrow delegation sandbox:
 Legacy `permission-mode: trusted` frontmatter is ignored. Skill `allowed-tools`
 is preapproval metadata, not a visibility allowlist. Inline skill rules are
 scoped to the current parent agent run and cleared when the run ends, stops, or
-resets. `context: fork` skill rules are passed to the child run as preapproved
+resets. `execution: isolated` skill rules are passed to the child run as preapproved
 tool rules.

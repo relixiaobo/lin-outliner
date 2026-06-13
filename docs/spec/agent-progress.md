@@ -116,7 +116,7 @@ truth.
   - task panel derived from the shared render task projection: child-run tasks keep
     open-details/stop actions, and agent-level Dream runs show as read-only
     reflective tasks with trigger, processed count, and memory-change count
-  - skill `context: fork` routed through the delegation runtime
+  - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation:

@@ -601,8 +601,8 @@ describe('agent skills', () => {
     expect(body).toContain('Separate authoring tools from runtime tools');
     expect(body).toContain('Omit `allowed-tools` when the future workflow does not need preapproval');
     expect(body).toContain('Flag broad `allowed-tools` in the preview summary');
-    expect(body).toContain('Default to inline execution');
-    expect(body).toContain('Use `context: fork` only for self-contained work');
+    expect(body).toContain('Default to `execution: inline`');
+    expect(body).toContain('Use `execution: isolated` only for self-contained work');
 
     expect(body).toContain('born unratified');
     expect(body).toContain('slash invocation works immediately');
@@ -637,6 +637,71 @@ describe('agent skills', () => {
 
     expect(text).toContain('- skillify [skill-file: built-in:skillify]');
     expect(text).not.toContain('built-in/skillify/SKILL.md');
+  });
+
+  test('ships research as a built-in read-only isolated skill', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      executeIsolatedSkill: async ({ skill, renderedContent, readOnlyIsolated }) => ({
+        agentId: 'research-child',
+        agentType: skill.agent ?? 'fork',
+        status: readOnlyIsolated ? 'completed' : 'failed',
+        result: renderedContent,
+      }),
+    });
+
+    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
+    const skill = await runtime.getSkill('research');
+
+    expect(automaticListing).toContain('- research:');
+    expect(skill).toMatchObject({
+      name: 'research',
+      source: 'built-in',
+      execution: 'isolated',
+      modelInvocable: true,
+      userInvocable: true,
+      ratified: true,
+      argumentHint: '<question or area to research>',
+      argumentNames: ['question'],
+    });
+    expect(skill?.allowedTools).toEqual([
+      'node_search',
+      'node_read',
+      'file_read',
+      'file_glob',
+      'file_grep',
+      'web_search',
+      'web_fetch',
+      'recall',
+    ]);
+    expect(skill?.body).toContain('codebase research specialist');
+    expect(skill?.body).toContain('READ-ONLY MODE - NO MODIFICATIONS');
+    expect(skill?.body).toContain('file_glob for broad file pattern matching');
+    expect(skill?.body).toContain('file_grep for content and regex search');
+    expect(skill?.body).toContain('Adapt thoroughness to the caller');
+    expect(skill?.body).toContain('issue them in parallel');
+
+    const invocation = await runtime.invokeSkill({
+      skill: 'research',
+      args: 'map the current spec',
+      trigger: 'agent',
+    });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.execution).toBe('isolated');
+    expect(invocation.isolated?.status).toBe('completed');
+  });
+
+  test('disabled skill gates apply to built-in research', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    runtime.updateDisabledSkills(['research']);
+
+    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('- research:');
+    const invocation = await runtime.invokeSkill({ skill: 'research', trigger: 'agent' });
+
+    expect(invocation.ok).toBe(false);
+    if (invocation.ok) return;
+    expect(invocation.code).toBe('skill_disabled');
   });
 
   test('records model and effort effects for slash and agent-invoked skills', async () => {
@@ -724,11 +789,11 @@ describe('agent skills', () => {
     expect(runtime.getActivePermissionRules()).toEqual([]);
   });
 
-  test('lists fork-context skills and routes them through a fork executor', async () => {
-    const root = await createSkillFixture('forked', {
+  test('lists isolated-execution skills and routes them through an isolated executor', async () => {
+    const root = await createSkillFixture('isolated', {
       frontmatter: [
-        'description: Forked skill',
-        'context: fork',
+        'description: Isolated skill',
+        'execution: isolated',
         'agent: specialist',
         'model: gpt-5.2',
         'effort: high',
@@ -739,39 +804,39 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
-      executeForkedSkill: async ({ skill, renderedContent }) => ({
+      executeIsolatedSkill: async ({ skill, renderedContent }) => ({
         agentId: 'child-run-test',
-        agentType: skill.agent ?? 'fork',
+        agentType: skill.agent ?? 'isolated',
         status: 'completed',
-        result: `fork result: ${renderedContent}`,
+        result: `isolated result: ${renderedContent}`,
       }),
     });
-    await acceptSkillForTest(runtime, 'forked');
+    await acceptSkillForTest(runtime, 'isolated');
 
-    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('- forked: Forked skill');
+    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('- isolated: Isolated skill');
     const invocation = await runtime.invokeSkill({
-      skill: 'forked',
+      skill: 'isolated',
       args: 'demo',
       trigger: 'agent',
     });
 
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.execution).toBe('fork');
-    expect(invocation.forked?.agentId).toBe('child-run-test');
+    expect(invocation.execution).toBe('isolated');
+    expect(invocation.isolated?.agentId).toBe('child-run-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
     expect(runtime.getActivePermissionRules()).toEqual([]);
     expect(runtime.consumePendingTurnEffect()).toBeNull();
     const messageText = invocation.message.content[0]?.type === 'text'
       ? invocation.message.content[0].text
       : '';
-    expect(messageText).toContain('fork result:');
+    expect(messageText).toContain('isolated result:');
   });
 
-  test('does not restore slash fork skill results as reusable skill guidance', async () => {
+  test('maps legacy context-fork skills to isolated execution', async () => {
     const root = await createSkillFixture('forked', {
       frontmatter: [
-        'description: Forked skill',
+        'description: Legacy fork skill',
         'context: fork',
       ],
       body: 'Requires isolated execution.',
@@ -779,38 +844,89 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
-      executeForkedSkill: async ({ skill }) => ({
+      executeIsolatedSkill: async ({ skill, renderedContent }) => ({
         agentId: 'child-run-test',
         agentType: skill.agent ?? 'general',
         status: 'completed',
-        result: 'one-shot fork result',
+        result: renderedContent,
       }),
     });
     await acceptSkillForTest(runtime, 'forked');
 
-    const prompt = await createSlashSkillPrompt(runtime, '/forked demo', null);
+    const skill = await runtime.getSkill('forked');
+    expect(skill?.execution).toBe('isolated');
+    const invocation = await runtime.invokeSkill({ skill: 'forked', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.execution).toBe('isolated');
+  });
+
+  test('does not restore slash isolated skill results as reusable skill guidance', async () => {
+    const root = await createSkillFixture('isolated', {
+      frontmatter: [
+        'description: Isolated skill',
+        'execution: isolated',
+      ],
+      body: 'Requires isolated execution.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeIsolatedSkill: async ({ skill }) => ({
+        agentId: 'child-run-test',
+        agentType: skill.agent ?? 'general',
+        status: 'completed',
+        result: 'one-shot isolated result',
+      }),
+    });
+    await acceptSkillForTest(runtime, 'isolated');
+
+    const prompt = await createSlashSkillPrompt(runtime, '/isolated demo', null);
     const restored = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     if (prompt) restored.restoreInvokedSkillsFromMessages([prompt]);
 
     expect(restored.createInvokedSkillsReminder()).toBeNull();
   });
 
-  test('rejects fork-context skills when no fork executor is available', async () => {
-    const root = await createSkillFixture('forked', {
+  test('rejects isolated-execution skills when no isolated executor is available', async () => {
+    const root = await createSkillFixture('isolated', {
       frontmatter: [
-        'description: Forked skill',
-        'context: fork',
+        'description: Isolated skill',
+        'execution: isolated',
       ],
       body: 'Requires isolated execution.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'forked');
+    await acceptSkillForTest(runtime, 'isolated');
 
-    const invocation = await runtime.invokeSkill({ skill: 'forked', trigger: 'agent' });
+    const invocation = await runtime.invokeSkill({ skill: 'isolated', trigger: 'agent' });
 
     expect(invocation.ok).toBe(false);
     if (invocation.ok) return;
-    expect(invocation.code).toBe('fork_not_supported');
+    expect(invocation.code).toBe('isolated_execution_not_supported');
+  });
+
+  test('skips skills with invalid execution frontmatter instead of loading them inline', async () => {
+    const root = await createSkillFixture('bad-execution', {
+      frontmatter: [
+        'description: Invalid execution skill',
+        'execution: fork',
+      ],
+      body: 'This must not load inline.',
+    });
+    await createSkillInRoot(root, 'good-skill', {
+      frontmatter: [
+        'description: Good skill',
+        'execution: Isolated',
+      ],
+      body: 'This should load isolated.',
+    });
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+
+    expect(await runtime.getSkill('bad-execution')).toBeNull();
+    expect((await runtime.getSkill('good-skill'))?.execution).toBe('isolated');
+    const invocation = await runtime.invokeSkill({ skill: 'bad-execution', trigger: 'agent' });
+    expect(invocation).toMatchObject({ ok: false, code: 'unknown_skill' });
   });
 
   test('restores invoked skills from post-compact reminders', async () => {
