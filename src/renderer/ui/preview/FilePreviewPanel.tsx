@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+/// <reference types="vite/client" />
+
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import type {
   PreviewDirectoryEntry,
   PreviewFileSource,
@@ -9,7 +13,17 @@ import type {
 } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { BackIcon, FileTextIcon, FolderIcon, ICON_SIZE, OpenIcon } from '../icons';
+import {
+  BackIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  FileTextIcon,
+  FolderIcon,
+  ICON_SIZE,
+  OpenIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from '../icons';
 import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFileIcon';
 import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shikiHighlighter';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
@@ -37,6 +51,14 @@ type TextState =
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
 const MAX_TABLE_ROWS = 100;
 const MAX_TABLE_COLUMNS = 24;
+const PDF_DEFAULT_SCALE = 1;
+const PDF_MIN_SCALE = 0.5;
+const PDF_MAX_SCALE = 2.5;
+const PDF_SCALE_STEP = 0.25;
+
+type PdfJsModule = typeof import('pdfjs-dist');
+
+let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 
 interface PreviewRendererProps {
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
@@ -52,6 +74,7 @@ interface PreviewRendererEntry {
 const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
   { id: 'directory', match: (source) => source.entryKind === 'directory', component: DirectoryPreview },
   { id: 'image', match: isImageSource, component: ImagePreview },
+  { id: 'pdf', match: isPdfSource, component: PdfPreview },
   { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
   { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
   { id: 'text', match: isTextSource, component: TextPreview },
@@ -333,7 +356,184 @@ function TextPreview({ source }: PreviewRendererProps) {
   return <div className="file-preview-code" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function MetadataPreview({ source }: PreviewRendererProps) {
+function PdfPreview({ source }: PreviewRendererProps) {
+  const labels = useT().shell.filePreview;
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | { status: 'ready'; document: PDFDocumentProxy; pageCount: number }
+    | { status: 'error'; error?: string }
+  >({ status: 'loading' });
+  const [pageNumber, setPageNumber] = useState(1);
+  const [scale, setScale] = useState(PDF_DEFAULT_SCALE);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: PDFDocumentLoadingTask | null = null;
+    setState({ status: 'loading' });
+    setPageNumber(1);
+    setScale(PDF_DEFAULT_SCALE);
+
+    void (async () => {
+      const bytesResult = await api.readPreviewBytes(source.target);
+      if (!bytesResult.bytes) {
+        throw new Error(bytesResult.error ?? 'missing');
+      }
+      if (cancelled) return;
+      const pdfjs = await loadPdfJs();
+      if (cancelled) return;
+      const data = new Uint8Array(bytesResult.bytes.slice(0));
+      loadingTask = pdfjs.getDocument({
+        data,
+        enableXfa: false,
+        stopAtErrors: true,
+      });
+      const loadedDocument = await loadingTask.promise;
+      if (cancelled) {
+        void loadingTask.destroy();
+        return;
+      }
+      setState({ status: 'ready', document: loadedDocument, pageCount: loadedDocument.numPages });
+    })().catch((error: unknown) => {
+      if (cancelled) return;
+      setState({ status: 'error', error: error instanceof Error ? error.message : undefined });
+    });
+
+    return () => {
+      cancelled = true;
+      void loadingTask?.destroy();
+    };
+  }, [source.target]);
+
+  if (state.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
+  if (state.status === 'error') return <MetadataPreview source={source} />;
+
+  const canGoPrevious = pageNumber > 1;
+  const canGoNext = pageNumber < state.pageCount;
+  const canZoomOut = scale > PDF_MIN_SCALE;
+  const canZoomIn = scale < PDF_MAX_SCALE;
+  const zoomPercent = Math.round(scale * 100);
+
+  return (
+    <div className="file-preview-pdf">
+      <div className="file-preview-pdf-toolbar" aria-label={labels.pdfToolbar}>
+        <div className="file-preview-pdf-control-group">
+          <IconButton
+            className="file-preview-pdf-icon-button"
+            disabled={!canGoPrevious}
+            icon={ChevronLeftIcon}
+            label={labels.pdfPreviousPage}
+            onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
+            variant="toolbar"
+          />
+          <span className="file-preview-pdf-page-label">
+            {labels.pdfPage({ page: pageNumber, total: state.pageCount })}
+          </span>
+          <IconButton
+            className="file-preview-pdf-icon-button"
+            disabled={!canGoNext}
+            icon={ChevronRightIcon}
+            label={labels.pdfNextPage}
+            onClick={() => setPageNumber((current) => Math.min(state.pageCount, current + 1))}
+            variant="toolbar"
+          />
+        </div>
+        <div className="file-preview-pdf-control-group">
+          <IconButton
+            className="file-preview-pdf-icon-button"
+            disabled={!canZoomOut}
+            icon={ZoomOutIcon}
+            label={labels.pdfZoomOut}
+            onClick={() => setScale((current) => clampPdfScale(current - PDF_SCALE_STEP))}
+            variant="toolbar"
+          />
+          <span className="file-preview-pdf-zoom-label">{labels.pdfZoom({ percent: zoomPercent })}</span>
+          <IconButton
+            className="file-preview-pdf-icon-button"
+            disabled={!canZoomIn}
+            icon={ZoomInIcon}
+            label={labels.pdfZoomIn}
+            onClick={() => setScale((current) => clampPdfScale(current + PDF_SCALE_STEP))}
+            variant="toolbar"
+          />
+        </div>
+      </div>
+      <PdfPageCanvas document={state.document} pageNumber={pageNumber} scale={scale} />
+    </div>
+  );
+}
+
+function PdfPageCanvas({
+  document,
+  pageNumber,
+  scale,
+}: {
+  document: PDFDocumentProxy;
+  pageNumber: number;
+  scale: number;
+}) {
+  const labels = useT().shell.filePreview;
+  const [state, setState] = useState<
+    | { status: 'rendering' }
+    | { status: 'ready' }
+    | { status: 'error'; error?: string }
+  >({ status: 'rendering' });
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let renderTask: RenderTask | null = null;
+    setState({ status: 'rendering' });
+
+    void (async () => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('canvas-unavailable');
+      const page = await document.getPage(pageNumber);
+      try {
+        if (cancelled) return;
+        const viewport = page.getViewport({ scale });
+        const pixelRatio = window.devicePixelRatio || 1;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('canvas-unavailable');
+        canvas.width = Math.ceil(viewport.width * pixelRatio);
+        canvas.height = Math.ceil(viewport.height * pixelRatio);
+        canvas.style.width = `${Math.ceil(viewport.width)}px`;
+        canvas.style.height = `${Math.ceil(viewport.height)}px`;
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        renderTask = page.render({
+          canvas,
+          canvasContext: context,
+          viewport,
+        });
+        await renderTask.promise;
+        if (!cancelled) setState({ status: 'ready' });
+      } finally {
+        page.cleanup();
+      }
+    })().catch((error: unknown) => {
+      if (cancelled) return;
+      setState({ status: 'error', error: error instanceof Error ? error.message : undefined });
+    });
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+    };
+  }, [document, pageNumber, scale]);
+
+  return (
+    <div className="file-preview-pdf-stage">
+      {state.status === 'rendering' ? <PreviewMessage>{labels.loading}</PreviewMessage> : null}
+      {state.status === 'error' ? <PreviewMessage>{labels.unavailable}</PreviewMessage> : null}
+      <canvas
+        ref={canvasRef}
+        aria-label={labels.pdfCanvas({ page: pageNumber })}
+        className="file-preview-pdf-canvas"
+      />
+    </div>
+  );
+}
+
+function MetadataPreview({ source }: { source: PreviewFileSource }) {
   const labels = useT().shell.filePreview;
   return (
     <div className="file-preview-metadata">
@@ -443,6 +643,11 @@ function isImageSource(source: PreviewFileSource): boolean {
   return source.mimeType.toLowerCase().startsWith('image/');
 }
 
+function isPdfSource(source: PreviewFileSource): boolean {
+  return source.entryKind === 'file'
+    && (source.mimeType.toLowerCase() === 'application/pdf' || source.ext === 'pdf');
+}
+
 function isMarkdownSource(source: PreviewFileSource): boolean {
   return source.ext === 'md' || source.ext === 'markdown' || source.mimeType.toLowerCase() === 'text/markdown';
 }
@@ -532,6 +737,18 @@ function formatModifiedDate(value: number): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function clampPdfScale(value: number): number {
+  return Math.min(PDF_MAX_SCALE, Math.max(PDF_MIN_SCALE, Number(value.toFixed(2))));
+}
+
+function loadPdfJs(): Promise<PdfJsModule> {
+  pdfJsModulePromise ??= import('pdfjs-dist').then((module) => {
+    module.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+    return module;
+  });
+  return pdfJsModulePromise;
 }
 
 function canOpenPreviewSource(source: PreviewSourceDescriptor): boolean {

@@ -301,7 +301,7 @@ resolve it through the preload preview API:
 - `preview_resolve_source` returns source metadata and never exposes raw payload
   filesystem paths to the renderer.
 - `preview_read_text` is capped to bounded text reads.
-- `preview_read_bytes` is capped to bounded binary reads for image preview.
+- `preview_read_bytes` is capped to bounded binary reads for image/PDF previews.
 - `preview_list_directory` lists trusted local-file directories with a capped
   result set.
 
@@ -319,10 +319,12 @@ Source authority stays source-specific:
 - `url` targets are modeled but only render metadata/unsupported until the URL
   reader PR ships.
 
-Initial renderers are directory listing, image, text/source-code with Shiki,
-Markdown with `react-markdown` + `remark-gfm`, CSV/TSV table, and fallback
-metadata. Markdown renderer output does not enable raw HTML execution; arbitrary
-HTML files render as text or fallback.
+Renderers are directory listing, image, PDF canvas rendering with `pdf.js`,
+text/source-code with Shiki, Markdown with `react-markdown` + `remark-gfm`,
+CSV/TSV table, and fallback metadata. The PDF renderer reads bytes only through
+the preview source API, uses a bundled same-origin worker, and falls back to the
+metadata renderer if parsing or rendering fails. Markdown renderer output does
+not enable raw HTML execution; arbitrary HTML files render as text or fallback.
 
 ## Panel Semantics
 

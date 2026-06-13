@@ -305,6 +305,7 @@
   --control-size-xs: 20px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
+  --breadcrumb-height: var(--control-size-xl);
   /* List-row height tier: each surface picks a deliberate density step. Agent
      process rows are compact by line/padding geometry, not a fixed row height,
      so they consume no rung here. */

@@ -100,4 +100,6 @@ export {
   Undo2 as UndoIcon,
   User as UserIcon,
   X as CloseIcon,
+  ZoomIn as ZoomInIcon,
+  ZoomOut as ZoomOutIcon,
 } from 'lucide-react';

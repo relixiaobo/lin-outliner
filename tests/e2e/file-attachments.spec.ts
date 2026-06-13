@@ -43,6 +43,31 @@ test.describe('file attachments', () => {
     await attachmentRow.locator('.outliner-attachment-main').click();
     const previewPanel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
     await expect(previewPanel.locator('.file-preview-title-text')).toContainText('picked-report.pdf');
+    await expect(previewPanel.locator('.file-preview-pdf-toolbar')).toContainText('1 / 1');
+    const pdfCanvas = previewPanel.locator('.file-preview-pdf-canvas');
+    await expect(pdfCanvas).toBeVisible();
+    await expect.poll(async () => pdfCanvas.evaluate((element) => {
+      const canvas = element as HTMLCanvasElement;
+      const context = canvas.getContext('2d');
+      const data = context && canvas.width > 0 && canvas.height > 0
+        ? context.getImageData(0, 0, canvas.width, canvas.height).data
+        : null;
+      let hasInk = false;
+      if (data) {
+        for (let index = 0; index < data.length; index += 4) {
+          const alpha = data[index + 3] ?? 0;
+          const red = data[index] ?? 255;
+          const green = data[index + 1] ?? 255;
+          const blue = data[index + 2] ?? 255;
+          if (alpha > 0 && (red < 245 || green < 245 || blue < 245)) {
+            hasInk = true;
+            break;
+          }
+        }
+      }
+      return { height: canvas.height, hasInk, width: canvas.width };
+    })).toEqual({ height: 792, hasInk: true, width: 612 });
+    await expect(previewPanel.locator('.file-preview-pdf-stage .file-preview-message')).toBeHidden();
     await previewPanel.getByRole('button', { name: 'Previous page' }).click();
     await expect(attachmentRow.locator('.outliner-attachment')).toBeVisible();
 

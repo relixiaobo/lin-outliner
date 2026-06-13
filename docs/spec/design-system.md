@@ -285,6 +285,7 @@ Use these default desktop tokens before adding component-specific values:
   --control-size-xs: 20px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
+  --breadcrumb-height: var(--control-size-xl);
   --row-h-dense: var(--line-content);
   --row-h-comfortable: 44px;
   --icon-size-xs: 12px;
