@@ -131,6 +131,194 @@ update the <skill-name> skill with what we just learned
 fix the skill that failed
 ```
 
+### Skillify Upgrade — creative UX execution unit
+
+**Shape: ONE complete feature in one PR.** This is the remaining creative-UX unit
+of this plan, not a new skill subsystem. It upgrades the built-in `/skillify`
+workflow from "thin write guidance" to a Tenon-native capture/update workflow,
+while continuing to use the existing skill runtime, existing file tools, and the
+existing ratification/acceptance model.
+
+#### Goal
+
+Make explicit user requests such as "save this as a skill", "turn that workflow
+into a skill", "update the import skill with what we just learned", or
+`/skillify <description>` produce a durable, reviewable `SKILL.md` that captures
+the repeatable process with enough structure for future use.
+
+The upgraded workflow should reliably produce:
+
+- a stable skill name and storage target (`user` vs `project`);
+- a concise `description`, precise `when_to_use`, and conservative trigger
+  examples;
+- arguments and `argument-hint` only when future invocations need them;
+- an explicit execution mode (`inline` by default, `context: fork` only for
+  self-contained work, optional `agent` only when the chosen agent definition is
+  essential);
+- step-by-step instructions with success criteria, artifacts, human checkpoints,
+  and hard rules where they matter;
+- minimal `allowed-tools` for the future skill, not a replay of every tool used
+  while authoring it;
+- a preview/confirmation pass before any `file_write` / `file_edit`.
+
+#### Non-goals
+
+- No new model-facing skill CRUD tools. The workflow still writes through
+  `file_write` / `file_edit` after review, matching the current cc-2.1-aligned
+  surface.
+- No new trust or permission primitive. Agent-written skills remain unratified:
+  slash-invocable immediately, model-invocable only after exact-byte acceptance
+  through the existing `skill_trust` / Settings path.
+- No dedicated preview-card protocol in this PR. The complete `SKILL.md` or
+  focused diff is shown in the assistant message, and confirmation uses the
+  existing `ask_user_question` interaction when available; the file-tool
+  permission card remains the write permission surface.
+- No executable support-file authoring. The existing M1 deny path for executable
+  support files stays in force until a separate ratify+sandbox design lands.
+- No background curation or silent skill rewriting.
+
+#### Design
+
+**1. Replace the built-in body with a Tenon-specific Skillify v2 workflow.**
+
+`src/main/agentSkills.ts` keeps `/skillify` as a code-registered immutable
+built-in, but the body becomes a structured authoring playbook derived from the
+cc-2.1 workflow and translated into Tenon terms:
+
+- Analyze the current conversation before asking questions: repeatable process,
+  inputs, steps, user corrections, required artifacts, tool needs, and success
+  criteria.
+- Do not over-interview. For a simple explicit request, ask only for missing
+  name/storage/trigger details; for ambiguous or broad workflows, run a short
+  structured interview.
+- Prefer `ask_user_question` for confirmation and real choices. If the current
+  runtime cannot use it, ask concise plain-language questions in the normal
+  conversation.
+- Use Tenon paths and frontmatter: `.agents/skills/<skill-name>/SKILL.md`,
+  lowercase `skill` tool semantics, no `.claude/skills`, and no `name`
+  frontmatter field because identity comes from the directory name.
+- Explain `user` vs `project` storage in product terms: personal workflows go to
+  `~/.agents/skills`; repo/workspace-specific workflows go to
+  `<workspace>/.agents/skills`.
+- Use Tenon execution vocabulary: inline skill, `context: fork`, optional
+  `agent`, and path-conditional `paths`. Do not mention cc-2.1-only concepts such
+  as "Teammate" or legacy command directories.
+
+**2. Creation and update paths are distinct.**
+
+For a new skill:
+
+- propose a normalized skill directory name;
+- choose user/project storage with the user;
+- write one `SKILL.md` with the stable supported frontmatter shape;
+- keep instructions concise and put large references in explicit support files
+  only when necessary.
+
+For an existing skill:
+
+- resolve and read the current `SKILL.md` first;
+- preserve existing `description`, `when_to_use`, `arguments`, `paths`,
+  `context`, `agent`, `model`, `effort`, and `allowed-tools` unless the user
+  explicitly wants to change them or the change is required by the new workflow;
+- prefer a focused `file_edit` patch over whole-file replacement;
+- show a focused diff, and call out any changes to `allowed-tools`,
+  auto-invocation, storage path, or execution mode before writing.
+
+**3. Preview/confirmation is part of Skillify, not a new tool family.**
+
+Before writing:
+
+- show the full `SKILL.md` for creation, or a focused diff for updates;
+- include a short review summary: storage target, invocation form, model
+  invocation state, future `allowed-tools`, whether it is inline or forked, and
+  whether it will be born unratified;
+- ask "Save this skill?" through `ask_user_question` where available, with
+  choices to save, revise, or cancel. Do not rely on the later file permission
+  approval as the only review step; permission answers "may this write happen",
+  while Skillify confirmation answers "is this the right reusable process?"
+
+After writing:
+
+- report the exact path;
+- state how to invoke it (`/<skill-name> ...`);
+- explain the trust state: slash works immediately, automatic model use waits
+  for acceptance if the skill is agent-written or project-sourced;
+- if the write failed validation, repair the draft and retry only after showing
+  the corrected preview when the change is material.
+
+**4. `allowed-tools` becomes an authored contract.**
+
+Skillify v2 must not infer broad preapproval from the session that produced the
+skill. It should:
+
+- separate tools needed to author the skill from tools needed to run the future
+  workflow;
+- omit `allowed-tools` when no preapproval is needed;
+- prefer narrow read/search rules for discovery-heavy workflows;
+- keep writes, bash, external actions, and irreversible operations out of
+  preapproval unless the workflow's whole point requires them and the pattern can
+  be narrow;
+- flag broad `allowed-tools` as a review item in the preview summary.
+
+**5. Trigger quality is a success criterion.**
+
+`when_to_use` must include positive and negative guidance. A good trigger starts
+with "Use when..." and names example user requests; it should also say when not
+to auto-invoke if the phrase is ambiguous or the workflow is destructive,
+infrequent, or judgment-heavy. Such skills should default to user-invoked slash
+usage with `disable-model-invocation: true` unless the user explicitly wants
+automatic invocation.
+
+#### Touched files
+
+- `src/main/agentSkills.ts` — replace the built-in `/skillify` body with the
+  Skillify v2 workflow text; keep the existing immutable built-in registration
+  and `whenToUse` gate.
+- `docs/spec/agent-skills.md` — describe the upgraded Skillify contract under
+  reference alignment / compatibility.
+- `docs/spec/agent-tool-design.md` — if needed, clarify that Skillify preview
+  uses normal conversation + `ask_user_question`, not a skill CRUD tool.
+- `tests/core/agentSkills.test.ts` or a small focused unit test — pin the
+  built-in body's Tenon-specific invariants: `.agents/skills`, no `.claude`
+  path, no `name` frontmatter, preview-before-write, existing-skill read before
+  patch, conservative `allowed-tools`, and unratified-after-write messaging.
+
+#### Risks
+
+- **Over-asking.** cc-2.1's interview loop is thorough but can become heavy.
+  Mitigation: make "do not over-interview simple skills" a first-class rule.
+- **Wrong namespace leakage.** The reference uses `.claude/skills`, `Skill`,
+  and `name:` frontmatter. Mitigation: tests pin Tenon's `.agents/skills` and
+  directory-derived identity.
+- **Overbroad preapproval.** A model may copy authoring tools into the future
+  skill. Mitigation: preview summary must flag `allowed-tools`; tests pin the
+  body text that separates authoring tools from runtime tools.
+- **False sense of acceptance.** Saving and accepting are separate. Mitigation:
+  the success message explicitly states slash availability vs automatic
+  model-invocation trust.
+
+#### Verification
+
+- `bun run typecheck`
+- `bun run test:core -- agentSkills`
+- `bun run docs:check`
+- No renderer visual verification is required unless the implementation adds a
+  dedicated preview surface, which this plan does not require.
+
+#### Collision check (2026-06-13)
+
+Open PRs reviewed:
+
+- #229 `cc-2/agent-workdir-relocation` touches agent file/workdir tools and
+  adjacent `agent-tool-design` / permission docs. No direct overlap with
+  `/skillify`, `agentSkills.ts`, or `docs/spec/agent-skills.md`.
+- #227 `codex/file-preview-pdf` touches preview renderer/package metadata. No
+  overlap.
+
+No blocking collision. If #229 edits the same paragraph in
+`docs/spec/agent-tool-design.md`, rebase and keep the Skillify note as a narrow
+clarification rather than a broad rewrite.
+
 **Write requirements** (from self-modification §7, carried verbatim in intent):
 
 - No dedicated model-facing skill-CRUD tool. Use `skillify`-style review/confirm +
@@ -391,9 +579,13 @@ deliberately conservative (self-modification §8):
 - [x] Confirm binding semantics: `AgentDefinition.skills` selects over the unified
       library; document that there is no per-agent storage.
 - [x] Slash-only built-in `/skillify` workflow.
-- [ ] Natural-language "save/update this as a skill" handling.
+- [ ] **Skillify Upgrade PR** — natural-language "save/update this as a skill"
+      handling, Skillify v2 capture/update prompt, preview/confirmation contract,
+      conservative `allowed-tools` guidance, and Tenon namespace tests. See
+      *Skillify Upgrade — creative UX execution unit* above.
 - [x] Skill-content write classification for `.agents/skills/**` (permission / audit).
-- [ ] Diff / full-`SKILL.md` preview + confirmation; draft-default for agent-initiated.
+- [ ] Diff / full-`SKILL.md` preview + confirmation carried by the Skillify
+      Upgrade PR; no new model-facing skill CRUD tool.
 - [x] Provenance metadata in tool details + `skill.created` / `skill.patched` /
       `skill.replaced` events.
 - [x] **PR A — skill acceptance** (close the ratification loop) — **merged #175**: explicit

@@ -7,9 +7,13 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 Code-registered `built-in` skills load first. They are immutable, ship with the
 app, and cannot be shadowed by mutable local skills with the same name. The
 current built-in skill is `/skillify`, a user- and model-invocable workflow for
-creating or updating local skills through normal file tools; its `when_to_use`
-gates it to explicit user save/update requests, so a conversational "save this
-as a skill" routes through the curated guidance instead of ad-hoc file writes.
+creating or updating local skills through normal file tools. Its Skillify v2
+body analyzes the current conversation, chooses a Tenon skill path, drafts a
+complete `SKILL.md` or focused update diff, previews it in the assistant message,
+and confirms through `ask_user_question` when that interaction is available.
+Its `when_to_use` gates it to explicit user save/update requests, so a
+conversational "save this as a skill" routes through curated guidance instead
+of ad-hoc file writes.
 Built-ins are code-registered instructions, not local `SKILL.md` files. Like
 cc-2.1 bundled skills, they only receive a `Base directory` prefix when they have
 real extracted reference files. Current built-ins have no extracted files, so
@@ -101,7 +105,7 @@ When the model calls the `skill` tool for a `context: fork` skill:
 Forked skill results stay on the normal tool-call disclosure path because they
 carry a real child-run result or error for the parent turn.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; the skills it writes are still born unratified.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified.
 
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
 
@@ -242,7 +246,9 @@ are supplemental references for safety, recovery, provenance, and curation.
 - `context: fork` through a sidechain agent;
 - path-conditional activation and dynamic nested skill discovery;
 - post-compact restoration of invoked skill content;
-- `skillify`-style authoring through ordinary `file_write` / `file_edit`.
+- Skillify-style authoring through ordinary `file_write` / `file_edit`, with
+  preview and confirmation carried by instructions rather than a dedicated skill
+  CRUD tool.
 
 Lin intentionally uses `.agents/skills` and the lowercase `skill` tool name
 instead of cc-2.1's `.claude/skills` and `Skill` tool name. This is a product
@@ -252,6 +258,16 @@ Agent-managed skill edits follow cc-2.1's smaller tool surface:
 `skillify`-style workflows plus ordinary file write/edit tools after review and
 confirmation. Lin adds skill-path validation, rollback metadata, provenance, and
 hot reload instead of a separate model-facing skill CRUD tool family.
+
+Skillify v2 is intentionally Tenon-native rather than a direct namespace copy:
+it writes only `.agents/skills/<skill-name>/SKILL.md`, does not emit `name`
+frontmatter, separates the tools used to author a skill from the future
+skill's `allowed-tools`, and previews broad preapproval, execution mode,
+storage target, and trust state before writing. For an existing skill it reads
+the current `SKILL.md` first and prefers a focused `file_edit` patch. Saving a
+skill is not acceptance for automatic model use; agent-written and
+project-source skills remain slash-invocable immediately and model-invocable
+only after exact-byte acceptance.
 
 ## Compatibility Decisions
 
@@ -275,7 +291,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
-| `skillify` | Supported as the built-in user- and model-invocable workflow (`when_to_use`-gated to explicit user save requests). It uses the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
+| `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 
