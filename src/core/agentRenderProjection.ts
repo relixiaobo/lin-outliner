@@ -587,6 +587,11 @@ function buildTranscriptRows(
     // persisted `status === running`: a run orphaned `running` by a crash is not
     // live, so its interrupted turn still renders instead of vanishing. A DM streams
     // its active turn live, so this is gated on `multiAgent`.
+    // NOTE: this lives in the shared consumer (DM + Channel) rather than the
+    // visibility producer (getAgentEventVisibleTranscriptPath); the live active-run
+    // set is a render-time input not available there. Unifying this with the DM
+    // `dmStreaming` tail-suppression into one "in-flight turn" model is a deferred
+    // pass, not a drive-by — see PR #242 review finding 3.
     if (multiAgent && entry.message.runId && activeRunIds.has(entry.message.runId)) {
       continue;
     }
