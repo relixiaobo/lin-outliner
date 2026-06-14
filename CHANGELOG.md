@@ -835,6 +835,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Channel "Interrupted" verdict tied to the run's real status — the root fix (PR #244, cc)** —
+  the recurring multi-agent Channel mislabel (a coordinator turn shown red **"Interrupted after thinking"**
+  while it looked unfinished) that #240 and #242 both only patched. Root cause: the "interrupted" verdict
+  was a pure RENDER heuristic — `turnFailedWithoutProse = turnEnded && !finalIsProse` — that never consulted
+  the run's real outcome. Because a multi-agent Channel hardcodes `turnPhase: idle` (every Channel row's
+  `turnEnded` is always true), it collapsed to "ends on a thinking/tool block → red Interrupted" for **any**
+  result-less turn, whether it completed cleanly, was mid-flight in a projection gap, or genuinely failed.
+  The fix decouples the two concerns the heuristic conflated, both off the run's authoritative status:
+  (1) the core projection stamps `turnInterrupted` on each assistant message from the producing run's REAL
+  status (`failed`/`cancelled`, or a crash-orphaned `running` run absent from the live `activeRunIds`), so
+  the red label + error styling fire ONLY on a genuine interruption — a cleanly `completed` turn is never
+  red, in either mode; (2) surfacing a resultless turn's process is now mode-aware
+  (`surfaceResultlessProcess`) — a genuine interruption surfaces in either mode, and a sealed resultless DM
+  turn still surfaces its work (#240 preserved unchanged), but a cleanly-completed resultless **Channel**
+  turn folds to the neutral **"Worked for …"** header (atomic delivery — its process lives in the activity
+  detail view, not inline). The dead `turnEnded` plumbing is removed; the e2e mock now carries
+  `turnInterrupted` to mirror the real entity. The four #240 DM e2e tests pass unchanged; visual verified
+  light + dark (a completed Channel `web_fetch` turn now reads "Worked for 5s", a cancelled one stays red
+  "Interrupted"). Spec: `docs/spec/agent-event-log-rendering.md`.
+
 - **Channel turns deliver atomically — suppress in-progress turns from the transcript (PR #242, cc-2)** —
   a running Channel agent's turn no longer appears in the transcript until it completes, realizing the
   spec's atomic-delivery rule and fixing the false **"Interrupted after thinking"** label that #240's

@@ -641,6 +641,18 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Channel "Interrupted" verdict tied to the run's real status — root fix**
+  (cc, PR #244, plan-track) — the root cause behind the recurring Channel mislabel that #240 and #242
+  only patched: the "interrupted" verdict was a render heuristic (`turnEnded && !finalIsProse`) that
+  never consulted the run's real outcome, so a Channel (always `turnPhase: idle` → `turnEnded` always
+  true) painted **every** result-less turn red "Interrupted". The core projection now stamps an
+  authoritative `turnInterrupted` from the producing run's real status (failed/cancelled/crash-orphaned),
+  and the renderer decouples the RED label (genuine interruption only) from surfacing a resultless
+  process (mode-aware `surfaceResultlessProcess`): DM keeps #240's surface-the-work unchanged, a
+  cleanly-completed resultless **Channel** turn folds to neutral "Worked for …". Gate (main):
+  typecheck + `test:core` 1024 + `test:renderer` 478 + `test:e2e` 363 (the four #240 DM tests pass
+  unchanged; one pre-existing unrelated `agent-settings` failure on `main`) + two review passes;
+  **visual verified light + dark**. Spec: `docs/spec/agent-event-log-rendering.md`.
 - **Compact Channel attribution — avatar+name header over a full-width reply**
   (cc-2, PR #243, fast-track) — a Channel assistant row stops indenting its body into an avatar
   gutter: the row is now a column with an attribution **header** (avatar + speaker name on one line)
