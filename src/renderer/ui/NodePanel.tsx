@@ -161,8 +161,9 @@ export function NodePanel(props: NodePanelProps) {
     ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
     : props.rootId;
   const rootNode = props.index.byId.get(resolvedRootId);
-  // A file root (attachment/image) renders its preview as the page body instead
-  // of an outliner; the title editor still holds the (editable) filename.
+  // A file root (attachment/image) renders its preview as the page "hero" above its
+  // children outline; the title editor holds the (editable) filename. A file node is
+  // a normal node, so it keeps its children — the preview is extra, not a substitute.
   const fileRoot = isFileNode(rootNode) ? rootNode : null;
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -192,7 +193,7 @@ export function NodePanel(props: NodePanelProps) {
   const definitionTemplatePlaceholder = rootNode
     ? definitionOutlinerPlaceholder(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) }, t.definition.outliner)
     : null;
-  const showOutliner = Boolean(rootNode && !fileRoot && (!rootDefinitionKind || definitionTemplateLabel));
+  const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(resolvedRootId, null, props.panelId, 'panel-title');
@@ -815,6 +816,14 @@ export function NodePanel(props: NodePanelProps) {
         {rootNode && rootDefinitionKind && (
           <DefinitionConfigPanel node={rootNode} index={props.index} run={props.run} />
         )}
+        {/* A file root shows its preview as the page hero, above the children
+            outline (a file node is a normal node and keeps its children). */}
+        {fileRoot && (
+          <FilePreviewBody
+            node={fileRoot}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
+          />
+        )}
         {showOutliner && (
           <div
             className={`outliner ${rootDefinitionKind ? 'definition-template-outliner' : ''}`}
@@ -871,12 +880,6 @@ export function NodePanel(props: NodePanelProps) {
               />
             )}
           </div>
-        )}
-        {fileRoot && (
-          <FilePreviewBody
-            node={fileRoot}
-            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
-          />
         )}
         {rootNode && (
           <BacklinksSection

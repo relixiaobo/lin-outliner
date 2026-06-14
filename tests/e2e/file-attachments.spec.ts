@@ -19,7 +19,7 @@ test.describe('file attachments', () => {
     await openMockedApp(page);
   });
 
-  test('/attachment creates a file row that opens as a node page with a preview + actions', async ({ page }) => {
+  test('/attachment creates a file node (icon row, child notes) that opens as a node page with a preview hero + actions', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -41,26 +41,30 @@ test.describe('file attachments', () => {
     await expect(attachmentRow.locator('.row-bullet-shape.file')).toBeVisible();
     await expect(rowEditor(page, attachmentId!)).toContainText('picked-report.pdf');
 
-    // Expanding the file node (chevron) reveals its preview inline as the child
-    // level — the same preview the node page shows, bounded under the row. The
-    // chevron is hover-revealed, so hover the row line (not the whole wrap, which
-    // grows to include the preview) before clicking.
+    // A file node is a normal node: expanding it reveals its children area, NOT a
+    // preview inline (the full preview lives on the node page). The chevron is
+    // hover-revealed, so hover the row line before clicking it.
     const attachmentRowLine = attachmentRow.locator('> .row').first();
     await attachmentRowLine.hover();
     await attachmentRow.locator('.row-chevron-button').first().click();
-    const inlineBlock = attachmentRow.locator('.file-node-children .file-node-body--inline');
-    await expect(inlineBlock.locator('.file-node-meta')).toContainText('PDF');
-    await expect(inlineBlock.locator('.file-node-preview .file-preview-pdf-canvas')).toBeVisible();
-    // Collapsing removes the inline preview again.
-    await attachmentRowLine.hover();
-    await attachmentRow.locator('.row-chevron-button').first().click();
-    await expect(attachmentRow.locator('.file-node-children')).toHaveCount(0);
+    await expect(attachmentRow.locator('.file-node-body')).toHaveCount(0);
 
-    // Drilling the bullet opens the file as a node page whose body is the preview.
+    // Because it is a normal node, a file node carries child notes: typing into its
+    // trailing child draft materializes a child under the attachment.
+    await trailingEditor(page, attachmentId!).click();
+    await page.keyboard.type('a note on this file');
+    await expect.poll(async () => {
+      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
+      return node?.children.length ?? 0;
+    }).toBe(1);
+
+    // Drilling the bullet opens the file as a node page: the preview is the page
+    // hero, with the child-notes outline below it.
     await attachmentRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.file-node-meta')).toContainText('PDF');
     await expect(nodePage.locator('.file-node-meta')).toContainText('1 page');
+    await expect(nodePage.getByText('a note on this file')).toBeVisible();
 
     const pdfCanvas = nodePage.locator('.file-node-preview .file-preview-pdf-canvas');
     await expect(pdfCanvas).toBeVisible();
@@ -99,5 +103,29 @@ test.describe('file attachments', () => {
     expect(calls.some((call) => call.cmd === 'open_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'reveal_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'copy_asset_file')).toBe(true);
+  });
+
+  test('/image creates an image node that renders a row-level thumbnail', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('/image');
+
+    await expect(page.getByRole('listbox', { name: 'Slash commands' })).toBeVisible();
+    await expect(page.getByRole('option', { name: /Image/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const imageId = (await todayChildren(page)).at(-1);
+    await expect.poll(async () => {
+      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === imageId);
+      return node?.type ?? null;
+    }).toBe('image');
+
+    // An image is the one file kind that renders inline — a bounded row-level
+    // thumbnail under the filename (part of the row, not a child block). The bullet
+    // is still the file glyph, and the chevron stays free for children.
+    const imageRow = row(page, imageId!);
+    await expect(imageRow.locator('.row-bullet-shape.file')).toBeVisible();
+    await expect(imageRow.locator('.row-content-line > .row-image-thumb img')).toBeVisible();
   });
 });

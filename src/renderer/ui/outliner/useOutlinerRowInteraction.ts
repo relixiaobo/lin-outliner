@@ -54,11 +54,6 @@ interface UseOutlinerRowInteractionOptions {
   setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   locked?: boolean;
-  // A file node (attachment/image) is a leaf, yet its expand toggle reveals an
-  // inline preview block — not a child outline. When set, expanding only adds the
-  // row to `ui.expanded` (the item renders the preview); it never focuses a
-  // trailing child draft, and Down past it never descends into a phantom child.
-  previewExpandable?: boolean;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
   // A not-yet-materialized trailing draft tags its wrap with the parent it will
@@ -92,7 +87,6 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     setUi,
     run,
     locked,
-    previewExpandable,
     dragId,
     setDragId,
     draft,
@@ -146,9 +140,9 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [draft, draftAfterId, panelId, parentId, rowId, setUi]);
 
   const toggleExpandOrSelect = useCallback(() => {
-    // A file node has no real children: its toggle flips the inline preview (the
-    // `previewExpandable` branch below), never a trailing child draft.
-    if (!hasChildren && !previewExpandable) {
+    // A childless row toggles its trailing child draft: expand focuses the draft so
+    // the first child can be typed; collapse selects the row.
+    if (!hasChildren) {
       const shouldFocusTrailing = !expanded;
       setUi((prev) => {
         const expandedSet = new Set(prev.expanded);
@@ -170,14 +164,14 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         expanded: expandedSet,
       }, rowFocusTarget(rowId, parentId, panelId));
     });
-  }, [childParentId, expanded, hasChildren, panelId, parentId, previewExpandable, rowId, setUi]);
+  }, [childParentId, expanded, hasChildren, panelId, parentId, rowId, setUi]);
 
   const moveFocus = useCallback((direction: 1 | -1) => {
     const scopeShowsTrailingInput = (scopeParentId: NodeId) => scopeParentId === rootId;
 
-    // A file node's expanded state shows a preview, not children, so Down past it
-    // must skip the trailing-child focus and fall through to the next visible row.
-    if (direction === 1 && expanded && !previewExpandable) {
+    // Down from an expanded row with no materialized children focuses the trailing
+    // child draft so a first child can be typed before leaving the row.
+    if (direction === 1 && expanded) {
       const childRows = buildOutlinerRows(byId.get(childParentId), byId);
       if (childRows.length === 0) {
         setUi((prev) => requestFocusState(prev, focusTarget(childParentId, childParentId, panelId, 'trailing'), cursorEnd()));
@@ -221,7 +215,6 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     expanded,
     panelId,
     parentId,
-    previewExpandable,
     rootId,
     rowId,
     setUi,

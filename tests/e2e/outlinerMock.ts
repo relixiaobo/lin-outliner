@@ -718,6 +718,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
       return bytes.buffer;
     };
+    const previewPngBytes = () => {
+      // A 1×1 opaque PNG — enough for the image renderer to produce a real <img>.
+      const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes.buffer;
+    };
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
       let next = clone(content);
       for (const op of patch.ops) {
@@ -2236,6 +2244,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             || (target?.kind === 'agent-payload' && target.payloadId?.toLowerCase().endsWith('pdf'))
           ) {
             return { bytes: previewPdfBytes(), mimeType: 'application/pdf' } as T;
+          }
+          const imageAsset = target?.kind === 'asset' && target.assetId ? assets.get(target.assetId) : undefined;
+          if (imageAsset?.mimeType?.startsWith('image/')) {
+            return { bytes: previewPngBytes(), mimeType: imageAsset.mimeType } as T;
           }
           return { bytes: new ArrayBuffer(0), mimeType: 'application/octet-stream' } as T;
         }

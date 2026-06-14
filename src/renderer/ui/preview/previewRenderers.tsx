@@ -123,13 +123,11 @@ export function PreviewRenderer({
  * the resolved-source rendering is common.
  */
 export function FilePreviewShell({
-  variant,
   meta,
   actions,
   state,
   onOpenTarget,
 }: {
-  variant: 'full' | 'inline';
   meta: string | null;
   actions?: ReactNode;
   state: PreviewSourceState;
@@ -137,7 +135,7 @@ export function FilePreviewShell({
 }) {
   const labels = useT().shell.filePreview;
   return (
-    <div className={`file-node-body file-node-body--${variant}`}>
+    <div className="file-node-body">
       <div className="file-node-toolbar">
         <span className="file-node-meta">{meta ?? ' '}</span>
         {actions ? <div className="file-node-actions">{actions}</div> : null}

@@ -17,37 +17,33 @@ type AttachmentLabels = ReturnType<typeof useT>['outliner']['field']['attachment
 interface FilePreviewBodyProps {
   node: FileNode;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
-  /** `full` = node page body; `inline` = bounded preview block under an expanded row. */
-  variant?: 'full' | 'inline';
 }
 
 /**
- * The body of a file node: a meta + actions strip over the rendered preview. The
- * file's name lives in the owning surface's title (node page) or row text (inline
- * block), so this body never repeats it. Shares its layout (FilePreviewShell) with
- * the non-node pane preview, so the two read identically.
+ * The body of a file node's node page: a meta + actions strip over the rendered
+ * preview, shown above the node's children outline. The file's name lives in the
+ * page title, so this body never repeats it. Shares its layout (FilePreviewShell)
+ * with the non-node pane preview, so the two read identically.
  */
-export function FilePreviewBody({ node, onOpenTarget, variant = 'full' }: FilePreviewBodyProps) {
+export function FilePreviewBody({ node, onOpenTarget }: FilePreviewBodyProps) {
   const target = useMemo(
     () => fileNodeTarget(node),
     [node.assetId, node.type, node.type === 'image' ? node.mediaUrl : undefined, node.content.text],
   );
   if (!target) {
-    return <FilePreviewShell variant={variant} meta={null} state={{ status: 'missing' }} onOpenTarget={onOpenTarget} />;
+    return <FilePreviewShell meta={null} state={{ status: 'missing' }} onOpenTarget={onOpenTarget} />;
   }
-  return <FilePreviewBodyResolved node={node} target={target} onOpenTarget={onOpenTarget} variant={variant} />;
+  return <FilePreviewBodyResolved node={node} target={target} onOpenTarget={onOpenTarget} />;
 }
 
 function FilePreviewBodyResolved({
   node,
   target,
   onOpenTarget,
-  variant,
 }: {
   node: FileNode;
   target: PreviewTarget;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
-  variant: 'full' | 'inline';
 }) {
   const ta = useT().outliner.field.attachment;
   const labels = useT().shell.filePreview;
@@ -89,7 +85,6 @@ function FilePreviewBodyResolved({
 
   return (
     <FilePreviewShell
-      variant={variant}
       meta={meta}
       actions={actions}
       state={state}

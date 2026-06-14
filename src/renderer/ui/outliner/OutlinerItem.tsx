@@ -70,8 +70,7 @@ import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactio
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
 import { fileNodeIconKind, isFileNode } from '../preview/fileNode';
-import { FilePreviewBlock } from '../preview/FilePreviewBlock';
-import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import { ImageThumb } from '../preview/ImageThumb';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -201,11 +200,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
-  // A file node (attachment/image) is an ordinary editable row whose bullet is the
-  // file-type glyph and whose text is the (editable) filename; its preview is the
-  // node-page body / inline block, not a card. It is a leaf — expanding it reveals
-  // the inline preview (previewExpandable), never a child outline.
+  // A file node (attachment/image) is an ordinary node whose bullet is the file-type
+  // glyph and whose text is the (editable) filename. It behaves like any node — the
+  // chevron expands its children, the bullet drills to its node page (where the full
+  // preview lives). The one inline exception is an image, which renders a row-level
+  // thumbnail (an image's content is its identity); the thumbnail is part of the row,
+  // not its child level, so it never collides with the chevron's children.
   const fileNodeRow = isFileNode(displayed) ? displayed : null;
+  const imageFileRow = fileNodeRow?.type === 'image' ? fileNodeRow : null;
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
@@ -221,7 +223,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     setUi: props.setUi,
     run: props.run,
     locked: node?.locked ?? true,
-    previewExpandable: Boolean(fileNodeRow),
     dragId: props.dragId,
     setDragId: props.setDragId,
     // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
@@ -1952,6 +1953,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               props.setUi((prev) => clearPendingInputState(prev, input));
             }}
           />
+          {imageFileRow && (
+            <ImageThumb node={imageFileRow} onOpen={() => props.onRoot(drillDownId)} />
+          )}
           {showSelectedReferenceOptionPicker && props.optionField && props.onSelectOption && (
             <SelectedReferenceOptionPicker
               anchorRef={optionAnchorRef}
@@ -2003,7 +2007,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       )}
     >
 
-      {row.expanded && !fileNodeRow && (
+      {row.expanded && (
         <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
       )}
 
@@ -2061,7 +2065,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && !props.fieldValue && !fileNodeRow && (
+      {!props.flat && row.expanded && !props.fieldValue && (
         <div className="children">
           <OutlinerView
             panelId={props.panelId}
@@ -2090,18 +2094,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         </div>
       )}
 
-      {/* A file node's expanded child level is the inline preview block, not an
-          outline. Rendered mode-agnostically (no `!props.flat` guard): in flat
-          mode the FlatRowShell measures it via ResizeObserver, so windowing keeps
-          the right height. */}
-      {fileNodeRow && row.expanded && (
-        <div className="children file-node-children">
-          <FilePreviewBlock
-            node={fileNodeRow}
-            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
-          />
-        </div>
-      )}
     </OutlinerRowShell>
   );
 }

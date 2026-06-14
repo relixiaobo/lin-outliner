@@ -326,11 +326,13 @@
   overflow-wrap: anywhere;
 }
 
-/* File-node body — the preview as a node's content. A meta + actions strip over
-   the shared file-preview-* renderers. Lives inside .panel-inner (node page) or
-   under an expanded file row (inline), both of which own the horizontal inset. */
+/* File-node body — the preview as a node's content: a meta + actions strip over
+   the shared file-preview-* renderers. Shown as the node-page hero above the file
+   node's children outline, and as the body of the non-node preview pane. Both
+   owning surfaces provide the horizontal inset. */
 .file-node-body {
   min-width: 0;
+  margin-bottom: var(--space-6);
 }
 
 .file-node-toolbar {
@@ -380,15 +382,35 @@
   min-width: 0;
 }
 
-/* Inline variant: bounded under an expanded file row, scrolls internally. */
-.file-node-body--inline .file-node-preview {
-  max-height: 40vh;
-  overflow: auto;
+/* An image file node renders a bounded row-level thumbnail below its filename —
+   the one inline file preview, because an image's content is its identity. It is
+   part of the row, not a child block, so it never collides with the chevron's
+   children. Clicking opens the image's node page for the full-size view. */
+.row-image-thumb {
+  display: block;
+  margin-top: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+  -webkit-app-region: no-drag;
 }
 
-/* The inline preview's child-level wrapper under an expanded file row. Inherits
-   the standard child indent (.children); adds vertical breathing room so the
-   preview reads as a distinct block, not a cramped continuation of the row. */
-.file-node-children {
-  padding-block: var(--space-2) var(--space-4);
+.row-image-thumb img {
+  display: block;
+  max-width: min(320px, 100%);
+  max-height: 160px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  object-fit: contain;
+}
+
+.row-image-thumb:focus-visible {
+  outline: none;
+}
+
+.row-image-thumb:focus-visible img {
+  box-shadow: var(--focus-ring-shadow);
 }

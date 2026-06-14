@@ -77,7 +77,6 @@ export function FilePreviewPanel({ canGoBack, onBack, onOpenTarget, target }: Fi
 
       <div className="file-preview-content">
         <FilePreviewShell
-          variant="full"
           meta={meta}
           actions={actions}
           state={state}
