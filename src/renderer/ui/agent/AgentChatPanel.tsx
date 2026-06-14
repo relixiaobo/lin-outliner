@@ -64,6 +64,7 @@ import type { AgentReplyAnchor } from './AgentMessageRow';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
+import { composerCurrentNodeId } from './userViewContext';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
@@ -92,14 +93,6 @@ interface AgentChatPanelProps {
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= 56;
-}
-
-function composerCurrentNodeId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
-  return context.focusedNode?.nodeId
-    ?? context.nodePanels.find((panel) => panel.active)?.rootNodeId
-    ?? context.nodePanels[0]?.rootNodeId
-    ?? index.projection.todayId
-    ?? null;
 }
 
 function withReferencedNodes(

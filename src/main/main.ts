@@ -1652,6 +1652,20 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       }
       return assetService.ingest(args as unknown as AssetIngestInput);
     }
+    case 'ingest_local_file': {
+      // The ingest bridge (agent working file -> committed outliner asset). Unlike
+      // ingest_asset, this takes a path -- but only one inside the agent's trusted
+      // roots (workdir/scratch), gated by the same check that backs preview/open of
+      // these chips. The renderer can only name a file it could already preview, so
+      // this does NOT reopen the arbitrary-local-file read primitive that
+      // ingest_asset's buffer-only rule guards against. Directories are rejected.
+      const file = await resolveTrustedLocalFileReference(
+        (args as { path?: unknown }).path,
+        [agentLocalFileRoot, agentScratchRoot],
+      );
+      if (!file || file.entryKind !== 'file') return null;
+      return assetService.ingest({ kind: 'path', path: file.path });
+    }
     case 'lookup_asset':
       return assetService.lookup(String(args.id));
     case 'delete_asset':

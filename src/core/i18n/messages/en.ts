@@ -1127,6 +1127,8 @@ commandPalette: {
       copyOutput: 'Copy tool output',
       copyChanges: 'Copy changes',
       copyFullOutput: 'Copy full tool output',
+      insertIntoOutliner: 'Insert into outliner',
+      insertedIntoOutliner: 'Inserted into outliner',
       screenshotCaptured: 'Screenshot captured',
       storedOutput: 'Stored tool output',
       payloadUnavailable: 'Payload unavailable',

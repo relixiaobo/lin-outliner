@@ -25,7 +25,9 @@ import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import { useCommandRunner } from './shared';
-import { buildAgentUserViewContext } from './agent/userViewContext';
+import { buildAgentUserViewContext, insertionTargetFor } from './agent/userViewContext';
+import { createAssetNode } from './interactions/attachmentIngest';
+import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
 import { onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
@@ -438,6 +440,33 @@ export function App() {
       ui,
     });
   }, [activePanelId, index, panels, ui]);
+
+  // The ingest bridge (agent-file-model F4): a file chip deep in the agent tree asks
+  // to save its working file into the outliner. Resolve where the file lands the way
+  // paste/drop does (insertionTargetFor — a sibling after the focused row, else the
+  // current root), ingest the path into a committed asset in main, then create the
+  // matching image/attachment node -- identical to a user-added file. Focus stays in
+  // the agent panel (applyFocus: false). A ref keeps the bridge reading the latest
+  // doc state while registering once (so it does not re-subscribe on every mutation).
+  const insertFileBridgeRef = useRef({ index, agentUserViewContext, run });
+  useEffect(() => {
+    insertFileBridgeRef.current = { index, agentUserViewContext, run };
+  }, [index, agentUserViewContext, run]);
+  useEffect(() => onInsertFileIntoOutlinerRequest(async (path) => {
+    const bridge = insertFileBridgeRef.current;
+    if (!bridge.index) return false;
+    const target = insertionTargetFor(bridge.agentUserViewContext, bridge.index);
+    if (!target) return false;
+    // Null when the file is gone or outside the trusted roots (e.g. a stale chip in
+    // an old conversation): report not-inserted so the chip never falsely confirms.
+    const asset = await api.ingestLocalFileToAsset(path);
+    if (!asset) return false;
+    // run() swallows a failed command into a null result (it never rejects), so a
+    // create that fails mid-insert (e.g. the parent was deleted between resolve and
+    // now) would otherwise still report success. Confirm only on a real CommandResult.
+    const result = await createAssetNode(bridge.run, target.parentId, target.index, asset, { applyFocus: false });
+    return result !== null;
+  }), []);
 
   if (!index) {
     return (

@@ -782,5 +782,30 @@
    `.inline-ref` local-file mention — hover preview + click-to-open come from the
    app-wide InlineFilePreviewLayer — so this only owns the row's placement. */
 .agent-tool-file-output {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   margin: var(--space-2) 0 0 20px;
+}
+
+/* Insert-into-outliner action on a produced-file chip. Mirrors the tool-call copy
+   button: a 24px icon control that deepens from faint to strong on hover. */
+.agent-tool-file-insert {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+
+.agent-tool-file-insert:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-tool-file-insert:disabled {
+  cursor: default;
 }

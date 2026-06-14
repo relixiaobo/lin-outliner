@@ -1040,6 +1040,8 @@ commandPalette: {
       copyOutput: '复制工具输出',
       copyChanges: '复制变更',
       copyFullOutput: '复制完整工具输出',
+      insertIntoOutliner: '插入到大纲',
+      insertedIntoOutliner: '已插入到大纲',
       screenshotCaptured: '已捕获截图',
       storedOutput: '已存储的工具输出',
       payloadUnavailable: '负载不可用',

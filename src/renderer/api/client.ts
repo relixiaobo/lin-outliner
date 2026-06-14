@@ -146,6 +146,13 @@ export const api = {
   // primitive (see pick_image_files) and is intentionally not exposed here.
   ingestAssetFromData: (data: Uint8Array, mimeType?: string, originalFilename?: string) =>
     command<AssetMetadata>('ingest_asset', { kind: 'buffer', data, mimeType, originalFilename }),
+  // The ingest bridge: copy+freeze an agent working file into the asset store. The
+  // path is path-ingested in main but only if it resolves inside the agent's trusted
+  // roots (workdir/scratch) -- the same gate that backs previewing these chips -- so
+  // this is not the arbitrary-path read the buffer-only rule above guards against.
+  // Returns null when the path is not a trusted file (e.g. GC'd working file).
+  ingestLocalFileToAsset: (path: string) =>
+    command<AssetMetadata | null>('ingest_local_file', { path }),
   lookupAsset: (id: string) => command<AssetMetadata | null>('lookup_asset', { id }),
   deleteAsset: (id: string) => command<void>('delete_asset', { id }),
   pickImageFiles: () => command<AssetMetadata[]>('pick_image_files'),
