@@ -641,6 +641,26 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Result-first turn fold for DM and Channel (channel-group-chat-semantics PR 2)**
+  (cc-2, PR #240, plan-track) — the human-side render fold that pairs with #239's
+  agent-side environment reminder. Every agent turn now renders **result-first**: the
+  final answer is the message; thinking, tool calls, and interim narration fold behind a
+  collapsed `Worked for {duration}` disclosure. Unifies DM and Channel onto one fold
+  mechanism (deletes the Channel text-only path and the single-tool inline block) and makes
+  `isLastInTurn` actor-aware, so each Channel agent's final message gets its own
+  copy/regenerate action bar. `Worked for {duration}` is the producing run's
+  `updatedAt − startedAt` (new `runDurationMs` on the message entity), with the descriptive
+  "Thought · used N tools" summary as the fallback when the run wall-clock is unknown. Pure
+  row-building logic extracted into `agentConversationRows.ts` for unit testing. Gate (main):
+  `/code-review xhigh` (9 finder angles) → cc-2 fixed the result-first content-hiding edge (a
+  resultless tool-ending turn now auto-expands so its interim text stays visible, keyed on
+  trailing prose not any text), the multi-run "Worked for" sum (reactive-compaction retry),
+  the running-run 0-vs-null duration (undefined → descriptive fallback, never a fake "<1s"),
+  and the third duplicate duration formatter (now one shared `formatRunDuration`); product-call
+  items (e.g. wall-clock includes approval-wait) deferred with rationale. typecheck + docs:check
+  + test:core (1018/0) + test:renderer (477/0) + e2e (agent-process + agent-composer, 65) green;
+  visual verified light + dark (collapsed + expanded). Spec:
+  `docs/spec/agent-event-log-rendering.md`, `docs/spec/agent-architecture.md`.
 - **Channel/DM framing → per-turn environment reminder (channel-group-chat-semantics PR 1)**
   (cc-2, PR #239, plan-track) — the agent-side foundation (A7) of Channel group-chat
   semantics. A member's stable system prompt is now **identity only** (one

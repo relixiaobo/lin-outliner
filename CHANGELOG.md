@@ -506,6 +506,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Result-first turn fold for DM and Channel (PR #240, cc-2)** —
+  every agent turn now renders **result-first**: the final answer is the message, while thinking,
+  tool calls, and interim narration fold behind a collapsed `Worked for {duration}` disclosure. DM
+  and Channel share one fold mechanism — the Channel text-only render path and the single-tool inline
+  block are removed — and each Channel agent's final message gets its own copy/regenerate action bar
+  (`isLastInTurn` is now actor-aware). `Worked for {duration}` is the producing run's wall-clock
+  (`updatedAt − startedAt`, threaded as `runDurationMs` on the message entity), falling back to the
+  descriptive "Thought · used N tools" summary when the run wall-clock is unknown — a still-`running`
+  run reports unknown rather than a fake "<1s". A resultless turn that ends on a tool/thought
+  auto-expands so its interim text stays visible instead of hiding behind the fold; a multi-run turn
+  (reactive-compaction retry) sums each distinct run's wall-clock. The pure row-building logic is
+  extracted into `agentConversationRows.ts` for unit testing. Pairs with #239 (the agent-side
+  environment reminder) to complete `channel-group-chat-semantics`. Spec:
+  `docs/spec/agent-event-log-rendering.md`, `docs/spec/agent-architecture.md`.
+
 - **Channel/DM framing moves from the member system prompt to a per-turn environment reminder (PR #239, cc-2)** —
   a Channel/DM member's stable system prompt is now **identity only** (display name + mention,
   description, authored instructions, profile skills) via one `buildAgentMemberSystemPrompt` that
