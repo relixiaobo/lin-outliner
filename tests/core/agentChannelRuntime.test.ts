@@ -25,7 +25,7 @@ import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { ASK_USER_QUESTION_TOOL_NAME } from '../../src/main/agentAskUserQuestionTool';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
-import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderActiveRun } from '../../src/core/agentRenderProjection';
 
 const MAIN_AGENT_ID = 'built-in:tenon:assistant';
 
@@ -572,12 +572,11 @@ describe('agent channel runtime', () => {
     ]);
   });
 
-  test('an in-progress Channel turn is suppressed from the transcript until its run seals', async () => {
+  test('an in-progress Channel turn is suppressed only while its run is LIVE, never when orphaned', async () => {
     // Atomic delivery (spec): a running Channel turn is "never a transcript row".
-    // Run a full 2-agent round, then rebuild the projection with one run's
-    // `run.completed` dropped (status → running). The ONLY difference between the
-    // two states is that run's status, so any change in transcript membership is
-    // the suppression itself — not a tree/grafting difference.
+    // Suppression is keyed off the LIVE active-run set, NOT persisted status — so a
+    // turn hides while genuinely in flight, but a run orphaned `running` by a crash
+    // still renders (its interrupted turn must not silently vanish).
     const reply = (context: Context) => fauxAssistantMessage(fauxText(
       (context.systemPrompt ?? '').includes('REVIEWER_AGENT_BODY') ? 'REVIEWER_ANSWER.' : 'MAIN_ANSWER.',
     ));
@@ -589,29 +588,44 @@ describe('agent channel runtime', () => {
     await runtime.drainChannelTurnsForTest(channel.conversationId);
 
     const events = await new AgentEventStore(dataRoot).readEvents(channel.conversationId);
-    const transcriptText = (state: ReturnType<typeof replayAgentEvents>) => {
-      const projection = buildAgentRenderProjection(state, { revision: 1 });
+    const sealed = replayAgentEvents(events);
+    const transcriptText = (
+      state: ReturnType<typeof replayAgentEvents>,
+      activeRuns: AgentRenderActiveRun[] = [],
+    ) => {
+      const projection = buildAgentRenderProjection(state, { revision: 1, activeRuns });
       return projection.transcriptRows
         .filter((row) => row.kind === 'message')
         .map((row) => JSON.stringify(projection.entities.messages[row.messageId]?.content ?? ''))
         .join('\n');
     };
 
-    // Both runs sealed → both answers are transcript rows.
-    const sealed = replayAgentEvents(events);
+    // Exactly one reviewer run (don't take an arbitrary one).
+    const reviewerRuns = Object.values(sealed.runs).filter((run) => run.agentId === reviewerAgentId);
+    expect(reviewerRuns).toHaveLength(1);
+    const reviewerRun = reviewerRuns[0]!;
+
+    // No live runs → both turns are transcript rows.
     expect(transcriptText(sealed)).toContain('MAIN_ANSWER');
     expect(transcriptText(sealed)).toContain('REVIEWER_ANSWER');
 
-    // Reopen the reviewer's run (drop its completion) → it is still running, so its
-    // whole turn drops out of the transcript while the sealed coordinator turn stays.
-    const reviewerRunId = Object.values(sealed.runs).find((run) => run.agentId === reviewerAgentId)?.id;
-    expect(reviewerRunId).toBeDefined();
-    const reopened = replayAgentEvents(
-      events.filter((event) => !(event.type === 'run.completed' && event.runId === reviewerRunId)),
+    // Reviewer run marked LIVE → its whole turn drops out; the coordinator stays.
+    const liveText = transcriptText(sealed, [{
+      runId: reviewerRun.id,
+      agentId: reviewerAgentId,
+      addressedByMessageId: reviewerRun.addressedByMessageId ?? null,
+      startedAt: reviewerRun.startedAt,
+    }]);
+    expect(liveText).toContain('MAIN_ANSWER');
+    expect(liveText).not.toContain('REVIEWER_ANSWER');
+
+    // Regression guard (crash/quit): a run orphaned `running` — status running but
+    // NOT in the live set — must STILL render rather than vanish.
+    const orphaned = replayAgentEvents(
+      events.filter((event) => !(event.type === 'run.completed' && event.runId === reviewerRun.id)),
     );
-    expect(reopened.runs[reviewerRunId!]?.status).toBe('running');
-    expect(transcriptText(reopened)).toContain('MAIN_ANSWER');
-    expect(transcriptText(reopened)).not.toContain('REVIEWER_ANSWER');
+    expect(orphaned.runs[reviewerRun.id]?.status).toBe('running');
+    expect(transcriptText(orphaned)).toContain('REVIEWER_ANSWER');
   });
 
   test('one addressee failing leaves its trace and never skips siblings', async () => {

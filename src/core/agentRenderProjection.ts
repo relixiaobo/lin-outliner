@@ -340,8 +340,13 @@ export function buildAgentRenderProjection(
   const activePath = getAgentEventActivePath(state);
   const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
   const multiAgent = isMultiAgentConversation(state.conversation.members);
+  // The runs that are LIVE right now (in-memory active runs the runtime passes in),
+  // NOT every run whose persisted status is `running`. A run left `running` by a
+  // crash/quit is absent here, so its interrupted turn is never mistaken for an
+  // in-flight one — see the Channel suppression in buildTranscriptRows.
+  const activeRunIds = new Set((options.activeRuns ?? []).map((run) => run.runId));
   const rows = buildActiveRows(state, activePath, entities);
-  const transcriptRows = buildTranscriptRows(state, entities, multiAgent);
+  const transcriptRows = buildTranscriptRows(state, entities, multiAgent, activeRunIds);
 
   // The streaming tail drives only the DM composer/transcript; a multi-agent
   // Channel nulls dmStreaming, so skip the active-path scan there entirely.
@@ -426,6 +431,13 @@ function applyMessageAddressing(
   }
 }
 
+// One predicate for "this run has not reached a terminal event", mirrored by the
+// sealed-duration gate (`!isRunRunning`). Centralized so the run-lifecycle meaning
+// changes in one place.
+function isRunRunning(run: { status: AgentRunStatus } | undefined): boolean {
+  return run?.status === 'running';
+}
+
 function buildDerivedActivityEntries(
   state: AgentEventReplayState,
   options: BuildAgentRenderProjectionOptions,
@@ -435,7 +447,7 @@ function buildDerivedActivityEntries(
   if (!activeRunId || !options.activeRunAddressedByMessageId) return [];
   const activeRun = state.runs[activeRunId];
   const activeAgentId = activeRun?.agentId;
-  if (!activeAgentId || activeRun.status !== 'running') return [];
+  if (!activeAgentId || !isRunRunning(activeRun)) return [];
 
   const addressedByMessageId = options.activeRunAddressedByMessageId;
   const addressingMessage = state.messages[addressedByMessageId];
@@ -451,14 +463,14 @@ function buildDerivedActivityEntries(
       if (message.role !== 'assistant' || !message.runId) continue;
       const run = state.runs[message.runId];
       if (!run?.agentId || !pendingAgentIds.has(run.agentId)) continue;
-      if (run.status === 'running') continue;
+      if (isRunRunning(run)) continue;
       if (message.createdAt < addressingMessage.createdAt) continue;
       pendingAgentIds.delete(run.agentId);
     }
     for (const run of Object.values(state.runs)) {
       if (!run.agentId || !pendingAgentIds.has(run.agentId)) continue;
       if (run.addressedByMessageId !== addressedByMessageId) continue;
-      if (run.status === 'running') continue;
+      if (isRunRunning(run)) continue;
       pendingAgentIds.delete(run.agentId);
     }
   }
@@ -563,16 +575,19 @@ function buildTranscriptRows(
   state: AgentEventReplayState,
   entities: AgentRenderEntities,
   multiAgent: boolean,
+  activeRunIds: ReadonlySet<string>,
 ): AgentRenderRow[] {
   const rows: AgentRenderRow[] = [];
   for (const entry of getAgentEventVisibleTranscript(state)) {
     // Atomic Channel delivery (spec: a running Channel turn is "never a transcript
-    // row"): in a multi-agent Channel, a turn whose producing run is still
-    // `running` is suppressed from the transcript — its live progress shows only
-    // in channelActivityEntries. The whole turn appears once its run seals
-    // (status leaves `running`), rendered result-first. A DM streams its active
-    // turn live, so this is gated on `multiAgent`.
-    if (multiAgent && entry.message.runId && state.runs[entry.message.runId]?.status === 'running') {
+    // row"): in a multi-agent Channel, a turn whose producing run is LIVE right now
+    // is suppressed from the transcript — its progress shows only in
+    // channelActivityEntries. The whole turn appears once its run seals (leaves the
+    // live set), rendered result-first. Keyed off the live active-run set, NOT
+    // persisted `status === running`: a run orphaned `running` by a crash is not
+    // live, so its interrupted turn still renders instead of vanishing. A DM streams
+    // its active turn live, so this is gated on `multiAgent`.
+    if (multiAgent && entry.message.runId && activeRunIds.has(entry.message.runId)) {
       continue;
     }
     const compaction = compactionForMessage(state, entry.message);
@@ -587,7 +602,7 @@ function buildTranscriptRows(
     }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
-  return insertChildRunRows(rows, entities, state);
+  return insertChildRunRows(rows, entities, state, multiAgent, activeRunIds);
 }
 
 function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCallId: string): boolean {
@@ -631,12 +646,19 @@ function insertChildRunRows(
   rows: AgentRenderRow[],
   entities: AgentRenderEntities,
   state: AgentEventReplayState,
+  multiAgent: boolean,
+  activeRunIds: ReadonlySet<string>,
 ): AgentRenderRow[] {
   const runs = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
   if (runs.length === 0) return rows;
   const result = [...rows];
   for (const run of runs) {
+    // Mirror the parent turn's suppression: a child run spawned by a Channel turn
+    // whose run is still LIVE is held back too, so its boundary row never orphans
+    // to the transcript end (its anchor message is suppressed) while the parent is
+    // hidden. It reappears, anchored, once the parent turn lands.
+    if (multiAgent && run.parentRunId && activeRunIds.has(run.parentRunId)) continue;
     const row: AgentRenderRow = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
     const insertAt = childRunInsertIndex(result, entities, run);
     if (insertAt < 0) result.push(row);
@@ -770,7 +792,7 @@ function toRenderMessageEntity(
     // `updatedAt === startedAt` → a misleading "<1s". Leave it undefined there so
     // the header falls back to its descriptive summary instead of faking 0ms.
     runDurationMs:
-      run && run.status !== 'running' ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
+      run && !isRunRunning(run) ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
   };
 }
 

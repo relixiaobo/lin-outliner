@@ -836,11 +836,17 @@ Rules:
   transcript row — the Channel message stream is whole-utterance only (**delivery**
   is atomic: the whole turn appears on completion). This is enforced in the
   projection: `buildTranscriptRows` **suppresses any message whose producing run is
-  still `running`** in a multi-agent Channel, so an in-flight turn (its thinking,
-  interim narration, AND tool-call/segment events — not just streamed text) is kept
-  out of the transcript until the run seals, at which point its whole turn appears
-  at once. (A DM streams its active turn live, so the suppression is gated on
-  `isMultiAgentConversation`.) On completion the turn renders through the same
+  in the live active-run set** in a multi-agent Channel, so an in-flight turn (its
+  thinking, interim narration, AND tool-call/segment events — not just streamed
+  text) is kept out of the transcript until the run leaves that set, at which point
+  its whole turn appears at once. The suppression is keyed off the **live**
+  in-memory active runs the runtime passes in (`options.activeRuns`), NOT the
+  persisted `status === 'running'`: a run orphaned `running` by a crash/quit is
+  absent from the live set, so its interrupted turn still renders rather than
+  silently vanishing. A child run anchored to a live parent turn is held back the
+  same way, so its boundary row never orphans to the transcript end while the
+  parent is hidden. (A DM streams its active turn live, so the suppression is gated
+  on `isMultiAgentConversation`.) On completion the turn renders through the same
   **result-first fold** as a DM (final answer as prose, process collapsed behind
   "Worked for …"); only the live-drill-in vs. inline-stream split differs between
   the two modes.
