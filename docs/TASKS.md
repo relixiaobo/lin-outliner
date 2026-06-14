@@ -287,6 +287,17 @@ data-gated — see § memory above). The remaining *active* build work is the sk
     "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
     contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
     the transport only when consulting agents outside the trust domain.
+- **channel-group-chat-semantics** (P1, agent-program / Channel; SET-level design staged in
+  `tmp/`, folds in with PR 2 — no committed plan yet) — make a Channel read like a group
+  chat: members are told how to communicate (lead with the result, keep intermediate
+  thinking/tool steps private), and the human-side thread renders each member's turn under
+  its identity with a per-agent action bar. Ships as a SET of two independent PRs.
+  - **SHIPPED — PR 1 agent side (PR #239, cc-2, 2026-06-14)** — Channel/DM framing moves
+    from the (now identity-only) member system prompt to a per-turn `<conversation-environment>`
+    reminder keyed off conversation identity (`isCanonicalDmConversationId`), carrying the
+    member roster + the new "only your final message is shared" norm. See Recently completed.
+  - **PR 2 — human-side render fold + per-agent action bar** (next) — the renderer half;
+    commit the SET design as a `docs/plans/` file when this lands.
 - **research = a base read-only capability of every agent** (**PM + codex re-decided
   2026-06-14; no separate agent**) — research is *not* a standalone agent; it is a
   foundational read-only investigation capability that **all agents** share (like
@@ -630,6 +641,24 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Channel/DM framing → per-turn environment reminder (channel-group-chat-semantics PR 1)**
+  (cc-2, PR #239, plan-track) — the agent-side foundation (A7) of Channel group-chat
+  semantics. A member's stable system prompt is now **identity only** (one
+  `buildAgentMemberSystemPrompt` replacing the split channel/DM builders), so the same
+  agent's prompt is identical and cacheable across its DM and any Channel. DM-vs-Channel
+  framing + member roster + Channel norms move to a new per-turn `<conversation-environment>`
+  reminder (`buildConversationEnvironmentReminder`, assembled in `deriveRuntimePiMessages`
+  next to the memory reminder, POV-correct for the executing member), which adds the missing
+  norm — *only your final message is shared; thinking/tool steps stay private* — so members
+  lead with the result instead of narrating into the thread. Gate (main): `/code-review`
+  caught a DM/Channel authority regression (decided by `isMultiAgentConversation` headcount,
+  not conversation identity, so a coordinator-only Channel got the DM block) — cc-2 re-keyed
+  it to `isChannel: !isCanonicalDmConversationId(conversationId)`, restored the DM
+  self-identity/stay-in-scope rules, and shared one `agentMemberMentionLabel` (escapeXml
+  moved to `src/core/reminderXml.ts`); a coordinator-only-Channel runtime regression test now
+  pins the real wiring. typecheck + `test:core` (1016/0) + `docs:check` green. Spec:
+  `docs/spec/agent-pi-mono-implementation.md`. PR 2 (human-side render fold + per-agent action
+  bar) follows.
 - **agent-file-model F4 — ingest bridge (save a conversation file into the outliner)**
   (cc, PR #238, plan-track) — the last item of `agent-file-model`; the `working →
   committed` inverse of F3's materialize bridge. An "Insert into outliner" icon button

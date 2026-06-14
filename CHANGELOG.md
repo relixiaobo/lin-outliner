@@ -506,6 +506,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Channel/DM framing moves from the member system prompt to a per-turn environment reminder (PR #239, cc-2)** —
+  a Channel/DM member's stable system prompt is now **identity only** (display name + mention,
+  description, authored instructions, profile skills) via one `buildAgentMemberSystemPrompt` that
+  replaces the split `buildChannelPeerSystemPrompt` / `buildDirectMessageAgentSystemPrompt`, so the
+  same agent's prompt is byte-identical (and cacheable) across its DM and any Channel. DM-vs-Channel
+  framing, the member roster, and the Channel communication norms are **environment**, so they ride a
+  new per-turn `<conversation-environment>` `<system-reminder>` (`buildConversationEnvironmentReminder`,
+  assembled in `deriveRuntimePiMessages` next to the memory reminder, POV-correct for the executing
+  member). The Channel block adds the previously-missing norm — *only your final message is shared with
+  the other members; intermediate thinking and tool steps stay private* — so members lead with the
+  result instead of narrating their process into the thread. DM-vs-Channel is keyed off conversation
+  **identity** (`isCanonicalDmConversationId`), not live agent headcount, so a coordinator-only Channel
+  is still framed as a Channel. `escapeXml` moves to `src/core/reminderXml.ts` and the POV identity
+  preamble + roster share one `agentMemberMentionLabel` (consistent escaping). PR 1 of 2 for Channel
+  group-chat semantics (agent side); the human-side render fold + per-agent action bar follow. Gate
+  (main): `/code-review` flagged a DM/Channel authority regression (decided by headcount, not identity)
+  — fixed to `isCanonicalDmConversationId` with a coordinator-only-Channel runtime regression test;
+  typecheck + `test:core` (1016) + `docs:check` green. Spec: `docs/spec/agent-pi-mono-implementation.md`.
 - **Cross-agent contact is baseline-allow + consultee approval attribution (PR #236, cc)** —
   `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']` flips `'ask'` → `'allow'`, so consulting another
   agent is ungated in **every** safety mode (`ask_first` / `balanced` / `full_access`); safety stays on
