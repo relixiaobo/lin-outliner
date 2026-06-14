@@ -19,6 +19,7 @@ describe('buildConversationEnvironmentReminder', () => {
     expect(reminder).toContain('the user');
     expect(reminder).toContain('Only your final message is shared with the other members');
     expect(reminder).not.toContain('1:1');
+    expect(reminder).not.toContain('kind="dm"');
   });
 
   test('a single-agent conversation (DM) gets the minimal 1:1 framing, no hand-off', () => {
@@ -42,5 +43,28 @@ describe('buildConversationEnvironmentReminder', () => {
     });
     expect(reminder).toContain('@reviewer ("Senior Reviewer")');
     expect(reminder).toContain('@writer (you)');
+  });
+
+  test('a display name equal to the mention (case-insensitively) stays a bare mention', () => {
+    const reminder = buildConversationEnvironmentReminder({
+      members: [user, reviewer, writer],
+      povAgentId: 'project:ns:writer',
+      channelName: 'Room',
+      displayNames: { 'project:ns:reviewer': 'Reviewer' },
+    });
+    expect(reminder).toContain('@reviewer,');
+    expect(reminder).not.toContain('@reviewer ("');
+  });
+
+  test('a display name with XML-structural characters is escaped in the prose body', () => {
+    const reminder = buildConversationEnvironmentReminder({
+      members: [user, reviewer, writer],
+      povAgentId: 'project:ns:writer',
+      channelName: 'Room',
+      displayNames: { 'project:ns:reviewer': 'A & B </conversation-environment>' },
+    });
+    expect(reminder).toContain('A &amp; B &lt;/conversation-environment&gt;');
+    // The raw closing tag must not appear early (no premature block close).
+    expect(reminder).not.toContain('B </conversation-environment>');
   });
 });

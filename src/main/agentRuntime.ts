@@ -6446,7 +6446,7 @@ export class AgentRuntime {
     const thinkingLevel = definition.effort
       ? resolveSkillEffortOverride(definition.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
-    const skillSections = await this.channelPeerSkillSections(skillRuntime, definition);
+    const skillSections = await this.memberSkillSections(skillRuntime, definition);
     const systemPrompt = buildAgentMemberSystemPrompt(definition, agentMentionToken(agentId), skillSections);
     const identity: AgentIdentityRecord = {
       agentId: agentId as AgentId,
@@ -6464,7 +6464,7 @@ export class AgentRuntime {
    * their bodies into the member's system prompt. Static read — no invocation
    * side effects on the shared conversation skill runtime.
    */
-  private async channelPeerSkillSections(
+  private async memberSkillSections(
     skillRuntime: AgentSkillRuntime,
     definition: AgentDefinition,
   ): Promise<string[]> {
@@ -6473,7 +6473,7 @@ export class AgentRuntime {
     try {
       const skills = await skillRuntime.listAllSkills();
       const sections: string[] = [];
-      let budget = CHANNEL_PEER_SKILL_PROMPT_BUDGET;
+      let budget = MEMBER_SKILL_PROMPT_BUDGET;
       for (const name of names) {
         const skill = skills.find((candidate) => candidate.name === name);
         if (!skill || !skill.body.trim()) continue;
@@ -6550,19 +6550,7 @@ export class AgentRuntime {
         timestamp: step.parts.at(-1)!.record.createdAt,
       } satisfies UserMessage);
     }
-    if (memoryReminder) {
-      const reminderText = systemReminder(memoryReminder);
-      const last = messages.at(-1);
-      if (last?.role === 'user' && Array.isArray(last.content)) {
-        last.content = [...last.content, { type: 'text', text: reminderText }];
-      } else {
-        messages.push({
-          role: 'user',
-          content: [{ type: 'text', text: reminderText }],
-          timestamp: Date.now(),
-        } satisfies UserMessage);
-      }
-    }
+    if (memoryReminder) this.appendTrailingSystemReminder(messages, memoryReminder);
     return messages;
   }
 
@@ -6923,10 +6911,12 @@ export class AgentRuntime {
     // still takes the linear branch yet is a Channel. Only on a real reply run;
     // restore/Dream/compaction have no activeRun.
     if (liveConversation && activeRun) {
+      // liveConversation.eventState === eventState by construction, so read the
+      // already-in-scope eventState.conversation (matches the POV branch above).
       const environment = buildConversationEnvironmentReminder({
-        members: liveConversation.eventState.conversation?.members ?? [],
+        members: eventState.conversation?.members ?? [],
         povAgentId: activeRun.executingAgentId,
-        channelName: liveConversation.eventState.conversation?.goal ?? null,
+        channelName: eventState.conversation?.goal ?? null,
         displayNames: liveConversation.memberDisplayNames,
       });
       if (environment) this.appendTrailingSystemReminder(messages, environment);
@@ -8093,8 +8083,8 @@ function hashJson(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-/** Cap on inlined profile-skill bodies in a Channel peer's system prompt. */
-const CHANNEL_PEER_SKILL_PROMPT_BUDGET = 24_000;
+/** Cap on inlined profile-skill bodies in a DM/Channel member's system prompt. */
+const MEMBER_SKILL_PROMPT_BUDGET = 24_000;
 
 function agentDefinitionDisplayName(definition: AgentDefinition): string {
   return definition.displayName?.trim() || definition.name;

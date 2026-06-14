@@ -1,6 +1,6 @@
 import type { AgentPrincipal } from '../core/agentEventLog';
 import { agentMentionToken, channelAgentMembers, isMultiAgentConversation } from '../core/agentChannel';
-import { xmlAttrs } from './agentReminderXml';
+import { escapeXml, xmlAttrs } from './agentReminderXml';
 
 /**
  * The Channel/DM **environment** reminder ([[agent-conversation-model]] reminder
@@ -34,11 +34,14 @@ export function buildConversationEnvironmentReminder(
 function renderChannelEnvironment(input: ConversationEnvironmentReminderInput): string {
   const roster = channelAgentMembers(input.members)
     .map((member) => {
-      const mention = `@${agentMentionToken(member.agentId)}`;
+      // The mention token is already normalized to [a-z0-9._-] at id construction,
+      // so it needs no escaping; the user-authored display name does (it lands in
+      // the reminder's prose body, not an attribute, so xmlAttrs never sees it).
+      const token = agentMentionToken(member.agentId);
       const name = input.displayNames?.[member.agentId];
-      const labelled = name && name.toLowerCase() !== agentMentionToken(member.agentId).toLowerCase()
-        ? `${mention} ("${name}")`
-        : mention;
+      const labelled = name && name.toLowerCase() !== token.toLowerCase()
+        ? `@${token} ("${escapeXml(name)}")`
+        : `@${token}`;
       return member.agentId === input.povAgentId ? `${labelled} (you)` : labelled;
     });
   const members = [...roster, 'the user'].join(', ');
