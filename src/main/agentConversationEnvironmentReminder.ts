@@ -1,6 +1,6 @@
 import type { AgentPrincipal } from '../core/agentEventLog';
-import { agentMentionToken, channelAgentMembers, isMultiAgentConversation } from '../core/agentChannel';
-import { escapeXml, xmlAttrs } from './agentReminderXml';
+import { agentMemberMentionLabel, channelAgentMembers } from '../core/agentChannel';
+import { xmlAttrs } from './agentReminderXml';
 
 /**
  * The Channel/DM **environment** reminder ([[agent-conversation-model]] reminder
@@ -14,6 +14,15 @@ import { escapeXml, xmlAttrs } from './agentReminderXml';
  * user-turn reminder stack.
  */
 export interface ConversationEnvironmentReminderInput {
+  /**
+   * Whether this conversation is structurally a Channel. DM-vs-Channel is a
+   * conversation **identity** (DM id prefix / `canonicalDmAgentId`), NOT a live
+   * headcount — a Channel may legitimately have only its coordinator (created
+   * with no extra agents, or shrunk via `member.removed`) yet is still a Channel.
+   * The runtime, which owns the `conversationId`, decides this; the builder only
+   * renders the block it is told to.
+   */
+  isChannel: boolean;
   members: readonly AgentPrincipal[];
   /** The in-flight run's executing member — the reminder is written for it. */
   povAgentId: string;
@@ -26,7 +35,7 @@ export interface ConversationEnvironmentReminderInput {
 export function buildConversationEnvironmentReminder(
   input: ConversationEnvironmentReminderInput,
 ): string | null {
-  return isMultiAgentConversation(input.members)
+  return input.isChannel
     ? renderChannelEnvironment(input)
     : renderDirectMessageEnvironment();
 }
@@ -34,14 +43,10 @@ export function buildConversationEnvironmentReminder(
 function renderChannelEnvironment(input: ConversationEnvironmentReminderInput): string {
   const roster = channelAgentMembers(input.members)
     .map((member) => {
-      // The mention token is already normalized to [a-z0-9._-] at id construction,
-      // so it needs no escaping; the user-authored display name does (it lands in
-      // the reminder's prose body, not an attribute, so xmlAttrs never sees it).
-      const token = agentMentionToken(member.agentId);
-      const name = input.displayNames?.[member.agentId];
-      const labelled = name && name.toLowerCase() !== token.toLowerCase()
-        ? `@${token} ("${escapeXml(name)}")`
-        : `@${token}`;
+      // Shared mention/display-name label (case-insensitive, escaped) so the
+      // roster never drifts from the POV identity preamble.
+      const { mention, displayName } = agentMemberMentionLabel(member.agentId, input.displayNames);
+      const labelled = displayName ? `@${mention} ("${displayName}")` : `@${mention}`;
       return member.agentId === input.povAgentId ? `${labelled} (you)` : labelled;
     });
   const members = [...roster, 'the user'].join(', ');
@@ -60,7 +65,10 @@ function renderChannelEnvironment(input: ConversationEnvironmentReminderInput): 
 function renderDirectMessageEnvironment(): string {
   return [
     '<conversation-environment kind="dm">',
-    'You are in a direct 1:1 conversation with the user. There are no other agent members here; do not hand off or mention another agent as a routing instruction. If the user needs a broader room, suggest creating a Channel.',
+    'You are in a direct 1:1 conversation with the user.',
+    '- Speak as yourself; your reply is posted to this DM under your name.',
+    '- There are no other agent members here; do not hand off or mention another agent as a routing instruction. If the user needs a broader room, suggest creating a Channel.',
+    '- Stay within your description and instructions.',
     '</conversation-environment>',
   ].join('\n');
 }

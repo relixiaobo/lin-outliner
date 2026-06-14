@@ -407,6 +407,35 @@ describe('agent channel runtime', () => {
     expect(await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID))).toBe(mainAccessCount);
   });
 
+  test('a coordinator-only Channel still serializes the Channel environment block, not the DM block', async () => {
+    // Regression the gate flagged: DM-vs-Channel is conversation identity (the
+    // `lin-agent-channel-` id prefix), NOT live agent headcount. A Channel
+    // created with no extra agents has only its coordinator as an agent member —
+    // `isMultiAgentConversation` is false — yet must still be framed as a Channel.
+    // The old headcount-keyed code wrongly served such a room the DM block.
+    const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('On it.'))]);
+    const { runtime, calls, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ title: 'Solo room' });
+    await runtime.sendMessage(channel.conversationId, 'kick things off');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    // The no-@ turn ran the coordinator (the only agent member), once.
+    expect(calls).toHaveLength(1);
+    // It carried the Channel environment block — keyed off identity, so a
+    // coordinator-only room is still a Channel — never the DM 1:1 framing.
+    expect(calls[0]!.serialized).toContain('conversation-environment');
+    expect(calls[0]!.serialized).toContain('Only your final message is shared with the other members');
+    expect(calls[0]!.serialized).not.toContain('direct 1:1 conversation');
+
+    // It really is coordinator-only: the user plus the coordinator, no other agent.
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: MAIN_AGENT_ID },
+    ]);
+  });
+
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {
     // Four runs — past the old relay budget of 3; the chain ends only because the
     // last reply mentions nobody (stop is the sole circuit breaker otherwise).

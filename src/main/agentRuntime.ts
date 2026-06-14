@@ -6906,14 +6906,17 @@ export class AgentRuntime {
     // the member system prompt is identity-only, so DM-vs-Channel framing + the
     // member roster + Channel communication norms ride here instead. POV-correct
     // (written for the executing member) and uniform across the main agent
-    // (whose prompt is built separately) and peers. Keyed off membership, not
-    // the POV branch above — a fresh Channel where only this member has spoken
-    // still takes the linear branch yet is a Channel. Only on a real reply run;
+    // (whose prompt is built separately) and peers. Keyed off conversation
+    // identity (DM id prefix), not the live headcount or the POV branch above —
+    // a coordinator-only Channel is still a Channel. Only on a real reply run;
     // restore/Dream/compaction have no activeRun.
     if (liveConversation && activeRun) {
       // liveConversation.eventState === eventState by construction, so read the
       // already-in-scope eventState.conversation (matches the POV branch above).
       const environment = buildConversationEnvironmentReminder({
+        // DM-vs-Channel is conversation identity, not headcount: a coordinator-only
+        // Channel (no extra agents, or shrunk) is still a Channel.
+        isChannel: !this.isCanonicalDmConversationId(conversationId),
         members: eventState.conversation?.members ?? [],
         povAgentId: activeRun.executingAgentId,
         channelName: eventState.conversation?.goal ?? null,

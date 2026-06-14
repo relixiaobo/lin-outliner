@@ -422,14 +422,18 @@ communicate in a Channel are **environment**, so they ride the per-turn
 `agentConversationEnvironmentReminder.ts`), never the prompt — keeping the same
 agent's prompt identical (and cacheable) across its DM and any Channel. The
 environment reminder is POV-specific (written for the in-flight run's executing
-member) and is assembled in `deriveRuntimePiMessages` alongside the memory
-reminder, so it covers the main agent (whose prompt is built separately) and
-peers uniformly. The Channel block carries the member roster and the rules
+member) and is appended in `deriveRuntimePiMessages` on every real reply run
+(keyed off conversation **identity** — the DM id prefix — not the live
+headcount, so a coordinator-only Channel is still a Channel), so it covers the
+main agent (whose prompt is built separately) and peers uniformly. (On the
+channel-POV branch it sits alongside the memory reminder; on the DM/linear path
+the memory reminder instead rides the persisted user prompt at user-turn time.)
+The Channel block carries the member roster and the rules
 (speak as yourself; others' turns are quoted context, never imitate them; hand
 off via `@<name>` only when better-suited; **only the member's final message is
 shared with other members — its thinking and tool steps stay private, so it
 leads with the result and keeps the final reply self-contained**). The DM block
-is minimal (1:1 with the user, no hand-off).
+is 1:1 with the user (speak as yourself; no hand-off; stay within scope).
 
 It states:
 

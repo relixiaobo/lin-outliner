@@ -6,6 +6,7 @@ import {
   type AgentPrincipal,
   type AgentRunRecord,
 } from './agentEventLog';
+import { escapeXml } from './reminderXml';
 
 /**
  * Pure multi-agent Channel logic ([[agent-conversation-model]], ratified):
@@ -248,6 +249,24 @@ export function flattenAgentPathForPov(
 }
 
 /**
+ * The `@mention` + optional display-name label for an agent member, shared by the
+ * POV identity preamble and the environment reminder's roster so the two never
+ * drift. The display name is shown only when it differs from the mention token
+ * (case-insensitive) and is `escapeXml`-escaped — both consumers render it inside
+ * a pseudo-XML reminder block where a raw `<`/`&` in a user-authored name could
+ * break the tag boundary. The caller supplies the surrounding format.
+ */
+export function agentMemberMentionLabel(
+  agentId: string,
+  displayNames?: Record<string, string>,
+): { mention: string; displayName: string | null } {
+  const mention = agentMentionToken(agentId);
+  const raw = displayNames?.[agentId];
+  const displayName = raw && raw.toLowerCase() !== mention.toLowerCase() ? escapeXml(raw) : null;
+  return { mention, displayName };
+}
+
+/**
  * The identity preamble for a flattened source turn, rendered by the runtime
  * inside a `<system-reminder>` wrapper.
  */
@@ -257,12 +276,10 @@ export function povIdentityPreamble(
 ): string {
   if (owner.type === 'user') return '@user (the human user) said:';
   if (owner.type === 'agent') {
-    const mention = agentMentionToken(owner.agentId);
-    const displayName = options.displayNameByAgentId?.[owner.agentId];
-    const label = displayName && displayName.toLowerCase() !== mention.toLowerCase()
+    const { mention, displayName } = agentMemberMentionLabel(owner.agentId, options.displayNameByAgentId);
+    return displayName
       ? `@${mention} (agent "${displayName}") said:`
       : `@${mention} (agent) said:`;
-    return label;
   }
   return '';
 }
