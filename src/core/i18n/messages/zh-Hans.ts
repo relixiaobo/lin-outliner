@@ -399,6 +399,8 @@ export const zhHans: PartialMessages = {
       open: '打开',
       reveal: '显示',
       copyFile: '拷贝文件',
+      addToOutline: '加入大纲',
+      addedToOutline: '已加入大纲',
       directory: '文件夹',
       emptyDirectory: '空文件夹',
       modified: ({ date }) => `修改于 ${date}`,

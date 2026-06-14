@@ -286,14 +286,30 @@ the originating node view.
 
 ### File preview panel
 
+A file that **is** an outliner node (an `attachment` or `image` node) is not a
+`file-preview` view at all: its bullet is a file glyph, its text is the editable
+filename, and drilling the bullet opens it as an ordinary **node page**
+(`NodePanel`) whose body is the full-size preview. Expanding the row inline
+reveals the same preview in a bounded block. See "File node" in
+`ui-behavior.md`. The `file-preview` workspace view therefore serves only sources
+with **no** node.
+
 `file-preview` is a workspace-panel view, not an overlay and not part of the
-agent dock. It can be opened from outliner inline local-file refs, attachment
-rows, agent inline local-file refs, and visible agent payload rows. A plain click
-opens in the active workspace pane when there is one; if the click originates in
-the agent dock, the active workspace pane is used, then the first available
-workspace pane. Cmd/Ctrl-click opens a split pane. When the 4-pane cap is already
-reached, preview reuses the rightmost workspace pane and preserves that pane's
-view history so Back can return to the previous outliner or preview view.
+agent dock. It is opened for non-node sources only: outliner/agent inline
+local-file refs, visible agent payload rows, and nested links followed from
+inside a preview body (e.g. a directory-listing entry). Attachment and image
+rows no longer open it — they drill to a node page. A plain click opens in the
+active workspace pane when there is one; if the click originates in the agent
+dock, the active workspace pane is used, then the first available workspace pane.
+Cmd/Ctrl-click opens a split pane. When the 4-pane cap is already reached,
+preview reuses the rightmost workspace pane and preserves that pane's view
+history so Back can return to the previous outliner or preview view.
+
+The non-node preview reuses the node page's preview body component
+(`FilePreviewShell`), so a `file-preview` view reads identically to a file
+node's node page — same meta line, same action strip, same renderers. Only the
+surrounding chrome differs: a filename header + Back here, the node breadcrumb
+there.
 
 The renderer normalizes every entry point to `PreviewTarget` and asks main to
 resolve it through the preload preview API:
@@ -311,7 +327,11 @@ Source authority stays source-specific:
   policy before reads or external open.
 - `asset` targets resolve by `assetId` inside the asset jail. Image rendering may
   use the existing `asset://` URL; open/reveal/copy stay on the existing
-  asset commands.
+  asset commands. `asset` is no longer a standalone `file-preview` view — a file
+  asset is a node, reached through its node page — but the kind remains in the
+  union because the file-node body resolves its preview source through it. A
+  persisted `file-preview` view whose target is an `asset` is dropped on restore
+  (pre-launch — no migration).
 - `agent-payload` targets resolve only through the active replay state for the
   referenced conversation and payload id. Normal conversation payloads can be
   previewed; debug-only payloads are not exposed through the normal preview
@@ -325,6 +345,21 @@ CSV/TSV table, and fallback metadata. The PDF renderer reads bytes only through
 the preview source API, uses a bundled same-origin worker, and falls back to the
 metadata renderer if parsing or rendering fails. Markdown renderer output does
 not enable raw HTML execution; arbitrary HTML files render as text or fallback.
+
+**Add to outline.** A non-node preview carries an "add to outline" action that
+saves the source into the document as a file node. It is offered for the kinds
+that can be copied into the asset store: `local-file` (full-file ingest, gated to
+the agent's trusted roots) and `agent-payload` (bounded byte read — it errors
+rather than truncating past the cap, so an oversized payload reports not-added
+instead of committing a partial file). `url` is not yet ingestable. Anything the
+preview can resolve, it can ingest — the same security boundary backs both, so
+no new command-surface or main-process gate is introduced. The renderer copies
+the bytes into the asset store and creates an `image`/`attachment` node under
+Today, then navigates the pane to the new node's node page; from then on the
+source is a node with the full node-page preview and every node operation. The
+preview pane reaches App's document state through a single-handler request bridge
+(`previewIngest`, mirroring `agentFileInsert`); the action confirms only on a
+real insert.
 
 ## Panel Semantics
 

@@ -2129,6 +2129,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             byteSize: typeof data?.byteLength === 'number' ? data.byteLength : undefined,
           })) as T;
         }
+        if (cmd === 'ingest_local_file') {
+          const path = typeof args.path === 'string' ? args.path : '';
+          const name = path.split('/').filter(Boolean).at(-1) ?? 'file';
+          const mimeType = name.endsWith('.png') || name.endsWith('.jpg')
+            ? 'image/png'
+            : name.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+          return clone(createAsset({ mimeType, originalFilename: name, byteSize: 4096 })) as T;
+        }
         if (cmd === 'lookup_asset') return clone(assets.get(String(args.id)) ?? null) as T;
         if (cmd === 'delete_asset') {
           assets.delete(String(args.id));

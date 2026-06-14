@@ -334,6 +334,8 @@ commands so undo/redo and projection updates stay document-native.
 | File node preview | A file node is a leaf — no outline children, no trailing draft. Expanding it (chevron) reveals an inline, bounded preview block as its child level; drilling the bullet opens the file as a node page whose body is the same preview. Because it is a normal node, every node operation (open in split pane, move, reference, pin) applies for free. |
 | File node actions | The preview body (node page + inline block) carries Open / Reveal / Copy alongside `type · size · pages/duration` meta. Open uses the OS default app after the main process revalidates the asset path and local-file policy. Reveal shows the stored asset copy. Copy puts the stored asset file on the clipboard. |
 | Missing asset metadata | The preview body shows an unavailable message; the row stays an ordinary editable filename row and exposes no broken system actions. |
+| Non-node source preview | A source with no node (agent payload, loose inline local-file ref, url) opens in a `file-preview` pane that reuses the same preview body, so it reads identically to a file node's node page (see `workspace-layout.md`). |
+| Add a non-node source to the outline | The non-node preview offers "add to outline" for ingestible kinds (`local-file`, `agent-payload`; not `url`): it copies the source into the asset store, creates a file node under Today, and navigates the pane to the new node page. After that it is a node with the full preview and every node operation. |
 
 ## Reference And Inline Reference Matrix
 

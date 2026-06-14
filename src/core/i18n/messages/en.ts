@@ -437,6 +437,8 @@ export const en = {
       open: 'Open',
       reveal: 'Reveal',
       copyFile: 'Copy file',
+      addToOutline: 'Add to outline',
+      addedToOutline: 'Added to outline',
       directory: 'Directory',
       emptyDirectory: 'Empty directory',
       modified: ({ date }: { date: string }) => `Modified ${date}`,

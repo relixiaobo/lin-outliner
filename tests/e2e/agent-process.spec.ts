@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { clipboardText, emitAgentProjection, openMockedApp } from './outlinerMock';
+import { clipboardText, commandCalls, emitAgentProjection, openMockedApp } from './outlinerMock';
 
 const usage = {
   input: 0,
@@ -360,6 +360,15 @@ test.describe('agent process disclosure', () => {
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
     await expect(panel.locator('.file-preview-heading')).toContainText('diagram.png');
     await expect(panel.locator('.file-preview-content')).toContainText('Mock preview text.');
+
+    // Add to outline: copy the previewed non-node file into the outline as a node and
+    // navigate the pane to its node page (the same body, now backed by a real node).
+    await panel.getByRole('button', { name: 'Add to outline' }).click();
+    const nodePage = page.locator('.outline-panel-surface.active-panel');
+    await expect(nodePage.locator('.file-node-body')).toBeVisible();
+    const calls = await commandCalls(page);
+    expect(calls.some((call) => call.cmd === 'ingest_local_file')).toBe(true);
+    expect(calls.some((call) => call.cmd === 'create_image_node')).toBe(true);
   });
 
   test('keeps completed process collapsed and expands thinking and tool details on demand', async ({ page }) => {
