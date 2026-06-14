@@ -41,6 +41,21 @@ test.describe('file attachments', () => {
     await expect(attachmentRow.locator('.row-bullet-shape.file')).toBeVisible();
     await expect(rowEditor(page, attachmentId!)).toContainText('picked-report.pdf');
 
+    // Expanding the file node (chevron) reveals its preview inline as the child
+    // level — the same preview the node page shows, bounded under the row. The
+    // chevron is hover-revealed, so hover the row line (not the whole wrap, which
+    // grows to include the preview) before clicking.
+    const attachmentRowLine = attachmentRow.locator('> .row').first();
+    await attachmentRowLine.hover();
+    await attachmentRow.locator('.row-chevron-button').first().click();
+    const inlineBlock = attachmentRow.locator('.file-node-children .file-node-body--inline');
+    await expect(inlineBlock.locator('.file-node-meta')).toContainText('PDF');
+    await expect(inlineBlock.locator('.file-node-preview .file-preview-pdf-canvas')).toBeVisible();
+    // Collapsing removes the inline preview again.
+    await attachmentRowLine.hover();
+    await attachmentRow.locator('.row-chevron-button').first().click();
+    await expect(attachmentRow.locator('.file-node-children')).toHaveCount(0);
+
     // Drilling the bullet opens the file as a node page whose body is the preview.
     await attachmentRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');

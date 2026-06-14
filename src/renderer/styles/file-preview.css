@@ -433,3 +433,10 @@
   max-height: 40vh;
   overflow: auto;
 }
+
+/* The inline preview's child-level wrapper under an expanded file row. Inherits
+   the standard child indent (.children); adds vertical breathing room so the
+   preview reads as a distinct block, not a cramped continuation of the row. */
+.file-node-children {
+  padding-block: var(--space-2) var(--space-4);
+}

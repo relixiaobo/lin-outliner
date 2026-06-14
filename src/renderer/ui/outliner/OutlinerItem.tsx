@@ -70,6 +70,8 @@ import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactio
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
 import { fileNodeIconKind, isFileNode } from '../preview/fileNode';
+import { FilePreviewBlock } from '../preview/FilePreviewBlock';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -199,6 +201,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
+  // A file node (attachment/image) is an ordinary editable row whose bullet is the
+  // file-type glyph and whose text is the (editable) filename; its preview is the
+  // node-page body / inline block, not a card. It is a leaf — expanding it reveals
+  // the inline preview (previewExpandable), never a child outline.
+  const fileNodeRow = isFileNode(displayed) ? displayed : null;
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
@@ -214,6 +221,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     setUi: props.setUi,
     run: props.run,
     locked: node?.locked ?? true,
+    previewExpandable: Boolean(fileNodeRow),
     dragId: props.dragId,
     setDragId: props.setDragId,
     // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
@@ -330,10 +338,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
   const pendingReferenceTypeAhead = props.ui.pendingReferenceTypeAhead?.nodeId === props.nodeId;
-  // A file node (attachment/image) is an ordinary editable row whose bullet is the
-  // file-type glyph and whose text is the (editable) filename; its preview is the
-  // node-page body / inline block, not a card.
-  const fileNodeRow = isFileNode(displayed) ? displayed : null;
   const leadingVariant = node.type === 'reference' || pendingReferenceConversion
     ? 'reference'
     : fileNodeRow
@@ -1999,7 +2003,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       )}
     >
 
-      {row.expanded && (
+      {row.expanded && !fileNodeRow && (
         <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
       )}
 
@@ -2057,7 +2061,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && !props.fieldValue && (
+      {!props.flat && row.expanded && !props.fieldValue && !fileNodeRow && (
         <div className="children">
           <OutlinerView
             panelId={props.panelId}
@@ -2082,6 +2086,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             // TrailingInput: shown for an empty child list or when nav focuses
             // the trailing surface, unless this is a reference cycle.
             trailingDraft={referenceCycle ? 'none' : 'auto'}
+          />
+        </div>
+      )}
+
+      {/* A file node's expanded child level is the inline preview block, not an
+          outline. Rendered mode-agnostically (no `!props.flat` guard): in flat
+          mode the FlatRowShell measures it via ResizeObserver, so windowing keeps
+          the right height. */}
+      {fileNodeRow && row.expanded && (
+        <div className="children file-node-children">
+          <FilePreviewBlock
+            node={fileNodeRow}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
           />
         </div>
       )}

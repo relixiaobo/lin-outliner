@@ -1,5 +1,6 @@
 import type { NodeId, NodeProjection } from '../api/types';
 import { buildOutlinerRows, readViewConfig } from './outlinerRows';
+import { isFileNode } from '../ui/preview/fileNode';
 import { outlinerChildParentId } from './document';
 import type { TrailingDraftPlacement } from './document';
 import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
@@ -180,6 +181,9 @@ export function buildVisualRows(
   };
 
   const descend = (rowId: NodeId, depth: number, referencePath: NodeId[], keyPath: NodeId[]) => {
+    // A file node is a leaf: its expanded state shows an inline preview block
+    // (rendered inside its OutlinerItem), never a child outline or trailing draft.
+    if (isFileNode(byId.get(rowId))) return;
     const childParentId = outlinerChildParentId(rowId, byId);
     if (!childParentId || referencePath.includes(childParentId)) return;
     visit(childParentId, depth + 1, [...referencePath, childParentId], [...keyPath, rowId], 'auto');
