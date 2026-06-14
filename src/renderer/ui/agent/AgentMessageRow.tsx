@@ -35,7 +35,6 @@ import {
 } from './AgentProcessBlock';
 import { IconButton } from '../primitives/IconButton';
 import { AgentMarkdown } from './AgentMarkdown';
-import { AgentToolCallBlock } from './AgentToolCallBlock';
 import { looksLikeRawAgentErrorPayload, parseAgentErrorMessage } from './agentErrorParse';
 import { AgentBranchNavigator } from './AgentBranchNavigator';
 import {
@@ -474,6 +473,7 @@ function renderAssistantBlocks(
   toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
   turnEnded: boolean,
+  workedForMs: number | null,
 ) {
   const rendered: ReactNode[] = [];
   const isError = !!message.errorMessage && message.stopReason !== 'aborted';
@@ -494,99 +494,75 @@ function renderAssistantBlocks(
   const turnHasProse = visibleBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0);
   const turnFailedWithoutProse = turnEnded && !turnHasProse;
 
-  let blockIndex = 0;
-  while (blockIndex < visibleBlocks.length) {
-    const block = visibleBlocks[blockIndex]!;
-    if (block.type === 'thinking' || block.type === 'toolCall') {
-      const runStart = blockIndex;
-      const segmentBlocks: AgentProcessSegmentBlock[] = [];
-      while (blockIndex < visibleBlocks.length) {
-        const candidate = visibleBlocks[blockIndex]!;
-        if (candidate.type === 'thinking') {
-          const hasLaterVisibleBlock = visibleBlocks
-            .slice(blockIndex + 1)
-            .some((later) => later.type === 'thinking' || later.type === 'toolCall' || later.type === 'text');
-          segmentBlocks.push({
-            kind: 'thinking',
-            sourceIndex: blockIndex,
-            streaming: streaming && !hasLaterVisibleBlock,
-            text: candidate.thinking,
-          });
-          blockIndex += 1;
-          continue;
-        }
-        if (candidate.type === 'toolCall') {
-          segmentBlocks.push({ kind: 'toolCall', toolCall: candidate });
-          blockIndex += 1;
-          continue;
-        }
-        break;
-      }
-
-      const thinkingCount = segmentBlocks.filter((candidate) => candidate.kind === 'thinking').length;
-      const toolCount = segmentBlocks.length - thinkingCount;
-      const segmentSealed = visibleBlocks
-        .slice(blockIndex)
-        .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
-
-      if (thinkingCount === 0 && toolCount === 1) {
-        const toolCall = (segmentBlocks[0] as Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }>).toolCall;
-        const toolId = `tool:${toolCall.id}`;
-        rendered.push(
-          <AgentToolCallBlock
-            expanded={expandState.isExpanded(toolId, false)}
-            index={documentIndex}
-            key={toolId}
-            onToggle={() => expandState.toggle(toolId, expandState.isExpanded(toolId, false))}
-            onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
-            pendingToolCallIds={pendingToolCallIds}
-            result={toolResults.get(toolCall.id)}
-            conversationId={conversationId}
-            childRun={childRunsByParentToolCallId?.get(toolCall.id)}
-            toolCall={toolCall}
-            turnActive={turnActive}
-          />,
-        );
-      } else if (segmentBlocks.length > 0) {
-        const segmentId = `process:${contentKey}:${runStart}`;
-        rendered.push(
-          <AgentProcessBlock
-            blocks={segmentBlocks}
-            expandState={expandState}
-            id={segmentId}
-            index={documentIndex}
-            key={segmentId}
-            onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
-            pendingToolCallIds={pendingToolCallIds}
-            results={toolResults}
-            sealed={segmentSealed}
-            conversationId={conversationId}
-            childRunsByParentToolCallId={childRunsByParentToolCallId}
-            turnActive={turnActive}
-            turnFailedWithoutProse={turnFailedWithoutProse}
-          />,
-        );
-      }
-      continue;
+  // Result-first turn: the final answer is the trailing text after the last
+  // thinking/toolCall block. Everything before it — thinking, tool calls, AND
+  // interim narration text — folds into ONE process disclosure; the trailing
+  // text renders as the visible answer. A turn with no thinking/tools is a
+  // direct answer and renders without a fold.
+  let lastProcessIndex = -1;
+  for (let i = visibleBlocks.length - 1; i >= 0; i -= 1) {
+    const candidate = visibleBlocks[i]!;
+    if (candidate.type === 'thinking' || candidate.type === 'toolCall') {
+      lastProcessIndex = i;
+      break;
     }
+  }
 
-    const hasLaterText = visibleBlocks
-      .slice(blockIndex + 1)
+  if (lastProcessIndex >= 0) {
+    const processBlocks = visibleBlocks.slice(0, lastProcessIndex + 1);
+    const finalIsProse = visibleBlocks
+      .slice(lastProcessIndex + 1)
+      .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
+    const segmentBlocks: AgentProcessSegmentBlock[] = processBlocks.map((candidate, sourceIndex) => {
+      const hasLater = sourceIndex < processBlocks.length - 1 || finalIsProse;
+      if (candidate.type === 'thinking') {
+        return { kind: 'thinking', sourceIndex, streaming: streaming && !hasLater, text: candidate.thinking };
+      }
+      if (candidate.type === 'toolCall') {
+        return { kind: 'toolCall', toolCall: candidate };
+      }
+      return { kind: 'narration', sourceIndex, streaming: streaming && !hasLater, text: candidate.text };
+    });
+    const segmentId = `process:${contentKey}`;
+    rendered.push(
+      <AgentProcessBlock
+        blocks={segmentBlocks}
+        expandState={expandState}
+        id={segmentId}
+        index={documentIndex}
+        key={segmentId}
+        onNodeReferenceOpen={onNodeReferenceOpen}
+        onOpenChildRunTranscript={onOpenChildRunTranscript}
+        pendingToolCallIds={pendingToolCallIds}
+        results={toolResults}
+        sealed={finalIsProse}
+        conversationId={conversationId}
+        childRunsByParentToolCallId={childRunsByParentToolCallId}
+        turnActive={turnActive}
+        turnFailedWithoutProse={turnFailedWithoutProse}
+        workedForMs={workedForMs}
+      />,
+    );
+  }
+
+  const finalBlocks = visibleBlocks.slice(lastProcessIndex + 1);
+  finalBlocks.forEach((block, i) => {
+    if (block.type !== 'text') return;
+    const sourceIndex = lastProcessIndex + 1 + i;
+    const hasLaterText = finalBlocks
+      .slice(i + 1)
       .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
     rendered.push(
       <AgentMarkdown
         index={documentIndex}
-        key={`text-${blockIndex}`}
-        keyPrefix={`${contentKey}-text-${blockIndex}`}
+        key={`text-${sourceIndex}`}
+        keyPrefix={`${contentKey}-text-${sourceIndex}`}
         onNodeReferenceOpen={onNodeReferenceOpen}
         streaming={streaming && !hasLaterText}
         text={block.text}
       />,
     );
-    blockIndex += 1;
-  }
+  });
 
   return rendered;
 }
@@ -837,6 +813,7 @@ export function AgentMessageRow({
     toolResults,
     turnActive,
     turnEnded,
+    entry.runDurationMs,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
 

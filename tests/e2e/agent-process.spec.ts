@@ -694,6 +694,9 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => clipboardText(page)).toContain('Full persisted tool output from payload');
     expect(await clipboardText(page)).not.toContain('Preview only');
 
+    // The lone tool call now folds into the result-first process block; open the
+    // fold first, then the tool row inside its timeline.
+    await row.locator('.agent-process-toggle').click();
     await row.locator('.agent-tool-call-toggle').click();
     await row.getByRole('button', { name: 'Preview output' }).click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');

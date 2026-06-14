@@ -67,6 +67,41 @@ describe('agent render projection', () => {
     });
   });
 
+  test('threads the producing run wall-clock onto the message entity as runDurationMs', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Worked for' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(5, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Answer.' }],
+      },
+      { ...base(9, 'run.completed'), runId: 'run-1' },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    const run = state.runs['run-1'];
+    expect(run).toBeDefined();
+    expect(run!.updatedAt - run!.startedAt).toBeGreaterThan(0);
+    expect(projection.entities.messages['assistant-1']?.runDurationMs).toBe(run!.updatedAt - run!.startedAt);
+  });
+
   test('keeps branch state on message entities without persisting a tree', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Branches' },

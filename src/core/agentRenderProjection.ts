@@ -84,6 +84,8 @@ export interface AgentRenderMessageEntity {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
+  runDurationMs?: number;
 }
 
 /** A conversation member as the renderer needs it: principal + mention + label. */
@@ -729,6 +731,7 @@ function toRenderMessageEntity(
   state: AgentEventReplayState,
   message: AgentEventMessageRecord,
 ): AgentRenderMessageEntity {
+  const run = message.runId ? state.runs[message.runId] : undefined;
   return {
     id: message.id,
     role: message.role,
@@ -751,6 +754,7 @@ function toRenderMessageEntity(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
     isError: message.isError,
+    runDurationMs: run ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
   };
 }
 

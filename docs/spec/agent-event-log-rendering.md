@@ -833,7 +833,11 @@ Rules:
   `kind` is never stored.
 - A running Channel agent's live `message_update` text rides on
   `channelActivityEntries[].streamingText` (the per-run detail view), never as a
-  transcript row — the Channel message stream is whole-utterance only.
+  transcript row — the Channel message stream is whole-utterance only (**delivery**
+  is atomic: the whole turn appears on completion). On completion the turn renders
+  through the same **result-first fold** as a DM (final answer as prose, process
+  collapsed behind "Worked for …"); only the live-drill-in vs. inline-stream split
+  differs between the two modes.
 - Render flushes are coalesced to at most one per animation frame.
 - `compaction.completed` events become dedicated compaction rows keyed by the
   compact root message, with summary and trigger metadata in
@@ -858,14 +862,31 @@ Rules:
   it seals it expands to the result (or error) and the full-run link. These rows
   live only in `transcriptRows`, never in the active `rows` path.
 - Long output rows are collapsed by default.
-- The thinking/tool **process block is collapsed by default** in every steady
-  state. While its turn is live, the collapsed header acts as a status line: it
-  shows the currently running tool (with status), else the latest streaming
-  thought, and carries the single activity spinner. Expanding the block moves the
-  spinner to the running tool row inside the timeline and reverts the header to
-  the static group summary (e.g. "Thought · used N tools"). A user-expanded block
-  never auto-collapses when the turn seals; only a turn that failed without any
-  prose auto-expands so the error context stays visible.
+- **Result-first turn fold (DM and Channel alike).** Every assistant turn renders
+  result-first: the **final answer is the trailing text** after the turn's last
+  thinking/tool block and shows as prose; **everything before it — thinking, tool
+  calls, AND interim narration text** ("let me check X first") — folds into ONE
+  collapsed process block. A turn with no thinking/tools is a direct answer and
+  renders without a fold. This is one mechanism, not two: there is no
+  channel-specific text-only path (a Channel turn renders the same fold once its
+  utterance lands) and no single-tool inline special case.
+- **Codex-style live disclosure.** A DM turn's process block **auto-expands while
+  it is working** (thinking/tools streaming live, `liveSegment`) so the process is
+  visible, then **auto-collapses the moment it seals** — when the final answer
+  begins streaming or the turn ends. A Channel turn is delivered atomically (its
+  rows are `idle`, never `liveSegment`), so it lands already collapsed. A turn that
+  failed without any prose auto-expands so the error context stays visible; every
+  other steady state defaults collapsed. The **sticky override wins**: once a user
+  toggles the block it keeps that choice and never auto-collapses on seal.
+- The collapsed header carries the single activity spinner and, while a turn is
+  live **and the user has collapsed it**, acts as a status line (current running
+  tool with status, else the latest streaming thought). Once the turn **seals**,
+  the collapsed header reads **"Worked for {duration}"** (codex-style; duration =
+  the producing run's `updatedAt − startedAt`, threaded as `runDurationMs` on the
+  message entity); when the run wall-clock is unknown it falls back to the static
+  group summary (e.g. "Thought · used N tools"). Expanding the block moves the
+  spinner to the running tool row inside the timeline. A turn that failed without
+  prose keeps the "Interrupted…" label, never a duration.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it

@@ -2,6 +2,7 @@ import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
+import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -39,7 +40,10 @@ export function AgentProcessTimeline({
   const toolCallBlocks = blocks.filter(
     (block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall',
   );
-  const soloThinking = thinkingBlocks.length === 1 && toolCallBlocks.length === 0;
+  const narrationBlocks = blocks.filter(
+    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'narration' }> => block.kind === 'narration',
+  );
+  const soloThinking = thinkingBlocks.length === 1 && toolCallBlocks.length === 0 && narrationBlocks.length === 0;
 
   return (
     <div className="agent-process-timeline">
@@ -56,6 +60,19 @@ export function AgentProcessTimeline({
                 streaming={block.streaming}
                 text={block.text}
               />
+            );
+          }
+          if (block.kind === 'narration') {
+            return (
+              <div className="agent-process-narration" key={`narration-${block.sourceIndex}`}>
+                <AgentMarkdown
+                  index={index}
+                  keyPrefix={`${id}-narration-${block.sourceIndex}`}
+                  onNodeReferenceOpen={onNodeReferenceOpen}
+                  streaming={block.streaming}
+                  text={block.text}
+                />
+              </div>
             );
           }
           return (
