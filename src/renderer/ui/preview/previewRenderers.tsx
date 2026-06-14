@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
@@ -112,6 +112,47 @@ export function PreviewRenderer({
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
   return <Renderer onOpenTarget={onOpenTarget} source={source} />;
+}
+
+/**
+ * The shared body of a file preview: a `meta · actions` toolbar over the rendered
+ * content. Both surfaces reuse it so a non-node pane preview is visually identical
+ * to a file node's node-page body — same toolbar, same content render, same CSS
+ * (`.file-node-*`). Callers supply their own meta string and action buttons (a node
+ * carries open/reveal/copy; a non-node source carries open / add-to-outline); only
+ * the resolved-source rendering is common.
+ */
+export function FilePreviewShell({
+  variant,
+  meta,
+  actions,
+  state,
+  onOpenTarget,
+}: {
+  variant: 'full' | 'inline';
+  meta: string | null;
+  actions?: ReactNode;
+  state: PreviewSourceState;
+  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+}) {
+  const labels = useT().shell.filePreview;
+  return (
+    <div className={`file-node-body file-node-body--${variant}`}>
+      <div className="file-node-toolbar">
+        <span className="file-node-meta">{meta ?? ' '}</span>
+        {actions ? <div className="file-node-actions">{actions}</div> : null}
+      </div>
+      <div className="file-node-preview">
+        {state.status === 'loading' ? (
+          <PreviewMessage>{labels.loading}</PreviewMessage>
+        ) : state.status === 'missing' ? (
+          <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
+        ) : (
+          <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {

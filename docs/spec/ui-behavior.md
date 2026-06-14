@@ -330,9 +330,10 @@ commands so undo/redo and projection updates stay document-native.
 | --- | --- |
 | Drop files on an editable content row | Prevent the browser's default navigation, ingest every regular `File`, convert images into image rows, and insert all other assets as attachment siblings after the target row in source order. |
 | `/attachment` on an empty row | Delete the slash trigger, open the native attachment picker, ingest selected files, and place image/attachment rows at that row's position. Cancel leaves the row empty. |
-| Attachment row render | Show a compact block row with a file-kind glyph or PDF thumbnail, filename, size, type label, and derived page count/duration when available. Audio and video attachments expose native media controls below the metadata. |
-| Attachment actions | Open uses the OS default app after the main process revalidates the asset path and local-file policy. Reveal shows the stored asset copy. Copy puts the stored asset path on the clipboard. |
-| Missing asset metadata | Render a non-editable unavailable placeholder; the row remains a block node and does not expose broken system actions. |
+| File node render | A file (attachment or image) is an ordinary editable row, not a block-node card: the bullet is a file-type glyph (image / audio / video / pdf / generic), and the node text is the editable filename (seeded from `originalFilename` at creation). |
+| File node preview | A file node is a leaf — no outline children, no trailing draft. Expanding it (chevron) reveals an inline, bounded preview block as its child level; drilling the bullet opens the file as a node page whose body is the same preview. Because it is a normal node, every node operation (open in split pane, move, reference, pin) applies for free. |
+| File node actions | The preview body (node page + inline block) carries Open / Reveal / Copy alongside `type · size · pages/duration` meta. Open uses the OS default app after the main process revalidates the asset path and local-file policy. Reveal shows the stored asset copy. Copy puts the stored asset file on the clipboard. |
+| Missing asset metadata | The preview body shows an unavailable message; the row stays an ordinary editable filename row and exposes no broken system actions. |
 
 ## Reference And Inline Reference Matrix
 

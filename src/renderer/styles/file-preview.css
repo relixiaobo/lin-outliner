@@ -11,8 +11,7 @@
   display: flex;
   min-height: var(--breadcrumb-height);
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
   padding: 0 var(--panel-content-x);
@@ -20,29 +19,12 @@
   user-select: none;
 }
 
-.file-preview-title-group {
-  min-width: 0;
-}
-
-.file-preview-title-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.file-preview-title-row > svg,
-.file-preview-title-row > .inline-ref-file-icon {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-}
-
-.file-preview-title-text {
-  min-width: 0;
-}
-
-.file-preview-title-text h1 {
+/* The non-node preview is identified by its filename in the header (mirroring a
+   node page's breadcrumb origin); the file glyph / meta / actions live in the
+   shared body toolbar below, identical to the node page. */
+.file-preview-heading {
   overflow: hidden;
+  min-width: 0;
   margin: 0;
   color: var(--text-strong);
   font-size: var(--font-ui-md);
@@ -52,38 +34,8 @@
   white-space: nowrap;
 }
 
-.file-preview-title-text p {
-  overflow: hidden;
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-preview-back,
-.file-preview-open-button {
+.file-preview-back {
   -webkit-app-region: no-drag;
-}
-
-.file-preview-open-button {
-  display: inline-flex;
-  min-height: 28px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-row);
-  background: var(--fill-0);
-  color: var(--text-primary);
-  font: inherit;
-  padding: 0 var(--space-3);
-}
-
-.file-preview-open-button:hover {
-  background: var(--fill-1);
-  color: var(--text-strong);
 }
 
 .file-preview-content {

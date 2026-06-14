@@ -7,8 +7,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { fileNodeTarget, type FileNode } from './fileNode';
 import {
   formatBytes,
-  PreviewMessage,
-  PreviewRenderer,
+  FilePreviewShell,
   sourceMeta,
   usePreviewSource,
 } from './previewRenderers';
@@ -25,21 +24,16 @@ interface FilePreviewBodyProps {
 /**
  * The body of a file node: a meta + actions strip over the rendered preview. The
  * file's name lives in the owning surface's title (node page) or row text (inline
- * block), so this body never repeats it. Shared by the node page and the inline
- * preview block via `variant`.
+ * block), so this body never repeats it. Shares its layout (FilePreviewShell) with
+ * the non-node pane preview, so the two read identically.
  */
 export function FilePreviewBody({ node, onOpenTarget, variant = 'full' }: FilePreviewBodyProps) {
-  const labels = useT().shell.filePreview;
   const target = useMemo(
     () => fileNodeTarget(node),
     [node.assetId, node.type, node.type === 'image' ? node.mediaUrl : undefined, node.content.text],
   );
   if (!target) {
-    return (
-      <div className={`file-node-body file-node-body--${variant}`}>
-        <PreviewMessage>{labels.unavailable}</PreviewMessage>
-      </div>
-    );
+    return <FilePreviewShell variant={variant} meta={null} state={{ status: 'missing' }} onOpenTarget={onOpenTarget} />;
   }
   return <FilePreviewBodyResolved node={node} target={target} onOpenTarget={onOpenTarget} variant={variant} />;
 }
@@ -65,47 +59,42 @@ function FilePreviewBodyResolved({
     ? attachmentNodeMeta(node, ta)
     : state.status === 'ready' ? sourceMeta(state.source, labels) : null;
   const assetId = node.assetId;
+  // A file node already lives in the outline, so its actions are open / reveal /
+  // copy on the stored asset (the non-node pane substitutes add-to-outline).
+  const actions = assetId ? (
+    <>
+      <ButtonControl
+        aria-label={ta.open}
+        className="file-node-action"
+        onClick={() => void api.openAsset(assetId)}
+      >
+        <OpenIcon size={ICON_SIZE.toolbar} />
+      </ButtonControl>
+      <ButtonControl
+        aria-label={ta.reveal}
+        className="file-node-action"
+        onClick={() => void api.revealAsset(assetId)}
+      >
+        <FolderIcon size={ICON_SIZE.toolbar} />
+      </ButtonControl>
+      <ButtonControl
+        aria-label={ta.copy}
+        className="file-node-action"
+        onClick={() => void api.copyAssetFile(assetId)}
+      >
+        <CopyIcon size={ICON_SIZE.toolbar} />
+      </ButtonControl>
+    </>
+  ) : null;
 
   return (
-    <div className={`file-node-body file-node-body--${variant}`}>
-      <div className="file-node-toolbar">
-        <span className="file-node-meta">{meta ?? ' '}</span>
-        {assetId ? (
-          <div className="file-node-actions">
-            <ButtonControl
-              aria-label={ta.open}
-              className="file-node-action"
-              onClick={() => void api.openAsset(assetId)}
-            >
-              <OpenIcon size={ICON_SIZE.toolbar} />
-            </ButtonControl>
-            <ButtonControl
-              aria-label={ta.reveal}
-              className="file-node-action"
-              onClick={() => void api.revealAsset(assetId)}
-            >
-              <FolderIcon size={ICON_SIZE.toolbar} />
-            </ButtonControl>
-            <ButtonControl
-              aria-label={ta.copy}
-              className="file-node-action"
-              onClick={() => void api.copyAssetFile(assetId)}
-            >
-              <CopyIcon size={ICON_SIZE.toolbar} />
-            </ButtonControl>
-          </div>
-        ) : null}
-      </div>
-      <div className="file-node-preview">
-        {state.status === 'loading' ? (
-          <PreviewMessage>{labels.loading}</PreviewMessage>
-        ) : state.status === 'missing' ? (
-          <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
-        ) : (
-          <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} />
-        )}
-      </div>
-    </div>
+    <FilePreviewShell
+      variant={variant}
+      meta={meta}
+      actions={actions}
+      state={state}
+      onOpenTarget={onOpenTarget}
+    />
   );
 }
 

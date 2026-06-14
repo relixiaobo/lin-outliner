@@ -358,7 +358,7 @@ test.describe('agent process disclosure', () => {
 
     await ref.click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
-    await expect(panel.locator('.file-preview-title-text')).toContainText('diagram.png');
+    await expect(panel.locator('.file-preview-heading')).toContainText('diagram.png');
     await expect(panel.locator('.file-preview-content')).toContainText('Mock preview text.');
   });
 
@@ -697,7 +697,7 @@ test.describe('agent process disclosure', () => {
     await row.locator('.agent-tool-call-toggle').click();
     await row.getByRole('button', { name: 'Preview output' }).click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
-    await expect(panel.locator('.file-preview-title-text')).toContainText('large.log output');
+    await expect(panel.locator('.file-preview-heading')).toContainText('large.log output');
     await expect(panel.locator('.file-preview-content')).toContainText('Full persisted tool output from payload');
   });
 });

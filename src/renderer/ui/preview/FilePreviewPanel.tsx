@@ -5,9 +5,7 @@ import { BackIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import {
-  FilePreviewGlyph,
-  PreviewMessage,
-  PreviewRenderer,
+  FilePreviewShell,
   canOpenPreviewSource,
   openPreviewSource,
   sourceMeta,
@@ -23,12 +21,13 @@ interface FilePreviewPanelProps {
   target: PreviewTarget;
 }
 
-export function FilePreviewPanel({
-  canGoBack,
-  onBack,
-  onOpenTarget,
-  target,
-}: FilePreviewPanelProps) {
+/**
+ * The pane preview for a source with no outliner node — an agent payload, a loose
+ * local file, or a remote URL. It reuses the node-page preview body
+ * (FilePreviewShell), so a non-node preview reads identically to a file node's node
+ * page; only the chrome differs — a filename header here, the node breadcrumb there.
+ */
+export function FilePreviewPanel({ canGoBack, onBack, onOpenTarget, target }: FilePreviewPanelProps) {
   const t = useT();
   const labels = t.shell.filePreview;
   const state = usePreviewSource(target);
@@ -42,44 +41,39 @@ export function FilePreviewPanel({
     ? sourceTitle(state.source)
     : target.label ?? targetTitleFallback(target);
   const meta = state.status === 'ready' ? sourceMeta(state.source, labels) : null;
+  const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
+
+  // The file's name is the header title (like a node page); open lives in the body
+  // toolbar beside the meta, matching the node page's action strip.
+  const actions = canOpen ? (
+    <ButtonControl aria-label={labels.open} className="file-node-action" onClick={openOriginal}>
+      <OpenIcon size={ICON_SIZE.toolbar} />
+    </ButtonControl>
+  ) : null;
 
   return (
     <section className="main-panel file-preview-panel" aria-label={title}>
       <header className="file-preview-header">
-        <div className="file-preview-title-group">
-          <div className="file-preview-title-row">
-            {canGoBack ? (
-              <IconButton
-                className="file-preview-back"
-                icon={BackIcon}
-                label={t.nodePanel.previousPage}
-                onClick={onBack}
-                variant="panel"
-              />
-            ) : null}
-            <FilePreviewGlyph source={state.status === 'ready' ? state.source : null} target={target} />
-            <div className="file-preview-title-text">
-              <h1 title={title}>{title}</h1>
-              {meta ? <p>{meta}</p> : null}
-            </div>
-          </div>
-        </div>
-        {state.status === 'ready' && canOpenPreviewSource(state.source) ? (
-          <ButtonControl className="file-preview-open-button" onClick={openOriginal}>
-            <OpenIcon size={ICON_SIZE.menu} />
-            <span>{labels.open}</span>
-          </ButtonControl>
+        {canGoBack ? (
+          <IconButton
+            className="file-preview-back"
+            icon={BackIcon}
+            label={t.nodePanel.previousPage}
+            onClick={onBack}
+            variant="panel"
+          />
         ) : null}
+        <h1 className="file-preview-heading" title={title}>{title}</h1>
       </header>
 
       <div className="file-preview-content">
-        {state.status === 'loading' ? (
-          <PreviewMessage>{labels.loading}</PreviewMessage>
-        ) : state.status === 'missing' ? (
-          <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
-        ) : (
-          <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} />
-        )}
+        <FilePreviewShell
+          variant="full"
+          meta={meta}
+          actions={actions}
+          state={state}
+          onOpenTarget={onOpenTarget}
+        />
       </div>
     </section>
   );
