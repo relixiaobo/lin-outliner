@@ -174,7 +174,7 @@ describe('agent process summary', () => {
     })).toBe('Worked for 1m 3s');
   });
 
-  test('a known duration never overrides the live status line while running', () => {
+  test('a known duration never overrides the live status line while collapsed and running', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
       lastThinkingText: 'Identify relevant outline nodes',
@@ -190,6 +190,26 @@ describe('agent process summary', () => {
       toolCallLabels,
       thinkingLabel,
     })).toBe('Reading node "node-alpha"');
+  });
+
+  test('an expanded, still-running turn shows the descriptive summary, never a partial duration', () => {
+    // turnActive gates the workedFor branch INSIDE summarizeProcess, so even with a
+    // non-null (partial) duration a live turn keeps its descriptive header.
+    expect(summarizeProcess({
+      firstThinkingText: 'Identify relevant outline nodes',
+      lastThinkingText: 'Identify relevant outline nodes',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map([[readTool.id, readResult]]),
+      toolCalls: [readTool, searchTool],
+      turnActive: true,
+      liveCollapsed: false,
+      turnFailedWithoutProse: false,
+      workedForMs: 5_000,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Thought · used 2 tools');
   });
 
   test('an interrupted turn keeps its interrupted label over the duration', () => {

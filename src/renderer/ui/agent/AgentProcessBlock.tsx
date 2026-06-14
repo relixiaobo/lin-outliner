@@ -14,7 +14,7 @@ import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
-import { firstLine, formatWorkedForDuration, previewText } from './agentProcessTypes';
+import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 
@@ -104,11 +104,14 @@ export function summarizeProcess({
     return process.interrupted;
   }
 
-  // Result-first resting state: a sealed turn collapses to "Worked for {duration}"
-  // (codex-style). The descriptive summaries below are the fallback when the run's
-  // wall-clock is unknown (e.g. legacy records with no run timing).
-  if (workedForMs !== null) {
-    return process.workedFor({ duration: formatWorkedForDuration(workedForMs) });
+  // Result-first resting state: a SEALED turn (not active) collapses to
+  // "Worked for {duration}" (codex-style). While the turn is still active the
+  // duration is partial, so the live/descriptive header stands — this is the
+  // single gate for that (the caller passes the raw run wall-clock). The
+  // descriptive summaries below are the fallback when the run's wall-clock is
+  // unknown (e.g. legacy records with no run timing).
+  if (!turnActive && workedForMs !== null) {
+    return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
 
   if (thinkingCount === 0 && toolCount === 1) {
@@ -207,9 +210,7 @@ export function AgentProcessBlock({
             turnActive,
             liveCollapsed,
             turnFailedWithoutProse,
-            // Only a settled turn shows its final wall-clock; while the run is still
-            // active the duration is partial, so the live/descriptive header stands.
-            workedForMs: turnActive ? null : workedForMs,
+            workedForMs,
             process: t.agent.process,
             toolCallLabels: t.agent.toolCall,
             thinkingLabel: t.agent.thinking.thinking,

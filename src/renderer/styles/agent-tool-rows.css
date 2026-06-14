@@ -191,21 +191,15 @@
 
 /* Interim narration folded into the process timeline: de-emphasized prose that
    reads as part of the working process, distinct from the final answer below the
-   fold. Matches the soft, meta-sized register of thinking rows. */
+   fold. Matches the soft, meta-sized register of thinking rows. (The nested
+   `.agent-markdown` already trims its own leading/trailing block margins, so no
+   first/last-child reset is needed here.) */
 .agent-process-narration {
   min-width: 0;
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   overflow-wrap: anywhere;
-}
-
-.agent-process-narration > :first-child {
-  margin-top: 0;
-}
-
-.agent-process-narration > :last-child {
-  margin-bottom: 0;
 }
 
 .agent-stream-caret {
