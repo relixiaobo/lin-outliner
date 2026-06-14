@@ -119,13 +119,26 @@
   white-space: nowrap;
 }
 
-.agent-process-indicator,
-.agent-thinking-icon {
+/* Trailing disclosure chevron for the icon-free "Worked for …" header. Faint at
+   rest (it is an affordance, not a focal mark), deepens on hover/focus of the
+   toggle, and rotates when the process timeline is expanded. */
+.agent-process-chevron {
+  flex: 0 0 auto;
   color: var(--text-faint);
+  transition: transform var(--motion-fast), color var(--motion-fast);
 }
 
-.agent-process-block.is-error .agent-process-indicator {
-  color: var(--danger);
+.agent-process-chevron.is-expanded {
+  transform: rotate(180deg);
+}
+
+.agent-process-toggle:hover .agent-process-chevron,
+.agent-process-toggle:focus-visible .agent-process-chevron {
+  color: var(--text-soft);
+}
+
+.agent-thinking-icon {
+  color: var(--text-faint);
 }
 
 .agent-process-timeline {

@@ -122,6 +122,27 @@
   --status-danger-muted: #9a3f34;
   --status-info: #3b82c4;
 
+  /* identity tints — a per-agent avatar hue, assigned deterministically by
+     identity (agentAvatarColor.ts). Identity is its OWN decorative category: not a
+     functional state (B3 keeps those neutral), not a status (B4 reserves these for
+     state), not the rose accent (B4). It therefore gets a dedicated muted palette.
+     One family with the tag-chip palette (tagColors.ts) so the app reads as one
+     coordinated set; like the accent/status hues these are fixed (only --ink flips
+     in dark), and the avatar mixes the hue toward --surface for a theme-aware tint. */
+  --identity-tint-0: #e11d48; /* red */
+  --identity-tint-1: #ea580c; /* orange */
+  --identity-tint-2: #ca8a04; /* amber */
+  --identity-tint-3: #059669; /* green */
+  --identity-tint-4: #0d9488; /* teal */
+  --identity-tint-5: #2563eb; /* blue */
+  --identity-tint-6: #7c3aed; /* violet */
+  --identity-tint-7: #db2777; /* pink */
+  /* The keyed avatar's hairline ring — the tint hue mixed toward transparent so it
+     reads as a soft 1px definition, never a hard border. A token (not an inline
+     box-shadow) so the consumer stays tokenized (B11); like --inline-ref-focus-shadow
+     it nests an accent var, --avatar-accent, resolved at the avatar by its is-tint-*. */
+  --avatar-tint-ring: inset 0 0 0 1px color-mix(in srgb, var(--avatar-accent) 26%, transparent);
+
   --inline-code-bg: rgb(var(--ink) / 0.06);
   --highlight-mark: rgba(247, 236, 139, 0.6);
 
