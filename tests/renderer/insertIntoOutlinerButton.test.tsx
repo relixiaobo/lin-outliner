@@ -49,25 +49,37 @@ describe('InsertIntoOutlinerButton', () => {
   });
 
   test('stays un-confirmed when nothing was inserted (file gone / out of root)', async () => {
-    detachBridge = onInsertFileIntoOutlinerRequest(async () => false);
+    let invoked = 0;
+    detachBridge = onInsertFileIntoOutlinerRequest(async () => {
+      invoked += 1;
+      return false;
+    });
     const rendered = render('/workdir/gone.md');
     const button = rendered.document.querySelector('.agent-tool-file-insert');
 
     await click(rendered, button);
-    // No false confirmation — the label stays actionable.
+    // The click really fired the bridge (not a no-op), yet there is no false
+    // confirmation — the label stays actionable, never reaching the confirmed state.
+    expect(invoked).toBe(1);
     expect(button?.getAttribute('aria-label')).toBe(labels.insertIntoOutliner);
+    expect(button?.getAttribute('aria-label')).not.toBe(labels.insertedIntoOutliner);
   });
 
   test('stays un-confirmed when the bridge throws', async () => {
+    let invoked = 0;
     detachBridge = onInsertFileIntoOutlinerRequest(async () => {
+      invoked += 1;
       throw new Error('ingest failed');
     });
     const rendered = render('/workdir/report.md');
     const button = rendered.document.querySelector('.agent-tool-file-insert');
 
     await click(rendered, button);
-    // Back to the actionable label, not the confirmation — the user can retry.
+    // The bridge was invoked and rejected; the button recovers to the actionable
+    // state (never the confirmation) so the user can retry.
+    expect(invoked).toBe(1);
     expect(button?.getAttribute('aria-label')).toBe(labels.insertIntoOutliner);
+    expect(button?.getAttribute('aria-label')).not.toBe(labels.insertedIntoOutliner);
   });
 });
 

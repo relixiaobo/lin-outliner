@@ -1573,12 +1573,15 @@ agent-produced file becomes the same kind of node as a user-added one.
   'path' })`. The renderer can only ingest a file it could already preview, so this is
   **not** the arbitrary-local-file read primitive that `ingest_asset`'s buffer-only
   rule guards against; directories and GC'd/out-of-root paths return null.
-- **Asset → node (renderer).** The node **type is derived from the sniffed mimeType**
-  (`image/*` → `create_image_node`, else `create_attachment_node`), never chosen by
-  the user; attachment metadata reuses the same `attachmentNodeInput` shape as a
-  user-added file. The node lands under the conversation's current node
-  (`composerCurrentNodeId` — the focused node, else the active panel root, else today),
-  appended; focus is **not** stolen from the agent panel (`applyFocus: false`).
+- **Asset → node (renderer).** The shared `createAssetNode` helper (also used by
+  paste/drop) derives the node **type from the sniffed mimeType** (`image/*` →
+  `create_image_node`, else `create_attachment_node`), never chosen by the user, and
+  reuses the same `attachmentNodeInput` metadata shape as a user-added file. The node
+  lands the way paste/drop lands one — `insertionTargetFor`: a sibling right after the
+  focused row (so it is never buried as a child of a media/code leaf), else appended
+  into the current outline root. Focus is **not** stolen from the agent panel
+  (`applyFocus: false`). `run` swallows a failed command to `null`, so the bridge
+  confirms only on a real `CommandResult` (no false "inserted").
 - **Symmetry.** Ingest and materialize are inverses over the one workdir↔asset-store
   boundary: a file saved out becomes the same `asset://` handle a user attachment has,
   and referenced back in becomes a workdir path again (materialize). The document only

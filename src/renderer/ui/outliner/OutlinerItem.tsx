@@ -658,7 +658,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const rowIndex = siblings.indexOf(props.nodeId);
     let insertIndex = rowIndex >= 0 ? rowIndex + 1 : null;
     for (const asset of assets) {
-      await createAssetNode(props.run, props.parentId, insertIndex, asset);
+      // Clipboard images are image nodes by construction (filtered on the declared
+      // type upstream), so force an image node rather than re-sniffing the bytes.
+      await props.run(() => api.createImageNode(props.parentId, insertIndex, {
+        assetId: asset.id,
+        width: asset.imageWidth,
+        height: asset.imageHeight,
+      }));
       if (insertIndex !== null) insertIndex += 1;
     }
   };

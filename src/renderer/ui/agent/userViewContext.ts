@@ -18,17 +18,46 @@ const MAX_CONTEXT_TITLE_LENGTH = 160;
 const MAX_VISIBLE_OUTLINE_NODES = 80;
 const MAX_VISIBLE_OUTLINE_DEPTH = 5;
 
-// The node a conversation is "about", resolved the same way for the composer (what
-// the agent is told the user is looking at) and the ingest bridge (where an inserted
-// file lands): the focused node, else the active panel root, else the first panel
-// root, else today. A single resolver keeps "insert into outliner" landing exactly
-// where the conversation is anchored.
-export function composerCurrentNodeId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
-  return context.focusedNode?.nodeId
-    ?? context.nodePanels.find((panel) => panel.active)?.rootNodeId
+// The outline root a conversation is anchored to: the active panel root, else the
+// first panel root, else today.
+function currentRootId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
+  return context.nodePanels.find((panel) => panel.active)?.rootNodeId
     ?? context.nodePanels[0]?.rootNodeId
     ?? index.projection.todayId
     ?? null;
+}
+
+// The node a conversation is "about" (what the composer tells the agent the user is
+// looking at): the focused node, else the current root.
+export function composerCurrentNodeId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
+  return context.focusedNode?.nodeId ?? currentRootId(context, index);
+}
+
+// Where an ingested file lands. Mirrors the paste/drop convention: a sibling right
+// after the focused row (under its parent), so the file never gets buried as a child
+// of a media/code leaf that doesn't render children. With nothing focused, append
+// into the current outline root (always a container). Returns null only when there
+// is no resolvable root at all.
+export function insertionTargetFor(
+  context: AgentUserViewContext,
+  index: DocumentIndex,
+): { parentId: NodeId; index: number | null } | null {
+  const focusedId = context.focusedNode?.nodeId;
+  if (focusedId) {
+    const node = index.byId.get(focusedId);
+    // When the focused node is itself a panel root (the user is on the zoomed-in
+    // title), append into it — a sibling would escape the visible subtree. Same for a
+    // parentless node. Otherwise insert right after the focused row.
+    const focusedIsRoot = context.nodePanels.some((panel) => panel.rootNodeId === focusedId);
+    if (!focusedIsRoot && node?.parentId) {
+      const siblings = index.byId.get(node.parentId)?.children ?? [];
+      const position = siblings.indexOf(focusedId);
+      return { parentId: node.parentId, index: position >= 0 ? position + 1 : null };
+    }
+    if (node) return { parentId: focusedId, index: null };
+  }
+  const root = currentRootId(context, index);
+  return root ? { parentId: root, index: null } : null;
 }
 
 export function buildAgentUserViewContext(input: {

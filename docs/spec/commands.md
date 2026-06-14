@@ -251,9 +251,9 @@ serialized to the run brief by `commandBriefText`.
 `undo`, `redo`.
 
 ### Assets
-`ingest_asset`, `lookup_asset`, `delete_asset`, `pick_image_files`,
-`pick_attachment_files`, `open_asset`, `reveal_asset`, `copy_asset_file`,
-`open_external_url`.
+`ingest_asset`, `ingest_local_file`, `lookup_asset`, `delete_asset`,
+`pick_image_files`, `pick_attachment_files`, `open_asset`, `reveal_asset`,
+`copy_asset_file`, `open_external_url`.
 
 `ingest_asset` stores bytes under the workspace asset directory and returns
 `AssetMetadata`. It derives image dimensions, PDF page count, audio/video
@@ -261,6 +261,15 @@ duration when the format is locally parseable, and a best-effort first-page PDF
 thumbnail when the platform thumbnail tool is available. MIME type is resolved
 from file signatures or filename extension first, then from a renderer hint when
 present, falling back to `application/octet-stream`.
+
+`ingest_local_file` is the ingest bridge for agent-produced files (agent-file-model
+F4): it path-ingests a file into the asset store and returns `AssetMetadata`, but
+**only** when the path resolves inside the agent's trusted roots
+(workdir/scratch) via `resolveTrustedLocalFileReference` — the same gate that backs
+previewing those file chips. The renderer can thus only ingest a file it could
+already preview, so this does not reopen the arbitrary-local-file read primitive
+that `ingest_asset`'s buffer-only-over-IPC rule guards against. Directories and
+gone/out-of-root paths return `null`.
 
 `pick_image_files` and `pick_attachment_files` open native file pickers in the
 main process and ingest selected regular files before returning metadata to the

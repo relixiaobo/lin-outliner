@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { buildIndex, type UiState } from '../../src/renderer/state/document';
-import { buildAgentUserViewContext, composerCurrentNodeId } from '../../src/renderer/ui/agent/userViewContext';
+import {
+  buildAgentUserViewContext,
+  composerCurrentNodeId,
+  insertionTargetFor,
+} from '../../src/renderer/ui/agent/userViewContext';
 import type { DocumentProjection, NodeProjection } from '../../src/core/types';
 
 function node(id: string, text: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -179,5 +183,60 @@ describe('composerCurrentNodeId', () => {
   test('falls back to today when there are no outliner panels', () => {
     const context = buildAgentUserViewContext({ activePanelId: null, panels: [], index, ui: ui() });
     expect(composerCurrentNodeId(context, index)).toBe('today');
+  });
+});
+
+// insertionTargetFor is where an ingested file lands: a sibling after the focused
+// row (paste convention, so it is never buried under a media/code leaf), else the
+// current outline root.
+describe('insertionTargetFor', () => {
+  const index = buildIndex(projection([
+    node('workspace', 'Workspace', { children: ['root'] }),
+    node('root', 'Library', { parentId: 'workspace', children: ['daily-notes'] }),
+    node('daily-notes', 'Daily Notes', { parentId: 'root', children: ['today'] }),
+    node('today', '2026-05-19', { parentId: 'daily-notes', children: ['child-1', 'child-2'] }),
+    node('child-1', 'First task', { parentId: 'today' }),
+    node('child-2', 'Second task', { parentId: 'today' }),
+  ]));
+
+  function contextFor(input: { activePanelId: string | null; focusedId?: string | null }) {
+    return buildAgentUserViewContext({
+      activePanelId: input.activePanelId,
+      panels: [
+        { id: 'panel-1', type: 'workspace', view: { kind: 'outliner', rootId: 'today' }, size: 1, backStack: [], forwardStack: [] },
+        { id: 'panel-2', type: 'workspace', view: { kind: 'outliner', rootId: 'root' }, size: 1, backStack: [], forwardStack: [] },
+      ],
+      index,
+      ui: ui(input.focusedId ? { focusedId: input.focusedId, focusedPanelId: 'panel-1', focusSurface: 'row' } : {}),
+    });
+  }
+
+  test('inserts as a sibling right after the focused row, under its parent', () => {
+    expect(insertionTargetFor(contextFor({ activePanelId: 'panel-1', focusedId: 'child-1' }), index))
+      .toEqual({ parentId: 'today', index: 1 });
+    expect(insertionTargetFor(contextFor({ activePanelId: 'panel-1', focusedId: 'child-2' }), index))
+      .toEqual({ parentId: 'today', index: 2 });
+  });
+
+  test('appends into a focused node that is itself a root (no parent)', () => {
+    expect(insertionTargetFor(contextFor({ activePanelId: 'panel-1', focusedId: 'workspace' }), index))
+      .toEqual({ parentId: 'workspace', index: null });
+  });
+
+  test('appends into a focused panel root rather than escaping the visible subtree', () => {
+    // 'today' is panel-1's root AND has a parent (daily-notes); a sibling-after would
+    // land the file outside the zoomed-in view, so it must append into 'today'.
+    expect(insertionTargetFor(contextFor({ activePanelId: 'panel-1', focusedId: 'today' }), index))
+      .toEqual({ parentId: 'today', index: null });
+  });
+
+  test('appends into the active panel root when nothing is focused', () => {
+    expect(insertionTargetFor(contextFor({ activePanelId: 'panel-2' }), index))
+      .toEqual({ parentId: 'root', index: null });
+  });
+
+  test('appends into today when there are no outliner panels', () => {
+    const context = buildAgentUserViewContext({ activePanelId: null, panels: [], index, ui: ui() });
+    expect(insertionTargetFor(context, index)).toEqual({ parentId: 'today', index: null });
   });
 });
