@@ -69,7 +69,7 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
-import { BlockNodeRow, isBlockNodeType } from './BlockNodeRow';
+import { fileNodeIconKind, isFileNode } from '../preview/fileNode';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -330,15 +330,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
   const pendingReferenceTypeAhead = props.ui.pendingReferenceTypeAhead?.nodeId === props.nodeId;
+  // A file node (attachment/image) is an ordinary editable row whose bullet is the
+  // file-type glyph and whose text is the (editable) filename; its preview is the
+  // node-page body / inline block, not a card.
+  const fileNodeRow = isFileNode(displayed) ? displayed : null;
   const leadingVariant = node.type === 'reference' || pendingReferenceConversion
     ? 'reference'
-    : displayed.type === 'tagDef'
-      ? 'tag'
-      : displayed.type === 'fieldDef'
-        ? 'fieldDef'
-        : displayed.type === 'command'
-          ? 'command'
-          : 'content';
+    : fileNodeRow
+      ? 'file'
+      : displayed.type === 'tagDef'
+        ? 'tag'
+        : displayed.type === 'fieldDef'
+          ? 'fieldDef'
+          : displayed.type === 'command'
+            ? 'command'
+            : 'content';
   const isCommandNode = leadingVariant === 'command';
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
@@ -349,11 +355,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
-  const isBlockNode = !referenceLikeRow && isBlockNodeType(displayed);
   // Plain text rows host their tag chips INSIDE the editor (an inline widget at the
-  // end of the text) so the chips flow after the last word and wrap with it. Block /
-  // code rows have no inline text editor, so they keep the tag bar as a sibling below.
-  const isPlainTextRow = !isBlockNode && !isCodeBlock;
+  // end of the text) so the chips flow after the last word and wrap with it. Code
+  // rows have no inline text editor, so they keep the tag bar as a sibling below.
+  const isPlainTextRow = !isCodeBlock;
   const hasTags = displayed.tags.length > 0;
   const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
   if (isPlainTextRow && hasTags && inlineTagSlotRef.current === null) {
@@ -1256,24 +1261,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
   };
 
-  // Enter on a block node (image/attachment/embed) opens a fresh text sibling
-  // below it, the way Enter on a code block does.
-  const handleBlockExit = async () => {
-    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-    const rowIndex = siblings.indexOf(props.nodeId);
-    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
-  };
-
-  // Open the caption editor — a block node's caption is its `description`.
-  const openCaptionEditor = () => {
-    descriptionReturnPlacementRef.current = cursorEnd();
-    props.setUi((prev) => requestFocusState(
-      { ...prev, editingDescriptionId: targetEditId },
-      descriptionFocusTarget,
-      cursorEnd(),
-    ));
-  };
-
   const handleSetCodeLanguage = (language: string) => {
     void props.run(() => api.setCodeLanguage(targetEditId, language), { applyFocus: false });
   };
@@ -1697,6 +1684,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           processing={isCommandNode && commandRun.running}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
+          fileIconKind={fileNodeRow ? fileNodeIconKind(fileNodeRow) : undefined}
           onToggleExpand={row.toggleExpandOrSelect}
           onDrillDown={() => props.onRoot(drillDownId)}
           draggable={row.dragHandleProps.draggable}
@@ -1705,7 +1693,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
         <div
           ref={optionAnchorRef}
-          className={isBlockNode ? 'row-content-line row-content-line--block' : 'row-content-line'}
+          className="row-content-line"
           onDragOver={handleExternalFileDragOver}
           onDrop={handleExternalFileDrop}
           onMouseDownCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
@@ -1725,31 +1713,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
-          {isBlockNode ? (
-            <BlockNodeRow
-              node={displayed}
-              readOnly={displayed.locked}
-              onFocus={row.updateSelection}
-              onArrowUp={() => row.moveFocus(-1)}
-              onArrowDown={() => row.moveFocus(1)}
-              onEnter={() => void handleBlockExit()}
-              // Backspace removes a childless block; a block with children is a
-              // no-op (block_delete_parent), matching plain rows so a Backspace
-              // never silently trashes a subtree.
-              onBackspace={() => void handleBackspaceAtStart(true)}
-              onEscape={() => void exitToSelection()}
-              onShiftArrow={() => void exitToSelection()}
-              onTab={(shiftKey) => void handleTab(shiftKey, 0)}
-              onUndo={() => void props.run(() => api.undo())}
-              onRedo={() => void props.run(() => api.redo())}
-              onAddCaption={openCaptionEditor}
-              focusTarget={editorFocusTarget}
-              focusRequest={props.ui.focusRequest}
-              onFocusRequestConsumed={(request) => {
-                props.setUi((prev) => clearFocusRequestState(prev, request));
-              }}
-            />
-          ) : isCodeBlock ? (
+          {isCodeBlock ? (
             <CodeBlockRow
               nodeId={props.nodeId}
               text={draftContent.text}

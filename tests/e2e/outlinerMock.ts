@@ -2256,7 +2256,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'create_image_node') {
           const parentId = String(args.parentId);
-          const nodeId = createNode(parentId, args.index as number | null, '', {
+          const nodeId = createNode(parentId, args.index as number | null, typeof args.name === 'string' ? args.name : '', {
             type: 'image',
             showCheckbox: false,
             assetId: typeof args.assetId === 'string' ? args.assetId : undefined,
@@ -2269,7 +2269,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'create_attachment_node') {
           const parentId = String(args.parentId);
-          const nodeId = createNode(parentId, args.index as number | null, '', {
+          const nodeId = createNode(parentId, args.index as number | null, String(args.originalFilename ?? 'attachment'), {
             type: 'attachment',
             showCheckbox: false,
             assetId: String(args.assetId ?? ''),

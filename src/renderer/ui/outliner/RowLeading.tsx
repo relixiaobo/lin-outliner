@@ -1,5 +1,6 @@
 import type { ComponentType, DragEvent } from 'react';
 import type { FieldType } from '../../api/types';
+import type { InlineFileIconKind } from '../editor/inlineFileIcon';
 import {
   ChevronRightIcon,
   ICON_SIZE,
@@ -20,6 +21,7 @@ interface RowLeadingProps {
   processing?: boolean;
   bulletColors?: string[];
   tagDefColor?: string;
+  fileIconKind?: InlineFileIconKind;
   onToggleExpand: () => void;
   onDrillDown: () => void;
   draggable?: boolean;
@@ -37,6 +39,7 @@ export function RowLeading({
   processing,
   bulletColors = [],
   tagDefColor,
+  fileIconKind,
   onToggleExpand,
   onDrillDown,
   draggable,
@@ -87,6 +90,7 @@ export function RowLeading({
           className={markerClassName}
           bulletColors={bulletColors}
           tagDefColor={tagDefColor}
+          fileIconKind={fileIconKind}
         />
       </ButtonControl>
     </div>

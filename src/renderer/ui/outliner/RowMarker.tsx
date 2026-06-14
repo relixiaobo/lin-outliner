@@ -2,10 +2,11 @@ import type { ComponentType, CSSProperties } from 'react';
 import type { FieldType } from '../../api/types';
 import { conicColorStyle } from '../tags/tagColors';
 import { CommandIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { INLINE_FILE_ICON_CLASS, type InlineFileIconKind } from '../editor/inlineFileIcon';
 import { FieldTypeIcon } from './fieldTypePresentation';
 import { NodeBulletDot } from './NodeBulletDot';
 
-export type RowMarkerVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef' | 'command';
+export type RowMarkerVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef' | 'command' | 'file';
 
 interface RowMarkerProps {
   hasChildren: boolean;
@@ -21,6 +22,8 @@ interface RowMarkerProps {
   processing?: boolean;
   bulletColors?: readonly string[];
   tagDefColor?: string;
+  // For the `file` variant: which file-type glyph the bullet shows.
+  fileIconKind?: InlineFileIconKind;
   className?: string;
 }
 
@@ -33,6 +36,7 @@ export function RowMarker({
   processing = false,
   bulletColors = [],
   tagDefColor,
+  fileIconKind,
   className,
 }: RowMarkerProps) {
   const bulletClass = [
@@ -61,6 +65,8 @@ export function RowMarker({
         processing ? <LoaderIcon size={13} aria-hidden="true" /> : <CommandIcon size={13} aria-hidden="true" />
       ) : variant === 'tag' ? (
         <span aria-hidden="true" className="row-bullet-tag-glyph">#</span>
+      ) : variant === 'file' ? (
+        <span aria-hidden="true" className={INLINE_FILE_ICON_CLASS} data-file-icon-kind={fileIconKind} />
       ) : (
         <NodeBulletDot style={bulletDotStyle} />
       )}

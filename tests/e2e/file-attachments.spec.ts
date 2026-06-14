@@ -5,6 +5,7 @@ import {
   ids,
   openMockedApp,
   row,
+  rowEditor,
   trailingEditor,
 } from './outlinerMock';
 
@@ -18,7 +19,7 @@ test.describe('file attachments', () => {
     await openMockedApp(page);
   });
 
-  test('/attachment picks a file, creates an attachment row, and exposes system actions', async ({ page }) => {
+  test('/attachment creates a file row that opens as a node page with a preview + actions', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -35,16 +36,18 @@ test.describe('file attachments', () => {
       return node?.type ?? null;
     }).toBe('attachment');
 
+    // A file is an ordinary row now: a file-type bullet + the filename as its text.
     const attachmentRow = row(page, attachmentId!);
-    await expect(attachmentRow.locator('.outliner-attachment')).toContainText('picked-report.pdf');
-    await expect(attachmentRow.locator('.outliner-attachment-meta')).toContainText('PDF');
-    await expect(attachmentRow.locator('.outliner-attachment-meta')).toContainText('1 page');
+    await expect(attachmentRow.locator('.row-bullet-shape.file')).toBeVisible();
+    await expect(rowEditor(page, attachmentId!)).toContainText('picked-report.pdf');
 
-    await attachmentRow.locator('.outliner-attachment-main').click();
-    const previewPanel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
-    await expect(previewPanel.locator('.file-preview-title-text')).toContainText('picked-report.pdf');
-    await expect(previewPanel.locator('.file-preview-pdf-toolbar')).toContainText('1 / 1');
-    const pdfCanvas = previewPanel.locator('.file-preview-pdf-canvas');
+    // Drilling the bullet opens the file as a node page whose body is the preview.
+    await attachmentRow.locator('.row-bullet-button').first().click();
+    const nodePage = page.locator('.outline-panel-surface.active-panel');
+    await expect(nodePage.locator('.file-node-meta')).toContainText('PDF');
+    await expect(nodePage.locator('.file-node-meta')).toContainText('1 page');
+
+    const pdfCanvas = nodePage.locator('.file-node-preview .file-preview-pdf-canvas');
     await expect(pdfCanvas).toBeVisible();
     await expect.poll(async () => pdfCanvas.evaluate((element) => {
       const canvas = element as HTMLCanvasElement;
@@ -67,12 +70,10 @@ test.describe('file attachments', () => {
       }
       return { height: canvas.height, hasInk, width: canvas.width };
     })).toEqual({ height: 792, hasInk: true, width: 612 });
-    await expect(previewPanel.locator('.file-preview-pdf-stage .file-preview-message')).toBeHidden();
-    await previewPanel.getByRole('button', { name: 'Previous page' }).click();
-    await expect(attachmentRow.locator('.outliner-attachment')).toBeVisible();
+    await expect(nodePage.locator('.file-node-preview .file-preview-message')).toBeHidden();
 
-    await attachmentRow.locator('.outliner-attachment').hover();
-    const actions = attachmentRow.locator('.outliner-attachment-actions');
+    // The node-page header carries the file system actions.
+    const actions = nodePage.locator('.file-node-actions');
     await actions.getByRole('button', { name: 'Open' }).click();
     await actions.getByRole('button', { name: 'Reveal in Finder' }).click();
     await actions.getByRole('button', { name: 'Copy file' }).click();
