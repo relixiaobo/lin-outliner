@@ -47,7 +47,16 @@ interface AgentProcessBlockProps {
   conversationId?: string | null;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
+  /** Run actually failed/cancelled/crashed with no result → RED "Interrupted" label + error styling. */
   turnFailedWithoutProse: boolean;
+  /**
+   * Show this resultless turn's process expanded (and skip the "Worked for …"
+   * resting header) so its interim work isn't buried. True for a genuine
+   * interruption in either mode, and — per the #240 result-first design — for a
+   * sealed resultless DM turn. A cleanly-completed resultless Channel turn is
+   * false here: it folds to "Worked for …" (atomic delivery, no inline process).
+   */
+  surfaceResultlessProcess: boolean;
   /** Wall-clock the run took; surfaced as "Worked for …" once sealed. Null when unknown. */
   workedForMs: number | null;
 }
@@ -62,6 +71,7 @@ export function summarizeProcess({
   turnActive,
   liveCollapsed,
   turnFailedWithoutProse,
+  surfaceResultlessProcess,
   workedForMs,
   process,
   toolCallLabels,
@@ -76,6 +86,7 @@ export function summarizeProcess({
   liveCollapsed: boolean;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
+  surfaceResultlessProcess: boolean;
   workedForMs: number | null;
   process: Messages['agent']['process'];
   toolCallLabels: Messages['agent']['toolCall'];
@@ -107,10 +118,13 @@ export function summarizeProcess({
   // Result-first resting state: a SEALED turn (not active) collapses to
   // "Worked for {duration}" (codex-style). While the turn is still active the
   // duration is partial, so the live/descriptive header stands — this is the
-  // single gate for that (the caller passes the raw run wall-clock). The
-  // descriptive summaries below are the fallback when the run's wall-clock is
+  // single gate for that (the caller passes the raw run wall-clock). A resultless
+  // turn we're deliberately surfacing (a sealed DM turn, per #240) is excluded:
+  // "Worked for …" would read as a clean unit of work and hide that there is no
+  // answer, so it falls through to the descriptive summary instead. The
+  // descriptive summaries below are also the fallback when the run's wall-clock is
   // unknown (e.g. legacy records with no run timing).
-  if (!turnActive && workedForMs !== null) {
+  if (!turnActive && workedForMs !== null && !surfaceResultlessProcess) {
     return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
 
@@ -153,6 +167,7 @@ export function AgentProcessBlock({
   childRunsByParentToolCallId,
   turnActive,
   turnFailedWithoutProse,
+  surfaceResultlessProcess,
   workedForMs,
 }: AgentProcessBlockProps) {
   const t = useT();
@@ -168,12 +183,14 @@ export function AgentProcessBlock({
   // Codex-style live disclosure: a DM turn auto-expands **while it is working**
   // (`liveSegment` — thinking/tools streaming) so the process is visible, then
   // auto-collapses to "Worked for …" the moment it seals (final text begins) or
-  // the turn ends. A turn that failed without prose also auto-expands so the error
-  // context stays visible. Everything else defaults collapsed (a Channel turn is
-  // `idle` → never `liveSegment`, so it lands already collapsed/atomic). The
-  // sticky override wins over the default: once a user toggles the block it keeps
-  // their choice and never auto-collapses on seal.
-  const defaultExpanded = turnFailedWithoutProse || liveSegment;
+  // the turn ends. A resultless turn we're surfacing (`surfaceResultlessProcess` —
+  // a genuine interruption in either mode, or a sealed resultless DM turn per #240)
+  // also auto-expands so its interim work / error context stays visible. Everything
+  // else defaults collapsed — including a cleanly-completed resultless Channel turn,
+  // which folds to "Worked for …" (atomic delivery, process in the activity detail
+  // view, not inline). The sticky override wins over the default: once a user
+  // toggles the block it keeps their choice and never auto-collapses on seal.
+  const defaultExpanded = surfaceResultlessProcess || liveSegment;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
   // The spinner appears in exactly one place: the collapsed live header, or — once
@@ -210,6 +227,7 @@ export function AgentProcessBlock({
             turnActive,
             liveCollapsed,
             turnFailedWithoutProse,
+            surfaceResultlessProcess,
             workedForMs,
             process: t.agent.process,
             toolCallLabels: t.agent.toolCall,

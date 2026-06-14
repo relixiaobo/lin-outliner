@@ -15,7 +15,8 @@ export interface AgentConversationRenderRow {
   endIndex: number;
   isLastInTurn: boolean;
   streaming: boolean;
-  turnEnded: boolean;
+  /** Authoritative interrupted verdict for this assistant turn (from the run's real status). */
+  turnInterrupted: boolean;
   turnPhase: AgentTurnPhase;
 }
 
@@ -84,13 +85,6 @@ export function buildConversationRenderRows(
   turnPhase: AgentTurnPhase,
 ): AgentConversationRenderRow[] {
   const rows: AgentConversationRenderRow[] = [];
-  const turnEndedByEndIndex = new Map<number, boolean>();
-  let hasUserAfter = false;
-
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    turnEndedByEndIndex.set(index, hasUserAfter || turnPhase === 'idle');
-    if (entries[index] && isTurnBoundaryEntry(entries[index]!)) hasUserAfter = true;
-  }
 
   let index = 0;
   while (index < entries.length) {
@@ -116,7 +110,6 @@ export function buildConversationRenderRows(
         entry: mergedEntry,
         endIndex,
         key: stableKey,
-        turnEnded: turnEndedByEndIndex.get(endIndex) ?? true,
         turnPhase,
         totalEntryCount: entries.length,
         nextEntry: entries[endIndex + 1],
@@ -130,7 +123,6 @@ export function buildConversationRenderRows(
       key: isBoundaryEntry(entry)
         ? entry.id
         : (entry as AgentMessageEntry).nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
-      turnEnded: turnEndedByEndIndex.get(index) ?? true,
       turnPhase,
       totalEntryCount: entries.length,
       nextEntry: entries[index + 1],
@@ -148,7 +140,6 @@ function buildConversationRenderRow({
   key,
   nextEntry,
   totalEntryCount,
-  turnEnded,
   turnPhase,
 }: {
   contentKey?: string;
@@ -157,7 +148,6 @@ function buildConversationRenderRow({
   key: string;
   nextEntry: AgentConversationEntry | undefined;
   totalEntryCount: number;
-  turnEnded: boolean;
   turnPhase: AgentTurnPhase;
 }): AgentConversationRenderRow {
   const isLastAssistantEntry = endIndex === totalEntryCount - 1 && getEntryRole(entry) === 'assistant';
@@ -177,7 +167,7 @@ function buildConversationRenderRow({
     endIndex,
     isLastInTurn: endIndex === totalEntryCount - 1 || !nextIsSameTurn,
     streaming: isLastAssistantEntry && turnPhase === 'streaming_text',
-    turnEnded,
+    turnInterrupted: entry.kind === 'message' ? entry.turnInterrupted : false,
     turnPhase: isLastAssistantEntry ? turnPhase : 'idle',
   };
 }

@@ -41,6 +41,7 @@ describe('agent process summary', () => {
       turnActive: true,
       liveCollapsed: true,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -59,6 +60,7 @@ describe('agent process summary', () => {
       turnActive: true,
       liveCollapsed: true,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -77,6 +79,7 @@ describe('agent process summary', () => {
       turnActive: true,
       liveCollapsed: true,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -95,6 +98,7 @@ describe('agent process summary', () => {
       turnActive: true,
       liveCollapsed: false,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -113,6 +117,7 @@ describe('agent process summary', () => {
       turnActive: false,
       liveCollapsed: false,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -131,6 +136,7 @@ describe('agent process summary', () => {
       turnActive: false,
       liveCollapsed: false,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -149,6 +155,7 @@ describe('agent process summary', () => {
       turnActive: false,
       liveCollapsed: false,
       turnFailedWithoutProse: true,
+      surfaceResultlessProcess: true,
       workedForMs: null,
       process,
       toolCallLabels,
@@ -167,6 +174,7 @@ describe('agent process summary', () => {
       turnActive: false,
       liveCollapsed: false,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: 63_000,
       process,
       toolCallLabels,
@@ -185,6 +193,7 @@ describe('agent process summary', () => {
       turnActive: true,
       liveCollapsed: true,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: 5_000,
       process,
       toolCallLabels,
@@ -205,6 +214,7 @@ describe('agent process summary', () => {
       turnActive: true,
       liveCollapsed: false,
       turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
       workedForMs: 5_000,
       process,
       toolCallLabels,
@@ -223,10 +233,36 @@ describe('agent process summary', () => {
       turnActive: false,
       liveCollapsed: false,
       turnFailedWithoutProse: true,
+      surfaceResultlessProcess: true,
       workedForMs: 8_000,
       process,
       toolCallLabels,
       thinkingLabel,
     })).toBe('Interrupted after thinking');
+  });
+
+  test('a surfaced resultless turn shows its descriptive summary, never "Worked for" (DM #240)', () => {
+    // Same sealed, non-interrupted turn with a known wall-clock — the ONLY
+    // difference is whether we are surfacing its resultless process. A folded
+    // turn (a completed-with-result turn, or a cleanly-completed resultless
+    // Channel turn) rests on "Worked for …"; a surfaced resultless DM turn skips
+    // that so the duration never reads as a clean unit of work with no answer.
+    const base = {
+      firstThinkingText: null,
+      lastThinkingText: null,
+      thinkingCount: 0,
+      pendingToolCallIds: new Set<string>(),
+      results: new Map([[readTool.id, readResult]]),
+      toolCalls: [readTool],
+      turnActive: false,
+      liveCollapsed: false,
+      turnFailedWithoutProse: false,
+      workedForMs: 5_000,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    };
+    expect(summarizeProcess({ ...base, surfaceResultlessProcess: false })).toBe('Worked for 5s');
+    expect(summarizeProcess({ ...base, surfaceResultlessProcess: true })).toBe('Read node "node-alpha"');
   });
 });

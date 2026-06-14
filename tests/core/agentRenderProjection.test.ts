@@ -839,4 +839,83 @@ describe('agent render projection', () => {
     expect(projection.channelActivityEntries).toEqual(activityEntries);
     expect(projection.channelActivityEntries).not.toBe(activityEntries);
   });
+
+  // The authoritative interrupted verdict — derived from the producing run's REAL
+  // status, never from whether the visible blocks end on answer prose. This is the
+  // single source of truth that stops the recurring Channel mislabel where a
+  // cleanly-completed turn that ended on a tool was painted red "Interrupted".
+  describe('turnInterrupted', () => {
+    // A turn that ended on a tool call with NO trailing answer prose — the exact
+    // shape the old `turnEnded && !finalIsProse` heuristic mislabeled. With a
+    // `completed` run it must NOT be interrupted.
+    function resultlessTurn(runTerminal: 'completed' | 'failed' | 'cancelled' | null) {
+      const events: AgentEvent[] = [
+        { ...base(1, 'conversation.created'), title: 'Interrupted verdict' } as AgentEvent,
+        {
+          ...base(2, 'user_message.created', userActor),
+          messageId: 'user-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Shanghai weather?' }],
+        } as AgentEvent,
+        { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' } as AgentEvent,
+        {
+          ...base(4, 'assistant_message.started', agentActor),
+          runId: 'run-1',
+          messageId: 'assistant-1',
+          parentMessageId: 'user-1',
+          providerId: 'p',
+          modelId: 'm',
+        } as AgentEvent,
+        {
+          ...base(5, 'assistant_message.completed', agentActor),
+          messageId: 'assistant-1',
+          stopReason: 'stop',
+          // Ends on a tool call — no trailing answer prose.
+          content: [
+            { type: 'thinking', thinking: 'Fetching Shanghai weather' },
+            { type: 'toolCall', id: 'call-1', name: 'web_fetch', input: { url: 'https://weather' } },
+          ],
+        } as AgentEvent,
+      ];
+      if (runTerminal === 'completed') events.push({ ...base(6, 'run.completed'), runId: 'run-1' } as AgentEvent);
+      if (runTerminal === 'failed') events.push({ ...base(6, 'run.failed'), runId: 'run-1', errorMessage: 'boom' } as AgentEvent);
+      if (runTerminal === 'cancelled') events.push({ ...base(6, 'run.cancelled'), runId: 'run-1' } as AgentEvent);
+      return replayAgentEvents(events);
+    }
+
+    test('a completed turn that ended on a tool is NOT interrupted (the core fix)', () => {
+      const state = resultlessTurn('completed');
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      expect(state.runs['run-1']?.status).toBe('completed');
+      expect(projection.entities.messages['assistant-1']?.turnInterrupted).toBeFalsy();
+    });
+
+    test('a failed turn is interrupted', () => {
+      const state = resultlessTurn('failed');
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      expect(projection.entities.messages['assistant-1']?.turnInterrupted).toBe(true);
+    });
+
+    test('a cancelled turn is interrupted', () => {
+      const state = resultlessTurn('cancelled');
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      expect(projection.entities.messages['assistant-1']?.turnInterrupted).toBe(true);
+    });
+
+    test('a live in-flight run is NOT interrupted; the same run orphaned (not live) is', () => {
+      const state = resultlessTurn(null);
+      expect(state.runs['run-1']?.status).toBe('running');
+
+      // Live: the run is in the active set → still working, not interrupted.
+      const live = buildAgentRenderProjection(state, {
+        revision: 1,
+        activeRuns: [{ runId: 'run-1', agentId: 'agent-1', addressedByMessageId: 'user-1', startedAt: 1 }],
+      });
+      expect(live.entities.messages['assistant-1']?.turnInterrupted).toBeFalsy();
+
+      // Crash-orphaned: persisted `running` but absent from the live set → interrupted.
+      const orphaned = buildAgentRenderProjection(state, { revision: 1 });
+      expect(orphaned.entities.messages['assistant-1']?.turnInterrupted).toBe(true);
+    });
+  });
 });

@@ -83,7 +83,8 @@ interface AgentMessageRowProps {
   streaming?: boolean;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
-  turnEnded?: boolean;
+  /** True in a multi-agent Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
+  isMultiAgentChannel?: boolean;
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
@@ -472,7 +473,8 @@ function renderAssistantBlocks(
   childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity> | undefined,
   toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
-  turnEnded: boolean,
+  turnInterrupted: boolean,
+  isChannel: boolean,
   workedForMs: number | null,
 ) {
   const rendered: ReactNode[] = [];
@@ -506,18 +508,30 @@ function renderAssistantBlocks(
   }
   // The trailing answer prose, after the last process block. `finalIsProse` gates
   // the result-first layout: WITH trailing prose the process collapses to
-  // "Worked for …" behind the answer; WITHOUT it the turn ended on a thought/tool
-  // and produced no result — interrupted, errored, or cut after a tool — so it is
-  // `turnFailedWithoutProse` and the process must stay visible (auto-expanded)
-  // rather than hide its folded interim text behind a bare collapsed header.
-  // (Keying this off ANY text would wrongly treat folded interim narration as the
-  // result and leave a resultless turn collapsed.)
+  // "Worked for …" behind the answer; WITHOUT it the turn produced no result.
+  //
+  // Two SEPARATE concerns, both keyed off this — decoupled so a Channel never
+  // mislabels:
+  //  • `turnFailedWithoutProse` (the alarming RED "Interrupted" label + error
+  //    styling) fires ONLY when the run actually failed/was cancelled/crashed
+  //    (`turnInterrupted`, derived in core from the run's REAL status — never from
+  //    block structure). A cleanly `completed` resultless turn is NEVER red.
+  //  • `surfaceResultlessProcess` (auto-expand the process so its interim work
+  //    isn't buried) fires for a genuine interruption in EITHER mode, AND — per
+  //    the #240 result-first design — for a sealed resultless **DM** turn, where
+  //    the user watched it 1:1. A Channel delivers atomically (its process lives
+  //    in the activity detail view, not inline), so a cleanly-completed resultless
+  //    Channel turn folds to "Worked for …" instead of dumping its process inline.
+  // (The old `turnEnded && !finalIsProse` conflated these: because a Channel turn
+  // is always `turnPhase: idle`, it fired on every result-less turn regardless of
+  // outcome — the recurring Channel mislabel.)
   const finalBlocks = visibleBlocks.slice(lastProcessIndex + 1);
   const finalProseBlocks = finalBlocks.filter(
     (block): block is Extract<(typeof visibleBlocks)[number], { type: 'text' }> => block.type === 'text',
   );
   const finalIsProse = finalProseBlocks.some((block) => block.text.trim().length > 0);
-  const turnFailedWithoutProse = turnEnded && !finalIsProse;
+  const turnFailedWithoutProse = turnInterrupted && !finalIsProse;
+  const surfaceResultlessProcess = !finalIsProse && (turnInterrupted || (!isChannel && !turnActive));
 
   if (lastProcessIndex >= 0) {
     const processBlocks = visibleBlocks.slice(0, lastProcessIndex + 1);
@@ -548,6 +562,7 @@ function renderAssistantBlocks(
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         turnActive={turnActive}
         turnFailedWithoutProse={turnFailedWithoutProse}
+        surfaceResultlessProcess={surfaceResultlessProcess}
         workedForMs={workedForMs}
       />,
     );
@@ -593,7 +608,7 @@ export function AgentMessageRow({
   streaming: streamingOverride,
   childRunsByParentToolCallId,
   toolResults,
-  turnEnded = false,
+  isMultiAgentChannel = false,
   turnPhase = 'idle',
   speakerLabel = null,
   speakerMention = null,
@@ -817,7 +832,8 @@ export function AgentMessageRow({
     childRunsByParentToolCallId,
     toolResults,
     turnActive,
-    turnEnded,
+    entry.turnInterrupted,
+    isMultiAgentChannel,
     entry.runDurationMs,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
