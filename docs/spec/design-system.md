@@ -1139,7 +1139,11 @@ category history; see "Settings window".)
 - Channel assistant rows show the speaking agent for every assistant message,
   including the coordinator. The label comes from the recorded message `actor`
   and member/definition metadata, not from provider/model strings or the current
-  live roster alone.
+  live roster alone. Attribution is a header — avatar and speaker name on one
+  line — above a full-width reply body that aligns to the avatar's left edge; the
+  body is NOT indented into an avatar gutter, so a Channel reply reclaims that
+  horizontal space. (A DM assistant row carries no attribution header, so its
+  content is full-width already.)
 - Channel activity is a floating presence marker above the composer, not a
   transcript row or bottom toolbar. It is out of layout flow, never changes the
   transcript scroll height or composer position, and defaults to a compact stack

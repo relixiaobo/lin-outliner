@@ -87,7 +87,19 @@
 }
 
 .agent-message-row.assistant {
-  justify-content: flex-start;
+  /* Stack a Channel attribution header (avatar + name) over a full-width body so
+     the reply aligns to the avatar's left edge instead of indenting into an avatar
+     gutter. A DM assistant row has no header — just the full-width content. */
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.agent-message-actor-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .agent-message-stopped {

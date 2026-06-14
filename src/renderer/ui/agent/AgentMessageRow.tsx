@@ -830,10 +830,24 @@ export function AgentMessageRow({
   return (
     <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
       {actorLabel ? (
-        <AgentIdentityAvatar
-          label={actorLabel}
-          mention={actorMention}
-        />
+        // Channel attribution header: avatar + speaker name on ONE line. The body
+        // below spans the full row width (aligned to the avatar's left edge) rather
+        // than being indented into an avatar gutter, so a Channel reply reclaims the
+        // horizontal space a per-message avatar column would cost. (A DM renders no
+        // actorLabel, so it has no header and its content is full-width already.)
+        <div
+          className="agent-message-actor-header"
+          title={actorMention ? `@${actorMention}` : undefined}
+        >
+          <AgentIdentityAvatar
+            label={actorLabel}
+            mention={actorMention}
+          />
+          <div className="agent-message-actor">
+            <span>{actorLabel}</span>
+            {actorMention ? <small>{`@${actorMention}`}</small> : null}
+          </div>
+        </div>
       ) : null}
       <AgentAssistantContent>
         {replyAnchor ? (
@@ -845,15 +859,6 @@ export function AgentMessageRow({
             <span aria-hidden>↩</span>
             <span>{`"${replyAnchor.quote}"`}</span>
           </ButtonControl>
-        ) : null}
-        {actorLabel ? (
-          <div
-            className="agent-message-actor"
-            title={actorMention ? `@${actorMention}` : undefined}
-          >
-            <span>{actorLabel}</span>
-            {actorMention ? <small>{`@${actorMention}`}</small> : null}
-          </div>
         ) : null}
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
