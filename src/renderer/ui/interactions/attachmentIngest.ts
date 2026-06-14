@@ -50,6 +50,7 @@ export function createAssetNode(
         assetId: asset.id,
         width: asset.imageWidth,
         height: asset.imageHeight,
+        name: asset.originalFilename,
       }), options)
     : run(() => api.createAttachmentNode(parentId, index, attachmentNodeInput(asset)), options);
 }

@@ -66,6 +66,8 @@ import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
+import { FilePreviewBody, isFileNode } from './preview/FilePreviewBody';
+import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { useT } from '../i18n/I18nProvider';
@@ -158,6 +160,9 @@ export function NodePanel(props: NodePanelProps) {
     ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
     : props.rootId;
   const rootNode = props.index.byId.get(resolvedRootId);
+  // A file root (attachment/image) renders its preview as the page body instead
+  // of an outliner; the title editor still holds the (editable) filename.
+  const fileRoot = isFileNode(rootNode) ? rootNode : null;
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const [titleContentRevision, setTitleContentRevision] = useState(0);
@@ -186,7 +191,7 @@ export function NodePanel(props: NodePanelProps) {
   const definitionTemplatePlaceholder = rootNode
     ? definitionOutlinerPlaceholder(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) }, t.definition.outliner)
     : null;
-  const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
+  const showOutliner = Boolean(rootNode && !fileRoot && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(resolvedRootId, null, props.panelId, 'panel-title');
@@ -865,6 +870,12 @@ export function NodePanel(props: NodePanelProps) {
               />
             )}
           </div>
+        )}
+        {fileRoot && (
+          <FilePreviewBody
+            node={fileRoot}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
+          />
         )}
         {rootNode && (
           <BacklinksSection

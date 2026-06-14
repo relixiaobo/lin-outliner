@@ -122,7 +122,7 @@ export const api = {
   createImageNode: (
     parentId: string,
     index: number | null,
-    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null },
+    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null; name?: string | null },
   ) => command<CommandResult>('create_image_node', { parentId, index, ...options }),
   createAttachmentNode: (
     parentId: string,

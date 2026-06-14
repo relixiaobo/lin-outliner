@@ -430,6 +430,7 @@ export class DocumentService {
           width: nullableNumber(args.width),
           height: nullableNumber(args.height),
           alt: nullableString(args.alt),
+          name: nullableString(args.name),
         });
       case 'create_attachment_node':
         return this.core.createAttachmentNode(String(args.parentId), nullableNumber(args.index), {

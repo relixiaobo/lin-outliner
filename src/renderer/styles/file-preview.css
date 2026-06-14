@@ -373,3 +373,63 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* File-node body — the preview as a node's content. A meta + actions strip over
+   the shared file-preview-* renderers. Lives inside .panel-inner (node page) or
+   under an expanded file row (inline), both of which own the horizontal inset. */
+.file-node-body {
+  min-width: 0;
+}
+
+.file-node-toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-size-md);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.file-node-meta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-node-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Icon-only action: deepen color on hover, no box (design-system B6). */
+.file-node-action {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: color var(--motion-fast);
+}
+
+.file-node-action:hover,
+.file-node-action:focus-visible {
+  color: var(--text-main);
+}
+
+.file-node-preview {
+  min-width: 0;
+}
+
+/* Inline variant: bounded under an expanded file row, scrolls internally. */
+.file-node-body--inline .file-node-preview {
+  max-height: 40vh;
+  overflow: auto;
+}

@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import type {
   PreviewDirectoryEntry,
@@ -684,8 +683,15 @@ function clampPdfScale(value: number): number {
 }
 
 function loadPdfJs(): Promise<PdfJsModule> {
-  pdfJsModulePromise ??= import('pdfjs-dist').then((module) => {
-    module.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  // Both the engine and its bundled same-origin worker URL load on demand, so
+  // this `?url` asset never enters the static module graph (which non-Vite test
+  // runners cannot parse). Vite still emits the worker into assets/, so the
+  // packaged file:// CSP's worker-src ← script-src 'self' permits it (PR #227).
+  pdfJsModulePromise ??= Promise.all([
+    import('pdfjs-dist'),
+    import('pdfjs-dist/build/pdf.worker.mjs?url'),
+  ]).then(([module, worker]) => {
+    module.GlobalWorkerOptions.workerSrc = (worker as { default: string }).default;
     return module;
   });
   return pdfJsModulePromise;
