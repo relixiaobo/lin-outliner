@@ -641,6 +641,29 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Compact Channel attribution — avatar+name header over a full-width reply**
+  (cc-2, PR #243, fast-track) — a Channel assistant row stops indenting its body into an avatar
+  gutter: the row is now a column with an attribution **header** (avatar + speaker name on one line)
+  over a **full-width reply body** aligned to the avatar's left edge, reclaiming the horizontal space
+  the per-message avatar column cost. The actor-name block moves from beneath the reply into the
+  header (the old negative-`margin-bottom` hack drops; the row gap owns the spacing). A DM row has no
+  header, so its full-width content is unchanged. Renderer/CSS only — no protocol/shared surface.
+  Gate (main): `bun run test:renderer` + e2e agent-composer green; **visual verified light + dark**
+  (avatar+name on one line, reply flush to the avatar's left edge). Spec: `docs/spec/design-system.md`.
+- **Channel turns deliver atomically — suppress in-progress turns from the transcript**
+  (cc-2, PR #242, plan-track) — realizes the spec's atomic Channel delivery and fixes the false
+  **"Interrupted after thinking"** label that #240's result-first fold surfaced on actively-working
+  turns. `buildTranscriptRows` suppresses every message whose producing run is **live** in a
+  multi-agent Channel — keyed off the in-memory active-run set (`options.activeRuns`), NOT persisted
+  `status === 'running'`, so a run left `running` by a crash/quit still renders its interrupted turn
+  instead of vanishing. A spawned child run is held back the same way (its boundary row never orphans
+  to the transcript end), and a shared `isRunRunning` predicate replaces the inline status checks.
+  Gated on `isMultiAgentConversation`, so a DM streams its active turn live. Gate (main):
+  `/code-review max` (9 finder angles) caught — on the first cut — that keying off persisted
+  `running` would hide a crash-interrupted turn forever and orphan child-run rows; cc-2 re-keyed to
+  the live active-run set, mirrored the child-run suppression, added the shared helper, and de-flaked
+  the test (`.find()` → exactly-one assertion). Re-review + adversarial verify clean; typecheck +
+  `test:core` (1020/0) green. Spec: `docs/spec/agent-event-log-rendering.md`.
 - **Result-first turn fold for DM and Channel (channel-group-chat-semantics PR 2)**
   (cc-2, PR #240, plan-track) — the human-side render fold that pairs with #239's
   agent-side environment reminder. Every agent turn now renders **result-first**: the

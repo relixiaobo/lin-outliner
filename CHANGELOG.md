@@ -506,6 +506,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Compact Channel attribution — avatar+name header over a full-width reply (PR #243, cc-2)** —
+  a Channel assistant row no longer indents its body into an avatar gutter. The row is now a column:
+  an **attribution header** (avatar + speaker name on one line) above a **full-width reply body** aligned
+  to the avatar's left edge, so every Channel reply reclaims the horizontal space the per-message avatar
+  column used to cost. The actor-name block moves from beneath the reply into the header (the old negative
+  `margin-bottom` hack drops; the row gap owns that spacing). A DM assistant row carries no attribution
+  header, so its content was already full-width and is unchanged. Renderer/CSS only — no protocol/shared
+  surface. Visual gate verified light + dark. Spec: `docs/spec/design-system.md`.
 - **Result-first turn fold for DM and Channel (PR #240, cc-2)** —
   every agent turn now renders **result-first**: the final answer is the message, while thinking,
   tool calls, and interim narration fold behind a collapsed `Worked for {duration}` disclosure. DM
@@ -827,6 +835,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Channel turns deliver atomically — suppress in-progress turns from the transcript (PR #242, cc-2)** —
+  a running Channel agent's turn no longer appears in the transcript until it completes, realizing the
+  spec's atomic-delivery rule and fixing the false **"Interrupted after thinking"** label that #240's
+  result-first fold surfaced on actively-working turns. `buildTranscriptRows` now suppresses every
+  message whose producing run is **live** in a multi-agent Channel — keyed off the in-memory active-run
+  set the runtime passes in (`options.activeRuns`), NOT the persisted `status === 'running'`: a run left
+  `running` by a crash/quit is absent from the live set, so its **interrupted** turn still renders rather
+  than silently vanishing (regression-guarded). The in-flight turn's progress stays in
+  `channelActivityEntries`; the whole turn appears once its run seals, rendered result-first. A spawned
+  child run is held back the same way, so its boundary row never orphans to the transcript end while the
+  parent is hidden, then reappears anchored once the parent lands. Gated on `isMultiAgentConversation`,
+  so a DM still streams its active turn live. A shared `isRunRunning` predicate replaces the scattered
+  inline status checks (and fixes a latent `activeRun` undefined-deref in the activity-entry gate).
+  Addresses the `/code-review max` findings on the first cut (live-set keying, child-run symmetry, the
+  shared helper, and the test). Spec: `docs/spec/agent-event-log-rendering.md`.
 - **Delegation runtime hygiene — stop-salvage + shared child-agent harness (PR
   #221, cc-2)** — a `stop()`ped child run now keeps the last partial assistant
   text it produced (surfaced in the synchronous tool result and terminal
