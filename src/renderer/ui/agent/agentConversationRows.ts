@@ -5,7 +5,8 @@ import type {
   AgentTurnPhase,
 } from '../../agent/runtime';
 
-export type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
+// Internal to row-building; not part of the module's public surface.
+type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
 
 export interface AgentConversationRenderRow {
   key: string;
@@ -33,7 +34,7 @@ export function getEntryTimestamp(entry: AgentConversationEntry): number {
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
 
-export function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
+function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
   return entry.kind === 'message' && entry.message.role === 'assistant';
 }
 
@@ -44,7 +45,7 @@ export function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
 // Channel relay puts back-to-back assistant turns from DIFFERENT agents in the
 // transcript; merging across that seam would attribute one agent's words to
 // another. The streaming placeholder (actor null) merges with anything.
-export function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
+function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
   const leftAgentId = left.actor?.type === 'agent' ? left.actor.agentId : null;
   const rightAgentId = right.actor?.type === 'agent' ? right.actor.agentId : null;
   if (leftAgentId === null || rightAgentId === null) return true;
@@ -54,8 +55,23 @@ export function sameAssistantActor(left: AssistantEntry, right: AssistantEntry):
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   const lastEntry = entries[entries.length - 1]!;
+  // A multi-run turn (e.g. reactive-compaction retry: run-1 overflows, run-2
+  // produces the answer) merges into one row, so its "Worked for …" must reflect
+  // the WHOLE turn. Sum each DISTINCT run's wall-clock — spreading only the last
+  // entry would drop the earlier runs' time entirely. Entries sharing a runId
+  // count once; a run still without a sealed duration contributes nothing.
+  const durationByRun = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.runId !== null && entry.runDurationMs !== null) {
+      durationByRun.set(entry.runId, entry.runDurationMs);
+    }
+  }
+  const runDurationMs = durationByRun.size > 0
+    ? [...durationByRun.values()].reduce((sum, ms) => sum + ms, 0)
+    : lastEntry.runDurationMs;
   return {
     ...lastEntry,
+    runDurationMs,
     message: {
       ...lastEntry.message,
       content: entries.flatMap((entry) => entry.message.content),

@@ -516,6 +516,61 @@ test.describe('agent process disclosure', () => {
     await expect(page.getByText('Done — the outline is updated.')).toBeVisible();
   });
 
+  test('auto-expands a sealed turn that ended on a tool, surfacing its interim text instead of hiding it', async ({ page }) => {
+    // Regression: a turn whose last visible block is a tool/thought has NO trailing
+    // answer prose. Its interim text must NOT silently fold behind a collapsed
+    // "Worked for" header — keying the result on ANY text would do exactly that.
+    // With no result the process auto-expands so the interim narration stays read.
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_002_000,
+      content: [
+        { type: 'text', text: 'Let me read the alpha node before answering.' },
+        { type: 'toolCall', id: 'tool-read-nofinal', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+      ],
+    };
+
+    await emitAgentProjection(page, 'mock-agent-conversation', {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [
+        assistant,
+        {
+          role: 'toolResult',
+          toolCallId: 'tool-read-nofinal',
+          toolName: 'node_read',
+          content: [{ type: 'text', text: 'Alpha node content' }],
+          isError: false,
+          timestamp: 1_800_000_002_001,
+        },
+      ],
+      conversation: [{
+        nodeId: 'assistant-node-nofinal',
+        message: assistant,
+        branches: null,
+        runDurationMs: 5_000,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const process = page.locator('.agent-process-block').first();
+    // Resultless sealed turn → auto-expanded (not collapsed to "Worked for …").
+    await expect(process.locator('.agent-process-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(process.locator('.agent-process-title')).not.toHaveText(/Worked for/);
+    // The interim text is visible inside the fold, not hidden.
+    await expect(page.getByText('Let me read the alpha node before answering.')).toBeVisible();
+  });
+
   test('renders loaded skill calls as a compact light and dark affordance while isolated skills stay expandable', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     const loadedAssistant = {

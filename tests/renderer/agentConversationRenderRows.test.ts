@@ -35,6 +35,8 @@ function assistantEntry(opts: {
   addressedByMessageId?: string | null;
   text?: string;
   timestamp?: number;
+  runId?: string | null;
+  runDurationMs?: number | null;
 }): AgentMessageEntry {
   return {
     id: opts.id,
@@ -44,10 +46,17 @@ function assistantEntry(opts: {
     branches: null,
     streaming: false,
     actor: opts.agentId ? { type: 'agent', agentId: opts.agentId } : null,
-    runId: opts.agentId ? `run-${opts.agentId}` : null,
-    runDurationMs: null,
+    runId: opts.runId !== undefined ? opts.runId : (opts.agentId ? `run-${opts.agentId}` : null),
+    runDurationMs: opts.runDurationMs ?? null,
     addressedByMessageId: opts.addressedByMessageId ?? null,
   };
+}
+
+function mergedAssistantRunDurationMs(rows: ReturnType<typeof buildConversationRenderRows>): number | null {
+  const assistantRows = rows.filter((row) => row.entry.kind === 'message'
+    && (row.entry as AgentMessageEntry).message.role === 'assistant');
+  expect(assistantRows).toHaveLength(1);
+  return (assistantRows[0]!.entry as AgentMessageEntry).runDurationMs;
 }
 
 function userEntry(id: string, timestamp: number): AgentMessageEntry {
@@ -123,5 +132,48 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
       'idle',
     );
     expect(rows[0]!.isLastInTurn).toBe(true);
+  });
+});
+
+describe('buildConversationRenderRows — merged turn duration', () => {
+  test('a multi-run turn sums each distinct run wall-clock for the merged "Worked for"', () => {
+    // Reactive-compaction retry: run-1 overflows (partial), run-2 produces the
+    // answer. Both merge into one row, so its runDurationMs must be run-1 + run-2
+    // — spreading only the last entry would silently drop run-1's time.
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: 4000 }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-2', runDurationMs: 8000 }),
+      ],
+      'idle',
+    );
+    expect(mergedAssistantRunDurationMs(rows)).toBe(12_000);
+  });
+
+  test('a single-run turn (two entries, one runId) counts that run once', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: 5000 }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: 5000 }),
+      ],
+      'idle',
+    );
+    expect(mergedAssistantRunDurationMs(rows)).toBe(5000);
+  });
+
+  test('a merged turn whose runs have no sealed duration yet stays null', () => {
+    // Both runs still running (the projection leaves runDurationMs undefined →
+    // null on the entry); the merged row reports null, not 0.
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: null }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-2', runDurationMs: null }),
+      ],
+      'idle',
+    );
+    expect(mergedAssistantRunDurationMs(rows)).toBe(null);
   });
 });

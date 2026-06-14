@@ -875,18 +875,24 @@ Rules:
   visible, then **auto-collapses the moment it seals** — when the final answer
   begins streaming or the turn ends. A Channel turn is delivered atomically (its
   rows are `idle`, never `liveSegment`), so it lands already collapsed. A turn that
-  failed without any prose auto-expands so the error context stays visible; every
-  other steady state defaults collapsed. The **sticky override wins**: once a user
-  toggles the block it keeps that choice and never auto-collapses on seal.
+  **ended without a trailing answer** (no final prose — interrupted, errored, or cut
+  after a tool) auto-expands so its folded interim text and error context stay
+  visible; keying this off the *trailing* answer, not *any* text in the turn, is
+  what stops a resultless turn from burying interim narration behind a collapsed
+  header. Every other steady state defaults collapsed. The **sticky override wins**:
+  once a user toggles the block it keeps that choice and never auto-collapses on seal.
 - The collapsed header carries the single activity spinner and, while a turn is
   live **and the user has collapsed it**, acts as a status line (current running
   tool with status, else the latest streaming thought). Once the turn **seals**,
   the collapsed header reads **"Worked for {duration}"** (codex-style; duration =
   the producing run's `updatedAt − startedAt`, threaded as `runDurationMs` on the
-  message entity); when the run wall-clock is unknown it falls back to the static
-  group summary (e.g. "Thought · used N tools"). Expanding the block moves the
-  spinner to the running tool row inside the timeline. A turn that failed without
-  prose keeps the "Interrupted…" label, never a duration.
+  message entity **only once the run is sealed** — a still-`running` run, whether
+  live or left running after a crash, has `updatedAt === startedAt` and so no
+  meaningful wall-clock, and is left unknown rather than shown as "<1s"; a multi-run
+  turn sums each run's wall-clock). When the duration is unknown the header falls
+  back to the static group summary (e.g. "Thought · used N tools"). Expanding the
+  block moves the spinner to the running tool row inside the timeline. A turn that
+  ended without a trailing answer keeps the "Interrupted…" label, never a duration.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it

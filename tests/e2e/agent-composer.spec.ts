@@ -1575,10 +1575,9 @@ test.describe('agent composer controls', () => {
       }],
     });
 
-    // The interim text + lone tool fold into the result-first process block; open
-    // it so the narration markdown (and, below, the tool) are reachable.
-    await page.locator('.agent-process-toggle').click();
-
+    // The interim text + lone tool produced no final answer, so the result-first
+    // process block auto-expands (a resultless turn) — the narration markdown and,
+    // below, the tool are already reachable without toggling it open.
     await expect(page.locator('.agent-markdown [data-inline-ref="node-alpha"]')).toHaveText(['Alpha', 'Alpha']);
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).toHaveText('Referenced node');
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).not.toContainText('node-missing');
@@ -1759,9 +1758,9 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-user-bubble', { hasText: 'Conversation compacted.' })).toHaveCount(0);
     await expect(page.getByText('Primary Request and Intent')).toHaveCount(0);
     await expect(page.getByText('Previous user request before compact.')).toBeVisible();
-    // The pre-compact assistant text + lone tool fold into the result-first
-    // process block; open it to reach the narration and the tool result below.
-    await page.locator('.agent-process-toggle').click();
+    // The pre-compact assistant text + lone tool produced no final answer, so the
+    // result-first process block auto-expands (a resultless turn) — the narration
+    // and the tool result below are reachable without toggling it open.
     await expect(page.getByText('Previous assistant response before compact.')).toBeVisible();
     await page.locator('.agent-tool-call-toggle').click();
     await expect(page.getByText(/Previous tool result before compact/)).toBeVisible();

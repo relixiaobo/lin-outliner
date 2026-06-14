@@ -34,21 +34,17 @@ export function AgentProcessTimeline({
   childRunsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
-  const thinkingBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'thinking' }> => block.kind === 'thinking',
-  );
-  const toolCallBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall',
-  );
-  const narrationBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'narration' }> => block.kind === 'narration',
-  );
-  const soloThinking = thinkingBlocks.length === 1 && toolCallBlocks.length === 0 && narrationBlocks.length === 0;
+  // A lone thought (no tools, no narration) renders as an always-open body; any
+  // richer process renders the per-block timeline below. The block union is
+  // exactly thinking|toolCall|narration, so "one block and it's a thought"
+  // captures the solo case without three throwaway classification passes.
+  const onlyBlock = blocks.length === 1 ? blocks[0]! : null;
+  const soloThinkingBlock = onlyBlock?.kind === 'thinking' ? onlyBlock : null;
 
   return (
     <div className="agent-process-timeline">
-      {soloThinking ? (
-        <AgentThinkingBody streaming={thinkingBlocks[0]!.streaming} text={thinkingBlocks[0]!.text} />
+      {soloThinkingBlock ? (
+        <AgentThinkingBody streaming={soloThinkingBlock.streaming} text={soloThinkingBlock.text} />
       ) : (
         blocks.map((block) => {
           if (block.kind === 'thinking') {

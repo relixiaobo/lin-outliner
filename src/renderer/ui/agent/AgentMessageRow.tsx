@@ -491,9 +491,6 @@ function renderAssistantBlocks(
     if (block.type === 'toolCall' && childRunsByParentToolCallId?.has(block.id)) return false;
     return true;
   });
-  const turnHasProse = visibleBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0);
-  const turnFailedWithoutProse = turnEnded && !turnHasProse;
-
   // Result-first turn: the final answer is the trailing text after the last
   // thinking/toolCall block. Everything before it — thinking, tool calls, AND
   // interim narration text — folds into ONE process disclosure; the trailing
@@ -507,12 +504,23 @@ function renderAssistantBlocks(
       break;
     }
   }
+  // The trailing answer prose, after the last process block. `finalIsProse` gates
+  // the result-first layout: WITH trailing prose the process collapses to
+  // "Worked for …" behind the answer; WITHOUT it the turn ended on a thought/tool
+  // and produced no result — interrupted, errored, or cut after a tool — so it is
+  // `turnFailedWithoutProse` and the process must stay visible (auto-expanded)
+  // rather than hide its folded interim text behind a bare collapsed header.
+  // (Keying this off ANY text would wrongly treat folded interim narration as the
+  // result and leave a resultless turn collapsed.)
+  const finalBlocks = visibleBlocks.slice(lastProcessIndex + 1);
+  const finalProseBlocks = finalBlocks.filter(
+    (block): block is Extract<(typeof visibleBlocks)[number], { type: 'text' }> => block.type === 'text',
+  );
+  const finalIsProse = finalProseBlocks.some((block) => block.text.trim().length > 0);
+  const turnFailedWithoutProse = turnEnded && !finalIsProse;
 
   if (lastProcessIndex >= 0) {
     const processBlocks = visibleBlocks.slice(0, lastProcessIndex + 1);
-    const finalIsProse = visibleBlocks
-      .slice(lastProcessIndex + 1)
-      .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
     const segmentBlocks: AgentProcessSegmentBlock[] = processBlocks.map((candidate, sourceIndex) => {
       const hasLater = sourceIndex < processBlocks.length - 1 || finalIsProse;
       if (candidate.type === 'thinking') {
@@ -545,18 +553,15 @@ function renderAssistantBlocks(
     );
   }
 
-  const finalBlocks = visibleBlocks.slice(lastProcessIndex + 1);
-  finalBlocks.forEach((block, i) => {
-    if (block.type !== 'text') return;
-    const sourceIndex = lastProcessIndex + 1 + i;
-    const hasLaterText = finalBlocks
-      .slice(i + 1)
-      .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
+  // Trailing answer prose. `finalProseBlocks` is already narrowed to text — the
+  // last process block is the fold boundary, so no thinking/tool survives past it.
+  finalProseBlocks.forEach((block, i) => {
+    const hasLaterText = finalProseBlocks.slice(i + 1).some((candidate) => candidate.text.trim().length > 0);
     rendered.push(
       <AgentMarkdown
         index={documentIndex}
-        key={`text-${sourceIndex}`}
-        keyPrefix={`${contentKey}-text-${sourceIndex}`}
+        key={`text-${i}`}
+        keyPrefix={`${contentKey}-text-${i}`}
         onNodeReferenceOpen={onNodeReferenceOpen}
         streaming={streaming && !hasLaterText}
         text={block.text}
