@@ -1442,7 +1442,7 @@ export function AgentChatPanel({
         streaming={row.streaming}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         toolResults={toolResults}
-        turnEnded={row.turnEnded}
+        isMultiAgentChannel={isMultiAgentChannel}
         turnPhase={row.turnPhase}
         speakerLabel={detailSpeakerLabel}
         speakerMention={detailSpeakerMention}

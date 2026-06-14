@@ -3153,6 +3153,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       modelId: message.model,
       runId: entry.runId ?? message.runId,
       runDurationMs: entry.runDurationMs ?? message.runDurationMs,
+      turnInterrupted: entry.turnInterrupted ?? message.turnInterrupted,
       stopReason: message.stopReason,
       usage: message.usage,
       errorMessage: message.errorMessage,

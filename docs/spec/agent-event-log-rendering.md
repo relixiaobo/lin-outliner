@@ -886,13 +886,34 @@ Rules:
   it is working** (thinking/tools streaming live, `liveSegment`) so the process is
   visible, then **auto-collapses the moment it seals** — when the final answer
   begins streaming or the turn ends. A Channel turn is delivered atomically (its
-  rows are `idle`, never `liveSegment`), so it lands already collapsed. A turn that
-  **ended without a trailing answer** (no final prose — interrupted, errored, or cut
-  after a tool) auto-expands so its folded interim text and error context stay
-  visible; keying this off the *trailing* answer, not *any* text in the turn, is
-  what stops a resultless turn from burying interim narration behind a collapsed
-  header. Every other steady state defaults collapsed. The **sticky override wins**:
-  once a user toggles the block it keeps that choice and never auto-collapses on seal.
+  rows are `idle`, never `liveSegment`), so it lands already collapsed.
+  - A **resultless** turn (last visible block is a thought/tool — no trailing
+    answer prose) drives two SEPARATE decisions, decoupled so a Channel never
+    mislabels:
+    - **The red "Interrupted" label + error styling** fire ONLY when the run was
+      **genuinely interrupted** — its producing run `failed`, was `cancelled`, or
+      was left `running` by a crash. This is the authoritative **`turnInterrupted`**,
+      stamped on the message entity by the core projection from the run's *real*
+      status, NEVER inferred from block structure. A cleanly `completed` resultless
+      turn is **never** red, in either mode.
+    - **Surfacing the process** (auto-expand so its interim work / error context
+      isn't buried — `surfaceResultlessProcess`) fires for a genuine interruption
+      in **either** mode, AND — per the result-first design — for a sealed
+      resultless **DM** turn, where the user watched it 1:1. A cleanly-completed
+      resultless **Channel** turn does NOT surface: it folds to the neutral
+      "Worked for …" header like any other sealed turn (atomic delivery — its
+      process lives in the activity detail view, not inline). A surfaced resultless
+      turn also suppresses the "Worked for …" resting header (which would read as a
+      clean unit of work and hide that there is no answer), falling back to the
+      descriptive group summary.
+  - (Tying the *label* to the run's real status — not to the mere absence of
+    trailing prose — is what fixed the recurring Channel mislabel: a Channel turn
+    is always `idle`, so the old `turnEnded && !finalIsProse` rule painted every
+    result-less turn red regardless of outcome. Keying the result-first *split* off
+    the *trailing* answer, not *any* text in the turn, still stops a surfaced
+    resultless turn from burying interim narration behind a collapsed header.)
+  - Every other steady state defaults collapsed. The **sticky override wins**: once
+  a user toggles the block it keeps that choice and never auto-collapses on seal.
 - The collapsed header carries the single activity spinner and, while a turn is
   live **and the user has collapsed it**, acts as a status line (current running
   tool with status, else the latest streaming thought). Once the turn **seals**,
@@ -903,8 +924,13 @@ Rules:
   meaningful wall-clock, and is left unknown rather than shown as "<1s"; a multi-run
   turn sums each run's wall-clock). When the duration is unknown the header falls
   back to the static group summary (e.g. "Thought · used N tools"). Expanding the
-  block moves the spinner to the running tool row inside the timeline. A turn that
-  ended without a trailing answer keeps the "Interrupted…" label, never a duration.
+  block moves the spinner to the running tool row inside the timeline. A
+  **genuinely interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
+  `turnInterrupted` — with no trailing answer) keeps the "Interrupted…" label,
+  never a duration. A cleanly `completed` resultless turn never shows "Interrupted":
+  in a Channel it folds to "Worked for {duration}"; in a DM it surfaces its process
+  (per the result-first design) under the descriptive group summary rather than the
+  "Worked for …" resting header.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it

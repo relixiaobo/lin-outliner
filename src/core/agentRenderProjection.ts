@@ -86,6 +86,16 @@ export interface AgentRenderMessageEntity {
   isError?: boolean;
   /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
   runDurationMs?: number;
+  /**
+   * Authoritative "this turn was interrupted" verdict, derived from the
+   * producing run's REAL terminal status — never from whether the visible
+   * blocks end on answer prose. A cleanly `completed` run is never interrupted
+   * even when it produced no trailing text (it folds to "Worked for …"); only a
+   * `failed` / `cancelled` run, or a run left `running` by a crash (orphaned —
+   * absent from the live active set), is. The renderer must consume this rather
+   * than re-deriving interruption from block structure.
+   */
+  turnInterrupted?: boolean;
 }
 
 /** A conversation member as the renderer needs it: principal + mention + label. */
@@ -347,6 +357,26 @@ export function buildAgentRenderProjection(
   const activeRunIds = new Set((options.activeRuns ?? []).map((run) => run.runId));
   const rows = buildActiveRows(state, activePath, entities);
   const transcriptRows = buildTranscriptRows(state, entities, multiAgent, activeRunIds);
+
+  // Stamp the authoritative interrupted verdict on every assistant message from
+  // the producing run's real status. This is the single fix for the recurring
+  // Channel mislabel: the renderer used to infer "interrupted" from "the turn
+  // ended without trailing prose", which — because a Channel turn is always
+  // `turnPhase: idle` (so the row's `turnEnded` is always true) — fired on EVERY
+  // result-less turn regardless of whether it actually failed. A `completed`
+  // run that simply ended on a tool/thought is NOT interrupted; only a `failed`
+  // / `cancelled` run, or a crash-orphaned `running` run (not in the live set),
+  // is. A live in-flight run is still working, never interrupted.
+  for (const message of Object.values(entities.messages)) {
+    if (message.role !== 'assistant' || !message.runId) continue;
+    const run = state.runs[message.runId];
+    const interrupted = run
+      ? run.status === 'failed'
+        || run.status === 'cancelled'
+        || (run.status === 'running' && !activeRunIds.has(message.runId))
+      : message.status === 'failed';
+    if (interrupted) message.turnInterrupted = true;
+  }
 
   // The streaming tail drives only the DM composer/transcript; a multi-agent
   // Channel nulls dmStreaming, so skip the active-path scan there entirely.
