@@ -14,7 +14,6 @@ import type {
   AgentMessageAttachmentInput,
   AgentToolResultWithPayloads,
   AgentUserViewContext,
-  AssistantMessage,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import { agentMentionToken } from '../../../core/agentChannel';
@@ -38,7 +37,6 @@ import { onAgentRevealRequest } from '../../agent/agentReveal';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
-  AgentTurnPhase,
 } from '../../agent/runtime';
 import {
   AddIcon,
@@ -61,6 +59,14 @@ import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
 import type { AgentReplyAnchor } from './AgentMessageRow';
+import {
+  buildConversationRenderRows,
+  getEntryRole,
+  getEntryTimestamp,
+  isBoundaryEntry,
+  isTurnBoundaryEntry,
+} from './agentConversationRows';
+import type { AgentConversationRenderRow } from './agentConversationRows';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
@@ -299,19 +305,6 @@ function systemLineText(entry: AgentMessageEntry): string | null {
   return text || null;
 }
 
-type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
-
-interface AgentConversationRenderRow {
-  key: string;
-  contentKey?: string;
-  entry: AgentConversationEntry;
-  endIndex: number;
-  isLastInTurn: boolean;
-  streaming: boolean;
-  turnEnded: boolean;
-  turnPhase: AgentTurnPhase;
-}
-
 interface VirtualTranscriptItem {
   top: number;
   height: number;
@@ -320,21 +313,6 @@ interface VirtualTranscriptItem {
 interface VirtualTranscriptLayout {
   items: VirtualTranscriptItem[];
   totalHeight: number;
-}
-
-function isBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.kind === 'child-run';
-}
-
-function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
-  return isBoundaryEntry(entry) ? 'system' : (entry as AgentMessageEntry).message.role;
-}
-
-function getEntryTimestamp(entry: AgentConversationEntry): number {
-  if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
-  if (entry.kind === 'child-run') return entry.childRun.startedAt;
-  if (entry.kind !== 'compaction') return entry.message.timestamp;
-  return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
 
 function textFromConversationEntry(entry: AgentMessageEntry): string {
@@ -395,130 +373,6 @@ function buildReplyAnchorMap(rows: readonly AgentConversationRenderRow[]): Map<s
     anchors.set(messageId, { targetMessageId: addressedByMessageId, quote });
   }
   return anchors;
-}
-
-function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
-  return entry.kind === 'message' && entry.message.role === 'assistant';
-}
-
-function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return isBoundaryEntry(entry) || (entry as AgentMessageEntry).message.role === 'user';
-}
-
-// Channel relay puts back-to-back assistant turns from DIFFERENT agents in the
-// transcript; merging across that seam would attribute one agent's words to
-// another. The streaming placeholder (actor null) merges with anything.
-function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
-  const leftAgentId = left.actor?.type === 'agent' ? left.actor.agentId : null;
-  const rightAgentId = right.actor?.type === 'agent' ? right.actor.agentId : null;
-  if (leftAgentId === null || rightAgentId === null) return true;
-  if (leftAgentId !== rightAgentId) return false;
-  return (left.addressedByMessageId ?? null) === (right.addressedByMessageId ?? null);
-}
-
-function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
-  const lastEntry = entries[entries.length - 1]!;
-  return {
-    ...lastEntry,
-    message: {
-      ...lastEntry.message,
-      content: entries.flatMap((entry) => entry.message.content),
-    },
-  };
-}
-
-function buildConversationRenderRows(
-  entries: AgentConversationEntry[],
-  turnPhase: AgentTurnPhase,
-): AgentConversationRenderRow[] {
-  const rows: AgentConversationRenderRow[] = [];
-  const turnEndedByEndIndex = new Map<number, boolean>();
-  let hasUserAfter = false;
-
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    turnEndedByEndIndex.set(index, hasUserAfter || turnPhase === 'idle');
-    if (entries[index] && isTurnBoundaryEntry(entries[index]!)) hasUserAfter = true;
-  }
-
-  let index = 0;
-  while (index < entries.length) {
-    const entry = entries[index]!;
-
-    if (isAssistantEntry(entry)) {
-      const assistantEntries: AssistantEntry[] = [];
-      while (index < entries.length) {
-        const candidate = entries[index]!;
-        if (!isAssistantEntry(candidate)) break;
-        if (assistantEntries.length > 0 && !sameAssistantActor(assistantEntries[0]!, candidate)) break;
-        assistantEntries.push(candidate);
-        index += 1;
-      }
-
-      const stableKey = `assistant-turn-${assistantEntries[0]!.id}`;
-      const mergedEntry = assistantEntries.length >= 2
-        ? mergeAssistantEntries(assistantEntries)
-        : assistantEntries[0]!;
-      const endIndex = index - 1;
-      rows.push(buildConversationRenderRow({
-        contentKey: stableKey,
-        entry: mergedEntry,
-        endIndex,
-        key: stableKey,
-        turnEnded: turnEndedByEndIndex.get(endIndex) ?? true,
-        turnPhase,
-        totalEntryCount: entries.length,
-        nextEntry: entries[endIndex + 1],
-      }));
-      continue;
-    }
-
-    rows.push(buildConversationRenderRow({
-      entry,
-      endIndex: index,
-      key: isBoundaryEntry(entry)
-        ? entry.id
-        : (entry as AgentMessageEntry).nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
-      turnEnded: turnEndedByEndIndex.get(index) ?? true,
-      turnPhase,
-      totalEntryCount: entries.length,
-      nextEntry: entries[index + 1],
-    }));
-    index += 1;
-  }
-
-  return rows;
-}
-
-function buildConversationRenderRow({
-  contentKey,
-  entry,
-  endIndex,
-  key,
-  nextEntry,
-  totalEntryCount,
-  turnEnded,
-  turnPhase,
-}: {
-  contentKey?: string;
-  entry: AgentConversationEntry;
-  endIndex: number;
-  key: string;
-  nextEntry: AgentConversationEntry | undefined;
-  totalEntryCount: number;
-  turnEnded: boolean;
-  turnPhase: AgentTurnPhase;
-}): AgentConversationRenderRow {
-  const isLastAssistantEntry = endIndex === totalEntryCount - 1 && getEntryRole(entry) === 'assistant';
-  return {
-    key,
-    contentKey,
-    entry,
-    endIndex,
-    isLastInTurn: endIndex === totalEntryCount - 1 || !nextEntry || getEntryRole(nextEntry) !== getEntryRole(entry),
-    streaming: isLastAssistantEntry && turnPhase === 'streaming_text',
-    turnEnded,
-    turnPhase: isLastAssistantEntry ? turnPhase : 'idle',
-  };
 }
 
 function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
@@ -1546,17 +1400,10 @@ export function AgentChatPanel({
         ?? (detailSpeakerAgentId ? `@${agentMentionToken(detailSpeakerAgentId)}` : dmAgentLabel)
         ?? t.agent.message.roleAssistant
       : t.agent.message.you;
-    // Pure-utterance thread (ratified): a delivered Channel message renders its
-    // final text only — process blocks live behind the typing drill-in / M3-C.
-    const displayEntry = isChannel && row.entry.message.role === 'assistant'
-      ? {
-          ...row.entry,
-          message: {
-            ...row.entry.message,
-            content: row.entry.message.content.filter((block) => block.type === 'text'),
-          },
-        }
-      : row.entry;
+    // Result-first turn (DM and Channel alike): the turn renders its final answer
+    // as prose with the working process — thinking, tools, interim narration —
+    // folded behind the collapsed "Worked for …" disclosure (renderAssistantBlocks).
+    // Channel no longer strips the process to text-only; it shares the DM path.
     const rowMessageId = row.entry.nodeId;
     const replyAnchor = rowMessageId ? replyAnchorByMessageId.get(rowMessageId) ?? null : null;
 
@@ -1579,7 +1426,7 @@ export function AgentChatPanel({
         actorMention={actorMention}
         busy={anyRunActive}
         contentKey={row.contentKey}
-        entry={displayEntry}
+        entry={row.entry}
         highlighted={rowMessageId !== null && rowMessageId === highlightedMessageId}
         index={index}
         isLastInTurn={row.isLastInTurn}

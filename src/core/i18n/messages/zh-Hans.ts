@@ -1006,6 +1006,7 @@ commandPalette: {
       thoughtAndTool: ({ tool }) => `已思考 · ${tool}`,
       usedTools: ({ count }) => `使用了 ${count} 个工具`,
       thoughtAndUsedTools: ({ count }) => `已思考 · 使用了 ${count} 个工具`,
+      workedFor: ({ duration }) => `用时 ${duration}`,
       compactingConversation: '正在压缩对话',
       conversationCompacted: '对话已压缩',
       compacting: '正在压缩',

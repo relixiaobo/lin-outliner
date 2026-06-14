@@ -31,6 +31,7 @@ import { Textarea } from '../primitives/Textarea';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
+import { formatRunDuration } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 
 interface AgentChildRunDetailsPanelProps {
@@ -44,16 +45,7 @@ interface AgentChildRunDetailsPanelProps {
 const LIVE_TRANSCRIPT_POLL_MS = 1_500;
 
 function formatDuration(startedAt: number, endedAt: number): string {
-  const elapsed = Math.max(0, endedAt - startedAt);
-  if (elapsed < 1000) return '<1s';
-  const seconds = Math.round(elapsed / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const minuteRest = minutes % 60;
-  return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`;
+  return formatRunDuration(endedAt - startedAt);
 }
 
 function formatTime(timestamp: number): string {

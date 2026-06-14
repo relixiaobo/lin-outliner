@@ -2,6 +2,7 @@ import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
+import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -33,18 +34,17 @@ export function AgentProcessTimeline({
   childRunsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
-  const thinkingBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'thinking' }> => block.kind === 'thinking',
-  );
-  const toolCallBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall',
-  );
-  const soloThinking = thinkingBlocks.length === 1 && toolCallBlocks.length === 0;
+  // A lone thought (no tools, no narration) renders as an always-open body; any
+  // richer process renders the per-block timeline below. The block union is
+  // exactly thinking|toolCall|narration, so "one block and it's a thought"
+  // captures the solo case without three throwaway classification passes.
+  const onlyBlock = blocks.length === 1 ? blocks[0]! : null;
+  const soloThinkingBlock = onlyBlock?.kind === 'thinking' ? onlyBlock : null;
 
   return (
     <div className="agent-process-timeline">
-      {soloThinking ? (
-        <AgentThinkingBody streaming={thinkingBlocks[0]!.streaming} text={thinkingBlocks[0]!.text} />
+      {soloThinkingBlock ? (
+        <AgentThinkingBody streaming={soloThinkingBlock.streaming} text={soloThinkingBlock.text} />
       ) : (
         blocks.map((block) => {
           if (block.kind === 'thinking') {
@@ -56,6 +56,19 @@ export function AgentProcessTimeline({
                 streaming={block.streaming}
                 text={block.text}
               />
+            );
+          }
+          if (block.kind === 'narration') {
+            return (
+              <div className="agent-process-narration" key={`narration-${block.sourceIndex}`}>
+                <AgentMarkdown
+                  index={index}
+                  keyPrefix={`${id}-narration-${block.sourceIndex}`}
+                  onNodeReferenceOpen={onNodeReferenceOpen}
+                  streaming={block.streaming}
+                  text={block.text}
+                />
+              </div>
             );
           }
           return (

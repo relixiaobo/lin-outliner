@@ -14,7 +14,7 @@ import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
-import { firstLine, previewText } from './agentProcessTypes';
+import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 
@@ -48,6 +48,8 @@ interface AgentProcessBlockProps {
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
+  /** Wall-clock the run took; surfaced as "Worked for …" once sealed. Null when unknown. */
+  workedForMs: number | null;
 }
 
 export function summarizeProcess({
@@ -60,6 +62,7 @@ export function summarizeProcess({
   turnActive,
   liveCollapsed,
   turnFailedWithoutProse,
+  workedForMs,
   process,
   toolCallLabels,
   thinkingLabel,
@@ -73,6 +76,7 @@ export function summarizeProcess({
   liveCollapsed: boolean;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
+  workedForMs: number | null;
   process: Messages['agent']['process'];
   toolCallLabels: Messages['agent']['toolCall'];
   thinkingLabel: string;
@@ -98,6 +102,16 @@ export function summarizeProcess({
     if (thinkingCount > 0 && toolCount > 0) return process.interruptedAfterThinking;
     if (thinkingCount > 0) return process.thoughtInterrupted;
     return process.interrupted;
+  }
+
+  // Result-first resting state: a SEALED turn (not active) collapses to
+  // "Worked for {duration}" (codex-style). While the turn is still active the
+  // duration is partial, so the live/descriptive header stands — this is the
+  // single gate for that (the caller passes the raw run wall-clock). The
+  // descriptive summaries below are the fallback when the run's wall-clock is
+  // unknown (e.g. legacy records with no run timing).
+  if (!turnActive && workedForMs !== null) {
+    return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
 
   if (thinkingCount === 0 && toolCount === 1) {
@@ -139,6 +153,7 @@ export function AgentProcessBlock({
   childRunsByParentToolCallId,
   turnActive,
   turnFailedWithoutProse,
+  workedForMs,
 }: AgentProcessBlockProps) {
   const t = useT();
   const thinkingBlocks = blocks.filter(
@@ -150,12 +165,15 @@ export function AgentProcessBlock({
   const firstThinkingText = firstLine(thinkingBlocks[0]?.text ?? '');
   const lastThinkingText = lastNonEmptyThinking(thinkingBlocks);
   const liveSegment = turnActive && !sealed;
-  // Default collapsed in every steady state. Only a turn that failed without any
-  // prose auto-expands, so the error context is visible. A live, in-progress block
-  // stays collapsed by default — its header shows the live status — and once a
-  // user opens it, the sticky override keeps it open: it never auto-collapses when
-  // the turn seals.
-  const defaultExpanded = turnFailedWithoutProse;
+  // Codex-style live disclosure: a DM turn auto-expands **while it is working**
+  // (`liveSegment` — thinking/tools streaming) so the process is visible, then
+  // auto-collapses to "Worked for …" the moment it seals (final text begins) or
+  // the turn ends. A turn that failed without prose also auto-expands so the error
+  // context stays visible. Everything else defaults collapsed (a Channel turn is
+  // `idle` → never `liveSegment`, so it lands already collapsed/atomic). The
+  // sticky override wins over the default: once a user toggles the block it keeps
+  // their choice and never auto-collapses on seal.
+  const defaultExpanded = turnFailedWithoutProse || liveSegment;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
   // The spinner appears in exactly one place: the collapsed live header, or — once
@@ -192,6 +210,7 @@ export function AgentProcessBlock({
             turnActive,
             liveCollapsed,
             turnFailedWithoutProse,
+            workedForMs,
             process: t.agent.process,
             toolCallLabels: t.agent.toolCall,
             thinkingLabel: t.agent.thinking.thinking,

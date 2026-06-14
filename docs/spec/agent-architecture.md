@@ -98,13 +98,22 @@ clean-cut, no migration).
     persisted on `assistant_message.completed.addressedTo`.
   - **Delivery (typing model, PM-ratified 2026-06-13):** the Channel **message
     stream is whole-utterance only** — replies are never token-streamed into the
-    transcript; the whole reply lands in the thread on completion (process blocks
-    live behind the drill-in). The running agent's live `message_update` text is
-    **retained on the run and surfaced in the per-run detail view** (the activity
-    drill-in — "watch a Channel agent compose"), never discarded and never in the
-    message flow. It is kept transiently on the run (`assistantText`, exposed as
+    transcript; the whole reply lands in the thread on completion. The running
+    agent's live `message_update` text is **retained on the run and surfaced in the
+    per-run detail view** (the activity drill-in — "watch a Channel agent
+    compose"), never discarded and never in the message flow. It is kept
+    transiently on the run (`assistantText`, exposed as
     `channelActivityEntries[].streamingText`), not written to the shared log, so
     concurrent runs never collide and the transcript stays whole-utterance.
+  - **Rendering (result-first turn fold, PM-ratified 2026-06-14):** once a turn
+    lands it renders **result-first** — the final answer as prose, with thinking,
+    tools, and interim narration folded behind a collapsed "Worked for {duration}"
+    disclosure — the **same fold DM uses**. This reverses the earlier
+    "process via live drill-in only" rule in favour of an inline persisted fold
+    (it delivers the deferred M3-C post-hoc process inspection); whole-utterance
+    *delivery* above is preserved. DM and Channel differ only in delivery (DM
+    streams the process live while running then collapses; Channel is atomic with
+    a "working…" activity indicator in-flight), not in resting shape.
   - **Parallel runtime (shipped in #202; async view/command layer 2026-06-13):**
     Channel execution tracks a set of in-flight runs per conversation, capped by a
     small per-conversation execution limit. Co-addressees dispatch immediately and

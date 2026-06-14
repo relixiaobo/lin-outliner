@@ -49,6 +49,8 @@ export interface AgentMessageEntry {
   actor: AgentActor | null;
   /** Run that produced this message, when known. */
   runId: string | null;
+  /** Wall-clock the producing run took, for the collapsed "Worked for …" header; null when unknown. */
+  runDurationMs: number | null;
   /** The message that addressed this reply, when the projection can derive it. */
   addressedByMessageId: string | null;
 }
@@ -224,6 +226,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming,
       actor: entity.actor,
       runId: entity.runId ?? null,
+      runDurationMs: entity.runDurationMs ?? null,
       addressedByMessageId: entity.addressedByMessageId ?? null,
     });
   }
@@ -284,6 +287,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming: true,
       actor: null,
       runId: null,
+      runDurationMs: null,
       addressedByMessageId: null,
     });
   }

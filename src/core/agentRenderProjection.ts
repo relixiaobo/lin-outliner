@@ -84,6 +84,8 @@ export interface AgentRenderMessageEntity {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
+  runDurationMs?: number;
 }
 
 /** A conversation member as the renderer needs it: principal + mention + label. */
@@ -729,6 +731,7 @@ function toRenderMessageEntity(
   state: AgentEventReplayState,
   message: AgentEventMessageRecord,
 ): AgentRenderMessageEntity {
+  const run = message.runId ? state.runs[message.runId] : undefined;
   return {
     id: message.id,
     role: message.role,
@@ -751,6 +754,13 @@ function toRenderMessageEntity(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
     isError: message.isError,
+    // Only a SEALED run has a meaningful wall-clock: `run.updatedAt` is bumped
+    // at start and at the terminal event, never in between, so a still-`running`
+    // run (live, or a top-level run left `running` after a crash/quit) has
+    // `updatedAt === startedAt` → a misleading "<1s". Leave it undefined there so
+    // the header falls back to its descriptive summary instead of faking 0ms.
+    runDurationMs:
+      run && run.status !== 'running' ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
   };
 }
 
