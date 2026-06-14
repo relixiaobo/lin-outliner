@@ -19,11 +19,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { replayAgentEvents } from '../../src/core/agentEventLog';
 import type { AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
+import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { ASK_USER_QUESTION_TOOL_NAME } from '../../src/main/agentAskUserQuestionTool';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
-import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderActiveRun } from '../../src/core/agentRenderProjection';
 
 const MAIN_AGENT_ID = 'built-in:tenon:assistant';
 
@@ -568,6 +570,62 @@ describe('agent channel runtime', () => {
       expect.stringContaining('REVIEWER_FAST'),
       expect.stringContaining('MAIN_SLOW'),
     ]);
+  });
+
+  test('an in-progress Channel turn is suppressed only while its run is LIVE, never when orphaned', async () => {
+    // Atomic delivery (spec): a running Channel turn is "never a transcript row".
+    // Suppression is keyed off the LIVE active-run set, NOT persisted status — so a
+    // turn hides while genuinely in flight, but a run orphaned `running` by a crash
+    // still renders (its interrupted turn must not silently vanish).
+    const reply = (context: Context) => fauxAssistantMessage(fauxText(
+      (context.systemPrompt ?? '').includes('REVIEWER_AGENT_BODY') ? 'REVIEWER_ANSWER.' : 'MAIN_ANSWER.',
+    ));
+    const fixture = await setupChannelFixture([reply, reply]);
+    const { runtime, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Atomic delivery' });
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    const events = await new AgentEventStore(dataRoot).readEvents(channel.conversationId);
+    const sealed = replayAgentEvents(events);
+    const transcriptText = (
+      state: ReturnType<typeof replayAgentEvents>,
+      activeRuns: AgentRenderActiveRun[] = [],
+    ) => {
+      const projection = buildAgentRenderProjection(state, { revision: 1, activeRuns });
+      return projection.transcriptRows
+        .filter((row) => row.kind === 'message')
+        .map((row) => JSON.stringify(projection.entities.messages[row.messageId]?.content ?? ''))
+        .join('\n');
+    };
+
+    // Exactly one reviewer run (don't take an arbitrary one).
+    const reviewerRuns = Object.values(sealed.runs).filter((run) => run.agentId === reviewerAgentId);
+    expect(reviewerRuns).toHaveLength(1);
+    const reviewerRun = reviewerRuns[0]!;
+
+    // No live runs → both turns are transcript rows.
+    expect(transcriptText(sealed)).toContain('MAIN_ANSWER');
+    expect(transcriptText(sealed)).toContain('REVIEWER_ANSWER');
+
+    // Reviewer run marked LIVE → its whole turn drops out; the coordinator stays.
+    const liveText = transcriptText(sealed, [{
+      runId: reviewerRun.id,
+      agentId: reviewerAgentId,
+      addressedByMessageId: reviewerRun.addressedByMessageId ?? null,
+      startedAt: reviewerRun.startedAt,
+    }]);
+    expect(liveText).toContain('MAIN_ANSWER');
+    expect(liveText).not.toContain('REVIEWER_ANSWER');
+
+    // Regression guard (crash/quit): a run orphaned `running` — status running but
+    // NOT in the live set — must STILL render rather than vanish.
+    const orphaned = replayAgentEvents(
+      events.filter((event) => !(event.type === 'run.completed' && event.runId === reviewerRun.id)),
+    );
+    expect(orphaned.runs[reviewerRun.id]?.status).toBe('running');
+    expect(transcriptText(orphaned)).toContain('REVIEWER_ANSWER');
   });
 
   test('one addressee failing leaves its trace and never skips siblings', async () => {
