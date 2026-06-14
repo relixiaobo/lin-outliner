@@ -19,7 +19,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { replayAgentEvents } from '../../src/core/agentEventLog';
 import type { AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
+import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { ASK_USER_QUESTION_TOOL_NAME } from '../../src/main/agentAskUserQuestionTool';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
@@ -568,6 +570,48 @@ describe('agent channel runtime', () => {
       expect.stringContaining('REVIEWER_FAST'),
       expect.stringContaining('MAIN_SLOW'),
     ]);
+  });
+
+  test('an in-progress Channel turn is suppressed from the transcript until its run seals', async () => {
+    // Atomic delivery (spec): a running Channel turn is "never a transcript row".
+    // Run a full 2-agent round, then rebuild the projection with one run's
+    // `run.completed` dropped (status → running). The ONLY difference between the
+    // two states is that run's status, so any change in transcript membership is
+    // the suppression itself — not a tree/grafting difference.
+    const reply = (context: Context) => fauxAssistantMessage(fauxText(
+      (context.systemPrompt ?? '').includes('REVIEWER_AGENT_BODY') ? 'REVIEWER_ANSWER.' : 'MAIN_ANSWER.',
+    ));
+    const fixture = await setupChannelFixture([reply, reply]);
+    const { runtime, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Atomic delivery' });
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    const events = await new AgentEventStore(dataRoot).readEvents(channel.conversationId);
+    const transcriptText = (state: ReturnType<typeof replayAgentEvents>) => {
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      return projection.transcriptRows
+        .filter((row) => row.kind === 'message')
+        .map((row) => JSON.stringify(projection.entities.messages[row.messageId]?.content ?? ''))
+        .join('\n');
+    };
+
+    // Both runs sealed → both answers are transcript rows.
+    const sealed = replayAgentEvents(events);
+    expect(transcriptText(sealed)).toContain('MAIN_ANSWER');
+    expect(transcriptText(sealed)).toContain('REVIEWER_ANSWER');
+
+    // Reopen the reviewer's run (drop its completion) → it is still running, so its
+    // whole turn drops out of the transcript while the sealed coordinator turn stays.
+    const reviewerRunId = Object.values(sealed.runs).find((run) => run.agentId === reviewerAgentId)?.id;
+    expect(reviewerRunId).toBeDefined();
+    const reopened = replayAgentEvents(
+      events.filter((event) => !(event.type === 'run.completed' && event.runId === reviewerRunId)),
+    );
+    expect(reopened.runs[reviewerRunId!]?.status).toBe('running');
+    expect(transcriptText(reopened)).toContain('MAIN_ANSWER');
+    expect(transcriptText(reopened)).not.toContain('REVIEWER_ANSWER');
   });
 
   test('one addressee failing leaves its trace and never skips siblings', async () => {

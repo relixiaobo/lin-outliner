@@ -139,6 +139,42 @@ describe('agent render projection', () => {
     expect(projection.entities.messages['assistant-1']?.runDurationMs).toBeUndefined();
   });
 
+  test('a DM streams its active turn into the transcript (no Channel suppression)', () => {
+    // Single-agent DM: even with the run still running, the active turn stays a
+    // transcript row — DM turns stream live; suppression is Channel-only.
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'DM' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        providerId: 'p',
+        modelId: 'm',
+      },
+      {
+        ...base(5, 'assistant_message.delta', agentActor),
+        messageId: 'assistant-1',
+        delta: { type: 'text_delta', text: 'Streaming…' },
+        providerChunkCount: 1,
+        startedAt: 10,
+        endedAt: 11,
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+    expect(state.runs['run-1']?.status).toBe('running');
+    expect(projection.transcriptRows.filter((row) => row.kind === 'message').map((row) => row.messageId))
+      .toContain('assistant-1');
+  });
+
   test('keeps branch state on message entities without persisting a tree', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Branches' },

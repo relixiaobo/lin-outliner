@@ -339,9 +339,9 @@ export function buildAgentRenderProjection(
 
   const activePath = getAgentEventActivePath(state);
   const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
-  const rows = buildActiveRows(state, activePath, entities);
-  const transcriptRows = buildTranscriptRows(state, entities);
   const multiAgent = isMultiAgentConversation(state.conversation.members);
+  const rows = buildActiveRows(state, activePath, entities);
+  const transcriptRows = buildTranscriptRows(state, entities, multiAgent);
 
   // The streaming tail drives only the DM composer/transcript; a multi-agent
   // Channel nulls dmStreaming, so skip the active-path scan there entirely.
@@ -562,9 +562,19 @@ function buildActiveRows(
 function buildTranscriptRows(
   state: AgentEventReplayState,
   entities: AgentRenderEntities,
+  multiAgent: boolean,
 ): AgentRenderRow[] {
   const rows: AgentRenderRow[] = [];
   for (const entry of getAgentEventVisibleTranscript(state)) {
+    // Atomic Channel delivery (spec: a running Channel turn is "never a transcript
+    // row"): in a multi-agent Channel, a turn whose producing run is still
+    // `running` is suppressed from the transcript — its live progress shows only
+    // in channelActivityEntries. The whole turn appears once its run seals
+    // (status leaves `running`), rendered result-first. A DM streams its active
+    // turn live, so this is gated on `multiAgent`.
+    if (multiAgent && entry.message.runId && state.runs[entry.message.runId]?.status === 'running') {
+      continue;
+    }
     const compaction = compactionForMessage(state, entry.message);
     if (compaction) {
       appendCompactionRow(rows, entities, state, entry.message, compaction, entry.archived);

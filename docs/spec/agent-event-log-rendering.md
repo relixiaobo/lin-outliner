@@ -834,10 +834,16 @@ Rules:
 - A running Channel agent's live `message_update` text rides on
   `channelActivityEntries[].streamingText` (the per-run detail view), never as a
   transcript row — the Channel message stream is whole-utterance only (**delivery**
-  is atomic: the whole turn appears on completion). On completion the turn renders
-  through the same **result-first fold** as a DM (final answer as prose, process
-  collapsed behind "Worked for …"); only the live-drill-in vs. inline-stream split
-  differs between the two modes.
+  is atomic: the whole turn appears on completion). This is enforced in the
+  projection: `buildTranscriptRows` **suppresses any message whose producing run is
+  still `running`** in a multi-agent Channel, so an in-flight turn (its thinking,
+  interim narration, AND tool-call/segment events — not just streamed text) is kept
+  out of the transcript until the run seals, at which point its whole turn appears
+  at once. (A DM streams its active turn live, so the suppression is gated on
+  `isMultiAgentConversation`.) On completion the turn renders through the same
+  **result-first fold** as a DM (final answer as prose, process collapsed behind
+  "Worked for …"); only the live-drill-in vs. inline-stream split differs between
+  the two modes.
 - Render flushes are coalesced to at most one per animation frame.
 - `compaction.completed` events become dedicated compaction rows keyed by the
   compact root message, with summary and trigger metadata in
