@@ -41,13 +41,12 @@ They are **mutually independent** (three different subsystems — file model / t
 parsing / Channel runtime) and differ only in their remaining PM gate. Highest
 build-readiness first:
 
-1. **`agent-file-model`** (P1, *Files & media*) — **no gate left**: the 4 decisions
-   are PM-ratified (2026-06-13). Ships as a SET of independent PRs (F1→F4); **F1
-   (render agent file outputs — the reported bug) shipped (#224)** — file outputs
-   now render as a previewable local-file chip + inspectable diff, not raw JSON —
-   **F2 (app-owned workdir + relocated scratch) shipped (#229)**, and **F3
-   (materialize bridge — referenced outliner files become agent-readable) shipped
-   (#237)**. F4 (ingest bridge) follows as an independent PR. → F4 ready to dispatch now.
+1. ~~**`agent-file-model`**~~ — **fully shipped (F1 #224 + F2 #229 + F3 #237 + F4
+   #238)**; see Recently completed. The SET of independent PRs is complete: file
+   outputs render as a previewable local-file chip + inspectable diff (F1), the
+   agent lives in an app-owned workdir with relocated scratch (F2), and the two
+   symmetric bridges — materialize handle→path on reference-in (F3) and ingest
+   path→handle on save-to-outliner (F4) — both landed. Plan archived `done`.
 2. ~~**`channel-async-message-bus`**~~ — **shipped (PR #231, cc)**; see Recently
    completed. Channel send now returns on acceptance; the `isStreaming`→mode-specific
    projection split (`dmRunActive`/`channelRunsActive` + per-run `streamingText`)
@@ -477,19 +476,19 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **agent-file-model** (P1, plan file, **in-progress — F1 (#224) + F2 (#229) + F3 (#237)
-  shipped; F4 remains. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
-  #220**) — give agent file
+- **agent-file-model** (P1, plan file, **shipped — F1 (#224) + F2 (#229) + F3 (#237)
+  + F4 (#238); plan archived `done`**; see Recently completed. PM-ratified 4 decisions
+  2026-06-13; superseded the closed #218, shipped via #220) — give agent file
   handling one shape: the agent lives in a path-addressed working directory, the
   document in the handle-addressed asset store (`asset://`), joined by two symmetric
   bridges (materialize handle→path on reference-in, ingest path→handle on
-  save-to-outliner). Deletes #218's parallel `<userData>/artifacts` store +
-  `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixes the lossy
+  save-to-outliner). Deleted #218's parallel `<userData>/artifacts` store +
+  `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixed the lossy
   input path (a referenced outliner file reaches the agent today as a node with no
   readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
   reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation
-  (**shipped #229**) · F3 materialize bridge (**shipped #237**) · F4 ingest bridge — F4 next. See
-  `docs/plans/agent-file-artifact-model.md`.
+  (**shipped #229**) · F3 materialize bridge (**shipped #237**) · F4 ingest bridge
+  (**shipped #238**). See `docs/plans/archive/agent-file-artifact-model.md`.
 - **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
   (feature); see Recently completed. Plan archived `done`
   (`docs/plans/archive/file-attachments.md`).
@@ -631,6 +630,26 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **agent-file-model F4 — ingest bridge (save a conversation file into the outliner)**
+  (cc, PR #238, plan-track) — the last item of `agent-file-model`; the `working →
+  committed` inverse of F3's materialize bridge. An "Insert into outliner" icon button
+  on a `file_write`/`file_edit` chip promotes the agent's working file into a
+  first-class image/attachment node — identical to a user-added one. The chip fires
+  `requestInsertFileIntoOutliner(path)` on a decoupled module channel
+  (`agentFileInsert.ts`, mirroring `agentReveal`); App's registered bridge runs the new
+  `ingest_local_file` asset command (path → `AssetMetadata`, gated by
+  `resolveTrustedLocalFileReference` over the agent workdir/scratch roots — the same
+  gate that backs previewing these chips, so it does **not** reopen the
+  arbitrary-local-file read that `ingest_asset`'s buffer-only rule guards), then the
+  shared `createAssetNode` helper (mime-sniffed image vs attachment, reused by
+  paste/drop). Placement uses `insertionTargetFor`: a sibling right after the focused
+  row (never buried under a media/code leaf), else appended into the current outline
+  root; focus is not stolen from the agent panel. Gate (main): xhigh `/code-review`
+  surfaced 11 findings across two rounds — cc fixed the 5 real ones (commands.md spec
+  drift, leaf-node insertion target, clipboard-image routing revert, removed the buggy
+  failure-rollback, negative-test robustness); re-review confirmed each resolved.
+  typecheck + `test:renderer` (466) + `test:core` (1009) + `docs:check` green. Design
+  folded into `docs/spec/agent-tool-design.md` + `commands.md`; plan archived.
 - **UI quality L2 — button-primitive + input-primitive + feedback-states**
   (codex, PR #234, plan-track) — the three Layer-2 lanes of the UI-quality suite shipped together as
   shared renderer primitives. `<Button variant>` (primary/secondary/ghost/danger + sm/md, solid danger

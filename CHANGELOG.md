@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Save a conversation file into the outliner — agent-file-model F4 ingest bridge (PR #238, cc)** —
+  an "Insert into outliner" icon button on an agent file chip (`file_write`/`file_edit`) promotes the
+  agent's working file into a first-class image/attachment node, identical to a user-added one — the
+  `working → committed` inverse of F3's materialize bridge (copy + freeze). The chip fires
+  `requestInsertFileIntoOutliner(path)` on a decoupled module channel (`agentFileInsert.ts`, mirroring
+  `agentReveal`); App's registered bridge runs the new `ingest_local_file` asset command, which
+  path-ingests into the asset store **only** when the path resolves inside the agent's trusted roots
+  (workdir/scratch) via `resolveTrustedLocalFileReference` — the same gate that backs previewing these
+  chips, so it does not reopen the arbitrary-local-file read that `ingest_asset`'s buffer-only-over-IPC
+  rule guards (directories / gone / out-of-root → `null`). The node type is derived from the sniffed
+  mimeType (`image/*` → `create_image_node`, else `create_attachment_node`) through the shared
+  `createAssetNode` helper also used by paste/drop; placement mirrors the paste convention
+  (`insertionTargetFor` — a sibling right after the focused row so it is never buried under a media/code
+  leaf, else appended into the current outline root) without stealing focus from the agent panel
+  (`applyFocus: false`). A stale chip (working file GC'd) or a create that fails mid-insert reports
+  not-inserted, so the button never shows a false "inserted". Completes the `agent-file-model` set
+  (F1 #224 + F2 #229 + F3 #237 + F4 #238). Spec: `docs/spec/agent-tool-design.md`, `docs/spec/commands.md`.
+
 - **UI quality L2 — shared Button / Input / Field / FeedbackState primitives (PR #234, codex)** —
   the three Layer-2 lanes of the UI-quality suite (`button-primitive` + `input-primitive` +
   `feedback-states`). Adds a `<Button variant>` (primary/secondary/ghost/danger, sm/md, solid danger
