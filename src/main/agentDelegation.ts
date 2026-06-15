@@ -1570,8 +1570,8 @@ export function createAgentDefinition(input: {
 export { parseAgentMarkdownDocument as parseAgentMarkdown } from '../core/agentMarkdown';
 
 // A fresh child run is the SAME Tenon agent in headless mode, not a separate
-// dumbed-down persona: it reuses the shared-core system prompt (capabilities,
-// tool conventions, safety — `LIN_CHILD_AGENT_CORE_PROMPT`) and layers a child run
+// dumbed-down persona: it reuses the shared-core system prompt (perception +
+// conduct/safety — `LIN_CHILD_AGENT_CORE_PROMPT`) and layers a child run
 // identity + directive on top, then the definition's own persona body. A custom
 // definition's body is the additive specialization. (Fork takes a different path
 // — it reuses the parent's full prompt + a fork directive.)

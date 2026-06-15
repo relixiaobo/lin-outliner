@@ -657,6 +657,23 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **The built-in agent is named Neva; the system prompt slims to identity-only**
+  (cc-2, PR #248) — the built-in agent's display name becomes **Neva** (displayName-only; the
+  identity string `built-in:tenon:assistant` is unchanged, so no userData wipe) and the stable
+  system prompt drops its `outliner` / `local-tools` / `web` sections, keeping only what holds on
+  every turn: identity (a new anti-sycophancy "thinking partner" persona), system-context
+  (perception), memory, and communication-and-safety (conduct). Tool-operating conventions
+  (`%%node:id%%` handles, `[[node:Display^id]]`/`[[file:…]]` references, date formats, parent→journal
+  default, prefer-file-tools-over-bash, web tool usage) now **ride with each tool's own description**
+  (`agentNodeToolGuidance.ts` / `agentNodeToolSchemas.ts` / `agentLocalTools.ts`), so the cached prompt
+  prefix stays identical across every conversation/DM/Channel and child runs (the `shared` subset)
+  inherit perception+conduct but not the main persona/memory. Gate (main): typecheck + `test:core`
+  1026/0 + `test:renderer` 483/0; `/code-review` medium verified **all 13 dropped instructions are
+  carried** by tool descriptions (or structurally gated, e.g. `outline.delete`=ask). Two low findings
+  folded as a post-merge doc sync: spec drift in `agent-delegation-runtime.md` (display name) + a stale
+  child-prompt comment. One behavior nuance flagged to PM/author (not a blocker): the "ask only when a
+  decision can't be inferred" restraint now survives only on the `ask_user_question` tool surface while
+  the new persona biases toward asking — tune later if over-asking shows up.
 - **A DM child run folds into its spawning turn's process**
   (cc, PR #247, fast-track) — fixes two bugs on a DM "Agent task" child run (an `agent` tool-call
   delegation): it rendered as a conversation-level child-run **boundary row** that (1) orphaned to the
