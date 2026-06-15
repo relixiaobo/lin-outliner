@@ -22,6 +22,19 @@ function localReferences(markdown) {
   });
 }
 
+function externalReferences(markdown) {
+  const refs = [];
+  for (const match of markdown.matchAll(IMAGE_RE)) refs.push(match[1]);
+  for (const match of markdown.matchAll(LINK_RE)) refs.push(match[1]);
+  return refs.filter((value) => /^https?:/i.test(value.trim()));
+}
+
+function remoteImageReferences(markdown) {
+  const refs = [];
+  for (const match of markdown.matchAll(IMAGE_RE)) refs.push(match[1]);
+  return refs.filter((value) => /^https?:/i.test(value.trim()));
+}
+
 async function existingLocalReference(filePath, ref) {
   const cleanRef = ref.split('#')[0].split('?')[0].replace(/^<|>$/g, '');
   if (!cleanRef) return true;
@@ -39,6 +52,8 @@ async function inspectMarkdown(filePath, markdown) {
     text: match[2].trim(),
   }));
   const refs = localReferences(markdown);
+  const externalRefs = externalReferences(markdown);
+  const remoteImageRefs = remoteImageReferences(markdown);
   const brokenLocalReferences = [];
   for (const ref of refs) {
     if (!(await existingLocalReference(filePath, ref))) brokenLocalReferences.push(ref);
@@ -49,7 +64,7 @@ async function inspectMarkdown(filePath, markdown) {
   if (headings[0] && headings[0].level !== 1) warnings.push('first_heading_not_h1');
   if (placeholders.length > 0) warnings.push('placeholder_text_found');
   if (brokenLocalReferences.length > 0) warnings.push('broken_local_asset_reference_found');
-  if (/https?:\/\/|cdn\./i.test(markdown)) warnings.push('remote_dependency_reference_found');
+  if (remoteImageRefs.length > 0) warnings.push('remote_image_reference_found');
 
   return {
     file: filePath,
@@ -57,6 +72,8 @@ async function inspectMarkdown(filePath, markdown) {
     heading_count: headings.length,
     headings,
     local_references: sortedUnique(refs),
+    external_references: sortedUnique(externalRefs),
+    remote_image_references: sortedUnique(remoteImageRefs),
     broken_local_references: sortedUnique(brokenLocalReferences),
     placeholder_hits: placeholders,
     warnings,
