@@ -1343,12 +1343,52 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
   };
 }
 
-/** Backbone sentinel — events with no `runId` share this one stream. */
+/** Backbone sentinel — events with no own run stream share this one stream. */
 export const AGENT_BACKBONE_STREAM_KEY = '';
 
-/** The seq space an event belongs to: its own run, or the conversation backbone. */
+/** The run id an event carries, or null for conversation-backbone events. */
+export function agentRunIdForEvent(event: AgentEvent): string | null {
+  return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
+}
+
+/**
+ * Whether an event belongs to a RUN's own private-seq stream (`runs/<id>/events.jsonl`)
+ * rather than the conversation backbone. The backbone keeps genuinely
+ * conversation-scoped events; everything a run produces (and run-scoped payloads)
+ * lives on the run stream. This is the single classifier shared by the write-time
+ * split, the merged read, and the per-stream replay watermark — so the seq space
+ * an event is numbered in always matches the file it lands in.
+ */
+export function isAgentRunStreamEvent(event: AgentEvent): boolean {
+  switch (event.type) {
+    case 'payload.created':
+    case 'payload.derived':
+      return event.payload.scope?.type === 'run' || agentRunIdForEvent(event) !== null;
+    case 'conversation.created':
+    case 'conversation.renamed':
+    case 'conversation.settings_changed':
+    case 'branch.selected':
+    case 'user_message.created':
+    case 'user_message.edited':
+    case 'follow_up.queued':
+    case 'follow_up.applied':
+    case 'compaction.completed':
+    case 'dream.finished':
+    case 'checkpoint.created':
+      return false;
+    default:
+      return agentRunIdForEvent(event) !== null;
+  }
+}
+
+/**
+ * The seq space an event belongs to: its own run stream, or the conversation
+ * backbone. Mirrors the write-time split exactly (a run-scoped event with a
+ * `runId` → that run; everything else → backbone).
+ */
 export function agentEventStreamKey(event: AgentEvent): string {
-  return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : AGENT_BACKBONE_STREAM_KEY;
+  const runId = agentRunIdForEvent(event);
+  return runId && isAgentRunStreamEvent(event) ? runId : AGENT_BACKBONE_STREAM_KEY;
 }
 
 /** Advance the per-stream + tail watermarks after an event is applied. */
