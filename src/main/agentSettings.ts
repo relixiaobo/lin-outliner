@@ -247,13 +247,18 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
  * probe model and the catalog fallback when no agent profile names one. Returns
  * null for a custom endpoint with no catalog.
  */
-function firstRankedModel(providerId: string): Model<Api> | null {
+/** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */
+export function rankedModels(providerId: string): Model<Api>[] {
   try {
     const models = getModels(providerId as KnownProvider) as Model<Api>[];
-    return [...models].sort((left, right) => compareModels(providerId, left, right))[0] ?? null;
+    return [...models].sort((left, right) => compareModels(providerId, left, right));
   } catch {
-    return null;
+    return [];
   }
+}
+
+function firstRankedModel(providerId: string): Model<Api> | null {
+  return rankedModels(providerId)[0] ?? null;
 }
 
 export async function deleteProviderConfig(providerIdInput: string) {
@@ -680,6 +685,25 @@ export async function testProviderConnection(input: {
     }
 
     const catalogModel = firstRankedModel(providerId);
+
+    // A custom base URL means the connection points at a proxy/gateway, which may
+    // not host the catalog's first-ranked model — so prove reachability by listing
+    // the endpoint's own models first (validate the connection, not a chosen model).
+    if (baseUrl) {
+      try {
+        const models = await listOpenAiCompatibleModels(baseUrl, apiKey);
+        if (models.length > 0) {
+          return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
+        }
+      } catch (listError) {
+        // With no catalog model to fall back to, the listing error IS the result
+        // (its status maps to the auth/endpoint message below). With a catalog
+        // model, the gateway may simply not expose /models — fall through and prove
+        // reachability with a completion probe instead.
+        if (!catalogModel) throw listError;
+      }
+    }
+
     if (catalogModel) {
       const model = baseUrl ? { ...catalogModel, baseUrl } : { ...catalogModel };
       await completeSimple(model as Model<any>, {
@@ -688,16 +712,9 @@ export async function testProviderConnection(input: {
       return { success: true, message: 'Connection successful.' };
     }
 
-    // Custom OpenAI-compatible endpoint: no catalog to probe against, so prove
-    // reachability by listing the endpoint's own models.
     if (baseUrl) {
-      const models = await listOpenAiCompatibleModels(baseUrl, apiKey);
-      if (models.length > 0) {
-        return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
-      }
       return { success: false, message: 'Reached the endpoint, but it advertised no usable model.' };
     }
-
     return { success: false, message: 'Reached the endpoint, but no usable model could be found.' };
   } catch (error: any) {
     const errMsg = error?.message || String(error);
@@ -727,8 +744,10 @@ export async function testProviderConnection(input: {
 /**
  * List models from an OpenAI-compatible `GET {baseUrl}/models`. Used to prove a
  * custom endpoint's connection when there is no catalog model to probe with.
- * Bounded (8s) and best-effort: any non-OK response or malformed body yields an
- * empty list, which the caller reports as an honest "no usable model" error.
+ * Bounded (8s). A successful-but-unparseable body yields an empty list; a non-OK
+ * response (or a timeout/abort) THROWS with the status, which `testProviderConnection`
+ * maps to a precise auth/endpoint message (401/404/timeout) — strictly better than
+ * a generic "no usable model".
  */
 async function listOpenAiCompatibleModels(baseUrl: string, apiKey: string): Promise<string[]> {
   const url = `${baseUrl.replace(/\/+$/, '')}/models`;

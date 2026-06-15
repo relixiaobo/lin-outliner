@@ -13,6 +13,7 @@ import {
   completeSimple,
   createAssistantMessageEventStream,
   getModels,
+  getProviders,
   getSupportedThinkingLevels,
   isContextOverflow,
   streamSimple,
@@ -164,9 +165,10 @@ import {
   getBuiltInAgentProfile,
   setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
+  rankedModels,
   type AgentProviderRuntimeConfig,
 } from './agentSettings';
-import { compareModels } from './modelRanking';
+import { parseProviderQualifiedModel } from '../core/agentModelId';
 import { appendAgentToolPermissionGrant, readAgentToolPermissionConfig } from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
@@ -2594,7 +2596,7 @@ export class AgentRuntime {
       input.model,
       input.effort,
       providerConfig,
-      this.tryResolveProviderModel(providerConfig),
+      () => this.tryResolveProviderModel(providerConfig),
     );
     // Attribution for this run's gated/denied approvals, resolved at the delegation
     // layer from the authoritative context mode (fresh consult → the consultee;
@@ -6398,11 +6400,25 @@ export class AgentRuntime {
     if (profile) await this.getEventStore().writeAgentIdentity(profile.identity);
     // The built-in coordinator owns its model/effort through the settings overlay,
     // resolved the same way as a peer profile; its base system prompt is unchanged.
-    const builtIn = isMainAgent ? await this.resolveBuiltInAssistantModelEffort(providerConfig) : null;
-    const model = profile?.model ?? builtIn!.model;
-    const thinkingLevel = profile?.thinkingLevel ?? builtIn!.thinkingLevel;
+    // null when the coordinator's connection has no resolvable model yet (a fresh
+    // custom endpoint, no assistant default chosen) — degrade like the direct
+    // conversation path rather than throwing the whole channel turn.
+    const builtIn = isMainAgent
+      ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
+      : null;
+    const model = profile?.model ?? builtIn?.model;
+    const thinkingLevel = profile?.thinkingLevel ?? builtIn?.thinkingLevel;
     const systemPrompt = profile?.systemPrompt ?? this.agentIdentity.systemPrompt;
     const definition = profile?.definition;
+    if (!model) {
+      return {
+        agent: createConfigurationErrorAgent(
+          conversationId,
+          'No model is configured. Choose a default model for the assistant in Settings → Agents.',
+        ),
+        definition,
+      };
+    }
     const agent = createConfiguredAgent(conversationId, providerConfig, [], this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
@@ -6496,7 +6512,7 @@ export class AgentRuntime {
       selection.model,
       selection.effort,
       providerConfig,
-      this.tryResolveProviderModel(providerConfig),
+      () => this.tryResolveProviderModel(providerConfig),
     );
   }
 
@@ -6524,7 +6540,7 @@ export class AgentRuntime {
       profileSelection.model,
       profileSelection.effort,
       providerConfig,
-      this.tryResolveProviderModel(providerConfig),
+      () => this.tryResolveProviderModel(providerConfig),
     );
     const skillSections = await this.memberSkillSections(skillRuntime, definition);
     const systemPrompt = buildAgentMemberSystemPrompt(definition, agentMentionToken(agentId), skillSections);
@@ -8566,7 +8582,14 @@ function createConfiguredAgent(
   return agent;
 }
 
-const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+// The reasoning ladder, lowest → highest. `AGENT_REASONING_LEVELS` membership and
+// `nearestSupportedLevel` distance both derive from this single ordered source.
+const REASONING_LADDER: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(REASONING_LADDER);
+// The default effort an agent runs at when it has not chosen one. `medium` keeps a
+// reasoning-capable model actually reasoning by default (a provider connection no
+// longer carries a global reasoning level), coerced to the model's nearest level.
+const DEFAULT_AGENT_THINKING_LEVEL: AgentReasoningLevel = 'medium';
 
 function resolveSkillTurnUpdate(
   effect: SkillTurnEffect | null,
@@ -8611,7 +8634,7 @@ function resolveModelOverride(
   requested: string,
   providerConfig: AgentProviderRuntimeConfig,
 ): Model<Api> | null {
-  const parsed = parseProviderQualifiedModel(requested);
+  const parsed = parseProviderQualifiedModel(requested, isKnownProviderId);
   const providerId = parsed?.providerId ?? providerConfig.providerId;
   const modelId = parsed?.modelId ?? requested;
   const knownModel = findKnownModel(providerId, modelId);
@@ -8626,23 +8649,13 @@ function resolveModelOverride(
   return null;
 }
 
-/** Catalog models for a provider, sorted by the shared ranking (newest, thinking-first). */
-function listRankedModels(providerId: string): Model<Api>[] {
-  try {
-    const models = getModels(providerId as KnownProvider) as Model<Api>[];
-    return [...models].sort((left, right) => compareModels(providerId, left, right));
-  } catch {
-    return [];
-  }
-}
-
 /**
- * The default catalog model for a provider connection — the first after the ranking
- * sort, with the connection's base URL applied. Null for a custom endpoint with no
- * catalog (where the agent profile must name the model).
+ * The default catalog model for a provider connection — the first after the shared
+ * ranking sort (`rankedModels`), with the connection's base URL applied. Null for a
+ * custom endpoint with no catalog (where the agent profile must name the model).
  */
 function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
-  const first = listRankedModels(config.providerId)[0];
+  const first = rankedModels(config.providerId)[0];
   if (!first) return null;
   return config.baseUrl ? { ...first, baseUrl: config.baseUrl } : first;
 }
@@ -8662,47 +8675,74 @@ function resolveModel(config: AgentProviderRuntimeConfig): Model<Api> {
 }
 
 /**
- * The model a model-selection string resolves to. `fallback` is the provider
- * connection's default model (resolved by the caller through the injectable
- * `resolveProviderModel` seam, so tests and custom resolvers are honored); an
- * empty/`inherit` selection uses it directly, an explicit selection overrides it.
+ * The model a model-selection string resolves to. `fallback` is a THUNK for the
+ * provider connection's default model (resolved by the caller through the injectable
+ * `resolveProviderModel` seam, so tests and custom resolvers are honored); it is
+ * invoked lazily — only an empty/`inherit` selection (or an unresolvable explicit
+ * one) needs it, so an explicit, resolvable model never triggers the catalog sort.
  */
 function resolveAgentModel(
   modelInput: string | undefined,
   config: AgentProviderRuntimeConfig,
-  fallback: Model<Api> | null,
+  fallback: () => Model<Api> | null,
 ): Model<Api> {
   const requested = modelInput?.trim();
   if (!requested || requested === 'inherit') {
-    if (fallback) return fallback;
+    const resolved = fallback();
+    if (resolved) return resolved;
     throw new Error('No model is configured for this agent. Set a default model in the agent profile.');
   }
   const resolved = resolveModelOverride(requested, config);
   if (resolved) return resolved;
-  if (fallback) return fallback;
+  const fell = fallback();
+  if (fell) return fell;
   throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
 }
 
-/** A model's natural default thinking level: `off` when supported, else its lowest. */
+/** The supported reasoning level nearest `target` on the ladder (ties favour lower). */
+function nearestSupportedLevel(
+  target: AgentReasoningLevel,
+  supported: readonly AgentReasoningLevel[],
+): AgentReasoningLevel {
+  if (supported.includes(target)) return target;
+  const targetIndex = REASONING_LADDER.indexOf(target);
+  let best = supported[0];
+  let bestDistance = Infinity;
+  for (const level of supported) {
+    const distance = Math.abs(REASONING_LADDER.indexOf(level) - targetIndex);
+    if (distance < bestDistance
+      || (distance === bestDistance && REASONING_LADDER.indexOf(level) < REASONING_LADDER.indexOf(best))) {
+      best = level;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * The default thinking level an agent runs at when its profile sets no effort:
+ * `medium` coerced to the model's nearest supported level (a non-reasoning model
+ * supporting only `off` stays `off`).
+ */
 function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
   const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
     AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
   ));
-  if (supported.includes('off')) return 'off';
-  return supported[0] ?? 'off';
+  if (!supported.length) return 'off';
+  return nearestSupportedLevel(DEFAULT_AGENT_THINKING_LEVEL, supported);
 }
 
 /**
  * Resolve the effective model + thinking level an agent runs with, from its
  * profile's model/effort selection over a provider connection. The single seam the
- * runtime uses now that the provider connection owns neither. `fallback` is the
- * connection's default model (see `resolveAgentModel`).
+ * runtime uses now that the provider connection owns neither. `fallback` is a thunk
+ * for the connection's default model (see `resolveAgentModel`).
  */
 function resolveAgentModelEffort(
   modelInput: string | undefined,
   effortInput: string | undefined,
   config: AgentProviderRuntimeConfig,
-  fallback: Model<Api> | null,
+  fallback: () => Model<Api> | null,
 ): { model: Model<Api>; thinkingLevel: AgentReasoningLevel } {
   const model = resolveAgentModel(modelInput, config, fallback);
   const thinkingLevel = effortInput
@@ -8711,13 +8751,10 @@ function resolveAgentModelEffort(
   return { model, thinkingLevel };
 }
 
-function parseProviderQualifiedModel(value: string): { providerId: string; modelId: string } | null {
-  const separator = value.includes('/') ? '/' : value.includes(':') ? ':' : null;
-  if (!separator) return null;
-  const [providerId, ...rest] = value.split(separator);
-  const modelId = rest.join(separator);
-  if (!providerId?.trim() || !modelId.trim()) return null;
-  return { providerId: providerId.trim(), modelId: modelId.trim() };
+let knownProviderIdsCache: Set<string> | null = null;
+function isKnownProviderId(providerId: string): boolean {
+  if (!knownProviderIdsCache) knownProviderIdsCache = new Set(getProviders());
+  return knownProviderIdsCache.has(providerId);
 }
 
 function clampEvidenceText(text: string, maxChars: number): { text: string; truncated: boolean } {

@@ -301,24 +301,34 @@ Model and effort are owned by the agent identity that actually runs:
 The profile selector is **capability-driven**: pick a provider, then a model; the
 effort options are derived from that model's `supportedThinkingLevels`. Saved
 values are the canonical model id (provider-qualified `providerId/modelId`) and the
-adapter's canonical effort, never a display label.
+adapter's canonical effort, never a display label. The provider→model string is
+parsed by one shared `core/agentModelId` helper (renderer + runtime), so a model id
+that itself contains `:` (Bedrock `amazon.nova-lite-v1:0`, Vertex inference
+profiles) is never mis-split — `/` is the canonical qualifier and `:` only splits
+when its prefix is a known provider.
 
-**`agentTestProviderConnection` validates reachability, not a chosen model.** It
-picks a probe model internally: the first ranked catalog model
-(`compareModels` / `firstRankedModel`); for custom OpenAI-compatible endpoints it
-tries a model-listing probe (`GET {baseUrl}/models`, `listOpenAiCompatibleModels`)
-first; if a completion probe is still required it uses the first discovered model;
-if none can be discovered it returns an honest "endpoint reached but no usable
-model" error. The probe keeps bounded behavior: short timeout, tiny output budget,
-cancellable UI.
+**`agentTestProviderConnection` validates reachability, not a chosen model.** Probe
+order: if the connection has a **custom base URL** (a proxy/gateway that may not
+host the catalog's first model), list the endpoint's own models first
+(`GET {baseUrl}/models`, `listOpenAiCompatibleModels`) — any model proves
+reachability. Otherwise (or if listing is unsupported but a catalog exists), send a
+1-token completion against the first ranked catalog model
+(`firstRankedModel`/`rankedModels`). If neither proves reachable, return an honest
+"endpoint reached but no usable model" error. A listing failure with no catalog
+model to fall back to surfaces its status (401/404/timeout) directly. The probe is
+bounded: short timeout, tiny output budget, cancellable UI.
 
 **Runtime model resolution** (`agentRuntime.ts`):
 
 1. Resolve the active usable provider connection.
 2. Resolve the running agent's model/effort: user/project override → built-in
    assistant overlay default → catalog first-ranked fallback (last-resort first-run
-   default), through one shared `resolveAgentModelEffort` helper that coerces effort
-   to the selected model's supported ladder.
+   default), through one shared `resolveAgentModelEffort` helper. When the profile
+   sets no effort, the default is **`medium`** coerced to the model's nearest
+   supported level (a non-reasoning model that supports only `off` stays `off`) —
+   a reasoning-capable model reasons by default rather than silently running off.
+   The catalog fallback is resolved lazily, so an explicit, resolvable model never
+   triggers a catalog ranking sort.
 3. Build the provider `Model` object with the connection's auth / base URL.
 
 Assistant events still record the actual `providerId`, `modelId`, `usage`, and

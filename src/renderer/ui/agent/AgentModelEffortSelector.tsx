@@ -1,3 +1,4 @@
+import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
 import type { AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { Field } from '../primitives/Field';
@@ -19,22 +20,21 @@ interface ModelSelection {
   modelId: string;
 }
 
-// `''`/`inherit` → use the provider catalog default. `providerId/modelId` (or the
-// `:` form skills emit) → an explicit cross-provider choice. A bare id is treated
-// as belonging to the active provider.
-export function parseModelSelection(model: string, activeProviderId: string): ModelSelection {
+// `''`/`inherit` → use the provider catalog default. A `providerId/modelId` (or the
+// `:` form skills emit, only when the prefix is a known provider) → an explicit
+// cross-provider choice. A bare id — including one that contains `:` like a Bedrock
+// `amazon.nova-lite-v1:0` — is treated as belonging to the active provider. The
+// split lives in `core/agentModelId`, shared with the runtime so both sides agree.
+export function parseModelSelection(
+  model: string,
+  activeProviderId: string,
+  isKnownProvider: (providerId: string) => boolean,
+): ModelSelection {
   const trimmed = model.trim();
   if (!trimmed || trimmed === 'inherit') return { providerId: '', modelId: '' };
-  const separator = trimmed.includes('/') ? '/' : trimmed.includes(':') ? ':' : '';
-  if (!separator) return { providerId: activeProviderId, modelId: trimmed };
-  const [providerId, ...rest] = trimmed.split(separator);
-  return { providerId: providerId.trim(), modelId: rest.join(separator).trim() };
-}
-
-function composeModel(providerId: string, modelId: string): string {
-  const id = modelId.trim();
-  if (!id) return '';
-  return providerId ? `${providerId}/${id}` : id;
+  const parsed = parseProviderQualifiedModel(trimmed, isKnownProvider);
+  if (parsed) return parsed;
+  return { providerId: activeProviderId, modelId: trimmed };
 }
 
 interface AgentModelEffortSelectorProps {
@@ -67,7 +67,15 @@ export function AgentModelEffortSelector({
   const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[level === 'xhigh' ? 'max' : level];
 
   const activeProviderId = settings?.activeProviderId ?? '';
-  const selection = parseModelSelection(model, activeProviderId);
+  // A provider id is "known" (eligible for the `:` qualifier split) when it is a
+  // catalog or configured provider — so a bare colon-bearing model id is not
+  // mis-read as a provider/model pair.
+  const knownProviderIds = new Set<string>([
+    ...(settings?.availableProviders ?? []).map((provider) => provider.providerId),
+    ...(settings?.providers ?? []).map((provider) => provider.providerId),
+  ]);
+  const isKnownProvider = (providerId: string) => knownProviderIds.has(providerId);
+  const selection = parseModelSelection(model, activeProviderId, isKnownProvider);
 
   // Providers the agent can actually run on: configured + credentialed connections.
   const usableProviders = (settings?.providers ?? [])
@@ -92,11 +100,23 @@ export function AgentModelEffortSelector({
   // Catalog providers list ranked models; a custom OpenAI-compatible connection has
   // no catalog, so its model is entered as free text.
   const useFreeTextModel = Boolean(selection.providerId) && catalogModels.length === 0;
+  // A saved model the catalog no longer lists must still appear (and stay selected),
+  // or the <select> would silently render an unrelated first option as if chosen.
+  const savedModelMissing = Boolean(selection.modelId)
+    && !catalogModels.some((option) => option.id === selection.modelId);
 
-  const supportedLevels = selectedModelOption?.supportedThinkingLevels.length
-    ? selectedModelOption.supportedThinkingLevels
-    // No catalog capability info (inherit, or a custom model): offer the full ladder.
-    : REASONING_ORDER;
+  const supportedLevelsFor = (option?: { supportedThinkingLevels: AgentReasoningLevel[] }): readonly AgentReasoningLevel[] => (
+    option?.supportedThinkingLevels.length ? option.supportedThinkingLevels : REASONING_ORDER
+  );
+  const supportedLevels = supportedLevelsFor(selectedModelOption);
+
+  // Clear an effort the newly-chosen model cannot honour, so the stored value never
+  // silently diverges from what the effort control can display.
+  function reconcileEffort(nextModelOption?: { supportedThinkingLevels: AgentReasoningLevel[] }) {
+    if (effort && !supportedLevelsFor(nextModelOption).includes(effort as AgentReasoningLevel)) {
+      onEffortChange('');
+    }
+  }
 
   function changeProvider(nextProviderId: string) {
     if (!nextProviderId) {
@@ -107,7 +127,13 @@ export function AgentModelEffortSelector({
     const nextModelId = nextModels.some((option) => option.id === selection.modelId)
       ? selection.modelId
       : nextModels[0]?.id ?? '';
-    onModelChange(composeModel(nextProviderId, nextModelId));
+    reconcileEffort(nextModels.find((option) => option.id === nextModelId));
+    onModelChange(composeProviderQualifiedModel(nextProviderId, nextModelId));
+  }
+
+  function changeModel(nextModelId: string) {
+    reconcileEffort(catalogModels.find((option) => option.id === nextModelId));
+    onModelChange(composeProviderQualifiedModel(selection.providerId, nextModelId));
   }
 
   return (
@@ -135,7 +161,7 @@ export function AgentModelEffortSelector({
               className="settings-sheet-row-input"
               disabled={disabled}
               label={modelLabel}
-              onChange={(event) => onModelChange(composeModel(selection.providerId, event.target.value))}
+              onChange={(event) => changeModel(event.target.value)}
               placeholder="model-id"
               value={selection.modelId}
               variant="bare"
@@ -145,10 +171,13 @@ export function AgentModelEffortSelector({
               className="settings-sheet-row-input"
               disabled={disabled}
               label={modelLabel}
-              onChange={(event) => onModelChange(composeModel(selection.providerId, event.target.value))}
+              onChange={(event) => changeModel(event.target.value)}
               value={selection.modelId}
               variant="popup"
             >
+              {savedModelMissing ? (
+                <option value={selection.modelId}>{selection.modelId}</option>
+              ) : null}
               {catalogModels.map((option) => (
                 <option key={option.id} value={option.id}>{option.name || option.id}</option>
               ))}
