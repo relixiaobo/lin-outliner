@@ -193,6 +193,11 @@ shippable and verifiable alone — not a scaffold-then-fill slice.
 - **PR 2 — cross-agent cache breakpoint (optimization).** Emit the L0-end `cache_control`
   in multi-agent contexts; **measure** prefix-cache hit rate / token cost before and after
   (A9). Pure performance, depends on PR 1, shippable alone.
+  - **[Deferred 2026-06-15 — gate]:** not buildable as written. Tenon passes a single
+    `systemPrompt` string and the engine auto-places the one `cache_control` over it
+    (`agent-conversation-model` §cache notes); there is no interface to split an "L0-end"
+    breakpoint inside the system prompt today. Contingent on engine cache-breakpoint support
+    **and** a measured win — parked until then. **PR 1 stands alone and is the deliverable.**
 
 ## Open questions
 

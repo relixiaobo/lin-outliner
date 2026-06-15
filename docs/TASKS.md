@@ -271,7 +271,40 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   gesture (scope grant; lets the agent see the user's real files) → PR-3 typed `file_convert`
   tool. **Supersedes** the `delegated-scope` draft (PR #249, closed `superseded`). See
   `docs/plans/agent-permission-redesign.md`. **PR-1 shipped; PR-2 (folder-handoff) + PR-3
-  (`file_convert`) remain**, ready for a dev agent to claim.
+  (`file_convert`) remain**, ready for a dev agent to claim. Sibling primitive:
+  **agent-capability-ceiling** (below) bounds what a *delegated* child may do — orthogonal to
+  this global-ledger redesign and sequenced after it.
+- **agent-capability-ceiling** (P2, `draft` — security-sensitive; **no plan file yet**,
+  extracted from the closed `delegated-scope` draft PR #251) — a spawner must not be able to
+  hand a child *more* than it holds. The #252 redesign made grants a single **global ledger**
+  (not per-agent), so the real escalation lever is **not** a grant clamp but the child agent
+  **definition** (`tools` allow-list + `permissionMode: 'trusted'`). The ceiling primitive
+  therefore clamps a delegated child's effective `tools` ⊆ creator's `tools` and forbids a
+  child `permissionMode` stronger than the creator's. **Redirect from #251** (its plan still
+  cites the dead safety-mode/`#250` framing — must be rewritten before it boards as a real
+  PR; left DRAFT). Depends on #252 (shipped) and sequences **after** `agent-context-architecture`
+  PR-1 (shared prompt/identity assembly). Escalate the exact clamp semantics before building.
+- **agent-context-architecture** (P1, `in-progress` — realizes agent-program decision **C3**,
+  PM-ratified 2026-06-15) — **one** run-context composer layered by **scope × volatility**
+  (L0 shared foundation → … → per-turn volatile), replacing the ad-hoc per-call prompt
+  assembly. This **is** the C3 "unify run-context assembly" that agent-program ratified-but-
+  deferred ("not a standalone PR") — #254 is adopted as its realization. **Shape (b):**
+  **PR-1** the unified composer (`composeAgentPrompt`, L0-tagged layers) — **ready to build,
+  the deliverable** → **PR-2** cross-agent cache breakpoint **DEFERRED** (not buildable on
+  today's single-`systemPrompt`-string interface; the engine auto-places the one
+  `cache_control` — contingent on engine support + a measured win). See
+  `docs/plans/agent-context-architecture.md`. Plan merged (#254).
+- **provider-connection-model-ownership** (P2, `draft`, **GO** 2026-06-15) — clarify who owns
+  a provider connection vs. the model selection on an agent profile (the model-onto-profile
+  seam). Orthogonal to the permission/context work; **rebase-aware of #252** (settings surface
+  moved). Ready for a dev agent to claim. See `docs/plans/provider-connection-model-ownership.md`.
+  Plan merged (#256).
+- **agent-debug-run-grounded** (P2, `draft`, **GO** 2026-06-15) — recast agent debug as a
+  **view over the run truth source** (the three run-log families) rather than a parallel debug
+  channel. **Shape (b):** **PR-1** re-scope the settle checkpoint to the run log (do this
+  first) → **PR-2** the debug view over it. Orthogonal to `agent-context-architecture`;
+  **rebase onto #252**. Ready for a dev agent to claim PR-1. See
+  `docs/plans/agent-debug-run-grounded.md`. Plan merged (#257).
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
