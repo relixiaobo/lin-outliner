@@ -1263,8 +1263,29 @@ export interface AgentConversationAttention {
 
 export interface AgentEventReplayState {
   conversation: AgentConversationRecord | null;
+  /**
+   * The tail of the LAST applied event in this replay's stream context. For a
+   * single-stream replay (`replayRunStream`) this is the run's private-seq tail;
+   * for a conversation replay it is the chronologically-last event applied. The
+   * durable conversation watermark consumers want (checkpoint tail-match, search,
+   * attention) is `backboneSeq` / `backboneEventId` below.
+   */
   latestSeq: number;
   latestEventId: string | null;
+  /**
+   * The conversation backbone tail (events with no `runId`). Run streams advance
+   * on their own private seq without moving this; checkpoints carry per-run
+   * cursors separately. Equal to `latestSeq` for a backbone-only or single-stream
+   * replay.
+   */
+  backboneSeq: number;
+  backboneEventId: string | null;
+  /**
+   * Per-stream monotonic seq watermark (stream key = `runId`, or the backbone
+   * sentinel for events with no `runId`). Run streams carry private seq spaces
+   * that start at 1, so monotonicity is asserted WITHIN a stream, not globally.
+   */
+  latestSeqByStream: Record<string, number>;
   messages: Record<string, AgentEventMessageRecord>;
   rootMessageIds: string[];
   childrenByParentId: Record<string, string[]>;
@@ -1302,6 +1323,9 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     conversation: null,
     latestSeq: 0,
     latestEventId: null,
+    backboneSeq: 0,
+    backboneEventId: null,
+    latestSeqByStream: {},
     messages: {},
     rootMessageIds: [],
     childrenByParentId: {},
@@ -1319,6 +1343,26 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
   };
 }
 
+/** Backbone sentinel — events with no `runId` share this one stream. */
+export const AGENT_BACKBONE_STREAM_KEY = '';
+
+/** The seq space an event belongs to: its own run, or the conversation backbone. */
+export function agentEventStreamKey(event: AgentEvent): string {
+  return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : AGENT_BACKBONE_STREAM_KEY;
+}
+
+/** Advance the per-stream + tail watermarks after an event is applied. */
+function advanceReplayTail(state: AgentEventReplayState, event: AgentEvent) {
+  const streamKey = agentEventStreamKey(event);
+  state.latestSeqByStream[streamKey] = event.seq;
+  state.latestSeq = event.seq;
+  state.latestEventId = event.eventId;
+  if (streamKey === AGENT_BACKBONE_STREAM_KEY) {
+    state.backboneSeq = event.seq;
+    state.backboneEventId = event.eventId;
+  }
+}
+
 export function replayAgentEvents(events: readonly AgentEvent[]): AgentEventReplayState {
   const state = createEmptyAgentEventReplayState();
   const seenEventIds = new Set<string>();
@@ -1327,8 +1371,7 @@ export function replayAgentEvents(events: readonly AgentEvent[]): AgentEventRepl
     applyAgentEvent(state, event);
     touchConversationUpdatedAt(state, event);
     seenEventIds.add(event.eventId);
-    state.latestSeq = event.seq;
-    state.latestEventId = event.eventId;
+    advanceReplayTail(state, event);
   }
   return state;
 }
@@ -1337,8 +1380,7 @@ export function appendAgentEventToReplayState(state: AgentEventReplayState, even
   assertValidNextEvent(state, new Set(), event);
   applyAgentEvent(state, event);
   touchConversationUpdatedAt(state, event);
-  state.latestSeq = event.seq;
-  state.latestEventId = event.eventId;
+  advanceReplayTail(state, event);
   return state;
 }
 
@@ -1562,8 +1604,9 @@ function assertValidNextEvent(
   if (seenEventIds.has(event.eventId)) {
     throw new Error(`Duplicate agent event id: ${event.eventId}`);
   }
-  if (event.seq <= state.latestSeq) {
-    throw new Error(`Agent events must be appended in increasing seq order: ${event.seq}`);
+  const streamSeq = state.latestSeqByStream[agentEventStreamKey(event)] ?? 0;
+  if (event.seq <= streamSeq) {
+    throw new Error(`Agent events must be appended in increasing seq order within a stream: ${event.seq}`);
   }
   if (state.conversation && event.conversationId !== state.conversation.id) {
     throw new Error(`Agent event conversation mismatch: ${event.conversationId}`);
