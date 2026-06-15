@@ -219,6 +219,30 @@ export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt:
   return { systemPrompt, tools: extractTools(payload.tools) };
 }
 
+/**
+ * The run's per-run system/tools snapshot, read from the latest
+ * `debug.run_snapshot.created` in its stream (hash-deduped at capture, so the
+ * last one is current). Null when no snapshot was captured (e.g. a delegation
+ * run, whose request-context capture is a follow-up) — the view degrades to no
+ * system prompt and an empty tool list.
+ */
+export function snapshotFromRunEvents(events: readonly AgentEvent[]): AgentDebugRunSnapshot | null {
+  let latest: Extract<AgentEvent, { type: 'debug.run_snapshot.created' }> | null = null;
+  for (const event of events) {
+    if (event.type === 'debug.run_snapshot.created') latest = event;
+  }
+  if (!latest) return null;
+  return {
+    systemPrompt: latest.systemPrompt,
+    tools: latest.tools.map((tool): AgentDebugToolEntry => ({
+      name: tool.name,
+      description: tool.description,
+      schema: tool.schema,
+      bytes: byteLength(tool.name) + byteLength(tool.description) + byteLength(tool.schema),
+    })),
+  };
+}
+
 function extractSystemPrompt(value: unknown): string {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) {

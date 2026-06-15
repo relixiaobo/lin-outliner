@@ -2399,6 +2399,10 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.debugTotals(conversationId());
     case 'agent_debug_payload':
       return agentRuntime.debugPayload(conversationId(), String(args.payloadId));
+    case 'agent_debug_view':
+      return agentRuntime.agentDebugView(conversationId());
+    case 'agent_debug_run':
+      return agentRuntime.agentDebugRun(conversationId(), String(args.runId));
     case 'agent_payload_text':
       return agentRuntime.payloadText(conversationId(), String(args.payloadId));
     case 'agent_child_run_transcript':

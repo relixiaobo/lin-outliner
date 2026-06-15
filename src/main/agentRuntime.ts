@@ -42,6 +42,10 @@ import {
   type AgentMessageAttachmentInput,
   type AgentDebugSnapshot,
   type AgentDebugTotals,
+  type AgentDebugConversation,
+  type AgentDebugConversationShape,
+  type AgentDebugRun,
+  type AgentDebugRunSummary,
   type AgentMessage,
   type AgentRuntimeEvent,
   type AgentApprovalRequestDetail,
@@ -135,7 +139,13 @@ import {
   deriveAgentDebugProjectionFromEvents,
   isDebugSnapshotCreatedEvent,
 } from './agentDebugProjection';
-import { extractRunSnapshotFromPayload } from './agentDebugView';
+import {
+  deriveDebugConversation,
+  deriveDebugRun,
+  extractRunSnapshotFromPayload,
+  snapshotFromRunEvents,
+  summarizeDebugRun,
+} from './agentDebugView';
 import {
   AgentEventStore,
   MAX_AGENT_MEMORY_FACT_CHARS,
@@ -598,6 +608,10 @@ export class AgentRuntime {
   // ([[agent-debug-run-grounded]]) re-emits only on a real change. Keyed by runId,
   // session-scoped (a few bytes per run).
   private debugRunSnapshotHashByRun = new Map<string, string>();
+  // Derived debug rounds per run, invalidated by the run's latestSeq (the
+  // childRunTranscript cache-by-latestSeq pattern) so the view IPC and the
+  // per-run IPC share one derivation.
+  private debugRunCache = new Map<string, { latestSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, {
@@ -1268,6 +1282,58 @@ export class AgentRuntime {
     if (!payload || payload.role !== 'debug') return null;
     const bytes = await this.getEventStore().readPayload(conversationId, payload);
     return bytes.toString('utf8');
+  }
+
+  /**
+   * Run-grounded debug ([[agent-debug-run-grounded]]): the conversation's
+   * execution tree as per-run summary nodes (agent / kind / status / model /
+   * real usage / round count), plus the conversation shape (DM = one member,
+   * Channel = many) and rolled-up totals. Reads the store directly, so it works
+   * on any stored conversation without loading it into memory.
+   */
+  async agentDebugView(conversationId: string): Promise<AgentDebugConversation> {
+    const store = this.getEventStore();
+    const metas = await store.listConversationRunMetaProjections(conversationId);
+    const parentToolCallByChild = await this.debugParentToolCallMap(conversationId);
+    const summaries: AgentDebugRunSummary[] = [];
+    for (const meta of metas) {
+      // Reflective / principal-anchored runs span conversations — not this view.
+      if (meta.kind === 'reflective' || meta.anchor.type !== 'conversation') continue;
+      const run = await this.deriveDebugRunFromStore(meta, parentToolCallByChild.get(meta.id) ?? null);
+      summaries.push(summarizeDebugRun(run));
+    }
+    const memberIds = [...new Set(summaries.map((summary) => summary.agentId))];
+    const shape: AgentDebugConversationShape = memberIds.length > 1 ? 'channel' : 'dm';
+    return deriveDebugConversation(conversationId, shape, memberIds, summaries);
+  }
+
+  /** Run-grounded debug: one run's full execution detail (rounds + per-run snapshot). */
+  async agentDebugRun(conversationId: string, runId: string): Promise<AgentDebugRun | null> {
+    const meta = await this.getEventStore().readRunMetaProjection(runId);
+    if (!meta) return null;
+    if (meta.anchor.type !== 'conversation' || meta.anchor.conversationId !== conversationId) return null;
+    const parentToolCallByChild = await this.debugParentToolCallMap(conversationId);
+    return this.deriveDebugRunFromStore(meta, parentToolCallByChild.get(runId) ?? null);
+  }
+
+  /** childRunId → parentToolCallId, read from the parent conversation's `child_run.started`. */
+  private async debugParentToolCallMap(conversationId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    for (const event of await this.getEventStore().readEvents(conversationId)) {
+      if (event.type === 'child_run.started' && typeof event.parentToolCallId === 'string') {
+        map.set(event.childRunId, event.parentToolCallId);
+      }
+    }
+    return map;
+  }
+
+  private async deriveDebugRunFromStore(meta: AgentRunMetaProjection, parentToolCallId: string | null): Promise<AgentDebugRun> {
+    const cached = this.debugRunCache.get(meta.id);
+    if (cached && cached.latestSeq === meta.latestSeq && cached.parentToolCallId === parentToolCallId) return cached.run;
+    const events = await this.getEventStore().readRunStreamEvents(meta.id);
+    const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(events), parentToolCallId });
+    this.debugRunCache.set(meta.id, { latestSeq: meta.latestSeq, parentToolCallId, run });
+    return run;
   }
 
   async payloadText(conversationId: string, payloadId: string) {

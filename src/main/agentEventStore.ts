@@ -683,6 +683,22 @@ export class AgentEventStore {
   }
 
   /** Reflective runs anchored to one principal (the runs maintaining that principal's pool). */
+  /**
+   * EVERY run anchored to a conversation (turn + delegation), in creation order.
+   * The run-grounded debug view ([[agent-debug-run-grounded]]) enumerates these,
+   * then derives each run's rounds from its own stream.
+   */
+  async listConversationRunMetaProjections(conversationId: string): Promise<AgentRunMetaProjection[]> {
+    await this.ensureStorageLayout();
+    const index = await this.ensureConversationRunIndex(conversationId);
+    const metas: AgentRunMetaProjection[] = [];
+    for (const runId of index.runIds) {
+      const meta = await this.readRunMeta(runId);
+      if (meta) metas.push(meta);
+    }
+    return metas.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+  }
+
   async listPrincipalRunMetaProjections(
     principal: AgentPrincipal,
     options: { limit?: number } = {},

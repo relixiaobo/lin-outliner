@@ -42,6 +42,8 @@ import { replaceAllRichTextPatch } from './types';
 import type {
   AgentDebugSnapshot,
   AgentDebugTotals,
+  AgentDebugConversation,
+  AgentDebugRun,
   AgentMessageAttachmentInput,
   AgentChildRunActionResult,
   AgentUserViewContext,
@@ -329,6 +331,10 @@ export const api = {
     command<AgentDebugTotals>('agent_debug_totals', { conversationId }),
   agentDebugPayload: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_debug_payload', { conversationId, payloadId }),
+  agentDebugView: (conversationId: string) =>
+    command<AgentDebugConversation>('agent_debug_view', { conversationId }),
+  agentDebugRun: (conversationId: string, runId: string) =>
+    command<AgentDebugRun | null>('agent_debug_run', { conversationId, runId }),
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
   agentChildRunTranscript: (conversationId: string, runId: string) =>

@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
-import { deriveDebugRounds, extractRunSnapshotFromPayload } from '../../src/main/agentDebugView';
+import {
+  deriveDebugRounds,
+  deriveDebugRun,
+  extractRunSnapshotFromPayload,
+  snapshotFromRunEvents,
+  summarizeDebugRun,
+} from '../../src/main/agentDebugView';
+import type { AgentRunMetaProjection } from '../../src/main/agentEventStore';
 
 // Round derivation ([[agent-debug-run-grounded]]): a run's own event stream ->
 // the rounds the debug surface renders. Boundaries come from
@@ -152,6 +159,50 @@ describe('extractRunSnapshotFromPayload', () => {
 
   test('degrades to empty on a non-record payload', () => {
     expect(extractRunSnapshotFromPayload('nope')).toEqual({ systemPrompt: '', tools: [] });
+  });
+});
+
+describe('deriveDebugRun + snapshot + summary assembly', () => {
+  test('assembles a run from its stream + per-run snapshot, and projects to a summary', () => {
+    seqCounter = 0;
+    const runId = 'run-assembled';
+    const events: AgentEvent[] = [
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('debug.run_snapshot.created', {
+        runId,
+        systemPrompt: 'You are Tenon.',
+        systemHash: 'h1',
+        tools: [{ name: 'list_files', description: 'List', schema: '{}' }],
+        toolsHash: 'h2',
+      }),
+      ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
+      ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
+      ev('assistant_message.completed', { runId, messageId: 'a1', parentMessageId: 'u1', stopReason: 'stop', content: [{ type: 'text', text: 'hello' }], usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.001 } } }),
+      ev('run.completed', { runId }),
+    ];
+
+    const meta = {
+      v: 1, id: runId, agentId: 'built-in:tenon:assistant', kind: 'turn', status: 'completed',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+      trigger: { type: 'message', messageId: 'u1' },
+      usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.001 } },
+      fingerprint: {}, retention: 'hot', createdAt: 1700, updatedAt: 1800, latestSeq: 6,
+    } as unknown as AgentRunMetaProjection;
+
+    const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(events), parentToolCallId: null });
+    expect(run.systemPrompt).toBe('You are Tenon.');
+    expect(run.tools).toEqual([{ name: 'list_files', description: 'List', schema: '{}', bytes: 16 }]);
+    expect(run.rounds.map((round) => round.messageId)).toEqual(['a1']);
+    expect(run.kind).toBe('turn');
+    expect(run.createdAt).toBe(1700);
+
+    const summary = summarizeDebugRun(run);
+    expect(summary).toMatchObject({ runId, agentId: 'built-in:tenon:assistant', kind: 'turn', roundCount: 1, createdAt: 1700 });
+    expect(summary.provider).toBe('anthropic');
+  });
+
+  test('snapshotFromRunEvents returns null when no snapshot was captured', () => {
+    expect(snapshotFromRunEvents([])).toBeNull();
   });
 });
 

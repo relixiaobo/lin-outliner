@@ -109,6 +109,8 @@ export const AGENT_COMMANDS = [
   'agent_debug_history',
   'agent_debug_totals',
   'agent_debug_payload',
+  'agent_debug_view',
+  'agent_debug_run',
   'agent_payload_text',
   'agent_child_run_transcript',
   'agent_child_run_status',
