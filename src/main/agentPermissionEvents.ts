@@ -33,18 +33,6 @@ const PERMISSION_DENIED_CONTRACT: Record<PermissionDeniedReason, {
     source: 'policy_denied',
     status: 'denied',
   },
-  classifier_blocked: {
-    recoverable: true,
-    resolvedBy: 'classifier',
-    source: 'classifier',
-    status: 'denied',
-  },
-  classifier_unavailable: {
-    recoverable: true,
-    resolvedBy: 'classifier_unavailable',
-    source: 'classifier_unavailable',
-    status: 'denied',
-  },
   platform_hard_block: {
     recoverable: false,
     resolvedBy: 'platform_hard_block',
@@ -112,22 +100,16 @@ export function permissionEventSourceForDecision(
   if (decision.behavior === 'deny') {
     return permissionEventSourceForDeniedReason(permissionDeniedReasonForDecision(decision));
   }
-  if (decision.permissionSource === 'configured_allow' || decision.permissionSource === 'configured_ask') {
-    return 'global_rule';
-  }
-  if (decision.permissionSource === 'safety_mode_profile') {
-    return 'safety_mode_profile';
-  }
   if (decision.permissionSource === 'trust_ledger') {
     return 'trust_ledger';
   }
-  return 'action_default';
+  return 'default';
 }
 
 export function permissionResolvedByForAllowDecision(decision: AgentPermissionAllowDecision): AgentToolPermissionResolvedBy {
   const source = permissionEventSourceForDecision(decision);
-  if (source === 'global_rule' || source === 'safety_mode_profile' || source === 'trust_ledger') return source;
-  return 'runtime';
+  if (source === 'trust_ledger') return source;
+  return 'default';
 }
 
 export function permissionResolvedByForDeniedReason(reason: PermissionDeniedReason): AgentToolPermissionResolvedBy {

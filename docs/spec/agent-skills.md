@@ -414,15 +414,14 @@ Intentional omissions:
 
 ## Permission Inputs
 
-The user-facing default policy is the app-level Security `safetyMode`
-(`ask_first`, `balanced`, `full_access`) described in
-`agent-tool-permissions.md`. Agent definitions and skills cannot widen above that
-global policy.
+The user-facing default policy is the consequence-based delegated-operator model
+described in `agent-tool-permissions.md`: local reversible work is allowed,
+commits ask, and the safety floor is denied. Agent definitions and skills cannot
+widen above that global policy.
 
 Agent settings expose only a narrow delegation sandbox:
 
-- **Follow global**: no sandbox; the run uses the global safety mode and normal
-  descriptor defaults.
+- **Follow global**: no sandbox; the run uses the normal global effect decision.
 - **Restricted**: only a small safe base set is allowed unless a matching
   `allowed-tools` rule preapproves the tool call.
 

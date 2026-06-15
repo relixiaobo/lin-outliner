@@ -1,11 +1,41 @@
-import type { AgentSafetyMode } from './types';
-
 export type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
 
-export interface AgentPermissionDecisionOverrides {
-  allow: readonly string[];
-  ask?: readonly string[];
-  deny: readonly string[];
+export type AgentPermissionEffectReach =
+  | 'local'
+  | 'outside_scope'
+  | 'network_read'
+  | 'network_write'
+  | 'external_system';
+
+export type AgentPermissionFloorKind =
+  | 'exfiltration'
+  | 'host_destruction'
+  | 'persistence'
+  | 'hidden_exec'
+  | 'permission_self_mod'
+  | 'payment';
+
+export type AgentPermissionScopeAccess = 'read' | 'write';
+
+export type AgentPermissionGrant =
+  | { kind: 'scope'; access: AgentPermissionScopeAccess; root: string }
+  | { kind: 'external'; target: string }
+  | { kind: 'command'; form: string };
+
+export interface AgentOperationEffect {
+  reach: AgentPermissionEffectReach;
+  reversible: boolean;
+  touchesCredentials: boolean;
+  floor?: AgentPermissionFloorKind;
+  label: string;
+  grant?: AgentPermissionGrant;
+}
+
+export function decideAgentOperationEffect(effect: AgentOperationEffect): GlobalToolPermissionDecision {
+  if (effect.floor) return 'deny';
+  if (effect.reach === 'network_read') return 'allow';
+  if (effect.reach === 'local' && effect.reversible && !effect.touchesCredentials) return 'allow';
+  return 'ask';
 }
 
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
@@ -52,53 +82,6 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
 ] as const;
 
 export type AgentToolActionKind = typeof SUPPORTED_AGENT_TOOL_ACTION_KINDS[number];
-
-const DEFAULT_ACTION_DECISIONS = {
-  'file.read.allowed_file_area': 'allow',
-  'file.read.outside_allowed_file_area': 'ask',
-  'file.read.sensitive_local_path': 'ask',
-  'file.edit.allowed_file_area': 'allow',
-  'file.write.allowed_file_area': 'allow',
-  'file.write.outside_allowed_file_area': 'ask',
-  'file.write.sensitive_local_path': 'ask',
-  'file.delete.allowed_file_area': 'ask',
-  'outline.read': 'allow',
-  'outline.edit': 'allow',
-  'outline.delete': 'ask',
-  'web.search': 'allow',
-  'web.fetch': 'ask',
-  'shell.read_search': 'allow',
-  'shell.project_script': 'ask',
-  'shell.local_code_execution': 'ask',
-  'shell.dependency_install': 'ask',
-  'shell.network_write': 'ask',
-  'shell.destructive_cleanup': 'ask',
-  'shell.background_process': 'ask',
-  'shell.sandbox_override': 'ask',
-  'shell.unknown': 'deny',
-  'git.publish_remote': 'ask',
-  'deploy.publish_remote': 'ask',
-  'external.message.send': 'ask',
-  'task.stop': 'allow',
-  'agent.memory.recall': 'allow',
-  'agent.memory.dream': 'ask',
-  'agent.user_question.ask': 'allow',
-  'agent.runtime.status': 'allow',
-  'agent.config.read': 'allow',
-  'agent.config.write': 'ask',
-  'agent.doctor.run': 'allow',
-  'agent.skill.invoke': 'allow',
-  // Contact (consulting another agent) is a universal baseline, not a per-act
-  // privilege: safety lives on the consultee's OWN capability permissions plus
-  // the depth/cycle/concurrency guards, never on gating the act of reaching out.
-  // See agent-conversation-model "Cross-agent help".
-  'agent.delegate.spawn': 'allow',
-  'agent.delegate.status': 'allow',
-  'agent.delegate.send': 'allow',
-  'agent.delegate.stop': 'allow',
-  'agent.permission.modify': 'deny',
-  'payment.purchase': 'deny',
-} satisfies Record<AgentToolActionKind, GlobalToolPermissionDecision>;
 
 const READ_ONLY_ACTION_KIND_FLAGS = {
   'file.read.allowed_file_area': true,
@@ -169,6 +152,11 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
     'file.write.outside_allowed_file_area',
     'file.write.sensitive_local_path',
   ],
+  file_delete: [
+    'file.delete.allowed_file_area',
+    'file.write.outside_allowed_file_area',
+    'file.write.sensitive_local_path',
+  ],
   bash: [
     'shell.read_search',
     'file.read.sensitive_local_path',
@@ -212,36 +200,8 @@ const READ_ONLY_AGENT_TOOL_NAMES = Object.entries(AGENT_TOOL_ACTION_KIND_PROFILE
   .filter(([, actionKinds]) => actionKinds.every(isReadOnlyActionKind))
   .map(([toolName]) => toolName);
 
-const ASK_FIRST_ASK_ACTIONS = new Set<AgentToolActionKind>([
-  'file.edit.allowed_file_area',
-  'file.write.allowed_file_area',
-  'outline.edit',
-  'agent.skill.invoke',
-]);
-
-const FULL_ACCESS_ALLOW_ACTIONS = new Set<AgentToolActionKind>([
-  'file.edit.allowed_file_area',
-  'file.delete.allowed_file_area',
-  'outline.edit',
-  'outline.delete',
-  'web.fetch',
-  'shell.local_code_execution',
-  'shell.project_script',
-  'shell.dependency_install',
-  'shell.network_write',
-  'git.publish_remote',
-  // 'agent.delegate.spawn' omitted: its baseline default is now 'allow' in every
-  // safety mode (see DEFAULT_ACTION_DECISIONS), so a Full Access override is moot.
-  'agent.memory.dream',
-  'shell.background_process',
-]);
-
 const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
 const AGENT_TOOL_ACTION_KIND_PROFILE_MAP: Readonly<Record<string, readonly AgentToolActionKind[]>> = AGENT_TOOL_ACTION_KIND_PROFILES;
-
-export function defaultActionDecision(actionKind: AgentToolActionKind): GlobalToolPermissionDecision {
-  return DEFAULT_ACTION_DECISIONS[actionKind];
-}
 
 export function isReadOnlyActionKind(actionKind: AgentToolActionKind): boolean {
   return READ_ONLY_ACTION_KIND_FLAGS[actionKind];
@@ -275,6 +235,7 @@ function normalizeAgentToolProfileName(toolNameInput: string): string {
   if (normalized === 'grep') return 'file_grep';
   if (normalized === 'edit') return 'file_edit';
   if (normalized === 'write') return 'file_write';
+  if (normalized === 'delete') return 'file_delete';
   if (normalized === 'agentstatus' || normalized === 'agent_status') return 'AgentStatus';
   if (normalized === 'agentsend' || normalized === 'agent_send') return 'AgentSend';
   if (normalized === 'agentstop' || normalized === 'agent_stop') return 'AgentStop';
@@ -300,39 +261,4 @@ export function actionKindFromRuleValue(ruleValueInput: string): AgentToolAction
   return actionKind && SUPPORTED_ACTION_KIND_SET.has(actionKind)
     ? actionKind as AgentToolActionKind
     : null;
-}
-
-export function explicitActionDecision(
-  actionKind: AgentToolActionKind,
-  overrides: AgentPermissionDecisionOverrides,
-): GlobalToolPermissionDecision | null {
-  const ruleValue = actionKindRuleValue(actionKind);
-  if (overrides.deny.includes(ruleValue)) return 'deny';
-  if (overrides.ask?.includes(ruleValue)) return 'ask';
-  if (overrides.allow.includes(ruleValue)) return 'allow';
-  return null;
-}
-
-export function safetyModeDefaultActionDecision(
-  actionKind: AgentToolActionKind,
-  safetyMode: AgentSafetyMode,
-  actionDefault: GlobalToolPermissionDecision = defaultActionDecision(actionKind),
-): GlobalToolPermissionDecision {
-  if (actionDefault === 'deny') return 'deny';
-  if (safetyMode === 'balanced') return actionDefault;
-  if (safetyMode === 'ask_first') {
-    return ASK_FIRST_ASK_ACTIONS.has(actionKind) ? 'ask' : actionDefault;
-  }
-  if (FULL_ACCESS_ALLOW_ACTIONS.has(actionKind)) return 'allow';
-  return actionDefault;
-}
-
-export function effectiveActionDecision(
-  actionKind: AgentToolActionKind,
-  safetyMode: AgentSafetyMode,
-  overrides: AgentPermissionDecisionOverrides,
-  actionDefault?: GlobalToolPermissionDecision,
-): GlobalToolPermissionDecision {
-  return explicitActionDecision(actionKind, overrides)
-    ?? safetyModeDefaultActionDecision(actionKind, safetyMode, actionDefault);
 }

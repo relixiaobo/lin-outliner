@@ -1,58 +1,56 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
-let userData = '';
+const userData = '/tmp/lin-agent-tool-permission-store-test';
 
 mock.module('electron', () => ({
   app: { getPath: () => userData },
 }));
 
 const {
-  appendAgentToolPermissionAllowRule,
+  appendAgentToolPermissionGrant,
   readAgentToolPermissionSettings,
   writeAgentToolPermissionSettings,
 } = await import('../../src/main/agentToolPermissionStore');
 
-beforeEach(async () => {
-  userData = await mkdtemp(path.join(tmpdir(), 'tenon-permissions-'));
-});
-
-afterEach(async () => {
-  await rm(userData, { recursive: true, force: true });
-});
-
 describe('agent tool permission store', () => {
-  test('persists the global permission file as private JSON', async () => {
+  beforeEach(async () => {
+    await fs.rm(userData, { recursive: true, force: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(userData, { recursive: true, force: true });
+  });
+
+  test('persists narrow grants as private JSON', async () => {
     await writeAgentToolPermissionSettings({
-      permissions: { allow: ['Action(file.read.allowed_file_area)'], ask: [], deny: [] },
+      grants: ['Scope(read:/tmp/project)', 'External(git:origin)'],
     });
 
     const filePath = path.join(userData, 'agent-tool-permissions.json');
     expect(await readAgentToolPermissionSettings()).toEqual({
-      permissions: { allow: ['Action(file.read.allowed_file_area)'], ask: [], deny: [] },
+      grants: ['Scope(read:/tmp/project)', 'External(git:origin)'],
     });
+
     if (process.platform !== 'win32') {
-      expect((await stat(path.dirname(filePath))).mode & 0o777).toBe(0o700);
-      expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+      const stat = await fs.stat(filePath);
+      expect(stat.mode & 0o777).toBe(0o600);
     }
   });
 
-  test('serializes concurrent allow-rule appends without dropping a rule', async () => {
+  test('serializes concurrent grant appends without dropping a grant', async () => {
     await Promise.all([
-      appendAgentToolPermissionAllowRule('Action(file.read.allowed_file_area)'),
-      appendAgentToolPermissionAllowRule('Action(shell.project_script)'),
-      appendAgentToolPermissionAllowRule('Action(web.fetch)'),
+      appendAgentToolPermissionGrant('Scope(read:/tmp/project)'),
+      appendAgentToolPermissionGrant('Command(npm test)'),
+      appendAgentToolPermissionGrant('External(git:origin)'),
     ]);
 
-    const raw = JSON.parse(await readFile(path.join(userData, 'agent-tool-permissions.json'), 'utf8')) as {
-      permissions?: { allow?: string[] };
-    };
-    expect(raw.permissions?.allow?.sort()).toEqual([
-      'Action(file.read.allowed_file_area)',
-      'Action(shell.project_script)',
-      'Action(web.fetch)',
+    const settings = await readAgentToolPermissionSettings();
+    expect(settings.grants?.sort()).toEqual([
+      'Command(npm test)',
+      'External(git:origin)',
+      'Scope(read:/tmp/project)',
     ]);
   });
 });

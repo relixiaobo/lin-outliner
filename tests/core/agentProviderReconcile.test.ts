@@ -80,18 +80,18 @@ afterEach(async () => {
 });
 
 describe('provider config startup reconcile (Part A)', () => {
-  test('normalizes legacy app-level permission modes into safety modes', async () => {
+  test('drops legacy app-level permission modes from runtime settings', async () => {
     await writeProviderFileRaw({
       agent: { permissionMode: 'restricted' },
       providers: [],
     });
-    expect(await getAgentRuntimeSettings()).toMatchObject({ safetyMode: 'ask_first' });
+    expect(await getAgentRuntimeSettings()).not.toHaveProperty('safetyMode');
 
     await writeProviderFileRaw({
       agent: { permissionMode: 'trusted' },
       providers: [],
     });
-    expect(await getAgentRuntimeSettings()).toMatchObject({ safetyMode: 'balanced' });
+    expect(await getAgentRuntimeSettings()).not.toHaveProperty('safetyMode');
   });
 
   test('prunes a keyless junk row and clears the active pointer', async () => {

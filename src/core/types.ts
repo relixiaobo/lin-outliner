@@ -788,7 +788,6 @@ export interface AgentMemoryEntryView {
 }
 
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-export type AgentSafetyMode = 'ask_first' | 'balanced' | 'full_access';
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentDelegationPermissionMode = 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';
@@ -801,7 +800,6 @@ export type AgentCacheRetention = 'none' | 'short' | 'long';
 export type AgentMemoryIsolation = 'global' | 'read-only-global';
 
 export interface AgentRuntimeSettings {
-  safetyMode: AgentSafetyMode;
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
@@ -817,7 +815,6 @@ export interface AgentRuntimeSettings {
 }
 
 export interface AgentRuntimeSettingsInput {
-  safetyMode?: AgentSafetyMode;
   /** Legacy app-level setting, normalized at read/write time. */
   permissionMode?: AgentPermissionMode;
   automaticSkillsEnabled?: boolean;

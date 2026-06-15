@@ -357,16 +357,8 @@ describe('agent runtime past chats integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'I want to test the Dream feature.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-    ));
-    if (!approvalEvent) throw new Error('Expected Dream approval request.');
-    expect(approvalEvent.request.toolName).toBe('dream');
-    expect(approvalEvent.request.title).toBe('Approve Memory Dream?');
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
-    await sendPromise;
+    await runtime.sendMessage(created.conversationId, 'I want to test the Dream feature.');
+    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
 
     const replay = await new AgentEventStore(dataRoot).replay(created.conversationId);
     const activePath = getAgentEventActivePath(replay);

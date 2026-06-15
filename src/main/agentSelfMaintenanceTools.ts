@@ -151,9 +151,6 @@ export function normalizeRuntimeSettingPatch(setting: string, value: unknown): A
     case 'agent.runtime.memoryIsolation':
       if (value === 'global' || value === 'read-only-global') return { memoryIsolation: value };
       throw new Error(`${setting} must be "global" or "read-only-global".`);
-    case 'agent.runtime.safetyMode':
-      if (value === 'ask_first' || value === 'balanced' || value === 'full_access') return { safetyMode: value };
-      throw new Error(`${setting} must be "ask_first", "balanced", or "full_access".`);
     case 'agent.runtime.automaticSkillsEnabled':
       return { automaticSkillsEnabled: requireBoolean(setting, value) };
     case 'agent.runtime.slashSkillsEnabled':
@@ -182,8 +179,6 @@ export function readRuntimeSetting(settings: AgentRuntimeSettings, setting: stri
       return settings.compactEnabled;
     case 'agent.runtime.memoryIsolation':
       return settings.memoryIsolation;
-    case 'agent.runtime.safetyMode':
-      return settings.safetyMode;
     case 'agent.runtime.automaticSkillsEnabled':
       return settings.automaticSkillsEnabled;
     case 'agent.runtime.slashSkillsEnabled':

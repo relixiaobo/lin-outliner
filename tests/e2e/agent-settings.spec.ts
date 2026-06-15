@@ -38,7 +38,7 @@ test.describe('agent settings window', () => {
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'Exceptions' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Default' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -50,7 +50,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'Exceptions' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Default' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -138,50 +138,16 @@ test.describe('agent settings window', () => {
     });
   }
 
-  test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
+  test('shows delegated-operator permissions without mode or exception controls', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await settings.getByText('Add an exception').click();
-    const content = settings.locator('.settings-content');
-    const popups = settings.locator('.settings-permissions-section .select-popup-input');
-    await expect(popups).toHaveCount(9);
-
-    const firstBox = await popups.first().boundingBox();
-    const lastBox = await popups.last().boundingBox();
-    expect(firstBox).not.toBeNull();
-    expect(lastBox).not.toBeNull();
-    expect(lastBox!.width).toBeCloseTo(firstBox!.width, 1);
-
-    await content.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-    const contentBox = await content.boundingBox();
-    const scrolledLastBox = await popups.last().boundingBox();
-    expect(contentBox).not.toBeNull();
-    expect(scrolledLastBox).not.toBeNull();
-    expect(scrolledLastBox!.y + scrolledLastBox!.height).toBeLessThan(contentBox!.y + contentBox!.height - 6);
-  });
-
-  test('shows effective safety-mode decisions and resets custom exceptions', async ({ page }) => {
-    const settings = await openSettings(page);
-    await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'Default' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Default' })).toContainText('Delegated operator');
     await expect(settings.getByText("Some actions are always blocked and can't be changed here.")).toBeVisible();
-    await settings.getByRole('radio', { name: 'Full Access' }).click();
-    await settings.getByText('Add an exception').click();
-    await expect(settings.getByText('Action Catalog')).toHaveCount(0);
-    await expect(settings.getByRole('list', { name: 'Actions' })).toBeVisible();
+    await expect(settings.getByRole('radio', { name: 'Full Access' })).toHaveCount(0);
+    await expect(settings.getByText('Add an exception')).toHaveCount(0);
+    await expect(settings.locator('.settings-permissions-section .select-popup-input')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Remembered grants' })).toContainText('No remembered grants yet.');
 
-    const fetchRow = settings.locator('.inset-row', { hasText: 'Fetch web pages' });
-    await expect(fetchRow.locator('.settings-chip', { hasText: 'Always allow' })).toBeVisible();
-
-    const ruleValue = 'Action(file.read.outside_allowed_file_area)';
-    const outsideReadRow = settings.locator('.inset-row', { hasText: 'Read outside allowed area' });
-    await outsideReadRow.locator('.select-popup-input').selectOption('allow');
-    await expect(settings.getByText('Custom')).toBeVisible();
-    await expect(settings.getByText('Based on Full Access')).toBeVisible();
-    await expect(settings.getByRole('list', { name: 'Exceptions' })
-      .locator('.inset-row', { hasText: 'Read outside allowed area' })).toBeVisible();
     const modeRowMetrics = await settings.locator('.settings-permission-mode-row').evaluate((row) => {
       const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
       if (!sublabel) {
@@ -196,36 +162,33 @@ test.describe('agent settings window', () => {
     expect(modeRowMetrics).not.toBeNull();
     expect(modeRowMetrics!.sublabelWidth).toBeGreaterThanOrEqual(300);
     expect(modeRowMetrics!.sublabelHeight).toBeLessThan(48);
+  });
+
+  test('revokes remembered permission grants through the Security pane', async ({ page }) => {
+    const settings = await openSettings(page, '', {
+      permissionGrants: ['Scope(read:/tmp/project)', 'External(git push origin main)'],
+    });
+    await settings.getByRole('button', { name: /^Security/ }).click();
+    const grants = settings.getByRole('list', { name: 'Remembered grants' });
+    await expect(grants).toContainText('Scope(read:/tmp/project)');
+
+    await grants.locator('.inset-row', { hasText: 'Scope(read:/tmp/project)' }).getByRole('button', { name: 'Revoke' }).click();
+    await expect(grants).not.toContainText('Scope(read:/tmp/project)');
+    await expect(grants).toContainText('External(git push origin main)');
 
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_update_tool_permission_settings')?.args;
-    }).toMatchObject({
-      settings: {
-        permissions: {
-          allow: [ruleValue],
-        },
-      },
-    });
+      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_update_tool_permission_settings');
+      return updateCall?.args.settings;
+    }).toEqual({ grants: ['External(git push origin main)'] });
+  });
 
-    await settings.getByRole('button', { name: 'Reset to Full Access' }).click();
-    await settings.getByRole('button', { name: 'Save', exact: true }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.filter((call) => call.cmd === 'agent_update_tool_permission_settings').at(-1)?.args;
-    }).toMatchObject({
-      settings: {
-        permissions: {
-          allow: [],
-          ask: [],
-          deny: [],
-        },
-      },
-    });
-    await expect(settings.getByRole('list', { name: 'Exceptions' })
-      .locator('.inset-row', { hasText: 'Read outside allowed area' })).toHaveCount(0);
+  test('shows ignored legacy permission rules as diagnostics', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: /^Security/ }).click();
+    const ignoredRules = settings.getByRole('list', { name: 'Ignored JSON rules' });
+    await expect(ignoredRules).toBeVisible();
+    await expect(ignoredRules.locator('.inset-row', { hasText: 'Action(file.read.outside_allowed_file_area)' })).toContainText('unsupported_grant');
   });
 
   test('opens agent config from the Agent Profiles list', async ({ page }) => {

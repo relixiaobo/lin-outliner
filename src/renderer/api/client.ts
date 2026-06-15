@@ -11,6 +11,7 @@ import type {
   AgentMemoryEntryView,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
+  AgentToolPermissionSettingsInput,
   AgentToolPermissionSettingsView,
   AgentDefinition,
   AgentDefinitionView,
@@ -389,7 +390,7 @@ export const api = {
     command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
   agentGetToolPermissionSettings: () =>
     command<AgentToolPermissionSettingsView>('agent_get_tool_permission_settings'),
-  agentUpdateToolPermissionSettings: (settings: AgentToolPermissionSettingsView) =>
+  agentUpdateToolPermissionSettings: (settings: AgentToolPermissionSettingsInput) =>
     command<AgentToolPermissionSettingsView>('agent_update_tool_permission_settings', { settings }),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
     command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),

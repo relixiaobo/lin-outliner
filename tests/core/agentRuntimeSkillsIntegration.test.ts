@@ -1235,7 +1235,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          safetyMode: 'full_access',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1258,7 +1257,7 @@ describe('agent runtime skill integration', () => {
     expect(noticeEvent.request.toolName).toBe('bash');
     expect(noticeEvent.request.target).toContain('$(cat ./script.sh)');
     expect(followUpContexts.join('\n')).toContain('permission_denied');
-    expect(followUpContexts.join('\n')).toContain('Unknown or ambiguous shell execution.');
+    expect(followUpContexts.join('\n')).toContain('Dynamic or ambiguous shell execution.');
 
     await runtime.resolveApproval(created.conversationId, noticeEvent.requestId, false);
 
@@ -1312,7 +1311,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          safetyMode: 'full_access',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1386,7 +1384,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          safetyMode: 'full_access',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1470,22 +1467,22 @@ describe('agent runtime skill integration', () => {
     ));
     if (!approvalEvent) throw new Error('Expected approval request event.');
 
-    expect(approvalEvent.request.alwaysAllowRule).toBe('Action(file.delete.allowed_file_area)');
+    expect(approvalEvent.request.alwaysAllowRule).toBe('Command(rm -rf ./dist)');
 
     await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true, 'always');
     await sendPromise;
 
     const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), 'utf8')) as {
-      permissions?: { allow?: string[] };
+      grants?: string[];
     };
-    expect(settings.permissions?.allow).toContain('Action(file.delete.allowed_file_area)');
+    expect(settings.grants).toContain('Command(rm -rf ./dist)');
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
       event.type === 'tool.permission.resolved'
       && event.status === 'approved'
       && event.resolvedBy === 'allow_rule_update'
-      && event.updatedRule === 'Action(file.delete.allowed_file_area)'
+      && event.updatedRule === 'Command(rm -rf ./dist)'
     ))).toBe(true);
   });
 
@@ -1549,7 +1546,7 @@ describe('agent runtime skill integration', () => {
 
     expect(sink.events.some((event) => (
       event.type === 'error'
-      && event.error.includes('Failed to persist always-allow rule; approved once instead.')
+      && event.error.includes('Failed to persist permission grant; approved once instead.')
     ))).toBe(true);
     expect(sink.events.some((event) => (
       event.type === 'approval_resolved'
@@ -1566,15 +1563,13 @@ describe('agent runtime skill integration', () => {
     ))).toBe(true);
   });
 
-  test('records configured global allow distinctly with all compound shell action kinds', async () => {
+  test('records remembered grants distinctly with all compound shell action kinds', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-global-allow-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-global-allow-data-'));
     roots.push(localRoot, dataRoot);
     await mkdir(electronUserDataRoot, { recursive: true });
     await writeFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), JSON.stringify({
-      permissions: {
-        allow: ['Action(file.delete.allowed_file_area)'],
-      },
+      grants: ['Command(ls && rm -rf ./dist)'],
     }));
 
     const script = scriptedStream(
@@ -1624,15 +1619,15 @@ describe('agent runtime skill integration', () => {
     expect(events.some((event) => (
       event.type === 'tool.permission.checked'
       && event.outcome === 'allow'
-      && event.source === 'global_rule'
+      && event.source === 'trust_ledger'
       && event.primaryActionKind === 'file.delete.allowed_file_area'
-      && event.actionKinds.includes('shell.read_search')
+      && event.actionKinds.includes('shell.unknown')
       && event.actionKinds.includes('file.delete.allowed_file_area')
     ))).toBe(true);
     expect(events.some((event) => (
       event.type === 'tool.permission.resolved'
       && event.status === 'approved'
-      && event.resolvedBy === 'global_rule'
+      && event.resolvedBy === 'trust_ledger'
     ))).toBe(true);
   });
 

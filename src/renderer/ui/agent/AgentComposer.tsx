@@ -780,24 +780,13 @@ function AgentApprovalCard({
 }) {
   const t = useT();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | 'full_access' | null>(null);
+  const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | null>(null);
 
   async function resolve(approved: boolean, scope: AgentApprovalResolutionScope = 'once') {
     if (submitting) return;
     setSubmitting(approved ? scope : 'deny');
     try {
       await onResolve(approval.requestId, approved, scope);
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  async function stopAsking() {
-    if (submitting) return;
-    if (!window.confirm(t.agent.composer.fullAccessConfirm)) return;
-    setSubmitting('full_access');
-    try {
-      await onResolve(approval.requestId, true, 'full_access');
     } finally {
       setSubmitting(null);
     }
@@ -899,17 +888,9 @@ function AgentApprovalCard({
                 onClick={() => void resolve(true, 'always')}
                 type="button"
               >
-                {t.agent.composer.alwaysAllow}
+                {t.agent.composer.alwaysAllowBoundary}
               </button>
             ) : null}
-            <button
-              className="agent-approval-button"
-              disabled={!!submitting}
-              onClick={() => void stopAsking()}
-              type="button"
-            >
-              {t.agent.composer.stopAsking}
-            </button>
             <button
               className="agent-approval-button"
               disabled={!!submitting}

@@ -336,7 +336,7 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'always' | 'full_access';
+export type AgentApprovalResolutionScope = 'once' | 'always';
 export type AgentApprovalRequestKind = 'tool_permission' | 'skill_trust' | 'permission_notice';
 
 export interface AgentApprovalRequestDetail {

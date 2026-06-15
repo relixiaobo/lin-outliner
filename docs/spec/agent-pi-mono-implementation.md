@@ -752,28 +752,12 @@ is not the security boundary.
 
 ## Approval Flow
 
-Some tools should be allowed immediately; others should pause the agent until
-the user approves.
+Tool permissions use the consequence-based gate in
+`agent-tool-permissions.md`. Local reversible work is allowed immediately,
+commits pause the run until the user approves, and safety-floor actions are
+denied before execution.
 
-Likely immediate tools:
-
-- Read outliner nodes with `node_read`.
-- Search outliner content with `node_search`.
-- List operation history.
-- Read or update explicit local agent memory with `memory`.
-- Read files under the workspace when permission mode allows it.
-- Search or fetch the web when web access is enabled.
-
-Likely approval tools:
-
-- Node creation or edit that mutates document state.
-- Node deletion.
-- Undo or redo that affects user-origin operations.
-- File write or edit.
-- Shell command with side effects.
-- Shell command outside a known safe allowlist.
-
-Approval flow:
+Flow:
 
 ```txt
 Tool call starts
@@ -786,11 +770,9 @@ Tool call starts
   -> pi-agent-core continues
 ```
 
-Rejected tools should return a normal tool result that says the user denied the
-operation. The agent can then explain or propose a safer alternative.
-
-Approval events are part of the schema, but the current main branch has not
-enabled the approval UI/runtime pause flow yet.
+Rejected or unattended approval-required tools return a normal tool result that
+says permission was denied. The agent can then explain or propose a safer
+alternative.
 
 ## Event Mapping
 
