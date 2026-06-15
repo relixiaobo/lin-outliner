@@ -379,8 +379,7 @@
 }
 
 .agent-debug-status-pill.is-error,
-.agent-debug-status-pill.is-aborted,
-.agent-debug-status-pill.is-interrupted {
+.agent-debug-status-pill.is-aborted {
   background: color-mix(in srgb, var(--status-danger) 12%, transparent);
   color: var(--danger);
 }
@@ -508,8 +507,7 @@
 }
 
 .agent-debug-round-meta .agent-debug-status-pill.is-error,
-.agent-debug-round-meta .agent-debug-status-pill.is-aborted,
-.agent-debug-round-meta .agent-debug-status-pill.is-interrupted {
+.agent-debug-round-meta .agent-debug-status-pill.is-aborted {
   color: var(--danger);
 }
 
@@ -771,6 +769,18 @@
   gap: var(--space-5);
   border-top: 1px solid var(--border-subtle);
   padding: var(--space-6);
+}
+
+/* The run's request-context block: system-prompt + tools disclosures grouped. */
+.agent-debug-context-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--fill-1);
 }
 
 .agent-debug-run-body {

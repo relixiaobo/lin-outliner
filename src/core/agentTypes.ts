@@ -190,7 +190,7 @@ export interface AgentChildRunActionResult {
   instructions?: string;
 }
 
-export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted' | 'interrupted';
+export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted';
 
 export type AgentDebugMessagePart =
   | { kind: 'text'; body: string; isReminder?: boolean }
@@ -204,7 +204,6 @@ export interface AgentDebugMessageRow {
   id: string;
   role: string;
   summary: string;
-  json: string;
   bytes: number;
   parts: AgentDebugMessagePart[];
 }
@@ -223,10 +222,6 @@ export interface AgentDebugUsage {
   cacheWrite: number;
   totalTokens: number;
   costUsd: number;
-  costInputUsd: number;
-  costOutputUsd: number;
-  costCacheReadUsd: number;
-  costCacheWriteUsd: number;
 }
 
 export interface AgentDebugTotals extends AgentDebugUsage {
@@ -252,20 +247,6 @@ export interface AgentDebugToolExchange {
   isError: boolean;
 }
 
-/** Transport metadata for one provider call, captured from onResponse (always on). */
-export interface AgentDebugTransport {
-  status: number | null;
-  latencyMs: number | null;
-  requestId: string | null;
-}
-
-/** The byte-exact outbound wire payload for a round (gated capture; may be absent). */
-export interface AgentDebugRoundWire {
-  payloadRef?: AgentPayloadRef;
-  bytes: number;
-  hash: string;
-}
-
 /** One provider call = one (request, response) pair. The atomic unit of the view. */
 export interface AgentDebugRound {
   index: number;
@@ -273,7 +254,6 @@ export interface AgentDebugRound {
   messageId: string;
   provider: string;
   modelId: string;
-  api: string | null;
   status: AgentDebugTurnStatus;
   /** The NEW context the model saw entering this round (triggering / prior tool-result messages). */
   requestWindow: AgentDebugMessageRow[];
@@ -282,8 +262,6 @@ export interface AgentDebugRound {
   stopReason: string | null;
   usage: AgentDebugUsage | null;
   toolExchanges: AgentDebugToolExchange[];
-  transport: AgentDebugTransport | null;
-  wire: AgentDebugRoundWire | null;
   startedAt: number;
   completedAt: number | null;
 }
@@ -296,8 +274,6 @@ export interface AgentDebugRun {
   status: AgentDebugTurnStatus;
   parentRunId: string | null;
   parentToolCallId: string | null;
-  addressedByMessageId: string | null;
-  triggerMessageId: string | null;
   provider: string | null;
   modelId: string | null;
   usage: AgentDebugUsage | null;
@@ -323,8 +299,6 @@ export interface AgentDebugRunSummary
     | 'status'
     | 'parentRunId'
     | 'parentToolCallId'
-    | 'addressedByMessageId'
-    | 'triggerMessageId'
     | 'provider'
     | 'modelId'
     | 'usage'

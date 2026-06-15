@@ -15,6 +15,7 @@ import type {
 } from '../core/agentTypes';
 import type { AgentEvent, AgentPersistedContent, DebugRunToolSchema } from '../core/agentEventLog';
 import type { AgentRunMetaProjection } from './agentEventStore';
+import { redactSecretLikeContent } from './agentSecretRedaction';
 
 // Run-grounded debug derivation ([[agent-debug-run-grounded]]): pure transforms
 // from a run's own event stream + meta into the execution-tree view. The unit is
@@ -83,15 +84,12 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
           messageId: event.messageId,
           provider: event.providerId,
           modelId: event.modelId,
-          api: typeof event.apiId === 'string' ? event.apiId : null,
           status: 'running',
           requestWindow: pendingWindow,
           responseParts: [],
           stopReason: null,
           usage: null,
           toolExchanges: [],
-          transport: null,
-          wire: null,
           startedAt: event.createdAt,
           completedAt: null,
         };
@@ -153,11 +151,12 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     status: runStatus(meta.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId: context.parentToolCallId ?? null,
-    addressedByMessageId: addressedByMessageId(events),
-    triggerMessageId: triggerMessageId(meta),
     provider: lastRound?.provider ?? null,
     modelId: lastRound?.modelId ?? null,
-    usage: usageToDebugUsage(meta.usage),
+    // `meta.usage` is only written when a run terminates; while it streams, roll
+    // up the rounds' own usage so the summary/totals stay live (and never lag the
+    // per-round detail the user can already see).
+    usage: usageToDebugUsage(meta.usage) ?? aggregateRoundUsage(rounds),
     createdAt: meta.createdAt,
     systemPrompt: context.snapshot?.systemPrompt ?? null,
     tools: context.snapshot?.tools ?? [],
@@ -178,8 +177,6 @@ export function summarizeDebugRun(run: AgentDebugRun): AgentDebugRunSummary {
     status: run.status,
     parentRunId: run.parentRunId,
     parentToolCallId: run.parentToolCallId,
-    addressedByMessageId: run.addressedByMessageId,
-    triggerMessageId: run.triggerMessageId,
     provider: run.provider,
     modelId: run.modelId,
     usage: run.usage,
@@ -207,7 +204,10 @@ export function deriveDebugConversation(
  * The once-per-run request context the ledger lacks: the agent's outbound system
  * prompt + tool schemas, pulled from the raw provider payload at capture time
  * ([[agent-debug-run-grounded]]). The message window is already event-sourced, so
- * we keep only system + tools. Tolerant of Anthropic / OpenAI payload shapes.
+ * we keep only system + tools. Tolerant of both provider shapes: Anthropic puts
+ * the system prompt at the top level (`system`), while the OpenAI providers
+ * (responses / completions) fold it into the message array as a `system` /
+ * `developer` role entry — so we fall back to scanning `input` / `messages`.
  */
 export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt: string; tools: DebugRunToolSchema[] } {
   if (!isRecord(payload)) return { systemPrompt: '', tools: [] };
@@ -215,8 +215,22 @@ export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt:
     extractSystemPrompt(payload.system),
     extractSystemPrompt(payload.instructions),
     extractSystemPrompt(payload.systemPrompt),
+    extractSystemFromMessages(payload.input),
+    extractSystemFromMessages(payload.messages),
   ]);
   return { systemPrompt, tools: extractTools(payload.tools) };
+}
+
+/** OpenAI-style fold: the system prompt is a `system`/`developer` role message. */
+function extractSystemFromMessages(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+  return value
+    .map((item) => {
+      if (!isRecord(item) || (item.role !== 'system' && item.role !== 'developer')) return '';
+      return extractSystemPrompt(item.content);
+    })
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /**
@@ -312,22 +326,30 @@ function persistedText(content: readonly AgentPersistedContent[]): string {
 }
 
 function messageRow(id: string, role: string, parts: AgentDebugMessagePart[]): AgentDebugMessageRow {
-  const json = stableJson(parts);
-  return { id, role, summary: summarize(role, parts), json, bytes: byteLength(json), parts };
+  return { id, role, summary: summarize(role, parts), bytes: byteLength(stableJson(parts)), parts };
 }
 
 function toolResultRow(messageId: string, toolCallId: string, toolName: string, body: string, isError: boolean): AgentDebugMessageRow {
   // toolUseId must be the tool CALL id (so the result links to its call), not the
   // result message id — those are distinct ids on a tool_result event.
   const parts: AgentDebugMessagePart[] = [{ kind: 'toolResult', toolUseId: toolCallId, body, isError }];
-  return { id: messageId, role: 'tool', summary: `tool: ${toolName}`, json: stableJson(parts), bytes: byteLength(body), parts };
+  // bytes measure the serialized parts (same basis as messageRow), so a tool row's
+  // context cost is comparable with every other request-window row.
+  return { id: messageId, role: 'tool', summary: `tool: ${toolName}`, bytes: byteLength(stableJson(parts)), parts };
 }
 
 /**
  * Attach a tool result to its exchange. A `tool_result.created` lands on the
- * round still in flight; a `tool_result.replaced` (output slimming) can arrive
- * after the next round opened, so we search every round, newest first. `isError`
- * is left untouched when undefined (replacements don't restate it).
+ * round still in flight; a `tool_result.replaced` (output slimming, stamped with
+ * its producing run's id) lands on whichever earlier round made the call — so we
+ * search the in-flight round first, then the rest. `isError` is left untouched
+ * when undefined (replacements don't restate it).
+ *
+ * Only a `.created` (which carries `toolName`) may OPEN an exchange — a result
+ * arriving before its round's `.completed` seeded the call. A `.replaced`
+ * (toolName undefined) only patches an existing exchange; if it matches none in
+ * this run (it was slimmed during a different run, so its call lives elsewhere),
+ * it is dropped rather than fabricating an empty-named phantom exchange.
  */
 function recordToolResult(
   rounds: readonly AgentDebugRound[],
@@ -346,10 +368,8 @@ function recordToolResult(
       return;
     }
   }
-  // No seeded exchange (result before the round's .completed): open one on the
-  // round in flight. A replacement with no live round has nowhere to land.
-  if (current) {
-    current.toolExchanges.push({ toolCallId, toolName: toolName ?? '', args: '', result, isError: isError === true });
+  if (current && toolName !== undefined) {
+    current.toolExchanges.push({ toolCallId, toolName, args: '', result, isError: isError === true });
   }
 }
 
@@ -362,31 +382,29 @@ function usageToDebugUsage(usage: Usage | undefined): AgentDebugUsage | null {
     cacheWrite: usage.cacheWrite ?? 0,
     totalTokens: usage.totalTokens ?? 0,
     costUsd: usage.cost?.total ?? 0,
-    costInputUsd: usage.cost?.input ?? 0,
-    costOutputUsd: usage.cost?.output ?? 0,
-    costCacheReadUsd: usage.cost?.cacheRead ?? 0,
-    costCacheWriteUsd: usage.cost?.cacheWrite ?? 0,
   };
+}
+
+/** Roll up the rounds' own usage — the live total before `meta.usage` is written. */
+function aggregateRoundUsage(rounds: readonly AgentDebugRound[]): AgentDebugUsage | null {
+  const withUsage = rounds.filter((round): round is AgentDebugRound & { usage: AgentDebugUsage } => round.usage !== null);
+  if (withUsage.length === 0) return null;
+  const totals: AgentDebugUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
+  for (const round of withUsage) addUsage(totals, round.usage);
+  return totals;
 }
 
 function emptyDebugTotals(): AgentDebugTotals {
-  return {
-    queries: 0, rounds: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-    totalTokens: 0, costUsd: 0, costInputUsd: 0, costOutputUsd: 0, costCacheReadUsd: 0, costCacheWriteUsd: 0,
-  };
+  return { queries: 0, rounds: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
 }
 
-function addUsage(totals: AgentDebugTotals, usage: AgentDebugUsage) {
+function addUsage(totals: AgentDebugUsage, usage: AgentDebugUsage) {
   totals.input += usage.input;
   totals.output += usage.output;
   totals.cacheRead += usage.cacheRead;
   totals.cacheWrite += usage.cacheWrite;
   totals.totalTokens += usage.totalTokens;
   totals.costUsd += usage.costUsd;
-  totals.costInputUsd += usage.costInputUsd;
-  totals.costOutputUsd += usage.costOutputUsd;
-  totals.costCacheReadUsd += usage.costCacheReadUsd;
-  totals.costCacheWriteUsd += usage.costCacheWriteUsd;
 }
 
 function statusFromStopReason(stopReason: unknown): AgentDebugTurnStatus {
@@ -400,17 +418,6 @@ function runStatus(status: string): AgentDebugTurnStatus {
   if (status === 'failed') return 'error';
   if (status === 'cancelled') return 'aborted';
   return 'completed';
-}
-
-function triggerMessageId(meta: AgentRunMetaProjection): string | null {
-  return meta.trigger.type === 'message' ? meta.trigger.messageId : null;
-}
-
-function addressedByMessageId(events: readonly AgentEvent[]): string | null {
-  for (const event of events) {
-    if (event.type === 'run.started' && typeof event.addressedByMessageId === 'string') return event.addressedByMessageId;
-  }
-  return null;
 }
 
 function summarize(role: string, parts: AgentDebugMessagePart[]): string {
@@ -437,9 +444,14 @@ function stableJson(value: unknown): string {
 // (read-only but on-screen) debug view. Mirrors the old agentDebug sanitizer.
 const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|secret|password|token/i;
 
-/** Pretty-print a value with secret-bearing keys redacted, recursively. */
+/**
+ * Pretty-print a value with secrets redacted, recursively. Two complementary
+ * passes: by key NAME (`api_key: …`), then by VALUE PATTERN over the serialized
+ * text ({@link redactSecretLikeContent}) to catch credentials embedded in a
+ * free-text field (e.g. a `Bearer sk-…` inside a tool's `command` argument).
+ */
 function sanitizedJson(value: unknown): string {
-  return stableJson(redactSecrets(value));
+  return redactSecretLikeContent(stableJson(redactSecrets(value)));
 }
 
 function redactSecrets(value: unknown): unknown {
@@ -452,8 +464,10 @@ function redactSecrets(value: unknown): unknown {
   return output;
 }
 
+const TEXT_ENCODER = new TextEncoder();
+
 function byteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return TEXT_ENCODER.encode(value).byteLength;
 }
 
 function truncate(value: string, maxLength: number): string {

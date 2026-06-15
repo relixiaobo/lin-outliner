@@ -135,6 +135,51 @@ describe('deriveDebugRounds', () => {
     expect(rounds[0]!.toolExchanges[0]).toMatchObject({ toolCallId: 'call-1', result: 'slim output', isError: true });
   });
 
+  test('a tool_result.replaced with no matching call is dropped, not made into a phantom exchange', () => {
+    seqCounter = 0;
+    const runId = 'run-orphan-replace';
+    // Slimming of a tool result produced in a DIFFERENT run lands in this run's
+    // stream (stamped with the active run) but matches no call here — it must be
+    // ignored, never fabricate an empty-named exchange on the in-flight round.
+    const events: AgentEvent[] = [
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
+      ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
+      ev('tool_result.replaced', { runId, messageId: 'tr-foreign', toolCallId: 'call-from-another-run', content: [{ type: 'text', text: 'slim' }], outputSummary: '' }),
+      ev('assistant_message.completed', { runId, messageId: 'a1', parentMessageId: 'u1', stopReason: 'stop', content: [{ type: 'text', text: 'ok' }] }),
+      ev('run.completed', { runId }),
+    ];
+    const rounds = deriveDebugRounds(events);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]!.toolExchanges).toHaveLength(0);
+  });
+
+  test('redacts secrets in tool-call arguments by key name AND inline value pattern', () => {
+    seqCounter = 0;
+    const runId = 'run-secret';
+    const events: AgentEvent[] = [
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'go' }] }, userActor),
+      ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
+      ev('assistant_message.completed', {
+        runId, messageId: 'a1', parentMessageId: 'u1', stopReason: 'tool_use',
+        content: [{
+          type: 'toolCall', id: 'call-1', name: 'run_command',
+          // `api_key` is caught by key name; the inline bearer token is caught by
+          // the value-pattern pass even though `command` is not a secret key.
+          arguments: { api_key: 'super-secret', command: "curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123'" },
+        }],
+      }),
+      ev('run.completed', { runId }),
+    ];
+    const rounds = deriveDebugRounds(events);
+    const toolCall = rounds[0]!.responseParts.find((part) => part.kind === 'toolCall');
+    expect(toolCall?.body).toContain('[redacted]');
+    expect(toolCall?.body).toContain('[redacted secret-like content]');
+    expect(toolCall?.body).not.toContain('super-secret');
+    expect(toolCall?.body).not.toContain('sk-abcdefghijklmnopqrstuvwxyz0123');
+  });
+
 });
 
 describe('extractRunSnapshotFromPayload', () => {
@@ -155,6 +200,19 @@ describe('extractRunSnapshotFromPayload', () => {
     });
     expect(snapshot.systemPrompt).toBe('You are Tenon.');
     expect(snapshot.tools[0]).toMatchObject({ name: 'read_file', description: 'Read' });
+  });
+
+  test('reads an OpenAI message-folded system prompt (developer/system role in input)', () => {
+    // The OpenAI responses/completions providers fold the system prompt into the
+    // message array as a `developer` / `system` role entry — no top-level key.
+    const fromInput = extractRunSnapshotFromPayload({
+      input: [{ role: 'developer', content: 'You are Tenon.' }, { role: 'user', content: 'hi' }],
+    });
+    expect(fromInput.systemPrompt).toBe('You are Tenon.');
+    const fromMessages = extractRunSnapshotFromPayload({
+      messages: [{ role: 'system', content: 'Be concise.' }, { role: 'user', content: 'hi' }],
+    });
+    expect(fromMessages.systemPrompt).toBe('Be concise.');
   });
 
   test('degrades to empty on a non-record payload', () => {
@@ -199,6 +257,31 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     const summary = summarizeDebugRun(run);
     expect(summary).toMatchObject({ runId, agentId: 'built-in:tenon:assistant', kind: 'turn', roundCount: 1, createdAt: 1700 });
     expect(summary.provider).toBe('anthropic');
+  });
+
+  test('rolls up round usage when meta.usage is absent (in-flight run)', () => {
+    seqCounter = 0;
+    const runId = 'run-live-usage';
+    const events: AgentEvent[] = [
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
+      ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
+      ev('assistant_message.completed', { runId, messageId: 'a1', parentMessageId: 'u1', stopReason: 'tool_use', content: [{ type: 'text', text: 'one' }], usage: { input: 100, output: 10, totalTokens: 110, cost: { total: 0.01 } } }),
+      ev('assistant_message.started', { runId, messageId: 'a2', parentMessageId: 'a1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
+      ev('assistant_message.completed', { runId, messageId: 'a2', parentMessageId: 'a1', stopReason: 'stop', content: [{ type: 'text', text: 'two' }], usage: { input: 50, output: 5, totalTokens: 55, cost: { total: 0.005 } } }),
+    ];
+    // meta has NO usage (run not terminated) — the run total must still reflect
+    // the rounds the user can already see, not read zero.
+    const meta = {
+      v: 1, id: runId, agentId: 'built-in:tenon:assistant', kind: 'turn', status: 'running',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+      trigger: { type: 'message', messageId: 'u1' },
+      fingerprint: {}, retention: 'hot', createdAt: 1700, updatedAt: 1800, latestSeq: 6,
+    } as unknown as AgentRunMetaProjection;
+
+    const run = deriveDebugRun(events, { meta, snapshot: null, parentToolCallId: null });
+    expect(run.usage?.totalTokens).toBe(165);
+    expect(run.usage?.costUsd).toBeCloseTo(0.015, 5);
   });
 
   test('snapshotFromRunEvents returns null when no snapshot was captured', () => {

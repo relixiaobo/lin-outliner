@@ -341,6 +341,10 @@ describe('agent runtime skill integration', () => {
     const turnRuns = view.runs.filter((run) => run.kind === 'turn');
     expect(turnRuns.length).toBe(2);
     expect(view.totals.rounds).toBeGreaterThanOrEqual(2);
+    // Shape comes from the conversation's member ROSTER, not distinct run
+    // executors: a single-agent DM is 'dm' with one member ([[agent-debug-run-grounded]]).
+    expect(view.shape).toBe('dm');
+    expect(view.members).toHaveLength(1);
   });
 
   test('runs automatic skill loading through a real pi agent conversation and keeps compact replay short', async () => {

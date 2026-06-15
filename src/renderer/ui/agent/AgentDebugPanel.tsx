@@ -62,19 +62,16 @@ function truncate(text: string, maxLength = 120): string {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trim()}...` : trimmed;
 }
 
-/** A short, stable agent label + a 0–7 palette bucket for per-agent coloring. */
-function agentBadge(agentId: string): { label: string; tone: number } {
-  const label = agentId.split(':').pop() || agentId;
-  let hash = 0;
-  for (let i = 0; i < agentId.length; i += 1) hash = (hash * 31 + agentId.charCodeAt(i)) >>> 0;
-  return { label, tone: hash % 8 };
+/** A short, stable agent label — the name segment of the agentId. Attribution is
+ * by label, never color (design system B4). */
+function agentLabel(agentId: string): string {
+  return agentId.split(':').pop() || agentId;
 }
 
 function statusLabel(status: AgentDebugTurnStatus, labels: DebugLabels): string {
   if (status === 'running') return labels.statusRunning;
   if (status === 'completed') return labels.statusCompleted;
   if (status === 'aborted') return labels.statusAborted;
-  if (status === 'interrupted') return labels.statusInterrupted;
   return labels.statusError;
 }
 
@@ -144,12 +141,17 @@ function useDebugTimeline(conversationId: string | null) {
   useEffect(() => {
     const eventConversationId = conversationId ?? resolvedConversationId;
     if (!eventConversationId) return undefined;
+    // A live turn fires many tool_call / tool_result / projection events in quick
+    // succession; coalesce them with a trailing debounce so we re-derive the tree
+    // once the burst settles, not once per event.
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const unlisten = window.lin?.onAgentEvent((event: AgentRuntimeEvent) => {
       if (event.type !== 'projection' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') return;
       if (event.conversationId !== eventConversationId) return;
-      void refresh();
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; void refresh(); }, 200);
     });
-    return () => { unlisten?.(); };
+    return () => { if (timer) clearTimeout(timer); unlisten?.(); };
   }, [refresh, resolvedConversationId, conversationId]);
 
   return { conversation, error, loading, refresh, resolvedConversationId };
@@ -181,7 +183,13 @@ export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
 
   const tree = useMemo(() => buildRunTree(conversation?.runs ?? []), [conversation]);
-  const members = conversation?.members ?? [];
+  // Filterable agents are the ones that actually executed runs (so a delegated
+  // sub-agent is selectable), distinct from the conversation roster the Overview
+  // counts. Sorted for a stable chip order.
+  const runAgentIds = useMemo(
+    () => [...new Set((conversation?.runs ?? []).map((run) => run.agentId))].sort(),
+    [conversation],
+  );
 
   if (!conversationId && !resolvedConversationId && loading) {
     return (
@@ -198,7 +206,13 @@ export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
     );
   }
 
-  const visibleTree = agentFilter ? tree.filter((node) => node.run.agentId === agentFilter) : tree;
+  // When filtering by agent, show that agent's runs flat (a delegated sub-agent's
+  // run is never a tree root, so a root-only filter would hide it entirely).
+  const visibleTree: RunTreeNode[] = agentFilter
+    ? (conversation?.runs ?? [])
+        .filter((run) => run.agentId === agentFilter)
+        .map((run) => ({ run, children: [] }))
+    : tree;
 
   return (
     <div className="agent-debug-panel">
@@ -223,8 +237,8 @@ export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
       {conversation ? (
         <>
           <Overview conversation={conversation} labels={labels} />
-          {members.length > 1 ? (
-            <AgentFilter members={members} active={agentFilter} onChange={setAgentFilter} labels={labels} />
+          {runAgentIds.length > 1 ? (
+            <AgentFilter members={runAgentIds} active={agentFilter} onChange={setAgentFilter} labels={labels} />
           ) : null}
           <section className="agent-debug-run-stack" aria-label={labels.timelineAriaLabel}>
             {visibleTree.length === 0 ? (
@@ -259,20 +273,16 @@ function AgentFilter({ members, active, onChange, labels }: { members: string[];
       <button type="button" className={`agent-debug-chip${active === null ? ' is-active' : ''}`} onClick={() => onChange(null)}>
         {labels.filterAll}
       </button>
-      {members.map((agentId) => {
-        const { label, tone } = agentBadge(agentId);
-        return (
-          <button
-            key={agentId}
-            type="button"
-            className={`agent-debug-chip${active === agentId ? ' is-active' : ''}`}
-            data-tone={tone}
-            onClick={() => onChange(active === agentId ? null : agentId)}
-          >
-            {label}
-          </button>
-        );
-      })}
+      {members.map((agentId) => (
+        <button
+          key={agentId}
+          type="button"
+          className={`agent-debug-chip${active === agentId ? ' is-active' : ''}`}
+          onClick={() => onChange(active === agentId ? null : agentId)}
+        >
+          {agentLabel(agentId)}
+        </button>
+      ))}
     </div>
   );
 }
@@ -285,10 +295,9 @@ function RunNode({ node, conversationId, depth, labels }: { node: RunTreeNode; c
   const [detail, setDetail] = useState<AgentDebugRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { label, tone } = agentBadge(run.agentId);
 
   const loadDetail = useCallback(async () => {
-    if (detail || !conversationId) return;
+    if (!conversationId) return;
     setLoading(true);
     try {
       const next = await api.agentDebugRun(conversationId, run.runId);
@@ -299,7 +308,14 @@ function RunNode({ node, conversationId, depth, labels }: { node: RunTreeNode; c
     } finally {
       setLoading(false);
     }
-  }, [detail, conversationId, run.runId]);
+  }, [conversationId, run.runId]);
+
+  // Re-fetch the detail whenever the node is open AND the run's live shape
+  // advances (roundCount / status) — an expanded in-flight run must not freeze at
+  // its first-open snapshot while the head keeps ticking up.
+  useEffect(() => {
+    if (open) void loadDetail();
+  }, [open, run.roundCount, run.status, loadDetail]);
 
   return (
     <div className="agent-debug-run-node" data-depth={depth}>
@@ -307,10 +323,10 @@ function RunNode({ node, conversationId, depth, labels }: { node: RunTreeNode; c
         type="button"
         className="agent-debug-run-head"
         aria-expanded={open}
-        onClick={() => { const next = !open; setOpen(next); if (next) void loadDetail(); }}
+        onClick={() => setOpen((value) => !value)}
       >
         <ChevronDownIcon className={`agent-debug-summary-chevron${open ? ' is-open' : ''}`} size={ICON_SIZE.tiny} />
-        <span className="agent-debug-agent-badge" data-tone={tone}>{label}</span>
+        <span className="agent-debug-agent-badge">{agentLabel(run.agentId)}</span>
         <span className="agent-debug-run-kind">{kindLabel(run.kind, labels)}</span>
         {run.parentToolCallId ? <span className="agent-debug-run-parent">{labels.delegatedBadge}</span> : null}
         <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span>
@@ -321,7 +337,7 @@ function RunNode({ node, conversationId, depth, labels }: { node: RunTreeNode; c
 
       {open ? (
         <div className="agent-debug-run-body">
-          {loading ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRun} /> : null}
+          {loading && !detail ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRun} /> : null}
           {error ? <ErrorState message={error} /> : null}
           {detail ? <RunDetail run={detail} labels={labels} /> : (!loading && !error ? <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div> : null)}
         </div>

@@ -1309,7 +1309,6 @@ commandPalette: {
     statusRunning: '运行中',
     statusCompleted: '已完成',
     statusAborted: '已中止',
-    statusInterrupted: '已中断',
     statusError: '错误',
     copyTitle: ({ title }) => `复制 ${title}`,
   },

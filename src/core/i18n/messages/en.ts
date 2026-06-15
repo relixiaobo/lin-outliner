@@ -1422,7 +1422,6 @@ commandPalette: {
     statusRunning: 'Running',
     statusCompleted: 'Completed',
     statusAborted: 'Aborted',
-    statusInterrupted: 'Interrupted',
     statusError: 'Error',
     copyTitle: ({ title }: { title: string }) => `Copy ${title}`,
   },

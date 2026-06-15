@@ -699,6 +699,16 @@ export class AgentEventStore {
     return metas.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
   }
 
+  /**
+   * The conversation's member roster + meta (a cheap meta-file read, no replay).
+   * The run-grounded debug view ([[agent-debug-run-grounded]]) reads it to decide
+   * shape (DM vs Channel) from the authoritative roster, not from run executors.
+   */
+  async readConversationMetaProjection(conversationId: string): Promise<AgentConversationMetaProjection | null> {
+    await this.ensureStorageLayout();
+    return this.readConversationMeta(conversationId);
+  }
+
   async listPrincipalRunMetaProjections(
     principal: AgentPrincipal,
     options: { limit?: number } = {},

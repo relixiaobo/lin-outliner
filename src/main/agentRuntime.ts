@@ -25,7 +25,6 @@ import type {
   KnownProvider,
   Message,
   Model,
-  ProviderResponse,
   SimpleStreamOptions,
   TextContent as PiTextContent,
   ToolCall,
@@ -351,6 +350,7 @@ const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
 const CHILD_RUN_TRANSCRIPT_CACHE_LIMIT = 16;
+const DEBUG_RUN_CACHE_LIMIT = 64;
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
 const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
 // In-memory per-command failure backoff (openclaw-style); process-level, never
@@ -586,11 +586,12 @@ export class AgentRuntime {
   private viewedConversationId: string | null = null;
   // Last emitted system/tools hash per run, so the once-per-run debug snapshot
   // ([[agent-debug-run-grounded]]) re-emits only on a real change. Keyed by runId,
-  // session-scoped (a few bytes per run).
+  // bounded LRU (a re-emit after eviction is just a harmless duplicate snapshot).
   private debugRunSnapshotHashByRun = new Map<string, string>();
   // Derived debug rounds per run, invalidated by the run's latestSeq (the
   // childRunTranscript cache-by-latestSeq pattern) so the view IPC and the
-  // per-run IPC share one derivation.
+  // per-run IPC share one derivation. Bounded LRU (run ids are globally unique,
+  // so an evicted entry is just re-derived; it never grows across a session).
   private debugRunCache = new Map<string, { latestSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
@@ -1244,7 +1245,10 @@ export class AgentRuntime {
    */
   async agentDebugView(conversationId: string): Promise<AgentDebugConversation> {
     const store = this.getEventStore();
-    const metas = await store.listConversationRunMetaProjections(conversationId);
+    const [metas, conversationMeta] = await Promise.all([
+      store.listConversationRunMetaProjections(conversationId),
+      store.readConversationMetaProjection(conversationId),
+    ]);
     const parentToolCallByChild = await this.debugParentToolCallMap(conversationId);
     const summaries: AgentDebugRunSummary[] = [];
     for (const meta of metas) {
@@ -1253,8 +1257,15 @@ export class AgentRuntime {
       const run = await this.deriveDebugRunFromStore(meta, parentToolCallByChild.get(meta.id) ?? null);
       summaries.push(summarizeDebugRun(run));
     }
-    const memberIds = [...new Set(summaries.map((summary) => summary.agentId))];
-    const shape: AgentDebugConversationShape = memberIds.length > 1 ? 'channel' : 'dm';
+    // Shape + member roster come from the conversation's authoritative members
+    // (NOT distinct run executors — a DM that delegates would otherwise look like
+    // a Channel, with the transient sub-agent shown as a member). The agents that
+    // actually executed runs are filterable in the renderer, derived from the runs.
+    const roster = conversationMeta?.members ?? [];
+    const memberIds = roster.length > 0
+      ? channelAgentMembers(roster).map((member) => member.agentId)
+      : [...new Set(summaries.map((summary) => summary.agentId))];
+    const shape: AgentDebugConversationShape = isMultiAgentConversation(roster) ? 'channel' : 'dm';
     return deriveDebugConversation(conversationId, shape, memberIds, summaries);
   }
 
@@ -1283,8 +1294,21 @@ export class AgentRuntime {
     if (cached && cached.latestSeq === meta.latestSeq && cached.parentToolCallId === parentToolCallId) return cached.run;
     const events = await this.getEventStore().readRunStreamEvents(meta.id);
     const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(events), parentToolCallId });
+    if (this.debugRunCache.size >= DEBUG_RUN_CACHE_LIMIT) {
+      const oldest = this.debugRunCache.keys().next().value;
+      if (oldest !== undefined) this.debugRunCache.delete(oldest);
+    }
     this.debugRunCache.set(meta.id, { latestSeq: meta.latestSeq, parentToolCallId, run });
     return run;
+  }
+
+  /** Bounded-LRU record of the last-emitted debug-snapshot hash (see capture). */
+  private rememberDebugRunSnapshotHash(runId: string, combined: string) {
+    if (this.debugRunSnapshotHashByRun.size >= DEBUG_RUN_CACHE_LIMIT && !this.debugRunSnapshotHashByRun.has(runId)) {
+      const oldest = this.debugRunSnapshotHashByRun.keys().next().value;
+      if (oldest !== undefined) this.debugRunSnapshotHashByRun.delete(oldest);
+    }
+    this.debugRunSnapshotHashByRun.set(runId, combined);
   }
 
   async payloadText(conversationId: string, payloadId: string) {
@@ -3013,7 +3037,6 @@ export class AgentRuntime {
     const toolsHash = createHash('sha256').update(JSON.stringify(tools)).digest('hex');
     const combined = `${systemHash}:${toolsHash}`;
     if (this.debugRunSnapshotHashByRun.get(runId) === combined) return;
-    this.debugRunSnapshotHashByRun.set(runId, combined);
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'debug.run_snapshot.created',
       actor: systemActor(),
@@ -3023,6 +3046,9 @@ export class AgentRuntime {
       tools,
       toolsHash,
     }]);
+    // Record the hash only AFTER the append succeeds — a swallowed append failure
+    // must not poison the dedupe and silently drop this run's snapshot forever.
+    this.rememberDebugRunSnapshotHash(runId, combined);
   }
 
   private async persistAndEmitIdle(
@@ -8239,8 +8265,7 @@ function createConfiguredAgent(
     ) => Promise<AfterToolCallResult | undefined> | AfterToolCallResult | undefined;
   } = {},
   onPayload?: (payload: unknown, model: Model<any>) => unknown | undefined | Promise<unknown | undefined>,
-  onResponse?: (response: ProviderResponse, model: Model<any>) => void | Promise<void>,
-  ) {
+) {
   const model = options.model ?? resolveModel(providerConfig);
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
@@ -8278,7 +8303,6 @@ function createConfiguredAgent(
       const callbackPayload = await onPayload?.(payloadForCallback, payloadModel);
       return callbackPayload ?? payloadWithBreakpoints;
     },
-    onResponse: async (response, responseModel) => onResponse?.(response, responseModel),
     getApiKey: async (provider) => {
       if (provider === providerConfig.providerId) {
         return providerConfig.apiKey ?? options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);

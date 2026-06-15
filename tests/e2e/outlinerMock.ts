@@ -491,10 +491,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       cacheWrite: 0,
       totalTokens: 12420,
       costUsd: 0.0005,
-      costInputUsd: 0.0003,
-      costOutputUsd: 0.0002,
-      costCacheReadUsd: 0,
-      costCacheWriteUsd: 0,
     };
     // Replayed transcript for the delegated run's own ledger — served whole by
     // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
@@ -572,8 +568,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       status: 'completed',
       parentRunId: null,
       parentToolCallId: null,
-      addressedByMessageId: null,
-      triggerMessageId: 'msg-1',
       provider: 'openai',
       modelId: 'gpt-5.4',
       usage: debugUsage,
@@ -601,13 +595,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         messageId: 'a1',
         provider: 'openai',
         modelId: 'gpt-5.4',
-        api: 'responses',
         status: 'completed',
         requestWindow: [{
           id: 'msg-1',
           role: 'user',
           summary: 'user: Summarize current outline.',
-          json: '{"role":"user","content":"Summarize current outline."}',
           bytes: 56,
           parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
         }],
@@ -619,8 +611,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         stopReason: 'stop',
         usage: debugUsage,
         toolExchanges: [{ toolCallId: 'tool-1', toolName: 'node_read', args: '{"nodeId":"today"}', result: 'Daily note content.', isError: false }],
-        transport: null,
-        wire: null,
         startedAt: 1_799_999_999_800,
         completedAt: 1_800_000_000_000,
       }],
