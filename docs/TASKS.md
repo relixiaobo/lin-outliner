@@ -255,6 +255,22 @@ data-gated — see § memory above). The remaining *active* build work is the sk
 (`agent-skills-authoring`: NL save-as-skill + diff/preview), **cross-agent consultation**
 (`ungate-contact` — see the agent-program list), and the standalone draft items below.
 
+- **agent-permission-redesign** (P1, `draft` — **PM-ratified direction 2026-06-15**;
+  security-sensitive) — replace the prompt-heavy `enum × 3 safety modes × dead LLM
+  classifier × shell allowlist` permission model with **one pure `decide(effect)` over an
+  operation's consequence**: three outcomes (`WORK→allow` silent · `COMMIT→confirm`-once-or-
+  remember · `FORBIDDEN→block` floor). Inverts shell from default-deny-whitelist to
+  floor-blocklist + commit-confirm (so `which soffice` and any unknown *static* command are
+  WORK by construction); makes delete reversible (agent-trash) to widen silent-allow; reduces
+  "scope" to one role whose grant gesture *is* the folder handoff; one credential carve-out
+  (read = confirm, read+sink = block). PM ratified: full reversal · unknown-static-shell =
+  silent allow · folder-handoff gesture in this round · credential-read = confirm.
+  **Shape (b) — a SET of independent complete PRs:** PR-1 model core (the reversal; lands as
+  shared-interface-first for the `/research` read-only partition on `agentPermissionModel.ts`,
+  A7) → PR-2 folder-handoff gesture (scope grant; lets the agent see the user's real files)
+  → PR-3 typed `file_convert` tool. **Supersedes** the `delegated-scope` draft (PR #249,
+  closed `superseded`). See `docs/plans/agent-permission-redesign.md`. Ready for a dev agent
+  to claim PR-1.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
