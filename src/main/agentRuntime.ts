@@ -131,7 +131,7 @@ import {
   deriveDebugRun,
   extractRunSnapshotFromPayload,
   snapshotFromRunEvents,
-  summarizeDebugRun,
+  summarizeRunStream,
 } from './agentDebugView';
 import {
   AgentEventStore,
@@ -351,6 +351,21 @@ const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
 const CHILD_RUN_TRANSCRIPT_CACHE_LIMIT = 16;
 const DEBUG_RUN_CACHE_LIMIT = 64;
+
+/**
+ * Conversation-stream events the run-grounded debug view ([[agent-debug-run-grounded]])
+ * needs but a run's own ledger lacks — read once per conversation, cached by its
+ * latestSeq, shared across every run in the view.
+ */
+interface DebugConversationContext {
+  latestSeq: number;
+  /** childRunId → parentToolCallId (from `child_run.started`). */
+  parentToolCallByChild: Map<string, string>;
+  /** messageId → the triggering `user_message.created` (appended with no runId). */
+  triggerMessages: Map<string, Extract<AgentEvent, { type: 'user_message.created' }>>;
+  /** toolCallId → conversation-budget `tool_result.replaced` slimming for that call. */
+  replacedByToolCall: Map<string, Extract<AgentEvent, { type: 'tool_result.replaced' }>[]>;
+}
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
 const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
 // In-memory per-command failure backoff (openclaw-style); process-level, never
@@ -588,11 +603,16 @@ export class AgentRuntime {
   // ([[agent-debug-run-grounded]]) re-emits only on a real change. Keyed by runId,
   // bounded LRU (a re-emit after eviction is just a harmless duplicate snapshot).
   private debugRunSnapshotHashByRun = new Map<string, string>();
-  // Derived debug rounds per run, invalidated by the run's latestSeq (the
-  // childRunTranscript cache-by-latestSeq pattern) so the view IPC and the
-  // per-run IPC share one derivation. Bounded LRU (run ids are globally unique,
-  // so an evicted entry is just re-derived; it never grows across a session).
-  private debugRunCache = new Map<string, { latestSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
+  // The debug view's caches, all bounded LRU (run ids are globally unique, so an
+  // evicted entry is just re-derived; none grows across a session):
+  // - conversation context (triggering messages / parent links / slimming), keyed
+  //   by the conversation's latestSeq;
+  // - light per-run SUMMARY nodes for the tree, keyed by the run's latestSeq;
+  // - full per-run DETAIL, also keyed by the conversation context seq (it splices
+  //   in conversation-stream slimming, so it must invalidate when that changes).
+  private debugConversationContextCache = new Map<string, DebugConversationContext>();
+  private debugRunSummaryCache = new Map<string, { latestSeq: number; parentToolCallId: string | null; summary: AgentDebugRunSummary }>();
+  private debugRunCache = new Map<string, { latestSeq: number; contextSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, {
@@ -1249,13 +1269,12 @@ export class AgentRuntime {
       store.listConversationRunMetaProjections(conversationId),
       store.readConversationMetaProjection(conversationId),
     ]);
-    const parentToolCallByChild = await this.debugParentToolCallMap(conversationId);
+    const context = await this.loadDebugConversationContext(conversationId, conversationMeta?.latestSeq ?? -1);
     const summaries: AgentDebugRunSummary[] = [];
     for (const meta of metas) {
       // Reflective / principal-anchored runs span conversations — not this view.
       if (meta.kind === 'reflective' || meta.anchor.type !== 'conversation') continue;
-      const run = await this.deriveDebugRunFromStore(meta, parentToolCallByChild.get(meta.id) ?? null);
-      summaries.push(summarizeDebugRun(run));
+      summaries.push(await this.summarizeDebugRunFromStore(meta, context.parentToolCallByChild.get(meta.id) ?? null));
     }
     // Shape + member roster come from the conversation's authoritative members
     // (NOT distinct run executors — a DM that delegates would otherwise look like
@@ -1271,43 +1290,115 @@ export class AgentRuntime {
 
   /** Run-grounded debug: one run's full execution detail (rounds + per-run snapshot). */
   async agentDebugRun(conversationId: string, runId: string): Promise<AgentDebugRun | null> {
-    const meta = await this.getEventStore().readRunMetaProjection(runId);
+    const store = this.getEventStore();
+    const meta = await store.readRunMetaProjection(runId);
     if (!meta) return null;
     if (meta.anchor.type !== 'conversation' || meta.anchor.conversationId !== conversationId) return null;
-    const parentToolCallByChild = await this.debugParentToolCallMap(conversationId);
-    return this.deriveDebugRunFromStore(meta, parentToolCallByChild.get(runId) ?? null);
+    const conversationMeta = await store.readConversationMetaProjection(conversationId);
+    const context = await this.loadDebugConversationContext(conversationId, conversationMeta?.latestSeq ?? -1);
+    return this.deriveDebugRunFromStore(meta, context);
   }
 
-  /** childRunId → parentToolCallId, read from the parent conversation's `child_run.started`. */
-  private async debugParentToolCallMap(conversationId: string): Promise<Map<string, string>> {
-    const map = new Map<string, string>();
-    for (const event of await this.getEventStore().readEvents(conversationId)) {
+  /**
+   * The conversation-stream events a run's OWN ledger lacks but its rounds need:
+   * the triggering user message (appended with no runId before the run starts),
+   * `child_run.started` parent links, and conversation-budget `tool_result.replaced`
+   * slimming (also runId-less). Read once from the conversation segment and cached
+   * by the conversation's latestSeq, so the whole tree shares one read instead of
+   * the old per-run full `readEvents` ([[agent-debug-run-grounded]]).
+   */
+  private async loadDebugConversationContext(conversationId: string, latestSeq: number): Promise<DebugConversationContext> {
+    const cached = this.debugConversationContextCache.get(conversationId);
+    if (cached && cached.latestSeq === latestSeq) return cached;
+    const parentToolCallByChild = new Map<string, string>();
+    const triggerMessages = new Map<string, Extract<AgentEvent, { type: 'user_message.created' }>>();
+    const replacedByToolCall = new Map<string, Extract<AgentEvent, { type: 'tool_result.replaced' }>[]>();
+    for (const event of await this.getEventStore().readConversationStreamEvents(conversationId)) {
       if (event.type === 'child_run.started' && typeof event.parentToolCallId === 'string') {
-        map.set(event.childRunId, event.parentToolCallId);
+        parentToolCallByChild.set(event.childRunId, event.parentToolCallId);
+      } else if (event.type === 'user_message.created') {
+        triggerMessages.set(event.messageId, event);
+      } else if (event.type === 'tool_result.replaced') {
+        const list = replacedByToolCall.get(event.toolCallId) ?? [];
+        list.push(event);
+        replacedByToolCall.set(event.toolCallId, list);
       }
     }
-    return map;
+    const context: DebugConversationContext = { latestSeq, parentToolCallByChild, triggerMessages, replacedByToolCall };
+    this.debugConversationContextCache.set(conversationId, context);
+    return context;
   }
 
-  private async deriveDebugRunFromStore(meta: AgentRunMetaProjection, parentToolCallId: string | null): Promise<AgentDebugRun> {
-    const cached = this.debugRunCache.get(meta.id);
-    if (cached && cached.latestSeq === meta.latestSeq && cached.parentToolCallId === parentToolCallId) return cached.run;
+  /** Light summary node: a single pass over the run stream, no full detail built. */
+  private async summarizeDebugRunFromStore(meta: AgentRunMetaProjection, parentToolCallId: string | null): Promise<AgentDebugRunSummary> {
+    const cached = this.debugRunSummaryCache.get(meta.id);
+    if (cached && cached.latestSeq === meta.latestSeq && cached.parentToolCallId === parentToolCallId) return cached.summary;
     const events = await this.getEventStore().readRunStreamEvents(meta.id);
-    const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(events), parentToolCallId });
-    if (this.debugRunCache.size >= DEBUG_RUN_CACHE_LIMIT) {
-      const oldest = this.debugRunCache.keys().next().value;
-      if (oldest !== undefined) this.debugRunCache.delete(oldest);
+    const summary = summarizeRunStream(events, meta, parentToolCallId);
+    this.evictForCapacity(this.debugRunSummaryCache, meta.id);
+    this.debugRunSummaryCache.set(meta.id, { latestSeq: meta.latestSeq, parentToolCallId, summary });
+    return summary;
+  }
+
+  private async deriveDebugRunFromStore(meta: AgentRunMetaProjection, context: DebugConversationContext): Promise<AgentDebugRun> {
+    const parentToolCallId = context.parentToolCallByChild.get(meta.id) ?? null;
+    const cached = this.debugRunCache.get(meta.id);
+    if (cached && cached.latestSeq === meta.latestSeq && cached.contextSeq === context.latestSeq && cached.parentToolCallId === parentToolCallId) {
+      return cached.run;
     }
-    this.debugRunCache.set(meta.id, { latestSeq: meta.latestSeq, parentToolCallId, run });
+    const runEvents = await this.getEventStore().readRunStreamEvents(meta.id);
+    // Splice in the conversation-stream events this run needs: its triggering user
+    // message (folded into round 0's window) and any slimming of its tool results
+    // (matched by toolCallId, regardless of which run did the slimming).
+    const events = this.assembleDebugRunEvents(meta, runEvents, context);
+    const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(runEvents), parentToolCallId });
+    this.evictForCapacity(this.debugRunCache, meta.id);
+    this.debugRunCache.set(meta.id, { latestSeq: meta.latestSeq, contextSeq: context.latestSeq, parentToolCallId, run });
     return run;
+  }
+
+  private assembleDebugRunEvents(
+    meta: AgentRunMetaProjection,
+    runEvents: readonly AgentEvent[],
+    context: DebugConversationContext,
+  ): AgentEvent[] {
+    const prefix: AgentEvent[] = [];
+    // The triggering user message lives in the conversation stream; prepend it
+    // before run.started so it folds into the first round's request window. (Child
+    // runs already carry their directive in the fork prefix, so skip if present.)
+    const triggerMessageId = meta.trigger.type === 'message' ? meta.trigger.messageId : null;
+    const hasTriggerInStream = triggerMessageId !== null
+      && runEvents.some((event) => event.type === 'user_message.created' && event.messageId === triggerMessageId);
+    if (triggerMessageId && !hasTriggerInStream) {
+      const triggerEvent = context.triggerMessages.get(triggerMessageId);
+      if (triggerEvent) prefix.push(triggerEvent);
+    }
+    // Append conversation-stream slimming for this run's tool calls. Matched by the
+    // globally-unique toolCallId, so a replacement for another run's call is never
+    // pulled in; recordToolResult drops any that still don't match.
+    const ownToolCallIds = new Set<string>();
+    for (const event of runEvents) {
+      if (event.type === 'tool_result.created') ownToolCallIds.add(event.toolCallId);
+    }
+    const suffix: AgentEvent[] = [];
+    for (const toolCallId of ownToolCallIds) {
+      const replaced = context.replacedByToolCall.get(toolCallId);
+      if (replaced) suffix.push(...replaced);
+    }
+    return prefix.length === 0 && suffix.length === 0 ? [...runEvents] : [...prefix, ...runEvents, ...suffix];
+  }
+
+  /** Bounded-LRU eviction shared by the debug caches (evict oldest when full). */
+  private evictForCapacity<V>(cache: Map<string, V>, key: string) {
+    if (cache.size >= DEBUG_RUN_CACHE_LIMIT && !cache.has(key)) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
   }
 
   /** Bounded-LRU record of the last-emitted debug-snapshot hash (see capture). */
   private rememberDebugRunSnapshotHash(runId: string, combined: string) {
-    if (this.debugRunSnapshotHashByRun.size >= DEBUG_RUN_CACHE_LIMIT && !this.debugRunSnapshotHashByRun.has(runId)) {
-      const oldest = this.debugRunSnapshotHashByRun.keys().next().value;
-      if (oldest !== undefined) this.debugRunSnapshotHashByRun.delete(oldest);
-    }
+    this.evictForCapacity(this.debugRunSnapshotHashByRun, runId);
     this.debugRunSnapshotHashByRun.set(runId, combined);
   }
 
@@ -3033,18 +3124,16 @@ export class AgentRuntime {
     const runId = runIdOverride ?? this.activeRunId(conversation);
     if (!runId) return;
     const { systemPrompt, tools } = extractRunSnapshotFromPayload(payload);
-    const systemHash = createHash('sha256').update(systemPrompt).digest('hex');
-    const toolsHash = createHash('sha256').update(JSON.stringify(tools)).digest('hex');
-    const combined = `${systemHash}:${toolsHash}`;
+    // In-memory dedupe key (re-emit only on a real change) — derived from the
+    // content itself; the hash is never persisted on the event (no reader needs it).
+    const combined = createHash('sha256').update(systemPrompt).update(' ').update(JSON.stringify(tools)).digest('hex');
     if (this.debugRunSnapshotHashByRun.get(runId) === combined) return;
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'debug.run_snapshot.created',
       actor: systemActor(),
       runId,
       systemPrompt,
-      systemHash,
       tools,
-      toolsHash,
     }]);
     // Record the hash only AFTER the append succeeds — a swallowed append failure
     // must not poison the dedupe and silently drop this run's snapshot forever.

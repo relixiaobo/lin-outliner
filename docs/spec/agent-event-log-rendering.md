@@ -965,9 +965,8 @@ Rules:
 
 The debug surface is a read-only **view of the execution tree**:
 `conversation → runs (per agent) → rounds → request-window / response /
-tool-exchange`, derived entirely from the run ledgers that are already the
-system's truth. There is no parallel snapshot representation and no provider-wire
-re-parsing.
+tool-exchange`, derived from the run ledgers that are already the system's truth,
+plus the few conversation-stream events a run's own ledger structurally lacks.
 
 **The unit is the round** = one provider call = `(request, response)`, bounded by
 `assistant_message.started` (always present, independent of any wire capture).
@@ -975,53 +974,79 @@ Walking a run's own stream in order yields its rounds: each `assistant_message.s
 opens a round, its `.completed` closes the response (content / usage / stopReason
 from the ledger), and the intervening `tool_result.created` (and `tool_result.replaced`,
 which records what the model saw after output slimming) are that round's tool
-exchanges. So the per-run view can reflect slimming, `tool_result.replaced` (from
-the conversation-budget / microcompact paths) is **stamped with the active run's
-id**, landing in that run's own stream beside its `tool_result.created` and
-advancing the run's `latestSeq` (so the `latestSeq`-keyed cache invalidates). A
-replacement that matches no call in the run it lands in (its original was produced
-by a different run) is **dropped, never turned into an empty-named phantom
-exchange** — only a `tool_result.created` may open an exchange. A round renders the
-*new* context entering it (the triggering / prior tool-result messages), not the
-whole growing history. Rounds begin only after the run's own `run.started`, so a
-child run's inherited fork prefix is folded into the first round's window as
-context rather than counted as rounds.
+exchanges. A `run.failed` / `run.cancelled` with a round still open (a crash mid-stream
+left no terminal `assistant_message`) closes that round with the run's terminal
+status, so a round's pill never reads *running* under a Failed run.
+
+**A run's own ledger is not self-sufficient** — two kinds of event live in the
+CONVERSATION stream (appended with no runId) and are spliced in at derivation:
+
+- The **triggering user message** (`user_message.created`, appended before
+  `startRun`). It is prepended ahead of `run.started` so it folds into round 0's
+  request window — without it, every turn run's first window would be empty. (A
+  child run already carries its directive in its fork prefix, so the splice is
+  skipped when the trigger is already in the run stream.)
+- **Conversation-budget `tool_result.replaced`** slimming. It is matched to the
+  producing run by the globally-unique `toolCallId` (NOT stamped with a runId — the
+  slimming usually runs during a *later* turn than the one that produced the
+  result), so the run that owns the call reflects the slimmed output regardless of
+  which run did the slimming. A replacement matching no call in a run is dropped;
+  only a `tool_result.created` may OPEN an exchange (never an empty-named phantom).
+
+A round renders the *new* context entering it (the triggering / prior tool-result
+messages), not the whole growing history. Rounds begin only after the run's own
+`run.started`, so a child run's inherited fork prefix is folded into the first
+round's window as context rather than counted as rounds.
+
+**Everything rendered is redacted.** The surface is read-only but on screen, so
+every string passes the shared `agentSecretRedaction` gate before display:
+secret-keyed object values, value-pattern matches over free text (sk-/PRIVATE KEY
+/ `Bearer …` / GitHub / JWT / `password=…`), and large-blob elision (inline base64
+→ a length note). This covers tool-call arguments, tool RESULTS, message text,
+thinking, and the per-run system prompt + tool schemas alike.
 
 **Capture (the only additive writes).** The semantic tree is already in the
 ledger; one gap is filled: a per-run `debug.run_snapshot.created` event carries the
 run's outbound **system prompt + tool schemas**, captured once per run from
-`onPayload`, hash-deduped (re-emitted only on a real change; the hash is recorded
-only **after** the append succeeds, so a swallowed write never poisons the dedupe),
-and split into the run's own stream. It is replay-neutral. The system prompt is
-read tolerantly across providers: a top-level `system` / `instructions` (Anthropic)
-**and** a `system` / `developer` role message folded into `input` / `messages` (the
-OpenAI responses / completions shape). Tool-call arguments shown in the view are
-redacted twice — by secret-bearing key NAME and by VALUE PATTERN over the serialized
-text (catching an inline `Bearer sk-…` in a free-text field). (Delegation/child
-request-context capture — plumbing the child run id through the delegation agent's
-payload callback — and per-round transport metadata + a gated byte-exact wire
-disclosure are scoped follow-ups, deliberately **not** pre-modeled in the round type;
+`onPayload`, deduped on an in-memory content hash (re-emitted only on a real change;
+the hash is recorded only **after** the append succeeds, so a swallowed write never
+poisons the dedupe — and never persisted on the event, which no reader needs). It is
+replay-neutral. The system prompt is read tolerantly across providers: a top-level
+`system` / `instructions` (Anthropic) **and** a `system` / `developer` role message
+folded into `input` / `messages` (the OpenAI responses / completions shape).
+(Delegation/child request-context capture — plumbing the child run id through the
+delegation agent's payload callback — per-ROUND snapshot attribution when the
+system/tools change mid-run, and per-round transport metadata + a gated byte-exact
+wire disclosure are scoped follow-ups, deliberately **not** pre-modeled in the type;
 the view degrades gracefully to no system prompt / empty tools when a snapshot is
-absent.)
+absent, and a run shows its latest snapshot.)
 
 **Read model + IPC.**
 
 - `agentDebugView(conversationId)` → the tree: per-run summary nodes (agent, kind,
   status, model, **real usage**, round count), the conversation shape, and rolled-up
-  totals. **Shape (DM vs Channel) comes from the conversation's authoritative member
-  roster** (`readConversationMetaProjection`), not from distinct run executors — a DM
-  that delegates to a sub-agent stays a DM, with the transient sub-agent never shown
-  as a member. The agents that actually executed runs are surfaced separately by the
-  renderer (derived from the runs) so a delegated sub-agent is still filterable. Run
-  usage is `meta.usage` when the run terminated, else **rolled up from the rounds**
-  so an in-flight run's totals stay live instead of reading zero. Reads the store
-  directly, so it works on closed conversations. Reflective / principal-anchored runs
-  are excluded (they span conversations, not this one).
+  totals. The tree builds each node from a LIGHT summary pass (`summarizeRunStream`:
+  one scan of the run stream for round count + last provider/model + usage) — it
+  never materializes the per-round detail / request windows / redaction it would
+  immediately discard. **Shape (DM vs Channel) comes from the conversation's
+  authoritative member roster** (`readConversationMetaProjection`), not from distinct
+  run executors — a DM that delegates to a sub-agent stays a DM, with the transient
+  sub-agent never shown as a member. The agents that actually executed runs are
+  surfaced separately by the renderer (derived from the runs) so a delegated
+  sub-agent is still filterable. Run usage is `meta.usage` when the run terminated,
+  else **rolled up from the rounds** so an in-flight run's totals stay live instead
+  of reading zero. Reads the store directly, so it works on closed conversations.
+  Reflective / principal-anchored runs are excluded (they span conversations).
 - `agentDebugRun(conversationId, runId)` → one run's full detail (rounds + per-run
-  snapshot), derived from `readRunStreamEvents(runId)` and cached by the run's
-  `latestSeq` (a bounded LRU — run ids are globally unique, so eviction only re-derives).
-  `parentToolCallId` is sourced from the parent conversation's `child_run.started`
-  (it is never in the child's own ledger). Works for `turn` and `delegation` runs
+  snapshot), derived from `readRunStreamEvents(runId)` spliced with the conversation
+  context (above) and cached by the run's `latestSeq` + the conversation context seq
+  (so it invalidates when slimming of its tool results lands). `parentToolCallId` is
+  sourced from the parent conversation's `child_run.started` (never in the child's
+  own ledger). The conversation context itself (trigger messages / parent links /
+  slimming) is read ONCE from the conversation segment (`readConversationStreamEvents`,
+  not the full merged `readEvents`) and cached by the conversation `latestSeq`, shared
+  across every run in the view. All three debug caches are bounded LRUs. Works for
+  `turn` and `delegation` runs
   alike — the seq convention is irrelevant to a single-stream walk.
 
 The pure derivation lives in `src/main/agentDebugView.ts`; the renderer

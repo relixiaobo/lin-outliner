@@ -229,9 +229,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
       ev('debug.run_snapshot.created', {
         runId,
         systemPrompt: 'You are Tenon.',
-        systemHash: 'h1',
         tools: [{ name: 'list_files', description: 'List', schema: '{}' }],
-        toolsHash: 'h2',
       }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),

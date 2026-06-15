@@ -699,9 +699,7 @@ export interface DebugRunSnapshotCreatedEvent extends AgentEventBase {
   type: 'debug.run_snapshot.created';
   runId: string;
   systemPrompt: string;
-  systemHash: string;
   tools: DebugRunToolSchema[];
-  toolsHash: string;
 }
 
 export interface BranchSelectedEvent extends AgentEventBase {

@@ -346,10 +346,6 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         {
           type: 'tool_result.replaced',
           actor: systemActor(),
-          // Stamp the active run so the slimming lands in that run's OWN stream
-          // (beside its tool_result.created), keeping the run-grounded debug view
-          // and its latestSeq-keyed cache in sync ([[agent-debug-run-grounded]]).
-          runId: conversation.activeRun?.id,
           messageId: candidate.messageId,
           toolCallId: candidate.toolCallId,
           content: [{ type: 'payload_ref', payload: persisted.payload, label: persisted.label }],
@@ -377,8 +373,6 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
     await this.host.appendConversationEvents(conversationId, conversation, candidates.map((candidate): AgentRuntimeContextEventInput => ({
       type: 'tool_result.replaced',
       actor: systemActor(),
-      // See applyToolResultBudget: route slimming into the active run's stream.
-      runId: conversation.activeRun?.id,
       messageId: candidate.messageId,
       toolCallId: candidate.toolCallId,
       content: [{ type: 'text', text: OLD_TOOL_RESULT_CLEARED_MESSAGE }],

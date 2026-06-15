@@ -15,7 +15,7 @@ import type {
 } from '../core/agentTypes';
 import type { AgentEvent, AgentPersistedContent, DebugRunToolSchema } from '../core/agentEventLog';
 import type { AgentRunMetaProjection } from './agentEventStore';
-import { redactSecretLikeContent } from './agentSecretRedaction';
+import { elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from './agentSecretRedaction';
 
 // Run-grounded debug derivation ([[agent-debug-run-grounded]]): pure transforms
 // from a run's own event stream + meta into the execution-tree view. The unit is
@@ -62,7 +62,9 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
         break;
       }
       case 'tool_result.created': {
-        const result = persistedText(event.content) || event.outputSummary || '';
+        // Tool output can echo file/secret content (`cat .env`, HTTP creds), so
+        // redact it before it reaches the exchange and the next round's window.
+        const result = redactDisplayText(persistedText(event.content) || event.outputSummary || '');
         recordToolResult(rounds, current, event.toolCallId, event.toolName, result, event.isError === true);
         // The same result is the next round's visible context.
         pendingWindow.push(toolResultRow(event.messageId, event.toolCallId, event.toolName, result, event.isError === true));
@@ -72,7 +74,7 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
         // Output slimming: what the model actually saw on its next turn. Patch the
         // exchange wherever it lives — by now `current` may be a later round. Keep
         // the original isError (a replacement doesn't restate success/failure).
-        const result = persistedText(event.content) || event.outputSummary || '';
+        const result = redactDisplayText(persistedText(event.content) || event.outputSummary || '');
         recordToolResult(rounds, current, event.toolCallId, undefined, result, undefined);
         break;
       }
@@ -132,6 +134,18 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
         }
         break;
       }
+      case 'run.failed':
+      case 'run.cancelled': {
+        // A run that died mid-stream (crash / force-quit) leaves its last round
+        // opened by assistant_message.started with no matching .completed. Close
+        // it with the run's terminal status so its pill doesn't read 'running'
+        // forever while the run node shows Failed/Aborted.
+        if (current && current.status === 'running') {
+          current.status = event.type === 'run.cancelled' ? 'aborted' : 'error';
+          current.completedAt = event.createdAt;
+        }
+        break;
+      }
       default:
         break;
     }
@@ -182,6 +196,51 @@ export function summarizeDebugRun(run: AgentDebugRun): AgentDebugRunSummary {
     usage: run.usage,
     createdAt: run.createdAt,
     roundCount: run.rounds.length,
+  };
+}
+
+/**
+ * The summary node WITHOUT building the full detail: a single light pass over the
+ * run's stream for round count + last provider/model + usage. The conversation
+ * tree shows one collapsed node per run, so it never needs the per-round request
+ * windows / redaction that {@link deriveDebugRun} materializes ([[agent-debug-run-grounded]]).
+ * Round counting mirrors deriveDebugRounds (only after the run's own run.started),
+ * so the summary can never disagree with the detail.
+ */
+export function summarizeRunStream(
+  events: readonly AgentEvent[],
+  meta: AgentRunMetaProjection,
+  parentToolCallId: string | null,
+): AgentDebugRunSummary {
+  let sawRunStart = false;
+  let roundCount = 0;
+  let provider: string | null = null;
+  let modelId: string | null = null;
+  const roundUsages: AgentDebugUsage[] = [];
+  for (const event of events) {
+    if (event.type === 'run.started') { sawRunStart = true; continue; }
+    if (!sawRunStart) continue;
+    if (event.type === 'assistant_message.started') {
+      roundCount += 1;
+      provider = event.providerId;
+      modelId = event.modelId;
+    } else if (event.type === 'assistant_message.completed') {
+      const usage = usageToDebugUsage(event.usage);
+      if (usage) roundUsages.push(usage);
+    }
+  }
+  return {
+    runId: meta.id,
+    agentId: meta.agentId,
+    kind: meta.kind,
+    status: runStatus(meta.status),
+    parentRunId: meta.parentRunId ?? null,
+    parentToolCallId,
+    provider,
+    modelId,
+    usage: usageToDebugUsage(meta.usage) ?? sumUsages(roundUsages),
+    createdAt: meta.createdAt,
+    roundCount,
   };
 }
 
@@ -246,14 +305,20 @@ export function snapshotFromRunEvents(events: readonly AgentEvent[]): AgentDebug
     if (event.type === 'debug.run_snapshot.created') latest = event;
   }
   if (!latest) return null;
+  // The system prompt / tool schemas can carry a secret embedded by a user-authored
+  // agent; redact like every other on-screen string.
   return {
-    systemPrompt: latest.systemPrompt,
-    tools: latest.tools.map((tool): AgentDebugToolEntry => ({
-      name: tool.name,
-      description: tool.description,
-      schema: tool.schema,
-      bytes: byteLength(tool.name) + byteLength(tool.description) + byteLength(tool.schema),
-    })),
+    systemPrompt: redactDisplayText(latest.systemPrompt),
+    tools: latest.tools.map((tool): AgentDebugToolEntry => {
+      const description = redactDisplayText(tool.description);
+      const schema = redactDisplayText(tool.schema);
+      return {
+        name: tool.name,
+        description,
+        schema,
+        bytes: byteLength(tool.name) + byteLength(description) + byteLength(schema),
+      };
+    }),
   };
 }
 
@@ -306,11 +371,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // --- helpers ---------------------------------------------------------------
 
 function persistedParts(content: readonly AgentPersistedContent[]): AgentDebugMessagePart[] {
+  // Everything on this surface is read-only but on screen, so every rendered
+  // string is redacted: message text, thinking, and tool-call arguments alike can
+  // carry a pasted/echoed credential ([[agent-debug-run-grounded]]).
   return content.map((part): AgentDebugMessagePart => {
-    if (part.type === 'text') return { kind: 'text', body: part.text, isReminder: part.text.startsWith('<system-reminder>') };
-    if (part.type === 'thinking') return { kind: 'thinking', body: part.redacted ? '[redacted thinking]' : part.thinking };
-    // Tool-call arguments can carry credentials (api_key, authorization, …); the
-    // debug view is read-only but still on screen, so redact before rendering.
+    if (part.type === 'text') return { kind: 'text', body: redactDisplayText(part.text), isReminder: part.text.startsWith('<system-reminder>') };
+    if (part.type === 'thinking') return { kind: 'thinking', body: part.redacted ? '[redacted thinking]' : redactDisplayText(part.thinking) };
     if (part.type === 'toolCall') return { kind: 'toolCall', name: part.name, toolUseId: part.id, body: sanitizedJson(part.arguments) };
     if (part.type === 'image') return { kind: 'image', body: part.alt ?? '[image]' };
     if (part.type === 'payload_ref') return { kind: 'json', body: part.label ?? `[payload ${part.payload.id}]` };
@@ -387,10 +453,13 @@ function usageToDebugUsage(usage: Usage | undefined): AgentDebugUsage | null {
 
 /** Roll up the rounds' own usage — the live total before `meta.usage` is written. */
 function aggregateRoundUsage(rounds: readonly AgentDebugRound[]): AgentDebugUsage | null {
-  const withUsage = rounds.filter((round): round is AgentDebugRound & { usage: AgentDebugUsage } => round.usage !== null);
-  if (withUsage.length === 0) return null;
+  return sumUsages(rounds.map((round) => round.usage).filter((usage): usage is AgentDebugUsage => usage !== null));
+}
+
+function sumUsages(usages: readonly AgentDebugUsage[]): AgentDebugUsage | null {
+  if (usages.length === 0) return null;
   const totals: AgentDebugUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
-  for (const round of withUsage) addUsage(totals, round.usage);
+  for (const usage of usages) addUsage(totals, usage);
   return totals;
 }
 
@@ -440,28 +509,21 @@ function stableJson(value: unknown): string {
   }
 }
 
-// Keys whose values are credentials — redacted before anything reaches the
-// (read-only but on-screen) debug view. Mirrors the old agentDebug sanitizer.
-const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|secret|password|token/i;
-
 /**
- * Pretty-print a value with secrets redacted, recursively. Two complementary
- * passes: by key NAME (`api_key: …`), then by VALUE PATTERN over the serialized
- * text ({@link redactSecretLikeContent}) to catch credentials embedded in a
- * free-text field (e.g. a `Bearer sk-…` inside a tool's `command` argument).
+ * The single redaction gate for everything the (read-only but on-screen) debug
+ * view renders. Free text — user/assistant text, thinking, tool results, the
+ * system prompt, tool descriptions/schemas — passes through here, as does the
+ * serialized form of structured values (via {@link sanitizedJson}). Layers all
+ * three passes from `agentSecretRedaction`: secret-keyed object values, value
+ * patterns over the text, and large-blob elision.
  */
-function sanitizedJson(value: unknown): string {
-  return redactSecretLikeContent(stableJson(redactSecrets(value)));
+function redactDisplayText(value: string): string {
+  return elideLargeBlobs(redactSecretLikeContent(value));
 }
 
-function redactSecrets(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(redactSecrets);
-  const output: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    output[key] = SECRET_KEY_PATTERN.test(key) ? '[redacted]' : redactSecrets(item);
-  }
-  return output;
+/** Pretty-print a structured value with every redaction pass applied. */
+function sanitizedJson(value: unknown): string {
+  return redactDisplayText(stableJson(redactSecretKeyedValues(value)));
 }
 
 const TEXT_ENCODER = new TextEncoder();

@@ -16,6 +16,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
+import { formatBytes } from '../preview/fileNode';
 
 // Run-grounded debug view ([[agent-debug-run-grounded]]): a read-only window onto
 // the execution tree — conversation → runs (per agent) → rounds (one provider
@@ -29,12 +30,6 @@ interface AgentDebugPanelProps {
 type DebugLabels = ReturnType<typeof useT>['agentDebug'];
 
 // --- formatting -----------------------------------------------------------
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
 
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${tokens}`;
@@ -168,6 +163,8 @@ function buildRunTree(runs: readonly AgentDebugRunSummary[]): RunTreeNode[] {
   for (const run of runs) byId.set(run.runId, { run, children: [] });
   const roots: RunTreeNode[] = [];
   for (const node of byId.values()) {
+    // A child whose parent isn't in this set (run-index drift, a parent whose meta
+    // failed to read) falls back to a root so it stays VISIBLE — never dropped.
     const parent = node.run.parentRunId ? byId.get(node.run.parentRunId) : undefined;
     if (parent) parent.children.push(node);
     else roots.push(node);

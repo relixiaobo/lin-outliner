@@ -133,9 +133,7 @@ describe('agent event log', () => {
         ...base(3, 'debug.run_snapshot.created'),
         runId: 'run-1',
         systemPrompt: 'You are Tenon.',
-        systemHash: 'sys-hash',
         tools: [{ name: 'list_files', description: 'List', schema: '{}' }],
-        toolsHash: 'tools-hash',
       },
     ];
 

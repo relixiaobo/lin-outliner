@@ -345,6 +345,17 @@ describe('agent runtime skill integration', () => {
     // executors: a single-agent DM is 'dm' with one member ([[agent-debug-run-grounded]]).
     expect(view.shape).toBe('dm');
     expect(view.members).toHaveLength(1);
+
+    // The triggering user message lives in the CONVERSATION stream (no runId), not
+    // the run's own ledger — so the detail must splice it into round 0's request
+    // window. Exercised end-to-end through the real store split (NOT hand-stamped).
+    const firstTurn = turnRuns[0]!;
+    const detail = await runtime.agentDebugRun(created.conversationId, firstTurn.runId);
+    expect(detail).not.toBeNull();
+    const firstWindow = detail!.rounds[0]!.requestWindow;
+    expect(firstWindow.some((row) => row.role === 'user')).toBe(true);
+    expect(firstWindow.map((row) => row.parts.map((part) => part.body).join(' ')).join(' '))
+      .toContain('First request before manual compact.');
   });
 
   test('runs automatic skill loading through a real pi agent conversation and keeps compact replay short', async () => {

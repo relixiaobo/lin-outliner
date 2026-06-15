@@ -491,6 +491,18 @@ export class AgentEventStore {
     return this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
   }
 
+  /**
+   * Read ONLY the conversation segment (not the joined run streams). The
+   * run-grounded debug view ([[agent-debug-run-grounded]]) reads it once to recover
+   * the conversation-stream events a run's own ledger lacks — the triggering user
+   * message, `child_run.started` parent links, and conversation-budget
+   * `tool_result.replaced` slimming — far cheaper than the full merged `readEvents`.
+   */
+  async readConversationStreamEvents(conversationId: string): Promise<AgentEvent[]> {
+    await this.ensureStorageLayout();
+    return this.agentEventLog.readIfExists(this.paths(conversationId).conversationEventsPath);
+  }
+
   /** Replay a delegated run's ledger into its own independent state. */
   async replayRunStream(runId: string): Promise<AgentEventReplayState> {
     return replayAgentEvents(await this.readRunStreamEvents(runId));
