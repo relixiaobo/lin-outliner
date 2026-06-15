@@ -361,6 +361,15 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
+- **default-general-channel** (P2, `draft`) — a Slack-like default **`#General`** Channel: a
+  reserved-identity Conversation that exists by default, starts with user + coordinator, and
+  **auto-includes every durable peer agent** as it appears (fork / child / headless runs excluded).
+  Membership = presence + addressability, **not** participation; unaddressed turns still route to the
+  coordinator, so auto-membership never becomes auto-noise. The Agent Dock defaults to `#General`
+  when there is no remembered conversation. **Shape (a)** one PR; **no stored conversation `kind`**
+  (reserved id + runtime invariant). `@all` deferred; coordinate with #251 (conversational agent
+  authoring) on the shared auto-membership path. Plan merged (#265). See
+  `docs/plans/default-general-channel.md`.
 - **channel-async-message-bus** (P1, plan file, **DONE — shipped #231 (cc)**) — make Channels behave like
   an async IM group instead of a special case of the single-run DM composer: send a
   new Channel message while agents are working; explicit `@agent` mentions dispatch

@@ -1,7 +1,3 @@
----
-status: draft
----
-
 # Default #General Channel - the shared room for durable peer agents
 
 Create a Slack-like `#General` Channel as the default shared room for the user and
@@ -15,7 +11,7 @@ conversation membership lifecycle.
 
 ## Goal
 
-- Every workspace has one default Channel named `#General`.
+- There is one default Channel named `#General`.
 - `#General` starts with the user and the coordinator agent.
 - Every future durable peer agent is automatically added to `#General`.
 - The Agent Dock defaults to `#General` when there is no remembered last
@@ -61,6 +57,11 @@ The product rule is therefore:
 > shared-room presence and makes it addressable; it does not make the agent answer
 > every message. Broadcast must be explicit.
 
+`#General` does not introduce a new routing rule — the coordinator already takes
+unaddressed turns in any Channel. What it adds is a default shared room that
+exists without setup and auto-includes every durable peer: a presence and
+onboarding surface, not a change to how turns are routed.
+
 ## Design
 
 ### 1. `#General` is a normal Channel with a reserved identity
@@ -96,7 +97,7 @@ Auto-membership applies to visible, durable peer identities:
 
 - the built-in main assistant;
 - user-authored agents;
-- project-authored agents loaded into the current workspace;
+- project-authored agents loaded for the current local file root;
 - future built-in human-like peer agents, if the product ships any.
 
 Auto-membership does **not** apply to:
@@ -145,7 +146,7 @@ every agent is currently participating. Mention typeahead should naturally inclu
 
 ### 6. Memory and privacy boundary
 
-`#General` is a public shared room inside the workspace:
+`#General` is a public shared room:
 
 - its conversation transcript is shared Channel context;
 - co-member semantic memory sharing follows the existing membership-scoped rule;
@@ -225,6 +226,3 @@ default Dock experience and auto-membership behavior work.
 - When an agent is deleted, should the current member edge be removed immediately,
   or should the member remain visible as unavailable until the next compaction /
   cleanup pass?
-- Should user-level agents join every workspace's `#General`, or only the active
-  workspace where they become addressable? The recommended default is active
-  workspace only.

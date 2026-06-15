@@ -1228,6 +1228,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Plan: default #General channel (PR #265, codex-4)** — docs-only. Adds
+  `docs/plans/default-general-channel.md`: a Slack-like default **`#General`** Channel — a
+  reserved-identity Conversation that exists by default (user + coordinator), **auto-includes every
+  durable peer agent** as it appears (fork / child / headless runs excluded), and is the Agent Dock
+  default when no conversation is remembered. Membership = presence + addressability, **not**
+  participation; unaddressed turns still route to the coordinator, so auto-membership never becomes
+  auto-noise. **No stored conversation `kind`** (reserved id + runtime invariant); `@all` deferred.
+  **Gate (main):** squash-merged after a plan review, then folded in the two review fixes — removed
+  the plan `status` frontmatter (plans are frontmatter-free; status lives only in `docs/TASKS.md`)
+  and dropped the non-existent multi-"workspace" framing (there is one workspace; `localFileRoot` is
+  env/cwd). Boarded as P2 (not started).
+
 - **Plan: bundled built-in skill resources (PR #268, codex-4)** — docs-only. Adds
   `docs/plans/bundled-built-in-skill-resources.md`: give app-shipped `built-in`
   skills the standard Anthropic Agent Skills shape (a real `SKILL.md` +
