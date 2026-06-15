@@ -87,6 +87,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "src/main/builtInSkills",
+        "to": "built-in-skills"
       }
     ],
     "mac": {

@@ -3,8 +3,10 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, TextContent, UserMessage } from '../core/agentTypes';
@@ -23,6 +25,8 @@ import {
 export const SKILL_TOOL_NAME = 'skill';
 
 const SKILL_FILE_NAME = 'SKILL.md';
+const BUILT_IN_SKILL_RESOURCE_DIR_NAME = 'built-in-skills';
+const BUILT_IN_SKILL_SOURCE_DIR = 'src/main/builtInSkills';
 const SKILL_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_SKILL_LISTING_CHAR_BUDGET = 8_000;
@@ -32,6 +36,7 @@ const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000;
 const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000;
 const SKILL_LISTING_STATE_MARKER = 'The following skills have already been listed to the agent in this session:';
 const execFile = promisify(execFileCallback);
+const requireForElectron = createRequire(import.meta.url);
 const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   name: 'skillify',
   description: 'Create or update a local agent skill from an explicit user workflow request.',
@@ -178,6 +183,7 @@ export interface SkillLoadOptions {
   localRoot?: string;
   includeUserSkills?: boolean;
   additionalSkillDirectories?: string[];
+  builtInSkillDirectories?: string[];
   builtInSkills?: BuiltInSkillInput[];
   conversationId?: string;
   permissionScopeProvider?: () => string | null;
@@ -185,6 +191,12 @@ export interface SkillLoadOptions {
   executeIsolatedSkill?: SkillIsolatedExecutor;
   skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   provenanceStore?: AgentSkillProvenanceStore;
+}
+
+export interface BuiltInSkillResourceRootOptions {
+  isPackaged?: boolean;
+  resourcesPath?: string;
+  moduleDir?: string;
 }
 
 /**
@@ -874,6 +886,7 @@ export async function createSlashSkillPrompt(
 class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
+  private readonly builtInSkillDirectories: string[];
   private readonly builtInSkills: BuiltInSkillInput[];
   private readonly builtInReadOnlyIsolatedSkills: Set<string>;
   private additionalSkillDirectories: string[];
@@ -891,6 +904,9 @@ class SkillRegistry {
   constructor(options: SkillLoadOptions) {
     this.root = path.resolve(options.localRoot ?? process.cwd());
     this.includeUserSkills = options.includeUserSkills ?? true;
+    this.builtInSkillDirectories = normalizeBuiltInSkillDirectories(
+      options.builtInSkillDirectories ?? [resolveBuiltInSkillResourceRoot()],
+    );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
     this.builtInReadOnlyIsolatedSkills = new Set(
       this.builtInSkills
@@ -1156,6 +1172,12 @@ class SkillRegistry {
     this.loaded = true;
     await this.ensureProvenanceLoaded();
     this.seenSkillFileIds.clear();
+    for (const dir of this.builtInSkillDirectories) {
+      const loaded = await loadSkillsFromDir(dir, 'built-in');
+      for (const skill of loaded) {
+        await this.addLoadedSkill(skill);
+      }
+    }
     for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
       await this.addLoadedSkill(skill);
     }
@@ -1170,7 +1192,12 @@ class SkillRegistry {
 
   private async addLoadedSkill(skill: SkillDefinition): Promise<boolean> {
     const existing = this.skills.get(skill.name) ?? this.conditionalSkills.get(skill.name);
-    if (existing?.source === 'built-in') return false;
+    if (existing?.source === 'built-in') {
+      if (skill.source === 'built-in') {
+        throw new Error(`Duplicate built-in skill "${skill.name}" from ${skillPathForPrompt(existing)} and ${skillPathForPrompt(skill)}.`);
+      }
+      return false;
+    }
     const fileId = skill.source === 'built-in'
       ? skillPathForPrompt(skill)
       : await skillFileIdentity(skill.skillFile);
@@ -1239,6 +1266,28 @@ function deriveSkillTrust(
 
   const agentAuthoredCurrent = record?.agentHash !== undefined && record.agentHash === skill.contentHash;
   return { ratified: !agentAuthoredCurrent, accepted: false };
+}
+
+export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRootOptions = {}): string {
+  const isPackaged = options.isPackaged ?? appIsPackaged();
+  if (isPackaged) {
+    const resourcesPath = options.resourcesPath ?? (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    if (!resourcesPath) {
+      throw new Error('Cannot resolve packaged built-in skill resources without process.resourcesPath.');
+    }
+    return path.join(resourcesPath, BUILT_IN_SKILL_RESOURCE_DIR_NAME);
+  }
+  const moduleDir = options.moduleDir ?? fileURLToPath(new URL('.', import.meta.url));
+  return path.resolve(moduleDir, '../../', BUILT_IN_SKILL_SOURCE_DIR);
+}
+
+function appIsPackaged(): boolean {
+  try {
+    const electron = requireForElectron('electron') as typeof import('electron');
+    return Boolean(electron.app?.isPackaged);
+  } catch {
+    return false;
+  }
 }
 
 function skillSearchDirs(
@@ -1514,15 +1563,20 @@ async function renderSkillContent(
 }
 
 function skillDirectoryForPrompt(skill: SkillDefinition): string | null {
-  return skill.source === 'built-in'
-    ? null
-    : normalizePathForPrompt(skill.rootDir);
+  if (skill.source !== 'built-in') return normalizePathForPrompt(skill.rootDir);
+  return isResourceBackedBuiltInSkill(skill)
+    ? normalizePathForPrompt(skill.rootDir)
+    : null;
 }
 
 function skillPathForPrompt(skill: SkillDefinition): string {
   return skill.source === 'built-in'
     ? `built-in:${skill.name}`
     : normalizePathForPrompt(skill.skillFile);
+}
+
+function isResourceBackedBuiltInSkill(skill: SkillDefinition): boolean {
+  return skill.source === 'built-in' && skill.contentHash !== undefined;
 }
 
 async function executeShellCommandsInSkillContent(
@@ -1829,6 +1883,21 @@ function normalizeAdditionalSkillDirectories(value: readonly string[] | undefine
     if (!expanded || seen.has(expanded)) continue;
     seen.add(expanded);
     dirs.push(expanded);
+  }
+  return dirs;
+}
+
+function normalizeBuiltInSkillDirectories(value: readonly string[] | undefined): string[] {
+  if (!value?.length) return [];
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const item of value) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    const normalized = path.resolve(trimmed);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    dirs.push(normalized);
   }
   return dirs;
 }
