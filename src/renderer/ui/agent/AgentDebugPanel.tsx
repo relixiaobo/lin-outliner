@@ -1,41 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
+  AgentDebugConversation,
   AgentDebugMessagePart,
   AgentDebugMessageRow,
-  AgentDebugSnapshot,
-  AgentDebugTotals,
+  AgentDebugRound,
+  AgentDebugRun,
+  AgentDebugRunSummary,
+  AgentDebugToolExchange,
+  AgentDebugTurnStatus,
   AgentDebugUsage,
   AgentRuntimeEvent,
 } from '../../../core/agentTypes';
-import type { Messages } from '../../../core/i18n';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 
-type DebugLabels = Messages['agentDebug'];
+// Run-grounded debug view ([[agent-debug-run-grounded]]): a read-only window onto
+// the execution tree — conversation → runs (per agent) → rounds (one provider
+// call) → request window / response / tool exchanges — sourced from the run
+// ledgers the system already writes. DM is the single-member case of Channel.
 
 interface AgentDebugPanelProps {
   conversationId: string | null;
 }
 
-function emptyTotals(): AgentDebugTotals {
-  return {
-    queries: 0,
-    rounds: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    costUsd: 0,
-    costInputUsd: 0,
-    costOutputUsd: 0,
-    costCacheReadUsd: 0,
-    costCacheWriteUsd: 0,
-  };
-}
+type DebugLabels = ReturnType<typeof useT>['agentDebug'];
+
+// --- formatting -----------------------------------------------------------
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -58,146 +51,461 @@ function usageTooltip(usage: AgentDebugUsage): string {
   return [
     `input: ${usage.input.toLocaleString()}`,
     `output: ${usage.output.toLocaleString()}`,
-    `cache read: ${usage.cacheRead.toLocaleString()}`,
-    `cache write: ${usage.cacheWrite.toLocaleString()}`,
-    `total tokens: ${usage.totalTokens.toLocaleString()}`,
-    `cost input: ${formatCost(usage.costInputUsd)}`,
-    `cost output: ${formatCost(usage.costOutputUsd)}`,
-    `cost cache read: ${formatCost(usage.costCacheReadUsd)}`,
-    `cost cache write: ${formatCost(usage.costCacheWriteUsd)}`,
+    `cache r/w: ${usage.cacheRead.toLocaleString()} / ${usage.cacheWrite.toLocaleString()}`,
+    `total: ${usage.totalTokens.toLocaleString()}`,
+    `cost: ${formatCost(usage.costUsd)}`,
   ].join('\n');
 }
 
-function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function formatPercent(value: number | null, labels: DebugLabels): string {
-  return value == null ? labels.unknown : `${value.toFixed(1)}%`;
-}
-
-function sourceLabel(snapshot: AgentDebugSnapshot, labels: DebugLabels): string {
-  if (snapshot.source === 'provider_payload') return labels.sourceProviderPayload;
-  if (snapshot.source === 'provider_response') return labels.sourceProviderResponse;
-  return labels.sourceRuntimeState;
-}
-
-function statusLabel(input: Pick<AgentDebugSnapshot, 'status'>, labels: DebugLabels): string {
-  if (input.status === 'running') return labels.statusRunning;
-  if (input.status === 'completed') return labels.statusCompleted;
-  if (input.status === 'aborted') return labels.statusAborted;
-  if (input.status === 'interrupted') return labels.statusInterrupted;
-  return labels.statusError;
-}
-
-function statusClassName(input: Pick<AgentDebugSnapshot, 'status'>): string {
-  return `agent-debug-status-pill is-${input.status}`;
-}
-
-function partTitle(part: AgentDebugMessagePart): string {
-  if (part.kind === 'toolCall') return `tool_call ${part.name}`;
-  if (part.kind === 'toolResult') return `tool_result ${part.toolUseId || ''}`.trim();
-  if (part.kind === 'thinking') return 'thinking';
-  if (part.kind === 'image') return 'image';
-  if (part.kind === 'json') return 'json';
-  return part.isReminder ? 'system reminder' : 'text';
-}
-
-function partBody(part: AgentDebugMessagePart): string {
-  if (part.kind === 'toolCall' || part.kind === 'toolResult') return part.body;
-  return part.body;
-}
-
-function truncate(text: string, maxLength = 96): string {
+function truncate(text: string, maxLength = 120): string {
   const trimmed = text.replace(/\s+/g, ' ').trim();
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trim()}...` : trimmed;
 }
 
-function previewFromPart(part: AgentDebugMessagePart): string {
-  if (part.kind === 'toolCall') return truncate(part.body, 120);
-  if (part.kind === 'toolResult') return truncate(part.body, 120);
-  return truncate(part.body, 120);
+/** A short, stable agent label + a 0–7 palette bucket for per-agent coloring. */
+function agentBadge(agentId: string): { label: string; tone: number } {
+  const label = agentId.split(':').pop() || agentId;
+  let hash = 0;
+  for (let i = 0; i < agentId.length; i += 1) hash = (hash * 31 + agentId.charCodeAt(i)) >>> 0;
+  return { label, tone: hash % 8 };
 }
 
-function previewFromSnapshot(snapshot: AgentDebugSnapshot, labels: DebugLabels): string {
-  for (let i = snapshot.messages.length - 1; i >= 0; i -= 1) {
-    const message = snapshot.messages[i]!;
-    if (message.role !== 'user') continue;
-    const text = message.parts.find((part) => part.kind === 'text' && !part.isReminder);
-    if (text?.kind === 'text') return truncate(text.body, 80);
+function statusLabel(status: AgentDebugTurnStatus, labels: DebugLabels): string {
+  if (status === 'running') return labels.statusRunning;
+  if (status === 'completed') return labels.statusCompleted;
+  if (status === 'aborted') return labels.statusAborted;
+  if (status === 'interrupted') return labels.statusInterrupted;
+  return labels.statusError;
+}
+
+function kindLabel(kind: string, labels: DebugLabels): string {
+  switch (kind) {
+    case 'turn': return labels.kindTurn;
+    case 'delegation': return labels.kindDelegation;
+    case 'background': return labels.kindBackground;
+    case 'scheduled': return labels.kindScheduled;
+    case 'reflective': return labels.kindReflective;
+    default: return kind || labels.unknown;
   }
-  return labels.requestFallbackPreview({ index: snapshot.turnIndex });
 }
 
-function addUsage(total: AgentDebugUsage, usage: AgentDebugUsage) {
-  total.input += usage.input;
-  total.output += usage.output;
-  total.cacheRead += usage.cacheRead;
-  total.cacheWrite += usage.cacheWrite;
-  total.totalTokens += usage.totalTokens;
-  total.costUsd += usage.costUsd;
-  total.costInputUsd += usage.costInputUsd;
-  total.costOutputUsd += usage.costOutputUsd;
-  total.costCacheReadUsd += usage.costCacheReadUsd;
-  total.costCacheWriteUsd += usage.costCacheWriteUsd;
+function partTitle(part: AgentDebugMessagePart, labels: DebugLabels): string {
+  if (part.kind === 'toolCall') return `tool_call ${part.name}`;
+  if (part.kind === 'toolResult') return `tool_result ${part.toolUseId || ''}`.trim();
+  if (part.kind === 'thinking') return labels.partThinking;
+  if (part.kind === 'image') return labels.partImage;
+  if (part.kind === 'json') return labels.partJson;
+  return part.isReminder ? labels.partReminder : labels.partText;
 }
 
-function emptyUsage(): AgentDebugUsage {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    costUsd: 0,
-    costInputUsd: 0,
-    costOutputUsd: 0,
-    costCacheReadUsd: 0,
-    costCacheWriteUsd: 0,
-  };
-}
+// --- data hook ------------------------------------------------------------
 
-interface AgentDebugQueryBlock {
-  id: string;
-  queryIndex: number;
-  preview: string;
-  rounds: AgentDebugSnapshot[];
-  status: AgentDebugSnapshot['status'];
-  total: AgentDebugUsage;
-}
+function useDebugTimeline(conversationId: string | null) {
+  const [resolvedConversationId, setResolvedConversationId] = useState<string | null>(conversationId);
+  const [conversation, setConversation] = useState<AgentDebugConversation | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
 
-function buildQueryBlocks(history: AgentDebugSnapshot[], labels: DebugLabels): AgentDebugQueryBlock[] {
-  const blocks = new Map<number, AgentDebugQueryBlock>();
-  for (const snapshot of history) {
-    const queryIndex = snapshot.queryIndex || snapshot.turnIndex;
-    let block = blocks.get(queryIndex);
-    if (!block) {
-      block = {
-        id: `query-${queryIndex}`,
-        queryIndex,
-        preview: previewFromSnapshot(snapshot, labels),
-        rounds: [],
-        status: snapshot.status,
-        total: emptyUsage(),
-      };
-      blocks.set(queryIndex, block);
+  const refresh = useCallback(async () => {
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
+    setLoading(true);
+    try {
+      let target = conversationId;
+      if (!target) {
+        const conversations = await api.agentListConversations();
+        if (requestId !== requestRef.current) return;
+        target = conversations[0]?.id ?? null;
+      }
+      if (requestId !== requestRef.current) return;
+      setResolvedConversationId(target);
+      if (!target) {
+        setConversation(null);
+        setError(null);
+        return;
+      }
+      const next = await api.agentDebugView(target);
+      if (requestId !== requestRef.current) return;
+      setConversation(next);
+      setError(null);
+    } catch (caught) {
+      if (requestId !== requestRef.current) return;
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (requestId === requestRef.current) setLoading(false);
     }
-    block.rounds.push(snapshot);
-    block.status = snapshot.status;
-    const nextPreview = previewFromSnapshot(snapshot, labels);
-    if (nextPreview) block.preview = nextPreview;
-    if (snapshot.usage) addUsage(block.total, snapshot.usage);
-  }
-  return [...blocks.values()].sort((left, right) => left.queryIndex - right.queryIndex);
+  }, [conversationId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const eventConversationId = conversationId ?? resolvedConversationId;
+    if (!eventConversationId) return undefined;
+    const unlisten = window.lin?.onAgentEvent((event: AgentRuntimeEvent) => {
+      if (event.type !== 'projection' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') return;
+      if (event.conversationId !== eventConversationId) return;
+      void refresh();
+    });
+    return () => { unlisten?.(); };
+  }, [refresh, resolvedConversationId, conversationId]);
+
+  return { conversation, error, loading, refresh, resolvedConversationId };
 }
 
-async function copyText(text: string) {
-  if (!text) return;
-  await navigator.clipboard.writeText(text);
+// A run summary plus its delegated children (the run tree by parentRunId).
+interface RunTreeNode {
+  run: AgentDebugRunSummary;
+  children: RunTreeNode[];
+}
+
+function buildRunTree(runs: readonly AgentDebugRunSummary[]): RunTreeNode[] {
+  const byId = new Map<string, RunTreeNode>();
+  for (const run of runs) byId.set(run.runId, { run, children: [] });
+  const roots: RunTreeNode[] = [];
+  for (const node of byId.values()) {
+    const parent = node.run.parentRunId ? byId.get(node.run.parentRunId) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+// --- top-level panel ------------------------------------------------------
+
+export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
+  const labels = useT().agentDebug;
+  const { conversation, error, loading, refresh, resolvedConversationId } = useDebugTimeline(conversationId);
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+
+  const tree = useMemo(() => buildRunTree(conversation?.runs ?? []), [conversation]);
+  const members = conversation?.members ?? [];
+
+  if (!conversationId && !resolvedConversationId && loading) {
+    return (
+      <div className="agent-debug-panel">
+        <EmptyState className="agent-debug-empty" icon={LoaderIcon} loading role="status" title={labels.loadingConversation} />
+      </div>
+    );
+  }
+  if (!conversationId && !resolvedConversationId) {
+    return (
+      <div className="agent-debug-panel">
+        <EmptyState className="agent-debug-empty" title={labels.noConversation} />
+      </div>
+    );
+  }
+
+  const visibleTree = agentFilter ? tree.filter((node) => node.run.agentId === agentFilter) : tree;
+
+  return (
+    <div className="agent-debug-panel">
+      <header className="agent-debug-header">
+        <div>
+          <h2>{labels.title}</h2>
+          <p>{resolvedConversationId ?? conversationId}</p>
+        </div>
+        <IconButton
+          className="agent-debug-icon-button"
+          icon={RefreshIcon}
+          label={labels.refreshLabel}
+          onClick={() => void refresh()}
+          title={labels.refreshTitle}
+          variant="panel"
+        />
+      </header>
+
+      {loading && !conversation ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRuntime} /> : null}
+      {error ? <ErrorState message={error} /> : null}
+
+      {conversation ? (
+        <>
+          <Overview conversation={conversation} labels={labels} />
+          {members.length > 1 ? (
+            <AgentFilter members={members} active={agentFilter} onChange={setAgentFilter} labels={labels} />
+          ) : null}
+          <section className="agent-debug-run-stack" aria-label={labels.timelineAriaLabel}>
+            {visibleTree.length === 0 ? (
+              <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
+            ) : visibleTree.map((node) => (
+              <RunNode key={node.run.runId} node={node} conversationId={resolvedConversationId} depth={0} labels={labels} />
+            ))}
+          </section>
+        </>
+      ) : (
+        !loading && !error ? <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div> : null
+      )}
+    </div>
+  );
+}
+
+function Overview({ conversation, labels }: { conversation: AgentDebugConversation; labels: DebugLabels }) {
+  const { totals, shape, members } = conversation;
+  return (
+    <div className="agent-debug-overview-grid" aria-label={labels.overviewAriaLabel}>
+      <DebugMetric label={labels.metricShape} value={shape === 'channel' ? labels.shapeChannel : labels.shapeDm} meta={labels.membersCount({ count: members.length })} />
+      <DebugMetric label={labels.statTotalRuns} value={conversation.runs.length} meta={labels.statRoundsMeta({ count: totals.rounds })} />
+      <DebugMetric label={labels.statTokens} value={formatTokens(totals.totalTokens)} meta={`${formatTokens(totals.input)} / ${formatTokens(totals.output)}`} />
+      <DebugMetric label={labels.statCost} value={formatCost(totals.costUsd)} />
+    </div>
+  );
+}
+
+function AgentFilter({ members, active, onChange, labels }: { members: string[]; active: string | null; onChange: (value: string | null) => void; labels: DebugLabels }) {
+  return (
+    <div className="agent-debug-filter" role="group" aria-label={labels.filterAriaLabel}>
+      <button type="button" className={`agent-debug-chip${active === null ? ' is-active' : ''}`} onClick={() => onChange(null)}>
+        {labels.filterAll}
+      </button>
+      {members.map((agentId) => {
+        const { label, tone } = agentBadge(agentId);
+        return (
+          <button
+            key={agentId}
+            type="button"
+            className={`agent-debug-chip${active === agentId ? ' is-active' : ''}`}
+            data-tone={tone}
+            onClick={() => onChange(active === agentId ? null : agentId)}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// --- run node (lazy detail) ----------------------------------------------
+
+function RunNode({ node, conversationId, depth, labels }: { node: RunTreeNode; conversationId: string | null; depth: number; labels: DebugLabels }) {
+  const { run } = node;
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<AgentDebugRun | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { label, tone } = agentBadge(run.agentId);
+
+  const loadDetail = useCallback(async () => {
+    if (detail || !conversationId) return;
+    setLoading(true);
+    try {
+      const next = await api.agentDebugRun(conversationId, run.runId);
+      setDetail(next);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }, [detail, conversationId, run.runId]);
+
+  return (
+    <div className="agent-debug-run-node" data-depth={depth}>
+      <button
+        type="button"
+        className="agent-debug-run-head"
+        aria-expanded={open}
+        onClick={() => { const next = !open; setOpen(next); if (next) void loadDetail(); }}
+      >
+        <ChevronDownIcon className={`agent-debug-summary-chevron${open ? ' is-open' : ''}`} size={ICON_SIZE.tiny} />
+        <span className="agent-debug-agent-badge" data-tone={tone}>{label}</span>
+        <span className="agent-debug-run-kind">{kindLabel(run.kind, labels)}</span>
+        {run.parentToolCallId ? <span className="agent-debug-run-parent">{labels.delegatedBadge}</span> : null}
+        <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span>
+        {run.modelId ? <code className="agent-debug-run-model">{run.modelId}</code> : null}
+        <span className="agent-debug-run-rounds">{labels.runRounds({ count: run.roundCount })}</span>
+        {run.usage ? <CostInline usage={run.usage} /> : null}
+      </button>
+
+      {open ? (
+        <div className="agent-debug-run-body">
+          {loading ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRun} /> : null}
+          {error ? <ErrorState message={error} /> : null}
+          {detail ? <RunDetail run={detail} labels={labels} /> : (!loading && !error ? <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div> : null)}
+        </div>
+      ) : null}
+
+      {node.children.length > 0 ? (
+        <div className="agent-debug-run-children">
+          {node.children.map((child) => (
+            <RunNode key={child.run.runId} node={child} conversationId={conversationId} depth={depth + 1} labels={labels} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels }) {
+  return (
+    <div className="agent-debug-run-detail">
+      <div className="agent-debug-context-card">
+        <ContextDisclosure title={labels.systemPromptDisclosure} copyText={run.systemPrompt ?? ''}>
+          {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
+        </ContextDisclosure>
+        <ContextDisclosure title={labels.toolsDisclosure({ count: run.tools.length })}>
+          {run.tools.length === 0 ? <span className="is-muted">{labels.noTools}</span> : (
+            <div className="agent-debug-tool-list">
+              {run.tools.map((tool) => (
+                <details className="agent-debug-tool-row" key={tool.name}>
+                  <summary>
+                    <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
+                    <code>{tool.name}</code>
+                    <span>{tool.description || labels.noDescription}</span>
+                  </summary>
+                  <pre>{tool.schema}</pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </ContextDisclosure>
+      </div>
+
+      {run.rounds.length === 0 ? (
+        <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div>
+      ) : run.rounds.map((round) => (
+        <RoundCard key={round.index} round={round} labels={labels} />
+      ))}
+    </div>
+  );
+}
+
+function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLabels }) {
+  return (
+    <article className="agent-debug-round-card">
+      <div className="agent-debug-section-header">
+        <h3>{labels.roundTitle({ index: round.index + 1 })}</h3>
+        <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span>
+        {round.modelId ? <code className="agent-debug-run-model">{round.modelId}</code> : null}
+        {round.usage ? <CostInline usage={round.usage} /> : <span className="is-muted">{labels.usagePending}</span>}
+      </div>
+
+      {round.usage ? (
+        <div className="agent-debug-round-usage">
+          <span>{labels.usageTokens({ total: formatTokens(round.usage.totalTokens), input: formatTokens(round.usage.input), output: formatTokens(round.usage.output) })}</span>
+          {round.stopReason ? <code>{round.stopReason}</code> : null}
+        </div>
+      ) : null}
+
+      {round.requestWindow.length > 0 ? (
+        <ContextDisclosure title={labels.requestWindowLabel({ count: round.requestWindow.length })}>
+          <div className="agent-debug-message-list">
+            {round.requestWindow.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
+          </div>
+        </ContextDisclosure>
+      ) : null}
+
+      <div className="agent-debug-round-response">
+        <DebugSectionHeader title={labels.responseLabel} />
+        {round.responseParts.length === 0 ? (
+          <div className="is-muted">{labels.noResponseParts}</div>
+        ) : (
+          <div className="agent-debug-part-list">
+            {round.responseParts.map((part, index) => <PartRow key={index} part={part} index={index} rowId={`${round.index}-resp`} labels={labels} />)}
+          </div>
+        )}
+      </div>
+
+      {round.toolExchanges.length > 0 ? (
+        <div className="agent-debug-round-tools">
+          <DebugSectionHeader title={labels.toolExchangesLabel({ count: round.toolExchanges.length })} />
+          {round.toolExchanges.map((exchange) => <ToolExchangeRow key={exchange.toolCallId} exchange={exchange} labels={labels} />)}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ToolExchangeRow({ exchange, labels }: { exchange: AgentDebugToolExchange; labels: DebugLabels }) {
+  const resultBody = exchange.result ?? labels.toolPending;
+  return (
+    <details className={`agent-debug-tool-exchange${exchange.isError ? ' is-error' : ''}`}>
+      <summary>
+        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
+        <code>{exchange.toolName}</code>
+        <strong>{truncate(exchange.result ?? (exchange.args || ''), 96)}</strong>
+        {exchange.isError ? <span className="agent-debug-tool-flag">{labels.toolError}</span> : null}
+      </summary>
+      <div className="agent-debug-tool-exchange-body">
+        {exchange.args ? (
+          <div>
+            <small>{labels.toolArgs}</small>
+            <pre>{exchange.args}</pre>
+          </div>
+        ) : null}
+        <div>
+          <small>{labels.toolResultLabel}</small>
+          <pre>{resultBody}</pre>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+// --- shared bits ----------------------------------------------------------
+
+function MessageRow({ message, labels }: { message: AgentDebugMessageRow; labels: DebugLabels }) {
+  return (
+    <article className="agent-debug-message-row">
+      <div className="agent-debug-message-head">
+        <span>{message.role}</span>
+        <strong>{message.summary}</strong>
+        <code>{formatBytes(message.bytes)}</code>
+      </div>
+      <div className="agent-debug-part-list">
+        {message.parts.map((part, index) => (
+          <PartRow part={part} rowId={message.id} index={index} key={`${message.id}-${index}`} labels={labels} />
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function PartRow({ part, index, rowId, labels }: { index: number; part: AgentDebugMessagePart; rowId: string; labels: DebugLabels }) {
+  const title = partTitle(part, labels);
+  return (
+    <details className={`agent-debug-part-details is-${part.kind}`} key={`${rowId}-${index}`}>
+      <summary>
+        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
+        <span>{title}</span>
+        <strong>{truncate(part.body, 120)}</strong>
+        <IconButton
+          className="agent-debug-copy-button"
+          icon={CopyIcon}
+          iconSize={ICON_SIZE.tiny}
+          label={labels.copyTitle({ title })}
+          onClick={(event) => { event.preventDefault(); void copyText(part.body); }}
+          variant="panel"
+        />
+      </summary>
+      <pre>{part.body}</pre>
+    </details>
+  );
+}
+
+function ContextDisclosure(props: { children: ReactNode; copyText?: string; title: string }) {
+  const labels = useT().agentDebug;
+  return (
+    <details className="agent-debug-disclosure">
+      <summary>
+        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
+        <span>{props.title}</span>
+        {props.copyText !== undefined && props.copyText !== '' ? (
+          <IconButton
+            className="agent-debug-copy-button"
+            icon={CopyIcon}
+            iconSize={ICON_SIZE.tiny}
+            label={labels.copyTitle({ title: props.title })}
+            onClick={(event) => { event.preventDefault(); void copyText(props.copyText ?? ''); }}
+            variant="panel"
+          />
+        ) : null}
+      </summary>
+      <div className="agent-debug-disclosure-body">{props.children}</div>
+    </details>
+  );
 }
 
 function CostInline({ usage }: { usage: AgentDebugUsage }) {
@@ -219,448 +527,16 @@ function DebugMetric(props: { label: string; meta?: ReactNode; value: ReactNode 
   );
 }
 
-function DebugSectionHeader(props: { id?: string; meta?: ReactNode; title: string }) {
+function DebugSectionHeader(props: { meta?: ReactNode; title: string }) {
   return (
     <div className="agent-debug-section-header">
-      <h3 id={props.id}>{props.title}</h3>
+      <h3>{props.title}</h3>
       {props.meta ? <span>{props.meta}</span> : null}
     </div>
   );
 }
 
-function useAgentDebug(conversationId: string | null) {
-  const [resolvedConversationId, setResolvedConversationId] = useState<string | null>(conversationId);
-  const [snapshot, setSnapshot] = useState<AgentDebugSnapshot | null>(null);
-  const [history, setHistory] = useState<AgentDebugSnapshot[]>([]);
-  const [totals, setTotals] = useState<AgentDebugTotals>(() => emptyTotals());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const refreshRequestRef = useRef(0);
-
-  const refresh = useCallback(async () => {
-    const requestId = refreshRequestRef.current + 1;
-    refreshRequestRef.current = requestId;
-    setLoading(true);
-    try {
-      let targetConversationId = conversationId;
-      if (!targetConversationId) {
-        const conversations = await api.agentListConversations();
-        if (requestId !== refreshRequestRef.current) return;
-        targetConversationId = conversations[0]?.id ?? null;
-      }
-      if (requestId !== refreshRequestRef.current) return;
-      setResolvedConversationId(targetConversationId);
-
-      if (!targetConversationId) {
-        setSnapshot(null);
-        setHistory([]);
-        setTotals(emptyTotals());
-        setError(null);
-        return;
-      }
-
-      const nextSnapshot = await api.agentDebugSnapshot(targetConversationId);
-      const [nextHistory, nextTotals] = await Promise.all([
-        api.agentDebugHistory(targetConversationId),
-        api.agentDebugTotals(targetConversationId),
-      ]);
-      if (requestId !== refreshRequestRef.current) return;
-      setSnapshot(nextSnapshot);
-      setHistory(nextHistory);
-      setTotals(nextTotals);
-      setError(null);
-    } catch (caught) {
-      if (requestId !== refreshRequestRef.current) return;
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (requestId === refreshRequestRef.current) setLoading(false);
-    }
-  }, [conversationId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    const eventConversationId = conversationId ?? resolvedConversationId;
-    if (!eventConversationId) return undefined;
-    const unlisten = window.lin?.onAgentEvent((event: AgentRuntimeEvent) => {
-      if (event.type !== 'projection' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') {
-        return;
-      }
-      if (event.conversationId !== eventConversationId) return;
-      void refresh();
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, [refresh, resolvedConversationId, conversationId]);
-
-  return { error, history, loading, refresh, resolvedConversationId, snapshot, totals };
-}
-
-export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
-  const labels = useT().agentDebug;
-  const { error, history, loading, refresh, resolvedConversationId, snapshot, totals } = useAgentDebug(conversationId);
-  const latest = snapshot ?? history.at(-1) ?? null;
-  const queryBlocks = useMemo(() => buildQueryBlocks(history, labels), [history, labels]);
-
-  if (!conversationId && !resolvedConversationId && loading) {
-    return (
-      <div className="agent-debug-panel">
-        <EmptyState className="agent-debug-empty" icon={LoaderIcon} loading role="status" title={labels.loadingConversation} />
-      </div>
-    );
-  }
-
-  if (!conversationId && !resolvedConversationId) {
-    return (
-      <div className="agent-debug-panel">
-        <EmptyState className="agent-debug-empty" title={labels.noConversation} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="agent-debug-panel">
-      <header className="agent-debug-header">
-        <div>
-          <h2>{labels.title}</h2>
-          <p>{resolvedConversationId ?? conversationId}</p>
-        </div>
-        <IconButton
-          className="agent-debug-icon-button"
-          icon={RefreshIcon}
-          label={labels.refreshLabel}
-          onClick={() => void refresh()}
-          title={labels.refreshTitle}
-          variant="panel"
-        />
-      </header>
-
-      {loading && !latest ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRuntime} /> : null}
-      {error ? <ErrorState message={error} /> : null}
-
-      {latest ? (
-        <>
-          <ConversationBar latest={latest} totals={totals} />
-          <ContextCard snapshot={latest} />
-          <section className="agent-debug-query-stack" aria-label={labels.timelineAriaLabel}>
-            {queryBlocks.length === 0 ? (
-              <div className="agent-debug-card is-muted">{labels.noRequests}</div>
-            ) : queryBlocks.map((block) => (
-              <QueryCard block={block} key={block.id} />
-            ))}
-          </section>
-        </>
-      ) : (
-        <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
-      )}
-    </div>
-  );
-}
-
-function ConversationBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotals }) {
-  const labels = useT().agentDebug;
-  const latest = props.latest;
-  const estimate = latest.tokenEstimate;
-  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : labels.unknown;
-  return (
-    <section className="agent-debug-overview-grid" aria-label={labels.overviewAriaLabel}>
-      <DebugMetric
-        label={labels.metricConversation}
-        value={labels.queries({ count: props.totals.queries })}
-        meta={<>{labels.rounds({ count: props.totals.rounds })} · <CostInline usage={props.totals} /></>}
-      />
-      <DebugMetric
-        label={labels.metricModel}
-        value={latest.modelId}
-        meta={<>{latest.provider} · {sourceLabel(latest, labels)}</>}
-      />
-      <DebugMetric
-        label={labels.metricContext}
-        value={`${formatTokens(estimate.total)} / ${contextWindow}`}
-        meta={formatPercent(estimate.usagePercent, labels)}
-      />
-      <DebugMetric
-        label={labels.metricStatus}
-        value={<span className={statusClassName(latest)}>{statusLabel(latest, labels)}</span>}
-        meta={formatTime(latest.capturedAt)}
-      />
-    </section>
-  );
-}
-
-function ContextCard({ snapshot }: { snapshot: AgentDebugSnapshot }) {
-  const labels = useT().agentDebug;
-  const estimate = snapshot.tokenEstimate;
-  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : labels.unknown;
-  const requestJson = labels.requestJson({ size: formatBytes(snapshot.wire.bytes) });
-  return (
-    <section className="agent-debug-card agent-debug-context-card" aria-labelledby="agent-debug-context-heading">
-      <DebugSectionHeader
-        id="agent-debug-context-heading"
-        title={labels.requestContext}
-        meta={requestJson}
-      />
-      <div className="agent-debug-context-head">
-        <div>
-          <div className="agent-debug-section-title">{labels.contextLabel}</div>
-          <div className="agent-debug-context-summary">
-            {labels.contextSummary({
-              total: formatTokens(estimate.total),
-              window: contextWindow,
-              percent: formatPercent(estimate.usagePercent, labels),
-            })}
-          </div>
-        </div>
-        <code>{requestJson}</code>
-      </div>
-      <div className="agent-debug-token-bar">
-        <div
-          className="agent-debug-token-bar-fill"
-          style={{ width: `${Math.min(100, estimate.usagePercent ?? 0)}%` }}
-        />
-      </div>
-      <div className="agent-debug-stat-row">
-        <span>{labels.statSystem} {formatTokens(estimate.systemPrompt)}</span>
-        <span>{labels.statTools} {formatTokens(estimate.tools)}</span>
-        <span>{labels.statMessages} {formatTokens(estimate.messages)}</span>
-        <strong>{labels.statTotal} {formatTokens(estimate.total)}</strong>
-      </div>
-      <div className="agent-debug-context-details">
-        <ContextDisclosure title={labels.systemPromptDisclosure({ size: formatBytes(snapshot.systemPromptBytes) })} copyText={snapshot.systemPrompt}>
-          <pre>{snapshot.systemPrompt || labels.empty}</pre>
-        </ContextDisclosure>
-        <ContextDisclosure title={labels.toolsDisclosure({ count: snapshot.tools.length })}>
-          {snapshot.tools.length === 0 ? (
-            <div className="agent-debug-empty-line">{labels.noTools}</div>
-          ) : snapshot.tools.map((tool) => (
-            <details className="agent-debug-tool-row" key={tool.name}>
-              <summary>
-                <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-                <strong>{tool.name}</strong>
-                <span>{tool.description || labels.noDescription}</span>
-                <code>{formatBytes(tool.bytes)}</code>
-              </summary>
-              <pre>{tool.schema}</pre>
-            </details>
-          ))}
-        </ContextDisclosure>
-      </div>
-    </section>
-  );
-}
-
-function QueryCard({ block }: { block: AgentDebugQueryBlock }) {
-  const labels = useT().agentDebug;
-  return (
-    <details className="agent-debug-card agent-debug-query-card" open>
-      <summary>
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
-        <span className="agent-debug-query-index">{labels.queryIndex({ index: block.queryIndex })}</span>
-        <strong>{block.preview}</strong>
-        <span className="agent-debug-query-meta">
-          {labels.rounds({ count: block.rounds.length })} · <CostInline usage={block.total} />
-        </span>
-        <span className={statusClassName({ status: block.status })}>{statusLabel({ status: block.status }, labels)}</span>
-      </summary>
-      <div className="agent-debug-query-body">
-        {block.rounds.map((round) => (
-          <RoundCard round={round} key={round.id} />
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function RoundCard({ round }: { round: AgentDebugSnapshot }) {
-  const labels = useT().agentDebug;
-  return (
-    <article className="agent-debug-round-card">
-      <div className="agent-debug-round-head">
-        <div>
-          <strong>{labels.round({ index: round.turnIndex })}</strong>
-          <span>{formatTime(round.capturedAt)} · {round.modelId}</span>
-        </div>
-        <div className="agent-debug-round-meta">
-          <span className={statusClassName(round)}>{statusLabel(round, labels)}</span>
-          <span>{round.usage ? <CostInline usage={round.usage} /> : labels.usagePending}</span>
-          <code>{round.wire.hash}</code>
-        </div>
-      </div>
-      <div className="agent-debug-round-timeline">
-        <div className="agent-debug-subsection-title">{labels.messagesSubsection({ count: round.messageCount })}</div>
-        <div className="agent-debug-message-list">
-          {round.messages.map((message) => (
-            <MessageRow message={message} key={message.id} />
-          ))}
-          <ResponseMessageRow round={round} />
-        </div>
-      </div>
-      <RawProviderPayload round={round} />
-    </article>
-  );
-}
-
-function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
-  const labels = useT().agentDebug;
-  const [payload, setPayload] = useState<string | null>(round.wire.json ?? null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPayload(round.wire.json ?? null);
-    setLoading(false);
-    setError(null);
-  }, [round.id, round.wire.json]);
-
-  const loadPayload = useCallback(() => {
-    const payloadId = round.wire.payloadRef?.id;
-    if (payload || loading || !payloadId) return;
-    setLoading(true);
-    setError(null);
-    void api.agentDebugPayload(round.conversationId, payloadId)
-      .then((nextPayload) => {
-        setPayload(nextPayload ?? '');
-        if (nextPayload == null) setError(labels.payloadUnavailableNow);
-      })
-      .catch((nextError) => setError(nextError instanceof Error ? nextError.message : String(nextError)))
-      .finally(() => setLoading(false));
-  }, [labels, loading, payload, round.conversationId, round.wire.payloadRef?.id]);
-
-  return (
-    <details
-      className="agent-debug-disclosure"
-      onToggle={(event) => {
-        if (event.currentTarget.open) loadPayload();
-      }}
-    >
-      <summary>
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
-        <span>{labels.rawPayload({ size: formatBytes(round.wire.bytes) })}</span>
-        {payload ? (
-          <IconButton
-            className="agent-debug-copy-button"
-            icon={CopyIcon}
-            iconSize={ICON_SIZE.tiny}
-            label={labels.copyRawPayload}
-            onClick={(event) => {
-              event.preventDefault();
-              void copyText(payload);
-            }}
-            variant="panel"
-          />
-        ) : null}
-      </summary>
-      <div className="agent-debug-disclosure-body">
-        {payload ? (
-          <pre>{payload}</pre>
-        ) : error ? (
-          <div className="agent-debug-error">{error}</div>
-        ) : loading ? (
-          <div className="agent-debug-empty-line">{labels.loadingPayload}</div>
-        ) : round.wire.payloadRef ? (
-          <div className="agent-debug-empty-line">{labels.openToLoad}</div>
-        ) : (
-          <div className="agent-debug-empty-line">{labels.rawPayloadUnavailable}</div>
-        )}
-      </div>
-    </details>
-  );
-}
-
-function ResponseMessageRow({ round }: { round: AgentDebugSnapshot }) {
-  const labels = useT().agentDebug;
-  return (
-    <article className="agent-debug-message-row is-response">
-      <div className="agent-debug-message-head">
-        {/* `assistant` is the wire role name, mirrored verbatim like other protocol fields. */}
-        <span>assistant</span>
-        <strong>{labels.providerResponse}</strong>
-        <span>{round.usage ? <CostInline usage={round.usage} /> : labels.usagePending}</span>
-      </div>
-      <div className="agent-debug-part-list">
-        {round.responseParts.length === 0 ? (
-          <div className="agent-debug-empty-line">{labels.noResponseParts}</div>
-        ) : round.responseParts.map((part, index) => (
-          <PartRow part={part} rowId={`response-${round.id}`} index={index} key={`response-${index}`} />
-        ))}
-      </div>
-      {round.errorMessage ? <div className="agent-debug-error">{round.errorMessage}</div> : null}
-    </article>
-  );
-}
-
-function MessageRow({ message }: { message: AgentDebugMessageRow }) {
-  const labels = useT().agentDebug;
-  return (
-    <article className="agent-debug-message-row">
-      <div className="agent-debug-message-head">
-        <span>{message.role}</span>
-        <strong>{message.summary}</strong>
-        <code>{formatBytes(message.bytes)}</code>
-      </div>
-      <div className="agent-debug-part-list">
-        {message.parts.map((part, index) => (
-          <PartRow part={part} rowId={message.id} index={index} key={`${message.id}-${index}`} />
-        ))}
-      </div>
-      <ContextDisclosure title={labels.rawMessageJson} copyText={message.json}>
-        <pre>{message.json}</pre>
-      </ContextDisclosure>
-    </article>
-  );
-}
-
-function PartRow(props: { index: number; part: AgentDebugMessagePart; rowId: string }) {
-  const labels = useT().agentDebug;
-  const body = partBody(props.part);
-  return (
-    <details className={`agent-debug-part-details is-${props.part.kind}`}>
-      <summary>
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span>{partTitle(props.part)}</span>
-        <strong>{previewFromPart(props.part)}</strong>
-        <IconButton
-          className="agent-debug-copy-button"
-          icon={CopyIcon}
-          iconSize={ICON_SIZE.tiny}
-          label={labels.copyTitle({ title: partTitle(props.part) })}
-          onClick={(event) => {
-            event.preventDefault();
-            void copyText(body);
-          }}
-          variant="panel"
-        />
-      </summary>
-      <pre>{body}</pre>
-    </details>
-  );
-}
-
-function ContextDisclosure(props: { children: ReactNode; copyText?: string; title: string }) {
-  const labels = useT().agentDebug;
-  return (
-    <details className="agent-debug-disclosure">
-      <summary>
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
-        <span>{props.title}</span>
-        {props.copyText !== undefined ? (
-          <IconButton
-            className="agent-debug-copy-button"
-            icon={CopyIcon}
-            iconSize={ICON_SIZE.tiny}
-            label={labels.copyTitle({ title: props.title })}
-            onClick={(event) => {
-              event.preventDefault();
-              void copyText(props.copyText ?? '');
-            }}
-            variant="panel"
-          />
-        ) : null}
-      </summary>
-      <div className="agent-debug-disclosure-body">{props.children}</div>
-    </details>
-  );
+async function copyText(text: string) {
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
 }
