@@ -549,6 +549,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Unified file preview surface (PR #262, codex-2)** — file-node previews and loose
+  agent/local-file previews collapse into one `nodeId`-keyed `FilePreviewPanel` with two lifecycle
+  states (`loose` → `ingested`) over a single mounted frame: a **read-only filename title** (fixing
+  the `Untitled` shown by title-less file nodes), a breadcrumb sourced from the filesystem/source
+  when loose and from outliner ancestry when ingested, the shared `FilePreviewShell` hero, and the
+  file node's children outline + backlinks when ingested. **Add to outline** copies the loose source
+  into an asset, creates a file node under Today, and rebinds the same mounted surface to the new
+  node **in place** (no remount/jump) — rewriting the bound view's target to the stored asset so the
+  hero no longer depends on the volatile loose source. File nodes no longer open a `NodePanel` node
+  page: every navigation entry routes them to the unified surface, which is also reported to the
+  agent's user-view context and persists its children-outline expansion. Panel chrome
+  (`usePanelTitleDock`, `PanelStickyBreadcrumb`, `PanelChildrenOutline`) is extracted to
+  `PanelShared.tsx` and shared with `NodePanel`. Reviewed over **three `/code-review high` rounds**
+  (round 1: 10 findings — assetId/UUID-as-title, file nodes missing from agent view-context +
+  outline-expansion persistence, a scroll/breadcrumb reset-key mismatch, a post-bind loose-source
+  hero divergence, a false "added" confirmation, an inert-but-clickable loose breadcrumb, scattered
+  reroute, and chrome duplication; all fixed across rounds 2–3). typecheck + 482 renderer tests +
+  file-attachments/agent-process e2e green. Specs: `docs/spec/ui-behavior.md` +
+  `docs/spec/workspace-layout.md`.
 - **Unified agent prompt composition + Anthropic L0 cache breakpoints (PR #263, codex)** — the four
   ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`, `LIN_CHILD_AGENT_CORE_PROMPT`,
   `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) collapse into one

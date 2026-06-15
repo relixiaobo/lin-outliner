@@ -536,21 +536,17 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **file-preview-unification** (P2, `draft` — **PM-ratified direction 2026-06-15**) — a file
-  should look/behave the same whether it is an outliner node or a loose agent-produced file.
-  Today there are two surfaces over **one shared preview hero** (`FilePreviewShell`): the
-  file-as-node *node page* (`NodePanel`, with an editable title that currently shows `Untitled`)
-  and the agent `[[file:…]]` chip *standalone pane* (`FilePreviewPanel`). Collapse them into **one
-  subject-keyed `FileView` with two lifecycle states** (`loose` → `ingested`); the frame is
-  identical, only the breadcrumb source (filesystem path vs outliner ancestry) and the children
-  outline change — and they change **in place** ("add to outline" = a loose→ingested subject
-  rebind, no remount/jump). Title is a **read-only filename** in both states (also fixes the
-  `Untitled` bug). **Shape (b) — a SET of independent PRs:** PR-1 read-only filename title + fix
-  `Untitled` (small, ships first) → PR-2 unify into the subject-keyed `FileView` + in-place
-  transition. Upstream (not in this plan): a loose agent file only previews if it's trust-resolvable
-  (inside `workdir`/`scratch`) — producing outputs into delegated roots is `agent-permission-redesign`
-  PR-3 (typed `file_convert`), Office/PPT rendering is separate. See
-  `docs/plans/file-preview-unification.md`. Ready for a dev agent to claim PR-1.
+- **file-preview-unification** (P2, **SHIPPED (PR #262, codex-2, 2026-06-15)**) — file-node
+  previews and loose agent/local-file previews are unified into **one `nodeId`-keyed
+  `FilePreviewPanel`** with two lifecycle states (`loose` → `ingested`) over a single mounted
+  frame: read-only filename title (fixes the `Untitled` bug), filesystem-vs-outliner-ancestry
+  breadcrumb, the shared `FilePreviewShell` hero, and the file node's children outline +
+  backlinks when ingested. "Add to outline" is an in-place loose→ingested rebind (no
+  remount/jump) that also rewrites the view target to the stored asset. Shipped as **Shape (a)**
+  (one PR; the original PR-1/PR-2 split became build-order within it). Shared panel chrome
+  extracted to `PanelShared.tsx` (`usePanelTitleDock`, `PanelStickyBreadcrumb`,
+  `PanelChildrenOutline`). See Recently completed; plan archived `done`. Design folded into
+  `docs/spec/ui-behavior.md` + `docs/spec/workspace-layout.md`.
 - **agent-file-model** (P1, plan file, **shipped — F1 (#224) + F2 (#229) + F3 (#237)
   + F4 (#238); plan archived `done`**; see Recently completed. PM-ratified 4 decisions
   2026-06-13; superseded the closed #218, shipped via #220) — give agent file
@@ -715,6 +711,26 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Unified file preview surface** (codex-2, PR #262) — collapses the file-node *node page* and the
+  loose agent/local-file *standalone pane* into one `nodeId`-keyed `FilePreviewPanel` with two
+  lifecycle states (`loose` → `ingested`) over a single mounted frame: read-only filename title
+  (fixing the `Untitled` that title-less file nodes showed), a breadcrumb sourced from the
+  filesystem/source when loose and from outliner ancestry when ingested, the shared
+  `FilePreviewShell` hero, and the file node's children outline + backlinks once ingested. **Add to
+  outline** copies the loose source into an asset, creates a file node under Today, and rebinds the
+  same mounted surface to the new node in place (no remount) — rewriting the view target to the
+  stored asset so the hero stops depending on the volatile loose source. File nodes route to the
+  unified surface from every navigation entry point and are now reported to the agent user-view
+  context + persist their children-outline expansion. Panel chrome (`usePanelTitleDock`,
+  `PanelStickyBreadcrumb`, `PanelChildrenOutline`) extracted to `PanelShared.tsx`, shared with
+  `NodePanel`. Gate (main): `/code-review high` over **three rounds** — round 1 surfaced 10 findings
+  (assetId UUID leaking as a title; file nodes dropped from agent view-context and outline-expansion
+  persistence; a scroll/breadcrumb reset keyed on target not nodeId; a loose-source hero divergence
+  after bind; a false "added" confirmation when the pane navigated away mid-ingest; an
+  inert-but-hover-styled loose breadcrumb; reroute scattered across 3 entry points; ~200 lines of
+  `NodePanel` chrome duplicated). codex-2 fixed all over rounds 2–3 (round 3 extracted the shared
+  chrome with no behavior drift). typecheck + 482 renderer tests + file-attachments/agent-process
+  e2e (13) green. Design folded into `docs/spec/ui-behavior.md` + `docs/spec/workspace-layout.md`.
 - **Unified agent prompt composition + Anthropic L0 cache breakpoints**
   (codex, PR #263) — collapses the four ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`,
   `LIN_CHILD_AGENT_CORE_PROMPT`, `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) into
