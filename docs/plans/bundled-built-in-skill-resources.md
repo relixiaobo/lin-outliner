@@ -47,6 +47,34 @@ capability stands on its own and should land before the presentation content PR.
 
 ## Design
 
+### Standard conformance (Anthropic Agent Skills)
+
+The bundled-folder shape is deliberately the **Anthropic Agent Skills standard**:
+a `SKILL.md` entry point plus the conventional `references/` · `scripts/` ·
+`assets/` resource directories, loaded through three-level progressive disclosure
+(metadata always in context → `SKILL.md` body on trigger → bundled resources on
+demand). This is exactly what lets an app-shipped skill look like any other
+standard skill, and it is the structural foundation for later *authoring* and
+*importing* third-party skills. Verified against the official Agent Skills docs,
+the `skill-creator` skill, and the `anthropics/skills` open standard.
+
+**This plan delivers structural conformance only.** Two boundaries are explicitly
+out of scope:
+
+- **`name:` frontmatter.** The standard's one hard frontmatter requirement is
+  `name:` (≤64 chars, kebab-case `[a-z0-9-]`, no reserved words) alongside
+  `description:` (≤1024 chars). Lin deliberately uses **directory-name identity
+  and omits `name:`** (see `docs/spec/agent-skills.md` and Skillify v2). Built-ins
+  keep code-registered identity, so this plan does not touch `name:`. Making
+  Lin's frontmatter fully *round-trippable* with other runtimes — respecting an
+  incoming `name:` on read with a directory-name fallback, tolerating unknown
+  keys, and deciding whether to emit `name:` on author/export — is a separate
+  effort tracked on the board as third-party skill import.
+- **Lin-specific frontmatter extensions** (`when_to_use`, `execution`, `agent`,
+  `paths`, `shell`, `model`, `effort`, `disable-model-invocation`,
+  `user-invocable`) stay as-is; they are ignored by spec-compliant runtimes that
+  don't recognize them, so they do not block conformance.
+
 ### Built-in skill sources
 
 Keep two built-in registration forms:
@@ -73,6 +101,13 @@ runtime contract is stable: each loaded built-in has a real `rootDir` and
 `skillFile`, while remaining immutable from the authoring/write gateway's point
 of view.
 
+**Terminology.** `docs/spec/agent-skills.md` already anticipates this case: it
+describes built-ins as receiving a `Base directory` prefix only when they have
+"real **extracted reference files**," and current built-ins as having "no
+extracted files." A bundled-folder built-in *is* that "built-in with extracted
+reference files." When folding this design back into the spec, reuse that
+existing vocabulary rather than introducing a second parallel term.
+
 ### Loader behavior
 
 `SkillRegistry.ensureLoaded()` should load built-ins in this order:
@@ -83,7 +118,10 @@ of view.
 
 The built-in floor still wins. If two built-ins share a name, that is a product
 bug and should fail loudly in tests or development; mutable skills with the same
-name continue to be ignored because built-ins cannot be shadowed.
+name continue to be ignored because built-ins cannot be shadowed. Note that
+today's `addLoadedSkill` dedups by `seenSkillFileIds` and **silently drops** a
+collision, so the fail-loud behavior on a duplicate built-in name is a small new
+addition this PR must implement, not free existing behavior.
 
 Bundled `SKILL.md` files use the same parser as mutable skills. Their
 frontmatter maps to the existing `SkillDefinition` fields: `description`,
@@ -145,9 +183,13 @@ permissions and the permission redesign's sandbox/effect evaluator.
 
 The Electron build must include the bundled skill directories. The runtime
 should resolve their path in both dev and packaged app modes, without depending
-on the current working directory. Tests should cover the path resolver with a
-temporary fixture; the packaged path should be covered by a small unit or
-integration test if the build config exposes a deterministic resource path.
+on the current working directory. **This path resolution is the load-bearing
+risk of the whole capability** — a built-in that loads in dev but not in the
+packaged `.dmg` is the failure mode to guard against. Packaged resolution should
+go through the app resource root (e.g. `process.resourcesPath` / an
+`electron-builder` `extraResources` entry), never `cwd`/`__dirname`. Tests must
+cover the path resolver with a temporary fixture, and the dev-vs-packaged
+divergence with a deterministic resource-path test.
 
 ### First consumers
 

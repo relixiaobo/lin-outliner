@@ -1188,6 +1188,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Plan: bundled built-in skill resources (PR #268, codex-4)** — docs-only. Adds
+  `docs/plans/bundled-built-in-skill-resources.md`: give app-shipped `built-in`
+  skills the standard Anthropic Agent Skills shape (a real `SKILL.md` +
+  `references/`/`scripts/`/`assets/` base directory so `${AGENT_SKILL_DIR}`
+  resolves and built-ins use progressive disclosure instead of a monolithic prompt
+  body), preserving the immutable built-in floor. PM-ratified after confirming the
+  folder shape against the official Agent Skills standard; the plan delivers
+  **structural conformance only** — `name:` frontmatter conformance + third-party
+  skill import is split out as a separate board item. Boarded as P1 (not started).
+
 - **Sync the security-exceptions e2e count to the 9-rule catalog (main, fast-track)** —
   `agent-settings.spec.ts` asserted `toHaveCount(10)` select-popup rows, stale since #50f8e6e2 (ungate
   cross-agent contact) intentionally dropped the `spawnChildAgents` (`agent.delegate.spawn`) rule from

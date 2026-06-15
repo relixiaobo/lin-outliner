@@ -439,6 +439,18 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   **Skillify v2 body shipped (#230)** — the structured authoring workflow on the
   built-in `/skillify` skill; remaining active work is the **NL save-as-skill +
   diff/preview creative-UX**. See `docs/plans/agent-skills-authoring.md`.
+- **bundled-built-in-skill-resources** (P1, plan ratified 2026-06-15 / PR #268,
+  not started) — give app-shipped `built-in` skills the **standard Anthropic
+  Agent Skills shape**: a real `SKILL.md` + `references/`/`scripts/`/`assets/`
+  base directory so `${AGENT_SKILL_DIR}` resolves and a built-in can use
+  progressive disclosure instead of one monolithic prompt body. ONE complete
+  capability in one PR (load · list · invoke · compact-restore · `${AGENT_SKILL_DIR}`),
+  preserving the immutable built-in floor; `/presentation` is the first intended
+  consumer in a *later* content PR. Structural standard-conformance only — the
+  `name:` frontmatter conformance + third-party import tolerance is the separate
+  item below. Implementation should rebase after #266 (spec-language overlap
+  only) and align spec terminology on "extracted reference files." See
+  `docs/plans/bundled-built-in-skill-resources.md`.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
   `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
@@ -472,6 +484,16 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   `docs/plans/archive/agent-authoring.md`). No follow-up remains.
 Standalone agent items (not part of the program):
 
+- **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
+  the **frontmatter-conformance + importer** half of "standard skills" that
+  `bundled-built-in-skill-resources` deliberately scopes out. Goal: let Lin import
+  another developer's standard SKILL.md skill (and decide on round-trip/export).
+  Concretely: respect an incoming `name:` on read with a **directory-name
+  fallback** + reconcile when folder-name ≠ `name:`; keep tolerating unknown
+  frontmatter keys; decide whether Lin-authored skills should **emit `name:`** so
+  they validate on claude.ai / Claude Code. **Distinct from `agent-import-skill`**,
+  which is *note/data* import (Tana/Roam/Obsidian), not skill import. PM decision
+  2026-06-15: split out from #268 as its own plan. Write the plan before building.
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
