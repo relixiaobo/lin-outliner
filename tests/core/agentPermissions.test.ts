@@ -20,6 +20,7 @@ describe('agent permissions', () => {
       ['file_write', { file_path: path.join(workspaceRoot, 'a.txt'), content: 'a' }],
       ['file_edit', { file_path: path.join(workspaceRoot, 'a.txt'), old_string: 'a', new_string: 'b' }],
       ['file_delete', { file_path: path.join(workspaceRoot, 'a.txt') }],
+      ['file_convert', { input_path: path.join(workspaceRoot, 'deck.pptx'), output_format: 'pdf', output_path: path.join(workspaceRoot, 'deck.pdf') }],
       ['node_edit', { node_id: 'node:1', old_string: 'a', new_string: 'b' }],
       ['node_delete', { node_id: 'node:1' }],
       ['web_search', { query: 'current docs' }],
@@ -323,6 +324,69 @@ describe('agent permissions', () => {
       },
     });
     expect(deploy.behavior).toBe('ask');
+  });
+
+  test('file_convert asks for outside input and output scopes independently', () => {
+    const outsideInput = evaluateAgentToolPermission({
+      toolName: 'file_convert',
+      args: {
+        input_path: '/tmp/source/deck.pptx',
+        output_format: 'pdf',
+        output_path: path.join(workspaceRoot, 'deck.pdf'),
+      },
+      policy: { workspaceRoot },
+    });
+    expect(outsideInput.behavior).toBe('ask');
+    if (outsideInput.behavior !== 'ask') throw new Error('expected ask');
+    expect(outsideInput.code).toBe('outside_workspace_read');
+    expect(outsideInput.request.alwaysAllowRule).toBe('Scope(read:/tmp/source/deck.pptx)');
+
+    const outsideInputGranted = evaluateAgentToolPermission({
+      toolName: 'file_convert',
+      args: {
+        input_path: '/tmp/source/deck.pptx',
+        output_format: 'pdf',
+        output_path: path.join(workspaceRoot, 'deck.pdf'),
+      },
+      policy: {
+        workspaceRoot,
+        globalPermissions: { grants: ['Scope(read:/tmp/source)'] },
+      },
+    });
+    expect(outsideInputGranted.behavior).toBe('allow');
+    expect(outsideInputGranted.permissionSource).toBe('trust_ledger');
+
+    const outsideOutputWithReadGrant = evaluateAgentToolPermission({
+      toolName: 'file_convert',
+      args: {
+        input_path: path.join(workspaceRoot, 'deck.pptx'),
+        output_format: 'pdf',
+        output_path: '/tmp/output/deck.pdf',
+      },
+      policy: {
+        workspaceRoot,
+        globalPermissions: { grants: ['Scope(read:/tmp/output)'] },
+      },
+    });
+    expect(outsideOutputWithReadGrant.behavior).toBe('ask');
+    if (outsideOutputWithReadGrant.behavior !== 'ask') throw new Error('expected ask');
+    expect(outsideOutputWithReadGrant.code).toBe('outside_workspace_write');
+    expect(outsideOutputWithReadGrant.request.alwaysAllowRule).toBe('Scope(write:/tmp/output/deck.pdf)');
+
+    const outsideOutputGranted = evaluateAgentToolPermission({
+      toolName: 'file_convert',
+      args: {
+        input_path: path.join(workspaceRoot, 'deck.pptx'),
+        output_format: 'pdf',
+        output_path: '/tmp/output/deck.pdf',
+      },
+      policy: {
+        workspaceRoot,
+        globalPermissions: { grants: ['Scope(write:/tmp/output)'] },
+      },
+    });
+    expect(outsideOutputGranted.behavior).toBe('allow');
+    expect(outsideOutputGranted.permissionSource).toBe('trust_ledger');
   });
 
   test('restricted skill sandbox remains orthogonal to the permission model', () => {

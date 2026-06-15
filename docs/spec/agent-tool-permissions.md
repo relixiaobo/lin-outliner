@@ -63,7 +63,10 @@ escapes are caught before execution. `file_glob` and `file_grep` default to the
 workdir, so scratch and handed folders are reached only through explicit
 absolute paths the app or user hands to the agent. `file_delete` refuses the
 workdir, handed roots, and the agent trash root themselves; delete only moves
-specific descendants to `.agent-trash`.
+specific descendants to `.agent-trash`. `file_convert` evaluates both sides of
+the conversion: the input path is a read boundary, and `output_path` /
+`output_dir` is a write boundary. If the model omits an output path, the output
+defaults to the workdir.
 
 ## Reversible Local Work
 
@@ -71,6 +74,8 @@ Reversible local work is allowed silently. Current examples:
 
 - `file_read`, `file_glob`, `file_grep`
 - `file_write` and `file_edit` inside workdir
+- `file_convert` inside workdir or handed write scope, because it writes new
+  outputs through typed converters and refuses to overwrite existing files
 - `file_delete` inside workdir, because it moves files or directories to
   `.agent-trash` instead of unlinking them
 - outliner node create/edit/delete operations

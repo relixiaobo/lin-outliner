@@ -449,6 +449,10 @@ export function deriveAgentToolActionDescriptors(input: {
     return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args, input.policy);
   }
 
+  if (toolName === 'file_convert') {
+    return deriveFileConvertActionDescriptors(input.args, input.policy);
+  }
+
   const pathArgName = toolPathArgumentName(toolName);
   if (pathArgName) {
     return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
@@ -675,6 +679,154 @@ export function deriveAgentToolActionDescriptors(input: {
     platformHardBlock: true,
     redline: true,
   })];
+}
+
+function deriveFileConvertActionDescriptors(
+  args: unknown,
+  policy: AgentPermissionPolicy,
+): DerivedToolActionDescriptor[] {
+  const descriptors: DerivedToolActionDescriptor[] = [];
+  descriptors.push(deriveFileConvertPathDescriptor({
+    rawPath: getStringArg(args, 'input_path'),
+    policy,
+    access: 'read',
+    role: 'input',
+  }));
+
+  const outputPath = getStringArg(args, 'output_path');
+  const outputDir = getStringArg(args, 'output_dir');
+  if (outputPath) {
+    descriptors.push(deriveFileConvertPathDescriptor({
+      rawPath: outputPath,
+      policy,
+      access: 'write',
+      role: 'output',
+    }));
+  } else if (outputDir) {
+    descriptors.push(deriveFileConvertPathDescriptor({
+      rawPath: outputDir,
+      policy,
+      access: 'write',
+      role: 'output directory',
+    }));
+  } else {
+    descriptors.push(descriptor('file_convert', 'file.convert.allowed_file_area', {
+      accessScope: 'allowed_file_area',
+      title: 'local file conversion output',
+      summary: 'Write converted output to the allowed file area.',
+      consequence: 'This creates converted output inside the allowed file area.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+    }));
+  }
+  return descriptors;
+}
+
+function deriveFileConvertPathDescriptor(input: {
+  rawPath: string | null;
+  policy: AgentPermissionPolicy;
+  access: 'read' | 'write';
+  role: string;
+}): DerivedToolActionDescriptor {
+  const isWrite = input.access === 'write';
+  const accessVerb = isWrite ? 'write' : 'read';
+  if (!input.rawPath) {
+    return descriptor('file_convert', 'file.convert.allowed_file_area', {
+      accessScope: 'allowed_file_area',
+      title: `local file conversion ${input.role}`,
+      summary: `${isWrite ? 'Write' : 'Read'} conversion ${input.role} in the allowed file area.`,
+      consequence: isWrite ? 'This creates converted output inside the allowed file area.' : 'This reads a local source file for conversion.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+    });
+  }
+
+  const resolved = resolvePermissionPath(input.policy.workspaceRoot, input.rawPath);
+  const isInsideWorkspace = isPathInside(input.policy.workspaceRoot, resolved)
+    || (!isWrite && input.policy.scratchRoot != null && isPathInside(input.policy.scratchRoot, resolved));
+
+  if (isWrite && isHardBlockedSensitiveWritePath(resolved)) {
+    return descriptor('file_convert', 'file.convert.sensitive_local_path', {
+      accessScope: 'sensitive_local_path',
+      title: 'sensitive conversion output',
+      summary: `Write converted output to sensitive local path ${resolved}.`,
+      consequence: `Blocked converted output to a credential, persistence, git-internal, or permission configuration path: ${resolved}`,
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      code: 'sensitive_persistence_write',
+      platformHardBlock: true,
+      redline: true,
+      effect: {
+        reach: 'local',
+        reversible: false,
+        touchesCredentials: true,
+        floor: 'persistence',
+        label: 'sensitive conversion output',
+      },
+    });
+  }
+
+  if (isSensitivePath(resolved)) {
+    return descriptor('file_convert', 'file.convert.sensitive_local_path', {
+      accessScope: 'sensitive_local_path',
+      title: `sensitive conversion ${input.role}`,
+      summary: `${accessVerb === 'write' ? 'Write converted output to' : 'Read conversion input from'} sensitive local path ${resolved}.`,
+      consequence: `This would ${accessVerb} a sensitive local path: ${resolved}`,
+      reversible: !isWrite,
+      externalEffect: false,
+      highConsequence: true,
+      code: `sensitive_path_${accessVerb}`,
+      requestTitle: `Approve sensitive file ${accessVerb}?`,
+      requestTarget: resolved,
+      requestDetails: [
+        { label: 'Tool', value: 'file_convert' },
+        { label: 'Path', value: resolved },
+        { label: 'Why asking', value: 'This path may contain credentials or local secrets.' },
+      ],
+      effect: {
+        reach: 'local',
+        reversible: !isWrite,
+        touchesCredentials: true,
+        label: `sensitive conversion ${input.role}`,
+        grant: { kind: 'scope', access: input.access, root: resolved },
+      },
+    });
+  }
+
+  if (!isInsideWorkspace) {
+    return descriptor('file_convert', 'file.convert.outside_allowed_file_area', {
+      accessScope: 'outside_allowed_file_area',
+      title: `outside-area conversion ${input.role}`,
+      summary: `${isWrite ? 'Write converted output to' : 'Read conversion input from'} ${resolved} outside the allowed file area.`,
+      consequence: `This would ${accessVerb} outside the allowed file area: ${resolved}`,
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      code: `outside_workspace_${accessVerb}`,
+      requestTitle: `Approve outside file ${accessVerb}?`,
+      requestTarget: resolved,
+      effect: {
+        reach: 'outside_scope',
+        reversible: false,
+        touchesCredentials: false,
+        label: `outside-area conversion ${input.role}`,
+        grant: { kind: 'scope', access: input.access, root: resolved },
+      },
+    });
+  }
+
+  return descriptor('file_convert', 'file.convert.allowed_file_area', {
+    accessScope: 'allowed_file_area',
+    title: `local file conversion ${input.role}`,
+    summary: `${isWrite ? 'Write converted output to' : 'Read conversion input from'} ${resolved}.`,
+    consequence: isWrite ? 'This creates converted output inside the allowed file area.' : 'This reads a local source file for conversion.',
+    reversible: true,
+    externalEffect: false,
+    highConsequence: false,
+  });
 }
 
 function derivePathToolActionDescriptor(
@@ -1712,7 +1864,7 @@ function toolPathArgumentName(toolName: string): string | null {
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor' || toolName === 'dream') return 'control';
-  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
+  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'file_convert' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }

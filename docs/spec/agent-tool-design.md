@@ -1458,6 +1458,8 @@ document. The design keeps dedicated tools for each local file role:
 - `file_read` inspects file content.
 - `file_edit` applies exact replacements.
 - `file_write` creates files or rewrites already-read files.
+- `file_convert` converts office/presentation files to PDF, PDF pages to PNG/JPEG
+  images, and images to PDF/PNG/JPEG through typed non-shell converters.
 - `file_glob` lists matching files.
 - `file_grep` searches file content.
 
@@ -1478,12 +1480,25 @@ files, and reserve `bash` for commands that actually need a shell.
 Path rules:
 
 - Concrete file tools use `file_path`.
+- `file_convert` uses `input_path`, plus `output_path` for one output file or
+  `output_dir` for PDF page-image output.
 - Search tools use `path` as an optional search root.
 - Model-facing `file_path` input values should be absolute paths. Search outputs
   such as `file_glob.filenames` and `file_grep.filenames` are local-root-relative
   to save tokens and keep path output compact.
 - TypeScript must enforce the configured local file root unless the user explicitly
   grants a broader root.
+
+`file_convert` is the preferred surface for common conversion workflows that
+previously pushed agents toward shell commands. The runtime invokes converter
+executables directly with `spawn(file, argv, { shell: false })` and returns a
+structured audit payload: input path, output format, output files with sizes and
+MIME types, executable, argv, cwd, shell flag, exit code, stdout, and stderr.
+LibreOffice-compatible `soffice`/`libreoffice` handles office and presentation
+files to PDF; Poppler `pdftoppm` handles PDF page images; macOS `sips` handles
+image format conversion. Outputs default to the workdir, explicit outputs must
+resolve through the same handed-scope rules as the other file tools, and
+existing output files are refused rather than overwritten.
 
 ## Per-Turn Context And Attachments
 

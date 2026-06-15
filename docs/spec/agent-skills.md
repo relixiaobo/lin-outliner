@@ -423,7 +423,9 @@ Agent settings expose only a narrow delegation sandbox:
 
 - **Follow global**: no sandbox; the run uses the normal global effect decision.
 - **Restricted**: only a small safe base set is allowed unless a matching
-  `allowed-tools` rule preapproves the tool call.
+  `allowed-tools` rule preapproves the tool call. `file_convert` is a mutating
+  file tool, so it follows the same rule as `file_write` / `file_edit` rather
+  than joining the read-only base set.
 
 Legacy `permission-mode: trusted` frontmatter is ignored. Skill `allowed-tools`
 is preapproval metadata, not a visibility allowlist. Inline skill rules are
