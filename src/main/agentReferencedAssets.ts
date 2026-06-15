@@ -65,7 +65,11 @@ export function selectReferencedAssetNodes(
         nodeId: ref.nodeId,
         assetId: node.assetId,
         isImageNode: false,
-        title: compactTitle(ref.title || node.originalFilename || node.content.text || ''),
+        // Prefer the node's current text (the display name, kept in sync on rename)
+        // over originalFilename, which is the immutable import-time disk name and goes
+        // stale after a rename. nodeFileName below keeps originalFilename for the path
+        // basename (it preserves the extension); the title is the user-facing name.
+        title: compactTitle(ref.title || node.content.text || node.originalFilename || ''),
         nodeMimeType: node.mimeType,
         nodeFileName: node.originalFilename,
         nodeFileSize: node.fileSize,

@@ -116,7 +116,10 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
   }
   if (value.kind === 'file-preview') {
     const target = previewTargetFromUnknown(value.target);
-    return target ? { kind: 'file-preview', target } : null;
+    // A document asset is an outliner node now — it opens as a node page, never a
+    // file-preview view. Drop any persisted asset-targeted preview as stale; the
+    // pane preview serves only non-node sources (agent payload / local file / url).
+    return target && target.kind !== 'asset' ? { kind: 'file-preview', target } : null;
   }
   return null;
 }

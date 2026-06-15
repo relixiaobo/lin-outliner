@@ -68,14 +68,19 @@ describe('selectReferencedAssetNodes', () => {
     expect(selected[0].nodeId).toBe('img-a');
   });
 
-  test('falls back to mediaAlt / originalFilename / content when the reference has no title, and compacts whitespace', () => {
+  test('with no ref title: image falls back to mediaAlt; attachment prefers display text over the stale originalFilename', () => {
     const doc = projection([
       node({ id: 'img', type: 'image', assetId: 'asset-1', mediaAlt: 'line one\nline two', content: plainText('Stored') }),
-      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', originalFilename: 'report.pdf', content: plainText('Stored') }),
+      // The attachment title prefers the node's current display text over originalFilename
+      // (the immutable import-time name, which goes stale after a node-page rename).
+      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', originalFilename: 'report.pdf', content: plainText('Renamed') }),
+      // …falling back to originalFilename only when there is no display text.
+      node({ id: 'raw', type: 'attachment', assetId: 'asset-3', originalFilename: 'raw.bin', content: plainText('') }),
     ]);
-    const selected = selectReferencedAssetNodes(doc, [{ nodeId: 'img' }, { nodeId: 'pdf' }]);
+    const selected = selectReferencedAssetNodes(doc, [{ nodeId: 'img' }, { nodeId: 'pdf' }, { nodeId: 'raw' }]);
     expect(selected[0].title).toBe('line one line two');
-    expect(selected[1].title).toBe('report.pdf');
+    expect(selected[1].title).toBe('Renamed');
+    expect(selected[2].title).toBe('raw.bin');
   });
 
   test('returns empty for empty or missing inputs', () => {

@@ -61,7 +61,7 @@ describe('createAssetNode', () => {
     await createAssetNode(passthroughRunner({}), 'parent', 2, imageAsset);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.command).toBe('create_image_node');
-    expect(calls[0]!.args).toEqual({ parentId: 'parent', index: 2, assetId: 'img1', width: 200, height: 100 });
+    expect(calls[0]!.args).toEqual({ parentId: 'parent', index: 2, assetId: 'img1', width: 200, height: 100, name: 'shot.png' });
   });
 
   test('routes a non-image asset to create_attachment_node with full metadata', async () => {

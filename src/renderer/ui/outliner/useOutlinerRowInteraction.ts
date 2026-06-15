@@ -140,6 +140,8 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [draft, draftAfterId, panelId, parentId, rowId, setUi]);
 
   const toggleExpandOrSelect = useCallback(() => {
+    // A childless row toggles its trailing child draft: expand focuses the draft so
+    // the first child can be typed; collapse selects the row.
     if (!hasChildren) {
       const shouldFocusTrailing = !expanded;
       setUi((prev) => {
@@ -167,6 +169,8 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   const moveFocus = useCallback((direction: 1 | -1) => {
     const scopeShowsTrailingInput = (scopeParentId: NodeId) => scopeParentId === rootId;
 
+    // Down from an expanded row with no materialized children focuses the trailing
+    // child draft so a first child can be typed before leaving the row.
     if (direction === 1 && expanded) {
       const childRows = buildOutlinerRows(byId.get(childParentId), byId);
       if (childRows.length === 0) {

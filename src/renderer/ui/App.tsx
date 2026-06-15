@@ -28,6 +28,7 @@ import { useCommandRunner } from './shared';
 import { buildAgentUserViewContext, insertionTargetFor } from './agent/userViewContext';
 import { createAssetNode } from './interactions/attachmentIngest';
 import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
+import { ingestPreviewTargetToAsset, onAddPreviewTargetToOutlineRequest } from './preview/previewIngest';
 import { onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
@@ -467,6 +468,22 @@ export function App() {
     const result = await createAssetNode(bridge.run, target.parentId, target.index, asset, { applyFocus: false });
     return result !== null;
   }), []);
+
+  // The non-node preview "Add to outline" bridge: copy the previewed source into an
+  // asset, create a file node under Today, then navigate the active (preview) pane to
+  // its node page so the freshly-saved file is shown. Confirms only on a real create.
+  useEffect(() => onAddPreviewTargetToOutlineRequest(async (target) => {
+    const currentIndex = indexRef.current;
+    const todayId = currentIndex?.projection.todayId;
+    if (!currentIndex || !todayId || !currentIndex.byId.has(todayId)) return false;
+    const asset = await ingestPreviewTargetToAsset(target);
+    if (!asset) return false;
+    const result = await createAssetNode(run, todayId, null, asset, { applyFocus: false });
+    const newNodeId = result && 'focus' in result ? result.focus?.nodeId ?? null : null;
+    if (!newNodeId) return false;
+    setActivePanelRoot(newNodeId, { focus: false });
+    return true;
+  }), [run, setActivePanelRoot]);
 
   if (!index) {
     return (

@@ -534,6 +534,15 @@ Standalone agent items (not part of the program):
   retires the **media-types** whole-file-read limitation. **PR 1 shipped (#210,
   shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining:
   media streaming / Office / URL reader. See `docs/plans/file-preview.md`.
+- **file-as-node** (plan-track, **in-progress** — PM-ratified 2026-06-14, cc) — files
+  (`attachment` / `image` nodes) become first-class outliner nodes: a file-icon-bullet +
+  editable-filename row that **expands to an inline preview block** and **opens as a normal
+  node page** whose body is the full preview. Retires the standalone `file-preview` panel for
+  document nodes (asset/image route through node pages); non-node sources
+  (`agent-payload` / `local-file` / `url`) keep a lightweight info preview; one shared renderer
+  set backs all three. Subsumes the "file-preview header matches node panel" ask. Ships as one
+  PR. See `docs/plans/file-as-node.md`. (Board line added by dev for docs:check; main owns
+  final status/curation at the gate.)
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
 

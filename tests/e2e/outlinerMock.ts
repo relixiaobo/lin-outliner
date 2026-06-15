@@ -718,6 +718,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
       return bytes.buffer;
     };
+    const previewPngBytes = () => {
+      // A 600×360 solid-color PNG — intrinsically wider than the inline cap, so the
+      // image renders at its max width and tests the overlay pinning to its real edge.
+      const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAlgAAAFoCAIAAAAElhK7AAAFZklEQVR4nO3VMQ0AMAzAsOIaqLEaz8HoEUsGkC9z7gOArFkvAIBFRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkGaEAKQZIQBpRghAmhECkPYBAwrJCBZIoboAAAAASUVORK5CYII=';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes.buffer;
+    };
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
       let next = clone(content);
       for (const op of patch.ops) {
@@ -2129,6 +2138,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             byteSize: typeof data?.byteLength === 'number' ? data.byteLength : undefined,
           })) as T;
         }
+        if (cmd === 'ingest_local_file') {
+          const path = typeof args.path === 'string' ? args.path : '';
+          const name = path.split('/').filter(Boolean).at(-1) ?? 'file';
+          const mimeType = name.endsWith('.png') || name.endsWith('.jpg')
+            ? 'image/png'
+            : name.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+          return clone(createAsset({ mimeType, originalFilename: name, byteSize: 4096 })) as T;
+        }
         if (cmd === 'lookup_asset') return clone(assets.get(String(args.id)) ?? null) as T;
         if (cmd === 'delete_asset') {
           assets.delete(String(args.id));
@@ -2229,6 +2246,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ) {
             return { bytes: previewPdfBytes(), mimeType: 'application/pdf' } as T;
           }
+          const imageAsset = target?.kind === 'asset' && target.assetId ? assets.get(target.assetId) : undefined;
+          if (imageAsset?.mimeType?.startsWith('image/')) {
+            return { bytes: previewPngBytes(), mimeType: imageAsset.mimeType } as T;
+          }
           return { bytes: new ArrayBuffer(0), mimeType: 'application/octet-stream' } as T;
         }
         if (cmd === 'preview_list_directory') {
@@ -2256,7 +2277,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'create_image_node') {
           const parentId = String(args.parentId);
-          const nodeId = createNode(parentId, args.index as number | null, '', {
+          const nodeId = createNode(parentId, args.index as number | null, typeof args.name === 'string' ? args.name : '', {
             type: 'image',
             showCheckbox: false,
             assetId: typeof args.assetId === 'string' ? args.assetId : undefined,
@@ -2269,7 +2290,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'create_attachment_node') {
           const parentId = String(args.parentId);
-          const nodeId = createNode(parentId, args.index as number | null, '', {
+          const nodeId = createNode(parentId, args.index as number | null, String(args.originalFilename ?? 'attachment'), {
             type: 'attachment',
             showCheckbox: false,
             assetId: String(args.assetId ?? ''),

@@ -11,8 +11,7 @@
   display: flex;
   min-height: var(--breadcrumb-height);
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
   padding: 0 var(--panel-content-x);
@@ -20,29 +19,12 @@
   user-select: none;
 }
 
-.file-preview-title-group {
-  min-width: 0;
-}
-
-.file-preview-title-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.file-preview-title-row > svg,
-.file-preview-title-row > .inline-ref-file-icon {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-}
-
-.file-preview-title-text {
-  min-width: 0;
-}
-
-.file-preview-title-text h1 {
+/* The non-node preview is identified by its filename in the header (mirroring a
+   node page's breadcrumb origin); the file glyph / meta / actions live in the
+   shared body toolbar below, identical to the node page. */
+.file-preview-heading {
   overflow: hidden;
+  min-width: 0;
   margin: 0;
   color: var(--text-strong);
   font-size: var(--font-ui-md);
@@ -52,38 +34,8 @@
   white-space: nowrap;
 }
 
-.file-preview-title-text p {
-  overflow: hidden;
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-preview-back,
-.file-preview-open-button {
+.file-preview-back {
   -webkit-app-region: no-drag;
-}
-
-.file-preview-open-button {
-  display: inline-flex;
-  min-height: 28px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-row);
-  background: var(--fill-0);
-  color: var(--text-primary);
-  font: inherit;
-  padding: 0 var(--space-3);
-}
-
-.file-preview-open-button:hover {
-  background: var(--fill-1);
-  color: var(--text-strong);
 }
 
 .file-preview-content {
@@ -176,6 +128,23 @@
   color: var(--text-muted);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
+}
+
+/* Audio / video players on a media file node's page. */
+.file-preview-media {
+  display: block;
+  margin: var(--space-4) auto;
+}
+
+.file-preview-audio {
+  width: min(480px, 100%);
+}
+
+.file-preview-video {
+  max-width: 100%;
+  max-height: calc(100vh - 160px);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
 }
 
 .file-preview-markdown {
@@ -372,4 +341,278 @@
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* File-node body — the preview as a node's content: a meta + actions strip over
+   the shared file-preview-* renderers. Shown as the node-page hero above the file
+   node's children outline, and as the body of the non-node preview pane. Both
+   owning surfaces provide the horizontal inset. */
+.file-node-body {
+  min-width: 0;
+  margin-bottom: var(--space-6);
+}
+
+.file-node-toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-size-md);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.file-node-meta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-node-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Icon-only action: deepen color on hover, no box (design-system B6). */
+.file-node-action {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: color var(--motion-fast);
+}
+
+.file-node-action:hover,
+.file-node-action:focus-visible {
+  color: var(--text-main);
+}
+
+.file-node-preview {
+  min-width: 0;
+}
+
+/* A file node's row content is a uniform card — a file-type icon, the editable
+   filename, a meta line, and a ⋯ action menu — identical across every file kind
+   (an image shows the file-type icon, never a thumbnail). It sits in the row's
+   content column; the leading bullet/chevron stay outside it, so a file is still a
+   full node (chevron → children, bullet → node page). */
+.file-node-card {
+  display: grid;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-hairline) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+
+/* The card's opaque background sits above the row's selection highlight (painted
+   behind row children at z-index 0), so without this a selected file row reads as
+   unselected. Carry the neutral selection treatment onto the card itself. */
+.row.selected .file-node-card {
+  border-color: color-mix(in srgb, var(--row-selection-border) 34%, transparent);
+  background: var(--row-selection-bg);
+}
+
+.file-node-card-icon {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  vertical-align: 0;
+  color: var(--text-soft);
+}
+
+.file-node-card-main {
+  min-width: 0;
+}
+
+/* The filename is display-only (renamed on the node page): a single line that
+   truncates with an ellipsis, so a file row stays one line tall. */
+.file-node-card-name {
+  display: block;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-node-card-meta {
+  display: block;
+  margin-top: var(--space-hairline);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The action menu reveals on hover / focus, and stays put while open (the menu is
+   portaled, so `:has(... [aria-expanded])` — not `:focus-within` — keeps it shown). */
+.file-node-card-actions {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.file-node-card:hover .file-node-card-actions,
+.file-node-card-actions:focus-within,
+.file-node-card-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
+  opacity: 1;
+}
+
+/* Icon-only chrome control: deepen colour on hover, no box (design-system B6). */
+.file-node-card-menu-trigger {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: color var(--motion-fast);
+  -webkit-app-region: no-drag;
+}
+
+.file-node-card-menu-trigger:hover,
+.file-node-card-menu-trigger[aria-expanded='true'] {
+  color: var(--text-main);
+}
+
+.file-node-card-menu-trigger:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* A keyboard-focused file row rings its card (focus lands on the hidden anchor). */
+.row:focus-within .file-node-card {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* An image file node renders the image itself inline (an image's content is its
+   identity) — no file-type icon, no filename in the row (it is edited on the node
+   page). The ⋯ menu floats at the image's top-right, revealed on hover / while open. */
+.file-node-image {
+  position: relative;
+  display: inline-block;
+  /* Same bound as the image so this positioning context tracks the image's box,
+     keeping the absolutely-positioned ⋯ overlay pinned to the real top-right corner
+     (an inline-block otherwise grows to the row width when the intrinsic image is
+     wider than the cap). */
+  max-width: min(320px, 100%);
+  margin: var(--space-hairline) 0;
+}
+
+.file-node-image-button {
+  display: block;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 0;
+  /* Clicking opens the file's node page (maximize), not an in-place zoom, and a
+     native app does not hand-cursor clickable content (B10) — keep the arrow. */
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+.file-node-image-button img {
+  display: block;
+  /* auto overrides the intrinsic width/height attributes (set to reserve layout and
+     avoid load-time shift) so the box scales aspect-correctly under the max bounds,
+     rather than letterboxing inside the raw attribute dimensions. */
+  width: auto;
+  height: auto;
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  object-fit: contain;
+}
+
+/* The image could not be loaded (missing asset, or no asset:// handler + byte read
+   also failed): a bounded neutral placeholder that still carries the ⋯ menu. */
+.file-node-image--missing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 160px;
+  min-height: var(--control-size-lg, 40px);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.file-node-image-fallback {
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.file-node-image-button:focus-visible {
+  outline: none;
+}
+
+/* The row's focus (keyboard nav lands on the hidden filename anchor) rings the image,
+   since the image is what the row shows. */
+.file-node-image-button:focus-visible img,
+.row:focus-within .file-node-image-button img {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.file-node-image-actions {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.file-node-image:hover .file-node-image-actions,
+.file-node-image-actions:focus-within,
+.file-node-image-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
+  opacity: 1;
+}
+
+/* Over arbitrary image content the trigger needs a legible backing: a circular glass
+   pill (B5 material on chrome; reduced-transparency fallback comes from the token). */
+.file-node-image-actions .file-node-card-menu-trigger {
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  color: var(--text-main);
+}
+
+/* A file row has no inline filename editor; this focusable, visually-hidden anchor
+   carries the row's keyboard parity (arrow nav, Enter, etc.). Hide it (sr-only) while
+   keeping it focusable. position: absolute takes the anchor out of flow, so the
+   canonical sr-only `margin: -1px` is redundant — width/height 1px + clip + overflow
+   hide it. */
+.file-node-keyboard-anchor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }

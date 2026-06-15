@@ -66,6 +66,9 @@ import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
+import { FilePreviewBody } from './preview/FilePreviewBody';
+import { isFileNode } from './preview/fileNode';
+import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { useT } from '../i18n/I18nProvider';
@@ -158,6 +161,10 @@ export function NodePanel(props: NodePanelProps) {
     ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
     : props.rootId;
   const rootNode = props.index.byId.get(resolvedRootId);
+  // A file root (attachment/image) renders its preview as the page "hero" above its
+  // children outline; the title editor holds the (editable) filename. A file node is
+  // a normal node, so it keeps its children — the preview is extra, not a substitute.
+  const fileRoot = isFileNode(rootNode) ? rootNode : null;
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const [titleContentRevision, setTitleContentRevision] = useState(0);
@@ -808,6 +815,14 @@ export function NodePanel(props: NodePanelProps) {
         )}
         {rootNode && rootDefinitionKind && (
           <DefinitionConfigPanel node={rootNode} index={props.index} run={props.run} />
+        )}
+        {/* A file root shows its preview as the page hero, above the children
+            outline (a file node is a normal node and keeps its children). */}
+        {fileRoot && (
+          <FilePreviewBody
+            node={fileRoot}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
+          />
         )}
         {showOutliner && (
           <div

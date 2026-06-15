@@ -465,15 +465,19 @@ export class Core {
   createImageNode(
     parentId: string,
     index: number | null | undefined,
-    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null },
+    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null; name?: string | null },
   ): CommandOutcome {
     const source = resolveImageSource(options);
+    // The node's text is its editable display name (the filename when one is
+    // known — drops carry it, clipboard/URL images do not). Empty is fine; the
+    // file row then shows a placeholder.
+    const displayName = options.name?.trim() ?? '';
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
       const id = freshId('image');
       this.loro.createNodeWithId<ImageNode>(id, parentId, index, 'image', (node) => {
-        node.content = plainText('');
+        node.content = plainText(displayName);
         if (source.assetId) node.assetId = source.assetId;
         else node.mediaUrl = source.mediaUrl;
         if (options.width != null) node.imageWidth = options.width;
@@ -506,7 +510,9 @@ export class Core {
       ensureParentMutable(state, parentId);
       const id = freshId('attachment');
       this.loro.createNodeWithId<AttachmentNode>(id, parentId, index, 'attachment', (node) => {
-        node.content = plainText('');
+        // The node's text is its editable display name; default it to the
+        // original filename so the file row reads as the file's name.
+        node.content = plainText(attachment.originalFilename);
         node.assetId = attachment.assetId;
         node.mimeType = attachment.mimeType;
         node.originalFilename = attachment.originalFilename;
