@@ -638,11 +638,7 @@ export function NodePanel(props: NodePanelProps) {
             </div>
           )}
           <div className="panel-title-row" ref={titleRowRef}>
-            <div
-              className={`panel-title-editor ${fileTitleLabel ? 'panel-title-editor--file' : ''}`}
-              aria-label={t.nodePanel.pageTitleAriaLabel}
-              onContextMenu={openHeaderContextMenu}
-            >
+            <div className="panel-title-editor" aria-label={t.nodePanel.pageTitleAriaLabel} onContextMenu={openHeaderContextMenu}>
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox
                   checked={Boolean(rootNode.completedAt)}
