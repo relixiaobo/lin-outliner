@@ -27,6 +27,8 @@ describe('agent system prompt', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Never show %%node:id%% markers');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[node:Display^id]]');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[node:^id]]');
+    // The agent surfaces a produced deliverable inline as a file chip (file-marker emit).
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[file:Display^/absolute/path]]');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('YYYY-MM-DDTHH:mm');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Do not use ".." for date ranges');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_read');
