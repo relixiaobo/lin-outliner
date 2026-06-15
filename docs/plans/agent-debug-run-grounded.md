@@ -213,6 +213,31 @@ writer" means **one append seam with private seq** (`appendRunStreamEvents` for
 all run kinds), *not* routing turn runs through the coarse translator — turn-run
 live streaming and its richer delta stream are preserved byte-for-byte.
 
+**The conversation "change version" gap (the sharp edge — resolve in the numbering
+change).** Today a single conversation-global `seq` doubles as the conversation's
+*change cursor*: the conversation index, search index, and checkpoint tail-match
+all treat `state.latestSeq` as a monotonic "has anything (backbone OR any run)
+advanced?" watermark, advancing it on every event. Per-stream seq removes that
+single value — a run can advance without the backbone moving. So the numbering
+change MUST, in the same commit:
+- Give the conversation a monotonic change cursor that advances on every event in
+  any of its streams. Use the per-stream tails composite, or (simplest) drive the
+  index/search "is this stale?" check off `updatedAt` + a folded
+  `max(backboneSeq, max run latestSeq)` rather than one `seq`. The index must
+  still fold run `assistant_message.completed` for `messageCount` /
+  `lastMessageSnippet` / search text while advancing its watermark on backbone +
+  run-completion events.
+- Make the checkpoint tail-match **per-stream**: capture the backbone tail AND
+  each run tail at the same logical point, and reject the checkpoint if ANY stream
+  advanced between state-capture and byte-offset-capture (a run appending without
+  touching the backbone is the failure mode a backbone-only tail-match misses).
+  Restore then reads each stream after its own byte offset with no cross-stream
+  seq filter (the per-stream byte offset is the precise boundary).
+This is why the numbering change cannot be a small isolated edit: `buildEvents`
+(private seq) + the store split (route run groups through `appendRunStreamEvents`,
+backbone via its own key) + the change-cursor rework + the checkpoint reshape all
+land together, with the guard + store/checkpoint tests as the net.
+
 **Guard invariant.** A guard test asserts the spliced visible transcript equals
 today's `getAgentEventVisibleTranscript` output for representative DM, Channel,
 and delegation fixtures — the refactor is correct iff the transcript is identical.
