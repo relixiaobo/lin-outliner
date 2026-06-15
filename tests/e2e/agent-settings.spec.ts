@@ -183,6 +183,24 @@ test.describe('agent settings window', () => {
     }).toEqual({ grants: ['External(git push origin main)'] });
   });
 
+  test('hands a folder to Tenon as a remembered scope grant', async ({ page }) => {
+    const settings = await openSettings(page, '', {
+      permissionGrants: ['Scope(read:/tmp/project)'],
+    });
+    await settings.getByRole('button', { name: /^Security/ }).click();
+
+    const grants = settings.getByRole('list', { name: 'Remembered grants' });
+    await grants.getByRole('button', { name: 'Choose Folder…' }).click();
+
+    await expect(grants).toContainText('Scope(read:/tmp/project)');
+    await expect(grants).toContainText('Scope(write:/mock/handoff-folder)');
+    await expect(settings.getByText('Folder handed to Tenon: /mock/handoff-folder')).toBeVisible();
+    await expect.poll(async () => {
+      const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_scope_folder');
+      return pickCall?.args.settings;
+    }).toEqual({ grants: ['Scope(read:/tmp/project)'] });
+  });
+
   test('shows ignored legacy permission rules as diagnostics', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();

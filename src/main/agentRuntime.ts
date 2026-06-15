@@ -228,6 +228,7 @@ import {
 import {
   createAgentLocalWorkspaceContext,
   scratchRootForWorkdir,
+  setAgentLocalPermissionRoots,
   type AgentLocalWorkspaceContext,
 } from './agentLocalTools';
 import {
@@ -288,6 +289,7 @@ import {
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
 import { shouldFireDateSchedule } from '../core/dateSchedule';
+import type { AgentPermissionGrant } from '../core/agentPermissionModel';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -330,6 +332,15 @@ const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
 // are still surfaced as readable paths. Mirrors the composer's MAX_ATTACHMENTS spirit.
 const MAX_REFERENCED_INLINE_IMAGES = MAX_ATTACHMENTS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
+const LOCAL_FILE_TOOL_NAMES = new Set([
+  'file_read',
+  'file_glob',
+  'file_grep',
+  'file_edit',
+  'file_write',
+  'file_convert',
+  'file_delete',
+]);
 const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
@@ -8223,10 +8234,11 @@ function createConfiguredAgent(
   } = {},
   onPayload?: (payload: unknown, model: Model<any>) => unknown | undefined | Promise<unknown | undefined>,
   onResponse?: (response: ProviderResponse, model: Model<any>) => void | Promise<void>,
-) {
+  ) {
   const model = options.model ?? resolveModel(providerConfig);
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
+  let syncedLocalPermissionRootSignature = '';
   const systemPrompt = options.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT;
   let activeLoopModel = model;
   let activeThinkingLevel = options.thinkingLevel ?? providerConfig.reasoningLevel;
@@ -8269,6 +8281,30 @@ function createConfiguredAgent(
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
+      const shouldSyncLocalPermissionRoots = Boolean(
+        options.localWorkspace
+        && LOCAL_FILE_TOOL_NAMES.has(toolCall.name.trim().replace(/-/g, '_').toLowerCase()),
+      );
+      const syncLocalPermissionRoots = (extraGrants: readonly AgentPermissionGrant[] = []) => {
+        if (!options.localWorkspace || !shouldSyncLocalPermissionRoots) return;
+        const roots = [
+          ...globalPermissions.grants.flatMap((rule) => (
+            rule.grant.kind === 'scope'
+              ? [{ access: rule.grant.access, root: rule.grant.root }]
+              : []
+          )),
+          ...extraGrants.flatMap((grant) => (
+            grant.kind === 'scope'
+              ? [{ access: grant.access, root: grant.root }]
+              : []
+          )),
+        ];
+        const signature = roots.map((root) => `${root.access}:${root.root}`).join('\0');
+        if (signature === syncedLocalPermissionRootSignature) return;
+        setAgentLocalPermissionRoots(options.localWorkspace, roots);
+        syncedLocalPermissionRootSignature = signature;
+      };
+      if (shouldSyncLocalPermissionRoots) syncLocalPermissionRoots();
       const decision = evaluateAgentToolPermission({
         toolName: toolCall.name,
         args,
@@ -8356,7 +8392,14 @@ function createConfiguredAgent(
               deniedReason: approval.approved ? undefined : deniedReason,
             },
           });
-          if (approval.approved) return undefined;
+          if (approval.approved) {
+            if (shouldSyncLocalPermissionRoots) {
+              syncLocalPermissionRoots((decision.descriptors ?? [])
+                .map((descriptor) => descriptor.effect.grant)
+                .filter((grant): grant is AgentPermissionGrant => grant !== undefined));
+            }
+            return undefined;
+          }
           return { block: true, reason: approvalDeniedToolResultMessage(toolCall.name, approval) };
         }
         await options.permissionEventHandler?.({

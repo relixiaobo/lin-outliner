@@ -60,6 +60,7 @@ export const en = {
     // The native "insert image" file-picker dialog (title + the image filter label).
     insertImageTitle: 'Insert image',
     insertAttachmentTitle: 'Insert attachment',
+    handScopeFolderTitle: 'Hand Tenon a folder',
     imageFilesFilter: 'Images',
   },
   // The global launcher's static chrome (placeholder + accessibility labels).
@@ -147,6 +148,11 @@ export const en = {
       grantsGroup: 'Remembered Grants',
       grantsAriaLabel: 'Remembered grants',
       noGrants: 'No remembered grants yet.',
+      handFolderLabel: 'Hand Tenon a folder',
+      handFolderSublabel: 'Allow the agent to read and edit files inside one selected folder.',
+      handFolderAction: 'Choose Folder…',
+      handingFolderAction: 'Choosing…',
+      handedFolderNotice: ({ path }: { path: string }) => `Folder handed to Tenon: ${path}`,
       scopeGrantLabel: 'Folder or file-scope grant',
       externalGrantLabel: 'External-system grant',
       commandGrantLabel: 'Command-form grant',

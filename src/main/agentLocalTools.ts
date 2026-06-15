@@ -1,8 +1,8 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -33,8 +33,21 @@ export interface AgentLocalWorkspaceContext {
   // it is a co-trusted read root (see `resolveWorkspacePath`) so the agent can read what the
   // app places there. Defaults to `<root>/tmp` when no explicit scratch root is supplied.
   scratchRoot: string;
+  // User-handed folders from remembered `Scope(read|write:...)` permission grants.
+  // These widen file-tool containment without changing the relative-path base.
+  permissionRoots: ResolvedAgentLocalPermissionRoot[];
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
+}
+
+export interface AgentLocalPermissionRoot {
+  access: 'read' | 'write';
+  root: string;
+}
+
+interface ResolvedAgentLocalPermissionRoot extends AgentLocalPermissionRoot {
+  realRoot: string;
+  isDirectory: boolean;
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -188,6 +201,38 @@ interface FileDeleteData {
   filePath: string;
   trashPath: string;
   kind: 'file' | 'directory' | 'other';
+}
+
+type FileConvertOutputFormat = 'pdf' | 'png' | 'jpeg';
+
+interface FileConvertParams {
+  input_path: string;
+  output_format: FileConvertOutputFormat;
+  output_path?: string;
+  output_dir?: string;
+  pages?: string;
+}
+
+interface FileConvertOutput {
+  filePath: string;
+  format: FileConvertOutputFormat;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+interface FileConvertData {
+  inputPath: string;
+  outputFormat: FileConvertOutputFormat;
+  outputs: FileConvertOutput[];
+  command: {
+    executable: string;
+    args: string[];
+    cwd: string;
+    shell: false;
+    exitCode: number | null;
+  };
+  stdout: string;
+  stderr: string;
 }
 
 interface Hunk {
@@ -375,6 +420,7 @@ const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
 const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
+const CONVERT_TIMEOUT_MS = 180_000;
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.jpg', 'image/jpeg'],
@@ -383,6 +429,28 @@ const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.gif', 'image/gif'],
   ['.webp', 'image/webp'],
 ]);
+const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
+  '.doc',
+  '.docx',
+  '.odp',
+  '.ods',
+  '.odt',
+  '.ppt',
+  '.pptx',
+  '.rtf',
+  '.xls',
+  '.xlsx',
+]);
+const CONVERT_FORMAT_EXTENSIONS: Record<FileConvertOutputFormat, string> = {
+  pdf: '.pdf',
+  png: '.png',
+  jpeg: '.jpg',
+};
+const CONVERT_FORMAT_MIME_TYPES: Record<FileConvertOutputFormat, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+};
 const SILENT_COMMANDS = new Set(['mv', 'cp', 'rm', 'mkdir', 'rmdir', 'chmod', 'chown', 'chgrp', 'touch', 'ln', 'cd', 'export', 'unset', 'wait']);
 const DISALLOWED_AUTO_BACKGROUND_COMMANDS = new Set(['sleep']);
 
@@ -461,6 +529,19 @@ const FILE_DELETE_PARAMETERS = {
   },
 };
 
+const FILE_CONVERT_PARAMETERS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['input_path', 'output_format'],
+  properties: {
+    input_path: { type: 'string', minLength: 1, description: 'The absolute path to the source file to convert.' },
+    output_format: { type: 'string', enum: ['pdf', 'png', 'jpg', 'jpeg'], description: 'Target format. Office documents and images can become pdf; PDFs can become png or jpeg page images; images can become png, jpeg, or pdf.' },
+    output_path: { type: 'string', minLength: 1, description: 'Exact output file path for single-file conversions. Defaults to the workdir with the source basename and target extension.' },
+    output_dir: { type: 'string', minLength: 1, description: 'Output directory for PDF page-image conversions. Defaults to a new directory in the workdir. Do not combine with output_path.' },
+    pages: { type: 'string', description: 'Page range for PDF-to-image conversion, for example "1-5", "3", or "10-20". Omit it to convert every page.' },
+  },
+};
+
 const BASH_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
@@ -498,6 +579,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
     createFileWriteTool(workspace),
+    createFileConvertTool(workspace),
     createFileDeleteTool(workspace),
     createBashTool(workspace),
     createTaskStopTool(),
@@ -551,6 +633,7 @@ function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillR
   return {
     root: path.resolve(localRoot ?? process.cwd()),
     scratchRoot: scratchRootForWorkdir(localRoot, scratchRoot),
+    permissionRoots: [],
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
   };
@@ -558,6 +641,24 @@ function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillR
 
 export function createAgentLocalWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
   return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
+}
+
+export function setAgentLocalPermissionRoots(
+  workspace: AgentLocalWorkspaceContext,
+  roots: readonly AgentLocalPermissionRoot[],
+): void {
+  workspace.permissionRoots = roots
+    .flatMap((entry): ResolvedAgentLocalPermissionRoot[] => {
+      const root = path.resolve(entry.root);
+      const resolved = resolveCanonicalPath(root);
+      if (!resolved) return [];
+      return [{
+        access: entry.access,
+        root,
+        realRoot: resolved.realPath,
+        isDirectory: isDirectoryPath(resolved.realPath),
+      }];
+    });
 }
 
 export async function restorePostCompactReadFiles(
@@ -1092,6 +1193,47 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
   };
 }
 
+function createFileConvertTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileConvertData>> {
+  return {
+    name: 'file_convert',
+    label: 'File Convert',
+    description: [
+      'Converts local files with typed, non-shell converters.',
+      'Use this instead of bash for common document and image conversions.',
+      'Supported conversions: office documents and presentations to PDF, PDF pages to PNG/JPEG images, and images to PDF/PNG/JPEG.',
+      'Input and output paths must be inside the allowed file area or an explicitly handed scope.',
+      'The tool refuses to overwrite existing outputs.',
+    ].join('\n'),
+    parameters: FILE_CONVERT_PARAMETERS,
+    executionMode: 'sequential',
+    execute: async (_toolCallId, rawParams: unknown) => {
+      const started = Date.now();
+      try {
+        const params = normalizeFileConvertParams(rawParams);
+        const inputPath = resolveWorkspacePath(workspace, params.input_path, 'read');
+        const inputStat = await stat(inputPath).catch((error: unknown) => {
+          throw localFsError(error, inputPath);
+        });
+        if (inputStat.isDirectory()) {
+          throw new LocalToolFailure('is_directory', `Path is a directory: ${inputPath}`, 'Pass a file path to file_convert.');
+        }
+
+        const data = await convertFile(workspace, inputPath, params);
+        await notifySuccessfulFileTouch(workspace, inputPath);
+        for (const output of data.outputs) {
+          await notifySuccessfulFileTouch(workspace, output.filePath);
+        }
+        return agentToolResult(successEnvelope('file_convert', data, {
+          instructions: `Converted ${path.basename(inputPath)} to ${data.outputs.map((output) => output.filePath).join(', ')}.`,
+          metrics: metrics(started, data),
+        }), visibleFileConvert(data));
+      } catch (error) {
+        return localErrorResult('file_convert', error, started);
+      }
+    },
+  };
+}
+
 function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileDeleteData>> {
   return {
     name: 'file_delete',
@@ -1108,8 +1250,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       try {
         const params = normalizeFileDeleteParams(rawParams);
         const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
-        const root = path.resolve(workspace.root);
-        if (path.resolve(filePath) === root) {
+        if (isFileAreaRoot(workspace, filePath)) {
           throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the allowed file area root.', 'Delete a specific file or subdirectory instead.');
         }
         const trashRoot = agentTrashRoot(workspace);
@@ -1146,7 +1287,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     label: 'Bash',
     description: [
       'Executes a shell command in the default file area.',
-      'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
+      'Use file_read, file_edit, file_write, file_convert, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
@@ -1290,6 +1431,36 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
   };
 }
 
+function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
+  const input = asRecord(rawParams);
+  const inputPath = requiredString(input.input_path, 'input_path');
+  const outputFormat = normalizeConvertOutputFormat(input.output_format);
+  const outputPath = optionalString(input.output_path);
+  const outputDir = optionalString(input.output_dir);
+  const pages = typeof input.pages === 'string' ? input.pages : undefined;
+  const extension = path.extname(inputPath).toLowerCase();
+  const isPdfToImage = (outputFormat === 'png' || outputFormat === 'jpeg') && extension === '.pdf';
+  if (outputPath && outputDir) {
+    throw new LocalToolFailure('invalid_args', 'output_path and output_dir cannot be used together.', 'Use output_path for one output file, or output_dir for PDF page images.');
+  }
+  if (pages !== undefined && !isPdfToImage) {
+    throw new LocalToolFailure('invalid_args', 'pages is only valid when converting PDF pages to images.', 'Remove pages or convert a PDF to png/jpeg.');
+  }
+  if (outputDir && !isPdfToImage) {
+    throw new LocalToolFailure('invalid_args', 'output_dir is only valid for PDF page-image conversions.', 'Use output_path for single-file output.');
+  }
+  if (outputPath && isPdfToImage) {
+    throw new LocalToolFailure('invalid_args', 'output_path is not supported for PDF page-image conversions.', 'Use output_dir so multiple page outputs can be returned.');
+  }
+  return {
+    input_path: inputPath,
+    output_format: outputFormat,
+    output_path: outputPath,
+    output_dir: outputDir,
+    pages,
+  };
+}
+
 function normalizeFileDeleteParams(rawParams: unknown): FileDeleteParams {
   const input = asRecord(rawParams);
   return {
@@ -1312,6 +1483,258 @@ function normalizeBashParams(rawParams: unknown): BashParams {
 function normalizeTaskStopParams(rawParams: unknown): TaskStopParams {
   const input = asRecord(rawParams);
   return { task_id: requiredString(input.task_id, 'task_id') };
+}
+
+function normalizeConvertOutputFormat(value: unknown): FileConvertOutputFormat {
+  if (typeof value !== 'string') {
+    throw new LocalToolFailure('invalid_args', 'output_format is required.');
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'jpg') return 'jpeg';
+  if (normalized === 'pdf' || normalized === 'png' || normalized === 'jpeg') return normalized;
+  throw new LocalToolFailure('unsupported_conversion', `Unsupported output_format: ${value}`, 'Use pdf, png, jpg, or jpeg.');
+}
+
+async function convertFile(
+  workspace: WorkspaceContext,
+  inputPath: string,
+  params: FileConvertParams,
+): Promise<FileConvertData> {
+  const extension = path.extname(inputPath).toLowerCase();
+  if (params.output_format === 'pdf') {
+    const outputPath = resolveSingleConvertOutputPath(workspace, inputPath, params);
+    await assertOutputPathAvailable(outputPath, inputPath);
+    if (IMAGE_MEDIA_TYPES.has(extension)) {
+      return await convertImageWithSips(inputPath, outputPath, params.output_format);
+    }
+    if (OFFICE_CONVERTIBLE_EXTENSIONS.has(extension)) {
+      return await convertOfficeToPdf(workspace, inputPath, outputPath);
+    }
+  }
+
+  if ((params.output_format === 'png' || params.output_format === 'jpeg') && extension === '.pdf') {
+    return await convertPdfToImages(workspace, inputPath, params);
+  }
+
+  if ((params.output_format === 'png' || params.output_format === 'jpeg') && IMAGE_MEDIA_TYPES.has(extension)) {
+    const outputPath = resolveSingleConvertOutputPath(workspace, inputPath, params);
+    await assertOutputPathAvailable(outputPath, inputPath);
+    return await convertImageWithSips(inputPath, outputPath, params.output_format);
+  }
+
+  throw new LocalToolFailure(
+    'unsupported_conversion',
+    `Unsupported conversion from ${extension || 'unknown file type'} to ${params.output_format}.`,
+    'Use office/presentation files to PDF, PDF to PNG/JPEG pages, or images to PDF/PNG/JPEG.',
+  );
+}
+
+function resolveSingleConvertOutputPath(
+  workspace: WorkspaceContext,
+  inputPath: string,
+  params: FileConvertParams,
+): string {
+  const fallback = path.join(
+    workspace.root,
+    `${path.basename(inputPath, path.extname(inputPath))}${CONVERT_FORMAT_EXTENSIONS[params.output_format]}`,
+  );
+  return resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+}
+
+async function assertOutputPathAvailable(outputPath: string, inputPath: string): Promise<void> {
+  if (path.resolve(outputPath) === path.resolve(inputPath)) {
+    throw new LocalToolFailure('output_overwrites_input', 'Output path must differ from the input path.', 'Choose a distinct output_path.');
+  }
+  try {
+    await stat(outputPath);
+    throw new LocalToolFailure('output_exists', `Output path already exists: ${outputPath}`, 'Choose a new output_path or delete the existing output first.');
+  } catch (error) {
+    if (error instanceof LocalToolFailure) throw error;
+    if (isNodeError(error) && error.code === 'ENOENT') return;
+    throw localFsError(error, outputPath);
+  }
+}
+
+async function convertOfficeToPdf(
+  workspace: WorkspaceContext,
+  inputPath: string,
+  outputPath: string,
+): Promise<FileConvertData> {
+  const tempDir = path.join(toolOutputDir(workspace), `convert-office-${randomUUID()}`);
+  await mkdir(tempDir, { recursive: true });
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const args = ['--headless', '--convert-to', 'pdf', '--outdir', tempDir, inputPath];
+  const attempted: string[] = [];
+  try {
+    for (const executable of ['soffice', 'libreoffice']) {
+      attempted.push(executable);
+      const result = await runProcess(executable, args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
+      if (result.error && isNodeError(result.error) && result.error.code === 'ENOENT') continue;
+      if (result.error) {
+        throw new LocalToolFailure('converter_failed', result.error.message, 'Check that LibreOffice can run on this system.');
+      }
+      if (result.exitCode !== 0) {
+        throw new LocalToolFailure('converter_failed', result.stderr.trim() || 'LibreOffice conversion failed.', 'Check that the source file is valid and supported.');
+      }
+      const generatedPath = await findSingleConvertedFile(tempDir, '.pdf');
+      await moveFile(generatedPath, outputPath);
+      await rm(tempDir, { recursive: true, force: true });
+      return await convertedData(inputPath, 'pdf', [outputPath], executable, args, path.dirname(inputPath), result);
+    }
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+  await rm(tempDir, { recursive: true, force: true });
+  throw new LocalToolFailure(
+    'converter_unavailable',
+    `Could not find LibreOffice converter (${attempted.join(', ')}).`,
+    'Install LibreOffice so soffice or libreoffice is available on PATH.',
+  );
+}
+
+async function convertPdfToImages(
+  workspace: WorkspaceContext,
+  inputPath: string,
+  params: FileConvertParams,
+): Promise<FileConvertData> {
+  const totalPages = await getPdfPageCount(inputPath);
+  const range = selectPdfConversionPageRange(totalPages, params.pages);
+  const outputDir = resolveWorkspacePath(
+    workspace,
+    params.output_dir ?? path.join(workspace.root, `${path.basename(inputPath, path.extname(inputPath))}-pages-${randomUUID().slice(0, 8)}`),
+    'write',
+  );
+  await ensureDirectoryOutput(outputDir);
+
+  const formatFlag = params.output_format === 'png' ? '-png' : '-jpeg';
+  const extension = params.output_format === 'png' ? '.png' : '.jpg';
+  const basename = path.basename(inputPath, path.extname(inputPath));
+  const prefix = path.join(outputDir, basename);
+  await assertNoPageOutputs(outputDir, basename, extension);
+  const args = [
+    formatFlag,
+    '-r',
+    '144',
+    '-f',
+    String(range.firstPage),
+    '-l',
+    String(range.lastPage),
+    inputPath,
+    prefix,
+  ];
+  const result = await runProcess('pdftoppm', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
+  if (result.error) {
+    throw new LocalToolFailure('converter_unavailable', result.error.message, 'Install poppler so pdftoppm is available on PATH.');
+  }
+  if (result.exitCode !== 0) {
+    throw pdfPageRenderFailure(
+      result.stderr,
+      'converter_failed',
+      'pdftoppm conversion failed.',
+      'Check that the PDF and page range are valid.',
+    );
+  }
+  const outputs = (await readdir(outputDir))
+    .filter((entry) => entry.startsWith(`${basename}-`) && entry.endsWith(extension))
+    .sort(naturalCompare)
+    .map((entry) => path.join(outputDir, entry));
+  if (!outputs.length) {
+    throw new LocalToolFailure('converter_failed', 'pdftoppm produced no page images.', 'Check that the PDF is valid and retry.');
+  }
+  return await convertedData(inputPath, params.output_format, outputs, 'pdftoppm', args, path.dirname(inputPath), result);
+}
+
+async function convertImageWithSips(
+  inputPath: string,
+  outputPath: string,
+  outputFormat: FileConvertOutputFormat,
+): Promise<FileConvertData> {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const args = ['-s', 'format', outputFormat, inputPath, '--out', outputPath];
+  const result = await runProcess('sips', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
+  if (result.error) {
+    throw new LocalToolFailure('converter_unavailable', result.error.message, 'Use macOS sips or convert this file through an installed image converter.');
+  }
+  if (result.exitCode !== 0) {
+    throw new LocalToolFailure('converter_failed', result.stderr.trim() || 'sips conversion failed.', 'Check that the source image is valid and supported.');
+  }
+  return await convertedData(inputPath, outputFormat, [outputPath], 'sips', args, path.dirname(inputPath), result);
+}
+
+async function ensureDirectoryOutput(outputDir: string): Promise<void> {
+  try {
+    const outputStat = await stat(outputDir);
+    if (!outputStat.isDirectory()) {
+      throw new LocalToolFailure('not_directory', `Output path is not a directory: ${outputDir}`, 'Choose another output_dir.');
+    }
+  } catch (error) {
+    if (error instanceof LocalToolFailure) throw error;
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      await mkdir(outputDir, { recursive: true });
+      return;
+    }
+    throw localFsError(error, outputDir);
+  }
+}
+
+async function assertNoPageOutputs(outputDir: string, basename: string, extension: string): Promise<void> {
+  const existing = (await readdir(outputDir)).find((entry) => entry.startsWith(`${basename}-`) && entry.endsWith(extension));
+  if (existing) {
+    throw new LocalToolFailure('output_exists', `Output page already exists: ${path.join(outputDir, existing)}`, 'Choose an empty output_dir or remove existing page images first.');
+  }
+}
+
+async function findSingleConvertedFile(tempDir: string, extension: string): Promise<string> {
+  const files = (await readdir(tempDir)).filter((entry) => entry.toLowerCase().endsWith(extension));
+  if (files.length !== 1) {
+    throw new LocalToolFailure('converter_failed', `Expected one ${extension} output, found ${files.length}.`, 'Check the converter output and retry with an explicit output_path.');
+  }
+  return path.join(tempDir, files[0]!);
+}
+
+async function moveFile(source: string, destination: string): Promise<void> {
+  try {
+    await rename(source, destination);
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'EXDEV') {
+      await copyFile(source, destination);
+      await unlink(source);
+      return;
+    }
+    throw localFsError(error, destination);
+  }
+}
+
+async function convertedData(
+  inputPath: string,
+  outputFormat: FileConvertOutputFormat,
+  outputPaths: readonly string[],
+  executable: string,
+  args: string[],
+  cwd: string,
+  result: ProcessResult,
+): Promise<FileConvertData> {
+  const outputs = await Promise.all(outputPaths.map(async (filePath): Promise<FileConvertOutput> => ({
+    filePath,
+    format: outputFormat,
+    mimeType: CONVERT_FORMAT_MIME_TYPES[outputFormat],
+    sizeBytes: (await stat(filePath)).size,
+  })));
+  return {
+    inputPath,
+    outputFormat,
+    outputs,
+    command: {
+      executable,
+      args,
+      cwd,
+      shell: false,
+      exitCode: result.exitCode,
+    },
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
@@ -2009,14 +2432,12 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
     throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, 'Install poppler so pdfinfo and pdftoppm are available on PATH, or convert the PDF first.');
   }
   if (result.exitCode !== 0) {
-    const stderr = result.stderr.trim();
-    if (/password/i.test(stderr)) {
-      throw new LocalToolFailure('pdf_password_protected', 'PDF is password-protected.', 'Provide an unprotected version or extract the pages manually.');
-    }
-    if (/damaged|corrupt|invalid/i.test(stderr)) {
-      throw new LocalToolFailure('pdf_corrupted', 'PDF file is corrupted or invalid.', 'Check the PDF file or convert it to images manually.');
-    }
-    throw new LocalToolFailure('pdf_read_failed', stderr || 'pdftoppm failed.', 'Check the PDF file and page range, then retry.');
+    throw pdfPageRenderFailure(
+      result.stderr,
+      'pdf_read_failed',
+      'pdftoppm failed.',
+      'Check the PDF file and page range, then retry.',
+    );
   }
 
   const imageFiles = (await readdir(outputDir)).filter((entry) => entry.endsWith('.jpg')).sort(naturalCompare);
@@ -2078,6 +2499,34 @@ function selectPdfPageRange(totalPages: number, requestedPages: string | undefin
     throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
   }
   return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
+}
+
+function selectPdfConversionPageRange(totalPages: number, requestedPages: string | undefined): PdfPageRange {
+  if (!requestedPages) return { firstPage: 1, lastPage: totalPages };
+  const range = parsePdfPageRange(requestedPages);
+  if (!range) {
+    throw new LocalToolFailure('invalid_pdf_pages', `Invalid PDF page range: ${requestedPages}`, 'Use page ranges like "3", "1-5", or "10-20".');
+  }
+  if (range.firstPage > totalPages) {
+    throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
+  }
+  return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
+}
+
+function pdfPageRenderFailure(
+  stderrInput: string,
+  fallbackCode: string,
+  fallbackMessage: string,
+  fallbackInstructions: string,
+): LocalToolFailure {
+  const stderr = stderrInput.trim();
+  if (/password/i.test(stderr)) {
+    return new LocalToolFailure('pdf_password_protected', 'PDF is password-protected.', 'Provide an unprotected version or extract the pages manually.');
+  }
+  if (/damaged|corrupt|invalid/i.test(stderr)) {
+    return new LocalToolFailure('pdf_corrupted', 'PDF file is corrupted or invalid.', 'Check the PDF file or convert it to images manually.');
+  }
+  return new LocalToolFailure(fallbackCode, stderr || fallbackMessage, fallbackInstructions);
 }
 
 function parsePdfPageRange(pages: string): PdfPageRange | null {
@@ -2329,6 +2778,14 @@ function visibleFileWrite(data: FileWriteData) {
   };
 }
 
+function visibleFileConvert(data: FileConvertData) {
+  return {
+    inputPath: data.inputPath,
+    outputFormat: data.outputFormat,
+    outputs: data.outputs,
+  };
+}
+
 function visibleSkillWrite(skillWrite: AgentSkillWriteAudit) {
   return {
     skillName: skillWrite.skillName,
@@ -2431,11 +2888,11 @@ function countOccurrences(content: string, needle: string): number {
   }
 }
 
-// The allowed file area is asymmetric: the agent may WRITE only under the workdir, but may READ
-// the workdir AND the app-owned scratch root (materialized attachments, fetched binaries,
-// overflow logs the app places there). `access` selects which rule applies, so both this layer
-// and the permission engine (`agentPermissions.ts`) enforce the same "write→workdir, read→
-// workdir∪scratch" boundary.
+// The allowed file area is asymmetric: the agent may WRITE under the workdir and handed
+// write-scope roots, but may READ the workdir, handed read/write roots, and the app-owned
+// scratch root (materialized attachments, fetched binaries, overflow logs the app places
+// there). `access` selects which rule applies, so both this layer and the permission engine
+// (`agentPermissions.ts`) enforce the same boundary.
 type FileAccess = 'read' | 'write';
 
 function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, access: FileAccess): string {
@@ -2447,24 +2904,25 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
   const allowedRoots = allowedRealRoots(workspace, rootRealPath, access);
   const expanded = expandHome(inputPath);
   const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
-  const existingPath = nearestExistingPath(requestedPath);
-  const existingRealPath = realpathSync.native(existingPath);
-  if (!isInsideAnyRoot(allowedRoots, existingRealPath)) {
-    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
-  }
-  const suffix = path.relative(existingPath, requestedPath);
-  const resolvedPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  if (!isInsideAnyRoot(allowedRoots, resolvedPath)) {
+  const resolved = resolveCanonicalPath(requestedPath);
+  if (!resolved || !isInsideAnyRoot(allowedRoots, resolved.realPath)) {
     throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
   return requestedPath;
 }
 
-// The real paths a file tool may touch for the given access: the workdir always, plus — for
-// reads — the scratch root when it resolves to a distinct, existing location (scratch is
-// `<root>/tmp` by default, already covered by the workdir).
+// The real paths a file tool may touch for the given access: the workdir always, handed
+// permission roots whose access covers the requested operation, plus — for reads — the
+// scratch root when it resolves to a distinct, existing location (scratch is `<root>/tmp`
+// by default, already covered by the workdir).
 function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, access: FileAccess): string[] {
   const roots = [rootRealPath];
+  for (const entry of workspace.permissionRoots) {
+    if (access === 'write' && entry.access !== 'write') continue;
+    if (!roots.some((root) => isResolvedPathInside(root, entry.realRoot))) {
+      roots.push(entry.realRoot);
+    }
+  }
   if (access === 'read') {
     const scratchReal = safeRealPath(workspace.scratchRoot);
     if (scratchReal && !isResolvedPathInside(rootRealPath, scratchReal)) {
@@ -2478,6 +2936,17 @@ function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
   return roots.some((root) => isResolvedPathInside(root, candidate));
 }
 
+function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean {
+  const rootRealPath = safeRealPath(workspace.root);
+  const candidate = resolveCanonicalPath(filePath);
+  if (!rootRealPath || !candidate) return false;
+  if (rootRealPath === candidate.realPath) return true;
+  return workspace.permissionRoots.some((entry) => {
+    if (entry.access !== 'write') return false;
+    return entry.realRoot === candidate.realPath && (entry.isDirectory || isDirectoryPath(entry.realRoot));
+  });
+}
+
 function safeRealPath(target: string): string | null {
   try {
     const resolved = realpathSync.native(path.resolve(target));
@@ -2487,6 +2956,29 @@ function safeRealPath(target: string): string | null {
     return resolved;
   } catch {
     return null;
+  }
+}
+
+interface CanonicalPathResolution {
+  realPath: string;
+}
+
+function resolveCanonicalPath(target: string): CanonicalPathResolution | null {
+  const requestedPath = path.resolve(target);
+  const existingPath = nearestExistingPath(requestedPath);
+  const existingRealPath = safeRealPath(existingPath);
+  if (!existingRealPath) return null;
+  const suffix = path.relative(existingPath, requestedPath);
+  const realPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
+  if (path.parse(realPath).root === realPath) return null;
+  return { realPath };
+}
+
+function isDirectoryPath(target: string): boolean {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
   }
 }
 

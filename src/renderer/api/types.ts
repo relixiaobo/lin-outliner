@@ -84,6 +84,13 @@ export interface AgentToolPermissionSettingsInput {
   grants: string[];
 }
 
+export interface AgentPickScopeFolderResult {
+  canceled: boolean;
+  path?: string;
+  grant?: string;
+  settings: AgentToolPermissionSettingsView;
+}
+
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';
 export {
   inlineRefNodeId,

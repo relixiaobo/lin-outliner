@@ -84,7 +84,7 @@ function agentToolPermissionSettingsView(settings: GlobalToolPermissionSettings)
   };
 }
 
-function normalizedRuleList(value: unknown): string[] {
+export function normalizedRuleList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 

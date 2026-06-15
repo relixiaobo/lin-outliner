@@ -8,6 +8,7 @@ import {
   createLocalTools,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
+  setAgentLocalPermissionRoots,
   visibleBash,
   visibleFileGlob,
   visibleFileGrep,
@@ -60,6 +61,20 @@ function commandExists(command: string): boolean {
 function commandPath(command: string): string | null {
   const result = spawnSync('which', [command], { encoding: 'utf8' });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+async function withPrependedPath<T>(binDir: string, fn: () => Promise<T>): Promise<T> {
+  const originalPath = process.env.PATH;
+  process.env.PATH = [binDir, originalPath].filter(Boolean).join(path.delimiter);
+  try {
+    return await fn();
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+  }
 }
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {
@@ -207,6 +222,253 @@ describe('agent local tools', () => {
       } finally {
         await rm(scratchRoot, { recursive: true, force: true });
       }
+    });
+  });
+
+  test('remembered scope grants widen file-tool containment without changing the relative base', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const handedRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-handed-'));
+      try {
+        const handedFile = path.join(handedRoot, 'notes.txt');
+        await writeFile(handedFile, 'handed notes', 'utf8');
+        const workspace = createAgentLocalWorkspaceContext(workspaceRoot);
+        setAgentLocalPermissionRoots(workspace, [{ access: 'read', root: handedRoot }]);
+        const tools = createLocalTools({ workspace });
+        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+        const read = (await (fileRead.execute as any)('call', { file_path: handedFile })).details as ToolEnvelope<{
+          type: 'text';
+          file: { content: string };
+        }>;
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.content).toBe('handed notes');
+
+        const readOnlyWrite = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(handedRoot, 'created.txt'),
+          content: 'no',
+        })).details as ToolEnvelope<unknown>;
+        expect(readOnlyWrite.ok).toBe(false);
+        expect(readOnlyWrite.error?.code).toBe('path_outside_local_root');
+
+        const exactNewFile = path.join(handedRoot, 'exact-new.txt');
+        setAgentLocalPermissionRoots(workspace, [{ access: 'write', root: exactNewFile }]);
+        const exactWrite = (await (fileWrite.execute as any)('call', {
+          file_path: exactNewFile,
+          content: 'exact',
+        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
+        expect(exactWrite.ok).toBe(true);
+        const siblingWrite = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(handedRoot, 'sibling.txt'),
+          content: 'no',
+        })).details as ToolEnvelope<unknown>;
+        expect(siblingWrite.ok).toBe(false);
+        expect(siblingWrite.error?.code).toBe('path_outside_local_root');
+
+        setAgentLocalPermissionRoots(workspace, [{ access: 'write', root: handedRoot }]);
+        const write = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(handedRoot, 'created.txt'),
+          content: 'yes',
+        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
+        expect(write.ok).toBe(true);
+        expect(await readFile(path.join(handedRoot, 'created.txt'), 'utf8')).toBe('yes');
+
+        const rootDelete = (await (tools.find((tool) => tool.name === 'file_delete')!.execute as any)('call', {
+          file_path: handedRoot,
+        })).details as ToolEnvelope<unknown>;
+        expect(rootDelete.ok).toBe(false);
+        expect(rootDelete.error?.code).toBe('root_delete_forbidden');
+
+        const relativeWrite = (await (fileWrite.execute as any)('call', {
+          file_path: 'relative.txt',
+          content: 'relative stays in workdir',
+        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
+        expect(relativeWrite.ok).toBe(true);
+        expect(relativeWrite.data!.filePath).toBe(path.join(workspaceRoot, 'relative.txt'));
+      } finally {
+        await rm(handedRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('file_convert uses handed scope roots for office-to-PDF output', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const inputRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-convert-input-'));
+      const outputRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-convert-output-'));
+      try {
+        const fakeBin = path.join(workspaceRoot, 'fake-bin');
+        await mkdir(fakeBin, { recursive: true });
+        const fakeSoffice = path.join(fakeBin, 'soffice');
+        await writeFile(fakeSoffice, [
+          '#!/bin/sh',
+          'outdir=""',
+          'input=""',
+          'while [ "$#" -gt 0 ]; do',
+          '  case "$1" in',
+          '    --outdir) shift; outdir="$1" ;;',
+          '    *) input="$1" ;;',
+          '  esac',
+          '  shift',
+          'done',
+          'base=${input##*/}',
+          'name=${base%.*}',
+          'printf "converted:%s\\n" "$input" > "$outdir/$name.pdf"',
+          '',
+        ].join('\n'), 'utf8');
+        await chmod(fakeSoffice, 0o755);
+
+        const inputPath = path.join(inputRoot, 'deck.pptx');
+        const outputPath = path.join(outputRoot, 'deck.pdf');
+        await writeFile(inputPath, 'presentation bytes', 'utf8');
+        const workspace = createAgentLocalWorkspaceContext(workspaceRoot);
+        setAgentLocalPermissionRoots(workspace, [
+          { access: 'read', root: inputRoot },
+          { access: 'write', root: outputRoot },
+        ]);
+        const fileConvert = createLocalTools({ workspace }).find((tool) => tool.name === 'file_convert')!;
+
+        await withPrependedPath(fakeBin, async () => {
+          const result = (await (fileConvert.execute as any)('convert-office', {
+            input_path: inputPath,
+            output_format: 'pdf',
+            output_path: outputPath,
+          })).details as ToolEnvelope<{
+            outputs: Array<{ filePath: string; format: string; mimeType: string; sizeBytes: number }>;
+            command: { executable: string; shell: false; args: string[] };
+          }>;
+
+          expect(result.ok).toBe(true);
+          expect(result.data!.outputs).toEqual([{
+            filePath: outputPath,
+            format: 'pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: (await readFile(outputPath)).byteLength,
+          }]);
+          expect(result.data!.command).toMatchObject({
+            executable: 'soffice',
+            shell: false,
+          });
+          expect(result.data!.command.args).toContain('--convert-to');
+          expect(await readFile(outputPath, 'utf8')).toBe(`converted:${inputPath}\n`);
+        });
+      } finally {
+        await rm(inputRoot, { recursive: true, force: true });
+        await rm(outputRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('file_convert renders every PDF page to image files when pages is omitted', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const fakeBin = path.join(workspaceRoot, 'fake-pdf-bin');
+      await mkdir(fakeBin, { recursive: true });
+      const fakePdfinfo = path.join(fakeBin, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'printf "Pages:          15\\n"',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftoppm = path.join(fakeBin, 'pdftoppm');
+      await writeFile(fakePdftoppm, [
+        '#!/bin/sh',
+        'first=1',
+        'last=1',
+        'prefix=""',
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in',
+        '    -f) shift; first="$1" ;;',
+        '    -l) shift; last="$1" ;;',
+        '    *) prefix="$1" ;;',
+        '  esac',
+        '  shift',
+        'done',
+        'i="$first"',
+        'while [ "$i" -le "$last" ]; do',
+        '  printf "page%s\\n" "$i" > "$prefix-$i.png"',
+        '  i=$((i + 1))',
+        'done',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftoppm, 0o755);
+
+      const inputPath = path.join(workspaceRoot, 'source.pdf');
+      const outputDir = path.join(workspaceRoot, 'pages');
+      await writeFile(inputPath, '%PDF synthetic', 'utf8');
+      const fileConvert = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_convert')!;
+
+      await withPrependedPath(fakeBin, async () => {
+        const result = (await (fileConvert.execute as any)('convert-pdf', {
+          input_path: inputPath,
+          output_format: 'png',
+          output_dir: outputDir,
+        })).details as ToolEnvelope<{
+          outputs: Array<{ filePath: string; format: string; mimeType: string; sizeBytes: number }>;
+          command: { executable: string; shell: false };
+        }>;
+
+        expect(result.ok).toBe(true);
+        expect(result.data!.command).toMatchObject({ executable: 'pdftoppm', shell: false });
+        expect(result.data!.outputs.map((output) => path.basename(output.filePath))).toEqual(
+          Array.from({ length: 15 }, (_, index) => `source-${index + 1}.png`),
+        );
+        expect(await readFile(path.join(outputDir, 'source-1.png'), 'utf8')).toBe('page1\n');
+        expect(await readFile(path.join(outputDir, 'source-15.png'), 'utf8')).toBe('page15\n');
+      });
+    });
+  });
+
+  test('file_convert maps pdftoppm password failures to actionable PDF errors', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const fakeBin = path.join(workspaceRoot, 'fake-protected-pdf-bin');
+      await mkdir(fakeBin, { recursive: true });
+      const fakePdfinfo = path.join(fakeBin, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'printf "Pages:          1\\n"',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftoppm = path.join(fakeBin, 'pdftoppm');
+      await writeFile(fakePdftoppm, [
+        '#!/bin/sh',
+        'printf "Incorrect password\\n" >&2',
+        'exit 1',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftoppm, 0o755);
+
+      const inputPath = path.join(workspaceRoot, 'protected.pdf');
+      await writeFile(inputPath, '%PDF protected', 'utf8');
+      const fileConvert = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_convert')!;
+
+      await withPrependedPath(fakeBin, async () => {
+        const result = (await (fileConvert.execute as any)('convert-protected-pdf', {
+          input_path: inputPath,
+          output_format: 'png',
+        })).details as ToolEnvelope<unknown>;
+
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('pdf_password_protected');
+        expect(result.instructions).toContain('unprotected');
+      });
+    });
+  });
+
+  test('file_convert rejects PDF page-image-only parameters during normalization', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const inputPath = path.join(workspaceRoot, 'source.txt');
+      await writeFile(inputPath, 'not convertible', 'utf8');
+      const fileConvert = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_convert')!;
+
+      const result = (await (fileConvert.execute as any)('convert-invalid-pages', {
+        input_path: inputPath,
+        output_format: 'png',
+        pages: '1-2',
+      })).details as ToolEnvelope<unknown>;
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('invalid_args');
+      expect(result.error?.message).toContain('pages is only valid');
     });
   });
 
