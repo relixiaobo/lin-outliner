@@ -173,6 +173,46 @@ free** — closing the observed gap where child ledgers have zero request payloa
 - *Checkpoints:* re-scope to `{conversation-backbone latestSeq}` + per-run
   cursors (runs replayed lazily), instead of a single merged-state checkpoint.
 
+**Seq & checkpoint model (settles the former open question — code-grounded).**
+The current write path numbers *every* event from one conversation-global counter
+(`buildEvents` against the live in-memory `eventState.latestSeq`); the split
+(`appendSplitEvents`) then routes run-scoped events to `runs/<runId>/events.jsonl`
+*carrying that global seq*, and `replayAgentEvents` asserts a single global
+monotonic `seq` (`assertValidNextEvent`). The refactor makes seq **per-stream**:
+- **Two seq spaces.** The conversation backbone keeps its own monotonic counter
+  (conversation-scoped events only: `conversation.*`, `user_message.*`,
+  `branch.selected`, `member.*`, `follow_up.*`, `checkpoint.created`,
+  `compaction.completed`/`dream.finished` markers). Each run keeps a private
+  counter starting at 1 (already true for delegation runs).
+- **Replay is per-stream-tolerant.** `replayAgentEvents` tracks `latestSeqByStream`
+  (stream key = `runId` for run events, the conversation backbone otherwise) and
+  asserts monotonicity *within* each stream, not globally — so an anchor-spliced
+  merge of independent private-seq streams replays cleanly. `replayRunStream`
+  (single stream) is unaffected: its `state.latestSeq` is that run's private seq,
+  so the `childRunTranscriptCache` keying is unchanged.
+- **`state.latestSeq` / `latestEventId` → the backbone tail.** The conversation
+  watermark consumed by checkpoint tail-match, search index, and attention/unread
+  becomes the *backbone* tail. Run advancement that does not touch the backbone is
+  carried by per-run cursors (below), and search/attention fold run-stream
+  `assistant_message.completed` explicitly (the writer's append path already
+  updates `runs.json`; extend it to the conversation watermark).
+- **Checkpoint = backbone cursor + per-run cursors.** Replace the single
+  merged-state snapshot keyed by global seq with `{ backbone: {seq, eventId,
+  byteOffset}, runs: Record<runId, {seq, byteOffset}> }` plus the cloned state;
+  restore reads the backbone tail after its cursor and each run tail after its
+  cursor, anchor-splices, and applies. (Pre-release: bump `CHECKPOINT_VERSION`;
+  a stale-shape checkpoint is ignored and rebuilt by replay — no migration.)
+- **Dream conversation-source ranges** move to per-stream cursors (run sources
+  already are per-run; the conversation source's `fromSeqExclusive..throughSeq`
+  becomes a backbone range, with run completions folded as they are for search).
+
+**Writer seam, not message translator.** Turn runs stream live
+`assistant_message.delta` events for the live UI; the child-run
+`AgentRunLedgerWriter` is deliberately coarse (per-message, no deltas). "One
+writer" means **one append seam with private seq** (`appendRunStreamEvents` for
+all run kinds), *not* routing turn runs through the coarse translator — turn-run
+live streaming and its richer delta stream are preserved byte-for-byte.
+
 **Guard invariant.** A guard test asserts the spliced visible transcript equals
 today's `getAgentEventVisibleTranscript` output for representative DM, Channel,
 and delegation fixtures — the refactor is correct iff the transcript is identical.
@@ -286,8 +326,9 @@ this view with one member.
 
 ## Open questions
 
-1. **PR 1 checkpoint re-scoping** is the riskiest sub-piece — settle the
-   backbone-cursor + per-run-cursor shape before the splice lands.
+- *(settled)* PR 1 checkpoint re-scoping — see **Seq & checkpoint model** above:
+  backbone cursor + per-run cursors, replay made per-stream-tolerant,
+  `state.latestSeq` redefined as the backbone tail.
 
 ## Checklists
 
