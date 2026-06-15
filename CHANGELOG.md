@@ -506,6 +506,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Colored identity avatars + icon-free "Worked for" header (PR #245, cc)** —
+  an agent's avatar now carries a per-identity hue instead of one neutral fill: a dedicated
+  `--identity-tint-0..7` palette — its own decorative category, kept distinct from functional state
+  (B3) and status (B4) — deterministically assigned by an identity hash (`agentAvatarColor.ts`, a
+  byte-identical murmur to `tagColors.ts`) and mixed toward `--surface` so the tint reads soft and
+  theme-aware in both light and dark, never a baked box. A hairline same-hue ring gives the small pill
+  definition; it ships as the tokenized `--avatar-tint-ring` (B11 — `box-shadow` stays a `var()`,
+  mirroring `--inline-ref-focus-shadow`). Separately, the result-first process header drops its leading
+  status glyph for a single **trailing** chevron slot (codex-style); the live spinner swaps into that
+  same slot while the turn is working, so the title text never shifts across the loading→sealed
+  transition ("labels don't move"). Renderer/CSS only — no protocol/shared surface. Visual gate verified
+  light + dark; design-system token guards green. Spec: `docs/spec/design-system.md`.
 - **Compact Channel attribution — avatar+name header over a full-width reply (PR #243, cc-2)** —
   a Channel assistant row no longer indents its body into an avatar gutter. The row is now a column:
   an **attribution header** (avatar + speaker name on one line) above a **full-width reply body** aligned

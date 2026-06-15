@@ -641,6 +641,18 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Colored identity avatars + icon-free "Worked for" header**
+  (cc, PR #245, fast-track) — visual polish realizing already-ratified design-system intent. An agent's
+  avatar carries a per-identity hue from a dedicated `--identity-tint-0..7` palette (its own decorative
+  category, distinct from functional state B3 / status B4), deterministically assigned by an identity
+  hash (`agentAvatarColor.ts`, byte-identical murmur to `tagColors.ts`) and mixed toward `--surface` for
+  a soft theme-aware tint; the hairline same-hue ring ships as the tokenized `--avatar-tint-ring` (B11 —
+  `box-shadow` stays a `var()`). The result-first process header drops its leading status glyph for a
+  single trailing chevron slot (codex-style), spinner swapped in while live so the title never shifts.
+  Gate (main): typecheck + `test:renderer` 478 + `test:e2e` typography-tokens 8/8 + agent-chat/settings
+  33/33; **visual verified light + dark**. A focused review flagged one defect — the avatar ring
+  `box-shadow` tripped the token guard — fixed by tokenizing (B11), not relaxing the guard. Spec:
+  `docs/spec/design-system.md`.
 - **Channel "Interrupted" verdict tied to the run's real status — root fix**
   (cc, PR #244, plan-track) — the root cause behind the recurring Channel mislabel that #240 and #242
   only patched: the "interrupted" verdict was a render heuristic (`turnEnded && !finalIsProse`) that
