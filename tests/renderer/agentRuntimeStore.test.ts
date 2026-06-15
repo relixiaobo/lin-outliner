@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createAgentRuntimeStore,
+  type AgentConversationPreferenceStore,
   type AgentRuntimeClient,
 } from '../../src/renderer/agent/runtime';
 import type {
@@ -220,11 +221,14 @@ function deferred<T>() {
 async function flushMicrotasks() {
   await Promise.resolve();
   await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function createFakeClient(options: {
   latestConversation: Promise<AgentConversation> | AgentConversation;
   createdConversation?: AgentConversation;
+  restoreConversation?: (conversationId: string) => Promise<AgentConversation> | AgentConversation;
 }) {
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   const calls = {
@@ -252,6 +256,7 @@ function createFakeClient(options: {
     },
     restoreConversation: async (conversationId) => {
       calls.restoreConversation.push(conversationId);
+      if (options.restoreConversation) return options.restoreConversation(conversationId);
       return conversation(conversationId, projection([]));
     },
     markConversationRead: async (conversationId) => {
@@ -308,6 +313,23 @@ function createFakeClient(options: {
   };
 }
 
+function memoryConversationPreferenceStore(initial: string | null = null): AgentConversationPreferenceStore & {
+  value: () => string | null;
+  writes: () => Array<string | null>;
+} {
+  let value = initial;
+  const writes: Array<string | null> = [];
+  return {
+    readLastConversationId: () => value,
+    writeLastConversationId: (conversationId) => {
+      value = conversationId;
+      writes.push(conversationId);
+    },
+    value: () => value,
+    writes: () => writes.slice(),
+  };
+}
+
 describe('agent runtime store', () => {
   test('hydrates conversation from restore command response without waiting for an event', async () => {
     const restored = conversation('saved', projection([
@@ -325,6 +347,66 @@ describe('agent runtime store', () => {
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
     expect(fake.calls.closeConversation).toEqual([]);
+    unsubscribe();
+  });
+
+  test('restores the remembered conversation before falling back to latest', async () => {
+    const preferenceStore = memoryConversationPreferenceStore('remembered-channel');
+    const fake = createFakeClient({ latestConversation: conversation('latest', projection([])) });
+    const store = createAgentRuntimeStore(fake.client, { conversationPreferenceStore: preferenceStore });
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(fake.calls.restoreConversation).toEqual(['remembered-channel']);
+    expect(fake.calls.restoreLatestConversation).toBe(0);
+    expect(store.getSnapshot().conversationId).toBe('remembered-channel');
+    expect(preferenceStore.value()).toBe('remembered-channel');
+    unsubscribe();
+  });
+
+  test('falls back to latest when the remembered conversation no longer restores', async () => {
+    const preferenceStore = memoryConversationPreferenceStore('deleted-channel');
+    const fake = createFakeClient({
+      latestConversation: conversation('latest', projection([])),
+      restoreConversation: async (conversationId) => {
+        throw new Error(`Missing conversation: ${conversationId}`);
+      },
+    });
+    const store = createAgentRuntimeStore(fake.client, { conversationPreferenceStore: preferenceStore });
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(fake.calls.restoreConversation).toEqual(['deleted-channel']);
+    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(store.getSnapshot().conversationId).toBe('latest');
+    expect(preferenceStore.value()).toBe('latest');
+    unsubscribe();
+  });
+
+  test('remembers explicit conversation switches and newly created conversations', async () => {
+    const preferenceStore = memoryConversationPreferenceStore();
+    const created = conversation('created-channel', projection([
+      { nodeId: 'u-created', message: userMessage('new'), branches: null },
+    ]));
+    const fake = createFakeClient({
+      latestConversation: conversation('saved', projection([])),
+      createdConversation: created,
+    });
+    const store = createAgentRuntimeStore(fake.client, { conversationPreferenceStore: preferenceStore });
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+    expect(preferenceStore.value()).toBe('saved');
+
+    await store.getSnapshot().selectConversation('other-dm');
+    await flushMicrotasks();
+    expect(preferenceStore.value()).toBe('other-dm');
+
+    await store.getSnapshot().newConversation({ title: 'Created channel' });
+    await flushMicrotasks();
+    expect(preferenceStore.value()).toBe('created-channel');
     unsubscribe();
   });
 

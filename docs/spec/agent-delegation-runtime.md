@@ -411,25 +411,29 @@ Recovery:
 #### System prompt — one agent, headless mode (not a separate persona)
 
 A fresh child run is the **same Tenon agent in headless mode**, not a stripped-down
-persona. `buildFreshAgentSystemPrompt(definition)` composes, in order:
+persona. It uses `composeAgentPrompt(definition, { mode: 'child' })`, so its stable
+prompt is layered in the same order as every other agent:
 
-1. a **child-agent identity + directive** ("You are a Tenon child agent… # Child
-   run rules": complete only the task, run headless / never ask the user, keep
-   tool chatter out of the result, stay in scope, don't over-claim);
-2. the **shared core** of the main system prompt — `LIN_CHILD_AGENT_CORE_PROMPT`, the
-   `audience: 'shared'` sections of `LIN_AGENT_SYSTEM_PROMPT_SECTIONS`
-   (system-context, outliner, local-tools, web, communication-and-safety) — so a
-   child run carries the SAME capabilities, tool conventions, and safety rules as
-   the main agent. The `audience: 'main'` sections (identity, memory) are the chat
-   agent's alone and are excluded;
-3. the definition's **persona body** as `# Agent instructions`, when non-empty.
+1. **L0 universal firmware** — the same perception and conduct/safety floor as the
+   main agent and custom peers;
+2. **L1 capability modules** — memory framing when the child can use memory tools,
+   plus a **child-agent directive** ("You are a Tenon child agent... # Child run
+   rules": complete only the task, run headless / never ask the user, keep tool
+   chatter out of the result, stay in scope, don't over-claim);
+3. **L2 persona** — the definition's body as `# Agent instructions`, when non-empty.
 
 A **user/project** definition specializes by adding a body; its body is purely
 additive on top of the shared base. A definition with an empty body is still a
-real definition, not a built-in generic fallback. This is the inverse of the
-earlier design where a fresh child run got a bespoke minimal prompt that
-discarded the base. (Cost: a fresh child run's system prompt grows from ~80 to
-~1.2k tokens — normally provider-cached. Fork is unaffected; see below.)
+real definition, not a built-in generic fallback. Fork is unaffected; see below.
+
+When the active provider is Anthropic, fresh child runs enable Tenon's L0
+system-prompt cache breakpoint rewrite. The runtime splits the provider payload
+at the shared firmware boundary, then leaves the child directive and persona in
+the per-agent stable segment. This lets a fresh child reuse the same firmware
+cache segment warmed by another agent while keeping its child-specific L1/L2
+prompt stable per agent. Forked child runs do not enable this rewrite because
+they inherit the parent's already-rendered cache-stable prompt and message
+prefix.
 
 ### Fork Child run
 

@@ -26,6 +26,7 @@ import { AgentEventStore } from '../../src/main/agentEventStore';
 import { ASK_USER_QUESTION_TOOL_NAME } from '../../src/main/agentAskUserQuestionTool';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { AgentRenderProjection, AgentRenderActiveRun } from '../../src/core/agentRenderProjection';
+import { AGENT_L0_FIRMWARE_PROMPT } from '../../src/main/agentSystemPrompt';
 
 const MAIN_AGENT_ID = 'built-in:tenon:assistant';
 
@@ -48,6 +49,19 @@ const EMPTY_USAGE: Usage = {
   cacheWrite: 0,
   totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+const ANTHROPIC_TEST_MODEL: Model<Api> = {
+  id: 'claude-test',
+  name: 'Claude Test',
+  provider: 'anthropic',
+  api: 'anthropic-messages',
+  baseUrl: 'https://api.anthropic.com',
+  reasoning: false,
+  input: ['text'],
+  contextWindow: 200_000,
+  maxTokens: 8_192,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-channel-runtime-test-user-data');
@@ -191,6 +205,23 @@ function scriptedStream(
   return { streamFn, pendingCount: () => queue.length };
 }
 
+function providerPayloadForSystemPrompt(systemPrompt: string) {
+  const cacheControl = () => ({ type: 'ephemeral' });
+  return {
+    system: [{ type: 'text', text: systemPrompt, cache_control: cacheControl() }],
+    tools: [{ name: 'node_read', cache_control: cacheControl() }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', cache_control: cacheControl() }] }],
+  };
+}
+
+function countCacheControls(value: unknown): number {
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countCacheControls(item), 0);
+  if (!value || typeof value !== 'object') return 0;
+  const record = value as Record<string, unknown>;
+  return ('cache_control' in record ? 1 : 0)
+    + Object.values(record).reduce((total, item) => total + countCacheControls(item), 0);
+}
+
 function controlledStream(calls: RecordedCall[]) {
   const pending = new Map<string, { stream: ReturnType<typeof createAssistantMessageEventStream>; model: Model<Api> }>();
   const streamFn = ((model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
@@ -226,6 +257,7 @@ async function createRuntime(
       enabled: boolean;
       apiKey: string;
     }>;
+    providerModelResolver?: () => Model<Api>;
   } = {},
 ) {
   const { AgentRuntime } = await loadRuntimeModule();
@@ -243,6 +275,7 @@ async function createRuntime(
         enabled: true,
         apiKey: 'test-key',
       })),
+      providerModelResolver: options.providerModelResolver,
       streamFn,
     },
   );
@@ -407,6 +440,63 @@ describe('agent channel runtime', () => {
     expect(refreshed.povInspectors[reviewerAgentId]?.memoryBriefing).toContain('Assistant tracks refreshed architecture seams.');
     expect(await memoryAccessEventCount(store, agentPrincipal(reviewerAgentId))).toBe(reviewerAccessCount);
     expect(await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID))).toBe(mainAccessCount);
+  });
+
+  test('multi-agent Channel member runs split Anthropic provider payload at the L0 cache breakpoint', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-cache-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-cache-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', [
+      '---',
+      'description: Reviews cache behavior.',
+      '---',
+      'REVIEWER_AGENT_BODY: check channel cache breakpoint wiring.',
+    ].join('\n'));
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const sentPayloads: unknown[] = [];
+    const payloadReturns: unknown[] = [];
+    const streamFn = ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(async () => {
+        const payload = providerPayloadForSystemPrompt(context.systemPrompt ?? '');
+        const payloadResult = await options?.onPayload?.(
+          payload,
+          model,
+        );
+        sentPayloads.push(payload);
+        payloadReturns.push(payloadResult);
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Channel reviewer done.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+    const { runtime } = await createRuntime(dataRoot, localRoot, streamFn, {
+      providerConfigLoader: async () => ({
+        providerId: 'anthropic',
+        modelId: ANTHROPIC_TEST_MODEL.id,
+        reasoningLevel: 'low',
+        enabled: true,
+        apiKey: 'test-key',
+      }),
+      providerModelResolver: () => ANTHROPIC_TEST_MODEL,
+    });
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Cache breakpoint' });
+    await runtime.sendMessage(channel.conversationId, '@reviewer check the cache breakpoint');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    expect(payloadReturns).toHaveLength(1);
+    expect(payloadReturns[0]).toBe(sentPayloads[0]);
+    const payload = sentPayloads[0] as { system?: Array<{ text?: unknown; cache_control?: unknown }> } | undefined;
+    expect(payload?.system).toHaveLength(2);
+    expect(payload?.system?.[0]).toMatchObject({ type: 'text', text: AGENT_L0_FIRMWARE_PROMPT });
+    expect(payload?.system?.[0]).toHaveProperty('cache_control');
+    expect(payload?.system?.[1]).toHaveProperty('cache_control');
+    expect(String(payload?.system?.[1]?.text)).toContain('REVIEWER_AGENT_BODY');
+    expect(countCacheControls(payload)).toBe(4);
   });
 
   test('a coordinator-only Channel still serializes the Channel environment block, not the DM block', async () => {

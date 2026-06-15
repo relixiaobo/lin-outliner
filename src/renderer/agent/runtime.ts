@@ -608,6 +608,42 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
 
+const LAST_CONVERSATION_STORAGE_KEY = 'lin-outliner:agent-last-conversation:v1';
+
+export interface AgentConversationPreferenceStore {
+  readLastConversationId(): string | null;
+  writeLastConversationId(conversationId: string | null): void;
+}
+
+function browserConversationPreferenceStore(): AgentConversationPreferenceStore | null {
+  if (typeof window === 'undefined') return null;
+  return {
+    readLastConversationId: () => {
+      try {
+        const value = window.localStorage.getItem(LAST_CONVERSATION_STORAGE_KEY);
+        return value && value.trim() ? value : null;
+      } catch {
+        return null;
+      }
+    },
+    writeLastConversationId: (conversationId) => {
+      try {
+        if (conversationId && conversationId.trim()) {
+          window.localStorage.setItem(LAST_CONVERSATION_STORAGE_KEY, conversationId);
+        } else {
+          window.localStorage.removeItem(LAST_CONVERSATION_STORAGE_KEY);
+        }
+      } catch {
+        // Best-effort UI preference; failing to persist should not block chat.
+      }
+    },
+  };
+}
+
+export interface AgentRuntimeStoreOptions {
+  conversationPreferenceStore?: AgentConversationPreferenceStore | null;
+}
+
 export class AgentRuntimeStore {
   private readonly listeners = new Set<() => void>();
   private projection: AgentRenderProjection = EMPTY_PROJECTION;
@@ -626,8 +662,13 @@ export class AgentRuntimeStore {
   private requestVersion = 0;
   private started = false;
   private view: LinAgentRuntimeView;
+  private readonly conversationPreferenceStore: AgentConversationPreferenceStore | null;
 
-  constructor(private readonly client: AgentRuntimeClient) {
+  constructor(
+    private readonly client: AgentRuntimeClient,
+    options: AgentRuntimeStoreOptions = {},
+  ) {
+    this.conversationPreferenceStore = options.conversationPreferenceStore ?? null;
     this.view = this.buildView();
   }
 
@@ -934,18 +975,7 @@ export class AgentRuntimeStore {
     if (this.conversationId) return Promise.resolve(this.conversationId);
     if (!this.restorePromise) {
       const requestVersion = this.requestVersion;
-      this.restorePromise = this.client.restoreLatestConversation()
-        .then((conversation) => {
-          if (!this.isCurrentRequest(requestVersion)) {
-            return this.conversationId ?? conversation.conversationId;
-          }
-          this.hydrateConversation(conversation);
-          // Startup may reveal this conversation → clear its unread only if the dock
-          // is actually open + focused (setDockVisible re-checks once the App reports
-          // the rail state, covering the mount-order race).
-          this.markCurrentConversationReadIfViewing();
-          return conversation.conversationId;
-        })
+      this.restorePromise = this.restoreInitialConversation(requestVersion)
         .catch((caught) => {
           this.restorePromise = null;
           throw caught;
@@ -954,12 +984,51 @@ export class AgentRuntimeStore {
     return this.restorePromise;
   }
 
+  private async restoreInitialConversation(requestVersion: number): Promise<string> {
+    const rememberedConversationId = this.conversationPreferenceStore?.readLastConversationId();
+    if (rememberedConversationId) {
+      try {
+        return await this.restoreInitialConversationById(rememberedConversationId, requestVersion);
+      } catch {
+        if (!this.isCurrentRequest(requestVersion)) {
+          return this.conversationId ?? rememberedConversationId;
+        }
+        this.conversationPreferenceStore?.writeLastConversationId(null);
+      }
+    }
+
+    const conversation = await this.client.restoreLatestConversation();
+    if (!this.isCurrentRequest(requestVersion)) {
+      return this.conversationId ?? conversation.conversationId;
+    }
+    this.hydrateConversation(conversation);
+    // Startup may reveal this conversation → clear its unread only if the dock
+    // is actually open + focused (setDockVisible re-checks once the App reports
+    // the rail state, covering the mount-order race).
+    this.markCurrentConversationReadIfViewing();
+    return conversation.conversationId;
+  }
+
+  private async restoreInitialConversationById(
+    conversationId: string,
+    requestVersion: number,
+  ): Promise<string> {
+    const conversation = await this.client.restoreConversation(conversationId);
+    if (!this.isCurrentRequest(requestVersion)) {
+      return this.conversationId ?? conversation.conversationId;
+    }
+    this.hydrateConversation(conversation);
+    this.markCurrentConversationReadIfViewing();
+    return conversation.conversationId;
+  }
+
   private hydrateConversation(conversation: AgentConversation) {
     this.conversationId = conversation.conversationId;
     this.projection = conversation.renderProjection;
     this.error = conversation.renderProjection.errorMessage;
     this.clearPendingApprovalState();
     if (conversation.pendingUserQuestion) this.addPendingUserQuestion(conversation.pendingUserQuestion);
+    this.conversationPreferenceStore?.writeLastConversationId(conversation.conversationId);
     this.publish();
   }
 
@@ -974,6 +1043,7 @@ export class AgentRuntimeStore {
         this.projection = EMPTY_PROJECTION;
         this.error = null;
         this.clearPendingApprovalState();
+        this.conversationPreferenceStore?.writeLastConversationId(null);
         this.publish();
       }
       return;
@@ -1191,11 +1261,13 @@ export class AgentRuntimeStore {
   }
 }
 
-export function createAgentRuntimeStore(client: AgentRuntimeClient) {
-  return new AgentRuntimeStore(client);
+export function createAgentRuntimeStore(client: AgentRuntimeClient, options: AgentRuntimeStoreOptions = {}) {
+  return new AgentRuntimeStore(client, options);
 }
 
-export const linAgentRuntimeStore = createAgentRuntimeStore(defaultAgentRuntimeClient);
+export const linAgentRuntimeStore = createAgentRuntimeStore(defaultAgentRuntimeClient, {
+  conversationPreferenceStore: browserConversationPreferenceStore(),
+});
 
 export function useLinAgentRuntime() {
   return useSyncExternalStore(

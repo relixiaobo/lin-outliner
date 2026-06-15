@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
-import { parseIsoLocalDate, todayIsoLocalDate, type FocusHint, type NodeId } from '../api/types';
+import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
@@ -39,6 +39,7 @@ import { useWorkspacePinnedNodes } from './useWorkspacePinnedNodes';
 import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
 import { onPreviewTargetOpen } from './preview/previewEvents';
+import { fileNodeTarget, isFileNode } from './preview/fileNode';
 import {
   persistOutlineViewState,
   restoreOutlineExpansionForRoot,
@@ -125,6 +126,7 @@ export function App() {
     activePanelId,
     activeWorkspacePanel,
     activatePanel,
+    bindPreviewPanelNode,
     closePanel,
     initializeLayout,
     navigatePanelBack: goPanelBack,
@@ -220,10 +222,12 @@ export function App() {
     if (!currentIndex) return;
     const persistedRootIds = new Set<NodeId>();
     for (const panel of panels) {
-      if (panel.type !== 'workspace' || panel.view.kind !== 'outliner') continue;
-      if (persistedRootIds.has(panel.view.rootId)) continue;
-      persistedRootIds.add(panel.view.rootId);
-      persistOutlineViewState(panel.view.rootId, currentIndex.byId, {
+      const rootId = panel.type === 'workspace'
+        ? panel.view.kind === 'outliner' ? panel.view.rootId : panel.view.nodeId ?? null
+        : null;
+      if (!rootId || persistedRootIds.has(rootId)) continue;
+      persistedRootIds.add(rootId);
+      persistOutlineViewState(rootId, currentIndex.byId, {
         expanded: ui.expanded,
         expandedHiddenFields: ui.expandedHiddenFields,
       });
@@ -279,7 +283,28 @@ export function App() {
     });
   }, [index, setUi]);
 
+  const filePreviewTargetForNode = useCallback((nodeId: NodeId): PreviewTarget | null => {
+    const node = index?.byId.get(nodeId);
+    return isFileNode(node) ? fileNodeTarget(node) : null;
+  }, [index]);
+
+  const openFilePreviewForNode = useCallback((
+    nodeId: NodeId,
+    options?: NavigateRootOptions & { panelId?: string },
+  ): boolean => {
+    const fileTarget = filePreviewTargetForNode(nodeId);
+    if (!fileTarget) return false;
+    if (options?.panelId) {
+      setPanelPreview(options.panelId, fileTarget, { newPane: options.newPane, nodeId });
+    } else {
+      openPreview(fileTarget, { newPane: options?.newPane, nodeId });
+    }
+    restoreNodeInOutliner(nodeId);
+    return true;
+  }, [filePreviewTargetForNode, openPreview, restoreNodeInOutliner, setPanelPreview]);
+
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+    if (openFilePreviewForNode(nodeId, options)) return;
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -287,7 +312,7 @@ export function App() {
     }
     setActivePanelRoot(nodeId, options);
     restoreNodeInOutliner(nodeId);
-  }, [openPanel, restoreNodeInOutliner, setActivePanelRoot]);
+  }, [openFilePreviewForNode, openPanel, restoreNodeInOutliner, setActivePanelRoot]);
 
   const ensureTodayNode = useCallback(async (): Promise<NodeId | null> => {
     const today = parseIsoLocalDate(todayIsoLocalDate());
@@ -318,6 +343,7 @@ export function App() {
   }), [openPreview]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
+    if (openFilePreviewForNode(nodeId, { ...options, panelId })) return;
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -325,20 +351,22 @@ export function App() {
     }
     setPanelRoot(panelId, nodeId, options);
     restoreNodeInOutliner(nodeId);
-  }, [openPanel, restoreNodeInOutliner, setPanelRoot]);
+  }, [openFilePreviewForNode, openPanel, restoreNodeInOutliner, setPanelRoot]);
 
-  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
     setPanelPreview(panelId, target, options);
   }, [setPanelPreview]);
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const view = goPanelBack(panelId);
     if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
+    if (view?.kind === 'file-preview' && view.nodeId) restoreNodeInOutliner(view.nodeId);
   }, [goPanelBack, restoreNodeInOutliner]);
 
   const navigatePanelForward = useCallback((panelId: string) => {
     const view = goPanelForward(panelId);
     if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
+    if (view?.kind === 'file-preview' && view.nodeId) restoreNodeInOutliner(view.nodeId);
   }, [goPanelForward, restoreNodeInOutliner]);
 
   const navigateActivePanelBack = useCallback(() => {
@@ -352,9 +380,10 @@ export function App() {
   }, [navigatePanelForward, pageHistoryPanel]);
 
   const openRootInPanel = useCallback((nodeId: NodeId) => {
+    if (openFilePreviewForNode(nodeId, { newPane: true })) return;
     openPanel(nodeId);
     restoreNodeInOutliner(nodeId);
-  }, [openPanel, restoreNodeInOutliner]);
+  }, [openFilePreviewForNode, openPanel, restoreNodeInOutliner]);
 
   const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     navigateRoot(nodeId, { focus: false, newPane: options?.newPane });
@@ -470,9 +499,9 @@ export function App() {
   }), []);
 
   // The non-node preview "Add to outline" bridge: copy the previewed source into an
-  // asset, create a file node under Today, then navigate the active (preview) pane to
-  // its node page so the freshly-saved file is shown. Confirms only on a real create.
-  useEffect(() => onAddPreviewTargetToOutlineRequest(async (target) => {
+  // asset, create a file node under Today, then bind the requesting file surface to
+  // the new node in place. Confirms only on a real create.
+  useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, target }) => {
     const currentIndex = indexRef.current;
     const todayId = currentIndex?.projection.todayId;
     if (!currentIndex || !todayId || !currentIndex.byId.has(todayId)) return false;
@@ -481,9 +510,10 @@ export function App() {
     const result = await createAssetNode(run, todayId, null, asset, { applyFocus: false });
     const newNodeId = result && 'focus' in result ? result.focus?.nodeId ?? null : null;
     if (!newNodeId) return false;
-    setActivePanelRoot(newNodeId, { focus: false });
+    const nextTarget = previewTargetForAsset(asset);
+    if (!bindPreviewPanelNode(panelId, newNodeId, nextTarget, target)) return false;
     return true;
-  }), [run, setActivePanelRoot]);
+  }), [bindPreviewPanelNode, run]);
 
   if (!index) {
     return (
@@ -620,4 +650,12 @@ export function App() {
       <InlineFilePreviewLayer />
     </div>
   );
+}
+
+function previewTargetForAsset(asset: AssetMetadata): PreviewTarget {
+  return {
+    kind: 'asset',
+    assetId: asset.id,
+    ...(asset.originalFilename ? { label: asset.originalFilename } : {}),
+  };
 }

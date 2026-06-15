@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeProjection } from '../../src/renderer/api/types';
-import { fileNodeMeta, formatBytes, type FileNode } from '../../src/renderer/ui/preview/fileNode';
+import { fileNodeMeta, fileNodeTitle, formatBytes, type FileNode } from '../../src/renderer/ui/preview/fileNode';
 import { getMessages } from '../../src/core/i18n';
 
 // fileNodeMeta is exercised end-to-end only by two e2e cases, so its size/duration math
@@ -79,5 +79,43 @@ describe('fileNodeMeta', () => {
   test('image: dimensions when known, else null', () => {
     expect(fileNodeMeta(fileNode({ type: 'image', assetId: 'a', imageWidth: 600, imageHeight: 360 }), labels)).toBe('600 × 360');
     expect(fileNodeMeta(fileNode({ type: 'image', assetId: 'a' }), labels)).toBeNull();
+  });
+});
+
+describe('fileNodeTitle', () => {
+  test('prefers the node display text when present', () => {
+    const node = fileNode({
+      type: 'attachment',
+      assetId: 'a',
+      originalFilename: 'report.pdf',
+      content: { text: 'Quarterly Report', marks: [], inlineRefs: [] },
+    });
+    expect(fileNodeTitle(node)).toBe('Quarterly Report');
+  });
+
+  test('falls back to the original attachment filename for blank legacy titles', () => {
+    const node = fileNode({
+      type: 'attachment',
+      assetId: 'a',
+      originalFilename: 'report.pdf',
+      content: { text: '', marks: [], inlineRefs: [] },
+    });
+    expect(fileNodeTitle(node)).toBe('report.pdf');
+  });
+
+  test('falls back to a remote image source identity when no display name exists', () => {
+    expect(fileNodeTitle(fileNode({
+      type: 'image',
+      mediaUrl: 'https://example.com/diagram.png',
+      content: { text: '', marks: [], inlineRefs: [] },
+    }))).toBe('https://example.com/diagram.png');
+  });
+
+  test('does not expose internal image asset ids as titles', () => {
+    expect(fileNodeTitle(fileNode({
+      type: 'image',
+      assetId: 'asset-image',
+      content: { text: '', marks: [], inlineRefs: [] },
+    }))).toBe('');
   });
 });

@@ -549,6 +549,44 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Unified file preview surface (PR #262, codex-2)** — file-node previews and loose
+  agent/local-file previews collapse into one `nodeId`-keyed `FilePreviewPanel` with two lifecycle
+  states (`loose` → `ingested`) over a single mounted frame: a **read-only filename title** (fixing
+  the `Untitled` shown by title-less file nodes), a breadcrumb sourced from the filesystem/source
+  when loose and from outliner ancestry when ingested, the shared `FilePreviewShell` hero, and the
+  file node's children outline + backlinks when ingested. **Add to outline** copies the loose source
+  into an asset, creates a file node under Today, and rebinds the same mounted surface to the new
+  node **in place** (no remount/jump) — rewriting the bound view's target to the stored asset so the
+  hero no longer depends on the volatile loose source. File nodes no longer open a `NodePanel` node
+  page: every navigation entry routes them to the unified surface, which is also reported to the
+  agent's user-view context and persists its children-outline expansion. Panel chrome
+  (`usePanelTitleDock`, `PanelStickyBreadcrumb`, `PanelChildrenOutline`) is extracted to
+  `PanelShared.tsx` and shared with `NodePanel`. Reviewed over **three `/code-review high` rounds**
+  (round 1: 10 findings — assetId/UUID-as-title, file nodes missing from agent view-context +
+  outline-expansion persistence, a scroll/breadcrumb reset-key mismatch, a post-bind loose-source
+  hero divergence, a false "added" confirmation, an inert-but-clickable loose breadcrumb, scattered
+  reroute, and chrome duplication; all fixed across rounds 2–3). typecheck + 482 renderer tests +
+  file-attachments/agent-process e2e green. Specs: `docs/spec/ui-behavior.md` +
+  `docs/spec/workspace-layout.md`.
+- **Unified agent prompt composition + Anthropic L0 cache breakpoints (PR #263, codex)** — the four
+  ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`, `LIN_CHILD_AGENT_CORE_PROMPT`,
+  `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) collapse into one
+  `composeAgentPrompt(definition, context)` whose blocks are layered by **scope × volatility**
+  (universal **L0 firmware** → capability modules → per-agent persona/skills). **Custom DM/Channel
+  agents and fresh child runs now receive the same perception and conduct/safety firmware as the
+  built-in assistant**; memory and child-run behavior become capability modules that follow effective
+  tool capability (so an agent's recall/dream guidance tracks the tools it actually has). Adds
+  **cross-agent prompt caching**: for multi-agent Channel member runs and fresh child runs,
+  `applyAgentPromptCacheBreakpoints` rewrites the Anthropic provider payload in `onPayload` — it
+  splits the stable system block into `L0 firmware` + `rest` (both cache-marked) so the identical
+  firmware prefix is shared across agents, while preserving the provider's last-tool/last-user
+  breakpoints inside Anthropic's 4-breakpoint budget (dropping the OAuth identity breakpoint first
+  when over budget). Single-agent DMs, fork child runs (which still inherit the parent prompt), and
+  non-Anthropic providers are unchanged; per-turn environment, memory briefings, and user-view
+  reminders stay outside the stable prompt. Tool-rule matching and agent display-name derivation are
+  extracted to shared `agentToolRules.ts` / `agentDefinitionDisplay.ts` so prompt capability gating
+  cannot drift from the actually-injected tool roster. Specs:
+  `docs/spec/agent-pi-mono-implementation.md` + `docs/spec/agent-delegation-runtime.md`.
 - **Agent permission model — consequence-based `decide(effect)` core (PR #252, codex)** — the agent
   tool permission gate is rebuilt around an operation's **consequence** rather than a mode/action/
   classifier matrix. `decideAgentOperationEffect(effect)` yields three outcomes: local reversible
@@ -906,6 +944,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **The agent dock reopens the conversation you last selected, not always the latest (PR #261, codex-4)** —
+  opening the agent dock after a renderer remount/reload restored the *latest* conversation rather than the
+  DM or Channel the user last had open: the selected conversation only lived in memory, and the initial
+  restore path always picked latest. The renderer runtime store now **persists the last-selected conversation
+  id** (`AgentRuntimeStore` gains an injectable `AgentConversationPreferenceStore`; the browser impl is
+  localStorage-backed under `lin-outliner:agent-last-conversation:v1`, best-effort so a failed write never
+  blocks chat) and **restores it before falling back to latest** — startup tries the remembered DM/Channel via
+  `restoreConversation(id)`, and on failure clears the remembered id and falls back to `restoreLatestConversation`
+  (the `requestVersion` guard blocks stale writes from a superseded restore). The preference is written at the
+  single choke point `hydrateConversation` (select / new / reload / restore all funnel through it) and cleared
+  when the active conversation is closed; the injectable store keeps tests independent of browser localStorage.
 - **A DM child run folds into its spawning turn's process — no orphan boundary, no broken style (PR #247, cc)** —
   a child run spawned by an `agent` tool call inside a **DM** (a non-multi-agent conversation) used to render
   as a conversation-level **child-run boundary row** (a centered divider between two rules), which surfaced

@@ -1,82 +1,103 @@
 import { describe, expect, test } from 'bun:test';
-import { LIN_AGENT_SYSTEM_PROMPT, LIN_AGENT_SYSTEM_PROMPT_SECTIONS, LIN_CHILD_AGENT_CORE_PROMPT } from '../../src/main/agentSystemPrompt';
+import type { AgentDefinition } from '../../src/core/types';
+import {
+  DEFAULT_AGENT_SYSTEM_PROMPT,
+  composeAgentPrompt,
+  composeAgentPromptBlocks,
+} from '../../src/main/agentSystemPrompt';
 
-describe('agent system prompt', () => {
-  test('is four always-on sections — identity + perception + memory + conduct, no tool manuals', () => {
-    expect(LIN_AGENT_SYSTEM_PROMPT_SECTIONS.map((section) => section.id)).toEqual([
-      'identity',
+function def(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
+  return {
+    name: 'reviewer',
+    displayName: 'Reviewer',
+    source: 'project',
+    rootDir: '/workspace/.agents/agents/reviewer',
+    agentFile: '/workspace/.agents/agents/reviewer/AGENT.md',
+    description: 'Reviews implementation plans.',
+    body: 'REVIEWER_AGENT_BODY',
+    ...overrides,
+  };
+}
+
+describe('agent system prompt composer', () => {
+  test('keeps the prompt blocks in stable layer order', () => {
+    expect(composeAgentPromptBlocks(def(), {
+      mode: 'member',
+      mention: 'reviewer',
+      profileSkillSections: ['SKILL_BODY'],
+      capabilities: { recall: true, dream: false },
+    }).map((block) => block.id)).toEqual([
       'system-context',
-      'memory',
       'communication-and-safety',
+      'memory',
+      'persona',
+      'profile-skills',
     ]);
-    // Tool-operating conventions ride each tool's own description, never the
-    // always-on prompt — these section headers must not come back.
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Outliner');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Web');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Local files and shell');
   });
 
-  test('the identity section is the Neva persona, not environment or tool conventions', () => {
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('You are Neva.');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('still water');
-    // Anti-sycophancy is the load-bearing trait of the persona — pin it.
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('agree in order to be agreeable');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Tenon Agent');
-    // Environment ("what Tenon is", structure taste) is NOT identity — it rides
-    // the conversation-start reminder, never the cached identity prompt.
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('second brain');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('atomic nodes');
-    // Tool-call conventions have moved out to the tool descriptions.
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('node_read');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('node_edit');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('%%node:id%%');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('file_read');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('web_search');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('YYYY-MM-DD');
+  test('the default agent prompt is composed from universal firmware, memory module, and Neva persona', () => {
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# System context');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Communication and safety');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Memory');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use dream');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('You are Neva.');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('still water');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('agree in order to be agreeable');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('# System context')).toBeLessThan(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('# Memory'));
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('# Memory')).toBeLessThan(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('You are Neva.'));
   });
 
-  test('keeps perception, memory framing, and conduct that hold every turn', () => {
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<system-reminder>');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Use recall for durable facts');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<memory>');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('do not claim you saved, updated, or forgot memory');
-    // Cross-tool behavioral rules lifted out of the deleted tool sections.
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('until the tool result confirms');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Permission-denied or out-of-boundary');
-    // The produced-deliverable output convention stays (file-marker emit).
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[file:Display^/absolute/path]]');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Use past_chats');
+  test('keeps dynamic state and tool manuals out of the stable prompt', () => {
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('# Outliner');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('# Web');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('# Local files and shell');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('second brain');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('atomic nodes');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('node_read');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('node_edit');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('%%node:id%%');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('file_read');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('web_search');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('YYYY-MM-DD');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('workspace root');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('Local workspace root');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('active panel id');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('Today node id');
   });
 
-  test('keeps dynamic state out of the stable prompt', () => {
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('workspace root');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Local workspace root');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('active panel id');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Today node id');
-  });
-
-  test('every section is tagged for an audience; the shared subset seeds childRuns', () => {
-    // identity + memory are the main chat agent's alone; the rest are shared with
-    // fresh childRuns (see [[child-run-prompt-unification]]).
-    const byAudience = Object.fromEntries(
-      LIN_AGENT_SYSTEM_PROMPT_SECTIONS.map((section) => [section.id, section.audience]),
-    );
-    expect(byAudience).toEqual({
-      identity: 'main',
-      'system-context': 'shared',
-      memory: 'main',
-      'communication-and-safety': 'shared',
+  test('custom member agents now receive universal firmware plus their persona', () => {
+    const prompt = composeAgentPrompt(def(), {
+      mode: 'member',
+      mention: 'reviewer',
+      capabilities: { recall: true, dream: false },
     });
+    expect(prompt).toContain('# System context');
+    expect(prompt).toContain('# Communication and safety');
+    expect(prompt).toContain('Permission-denied or out-of-boundary');
+    expect(prompt).toContain('You are "Reviewer" (@reviewer).');
+    expect(prompt).toContain('# Agent instructions');
+    expect(prompt).toContain('REVIEWER_AGENT_BODY');
+    expect(prompt.indexOf('# System context')).toBeLessThan(prompt.indexOf('You are "Reviewer"'));
   });
 
-  test('the child run core reuses the shared base but not the main-only framing', () => {
-    // The shared perception + conduct/safety guidance the main agent carries…
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# System context');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Communication and safety');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('<system-reminder>');
-    // …minus the user-facing persona + memory sections.
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('You are Neva');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('# Memory');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('<memory>');
+  test('memory module follows effective tool capability', () => {
+    const memoryPrompt = composeAgentPrompt(def(), {
+      mode: 'member',
+    });
+    expect(memoryPrompt).toContain('# Memory');
+    expect(memoryPrompt).toContain('Use recall for durable facts');
+    expect(memoryPrompt).not.toContain('Use dream');
+
+    const noMemoryPrompt = composeAgentPrompt(def({ tools: ['web_search'] }), {
+      mode: 'member',
+    });
+    expect(noMemoryPrompt).not.toContain('# Memory');
+    expect(noMemoryPrompt).not.toContain('Use recall for durable facts');
+
+    const normalizedRulePrompt = composeAgentPrompt(def({ tools: ['recall(query)'] }), {
+      mode: 'member',
+    });
+    expect(normalizedRulePrompt).toContain('# Memory');
+    expect(normalizedRulePrompt).toContain('Use recall for durable facts');
   });
 });

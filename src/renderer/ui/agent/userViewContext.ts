@@ -11,6 +11,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { buildOutlinerRows, readViewConfig } from '../../state/outlinerRows';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
+import { fileNodeTitle, isFileNode } from '../preview/fileNode';
 import type { WorkspacePanelState } from '../workspaceLayoutTypes';
 
 const MAX_BREADCRUMB_CONTEXT_NODES = 6;
@@ -88,8 +89,8 @@ function buildPanelContexts(
 ): AgentUserViewPanelContext[] {
   if (panels.length === 0) return [];
   return panels.flatMap((panel, panelIndex) => {
-    if (panel.type !== 'workspace' || panel.view.kind !== 'outliner') return [];
-    const rootId = panel.view.rootId;
+    const rootId = panelContextRootId(panel);
+    if (!rootId) return [];
     const rootNode = index.byId.get(rootId);
     const visibleOutline = buildVisibleOutline(rootId, index, ui);
     return [{
@@ -109,6 +110,12 @@ function buildPanelContexts(
       visibleOutlineTruncated: visibleOutline.truncated,
     }];
   });
+}
+
+function panelContextRootId(panel: WorkspacePanelState): NodeId | null {
+  if (panel.type !== 'workspace') return null;
+  if (panel.view.kind === 'outliner') return panel.view.rootId;
+  return panel.view.nodeId ?? null;
 }
 
 function buildNodeContext(
@@ -212,6 +219,7 @@ function tagLabels(node: NodeProjection, index: DocumentIndex): string[] {
 
 function titleForNode(node: NodeProjection | undefined): string {
   if (!node) return 'Untitled';
+  if (isFileNode(node)) return compactContextText(fileNodeTitle(node) || 'Untitled', MAX_CONTEXT_TITLE_LENGTH);
   const text = node.type === 'reference' && node.targetId
     ? `@${node.targetId}`
     : richTextToReferenceMarkup(node.content) || 'Untitled';

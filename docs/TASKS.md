@@ -284,16 +284,15 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   cites the dead safety-mode/`#250` framing — must be rewritten before it boards as a real
   PR; left DRAFT). Depends on #252 (shipped) and sequences **after** `agent-context-architecture`
   PR-1 (shared prompt/identity assembly). Escalate the exact clamp semantics before building.
-- **agent-context-architecture** (P1, `in-progress` — realizes agent-program decision **C3**,
-  PM-ratified 2026-06-15) — **one** run-context composer layered by **scope × volatility**
+- **agent-context-architecture** (P1, **SHIPPED (PR #263, codex, 2026-06-15)** — realizes
+  agent-program decision **C3**) — **one** run-context composer layered by **scope × volatility**
   (L0 shared foundation → … → per-turn volatile), replacing the ad-hoc per-call prompt
-  assembly. This **is** the C3 "unify run-context assembly" that agent-program ratified-but-
-  deferred ("not a standalone PR") — #254 is adopted as its realization. **Shape (b):**
-  **PR-1** the unified composer (`composeAgentPrompt`, L0-tagged layers) — **ready to build,
-  the deliverable** → **PR-2** cross-agent cache breakpoint **DEFERRED** (not buildable on
-  today's single-`systemPrompt`-string interface; the engine auto-places the one
-  `cache_control` — contingent on engine support + a measured win). See
-  `docs/plans/agent-context-architecture.md`. Plan merged (#254).
+  assembly. **Shape (b)** shipped in one PR: **PR-1** the unified composer (`composeAgentPrompt`,
+  L0-tagged layers) **and PR-2** the cross-agent cache breakpoint — the PR-2 deferral was lifted by
+  rewriting the **Anthropic provider payload** in `onPayload` (split the stable system block into
+  `L0 firmware` + `rest`, both cache-marked, within Anthropic's 4-breakpoint budget) rather than
+  waiting on engine support for the single-`systemPrompt`-string interface. See Recently completed;
+  plan archived `done`. Plan merged (#254).
 - **provider-connection-model-ownership** (P2, `draft`, **GO** 2026-06-15) — clarify who owns
   a provider connection vs. the model selection on an agent profile (the model-onto-profile
   seam). Orthogonal to the permission/context work; **rebase-aware of #252** (settings surface
@@ -537,21 +536,17 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **file-preview-unification** (P2, `draft` — **PM-ratified direction 2026-06-15**) — a file
-  should look/behave the same whether it is an outliner node or a loose agent-produced file.
-  Today there are two surfaces over **one shared preview hero** (`FilePreviewShell`): the
-  file-as-node *node page* (`NodePanel`, with an editable title that currently shows `Untitled`)
-  and the agent `[[file:…]]` chip *standalone pane* (`FilePreviewPanel`). Collapse them into **one
-  subject-keyed `FileView` with two lifecycle states** (`loose` → `ingested`); the frame is
-  identical, only the breadcrumb source (filesystem path vs outliner ancestry) and the children
-  outline change — and they change **in place** ("add to outline" = a loose→ingested subject
-  rebind, no remount/jump). Title is a **read-only filename** in both states (also fixes the
-  `Untitled` bug). **Shape (b) — a SET of independent PRs:** PR-1 read-only filename title + fix
-  `Untitled` (small, ships first) → PR-2 unify into the subject-keyed `FileView` + in-place
-  transition. Upstream (not in this plan): a loose agent file only previews if it's trust-resolvable
-  (inside `workdir`/`scratch`) — producing outputs into delegated roots is `agent-permission-redesign`
-  PR-3 (typed `file_convert`), Office/PPT rendering is separate. See
-  `docs/plans/file-preview-unification.md`. Ready for a dev agent to claim PR-1.
+- **file-preview-unification** (P2, **SHIPPED (PR #262, codex-2, 2026-06-15)**) — file-node
+  previews and loose agent/local-file previews are unified into **one `nodeId`-keyed
+  `FilePreviewPanel`** with two lifecycle states (`loose` → `ingested`) over a single mounted
+  frame: read-only filename title (fixes the `Untitled` bug), filesystem-vs-outliner-ancestry
+  breadcrumb, the shared `FilePreviewShell` hero, and the file node's children outline +
+  backlinks when ingested. "Add to outline" is an in-place loose→ingested rebind (no
+  remount/jump) that also rewrites the view target to the stored asset. Shipped as **Shape (a)**
+  (one PR; the original PR-1/PR-2 split became build-order within it). Shared panel chrome
+  extracted to `PanelShared.tsx` (`usePanelTitleDock`, `PanelStickyBreadcrumb`,
+  `PanelChildrenOutline`). See Recently completed; plan archived `done`. Design folded into
+  `docs/spec/ui-behavior.md` + `docs/spec/workspace-layout.md`.
 - **agent-file-model** (P1, plan file, **shipped — F1 (#224) + F2 (#229) + F3 (#237)
   + F4 (#238); plan archived `done`**; see Recently completed. PM-ratified 4 decisions
   2026-06-13; superseded the closed #218, shipped via #220) — give agent file
@@ -716,6 +711,56 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Unified file preview surface** (codex-2, PR #262) — collapses the file-node *node page* and the
+  loose agent/local-file *standalone pane* into one `nodeId`-keyed `FilePreviewPanel` with two
+  lifecycle states (`loose` → `ingested`) over a single mounted frame: read-only filename title
+  (fixing the `Untitled` that title-less file nodes showed), a breadcrumb sourced from the
+  filesystem/source when loose and from outliner ancestry when ingested, the shared
+  `FilePreviewShell` hero, and the file node's children outline + backlinks once ingested. **Add to
+  outline** copies the loose source into an asset, creates a file node under Today, and rebinds the
+  same mounted surface to the new node in place (no remount) — rewriting the view target to the
+  stored asset so the hero stops depending on the volatile loose source. File nodes route to the
+  unified surface from every navigation entry point and are now reported to the agent user-view
+  context + persist their children-outline expansion. Panel chrome (`usePanelTitleDock`,
+  `PanelStickyBreadcrumb`, `PanelChildrenOutline`) extracted to `PanelShared.tsx`, shared with
+  `NodePanel`. Gate (main): `/code-review high` over **three rounds** — round 1 surfaced 10 findings
+  (assetId UUID leaking as a title; file nodes dropped from agent view-context and outline-expansion
+  persistence; a scroll/breadcrumb reset keyed on target not nodeId; a loose-source hero divergence
+  after bind; a false "added" confirmation when the pane navigated away mid-ingest; an
+  inert-but-hover-styled loose breadcrumb; reroute scattered across 3 entry points; ~200 lines of
+  `NodePanel` chrome duplicated). codex-2 fixed all over rounds 2–3 (round 3 extracted the shared
+  chrome with no behavior drift). typecheck + 482 renderer tests + file-attachments/agent-process
+  e2e (13) green. Design folded into `docs/spec/ui-behavior.md` + `docs/spec/workspace-layout.md`.
+- **Unified agent prompt composition + Anthropic L0 cache breakpoints**
+  (codex, PR #263) — collapses the four ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`,
+  `LIN_CHILD_AGENT_CORE_PROMPT`, `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) into
+  one `composeAgentPrompt(definition, context)` whose blocks are layered by **scope × volatility**
+  (universal L0 firmware → capability modules → per-agent persona/skills). The **L0 firmware**
+  (perception + conduct/safety) is now universal across Neva, custom DM/Channel agents, and fresh
+  child runs; memory and child-run behavior move into capability modules that follow effective tool
+  capability. PR-2's previously-**deferred** cross-agent cache breakpoint is realized by
+  `applyAgentPromptCacheBreakpoints`: for multi-agent Channel member runs and fresh child runs it
+  rewrites the **Anthropic provider payload** in `onPayload`, splitting the stable system block into
+  `L0 firmware` + `rest` (both cache-marked) while preserving the provider's last-tool/last-user
+  breakpoints inside Anthropic's 4-breakpoint budget; single-agent DMs, fork child runs, and
+  non-Anthropic providers are untouched. Gate (main): `/code-review high` over **two rounds** —
+  round 1 surfaced 7 findings (a fragile exact-string/`sanitizeSurrogates` match that silently
+  no-op'd the split, tool-rule matching forked from the canonical normalizer, an O(n²) payload
+  re-walk, a misleading no-cache-control split, plus reuse/simplification cleanups); codex fixed all
+  7 (shared `agentToolRules.ts` + `agentDefinitionDisplay.ts`, sanitized-domain prefix match,
+  single-pass breakpoint trim, cache_control-gated split). Round 2: typecheck + 70/70 across the five
+  affected core suites green. Plan archived `done`; design folded into
+  `docs/spec/agent-pi-mono-implementation.md` + `docs/spec/agent-delegation-runtime.md`.
+- **Agent dock remembers the last-selected conversation across reload** (fast-track)
+  (codex-4, PR #261) — opening the dock after a renderer remount/reload restored the *latest* conversation
+  instead of the DM/Channel the user last had open (the selection only lived in memory). The renderer runtime
+  store now persists the last-selected conversation id (injectable `AgentConversationPreferenceStore`,
+  localStorage-backed under `lin-outliner:agent-last-conversation:v1`, best-effort) and restores it before
+  falling back to latest; on a missing/closed remembered id it clears the preference and falls back to
+  `restoreLatestConversation`. Written at the single `hydrateConversation` choke point, cleared on close;
+  `requestVersion` guard blocks stale writes. Gate (main): `/code-review` (medium) — no blocking findings
+  (the two "critical" candidates were refuted/self-healing); typecheck + `agentRuntimeStore.test.ts` 24/24 +
+  `test:renderer` 479/479 green. No plan file (fast-track UI fix).
 - **Agent permission redesign — model core (PR-1)**
   (codex, PR #252) — replaces the `enum × 3 safety modes × dead LLM classifier × shell allowlist`
   permission model with **one pure `decide(effect)` over an operation's consequence** (`WORK→allow`

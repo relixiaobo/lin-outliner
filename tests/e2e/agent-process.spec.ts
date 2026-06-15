@@ -358,14 +358,20 @@ test.describe('agent process disclosure', () => {
 
     await ref.click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
-    await expect(panel.locator('.file-preview-heading')).toContainText('diagram.png');
+    await expect(panel.locator('.panel-title-file-heading')).toContainText('diagram.png');
+    await expect(panel.locator('.panel-breadcrumb')).toContainText('Users');
     await expect(panel.locator('.file-preview-content')).toContainText('Mock preview text.');
+    await expect(panel.locator('.file-preview-content > .outliner')).toHaveCount(0);
 
-    // Add to outline: copy the previewed non-node file into the outline as a node and
-    // navigate the pane to its node page (the same body, now backed by a real node).
+    // Add to outline: copy the previewed non-node file into the outline as a node,
+    // then bind the same mounted file surface to that node in place. The pane stays
+    // a file-preview surface; only its breadcrumb source and children outline change.
     await panel.getByRole('button', { name: 'Add to outline' }).click();
-    const nodePage = page.locator('.outline-panel-surface.active-panel');
-    await expect(nodePage.locator('.file-node-body')).toBeVisible();
+    await expect(panel).toHaveClass(/is-file-preview/);
+    await expect(panel.locator('.panel-title-file-heading')).toContainText('diagram.png');
+    await expect(panel.locator('.panel-breadcrumb')).toContainText('2026-05-13');
+    await expect(panel.getByRole('button', { name: 'Add to outline' })).toHaveCount(0);
+    await expect(panel.locator('.file-preview-content > .outliner')).toBeVisible();
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'ingest_local_file')).toBe(true);
     expect(calls.some((call) => call.cmd === 'create_image_node')).toBe(true);
@@ -816,7 +822,7 @@ test.describe('agent process disclosure', () => {
     await row.locator('.agent-tool-call-toggle').click();
     await row.getByRole('button', { name: 'Preview output' }).click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
-    await expect(panel.locator('.file-preview-heading')).toContainText('large.log output');
+    await expect(panel.locator('.panel-title-file-heading')).toContainText('large.log output');
     await expect(panel.locator('.file-preview-content')).toContainText('Full persisted tool output from payload');
   });
 });
