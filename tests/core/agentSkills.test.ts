@@ -841,6 +841,22 @@ describe('agent skills', () => {
     await expect(runtime.buildSkillListingReminderText(200_000)).rejects.toThrow('Duplicate built-in skill "skillify"');
   });
 
+  test('shares the first skill load across concurrent callers', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const results = await Promise.allSettled([
+      runtime.getSkill('skillify'),
+      runtime.getSkill('research'),
+      runtime.listAllSkills(),
+      runtime.buildSkillListingReminderText(200_000),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+    expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
+    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
+    const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
+    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['research', 'skillify']);
+  });
+
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
     const repoRoot = path.join(path.sep, 'repo');
     const moduleDir = path.join(repoRoot, 'out', 'main');

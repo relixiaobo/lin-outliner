@@ -896,6 +896,8 @@ class SkillRegistry {
   private readonly conditionalSkills = new Map<string, SkillDefinition>();
   private readonly checkedDynamicSkillDirs = new Set<string>();
   private readonly seenSkillFileIds = new Set<string>();
+  private loadPromise: Promise<void> | null = null;
+  private loadGeneration = 0;
   // Per-skill trust records: agent-write provenance, user acceptance, one undo
   // version. Ratification is derived from these in addLoadedSkill, never stored.
   private readonly provenance = new Map<string, AgentSkillProvenanceRecord>();
@@ -1114,6 +1116,7 @@ class SkillRegistry {
 
   reloadAll(): void {
     this.loaded = false;
+    this.loadGeneration += 1;
     this.skills.clear();
     this.conditionalSkills.clear();
     this.checkedDynamicSkillDirs.clear();
@@ -1171,7 +1174,20 @@ class SkillRegistry {
   }
 
   private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
+    while (!this.loaded) {
+      const loadPromise = this.loadPromise ?? this.performLoad(this.loadGeneration);
+      this.loadPromise = loadPromise;
+      try {
+        await loadPromise;
+      } finally {
+        if (this.loadPromise === loadPromise) {
+          this.loadPromise = null;
+        }
+      }
+    }
+  }
+
+  private async performLoad(loadGeneration: number): Promise<void> {
     await this.ensureProvenanceLoaded();
     this.skills.clear();
     this.conditionalSkills.clear();
@@ -1194,7 +1210,9 @@ class SkillRegistry {
           await this.addLoadedSkill(skill);
         }
       }
-      this.loaded = true;
+      if (this.loadGeneration === loadGeneration) {
+        this.loaded = true;
+      }
     } catch (error) {
       this.loaded = false;
       this.skills.clear();
