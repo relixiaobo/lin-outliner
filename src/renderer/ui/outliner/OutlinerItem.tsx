@@ -203,11 +203,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
   // A file node is a full node — the chevron expands its children, and the bullet
-  // drills to its node page (where the full preview lives). Its row content depends on
-  // the kind: a non-image file renders a uniform card (FileNodeCard: file-type icon,
-  // read-only filename, meta, ⋯ menu); an image renders the image itself inline
-  // (FileNodeImage: an image's content is its identity), with the filename displayed
-  // read-only on the node page.
+  // opens the ingested file preview. Its row content depends on the kind: a non-image
+  // file renders a uniform card (FileNodeCard: file-type icon, read-only filename,
+  // meta, ⋯ menu); an image renders the image itself inline (FileNodeImage: an
+  // image's content is its identity), with the filename displayed read-only on the
+  // preview surface.
   // A reference whose target is a file node must still render as a reference row,
   // not as the file's own card/image: `displayed` resolves to the target only when
   // `referenceTargetId` is set, so guard on `!referenceTargetId`. Otherwise an
@@ -1887,7 +1887,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             // gives the row full keyboard parity (arrow nav, Enter → sibling, etc.)
             // without a read-only ProseMirror that could not even drive nav. The
             // leading bullet/chevron stay on the row, so it is still a full node
-            // (chevron → children, bullet → node page).
+            // (chevron → children, bullet → ingested preview).
             <>
               {imageFileRow ? (
                 <FileNodeImage node={imageFileRow} onMaximize={() => props.onRoot(drillDownId)} />

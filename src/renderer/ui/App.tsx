@@ -39,6 +39,7 @@ import { useWorkspacePinnedNodes } from './useWorkspacePinnedNodes';
 import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
 import { onPreviewTargetOpen } from './preview/previewEvents';
+import { fileNodeTarget, isFileNode } from './preview/fileNode';
 import {
   persistOutlineViewState,
   restoreOutlineExpansionForRoot,
@@ -125,6 +126,7 @@ export function App() {
     activePanelId,
     activeWorkspacePanel,
     activatePanel,
+    bindPreviewPanelNode,
     closePanel,
     initializeLayout,
     navigatePanelBack: goPanelBack,
@@ -279,7 +281,18 @@ export function App() {
     });
   }, [index, setUi]);
 
+  const filePreviewTargetForNode = useCallback((nodeId: NodeId): PreviewTarget | null => {
+    const node = index?.byId.get(nodeId);
+    return isFileNode(node) ? fileNodeTarget(node) : null;
+  }, [index]);
+
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+    const fileTarget = filePreviewTargetForNode(nodeId);
+    if (fileTarget) {
+      openPreview(fileTarget, { newPane: options?.newPane, nodeId });
+      restoreNodeInOutliner(nodeId);
+      return;
+    }
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -287,7 +300,7 @@ export function App() {
     }
     setActivePanelRoot(nodeId, options);
     restoreNodeInOutliner(nodeId);
-  }, [openPanel, restoreNodeInOutliner, setActivePanelRoot]);
+  }, [filePreviewTargetForNode, openPanel, openPreview, restoreNodeInOutliner, setActivePanelRoot]);
 
   const ensureTodayNode = useCallback(async (): Promise<NodeId | null> => {
     const today = parseIsoLocalDate(todayIsoLocalDate());
@@ -318,6 +331,12 @@ export function App() {
   }), [openPreview]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
+    const fileTarget = filePreviewTargetForNode(nodeId);
+    if (fileTarget) {
+      setPanelPreview(panelId, fileTarget, { newPane: options?.newPane, nodeId });
+      restoreNodeInOutliner(nodeId);
+      return;
+    }
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -325,20 +344,22 @@ export function App() {
     }
     setPanelRoot(panelId, nodeId, options);
     restoreNodeInOutliner(nodeId);
-  }, [openPanel, restoreNodeInOutliner, setPanelRoot]);
+  }, [filePreviewTargetForNode, openPanel, restoreNodeInOutliner, setPanelPreview, setPanelRoot]);
 
-  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => {
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
     setPanelPreview(panelId, target, options);
   }, [setPanelPreview]);
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const view = goPanelBack(panelId);
     if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
+    if (view?.kind === 'file-preview' && view.nodeId) restoreNodeInOutliner(view.nodeId);
   }, [goPanelBack, restoreNodeInOutliner]);
 
   const navigatePanelForward = useCallback((panelId: string) => {
     const view = goPanelForward(panelId);
     if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
+    if (view?.kind === 'file-preview' && view.nodeId) restoreNodeInOutliner(view.nodeId);
   }, [goPanelForward, restoreNodeInOutliner]);
 
   const navigateActivePanelBack = useCallback(() => {
@@ -352,9 +373,15 @@ export function App() {
   }, [navigatePanelForward, pageHistoryPanel]);
 
   const openRootInPanel = useCallback((nodeId: NodeId) => {
+    const fileTarget = filePreviewTargetForNode(nodeId);
+    if (fileTarget) {
+      openPreview(fileTarget, { newPane: true, nodeId });
+      restoreNodeInOutliner(nodeId);
+      return;
+    }
     openPanel(nodeId);
     restoreNodeInOutliner(nodeId);
-  }, [openPanel, restoreNodeInOutliner]);
+  }, [filePreviewTargetForNode, openPanel, openPreview, restoreNodeInOutliner]);
 
   const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     navigateRoot(nodeId, { focus: false, newPane: options?.newPane });
@@ -470,9 +497,9 @@ export function App() {
   }), []);
 
   // The non-node preview "Add to outline" bridge: copy the previewed source into an
-  // asset, create a file node under Today, then navigate the active (preview) pane to
-  // its node page so the freshly-saved file is shown. Confirms only on a real create.
-  useEffect(() => onAddPreviewTargetToOutlineRequest(async (target) => {
+  // asset, create a file node under Today, then bind the requesting file surface to
+  // the new node in place. Confirms only on a real create.
+  useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, target }) => {
     const currentIndex = indexRef.current;
     const todayId = currentIndex?.projection.todayId;
     if (!currentIndex || !todayId || !currentIndex.byId.has(todayId)) return false;
@@ -481,9 +508,9 @@ export function App() {
     const result = await createAssetNode(run, todayId, null, asset, { applyFocus: false });
     const newNodeId = result && 'focus' in result ? result.focus?.nodeId ?? null : null;
     if (!newNodeId) return false;
-    setActivePanelRoot(newNodeId, { focus: false });
+    bindPreviewPanelNode(panelId, newNodeId);
     return true;
-  }), [run, setActivePanelRoot]);
+  }), [bindPreviewPanelNode, run]);
 
   if (!index) {
     return (

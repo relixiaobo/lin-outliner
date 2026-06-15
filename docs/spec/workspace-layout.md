@@ -186,7 +186,7 @@ type PreviewTarget =
 
 type PanelView =
   | { kind: 'outliner'; rootId: NodeId }
-  | { kind: 'file-preview'; target: PreviewTarget };
+  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -286,34 +286,37 @@ the originating node view.
 
 ### File preview panel
 
-A file that **is** an outliner node (an `attachment` or `image` node) is not a
-`file-preview` view at all. It behaves like any node: a plain node-handle bullet,
-the chevron expands its **children**, and opening it (a card/image click, its `⋯`
-menu, or drilling the bullet) shows an ordinary **node page** (`NodePanel`) whose
-title is a read-only filename and whose body is the full-size preview "hero"
-above the node's children outline. Its row content is a uniform **file card**
-(file-type icon · display-only filename · meta · `⋯` menu, click-to-open); an
-**image** is the one exception, rendering the image itself inline (no card, no
-filename, `⋯` at its top-right). There is no inline
-preview block in the outline. See "File node" in `ui-behavior.md`. The
-`file-preview` workspace view therefore serves only sources with **no** node.
+A file that **is** an outliner node (an `attachment` or `image` node) behaves
+like a normal outline row: the chevron expands its **children**, the bullet drills
+into the node, and the row content is a uniform file card (or the image itself for
+image nodes). There is no inline preview block in the outline. See "File node" in
+`ui-behavior.md`.
+
+Opening a file node shows the same `file-preview` workspace view used by loose
+sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
+
+- Without `nodeId`, the view is a loose preview. The breadcrumb is sourced from
+  the filesystem/source identity, the title is the read-only filename/source
+  label, and no children outline is mounted.
+- With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
+  from the outliner ancestry, the title remains the read-only filename, and the
+  file node's children outline mounts below the preview hero.
 
 `file-preview` is a workspace-panel view, not an overlay and not part of the
-agent dock. It is opened for non-node sources only: outliner/agent inline
+agent dock. It is opened for outliner file nodes, outliner/agent inline
 local-file refs, visible agent payload rows, and nested links followed from
-inside a preview body (e.g. a directory-listing entry). Attachment and image
-rows no longer open it — they drill to a node page. A plain click opens in the
-active workspace pane when there is one; if the click originates in the agent
+inside a preview body (e.g. a directory-listing entry). A plain click opens in
+the active workspace pane when there is one; if the click originates in the agent
 dock, the active workspace pane is used, then the first available workspace pane.
 Cmd/Ctrl-click opens a split pane. When the 4-pane cap is already reached,
 preview reuses the rightmost workspace pane and preserves that pane's view
 history so Back can return to the previous outliner or preview view.
 
-The non-node preview reuses the node page's preview body component
-(`FilePreviewShell`), so a `file-preview` view reads identically to a file
-node's node page — same meta line, same action strip, same renderers. Only the
-surrounding chrome differs: a filename header + Back here, the node breadcrumb
-there.
+The unified view renders one frame in both lifecycle states: sticky breadcrumb,
+read-only filename title, `FilePreviewShell` hero, and optional children outline.
+Changing a loose preview into an ingested node mutates the same mounted view
+(`nodeId` is added); it does not navigate to a different panel kind or remount the
+preview body.
 
 The renderer normalizes every entry point to `PreviewTarget` and asks main to
 resolve it through the preload preview API:
@@ -330,12 +333,10 @@ Source authority stays source-specific:
 - `local-file` targets are validated in main through the local-file reference
   policy before reads or external open.
 - `asset` targets resolve by `assetId` inside the asset jail. Image rendering may
-  use the existing `asset://` URL; open/reveal/copy stay on the existing
-  asset commands. `asset` is no longer a standalone `file-preview` view — a file
-  asset is a node, reached through its node page — but the kind remains in the
-  union because the file-node body resolves its preview source through it. A
-  persisted `file-preview` view whose target is an `asset` is dropped on restore
-  (pre-launch — no migration).
+  use the existing `asset://` URL; open/reveal/copy stay on the existing asset
+  commands. A standalone `asset` preview is only valid when the view is bound to a
+  file node via `nodeId`; a persisted `file-preview` view whose target is an
+  `asset` but has no `nodeId` is dropped on restore (pre-launch — no migration).
 - `agent-payload` targets resolve only through the active replay state for the
   referenced conversation and payload id. Normal conversation payloads can be
   previewed; debug-only payloads are not exposed through the normal preview
@@ -359,11 +360,11 @@ instead of committing a partial file). `url` is not yet ingestable. Anything the
 preview can resolve, it can ingest — the same security boundary backs both, so
 no new command-surface or main-process gate is introduced. The renderer copies
 the bytes into the asset store and creates an `image`/`attachment` node under
-Today, then navigates the pane to the new node's node page; from then on the
-source is a node with the full node-page preview and every node operation. The
-preview pane reaches App's document state through a single-handler request bridge
-(`previewIngest`, mirroring `agentFileInsert`); the action confirms only on a
-real insert.
+Today, then binds the same mounted `file-preview` view to the new node id; from
+then on the source is an ingested node with outliner ancestry and a children
+outline. The preview pane reaches App's document state through a single-handler
+request bridge (`previewIngest`, mirroring `agentFileInsert`); the action
+confirms only on a real insert.
 
 ## Panel Semantics
 

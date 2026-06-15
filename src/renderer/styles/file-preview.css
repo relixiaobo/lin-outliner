@@ -4,44 +4,12 @@
   flex-direction: column;
 }
 
-.file-preview-header {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-raised);
-  display: flex;
-  min-height: var(--breadcrumb-height);
-  align-items: center;
-  gap: var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface);
-  padding: 0 var(--panel-content-x);
-  -webkit-app-region: drag;
-  user-select: none;
-}
-
-/* The non-node preview is identified by its filename in the header (mirroring a
-   node page's breadcrumb origin); the file glyph / meta / actions live in the
-   shared body toolbar below, identical to the node page. */
-.file-preview-heading {
-  overflow: hidden;
-  min-width: 0;
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--font-ui-md);
-  font-weight: 600;
-  line-height: var(--line-ui-md);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-preview-back {
-  -webkit-app-region: no-drag;
-}
-
 .file-preview-content {
   min-width: 0;
-  flex: 1 1 auto;
-  padding: var(--space-6) var(--panel-content-x) var(--panel-content-bottom);
+}
+
+.file-preview-path-origin {
+  pointer-events: none;
 }
 
 .file-preview-message {
@@ -343,10 +311,9 @@
   overflow-wrap: anywhere;
 }
 
-/* File-node body — the preview as a node's content: a meta + actions strip over
-   the shared file-preview-* renderers. Shown as the node-page hero above the file
-   node's children outline, and as the body of the non-node preview pane. Both
-   owning surfaces provide the horizontal inset. */
+/* File-node body — the preview content: a meta + actions strip over the shared
+   file-preview-* renderers. Shown in both loose previews and ingested file-node
+   previews; the unified surface provides the horizontal inset. */
 .file-node-body {
   min-width: 0;
   margin-bottom: var(--space-6);
@@ -402,7 +369,7 @@
 /* A non-image file node's row content is a uniform card — a file-type icon, the
    read-only filename, a meta line, and a ⋯ action menu. It sits in the row's content
    column; the leading bullet/chevron stay outside it, so a file is still a full node
-   (chevron → children, bullet → node page). */
+   (chevron → children, bullet → ingested preview). */
 .file-node-card {
   display: grid;
   width: min(560px, 100%);
@@ -437,7 +404,7 @@
   min-width: 0;
 }
 
-/* The filename is display-only (renamed on the node page): a single line that
+/* The filename is display-only on the file preview surface: a single line that
    truncates with an ellipsis, so a file row stays one line tall. */
 .file-node-card-name {
   display: block;
@@ -523,7 +490,7 @@
   border-radius: var(--radius-md);
   background: transparent;
   padding: 0;
-  /* Clicking opens the file's node page (maximize), not an in-place zoom, and a
+  /* Clicking opens the ingested file preview (maximize), not an in-place zoom, and a
      native app does not hand-cursor clickable content (B10) — keep the arrow. */
   cursor: default;
   -webkit-app-region: no-drag;

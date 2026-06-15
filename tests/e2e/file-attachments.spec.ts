@@ -18,7 +18,7 @@ test.describe('file attachments', () => {
     await openMockedApp(page);
   });
 
-  test('/attachment creates a click-to-open file card (icon · filename · meta · ⋯ menu) that opens as a node page', async ({ page }) => {
+  test('/attachment creates a click-to-open file card (icon · filename · meta · ⋯ menu) that opens as an ingested preview', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -36,7 +36,7 @@ test.describe('file attachments', () => {
     }).toBe('attachment');
 
     // Simulate old saved data where the file node has a source filename but an empty
-    // node title. The row and node page should still render the filename, not
+    // node title. The row and preview surface should still render the filename, not
     // "Untitled".
     await page.evaluate((nodeId) => {
       const win = window as typeof window & {
@@ -63,7 +63,7 @@ test.describe('file attachments', () => {
     await expect(card.locator('.file-node-card-meta')).toContainText('PDF');
 
     // A file node is a normal node: expanding it reveals its children area, NOT a
-    // preview inline (the full preview lives on the node page). The chevron is
+    // preview inline (the full preview lives on the file preview surface). The chevron is
     // hover-revealed, so hover the row line before clicking it.
     const attachmentRowLine = attachmentRow.locator('> .row').first();
     await attachmentRowLine.hover();
@@ -79,8 +79,8 @@ test.describe('file attachments', () => {
       return node?.children.length ?? 0;
     }).toBe(1);
 
-    // Clicking the card opens the file as a node page: the preview is the page hero,
-    // with a read-only filename title and the child-notes outline below it.
+    // Clicking the card opens the file as an ingested preview: the preview is the
+    // hero, with a read-only filename title and the child-notes outline below it.
     await card.locator('.file-node-card-name').click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-file-heading')).toContainText('picked-report.pdf');
@@ -115,7 +115,7 @@ test.describe('file attachments', () => {
     })).toEqual({ height: 792, hasInk: true, width: 612 });
     await expect(nodePage.locator('.file-node-preview .file-preview-message')).toBeHidden();
 
-    // The node-page header carries the file system actions.
+    // The preview header carries the file system actions.
     const actions = nodePage.locator('.file-node-actions');
     await actions.getByRole('button', { name: 'Open' }).click();
     await actions.getByRole('button', { name: 'Reveal in Finder' }).click();
@@ -159,7 +159,7 @@ test.describe('file attachments', () => {
 
     // An image is the one file kind that renders inline as the image itself — an
     // image's content is its identity. It does NOT use the file card and shows no
-    // file-type icon or filename in the row (the filename is edited on the node page).
+    // file-type icon or filename in the row (the filename is shown in the preview).
     const imageRow = row(page, imageId!);
     await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
     await expect(imageRow.locator('.file-node-card')).toHaveCount(0);
@@ -186,7 +186,7 @@ test.describe('file attachments', () => {
     expect(overlayGeometry!.topGap).toBeGreaterThanOrEqual(0);
     expect(overlayGeometry!.topGap).toBeLessThanOrEqual(12);
 
-    // Clicking the image maximizes it (its node page); Back returns to the inline image.
+    // Clicking the image maximizes it; Back returns to the inline image.
     await imageRow.locator('.file-node-image-button').click();
     await expect(page.locator('.outline-panel-surface.active-panel .file-node-body')).toBeVisible();
     await expect(page.locator('.outline-panel-surface.active-panel .panel-page-back-button')).toBeEnabled();

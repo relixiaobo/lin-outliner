@@ -17,7 +17,7 @@ export function isFileNode(node: NodeProjection | undefined): node is FileNode {
   return false;
 }
 
-/** The read-only filename/title used by file rows and file-node pages. */
+/** The read-only filename/title used by file rows and file preview surfaces. */
 export function fileNodeTitle(node: FileNode): string {
   const displayName = node.content.text.trim();
   if (displayName) return displayName;

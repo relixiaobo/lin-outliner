@@ -5,9 +5,9 @@ import { fileNodeIconKind, fileNodeMeta, fileNodeTitle, type FileNode } from './
 
 interface FileNodeCardProps {
   node: FileNode;
-  /** Open the file's node page in the current panel (a card click, "the preview page"). */
+  /** Open the file preview in the current panel. */
   onOpen: () => void;
-  /** Open the file's node page in a split pane (the ⋯ menu's primary action). */
+  /** Open the file preview in a split pane (the ⋯ menu's primary action). */
   onOpenSplit: () => void;
 }
 
@@ -15,7 +15,7 @@ interface FileNodeCardProps {
  * A non-image file node's outliner row content: a uniform card — file-type icon, the
  * filename (display-only, single line, truncated), a meta line (type · size · …), and
  * a ⋯ action menu. The whole card is click-to-open: a click opens the file's node
- * page (the preview), so the filename is never edited inline. The leading
+ * preview surface, so the filename is never edited inline. The leading
  * bullet/chevron stay on the row, so a file is a full node: the
  * chevron expands its children. Images render inline via FileNodeImage instead.
  */
@@ -27,7 +27,7 @@ export function FileNodeCard({ node, onOpen, onOpenSplit }: FileNodeCardProps) {
   return (
     <div
       className="file-node-card"
-      // A plain card click opens the file (its node page); the bubble-phase swallow
+      // A plain card click opens the file preview; the bubble-phase swallow
       // keeps that click from moving edit focus into the hidden filename anchor. Row
       // selection runs in the capture phase (OutlinerRowShell), so modifier-clicks
       // still reach it — they must NOT also open, hence the onClick guard below.

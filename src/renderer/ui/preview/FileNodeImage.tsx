@@ -11,12 +11,12 @@ type ImageNode = Extract<FileNode, { type: 'image' }>;
  * An image file node's outliner row content: the image itself, rendered inline as a
  * bounded preview — an image's content is its identity, so it shows directly instead
  * of a file-type icon + filename (other file kinds use FileNodeCard). The filename is
- * displayed read-only on the node page, not in the row. A ⋯ menu sits at the image's
- * top-right, revealed on hover or keyboard focus, offering Maximize (open the node page)
- * plus the asset actions (Open / Reveal / Copy). Clicking the image also maximizes it; the
- * leading bullet/chevron still drill / expand children.
+ * displayed read-only on the file preview surface, not in the row. A ⋯ menu sits at
+ * the image's top-right, revealed on hover or keyboard focus, offering Maximize
+ * (open the preview) plus the asset actions (Open / Reveal / Copy). Clicking the
+ * image also maximizes it; the leading bullet/chevron still drill / expand children.
  *
- * Loads through the streaming `asset://` protocol (the same path the node-page image
+ * Loads through the streaming `asset://` protocol (the same path the full image
  * preview uses): Chromium-cached, lazy, range-served and uncapped, so large images
  * render and the outliner hot path pays no per-mount byte read. If that direct source
  * fails — an environment without the asset:// handler (the browser test harness) or a
@@ -67,7 +67,7 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
       <button
         aria-label={labels.open}
         className="file-node-image-button"
-        // A click maximizes the image (its node page); stop the mousedown from
+        // A click maximizes the image; stop the mousedown from
         // reaching the row so it does not also run row pointer-selection.
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => {
