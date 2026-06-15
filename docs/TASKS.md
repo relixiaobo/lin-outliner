@@ -503,6 +503,21 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
+- **file-preview-unification** (P2, `draft` — **PM-ratified direction 2026-06-15**) — a file
+  should look/behave the same whether it is an outliner node or a loose agent-produced file.
+  Today there are two surfaces over **one shared preview hero** (`FilePreviewShell`): the
+  file-as-node *node page* (`NodePanel`, with an editable title that currently shows `Untitled`)
+  and the agent `[[file:…]]` chip *standalone pane* (`FilePreviewPanel`). Collapse them into **one
+  subject-keyed `FileView` with two lifecycle states** (`loose` → `ingested`); the frame is
+  identical, only the breadcrumb source (filesystem path vs outliner ancestry) and the children
+  outline change — and they change **in place** ("add to outline" = a loose→ingested subject
+  rebind, no remount/jump). Title is a **read-only filename** in both states (also fixes the
+  `Untitled` bug). **Shape (b) — a SET of independent PRs:** PR-1 read-only filename title + fix
+  `Untitled` (small, ships first) → PR-2 unify into the subject-keyed `FileView` + in-place
+  transition. Upstream (not in this plan): a loose agent file only previews if it's trust-resolvable
+  (inside `workdir`/`scratch`) — producing outputs into delegated roots is `agent-permission-redesign`
+  PR-3 (typed `file_convert`), Office/PPT rendering is separate. See
+  `docs/plans/file-preview-unification.md`. Ready for a dev agent to claim PR-1.
 - **agent-file-model** (P1, plan file, **shipped — F1 (#224) + F2 (#229) + F3 (#237)
   + F4 (#238); plan archived `done`**; see Recently completed. PM-ratified 4 decisions
   2026-06-13; superseded the closed #218, shipped via #220) — give agent file
