@@ -35,7 +35,7 @@ import type {
   AgentMemoryAccessVia,
   AgentRunTrigger,
 } from '../core/agentEventLog';
-import { agentIdOfRunAnchor, agentRunIdForEvent, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, isAgentRunStreamEvent, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
+import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import {
   buildMemoryOverview,
   cloneMemoryAccessStats,
@@ -1206,7 +1206,7 @@ export class AgentEventStore {
 
     for (const event of events) {
       const runId = agentRunIdForEvent(event);
-      if (runId && isAgentRunStreamEvent(event)) {
+      if (runId && isRunLogEvent(event)) {
         const group = runEvents.get(runId) ?? [];
         group.push(event);
         runEvents.set(runId, group);
@@ -2138,13 +2138,39 @@ function compareAgentEventsForReplay(left: AgentEvent, right: AgentEvent): numbe
   return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
 }
 
+function agentRunIdForEvent(event: AgentEvent): string | null {
+  return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
+}
+
 /**
- * Serialization/latest-seq key for a run's OWN ledger stream — kept distinct
- * from conversation log keys (a conversation id and a run id could in principle
- * collide as raw strings).
+ * Serialization/latest-seq key for a delegated run's OWN ledger stream — kept
+ * distinct from conversation log keys (a conversation id and a run id could in
+ * principle collide as raw strings).
  */
 function runStreamLogKey(runId: string): string {
   return `run-stream:${runId}`;
+}
+
+function isRunLogEvent(event: AgentEvent): boolean {
+  switch (event.type) {
+    case 'payload.created':
+    case 'payload.derived':
+      return event.payload.scope?.type === 'run' || agentRunIdForEvent(event) !== null;
+    case 'conversation.created':
+    case 'conversation.renamed':
+    case 'conversation.settings_changed':
+    case 'branch.selected':
+    case 'user_message.created':
+    case 'user_message.edited':
+    case 'follow_up.queued':
+    case 'follow_up.applied':
+    case 'compaction.completed':
+    case 'dream.finished':
+    case 'checkpoint.created':
+      return false;
+    default:
+      return agentRunIdForEvent(event) !== null;
+  }
 }
 
 function isStreamingDeltaEvent(event: AgentEvent): boolean {
