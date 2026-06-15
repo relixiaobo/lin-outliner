@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Files become first-class outliner nodes — file-as-node (PR #241, cc)** — an `attachment` /
+  `image` node is now a normal outliner node, not a special row. A non-image file renders as a
+  click-to-open **file card** (file-type icon · display-only filename · `type · size · pages/duration`
+  meta · `⋯` menu); an **image renders inline as the image itself** (no card, no filename); and the
+  **bullet drills to the node's page**, whose body is the full-size preview "hero" above the node's
+  children outline. The chevron expands the file node's **children** like any node (no inline preview
+  block), so move / reference / pin / open-in-split all work for free. The standalone `file-preview`
+  pane now serves only non-node sources (`agent-payload` / `local-file` / `url`), reuses the same
+  preview body, and carries an **"add to outline"** action that copies the source into a file node. The
+  filename is display-only in the row (renamed on the node page); a lightweight visually-hidden keyboard
+  anchor keeps full row keyboard parity (arrow nav, Enter → sibling, Tab → indent, Backspace → remove).
+  Audio / video previews and a shared object-URL hook landed alongside. Spec:
+  `docs/spec/workspace-layout.md` + `docs/spec/ui-behavior.md`.
 - **The built-in agent is named Neva; the system prompt slims to identity-only (PR #248, cc-2)** —
   the built-in agent now presents as **Neva**, a thinking-partner persona with a load-bearing
   anti-sycophancy stance (challenges weak reasoning, won't flatter, hard on the idea and reverent

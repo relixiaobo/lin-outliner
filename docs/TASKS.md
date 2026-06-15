@@ -534,15 +534,16 @@ Standalone agent items (not part of the program):
   retires the **media-types** whole-file-read limitation. **PR 1 shipped (#210,
   shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining:
   media streaming / Office / URL reader. See `docs/plans/file-preview.md`.
-- **file-as-node** (plan-track, **in-progress** — PM-ratified 2026-06-14, cc) — files
-  (`attachment` / `image` nodes) become first-class outliner nodes: a file-icon-bullet +
-  editable-filename row that **expands to an inline preview block** and **opens as a normal
-  node page** whose body is the full preview. Retires the standalone `file-preview` panel for
-  document nodes (asset/image route through node pages); non-node sources
-  (`agent-payload` / `local-file` / `url`) keep a lightweight info preview; one shared renderer
-  set backs all three. Subsumes the "file-preview header matches node panel" ask. Ships as one
-  PR. See `docs/plans/file-as-node.md`. (Board line added by dev for docs:check; main owns
-  final status/curation at the gate.)
+- **file-as-node** (plan-track, **shipped** — PR #241, cc; PM-ratified 2026-06-14) — files
+  (`attachment` / `image` nodes) are first-class outliner nodes: a non-image file renders as a
+  click-to-open **file card** (icon · display-only filename · meta · `⋯`), an image renders **inline as
+  the image itself**, and the **bullet drills to the node page** whose hero is the full preview above the
+  node's children (the chevron expands **children**, not a preview — no inline preview block). The
+  standalone `file-preview` pane now serves only non-node sources (`agent-payload` / `local-file` /
+  `url`) and reuses the same preview body (+ "add to outline"). See Recently completed; plan archived
+  `done` (`docs/plans/archive/file-as-node.md`). **Follow-up (low, pre-release):** restoring a persisted
+  pane whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
+  anchor / backStack (`useWorkspaceLayout` `sanitizePanel`) — dev-only userData, narrow same-day window.
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
 
@@ -666,6 +667,23 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Files become first-class outliner nodes — file-as-node**
+  (cc, PR #241) — an `attachment` / `image` node is now a normal outliner node: a non-image file is a
+  click-to-open **file card** (icon · display-only filename · `type · size · pages/duration` meta · `⋯`),
+  an image renders **inline as the image itself**, and the **bullet drills to the node page** whose hero
+  is the full preview above the node's children (the chevron expands **children** — no inline preview
+  block). The standalone `file-preview` pane now serves only non-node sources (`agent-payload` /
+  `local-file` / `url`), reuses the same preview body, and carries an **"add to outline"** action. The
+  display-only filename is renamed on the node page; a lightweight visually-hidden **keyboard anchor**
+  restores full row keyboard parity (arrow / Enter→sibling / Tab→indent / Backspace→remove) — the
+  interim read-only ProseMirror anchor swallowed those, since ProseMirror gates `handleKeyDown` behind
+  `view.editable`. Gate (main): `/code-review max` over **two rounds** — round 1 surfaced a keyboard
+  dead-end, an agent-stale-filename divergence (after a rename the agent referenced the old name), a
+  dropped `reference`→file render guard, an image-load race/leak, and DRY/test gaps; the fix commit
+  resolved all and was re-verified (typecheck + `test:core` 1025/0 + `test:renderer` 479/0 + docs:check;
+  keyboard-parity & inline-image e2e green). One **low** follow-up deferred (pre-release, dev-only
+  userData): an `asset` `file-preview` layout-restore drops the pane (see the board entry). Plan
+  archived `done`.
 - **The built-in agent is named Neva; the system prompt slims to identity-only**
   (cc-2, PR #248) — the built-in agent's display name becomes **Neva** (displayName-only; the
   identity string `built-in:tenon:assistant` is unchanged, so no userData wipe) and the stable
