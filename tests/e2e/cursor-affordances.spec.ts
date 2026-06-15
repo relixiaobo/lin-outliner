@@ -21,7 +21,6 @@ test.describe('cursor affordances', () => {
         panelMore: cursor('.panel-title-more-button'),
         rowBullet: cursor(`[data-node-id="${ids.alpha}"] .row-bullet-button`),
         composerSend: cursor('.agent-composer-action-button'),
-        composerModel: cursor('.agent-composer-model-button'),
         agentTitle: cursor('.agent-dock-title-button'),
       };
     }, ids);
@@ -30,7 +29,6 @@ test.describe('cursor affordances', () => {
     expect(cursors.panelMore).toBe('default');
     expect(cursors.rowBullet).toBe('default');
     expect(cursors.composerSend).toBe('default');
-    expect(cursors.composerModel).toBe('default');
     expect(cursors.agentTitle).toBe('default');
   });
 

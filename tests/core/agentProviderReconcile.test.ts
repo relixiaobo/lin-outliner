@@ -39,8 +39,6 @@ const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
 
 interface OnDiskProvider {
   providerId: string;
-  modelId: string;
-  reasoningLevel: string;
   baseUrl?: string;
   enabled: boolean;
 }
@@ -99,7 +97,7 @@ describe('provider config startup reconcile (Part A)', () => {
     // also set active, while it has no usable key.
     await writeProviderFileRaw({
       activeProviderId: 'openai',
-      providers: [{ providerId: 'openai', modelId: 'gpt-5.5', reasoningLevel: 'off', enabled: true }],
+      providers: [{ providerId: 'openai', enabled: true }],
     });
 
     await reconcileProviderConfig();
@@ -115,7 +113,7 @@ describe('provider config startup reconcile (Part A)', () => {
     // An upsert with no credential leaves a keyless row (the read path no longer
     // self-heals); the next startup reconcile removes it instead of leaving a
     // removable-yet-keyless contradiction behind.
-    await upsertProviderConfig({ providerId: 'openai', modelId: 'gpt-4o', reasoningLevel: 'off', enabled: true });
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
     await reconcileProviderConfig();
 
     const view = await getProviderSettings();
@@ -126,7 +124,7 @@ describe('provider config startup reconcile (Part A)', () => {
   test('a credentialed provider survives and becomes the active provider', async () => {
     // The real config-window order: credential first, then the row.
     await setProviderApiKey('openai', 'sk-test');
-    await upsertProviderConfig({ providerId: 'openai', modelId: 'gpt-4o', reasoningLevel: 'off', enabled: true });
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
     await reconcileProviderConfig();
 
     const view = await getProviderSettings();
@@ -149,7 +147,7 @@ describe('provider config startup reconcile (Part A)', () => {
   test('a keyless row with a local baseUrl is a legit connection and survives', async () => {
     await writeProviderFileRaw({
       providers: [
-        { providerId: 'local-llm', modelId: 'my-model', reasoningLevel: 'off', baseUrl: 'http://localhost:1234/v1', enabled: true },
+        { providerId: 'local-llm', baseUrl: 'http://localhost:1234/v1', enabled: true },
       ],
     });
 
@@ -166,8 +164,8 @@ describe('provider config startup reconcile (Part A)', () => {
     await writeProviderFileRaw({
       activeProviderId: 'openai', // junk row, about to be pruned
       providers: [
-        { providerId: 'openai', modelId: 'gpt-5.5', reasoningLevel: 'off', enabled: true },
-        { providerId: 'anthropic', modelId: 'claude-haiku-4-5', reasoningLevel: 'off', enabled: true },
+        { providerId: 'openai', enabled: true },
+        { providerId: 'anthropic', enabled: true },
       ],
     });
 
@@ -183,8 +181,8 @@ describe('provider config startup reconcile (Part A)', () => {
     await writeProviderFileRaw({
       activeProviderId: 'openai',
       providers: [
-        { providerId: 'openai', modelId: 'gpt-5.5', reasoningLevel: 'off', enabled: true }, // would-be junk
-        { providerId: 'anthropic', modelId: 'claude-haiku-4-5', reasoningLevel: 'off', enabled: true },
+        { providerId: 'openai', enabled: true }, // would-be junk
+        { providerId: 'anthropic', enabled: true },
       ],
     });
     const before = await readFile(providerPath(), 'utf8');
@@ -201,8 +199,8 @@ describe('provider config startup reconcile (Part A)', () => {
     // managed rows must still survive because their credential is always ambient.
     await writeProviderFileRaw({
       providers: [
-        { providerId: 'amazon-bedrock', modelId: 'amazon.nova-lite-v1:0', reasoningLevel: 'off', enabled: true },
-        { providerId: 'google-vertex', modelId: 'gemini-2.5-flash', reasoningLevel: 'off', enabled: true },
+        { providerId: 'amazon-bedrock', enabled: true },
+        { providerId: 'google-vertex', enabled: true },
       ],
     });
 

@@ -221,8 +221,6 @@ async function createRuntime(
   options: {
     providerConfigLoader?: () => Promise<{
       providerId: string;
-      modelId: string;
-      reasoningLevel: 'low';
       enabled: boolean;
       apiKey: string;
     }>;
@@ -238,8 +236,6 @@ async function createRuntime(
       localFileRoot: localRoot,
       providerConfigLoader: options.providerConfigLoader ?? (async () => ({
         providerId: 'openai',
-        modelId: 'gpt-4.1',
-        reasoningLevel: 'low',
         enabled: true,
         apiKey: 'test-key',
       })),
@@ -773,8 +769,6 @@ describe('agent channel runtime', () => {
         if (providerRequests > 1 && holdProvider) await providerGate;
         return {
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         };
@@ -827,8 +821,6 @@ describe('agent channel runtime', () => {
         if (providerRequests > 1 && holdProvider) await providerGate;
         return {
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         };

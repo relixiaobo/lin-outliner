@@ -296,8 +296,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       providers: [{
         providerId: 'openai',
-        modelId: 'gpt-5.4',
-        reasoningLevel: 'medium',
         baseUrl: '',
         enabled: true,
         hasApiKey: true,
@@ -1545,8 +1543,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // updated settings — the renderer re-renders into the connected state.
     type MockAuthProvider = {
       providerId: string;
-      modelId: string;
-      reasoningLevel: string;
       baseUrl: string;
       enabled: boolean;
       hasApiKey: boolean;
@@ -1555,14 +1551,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const resolveOAuthLogin = (providerId: string) => {
       const providers = agentSettings.providers as unknown as MockAuthProvider[];
-      const catalog = agentSettings.availableProviders.find((item) => item.providerId === providerId);
       const auth = { authKind: 'oauth', credentialed: true, oauth: { connected: true, expiresAt: now + 1_000 * 60 * 60 * 24 * 30 } };
       const existing = providers.find((item) => item.providerId === providerId);
       if (existing) { existing.enabled = true; existing.hasApiKey = false; existing.auth = auth; } else {
         providers.push({
           providerId,
-          modelId: catalog?.models[0]?.id ?? '',
-          reasoningLevel: 'medium',
           baseUrl: '',
           enabled: true,
           hasApiKey: false,
@@ -1842,24 +1835,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ ok: true }) as T;
         }
         if (cmd === 'agent_upsert_provider_config') {
+          // Connection-only: the provider config carries credentials + endpoint
+          // only; model/effort now live on the agent profile, never here.
           const provider = args.provider as {
             providerId: string;
-            modelId: string;
-            reasoningLevel: string;
             baseUrl?: string | null;
             enabled?: boolean;
           };
           const existing = agentSettings.providers.find((item) => item.providerId === provider.providerId);
           if (existing) {
-            existing.modelId = provider.modelId;
-            existing.reasoningLevel = provider.reasoningLevel;
             existing.baseUrl = provider.baseUrl ?? '';
             existing.enabled = provider.enabled ?? true;
           } else {
             agentSettings.providers.push({
               providerId: provider.providerId,
-              modelId: provider.modelId,
-              reasoningLevel: provider.reasoningLevel,
               baseUrl: provider.baseUrl ?? '',
               enabled: provider.enabled ?? true,
               hasApiKey: true,
@@ -1986,11 +1975,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             existing.hasApiKey = true;
             existing.auth = keyAuth;
           } else {
-            const catalog = agentSettings.availableProviders.find((item) => item.providerId === providerId);
             agentSettings.providers.push({
               providerId,
-              modelId: catalog?.models[0]?.id ?? '',
-              reasoningLevel: 'medium',
               baseUrl: '',
               enabled: true,
               hasApiKey: true,

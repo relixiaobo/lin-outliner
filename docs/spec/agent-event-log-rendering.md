@@ -112,11 +112,14 @@ The old mutable chat snapshot store is no longer part of the runtime.
   message context menu's Details action opens an anchored popover with speaker,
   timestamp, model/provider, and token usage. These details are derived from the
   event log; no separate metadata store is introduced.
-- The composer model chip is a display-and-navigation affordance. It shows the
-  active provider/model and reasoning level from the projection/settings state.
-  In a canonical agent DM it opens that agent's profile, including the view-only
-  built-in Tenon assistant profile. Otherwise it opens the owning provider
-  config. The chat surface does not mutate provider/model settings inline.
+- The composer footer shows **no model identity control**. A DM talks to an agent
+  identity and a channel to a roster — not to a single model — so the footer never
+  presents model/provider as a primary conversation affordance (it would imply one
+  global model and mislead in channels where members may answer with different
+  profiles). Model/provider/effort stay visible only where they are diagnostic or
+  configuration-relevant: the Details popover, the run/debug panel, ledger
+  metadata, and the agent profile (where the model is actually chosen). See
+  `agent-delegation-runtime.md` for how a profile owns model + effort.
 
 ## Reference Analysis
 

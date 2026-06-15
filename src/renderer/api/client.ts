@@ -414,7 +414,7 @@ export const api = {
     command<void>('agent_oauth_cancel', { providerId }),
   agentListAllDefinitions: (conversationId: string) =>
     command<AgentDefinitionView[]>('agent_list_all_definitions', { conversationId }),
-  agentTestProviderConnection: (options: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }) =>
+  agentTestProviderConnection: (options: { providerId: string; baseUrl?: string; apiKey?: string }) =>
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: (conversationId: string) =>
     command<SkillDefinition[]>('agent_list_all_skills', { conversationId }),

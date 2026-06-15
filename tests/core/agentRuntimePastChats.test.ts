@@ -271,8 +271,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -329,8 +327,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -429,8 +425,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -534,8 +528,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -626,8 +618,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -690,8 +680,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -759,8 +747,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -831,8 +817,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -924,8 +908,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -994,8 +976,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1087,8 +1067,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1152,8 +1130,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1220,8 +1196,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1311,8 +1285,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1383,8 +1355,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1469,8 +1439,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1550,8 +1518,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1639,8 +1605,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1703,8 +1667,6 @@ describe('agent runtime past chats integration', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1774,8 +1736,6 @@ describe('agent runtime past chats integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),

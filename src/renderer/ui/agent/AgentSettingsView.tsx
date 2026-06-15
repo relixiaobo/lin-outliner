@@ -1,11 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppIcon } from '../icons';
 import type {
-  AgentModelOption,
   AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
-  AgentReasoningLevel,
   AgentDefinitionView,
   AgentMemoryEntryView,
   AgentToolPermissionSettingsView,
@@ -51,7 +49,6 @@ import {
   resolveUsableActiveProvider,
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
-import { defaultReasoningLevel } from './settingsReasoning';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -66,8 +63,6 @@ type RequestScope = 'settings' | 'section' | 'mutation';
 
 interface DraftConfig {
   providerId: string;
-  modelId: string;
-  reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   enabled: boolean;
   automaticSkillsEnabled: boolean;
@@ -152,8 +147,6 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
 
 const EMPTY_DRAFT: DraftConfig = {
   providerId: '',
-  modelId: '',
-  reasoningLevel: 'off',
   baseUrl: '',
   enabled: true,
   automaticSkillsEnabled: true,
@@ -1341,8 +1334,6 @@ function resolveInitialDraft(settings: AgentProviderSettingsView): DraftConfig {
     .find(Boolean) ?? settings.availableProviders[0];
   return {
     providerId: preferredCatalog?.providerId ?? 'anthropic',
-    modelId: preferredCatalog?.models[0]?.id ?? '',
-    reasoningLevel: defaultReasoningLevel(preferredCatalog?.models[0]),
     baseUrl: '',
     enabled: true,
     disabledSkills: settings.agent.disabledSkills ?? [],
@@ -1459,8 +1450,6 @@ function preferredProviderIndex(providerId: string): number {
 function providerToDraft(provider: AgentProviderConfigView, settings: AgentProviderSettingsView): DraftConfig {
   return {
     providerId: provider.providerId,
-    modelId: provider.modelId,
-    reasoningLevel: provider.reasoningLevel,
     baseUrl: provider.baseUrl ?? '',
     enabled: provider.enabled,
     disabledSkills: settings.agent.disabledSkills ?? [],

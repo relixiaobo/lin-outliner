@@ -2183,34 +2183,15 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-message-row.assistant', { hasText: 'Adjacent answer has no anchor.' }).locator('.agent-reply-anchor')).toHaveCount(0);
   });
 
-  test('opens the DM agent profile from the model chip without mutating model settings inline', async ({ page }) => {
-    const modelButton = page.getByRole('button', { name: 'Open model settings' });
-    await expect(modelButton).toContainText('GPT-5.4');
-    await expect(modelButton).toContainText('Medium');
-
-    await modelButton.click();
-
-    await expect(page.getByRole('menu', { name: 'Model and reasoning settings' })).toHaveCount(0);
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'built-in:tenon:assistant', mode: 'configure' });
-    expect((await commandCalls(page)).some((call) => call.cmd === 'agent_upsert_provider_config')).toBe(false);
-  });
-
-  test('keeps the model chip a stable display control', async ({ page }) => {
-    const modelButton = page.getByRole('button', { name: 'Open model settings' });
-    const before = await modelButton.boundingBox();
-    expect(before).not.toBeNull();
-
-    await modelButton.hover();
-    const after = await modelButton.boundingBox();
-
-    expect(after).not.toBeNull();
-    expect(after!.width).toBeCloseTo(before!.width, 1);
-    expect(after!.height).toBeCloseTo(before!.height, 1);
-    await expect(page.locator('.agent-composer-thinking-row')).toHaveCount(0);
+  // The composer no longer renders a model chip (provider-connection-model-ownership
+  // #256): a DM is a conversation with an agent identity, not with a model, so the
+  // footer carries no model identity and no inline model menu. Model/effort live on
+  // the agent profile; model/provider stay visible in details/run-debug surfaces.
+  test('the composer footer shows no model identity control', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Open model settings' })).toHaveCount(0);
+    await expect(page.locator('.agent-composer-model-button')).toHaveCount(0);
     await expect(page.locator('.agent-composer-model-menu')).toHaveCount(0);
+    await expect(page.locator('.agent-composer-thinking-row')).toHaveCount(0);
   });
 
   test('keeps settings in the sidebar, never duplicated in the agent surface', async ({ page }) => {
@@ -2222,9 +2203,6 @@ test.describe('agent composer controls', () => {
     await expect(
       page.locator('.sidebar-bottom').getByRole('button', { name: 'Settings' }),
     ).toBeVisible();
-
-    await page.getByRole('button', { name: 'Open model settings' }).click();
-    await expect(page.getByRole('menuitem', { name: 'API Settings' })).toHaveCount(0);
   });
 
   test('keeps the composer surface unified with neutral focus', async ({ page }) => {
@@ -2298,10 +2276,8 @@ test.describe('agent composer controls', () => {
       const editorTextBox = editorText instanceof HTMLElement ? editorText.getBoundingClientRect() : null;
       const actionButton = surface.querySelector('.agent-composer-action-button');
       const attachmentButton = surface.querySelector('.agent-composer-tool-button');
-      const modelButton = surface.querySelector('.agent-composer-model-button');
       const actionStyle = actionButton instanceof HTMLElement ? getComputedStyle(actionButton) : null;
       const attachmentStyle = attachmentButton instanceof HTMLElement ? getComputedStyle(attachmentButton) : null;
-      const modelStyle = modelButton instanceof HTMLElement ? getComputedStyle(modelButton) : null;
       const actionBox = actionButton instanceof HTMLElement ? actionButton.getBoundingClientRect() : null;
       const attachmentBox = attachmentButton instanceof HTMLElement ? attachmentButton.getBoundingClientRect() : null;
       const rootStyle = getComputedStyle(document.documentElement);
@@ -2325,8 +2301,6 @@ test.describe('agent composer controls', () => {
         attachmentRadius: attachmentStyle ? Number.parseFloat(attachmentStyle.borderTopLeftRadius) : null,
         attachmentSize: attachmentBox ? attachmentBox.width : null,
         dockInset: Number.parseFloat(rootStyle.getPropertyValue('--rail-pad')),
-        modelRadius: modelStyle ? Number.parseFloat(modelStyle.borderTopLeftRadius) : null,
-        modelHeight: modelStyle ? Number.parseFloat(modelStyle.height) : null,
         composerBottomDelta: Math.abs(panelBox.bottom - composerBox.bottom),
         composerPaddingBottom: Number.parseFloat(composerStyle.paddingBottom),
         composerPaddingLeft: Number.parseFloat(composerStyle.paddingLeft),
@@ -2384,13 +2358,12 @@ test.describe('agent composer controls', () => {
     expect(metrics!.surfaceRadius).toBe(metrics!.expectedSurfaceRadius);
     // The footer controls are fully-rounded capsules (B6), NOT on the concentric
     // container chain that gives the surface its radius: --radius-pill makes each
-    // square icon button a circle and the wide model button a stadium, so every
-    // 28px-tall control shows the same corner arc (>= half its own height) and they
-    // line up. (Asserting >= half-height is robust to the browser returning either
-    // the specified --radius-pill length or its box-clamped used value.)
+    // square icon button a circle, so every 28px-tall control shows the same corner
+    // arc (>= half its own height) and they line up. (Asserting >= half-height is
+    // robust to the browser returning either the specified --radius-pill length or
+    // its box-clamped used value.)
     expect(metrics!.actionRadius!).toBeGreaterThanOrEqual(metrics!.actionSize! / 2);
     expect(metrics!.attachmentRadius!).toBeGreaterThanOrEqual(metrics!.attachmentSize! / 2);
-    expect(metrics!.modelRadius!).toBeGreaterThanOrEqual(metrics!.modelHeight! / 2);
     expect(metrics!.actionSize).toBe(metrics!.attachmentSize);
     expect(Math.abs(metrics!.attachmentLeftInset! - metrics!.surfacePaddingLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs(metrics!.attachmentBottomInset! - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);

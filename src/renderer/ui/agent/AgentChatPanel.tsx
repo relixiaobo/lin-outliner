@@ -1226,19 +1226,6 @@ export function AgentChatPanel({
     return await resolveApproval(requestId, approved, scope);
   }, [resolveApproval]);
 
-  function openComposerModelSettings() {
-    if (dmAgentDefinition) {
-      void window.lin?.openAgentConfig?.({ agentId: dmAgentDefinition.agentId, mode: 'configure' });
-      return;
-    }
-    const activeProvider = providerSettings ? resolveUsableActiveProvider(providerSettings) : null;
-    if (activeProvider?.providerId) {
-      void window.lin?.openProviderConfig?.({ providerId: activeProvider.providerId, mode: 'configure' });
-      return;
-    }
-    void window.lin?.openSettings?.({ category: 'providers' });
-  }
-
   async function refreshAfterSettingsChange() {
     await Promise.all([
       loadProviderSettings(),
@@ -1812,7 +1799,6 @@ export function AgentChatPanel({
           members={composerMembers}
           queueSends={isMultiAgentChannel}
           onNodeReferenceOpen={onOpenNodeReference}
-          onOpenModelSettings={openComposerModelSettings}
           onCancelSteer={handleCancelSteer}
           onSend={sendMessage}
           onStop={stop}

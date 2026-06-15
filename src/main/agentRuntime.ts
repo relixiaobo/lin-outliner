@@ -161,9 +161,12 @@ import {
   getAgentRuntimeSettings,
   updateAgentRuntimeSettings,
   getProviderApiKey,
+  getBuiltInAgentProfile,
+  setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
   type AgentProviderRuntimeConfig,
 } from './agentSettings';
+import { compareModels } from './modelRanking';
 import { appendAgentToolPermissionGrant, readAgentToolPermissionConfig } from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
@@ -964,12 +967,18 @@ export class AgentRuntime {
 
   private async listConversationRosterAgents(): Promise<AgentRosterEntry[]> {
     const providerConfig = await this.getActiveProviderConfig();
-    const inheritedModel = providerConfig ? this.resolveProviderModel(providerConfig).id : this.agentIdentity.model;
+    const builtInModel = providerConfig
+      ? await this.resolveBuiltInAssistantModelEffort(providerConfig)
+          .then((resolved) => resolved.model.id)
+          // Display-only: a connection with no resolvable model (custom, no profile
+          // model yet) falls back to the identity's last-known model id.
+          .catch(() => this.agentIdentity.model)
+      : this.agentIdentity.model;
     const definitions = await this.listRawAgentDefinitions('conversation-roster');
     const entries: AgentRosterEntry[] = [{
       agentId: this.agentIdentity.agentId,
       displayName: this.agentIdentity.displayName,
-      model: inheritedModel,
+      model: builtInModel,
     }];
     const seen = new Set(entries.map((entry) => entry.agentId));
     for (const definition of definitions) {
@@ -1321,10 +1330,18 @@ export class AgentRuntime {
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const localRoot = this.authoringLocalRoot();
-    return this.withBuiltInAgentDefinitions(definitions).map((definition) => ({
-      ...definition,
-      agentId: agentDefinitionAgentId(definition),
-      writable: isAgentDefinitionWritable(definition, localRoot),
+    return Promise.all(this.withBuiltInAgentDefinitions(definitions).map(async (definition) => {
+      const agentId = agentDefinitionAgentId(definition);
+      // Surface the built-in's editable model/effort overlay on its view so the
+      // editor renders the user's saved selection (not the inert `inherit` default).
+      const overlaid = definition.source === 'built-in'
+        ? { ...definition, ...(await this.resolveDefinitionModelEffort(agentId, definition)) }
+        : definition;
+      return {
+        ...overlaid,
+        agentId,
+        writable: isAgentDefinitionWritable(definition, localRoot),
+      };
     }));
   }
 
@@ -1376,7 +1393,16 @@ export class AgentRuntime {
     input: AgentAuthoringInput,
   ): Promise<AgentDefinitionView[]> {
     const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
-    await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
+    // A built-in definition is read-only code: only its model/effort are editable,
+    // and they persist to the settings overlay rather than a (non-existent) file.
+    if (existing.source === 'built-in') {
+      await setBuiltInAgentProfile(agentId, {
+        model: input.model ?? null,
+        effort: typeof input.effort === 'string' ? input.effort : null,
+      });
+    } else {
+      await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
+    }
     return this.reloadAgentDefinitions(conversationId);
   }
 
@@ -2107,7 +2133,7 @@ export class AgentRuntime {
     const providerConfig = await this.getActiveProviderConfig();
     const runtimeSettings = await this.getRuntimeSettings();
     const activePath = await this.deriveRuntimePiMessages(conversationId, eventState);
-    const providerModel = providerConfig ? this.resolveProviderModel(providerConfig) : null;
+    const providerModel = providerConfig ? this.tryResolveProviderModel(providerConfig) : null;
     const defaultAgentId = this.defaultAgentIdForConversation(eventState);
     const conversationRef: { current: AgentConversationState | null } = { current: null };
     const agentRef: { current: Agent | null } = { current: null };
@@ -2244,16 +2270,26 @@ export class AgentRuntime {
     const defaultAgentProfile = providerConfig && defaultAgentId !== this.agentIdentity.agentId
       ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, { providerConfig })
       : null;
+    // The built-in assistant owns its model/effort through a settings overlay, not
+    // the provider connection — resolve it the same way a profile agent resolves
+    // its own, while keeping the built-in's base system prompt unchanged.
+    const builtInModelEffort = providerConfig && defaultAgentId === this.agentIdentity.agentId
+      // null when the connection has no resolvable model yet (a fresh custom endpoint
+      // with no assistant default chosen) — surfaced below as a configuration error.
+      ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
+      : null;
     if (defaultAgentProfile) {
       await this.getEventStore().writeAgentIdentity(defaultAgentProfile.identity);
     } else {
-      await this.getEventStore().writeAgentIdentity(this.currentAgentIdentity(providerModel));
+      await this.getEventStore().writeAgentIdentity(
+        this.currentAgentIdentity(builtInModelEffort?.model ?? providerModel, builtInModelEffort?.thinkingLevel),
+      );
     }
-    const agentModel = defaultAgentProfile?.model ?? providerModel;
-    const agentThinkingLevel = defaultAgentProfile?.thinkingLevel ?? providerConfig?.reasoningLevel;
+    const agentModel = defaultAgentProfile?.model ?? builtInModelEffort?.model ?? providerModel;
+    const agentThinkingLevel = defaultAgentProfile?.thinkingLevel ?? builtInModelEffort?.thinkingLevel;
     const agentSystemPrompt = defaultAgentProfile?.systemPrompt ?? this.agentIdentity.systemPrompt;
     const defaultAgentDisplayName = defaultAgentProfile?.identity.displayName ?? this.agentIdentity.displayName;
-    const agent = providerConfig
+    const agent = providerConfig && agentModel
       ? createConfiguredAgent(conversationId, providerConfig, activePath, this.outlinerToolHost, {
           localFileRoot: this.options.localFileRoot,
           localWorkspace,
@@ -2307,7 +2343,13 @@ export class AgentRuntime {
             this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
         })
-      : createConfigurationErrorAgent(conversationId, 'No enabled agent provider is configured.', activePath);
+      : createConfigurationErrorAgent(
+          conversationId,
+          providerConfig
+            ? 'No model is configured. Choose a default model for the assistant in Settings → Agents.'
+            : 'No enabled agent provider is configured.',
+          activePath,
+        );
     agentRef.current = agent;
 
     const debugCounters = await this.loadDebugCounters(conversationId);
@@ -2548,13 +2590,12 @@ export class AgentRuntime {
     providerConfig: AgentProviderRuntimeConfig,
     input: AgentChildAgentCreateInput,
   ): Agent {
-    const inheritedModel = this.resolveProviderModel(providerConfig);
-    const model = input.model
-      ? resolveSkillModelOverride(input.model, providerConfig, inheritedModel)
-      : inheritedModel;
-    const thinkingLevel = input.effort
-      ? resolveSkillEffortOverride(input.effort, model, providerConfig.reasoningLevel)
-      : providerConfig.reasoningLevel;
+    const { model, thinkingLevel } = resolveAgentModelEffort(
+      input.model,
+      input.effort,
+      providerConfig,
+      this.tryResolveProviderModel(providerConfig),
+    );
     // Attribution for this run's gated/denied approvals, resolved at the delegation
     // layer from the authoritative context mode (fresh consult → the consultee;
     // fork → inherited; the user's own agent → undefined). The card resolves the id
@@ -2909,7 +2950,9 @@ export class AgentRuntime {
     const providerConfig = await this.getActiveProviderConfig();
     throwIfAborted(signal);
     if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-    const model = modelOverride ?? this.resolveProviderModel(providerConfig);
+    // Summaries run on the assistant's resolved model (handles custom endpoints,
+    // where the provider connection has no catalog default).
+    const model = modelOverride ?? (await this.resolveBuiltInAssistantModelEffort(providerConfig)).model;
     const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
     const runtimeSettings = await this.getRuntimeSettings();
     let messagesToSummarize = [...messages];
@@ -3772,7 +3815,8 @@ export class AgentRuntime {
           errorMessage: 'No enabled agent provider is configured.',
         };
       }
-      const model = this.resolveProviderModel(providerConfig);
+      // Dream runs on the assistant's resolved model (handles custom endpoints).
+      const model = (await this.resolveBuiltInAssistantModelEffort(providerConfig)).model;
       modelForRunMeta = model;
       await this.writeDreamRunMeta(task, 'running', model);
       const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
@@ -4193,10 +4237,11 @@ export class AgentRuntime {
     }, callback);
   }
 
-  private currentAgentIdentity(model: Model<Api> | null): AgentIdentityRecord {
+  private currentAgentIdentity(model: Model<Api> | null, effort?: AgentReasoningLevel): AgentIdentityRecord {
     return {
       ...this.agentIdentity,
       model: model?.id ?? this.agentIdentity.model,
+      effort: effort ? String(effort) : this.agentIdentity.effort,
     };
   }
 
@@ -4783,17 +4828,22 @@ export class AgentRuntime {
     return {
       runtimeStatus: async () => {
         const providerConfig = await this.getActiveProviderConfig();
+        // The provider connection owns no model; report the built-in assistant's
+        // resolved model/effort (its agent-owned default over this connection).
+        const provider = providerConfig
+          ? await this.resolveBuiltInAssistantModelEffort(providerConfig)
+              .then((resolved) => ({
+                configured: true,
+                providerId: providerConfig.providerId,
+                modelId: resolved.model.id,
+                reasoningLevel: String(resolved.thinkingLevel),
+              }))
+              .catch(() => ({ configured: true, providerId: providerConfig.providerId }))
+          : { configured: false };
         return {
           agentId: this.agentIdentity.agentId,
           conversationId: getConversationId(),
-          provider: providerConfig
-            ? {
-                configured: true,
-                providerId: providerConfig.providerId,
-                modelId: providerConfig.modelId,
-                reasoningLevel: providerConfig.reasoningLevel,
-              }
-            : { configured: false },
+          provider,
           runtime: await this.getRuntimeSettings(),
         };
       },
@@ -5339,6 +5389,19 @@ export class AgentRuntime {
 
   private resolveProviderModel(providerConfig: AgentProviderRuntimeConfig) {
     return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
+  }
+
+  /**
+   * The provider connection's default catalog model, or null when none exists (a
+   * custom endpoint with no catalog). Display/fallback paths use this so an
+   * unconfigured custom provider never throws during conversation setup.
+   */
+  private tryResolveProviderModel(providerConfig: AgentProviderRuntimeConfig): Model<Api> | null {
+    try {
+      return this.resolveProviderModel(providerConfig);
+    } catch {
+      return null;
+    }
   }
 
   private async loadEventState(conversationId: string): Promise<AgentEventReplayState> {
@@ -6333,8 +6396,11 @@ export class AgentRuntime {
     const isMainAgent = targetAgentId === this.coordinatorAgentId();
     const profile = isMainAgent ? null : await this.resolveChannelPeerProfile(conversation, targetAgentId);
     if (profile) await this.getEventStore().writeAgentIdentity(profile.identity);
-    const model = profile?.model ?? this.resolveProviderModel(providerConfig);
-    const thinkingLevel = profile?.thinkingLevel ?? providerConfig.reasoningLevel;
+    // The built-in coordinator owns its model/effort through the settings overlay,
+    // resolved the same way as a peer profile; its base system prompt is unchanged.
+    const builtIn = isMainAgent ? await this.resolveBuiltInAssistantModelEffort(providerConfig) : null;
+    const model = profile?.model ?? builtIn!.model;
+    const thinkingLevel = profile?.thinkingLevel ?? builtIn!.thinkingLevel;
     const systemPrompt = profile?.systemPrompt ?? this.agentIdentity.systemPrompt;
     const definition = profile?.definition;
     const agent = createConfiguredAgent(conversationId, providerConfig, [], this.outlinerToolHost, {
@@ -6398,6 +6464,42 @@ export class AgentRuntime {
     return this.resolveAgentProfile(agentId, conversation.delegationRuntime, conversation.skillRuntime);
   }
 
+  /**
+   * The model/effort an agent profile selects. For a writable agent this is its own
+   * `model`/`effort` frontmatter; for a read-only built-in it is the settings-owned
+   * overlay (keyed by agentId), since built-in definitions are code, not files.
+   */
+  private async resolveDefinitionModelEffort(
+    agentId: string,
+    definition: AgentDefinition,
+  ): Promise<{ model?: string; effort?: string }> {
+    if (definition.source !== 'built-in') {
+      return {
+        model: definition.model,
+        effort: typeof definition.effort === 'string' ? definition.effort : undefined,
+      };
+    }
+    const overlay = await getBuiltInAgentProfile(agentId);
+    return {
+      model: overlay.model ?? definition.model,
+      effort: overlay.effort ?? (typeof definition.effort === 'string' ? definition.effort : undefined),
+    };
+  }
+
+  /** The built-in assistant's effective model + thinking level over a connection. */
+  private async resolveBuiltInAssistantModelEffort(
+    providerConfig: AgentProviderRuntimeConfig,
+  ): Promise<{ model: Model<Api>; thinkingLevel: AgentReasoningLevel }> {
+    const definition = createTenonAssistantAgentDefinition();
+    const selection = await this.resolveDefinitionModelEffort(this.agentIdentity.agentId, definition);
+    return resolveAgentModelEffort(
+      selection.model,
+      selection.effort,
+      providerConfig,
+      this.tryResolveProviderModel(providerConfig),
+    );
+  }
+
   private async resolveAgentProfile(
     agentId: string,
     delegationRuntime: AgentDelegationRuntime,
@@ -6417,13 +6519,13 @@ export class AgentRuntime {
     if (!definition) throw new Error(`Agent definition not found: ${agentId}`);
     const providerConfig = options.providerConfig ?? await this.getActiveProviderConfig();
     if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-    const inheritedModel = this.resolveProviderModel(providerConfig);
-    const model = definition.model
-      ? resolveSkillModelOverride(definition.model, providerConfig, inheritedModel)
-      : inheritedModel;
-    const thinkingLevel = definition.effort
-      ? resolveSkillEffortOverride(definition.effort, model, providerConfig.reasoningLevel)
-      : providerConfig.reasoningLevel;
+    const profileSelection = await this.resolveDefinitionModelEffort(agentId, definition);
+    const { model, thinkingLevel } = resolveAgentModelEffort(
+      profileSelection.model,
+      profileSelection.effort,
+      providerConfig,
+      this.tryResolveProviderModel(providerConfig),
+    );
     const skillSections = await this.memberSkillSections(skillRuntime, definition);
     const systemPrompt = buildAgentMemberSystemPrompt(definition, agentMentionToken(agentId), skillSections);
     const identity: AgentIdentityRecord = {
@@ -8249,7 +8351,7 @@ function createConfiguredAgent(
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
   let activeLoopModel = model;
-  let activeThinkingLevel = options.thinkingLevel ?? providerConfig.reasoningLevel;
+  let activeThinkingLevel = options.thinkingLevel ?? defaultThinkingLevel(model);
   let agent: Agent;
   agent = new Agent({
     initialState: {
@@ -8494,7 +8596,21 @@ function resolveSkillModelOverride(
 ): Model<Api> {
   const requested = modelInput.trim();
   if (!requested || requested === 'inherit' || requested === currentModel.id) return currentModel;
+  return resolveModelOverride(requested, providerConfig) ?? currentModel;
+}
 
+/**
+ * Resolve a model-selection string against a provider CONNECTION. Accepts a bare
+ * model id or a `providerId/modelId` (or `providerId:modelId`) qualifier. Returns a
+ * catalog model when the id is known, an OpenAI-compatible model for the
+ * connection's custom endpoint, or null when nothing matches (the caller decides
+ * the fallback). The provider connection no longer carries a model, so this is the
+ * single place a model string becomes a `Model`.
+ */
+function resolveModelOverride(
+  requested: string,
+  providerConfig: AgentProviderRuntimeConfig,
+): Model<Api> | null {
   const parsed = parseProviderQualifiedModel(requested);
   const providerId = parsed?.providerId ?? providerConfig.providerId;
   const modelId = parsed?.modelId ?? requested;
@@ -8504,12 +8620,95 @@ function resolveSkillModelOverride(
       ? { ...knownModel, baseUrl: providerConfig.baseUrl }
       : knownModel;
   }
-
   if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
     return createOpenAICompatibleModel({ ...providerConfig, modelId });
   }
+  return null;
+}
 
-  return currentModel;
+/** Catalog models for a provider, sorted by the shared ranking (newest, thinking-first). */
+function listRankedModels(providerId: string): Model<Api>[] {
+  try {
+    const models = getModels(providerId as KnownProvider) as Model<Api>[];
+    return [...models].sort((left, right) => compareModels(providerId, left, right));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The default catalog model for a provider connection — the first after the ranking
+ * sort, with the connection's base URL applied. Null for a custom endpoint with no
+ * catalog (where the agent profile must name the model).
+ */
+function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
+  const first = listRankedModels(config.providerId)[0];
+  if (!first) return null;
+  return config.baseUrl ? { ...first, baseUrl: config.baseUrl } : first;
+}
+
+/**
+ * The model a provider connection runs by default when no agent profile names one.
+ * Throws (rather than returns null) for the utility callers — compaction, dream,
+ * roster display — that always need a concrete model.
+ */
+function resolveModel(config: AgentProviderRuntimeConfig): Model<Api> {
+  const model = resolveProviderCatalogModel(config);
+  if (model) return model;
+  if (config.baseUrl) {
+    throw new Error(`No catalog model for custom provider ${config.providerId}; set a model on the agent profile.`);
+  }
+  throw new Error(`model not found for provider ${config.providerId}`);
+}
+
+/**
+ * The model a model-selection string resolves to. `fallback` is the provider
+ * connection's default model (resolved by the caller through the injectable
+ * `resolveProviderModel` seam, so tests and custom resolvers are honored); an
+ * empty/`inherit` selection uses it directly, an explicit selection overrides it.
+ */
+function resolveAgentModel(
+  modelInput: string | undefined,
+  config: AgentProviderRuntimeConfig,
+  fallback: Model<Api> | null,
+): Model<Api> {
+  const requested = modelInput?.trim();
+  if (!requested || requested === 'inherit') {
+    if (fallback) return fallback;
+    throw new Error('No model is configured for this agent. Set a default model in the agent profile.');
+  }
+  const resolved = resolveModelOverride(requested, config);
+  if (resolved) return resolved;
+  if (fallback) return fallback;
+  throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
+}
+
+/** A model's natural default thinking level: `off` when supported, else its lowest. */
+function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
+  const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
+    AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
+  ));
+  if (supported.includes('off')) return 'off';
+  return supported[0] ?? 'off';
+}
+
+/**
+ * Resolve the effective model + thinking level an agent runs with, from its
+ * profile's model/effort selection over a provider connection. The single seam the
+ * runtime uses now that the provider connection owns neither. `fallback` is the
+ * connection's default model (see `resolveAgentModel`).
+ */
+function resolveAgentModelEffort(
+  modelInput: string | undefined,
+  effortInput: string | undefined,
+  config: AgentProviderRuntimeConfig,
+  fallback: Model<Api> | null,
+): { model: Model<Api>; thinkingLevel: AgentReasoningLevel } {
+  const model = resolveAgentModel(modelInput, config, fallback);
+  const thinkingLevel = effortInput
+    ? resolveSkillEffortOverride(effortInput, model, defaultThinkingLevel(model))
+    : defaultThinkingLevel(model);
+  return { model, thinkingLevel };
 }
 
 function parseProviderQualifiedModel(value: string): { providerId: string; modelId: string } | null {
@@ -8606,17 +8805,6 @@ function createConfigurationErrorAgent(conversationId: string, message: string, 
   });
 }
 
-function resolveModel(config: AgentProviderRuntimeConfig): Model<Api> {
-  const knownModel = findKnownModel(config.providerId, config.modelId);
-  if (knownModel) {
-    return config.baseUrl ? { ...knownModel, baseUrl: config.baseUrl } : knownModel;
-  }
-  if (config.baseUrl) {
-    return createOpenAICompatibleModel(config);
-  }
-  throw new Error(`model not found for provider ${config.providerId}: ${config.modelId}`);
-}
-
 function findKnownModel(providerId: string, modelId: string): Model<Api> | null {
   try {
     return getModels(providerId as KnownProvider).find((model) => model.id === modelId) as Model<Api> | undefined ?? null;
@@ -8625,7 +8813,9 @@ function findKnownModel(providerId: string, modelId: string): Model<Api> | null 
   }
 }
 
-function createOpenAICompatibleModel(config: AgentProviderRuntimeConfig): Model<'openai-completions'> {
+function createOpenAICompatibleModel(
+  config: { providerId: string; modelId: string; baseUrl?: string },
+): Model<'openai-completions'> {
   return {
     id: config.modelId,
     name: config.modelId,

@@ -511,8 +511,11 @@ Field behavior:
 - `prompt`: complete task instruction for fresh agents, or a directive for fork
   agents.
 - `agent_type`: agent definition name. If omitted, run a fork child run.
-- `model`: optional model override. Agent definition model takes precedence rules
-  should match Lin's model policy.
+- `model`: optional per-call model override. Resolution order is request override
+  → the running agent's owned model (user/project `AgentDefinition.model`, or the
+  built-in assistant's settings overlay) → catalog first-ranked fallback. Provider
+  rows are connection-only and never carry a model; see the resolution chain in
+  `agent-pi-mono-implementation.md`.
 - `run_in_background`: if true, return immediately and notify the parent conversation
   when done.
 - `name`: optional conversation-local alias for later `AgentSend`, `AgentStatus`, and

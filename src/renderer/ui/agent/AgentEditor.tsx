@@ -3,6 +3,7 @@ import type {
   AgentAuthoringInput,
   AgentDefinitionView,
   AgentDelegationPermissionMode,
+  AgentProviderSettingsView,
   AgentReasoningLevel,
   AgentStorageLocation,
   SkillDefinition,
@@ -10,12 +11,12 @@ import type {
 import { parseAgentAuthoringInput, serializeAgentMarkdown } from '../../../core/agentMarkdown';
 import { TOOL_CATALOG } from '../../../core/agentToolCatalog';
 import { useT } from '../../i18n/I18nProvider';
+import { AgentModelEffortSelector } from './AgentModelEffortSelector';
 import { Button } from '../primitives/Button';
 import { EmptyState } from '../primitives/FeedbackState';
 import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
 import { SegmentedControl } from '../primitives/SegmentedControl';
-import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
@@ -42,6 +43,9 @@ interface AgentEditorProps {
   // read-only view (built-in / external non-writable).
   agent: AgentDefinitionView | null;
   availableSkills: SkillDefinition[];
+  // Provider connections, for the capability-driven model/effort selector. Null
+  // while still loading.
+  providerSettings: AgentProviderSettingsView | null;
   busy: boolean;
   onCreate: (input: AgentAuthoringInput, storage: AgentStorageLocation) => void;
   onUpdate: (agentId: string, input: AgentAuthoringInput) => void;
@@ -73,7 +77,7 @@ interface AgentFormState {
   disallowedTools: string[];
 }
 
-export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, onDelete, onDuplicate, onCancel }: AgentEditorProps) {
+export function AgentEditor({ agent, availableSkills, providerSettings, busy, onCreate, onUpdate, onDelete, onDuplicate, onCancel }: AgentEditorProps) {
   const messages = useT();
   const t = messages.settings.agents;
   const isBuiltIn = agent?.source === 'built-in';
@@ -81,6 +85,10 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
   // same abstraction as a writable agent, so the only difference a user sees is
   // "can I change it".
   const readOnly = agent ? !isWritableAgentDefinition(agent) : false;
+  // A built-in's definition is fixed, but its model/effort are editable and persist
+  // to the settings overlay — so the model selector stays live even when the rest of
+  // the form is read-only (provider-connection-model-ownership #256).
+  const modelEffortReadOnly = readOnly && !isBuiltIn;
   const skillNames = useMemo(() => availableSkills.map((skill) => skill.name), [availableSkills]);
   const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames, newAgentScaffold(t)));
   const [mode, setMode] = useState<EditorMode>('form');
@@ -162,15 +170,18 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
             <Field as="label" className="settings-sheet-row" label={t.descriptionLabel} labelClassName="settings-sheet-row-label">
               <Input className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} readOnly={readOnly} value={form.description} variant="bare" />
             </Field>
-            <Field as="label" className="settings-sheet-row" label={t.modelOverride} labelClassName="settings-sheet-row-label">
-              <Input className="settings-sheet-row-input" label={t.modelOverride} onChange={(e) => update('model', e.target.value)} placeholder={t.modelPlaceholder} readOnly={readOnly} value={form.model} variant="bare" />
-            </Field>
-            <Field as="label" className="settings-sheet-row" label={t.thinkingLevel} labelClassName="settings-sheet-row-label">
-              <SelectControl className="settings-sheet-row-input" disabled={readOnly} label={t.thinkingLevel} onChange={(e) => update('effort', e.target.value)} value={form.effort} variant="popup">
-                <option value="">{t.effortDefault}</option>
-                {REASONING_OPTIONS.map((level) => <option key={level} value={level}>{level}</option>)}
-              </SelectControl>
-            </Field>
+            <AgentModelEffortSelector
+              disabled={modelEffortReadOnly}
+              effort={form.effort}
+              effortLabel={t.thinkingLevel}
+              inheritLabel={t.effortDefault}
+              model={form.model}
+              modelLabel={t.modelOverride}
+              providerLabel={t.providerOverride}
+              onEffortChange={(value) => update('effort', value)}
+              onModelChange={(value) => update('model', value)}
+              settings={providerSettings}
+            />
             <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.permissionMode} labelClassName="settings-sheet-row-label">
               <SegmentedControl<'' | AgentDelegationPermissionMode>
                 disabled={readOnly}
@@ -249,9 +260,16 @@ export function AgentEditor({ agent, availableSkills, busy, onCreate, onUpdate, 
               </Button>
             ) : <span />}
             <span className="agent-editor-actions-right">
-              <Button disabled={busy} onClick={() => onDuplicate(agent)} variant="primary">
+              <Button disabled={busy} onClick={() => onDuplicate(agent)} variant={isBuiltIn ? 'secondary' : 'primary'}>
                 {t.duplicateToMine}
               </Button>
+              {/* A built-in's model/effort are editable and persist to the settings
+                  overlay, so it gets a real Save even though the rest is read-only. */}
+              {isBuiltIn ? (
+                <Button disabled={busy} onClick={submit} variant="primary">
+                  {t.saveAgent}
+                </Button>
+              ) : null}
             </span>
           </>
         ) : agent ? (

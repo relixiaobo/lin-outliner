@@ -219,13 +219,18 @@ test.describe('agent settings window', () => {
     }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
   });
 
-  test('opens the built-in Tenon agent config as a view-only profile', async ({ page }) => {
+  test('opens the built-in Tenon agent config: read-only except an editable model/effort', async ({ page }) => {
     const config = await openAgentConfig(page, 'built-in%3Atenon%3Aassistant');
     await expect(config.getByRole('heading', { name: 'Neva' })).toBeVisible();
     await expect(config.getByText('Default Tenon assistant profile.')).toBeVisible();
-    await expect(config.getByText('Built-in agents are view-only')).toBeVisible();
+    await expect(config.getByText('read-only except for the model')).toBeVisible();
     await expect(config.getByLabel('Name')).toHaveValue('Neva');
-    await expect(config.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    await expect(config.getByLabel('Name')).not.toBeEditable();
+    // The built-in owns its model/effort through the settings overlay: the selector
+    // stays editable and the profile gets a real Save (no Delete), alongside Duplicate.
+    // Provider is the always-present entry point (Model appears once a provider is set).
+    await expect(config.getByLabel('Provider')).toBeEnabled();
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
     await expect(config.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
     await expect(config.getByRole('button', { name: 'Duplicate to my agents' })).toBeVisible();
   });
@@ -449,21 +454,23 @@ test.describe('agent and Channel config windows', () => {
 });
 
 // The per-provider config window (?surface=provider-config) — a standalone surface
-// (in the app, a modal child window). It hosts the connection plus the built-in
-// assistant's global model/reasoning choice; the composer chip only navigates here.
+// (in the app, a modal child window). It is connection-only: credentials + endpoint.
+// Model and effort now live on the agent profile, never here, so this window has no
+// Model or Thinking-level control.
 test.describe('provider config window', () => {
-  test('renders the saved connection with model and reasoning controls', async ({ page }) => {
+  test('renders the saved connection — connection only, no model/reasoning controls', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
     await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', /Saved \(encrypted\)/);
     await expect(config.getByLabel('Base URL')).toBeVisible();
-    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveValue('gpt-5.4');
-    await expect(config.getByRole('combobox', { name: 'Thinking level' })).toHaveValue('medium');
+    // Model and effort moved to the agent profile — neither control lives here now.
+    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+    await expect(config.getByRole('combobox', { name: 'Thinking level' })).toHaveCount(0);
     // A configured provider can be removed from its window.
     await expect(config.getByRole('button', { name: 'Remove provider' })).toBeVisible();
   });
 
-  test('enters a credential and saves the config', async ({ page }) => {
+  test('enters a credential and saves the connection', async ({ page }) => {
     const config = await openProviderConfig(page, 'anthropic');
     await expect(config.getByRole('heading', { name: /Anthropic/ })).toBeVisible();
     await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste API key');
@@ -481,8 +488,6 @@ test.describe('provider config window', () => {
     }).toMatchObject({
       provider: {
         providerId: 'anthropic',
-        modelId: 'claude-sonnet-4-5',
-        reasoningLevel: 'off',
         enabled: true,
       },
     });
@@ -507,7 +512,6 @@ test.describe('provider config window', () => {
     await expect(config.getByLabel('API key')).toHaveCount(0);
     await expect(config.getByText(/uses your AWS credentials/i)).toBeVisible();
     await expect(config.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
-    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveValue('amazon.nova-lite-v1:0');
     await expect(config.getByLabel('Base URL')).toBeVisible();
   });
 
@@ -533,21 +537,18 @@ test.describe('provider config window', () => {
     const config = await openProviderConfig(page, '', 'custom');
     await config.getByLabel('Provider ID').fill('my-proxy');
     await config.getByLabel('API key').fill('sk-test');
-    await config.getByRole('textbox', { name: 'Model' }).fill('custom-model');
     await config.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
     }).toMatchObject({
-      provider: { providerId: 'my-proxy', modelId: 'custom-model', enabled: true },
+      provider: { providerId: 'my-proxy', enabled: true },
     });
   });
 
-  test('saves the connection with selected model and reasoning', async ({ page }) => {
+  test('saves the connection with a base URL override', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
-    await config.getByRole('combobox', { name: 'Model' }).selectOption('gpt-5.4-mini');
-    await config.getByRole('combobox', { name: 'Thinking level' }).selectOption('high');
     await config.getByLabel('Base URL').fill('https://proxy.example.com/v1');
     await config.getByRole('button', { name: 'Save', exact: true }).click();
 
@@ -557,8 +558,6 @@ test.describe('provider config window', () => {
     }).toMatchObject({
       provider: {
         providerId: 'openai',
-        modelId: 'gpt-5.4-mini',
-        reasoningLevel: 'high',
         baseUrl: 'https://proxy.example.com/v1',
         enabled: true,
       },

@@ -900,10 +900,15 @@ export interface AgentSlashCommandView {
   insertText: string;
 }
 
+/**
+ * A provider is a CONNECTION, not a model choice. It proves credentials and an
+ * endpoint are reachable; which model/effort actually runs is owned by the agent
+ * profile that runs (see `AgentDefinition.model` / `effort` and the built-in
+ * assistant's settings-owned default). Provider config therefore carries no
+ * `modelId` / `reasoningLevel`.
+ */
 export interface AgentProviderConfigInput {
   providerId: string;
-  modelId: string;
-  reasoningLevel?: AgentReasoningLevel;
   baseUrl?: string | null;
   enabled?: boolean;
 }
@@ -928,8 +933,6 @@ export interface ProviderAuthView {
 
 export interface AgentProviderConfigView {
   providerId: string;
-  modelId: string;
-  reasoningLevel: AgentReasoningLevel;
   baseUrl?: string;
   enabled: boolean;
   hasApiKey: boolean;

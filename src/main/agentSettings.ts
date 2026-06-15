@@ -29,18 +29,31 @@ import { compareModels } from './modelRanking';
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
 
+// A provider config is a CONNECTION record only — credentials + endpoint. The
+// model/effort that actually runs is owned by the agent profile (user/project
+// `AgentDefinition`, or the built-in assistant's `builtInAgentProfiles` overlay
+// below), never by the provider. See `docs/spec/agent-delegation-runtime.md`.
 interface AgentProviderConfig {
   providerId: string;
-  modelId: string;
-  reasoningLevel: AgentReasoningLevel;
   baseUrl?: string;
   enabled: boolean;
+}
+
+// Settings-owned model/effort for a read-only built-in agent definition, keyed by
+// agentId. Built-in definitions are code, not files, so their model selection
+// lives here instead of in frontmatter. Empty fields mean "use the catalog
+// default for the active provider"; the runtime coerces effort to the chosen
+// model's supported levels.
+interface StoredBuiltInAgentProfile {
+  model?: string;
+  effort?: string;
 }
 
 interface ProviderConfigFile {
   activeProviderId?: string;
   agent?: StoredAgentRuntimeSettings;
   providers: AgentProviderConfig[];
+  builtInAgentProfiles?: Record<string, StoredBuiltInAgentProfile>;
 }
 
 type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings> & {
@@ -116,15 +129,48 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     ?? file.providers.find((provider) => providerHasCredential(provider, secrets))
     ?? null;
   if (!active) return null;
-  const modelId = active.modelId;
-  // Do not bake the key here — this path is sync and cannot await an OAuth
-  // refresh. Consumers resolve lazily via getProviderApiKey (the single async
-  // resolver) at request time; leaving apiKey undefined routes them there.
-  return {
-    ...active,
-    modelId,
-    reasoningLevel: normalizeReasoningLevel(active.providerId, modelId, active.reasoningLevel),
-  };
+  // Connection only. Do not bake the key here — this path is sync and cannot await
+  // an OAuth refresh. Consumers resolve lazily via getProviderApiKey (the single
+  // async resolver) at request time; leaving apiKey undefined routes them there.
+  return { ...active };
+}
+
+/**
+ * The settings-owned model/effort overlay for a built-in agent definition. Built-in
+ * definitions are read-only code, so the user's model choice for them lives here.
+ * Empty when never set — the runtime then falls back to the active provider's
+ * catalog default.
+ */
+export async function getBuiltInAgentProfile(agentId: string): Promise<StoredBuiltInAgentProfile> {
+  const file = await readProviderFile();
+  const stored = file.builtInAgentProfiles?.[agentId];
+  if (!stored) return {};
+  const profile: StoredBuiltInAgentProfile = {};
+  if (typeof stored.model === 'string' && stored.model.trim()) profile.model = stored.model.trim();
+  if (isAgentReasoningLevel(stored.effort)) profile.effort = stored.effort;
+  return profile;
+}
+
+/**
+ * Persist the built-in assistant's default model/effort. An empty/`inherit` model
+ * or an unset effort clears that field (falls back to the provider catalog default).
+ */
+export async function setBuiltInAgentProfile(
+  agentId: string,
+  input: { model?: string | null; effort?: string | null },
+): Promise<void> {
+  const id = agentId.trim();
+  if (!id) throw new Error('agentId is required');
+  const model = input.model?.trim();
+  const next: StoredBuiltInAgentProfile = {};
+  if (model && model !== 'inherit') next.model = model;
+  if (isAgentReasoningLevel(input.effort)) next.effort = input.effort;
+  const file = await readProviderFile();
+  const profiles = { ...(file.builtInAgentProfiles ?? {}) };
+  if (next.model === undefined && next.effort === undefined) delete profiles[id];
+  else profiles[id] = next;
+  file.builtInAgentProfiles = profiles;
+  await writeProviderFile(file);
 }
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
@@ -179,20 +225,14 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
  * Ensure a provider has a config row in agent-providers.json. The OAuth sign-in
  * path persists a credential but, unlike the API-key form's `upsertProviderConfig`,
  * has no step that creates a provider row — so a first-time login would be
- * orphaned (credential on disk, no selectable provider). Creates a row with the
- * catalog's default model when none exists; an existing row is left untouched.
+ * orphaned (credential on disk, no selectable provider). Creates a connection row
+ * when none exists; an existing row is left untouched.
  */
 export async function ensureProviderConfig(providerIdInput: string): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
   const file = await readProviderFile();
   if (file.providers.some((provider) => provider.providerId === providerId)) return;
-  const modelId = firstModelId(providerId);
-  file.providers.push({
-    providerId,
-    modelId,
-    reasoningLevel: normalizeReasoningLevel(providerId, modelId, undefined),
-    enabled: true,
-  });
+  file.providers.push({ providerId, enabled: true });
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
   // The OAuth credential is persisted before this row is created, so read paths
   // resolve it as the active provider via the credentialed-row fallback even before
@@ -201,11 +241,18 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
   await writeProviderFile(file);
 }
 
-function firstModelId(providerId: string): string {
+/**
+ * The runtime's default model for a provider connection: the first model after the
+ * shared ranking sort (newest, thinking-capable first). Used as the connection
+ * probe model and the catalog fallback when no agent profile names one. Returns
+ * null for a custom endpoint with no catalog.
+ */
+function firstRankedModel(providerId: string): Model<Api> | null {
   try {
-    return getModels(providerId as KnownProvider)[0]?.id ?? '';
+    const models = getModels(providerId as KnownProvider) as Model<Api>[];
+    return [...models].sort((left, right) => compareModels(providerId, left, right))[0] ?? null;
   } catch {
-    return '';
+    return null;
   }
 }
 
@@ -318,7 +365,6 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
     activeProviderId: file.activeProviderId,
     agent: normalizeAgentRuntimeSettings(file.agent),
     providers: file.providers.map((provider): AgentProviderConfigView => {
-      const modelId = provider.modelId;
       const cred = secrets.credentials[provider.providerId];
       const hasEnvApiKey = !!getEnvApiKey(provider.providerId);
       const authKind = getProviderAuthKind(provider.providerId);
@@ -336,8 +382,6 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
       };
       return {
         providerId: provider.providerId,
-        modelId,
-        reasoningLevel: normalizeReasoningLevel(provider.providerId, modelId, provider.reasoningLevel),
         baseUrl: provider.baseUrl,
         enabled: provider.enabled,
         hasApiKey: hasStoredKey,
@@ -424,11 +468,8 @@ function getAvailableProviders(): AgentProviderOption[] {
 
 function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
   const providerId = normalizeProviderId(input.providerId);
-  const modelId = input.modelId.trim();
-  if (!modelId) throw new Error('modelId is required');
-  const reasoningLevel = normalizeReasoningLevel(providerId, modelId, input.reasoningLevel);
   const baseUrl = input.baseUrl?.trim() || undefined;
-  return { providerId, modelId, reasoningLevel, baseUrl, enabled: input.enabled ?? true };
+  return { providerId, baseUrl, enabled: input.enabled ?? true };
 }
 
 function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFile): boolean {
@@ -517,34 +558,8 @@ function normalizeProviderId(providerIdInput: string) {
   return providerId;
 }
 
-function normalizeReasoningLevel(
-  providerId: string,
-  modelId: string,
-  reasoningLevelInput?: string,
-): AgentReasoningLevel {
-  const requested = isAgentReasoningLevel(reasoningLevelInput) ? reasoningLevelInput : 'off';
-  const supported = getSupportedReasoningLevels(providerId, modelId);
-  if (supported.includes(requested)) return requested;
-  if (supported.includes('off')) return 'off';
-  return supported[0] ?? 'off';
-}
-
-function getSupportedReasoningLevels(providerId: string, modelId: string): AgentReasoningLevel[] {
-  const model = findKnownModel(providerId, modelId);
-  if (!model) return ['off'];
-  return getSupportedReasoningLevelsForModel(model);
-}
-
 function getSupportedReasoningLevelsForModel(model: Model<Api>): AgentReasoningLevel[] {
   return getSupportedThinkingLevels(model).filter(isAgentReasoningLevel);
-}
-
-function findKnownModel(providerId: string, modelId: string): Model<Api> | null {
-  try {
-    return getModels(providerId as KnownProvider).find((model) => model.id === modelId) as Model<Api> | undefined ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function isAgentReasoningLevel(value: unknown): value is AgentReasoningLevel {
@@ -632,47 +647,58 @@ function secretPath() {
   return join(electron.app.getPath('userData'), SECRETS_FILE);
 }
 
+/**
+ * Validate a provider CONNECTION — credentials + endpoint reachability — not a
+ * user-chosen model. The runtime picks its own probe model:
+ *
+ * 1. A known catalog model for the provider (the first after the ranking sort),
+ *    probed with a 1-token completion.
+ * 2. For a custom OpenAI-compatible endpoint with no catalog, list models at
+ *    `{baseUrl}/models`; a non-empty list proves the connection.
+ * 3. If no model can be discovered, return an honest error: the endpoint was
+ *    reached but advertised no usable model.
+ *
+ * Keeps the old bounded behavior: short timeout, tiny output, no model field in
+ * the UI.
+ */
 export async function testProviderConnection(input: {
   providerId: string;
-  modelId: string;
   baseUrl?: string | null;
   apiKey?: string | null;
 }): Promise<{ success: boolean; message: string; statusCode?: number }> {
   try {
     const providerId = normalizeProviderId(input.providerId);
-    const modelId = input.modelId.trim();
-    if (!modelId) {
-      return { success: false, message: 'Model ID is required.' };
-    }
+    const baseUrl = input.baseUrl?.trim() || undefined;
 
     let apiKey = input.apiKey?.trim();
     if (!apiKey) {
       // The single resolver handles api-key, oauth refresh, env, and managed.
       apiKey = await getProviderApiKey(providerId);
     }
-
     if (!apiKey) {
       return { success: false, message: 'API Key is missing.' };
     }
 
-    const model = getTempModelForTest(providerId, modelId);
-    
-    const streamOptions: SimpleStreamOptions = {
-      apiKey,
-      timeoutMs: 8000,
-      maxTokens: 1,
-    };
-    
-    const baseUrl = input.baseUrl?.trim();
-    if (baseUrl) {
-      model.baseUrl = baseUrl;
+    const catalogModel = firstRankedModel(providerId);
+    if (catalogModel) {
+      const model = baseUrl ? { ...catalogModel, baseUrl } : { ...catalogModel };
+      await completeSimple(model as Model<any>, {
+        messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
+      }, { apiKey, timeoutMs: 8000, maxTokens: 1 });
+      return { success: true, message: 'Connection successful.' };
     }
 
-    await completeSimple(model as Model<any>, {
-      messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
-    }, streamOptions);
+    // Custom OpenAI-compatible endpoint: no catalog to probe against, so prove
+    // reachability by listing the endpoint's own models.
+    if (baseUrl) {
+      const models = await listOpenAiCompatibleModels(baseUrl, apiKey);
+      if (models.length > 0) {
+        return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
+      }
+      return { success: false, message: 'Reached the endpoint, but it advertised no usable model.' };
+    }
 
-    return { success: true, message: 'Connection successful.' };
+    return { success: false, message: 'Reached the endpoint, but no usable model could be found.' };
   } catch (error: any) {
     const errMsg = error?.message || String(error);
     // Log only the message, never the raw error: provider SDK errors can embed the
@@ -698,24 +724,28 @@ export async function testProviderConnection(input: {
   }
 }
 
-function getTempModelForTest(providerId: string, modelId: string): Model<any> {
-  const known = findKnownModel(providerId, modelId);
-  if (known) return { ...known };
-  let first: any = null;
+/**
+ * List models from an OpenAI-compatible `GET {baseUrl}/models`. Used to prove a
+ * custom endpoint's connection when there is no catalog model to probe with.
+ * Bounded (8s) and best-effort: any non-OK response or malformed body yields an
+ * empty list, which the caller reports as an honest "no usable model" error.
+ */
+async function listOpenAiCompatibleModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const url = `${baseUrl.replace(/\/+$/, '')}/models`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const list = getModels(providerId as KnownProvider);
-    first = list[0];
-  } catch {}
-  return {
-    id: modelId,
-    name: modelId,
-    api: first ? first.api : 'openai-completions',
-    provider: providerId,
-    baseUrl: first ? first.baseUrl : '',
-    reasoning: false,
-    input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 8192,
-    maxTokens: 1024,
-  };
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`${response.status}`);
+    const body = await response.json() as { data?: Array<{ id?: unknown }> };
+    const data = Array.isArray(body?.data) ? body.data : [];
+    return data
+      .map((entry) => (typeof entry?.id === 'string' ? entry.id : null))
+      .filter((id): id is string => Boolean(id));
+  } finally {
+    clearTimeout(timeout);
+  }
 }

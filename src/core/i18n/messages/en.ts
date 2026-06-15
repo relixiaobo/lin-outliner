@@ -214,6 +214,7 @@ export const en = {
       enabledLabel: 'Enabled',
       enabledSublabel: 'Allow this profile to be used for delegated agent tasks.',
       personaPromptLabel: 'Persona prompt (System instructions)',
+      providerOverride: 'Provider',
       modelOverride: 'Model Override',
       thinkingLevel: 'Thinking Level',
       permissionMode: 'Delegation Sandbox',
@@ -229,7 +230,6 @@ export const en = {
       descriptionPlaceholder: 'What this agent is for',
       personaPlaceholder: 'You are a focused child agent…',
       scaffoldBody: 'You are a focused child agent.\nComplete the task and report only the result.',
-      modelPlaceholder: 'inherit',
       effortDefault: 'Inherit',
       permissionInherit: 'Follow global',
       trusted: 'Trusted',
@@ -256,7 +256,7 @@ export const en = {
       deleteAgent: 'Delete',
       duplicateToMine: 'Duplicate to my agents',
       deleteConfirm: ({ name }: { name: string }) => `Delete agent “${name}”? This removes its AGENT.md.`,
-      builtInReadOnly: 'Built-in agents are view-only. Duplicate to create an editable copy.',
+      builtInReadOnly: 'Built-in agents are read-only except for the model and effort. Duplicate to create a fully editable copy.',
       nameRequired: 'Enter an agent name.',
       createdNotice: 'Agent created.',
       savedAgentNotice: 'Agent saved.',
@@ -276,17 +276,6 @@ export const en = {
     navigation: {
       back: 'Back',
       forward: 'Forward',
-    },
-    // Reasoning-level display names (Off / Minimal / … / XHigh). NOTE: currently the
-    // only consumer in scope (settingsReasoning.ts REASONING_LABELS) is dead code; a
-    // later consolidation pass can point the live composer menu at these.
-    reasoning: {
-      off: 'Off',
-      minimal: 'Minimal',
-      low: 'Low',
-      medium: 'Medium',
-      high: 'High',
-      xhigh: 'XHigh',
     },
     railTitle: 'Settings',
     loading: 'Loading…',
@@ -912,10 +901,7 @@ commandPalette: {
       appendSteerPlaceholder: 'Append another steer...',
       dropFilesToAttach: 'Drop files to attach',
       addAttachment: 'Add attachment',
-      noModelConfigured: 'No model configured',
-      openModelSettings: 'Open model settings',
-      thinkingLevel: 'Thinking level',
-      // Reasoning effort levels shown on the model/settings chip and provider config.
+      // Reasoning effort levels shown on the agent profile model/effort selector.
       reasoningLevels: {
         off: 'Off',
         minimal: 'Minimal',
@@ -1212,8 +1198,6 @@ commandPalette: {
     apiKeyPlaceholder: 'Paste API key',
     showKey: 'Show key',
     hideKey: 'Hide key',
-    modelLabel: 'Model',
-    modelPlaceholder: 'Model ID',
     baseUrlLabel: 'Base URL',
     getApiKey: 'Get API key',
     validating: 'Validating…',
