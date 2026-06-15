@@ -144,7 +144,7 @@ test.describe('agent settings window', () => {
     await settings.getByText('Add an exception').click();
     const content = settings.locator('.settings-content');
     const popups = settings.locator('.settings-permissions-section .select-popup-input');
-    await expect(popups).toHaveCount(10);
+    await expect(popups).toHaveCount(9);
 
     const firstBox = await popups.first().boundingBox();
     const lastBox = await popups.last().boundingBox();

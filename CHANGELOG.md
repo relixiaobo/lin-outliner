@@ -1037,6 +1037,11 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Sync the security-exceptions e2e count to the 9-rule catalog (main, fast-track)** —
+  `agent-settings.spec.ts` asserted `toHaveCount(10)` select-popup rows, stale since #50f8e6e2 (ungate
+  cross-agent contact) intentionally dropped the `spawnChildAgents` (`agent.delegate.spawn`) rule from
+  `COMMON_PERMISSION_RULES`, taking it 10 → 9. Updated the assertion to 9; agent-settings e2e 33/33 green.
+
 - **Unified main-process JSON persistence into one store primitive (PR #226, codex-3)**
   — the main process had three hand-rolled atomic-write implementations plus two
   synchronous `writeFileSync` outliers (`agentSettings.ts` / `documentService.ts`
