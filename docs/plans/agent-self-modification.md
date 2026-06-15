@@ -10,10 +10,10 @@ gated on the task/channel layer that [[agent-conversation-model]] builds (progra
 M2/M3). Single-agent self-configuration is this plan's; **multi-agent "configure each
 other"** is [[agent-conversation-model]]'s.
 
-**Status (2026-06-09).** Self-observation (`runtime_status`, read-only `doctor`) and the
-`config` tool **landed in M1 (#153)**. **The remainder — prompt-only hooks, config
-recovery/rollback, curation — is deferred** (PM call 2026-06-09: prioritize memory/render
-over the rest of M2 self-mod). Escalate the capability boundary to the PM before building it.
+**Scope.** M1 covers self-observation (`runtime_status`, read-only `doctor`) and the
+`config` tool. The remainder — prompt-only hooks, config recovery/rollback, and curation —
+is the later, security-sensitive surface; **escalate the capability boundary to the PM
+before building it.** (Lifecycle status lives in `docs/TASKS.md`.)
 
 ## Goal
 

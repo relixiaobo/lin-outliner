@@ -8,20 +8,19 @@ the workflow/policy) so the **same capability lives in one place** instead of tw
 Sits on the **M0 foundation** defined in [[agent-program]]; the program doc owns the
 cross-plan event taxonomy and the protocol-surface change list this plan depends on.
 
-**Status (2026-06-12).** Structure (unified library, by-name binding, the `built-in` floor)
-and self-authoring v1 (`/skillify`, governed `.agents/skills` writes, hot-reload,
-no-escalation guard) **landed in M1 (#153)** — design in `docs/spec/agent-skills.md`. The
-**convergence pass shipped as #174** (source taxonomy collapsed to `AgentSourceKind`, single
-skill-path resolver, ratification gate re-layered onto invocation) and **skill acceptance
-shipped as #175** (the ratification loop + single-step undo — the former "snapshot UI"). The
-separate **workspace-trust gate for cloned-repo `project` skills shipped as #185**.
-**Remaining (creative-UX, the real next unit):** natural-language "save / update as a skill"
-and diff/`SKILL.md` preview + confirmation. **Deferred:** executable-script support-file
-ratify+sandbox and opt-in curation dry-run (alongside M2 self-mod per PM 2026-06-09).
+**Scope.** The skill system covers structure (unified library, by-name binding, the
+`built-in` floor) and self-authoring v1 (`/skillify`, governed `.agents/skills` writes,
+hot-reload, no-escalation guard) — design in `docs/spec/agent-skills.md`; a convergence pass
+(source taxonomy collapsed to `AgentSourceKind`, single skill-path resolver, ratification
+gate re-layered onto invocation); skill acceptance (the ratification loop + single-step
+undo); and a workspace-trust gate for cloned-repo `project` skills. The **next build unit is
+the creative-UX:** natural-language "save / update as a skill" + diff/`SKILL.md` preview +
+confirmation. Out of scope for now: executable-script support-file ratify+sandbox and opt-in
+curation dry-run (ride with M2 self-mod). (Lifecycle status lives in `docs/TASKS.md`.)
 
-**Convergence pass (PM-ratified 2026-06-09; SHIPPED as #174).** A design review found the
-M1 shipped in #153 had three seams worth fixing pre-launch (see *Governance layering &
-single-source identity* below): a redundant `dynamic` `source` value, two disagreeing
+**Convergence pass.** A design review found the M1 skill implementation had three seams
+worth fixing pre-launch (see *Governance layering & single-source identity* below): a
+redundant `dynamic` `source` value, two disagreeing
 definitions of "what is a skill" (a real governance hole), and write-time governance heavier
 than it needed to be. The fix landed as **one convergence PR (#174)** that collapsed the
 `source` taxonomy, gave skill-path identity a single source of truth, and re-layered

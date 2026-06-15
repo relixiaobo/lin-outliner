@@ -91,10 +91,6 @@ collapses at once, instead of being optimized one memo at a time.
 
 Both are surgical, no behavior change, no protocol change. P0-1 is the fastest-firing offender in the codebase; P0-2 roughly halves the bytes written on every save.
 
-> **Status: shipped** in PR #117 (`cc/perf-p0-write-amplification`, merged `d29f110`) —
-> P0-1 skips the index rewrite for delta-only batches; P0-2 drops `null, 2` from the doc
-> snapshot + both agent indexes.
-
 ---
 
 ## P1 — Incremental projection protocol (the keystone)
@@ -146,14 +142,14 @@ plus new delta-application tests; keep a full-projection fallback path.
 
 **Subsumes:** renderer H1/H2/H3, core H2/H3, Codex #1/#3.
 
-**Status: shipped** (detailed plan `docs/plans/archive/incremental-projection.md`,
-folded into `docs/spec/architecture.md`). PR-A (#119) landed the `ProjectionUpdate`
-union + delta reducer (deleted the `JSON.stringify` signature pass, stable
-unchanged-node identity); PR-B (#121) made the reverse-edge index incremental
-(`patchReverseEdges`, held across edits — retired the reverse-edge rebuild). The
-two big O(N) passes here are gone. **Residual O(N) per keystroke** still in the
-delta reducer: `new Map(prev.byId)` whole-map copy and the `nextRevisions`
-whole-map rebuild, both immutability-driven — tracked as **P3-23** below.
+**Design detail** lives in `docs/plans/archive/incremental-projection.md` (folded into
+`docs/spec/architecture.md`). It splits in two: PR-A — the `ProjectionUpdate` union +
+delta reducer (drops the `JSON.stringify` signature pass; stable unchanged-node
+identity); PR-B — an incremental reverse-edge index (`patchReverseEdges`, held across
+edits, no rebuild). Together they remove the two big O(N) passes here. The **residual
+O(N) per keystroke** in the delta reducer — `new Map(prev.byId)` whole-map copy + the
+`nextRevisions` whole-map rebuild, both immutability-driven — is design item **P3-23**
+below.
 
 ---
 
@@ -341,15 +337,21 @@ now — recorded so they are not "lost"):
   (infrastructure-ownership files) — must be claimed and interface-first per
   `AGENTS.md`; the rest can fan out across dev clones once P1's interface lands.
 
-## Checklist
+## Execution units (build order)
 
-- [x] P0-1 agent index update at message boundaries (or debounced) — shipped #117
-- [x] P0-2 drop `null, 2` from doc snapshot + agent index writes — shipped #117
-- [~] P1 delta projection envelope → core emit → renderer ingest; delete whole-doc signature pass — **PR-A shipped #119** (`ProjectionUpdate` union, `buildProjectionUpdate`, `reduceProjection` with stable unchanged-node identity, `nodeSignatures` pass deleted). PR-B (incrementalize reverse edges) still open — see `incremental-projection.md`
-- [ ] P2-1 default flat/virtual outliner after parity verify (light/dark)
-- [ ] P2-2 agent streaming delta + transcript row memo + tail-markdown throttle + rAF auto-scroll
-- [ ] P2-3 coalesce structural-mutation saves; evaluate Loro incremental export
-- [ ] P3 reverse-reference index (P3-2/7/8), render memo/lookup cleanups
+Shape (b) — each is an independent complete optimization; lifecycle status is tracked in
+`docs/TASKS.md`.
+
+- P0-1 agent index update at message boundaries (or debounced)
+- P0-2 drop `null, 2` from doc snapshot + agent index writes
+- P1 delta projection envelope → core emit → renderer ingest; delete whole-doc signature
+  pass (PR-A: `ProjectionUpdate` union + `buildProjectionUpdate` + `reduceProjection` with
+  stable unchanged-node identity; PR-B: incrementalize reverse edges — see
+  `incremental-projection.md`)
+- P2-1 default flat/virtual outliner after parity verify (light/dark)
+- P2-2 agent streaming delta + transcript row memo + tail-markdown throttle + rAF auto-scroll
+- P2-3 coalesce structural-mutation saves; evaluate Loro incremental export
+- P3 reverse-reference index (P3-2/7/8), render memo/lookup cleanups
       (P3-1/3/4/5/6/9/10), search index caching (P3-11/12/13/22),
       agent-history cold-rebuild/clone (P3-14/15/16), main IO (P3-17/18),
       Shiki langs + code-block re-highlight (P3-19/21), tokenizer (P3-20)

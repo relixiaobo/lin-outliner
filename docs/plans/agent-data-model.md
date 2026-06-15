@@ -762,15 +762,12 @@ M0 lands/reserves the surface so consumers build on the target names directly:
 
 ## Extension — principal-keyed memory (the user is an ordinary principal)
 
-**Status: RATIFIED + SHIPPED (merged as PR #173, 2026-06-10; 3-round review gate passed).**
-PM ratified the *direction* (2026-06-09: principal-keyed memory +
-per-principal Dream, over the earlier publish/subscribe sketch) and said begin; the contract
-below is now built. It is **interface-first** — the `src/core/*` surface (`MemoryEntry.principal`)
-landed first, then consumers. It adds **no new storage family and no parallel visibility
-system**, reuses the existing `Principal` type + `conversation.members`, and **revises shipped
-P1+P2** (PR #172) — pre-launch clean cut, no migration. The detail forks are resolved as noted
-below (agent↔agent reading shipped in M3-B; named `<principal>` zone;
-watermark-serialized user-Dream).
+**Design: principal-keyed memory + per-principal Dream** (over the earlier publish/subscribe
+sketch). It is **interface-first** — the `src/core/*` surface (`MemoryEntry.principal`) lands
+first, then consumers. It adds **no new storage family and no parallel visibility system**,
+reuses the existing `Principal` type + `conversation.members`, and **revises the P1+P2 memory
+layer** — pre-launch clean cut, no migration. The detail forks resolve as noted below
+(agent↔agent reading via M3-B; named `<principal>` zone; watermark-serialized user-Dream).
 
 ### The gap
 
