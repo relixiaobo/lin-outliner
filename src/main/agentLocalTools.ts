@@ -1273,7 +1273,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     label: 'Bash',
     description: [
       'Executes a shell command in the default file area.',
-      'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
+      'Use file_read, file_edit, file_write, file_convert, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),

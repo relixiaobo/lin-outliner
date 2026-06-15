@@ -8283,7 +8283,7 @@ function createConfiguredAgent(
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
-      const syncLocalPermissionRoots = (extraGrant?: AgentPermissionGrant) => {
+      const syncLocalPermissionRoots = (extraGrants: readonly AgentPermissionGrant[] = []) => {
         if (!options.localWorkspace) return;
         setAgentLocalPermissionRoots(
           options.localWorkspace,
@@ -8293,7 +8293,11 @@ function createConfiguredAgent(
                 ? [{ access: rule.grant.access, root: rule.grant.root }]
                 : []
             )),
-            ...(extraGrant?.kind === 'scope' ? [{ access: extraGrant.access, root: extraGrant.root }] : []),
+            ...extraGrants.flatMap((grant) => (
+              grant.kind === 'scope'
+                ? [{ access: grant.access, root: grant.root }]
+                : []
+            )),
           ],
         );
       };
@@ -8386,7 +8390,9 @@ function createConfiguredAgent(
             },
           });
           if (approval.approved) {
-            syncLocalPermissionRoots(decision.descriptor?.effect.grant);
+            syncLocalPermissionRoots((decision.descriptors ?? [])
+              .map((descriptor) => descriptor.effect.grant)
+              .filter((grant): grant is AgentPermissionGrant => grant !== undefined));
             return undefined;
           }
           return { block: true, reason: approvalDeniedToolResultMessage(toolCall.name, approval) };
