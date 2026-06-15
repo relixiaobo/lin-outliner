@@ -357,14 +357,14 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_convert renders PDF pages to image files without invoking bash', async () => {
+  test('file_convert renders every PDF page to image files when pages is omitted', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const fakeBin = path.join(workspaceRoot, 'fake-pdf-bin');
       await mkdir(fakeBin, { recursive: true });
       const fakePdfinfo = path.join(fakeBin, 'pdfinfo');
       await writeFile(fakePdfinfo, [
         '#!/bin/sh',
-        'printf "Pages:          3\\n"',
+        'printf "Pages:          15\\n"',
         '',
       ].join('\n'), 'utf8');
       await chmod(fakePdfinfo, 0o755);
@@ -401,7 +401,6 @@ describe('agent local tools', () => {
           input_path: inputPath,
           output_format: 'png',
           output_dir: outputDir,
-          pages: '2-3',
         })).details as ToolEnvelope<{
           outputs: Array<{ filePath: string; format: string; mimeType: string; sizeBytes: number }>;
           command: { executable: string; shell: false };
@@ -409,10 +408,67 @@ describe('agent local tools', () => {
 
         expect(result.ok).toBe(true);
         expect(result.data!.command).toMatchObject({ executable: 'pdftoppm', shell: false });
-        expect(result.data!.outputs.map((output) => path.basename(output.filePath))).toEqual(['source-2.png', 'source-3.png']);
-        expect(await readFile(path.join(outputDir, 'source-2.png'), 'utf8')).toBe('page2\n');
-        expect(await readFile(path.join(outputDir, 'source-3.png'), 'utf8')).toBe('page3\n');
+        expect(result.data!.outputs.map((output) => path.basename(output.filePath))).toEqual(
+          Array.from({ length: 15 }, (_, index) => `source-${index + 1}.png`),
+        );
+        expect(await readFile(path.join(outputDir, 'source-1.png'), 'utf8')).toBe('page1\n');
+        expect(await readFile(path.join(outputDir, 'source-15.png'), 'utf8')).toBe('page15\n');
       });
+    });
+  });
+
+  test('file_convert maps pdftoppm password failures to actionable PDF errors', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const fakeBin = path.join(workspaceRoot, 'fake-protected-pdf-bin');
+      await mkdir(fakeBin, { recursive: true });
+      const fakePdfinfo = path.join(fakeBin, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'printf "Pages:          1\\n"',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftoppm = path.join(fakeBin, 'pdftoppm');
+      await writeFile(fakePdftoppm, [
+        '#!/bin/sh',
+        'printf "Incorrect password\\n" >&2',
+        'exit 1',
+        '',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftoppm, 0o755);
+
+      const inputPath = path.join(workspaceRoot, 'protected.pdf');
+      await writeFile(inputPath, '%PDF protected', 'utf8');
+      const fileConvert = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_convert')!;
+
+      await withPrependedPath(fakeBin, async () => {
+        const result = (await (fileConvert.execute as any)('convert-protected-pdf', {
+          input_path: inputPath,
+          output_format: 'png',
+        })).details as ToolEnvelope<unknown>;
+
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('pdf_password_protected');
+        expect(result.instructions).toContain('unprotected');
+      });
+    });
+  });
+
+  test('file_convert rejects PDF page-image-only parameters during normalization', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const inputPath = path.join(workspaceRoot, 'source.txt');
+      await writeFile(inputPath, 'not convertible', 'utf8');
+      const fileConvert = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_convert')!;
+
+      const result = (await (fileConvert.execute as any)('convert-invalid-pages', {
+        input_path: inputPath,
+        output_format: 'png',
+        pages: '1-2',
+      })).details as ToolEnvelope<unknown>;
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('invalid_args');
+      expect(result.error?.message).toContain('pages is only valid');
     });
   });
 

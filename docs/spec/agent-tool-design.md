@@ -1498,7 +1498,10 @@ LibreOffice-compatible `soffice`/`libreoffice` handles office and presentation
 files to PDF; Poppler `pdftoppm` handles PDF page images; macOS `sips` handles
 image format conversion. Outputs default to the workdir, explicit outputs must
 resolve through the same handed-scope rules as the other file tools, and
-existing output files are refused rather than overwritten.
+existing output files are refused rather than overwritten. PDF-to-image
+conversion renders every page when `pages` is omitted; unlike `file_read`, it is
+not capped by the inline PDF page limit because the result is written to files
+instead of attached to the model response.
 
 ## Per-Turn Context And Attachments
 

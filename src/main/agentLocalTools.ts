@@ -35,7 +35,7 @@ export interface AgentLocalWorkspaceContext {
   scratchRoot: string;
   // User-handed folders from remembered `Scope(read|write:...)` permission grants.
   // These widen file-tool containment without changing the relative-path base.
-  permissionRoots: AgentLocalPermissionRoot[];
+  permissionRoots: ResolvedAgentLocalPermissionRoot[];
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
 }
@@ -43,6 +43,11 @@ export interface AgentLocalWorkspaceContext {
 export interface AgentLocalPermissionRoot {
   access: 'read' | 'write';
   root: string;
+}
+
+interface ResolvedAgentLocalPermissionRoot extends AgentLocalPermissionRoot {
+  realRoot: string;
+  isDirectory: boolean;
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -533,7 +538,7 @@ const FILE_CONVERT_PARAMETERS = {
     output_format: { type: 'string', enum: ['pdf', 'png', 'jpg', 'jpeg'], description: 'Target format. Office documents and images can become pdf; PDFs can become png or jpeg page images; images can become png, jpeg, or pdf.' },
     output_path: { type: 'string', minLength: 1, description: 'Exact output file path for single-file conversions. Defaults to the workdir with the source basename and target extension.' },
     output_dir: { type: 'string', minLength: 1, description: 'Output directory for PDF page-image conversions. Defaults to a new directory in the workdir. Do not combine with output_path.' },
-    pages: { type: 'string', description: `Page range for PDF-to-image conversion, for example "1-5", "3", or "10-20". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
+    pages: { type: 'string', description: 'Page range for PDF-to-image conversion, for example "1-5", "3", or "10-20". Omit it to convert every page.' },
   },
 };
 
@@ -643,8 +648,17 @@ export function setAgentLocalPermissionRoots(
   roots: readonly AgentLocalPermissionRoot[],
 ): void {
   workspace.permissionRoots = roots
-    .map((entry) => ({ access: entry.access, root: path.resolve(entry.root) }))
-    .filter((entry) => permissionRootPath(entry.root) !== null);
+    .flatMap((entry): ResolvedAgentLocalPermissionRoot[] => {
+      const root = path.resolve(entry.root);
+      const resolved = resolveCanonicalPath(root);
+      if (!resolved) return [];
+      return [{
+        access: entry.access,
+        root,
+        realRoot: resolved.realPath,
+        isDirectory: isDirectoryPath(resolved.realPath),
+      }];
+    });
 }
 
 export async function restorePostCompactReadFiles(
@@ -1419,18 +1433,31 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
 
 function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
   const input = asRecord(rawParams);
+  const inputPath = requiredString(input.input_path, 'input_path');
   const outputFormat = normalizeConvertOutputFormat(input.output_format);
   const outputPath = optionalString(input.output_path);
   const outputDir = optionalString(input.output_dir);
+  const pages = typeof input.pages === 'string' ? input.pages : undefined;
+  const extension = path.extname(inputPath).toLowerCase();
+  const isPdfToImage = (outputFormat === 'png' || outputFormat === 'jpeg') && extension === '.pdf';
   if (outputPath && outputDir) {
     throw new LocalToolFailure('invalid_args', 'output_path and output_dir cannot be used together.', 'Use output_path for one output file, or output_dir for PDF page images.');
   }
+  if (pages !== undefined && !isPdfToImage) {
+    throw new LocalToolFailure('invalid_args', 'pages is only valid when converting PDF pages to images.', 'Remove pages or convert a PDF to png/jpeg.');
+  }
+  if (outputDir && !isPdfToImage) {
+    throw new LocalToolFailure('invalid_args', 'output_dir is only valid for PDF page-image conversions.', 'Use output_path for single-file output.');
+  }
+  if (outputPath && isPdfToImage) {
+    throw new LocalToolFailure('invalid_args', 'output_path is not supported for PDF page-image conversions.', 'Use output_dir so multiple page outputs can be returned.');
+  }
   return {
-    input_path: requiredString(input.input_path, 'input_path'),
+    input_path: inputPath,
     output_format: outputFormat,
     output_path: outputPath,
     output_dir: outputDir,
-    pages: typeof input.pages === 'string' ? input.pages : undefined,
+    pages,
   };
 }
 
@@ -1475,12 +1502,6 @@ async function convertFile(
 ): Promise<FileConvertData> {
   const extension = path.extname(inputPath).toLowerCase();
   if (params.output_format === 'pdf') {
-    if (params.pages !== undefined) {
-      throw new LocalToolFailure('invalid_args', 'pages is only valid when converting PDF pages to images.', 'Remove pages for PDF output.');
-    }
-    if (params.output_dir) {
-      throw new LocalToolFailure('invalid_args', 'output_dir is only valid for PDF page-image conversions.', 'Use output_path for single-file PDF output.');
-    }
     const outputPath = resolveSingleConvertOutputPath(workspace, inputPath, params);
     await assertOutputPathAvailable(outputPath, inputPath);
     if (IMAGE_MEDIA_TYPES.has(extension)) {
@@ -1492,19 +1513,10 @@ async function convertFile(
   }
 
   if ((params.output_format === 'png' || params.output_format === 'jpeg') && extension === '.pdf') {
-    if (params.output_path) {
-      throw new LocalToolFailure('invalid_args', 'output_path is not supported for PDF page-image conversions.', 'Use output_dir so multiple page outputs can be returned.');
-    }
     return await convertPdfToImages(workspace, inputPath, params);
   }
 
   if ((params.output_format === 'png' || params.output_format === 'jpeg') && IMAGE_MEDIA_TYPES.has(extension)) {
-    if (params.pages !== undefined) {
-      throw new LocalToolFailure('invalid_args', 'pages is only valid when converting PDF pages to images.', 'Remove pages for image conversion.');
-    }
-    if (params.output_dir) {
-      throw new LocalToolFailure('invalid_args', 'output_dir is only valid for PDF page-image conversions.', 'Use output_path for single-file image output.');
-    }
     const outputPath = resolveSingleConvertOutputPath(workspace, inputPath, params);
     await assertOutputPathAvailable(outputPath, inputPath);
     return await convertImageWithSips(inputPath, outputPath, params.output_format);
@@ -1587,7 +1599,7 @@ async function convertPdfToImages(
   params: FileConvertParams,
 ): Promise<FileConvertData> {
   const totalPages = await getPdfPageCount(inputPath);
-  const range = selectPdfPageRange(totalPages, params.pages);
+  const range = selectPdfConversionPageRange(totalPages, params.pages);
   const outputDir = resolveWorkspacePath(
     workspace,
     params.output_dir ?? path.join(workspace.root, `${path.basename(inputPath, path.extname(inputPath))}-pages-${randomUUID().slice(0, 8)}`),
@@ -1616,7 +1628,12 @@ async function convertPdfToImages(
     throw new LocalToolFailure('converter_unavailable', result.error.message, 'Install poppler so pdftoppm is available on PATH.');
   }
   if (result.exitCode !== 0) {
-    throw new LocalToolFailure('converter_failed', result.stderr.trim() || 'pdftoppm conversion failed.', 'Check that the PDF and page range are valid.');
+    throw pdfPageRenderFailure(
+      result.stderr,
+      'converter_failed',
+      'pdftoppm conversion failed.',
+      'Check that the PDF and page range are valid.',
+    );
   }
   const outputs = (await readdir(outputDir))
     .filter((entry) => entry.startsWith(`${basename}-`) && entry.endsWith(extension))
@@ -1634,8 +1651,7 @@ async function convertImageWithSips(
   outputFormat: FileConvertOutputFormat,
 ): Promise<FileConvertData> {
   await mkdir(path.dirname(outputPath), { recursive: true });
-  const sipsFormat = outputFormat === 'jpeg' ? 'jpeg' : outputFormat;
-  const args = ['-s', 'format', sipsFormat, inputPath, '--out', outputPath];
+  const args = ['-s', 'format', outputFormat, inputPath, '--out', outputPath];
   const result = await runProcess('sips', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
   if (result.error) {
     throw new LocalToolFailure('converter_unavailable', result.error.message, 'Use macOS sips or convert this file through an installed image converter.');
@@ -2416,14 +2432,12 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
     throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, 'Install poppler so pdfinfo and pdftoppm are available on PATH, or convert the PDF first.');
   }
   if (result.exitCode !== 0) {
-    const stderr = result.stderr.trim();
-    if (/password/i.test(stderr)) {
-      throw new LocalToolFailure('pdf_password_protected', 'PDF is password-protected.', 'Provide an unprotected version or extract the pages manually.');
-    }
-    if (/damaged|corrupt|invalid/i.test(stderr)) {
-      throw new LocalToolFailure('pdf_corrupted', 'PDF file is corrupted or invalid.', 'Check the PDF file or convert it to images manually.');
-    }
-    throw new LocalToolFailure('pdf_read_failed', stderr || 'pdftoppm failed.', 'Check the PDF file and page range, then retry.');
+    throw pdfPageRenderFailure(
+      result.stderr,
+      'pdf_read_failed',
+      'pdftoppm failed.',
+      'Check the PDF file and page range, then retry.',
+    );
   }
 
   const imageFiles = (await readdir(outputDir)).filter((entry) => entry.endsWith('.jpg')).sort(naturalCompare);
@@ -2485,6 +2499,34 @@ function selectPdfPageRange(totalPages: number, requestedPages: string | undefin
     throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
   }
   return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
+}
+
+function selectPdfConversionPageRange(totalPages: number, requestedPages: string | undefined): PdfPageRange {
+  if (!requestedPages) return { firstPage: 1, lastPage: totalPages };
+  const range = parsePdfPageRange(requestedPages);
+  if (!range) {
+    throw new LocalToolFailure('invalid_pdf_pages', `Invalid PDF page range: ${requestedPages}`, 'Use page ranges like "3", "1-5", or "10-20".');
+  }
+  if (range.firstPage > totalPages) {
+    throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
+  }
+  return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
+}
+
+function pdfPageRenderFailure(
+  stderrInput: string,
+  fallbackCode: string,
+  fallbackMessage: string,
+  fallbackInstructions: string,
+): LocalToolFailure {
+  const stderr = stderrInput.trim();
+  if (/password/i.test(stderr)) {
+    return new LocalToolFailure('pdf_password_protected', 'PDF is password-protected.', 'Provide an unprotected version or extract the pages manually.');
+  }
+  if (/damaged|corrupt|invalid/i.test(stderr)) {
+    return new LocalToolFailure('pdf_corrupted', 'PDF file is corrupted or invalid.', 'Check the PDF file or convert it to images manually.');
+  }
+  return new LocalToolFailure(fallbackCode, stderr || fallbackMessage, fallbackInstructions);
 }
 
 function parsePdfPageRange(pages: string): PdfPageRange | null {
@@ -2862,11 +2904,8 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
   const allowedRoots = allowedRealRoots(workspace, rootRealPath, access);
   const expanded = expandHome(inputPath);
   const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
-  const existingPath = nearestExistingPath(requestedPath);
-  const existingRealPath = realpathSync.native(existingPath);
-  const suffix = path.relative(existingPath, requestedPath);
-  const resolvedPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  if (!isInsideAnyRoot(allowedRoots, resolvedPath)) {
+  const resolved = resolveCanonicalPath(requestedPath);
+  if (!resolved || !isInsideAnyRoot(allowedRoots, resolved.realPath)) {
     throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
   return requestedPath;
@@ -2880,9 +2919,8 @@ function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, acc
   const roots = [rootRealPath];
   for (const entry of workspace.permissionRoots) {
     if (access === 'write' && entry.access !== 'write') continue;
-    const permissionRoot = permissionRootPath(entry.root);
-    if (permissionRoot && !roots.some((root) => isResolvedPathInside(root, permissionRoot))) {
-      roots.push(permissionRoot);
+    if (!roots.some((root) => isResolvedPathInside(root, entry.realRoot))) {
+      roots.push(entry.realRoot);
     }
   }
   if (access === 'read') {
@@ -2899,15 +2937,13 @@ function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
 }
 
 function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean {
-  const resolved = path.resolve(filePath);
   const rootRealPath = safeRealPath(workspace.root);
-  const candidateRealPath = permissionRootPath(resolved);
-  if (!rootRealPath || !candidateRealPath) return false;
-  if (rootRealPath === candidateRealPath) return true;
+  const candidate = resolveCanonicalPath(filePath);
+  if (!rootRealPath || !candidate) return false;
+  if (rootRealPath === candidate.realPath) return true;
   return workspace.permissionRoots.some((entry) => {
     if (entry.access !== 'write') return false;
-    const permissionRoot = permissionRootPath(entry.root);
-    return Boolean(permissionRoot && permissionRoot === candidateRealPath && isDirectoryPath(permissionRoot));
+    return entry.realRoot === candidate.realPath && (entry.isDirectory || isDirectoryPath(entry.realRoot));
   });
 }
 
@@ -2923,15 +2959,19 @@ function safeRealPath(target: string): string | null {
   }
 }
 
-function permissionRootPath(target: string): string | null {
+interface CanonicalPathResolution {
+  realPath: string;
+}
+
+function resolveCanonicalPath(target: string): CanonicalPathResolution | null {
   const requestedPath = path.resolve(target);
   const existingPath = nearestExistingPath(requestedPath);
   const existingRealPath = safeRealPath(existingPath);
   if (!existingRealPath) return null;
   const suffix = path.relative(existingPath, requestedPath);
-  const resolvedRoot = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  if (path.parse(resolvedRoot).root === resolvedRoot) return null;
-  return resolvedRoot;
+  const realPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
+  if (path.parse(realPath).root === realPath) return null;
+  return { realPath };
 }
 
 function isDirectoryPath(target: string): boolean {

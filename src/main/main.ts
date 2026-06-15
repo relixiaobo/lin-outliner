@@ -68,6 +68,7 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
+  normalizedRuleList,
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
@@ -1871,7 +1872,7 @@ async function pickAgentScopeFolder(
   const grant = grantRuleValue({ kind: 'scope', access: 'write', root });
   const draftGrants = draftSettings?.grants;
   const baseGrantInput = Array.isArray(draftGrants) ? draftGrants : (await readAgentToolPermissionSettingsView()).grants;
-  const baseGrants = stringList(baseGrantInput);
+  const baseGrants = normalizedRuleList(baseGrantInput);
   const grants = baseGrants.includes(grant) ? baseGrants : [...baseGrants, grant];
   const settings = await writeAgentToolPermissionSettingsView({ grants });
   return {
@@ -1887,10 +1888,6 @@ async function canonicalDirectoryPath(inputPath: string): Promise<string> {
   const info = await stat(resolved);
   if (!info.isDirectory()) throw new Error('Selected path is not a folder.');
   return resolved;
-}
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
