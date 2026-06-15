@@ -4,15 +4,12 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { CopyIcon, FolderIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { fileNodeTarget, type FileNode } from './fileNode';
+import { fileNodeMeta, fileNodeTarget, type FileNode } from './fileNode';
 import {
-  formatBytes,
   FilePreviewShell,
   sourceMeta,
   usePreviewSource,
 } from './previewRenderers';
-
-type AttachmentLabels = ReturnType<typeof useT>['outliner']['field']['attachment'];
 
 interface FilePreviewBodyProps {
   node: FileNode;
@@ -52,7 +49,7 @@ function FilePreviewBodyResolved({
   // page count, media duration), so build their meta from the node; images / URLs
   // fall back to the resolved-source meta.
   const meta = node.type === 'attachment'
-    ? attachmentNodeMeta(node, ta)
+    ? fileNodeMeta(node, ta)
     : state.status === 'ready' ? sourceMeta(state.source, labels) : null;
   const assetId = node.assetId;
   // A file node already lives in the outline, so its actions are open / reveal /
@@ -91,45 +88,4 @@ function FilePreviewBodyResolved({
       onOpenTarget={onOpenTarget}
     />
   );
-}
-
-type AttachmentKind = 'pdf' | 'audio' | 'video' | 'file';
-
-function attachmentNodeMeta(
-  node: Extract<FileNode, { type: 'attachment' }>,
-  labels: AttachmentLabels,
-): string {
-  const mimeType = node.mimeType ?? 'application/octet-stream';
-  const kind = attachmentKind(mimeType);
-  return [
-    attachmentTypeLabel(kind, mimeType, labels),
-    node.fileSize !== undefined ? formatBytes(node.fileSize) : null,
-    node.pdfPageCount ? labels.pages({ count: node.pdfPageCount }) : null,
-    node.audioDurationMs ? labels.duration({ duration: formatDuration(node.audioDurationMs) }) : null,
-    node.videoDurationMs ? labels.duration({ duration: formatDuration(node.videoDurationMs) }) : null,
-  ].filter((part): part is string => Boolean(part)).join(' · ');
-}
-
-function attachmentKind(mimeType: string): AttachmentKind {
-  if (mimeType === 'application/pdf') return 'pdf';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('video/')) return 'video';
-  return 'file';
-}
-
-function attachmentTypeLabel(kind: AttachmentKind, mimeType: string, labels: AttachmentLabels): string {
-  if (kind === 'pdf') return labels.pdf;
-  if (kind === 'audio') return labels.audio;
-  if (kind === 'video') return labels.video;
-  return mimeType === 'application/octet-stream' ? labels.file : mimeType;
-}
-
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-    : `${minutes}:${String(seconds).padStart(2, '0')}`;
 }

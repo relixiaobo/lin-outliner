@@ -26,6 +26,7 @@ import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shi
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { IconButton } from '../primitives/IconButton';
 import { wantsNewPaneFromClick } from '../shared';
+import { formatBytes } from './fileNode';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
 
@@ -695,19 +696,6 @@ function parseDelimitedRows(text: string, delimiter: string): string[][] {
     rows.push(row.slice(0, MAX_TABLE_COLUMNS));
   }
   return rows;
-}
-
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 export function formatModifiedDate(value: number): string {

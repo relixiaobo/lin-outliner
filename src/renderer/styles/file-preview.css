@@ -382,13 +382,119 @@
   min-width: 0;
 }
 
-/* An image file node renders a bounded row-level thumbnail below its filename —
-   the one inline file preview, because an image's content is its identity. It is
-   part of the row, not a child block, so it never collides with the chevron's
-   children. Clicking opens the image's node page for the full-size view. */
-.row-image-thumb {
+/* A file node's row content is a uniform card — a file-type icon, the editable
+   filename, a meta line, and a ⋯ action menu — identical across every file kind
+   (an image shows the file-type icon, never a thumbnail). It sits in the row's
+   content column; the leading bullet/chevron stay outside it, so a file is still a
+   full node (chevron → children, bullet → node page). */
+.file-node-card {
+  display: grid;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-hairline) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+
+.file-node-card-icon {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  vertical-align: 0;
+  color: var(--text-soft);
+}
+
+.file-node-card-main {
+  min-width: 0;
+}
+
+/* The filename is display-only (renamed on the node page): a single line that
+   truncates with an ellipsis, so a file row stays one line tall. */
+.file-node-card-name {
   display: block;
-  margin-top: var(--space-1);
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-node-card-meta {
+  display: block;
+  margin-top: var(--space-hairline);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The action menu reveals on hover / focus, and stays put while open (the menu is
+   portaled, so `:has(... [aria-expanded])` — not `:focus-within` — keeps it shown). */
+.file-node-card-actions {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.file-node-card:hover .file-node-card-actions,
+.file-node-card-actions:focus-within,
+.file-node-card-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
+  opacity: 1;
+}
+
+/* Icon-only chrome control: deepen colour on hover, no box (design-system B6). */
+.file-node-card-menu-trigger {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: color var(--motion-fast);
+  -webkit-app-region: no-drag;
+}
+
+.file-node-card-menu-trigger:hover,
+.file-node-card-menu-trigger[aria-expanded='true'] {
+  color: var(--text-main);
+}
+
+.file-node-card-menu-trigger:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* A keyboard-focused file row rings its card (focus lands on the hidden anchor). */
+.row:focus-within .file-node-card {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* An image file node renders the image itself inline (an image's content is its
+   identity) — no file-type icon, no filename in the row (it is edited on the node
+   page). The ⋯ menu floats at the image's top-right, revealed on hover / while open. */
+.file-node-image {
+  position: relative;
+  display: inline-block;
+  /* Same bound as the image so this positioning context tracks the image's box,
+     keeping the absolutely-positioned ⋯ overlay pinned to the real top-right corner
+     (an inline-block otherwise grows to the row width when the intrinsic image is
+     wider than the cap). */
+  max-width: min(320px, 100%);
+  margin: var(--space-hairline) 0;
+}
+
+.file-node-image-button {
+  display: block;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
@@ -397,20 +503,61 @@
   -webkit-app-region: no-drag;
 }
 
-.row-image-thumb img {
+.file-node-image-button img {
   display: block;
   max-width: min(320px, 100%);
-  max-height: 160px;
+  max-height: 240px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface);
   object-fit: contain;
 }
 
-.row-image-thumb:focus-visible {
+.file-node-image-button:focus-visible {
   outline: none;
 }
 
-.row-image-thumb:focus-visible img {
+/* The row's focus (keyboard nav lands on the hidden filename anchor) rings the image,
+   since the image is what the row shows. */
+.file-node-image-button:focus-visible img,
+.row:focus-within .file-node-image-button img {
   box-shadow: var(--focus-ring-shadow);
+}
+
+.file-node-image-actions {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.file-node-image:hover .file-node-image-actions,
+.file-node-image-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
+  opacity: 1;
+}
+
+/* Over arbitrary image content the trigger needs a legible backing: a circular glass
+   pill (B5 material on chrome; reduced-transparency fallback comes from the token). */
+.file-node-image-actions .file-node-card-menu-trigger {
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  color: var(--text-main);
+}
+
+/* The filename editor still mounts for keyboard parity, but a file row shows no
+   editable filename — hide it visually while keeping it focusable (sr-only). */
+.file-node-keyboard-anchor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }

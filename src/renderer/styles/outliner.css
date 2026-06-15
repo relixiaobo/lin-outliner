@@ -1880,19 +1880,6 @@
   display: block;
 }
 
-/* File nodes (attachment/image) mark themselves with the file-type glyph instead
-   of a dot bullet; the glyph mask inherits the bullet's currentColor. */
-.row-bullet-shape.file {
-  color: var(--text-secondary);
-}
-
-.row-bullet-shape.file .inline-ref-file-icon {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  vertical-align: 0;
-}
-
 .row-bullet-dot {
   display: block;
   width: 5px;

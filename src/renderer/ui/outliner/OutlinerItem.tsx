@@ -69,8 +69,9 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
-import { fileNodeIconKind, isFileNode } from '../preview/fileNode';
-import { ImageThumb } from '../preview/ImageThumb';
+import { isFileNode } from '../preview/fileNode';
+import { FileNodeCard } from '../preview/FileNodeCard';
+import { FileNodeImage } from '../preview/FileNodeImage';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -200,12 +201,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
-  // A file node (attachment/image) is an ordinary node whose bullet is the file-type
-  // glyph and whose text is the (editable) filename. It behaves like any node — the
-  // chevron expands its children, the bullet drills to its node page (where the full
-  // preview lives). The one inline exception is an image, which renders a row-level
-  // thumbnail (an image's content is its identity); the thumbnail is part of the row,
-  // not its child level, so it never collides with the chevron's children.
+  // A file node is a full node — the chevron expands its children, and the bullet
+  // drills to its node page (where the full preview lives). Its row content depends on
+  // the kind: a non-image file renders a uniform card (FileNodeCard: file-type icon,
+  // editable filename, meta, ⋯ menu); an image renders the image itself inline
+  // (FileNodeImage: an image's content is its identity), with the filename edited only
+  // on the node page.
   const fileNodeRow = isFileNode(displayed) ? displayed : null;
   const imageFileRow = fileNodeRow?.type === 'image' ? fileNodeRow : null;
   const row = useOutlinerRowInteraction({
@@ -339,17 +340,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
   const pendingReferenceTypeAhead = props.ui.pendingReferenceTypeAhead?.nodeId === props.nodeId;
+  // A file node keeps the neutral content bullet (its file-type icon lives on the
+  // card, not the bullet) so the bullet stays a plain node handle that drills.
   const leadingVariant = node.type === 'reference' || pendingReferenceConversion
     ? 'reference'
-    : fileNodeRow
-      ? 'file'
-      : displayed.type === 'tagDef'
-        ? 'tag'
-        : displayed.type === 'fieldDef'
-          ? 'fieldDef'
-          : displayed.type === 'command'
-            ? 'command'
-            : 'content';
+    : displayed.type === 'tagDef'
+      ? 'tag'
+      : displayed.type === 'fieldDef'
+        ? 'fieldDef'
+        : displayed.type === 'command'
+          ? 'command'
+          : 'content';
   const isCommandNode = leadingVariant === 'command';
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
@@ -1664,6 +1665,145 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
 
+  // The row's text editor — the editable filename for a file node, plain content
+  // otherwise. Extracted so a file node can wrap it in its card chrome (FileNodeCard)
+  // while every other node renders it bare.
+  const rowEditorElement = isCodeBlock ? (
+    <CodeBlockRow
+      nodeId={props.nodeId}
+      text={draftContent.text}
+      language={displayed.codeLanguage}
+      readOnly={displayed.locked}
+      onFocus={row.updateSelection}
+      onTextChange={handleCodeBlockTextChange}
+      onCommit={(text) => void commitDraft(plainText(text))}
+      onSetLanguage={handleSetCodeLanguage}
+      onExitToNewRow={() => void handleCodeBlockExit()}
+      onBackspaceAtStart={() => void handleBackspaceAtStart(true)}
+      onArrowUpAtStart={() => row.moveFocus(-1)}
+      onArrowDownAtEnd={() => row.moveFocus(1)}
+      onShiftArrow={() => void exitToSelection()}
+      onEscape={() => void exitToSelection()}
+      onUndo={() => void props.run(() => api.undo())}
+      onRedo={() => void props.run(() => api.redo())}
+      focusTarget={editorFocusTarget}
+      focusRequest={props.ui.focusRequest}
+      pendingInput={props.ui.pendingInputChar}
+      onFocusRequestConsumed={(request) => {
+        props.setUi((prev) => clearFocusRequestState(prev, request));
+      }}
+      onPendingInputConsumed={(input) => {
+        props.setUi((prev) => clearPendingInputState(prev, input));
+      }}
+    />
+  ) : (
+    <RichTextEditor
+      nodeId={props.nodeId}
+      content={draftContent}
+      contentRevision={editorContentRevision}
+      inlineSlotEl={inlineTagSlot}
+      readOnly={displayed.locked}
+      completed={Boolean(displayed.completedAt)}
+      placeholder={fieldValueDraft
+        ? props.fieldValue?.placeholder
+        : (props.draft === true && !realNode ? props.draftPlaceholder : undefined)}
+      onFocus={() => {
+        row.updateSelection();
+        // optionPicker / referencePicker: open the picker overlay on a
+        // genuine user focus (click) so you can type-to-filter. Suppress it
+        // when focus arrived programmatically via a focus request — advancing
+        // to the next value draft after committing one (Enter / pick) should
+        // land closed, not immediately reopen the picker. Typing still reopens
+        // it (handleEditorChange).
+        const programmaticFocus = Boolean(props.ui.focusRequest)
+          && focusTargetMatches(props.ui.focusRequest!.target, editorRequestTarget);
+        if ((optionPickerDraft || referencePickerDraft) && !programmaticFocus) setOptionsOpen(true);
+      }}
+      onChange={handleEditorChange}
+      onPatch={applyTextPatch}
+      onCommit={(content) => void commitDraft(content)}
+      onEnter={(payload) => void handleEnter(payload)}
+      onBackspaceAtStart={(isEmpty) => void handleBackspaceAtStart(isEmpty)}
+      onTab={(shiftKey, cursorOffset) => void handleTab(shiftKey, cursorOffset)}
+      onArrowUpAtStart={() => (props.draft && !realNode ? focusPreviousFromDraft() : row.moveFocus(-1))}
+      onArrowDownAtEnd={() => row.moveFocus(1)}
+      onShiftArrow={() => void exitToSelection()}
+      onMove={(direction) => void moveCurrentNode(direction)}
+      onUndo={() => void props.run(() => api.undo())}
+      onRedo={() => void props.run(() => api.redo())}
+      onSelectAllRows={selectAllVisibleRows}
+      onDescriptionToggle={({ cursorOffset }) => {
+        descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
+        props.setUi((prev) => requestFocusState(
+          { ...prev, editingDescriptionId: targetEditId },
+          descriptionFocusTarget,
+          cursorEnd(),
+        ));
+      }}
+      onModEnter={(content) => void handleModEnter(content)}
+      onEscape={() => void exitToSelection()}
+      onSpace={dateFieldValue ? () => {
+        // Space summons the date picker only on an empty value, so a typed
+        // value (e.g. "next monday") can still contain literal spaces.
+        if (draftContentRef.current.text.trim().length > 0) return false;
+        setDateOverlayOpen(true);
+        return true;
+      } : undefined}
+      resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+      onFieldTriggerFire={suppressTextTriggers ? undefined : () => {
+        props.setTrigger(null);
+        // A draft has no real node to anchor "after"; create the field as a
+        // child of the parent (create_inline_field). A real row anchors it
+        // right after itself (create_inline_field_after_node).
+        const createField = onDraftTrigger
+          ? () => createPlaceholderInlineField(props.parentId, null, 'plain')
+          : () => createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
+        if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
+        void pendingTextPatchRef.current.then(() => props.run(createField));
+      }}
+      onCodeFenceFire={
+        !suppressTextTriggers
+          && node.type === undefined && !pendingReferenceConversion && !displayed.locked
+          ? convertRowToCodeBlock
+          : undefined
+      }
+      onTriggerChange={(nextTrigger) => {
+        // optionPicker free text feeds the options filter, not triggers.
+        if (suppressTextTriggers) return;
+        // Record trigger state synchronously so the patch callback that fires
+        // later in this same transaction can suppress eager materialization
+        // while a trigger query is open.
+        draftTriggerActiveRef.current = Boolean(nextTrigger);
+        if (nextTrigger) {
+          props.setTrigger({ nodeId: props.nodeId, ...nextTrigger });
+        } else if (props.trigger?.nodeId === props.nodeId) {
+          props.setTrigger(null);
+        }
+      }}
+      onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
+      onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
+      onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
+      onInlineReferenceClick={pendingReferenceConversion
+        ? undefined
+        : (targetId, options) => props.onRoot(targetId, {
+          focus: false,
+          newPane: options?.newPane,
+        })}
+      focusTarget={editorRequestTarget}
+      focusRequest={props.ui.focusRequest}
+      pendingInput={props.ui.pendingInputChar}
+      onFocusRequestConsumed={(request) => {
+        props.setUi((prev) => clearFocusRequestState(prev, request));
+      }}
+      onPendingInputConsumed={(input) => {
+        props.setUi((prev) => clearPendingInputState(prev, input));
+      }}
+      onCompositionHandoff={(text) => {
+        props.setUi((prev) => relayCompositionHandoffState(prev, text));
+      }}
+    />
+  );
+
   return (
     <OutlinerRowShell
       hasChildren={row.hasChildren}
@@ -1689,7 +1829,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           processing={isCommandNode && commandRun.running}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
-          fileIconKind={fileNodeRow ? fileNodeIconKind(fileNodeRow) : undefined}
           onToggleExpand={row.toggleExpandOrSelect}
           onDrillDown={() => props.onRoot(drillDownId)}
           draggable={row.dragHandleProps.draggable}
@@ -1718,140 +1857,27 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
-          {isCodeBlock ? (
-            <CodeBlockRow
-              nodeId={props.nodeId}
-              text={draftContent.text}
-              language={displayed.codeLanguage}
-              readOnly={displayed.locked}
-              onFocus={row.updateSelection}
-              onTextChange={handleCodeBlockTextChange}
-              onCommit={(text) => void commitDraft(plainText(text))}
-              onSetLanguage={handleSetCodeLanguage}
-              onExitToNewRow={() => void handleCodeBlockExit()}
-              onBackspaceAtStart={() => void handleBackspaceAtStart(true)}
-              onArrowUpAtStart={() => row.moveFocus(-1)}
-              onArrowDownAtEnd={() => row.moveFocus(1)}
-              onShiftArrow={() => void exitToSelection()}
-              onEscape={() => void exitToSelection()}
-              onUndo={() => void props.run(() => api.undo())}
-              onRedo={() => void props.run(() => api.redo())}
-              focusTarget={editorFocusTarget}
-              focusRequest={props.ui.focusRequest}
-              pendingInput={props.ui.pendingInputChar}
-              onFocusRequestConsumed={(request) => {
-                props.setUi((prev) => clearFocusRequestState(prev, request));
-              }}
-              onPendingInputConsumed={(input) => {
-                props.setUi((prev) => clearPendingInputState(prev, input));
-              }}
-            />
+          {fileNodeRow ? (
+            // A file node is click-to-open with a non-editable filename: an image
+            // renders inline as the image itself, every other file as a uniform card.
+            // The filename editor still mounts (visually hidden) so the row keeps full
+            // keyboard parity — arrow nav, Enter to add a sibling, etc. The leading
+            // bullet/chevron stay on the row, so it is still a full node (chevron →
+            // children, bullet → node page).
+            <>
+              {imageFileRow ? (
+                <FileNodeImage node={imageFileRow} onMaximize={() => props.onRoot(drillDownId)} />
+              ) : (
+                <FileNodeCard
+                  node={fileNodeRow}
+                  onOpen={() => props.onRoot(drillDownId)}
+                  onOpenSplit={() => props.onRoot(drillDownId, { newPane: true })}
+                />
+              )}
+              <div className="file-node-keyboard-anchor">{rowEditorElement}</div>
+            </>
           ) : (
-          <RichTextEditor
-            nodeId={props.nodeId}
-            content={draftContent}
-            contentRevision={editorContentRevision}
-            inlineSlotEl={inlineTagSlot}
-            readOnly={displayed.locked}
-            completed={Boolean(displayed.completedAt)}
-            placeholder={fieldValueDraft
-              ? props.fieldValue?.placeholder
-              : (props.draft === true && !realNode ? props.draftPlaceholder : undefined)}
-            onFocus={() => {
-              row.updateSelection();
-              // optionPicker / referencePicker: open the picker overlay on a
-              // genuine user focus (click) so you can type-to-filter. Suppress it
-              // when focus arrived programmatically via a focus request — advancing
-              // to the next value draft after committing one (Enter / pick) should
-              // land closed, not immediately reopen the picker. Typing still reopens
-              // it (handleEditorChange).
-              const programmaticFocus = Boolean(props.ui.focusRequest)
-                && focusTargetMatches(props.ui.focusRequest!.target, editorRequestTarget);
-              if ((optionPickerDraft || referencePickerDraft) && !programmaticFocus) setOptionsOpen(true);
-            }}
-            onChange={handleEditorChange}
-            onPatch={applyTextPatch}
-            onCommit={(content) => void commitDraft(content)}
-            onEnter={(payload) => void handleEnter(payload)}
-            onBackspaceAtStart={(isEmpty) => void handleBackspaceAtStart(isEmpty)}
-            onTab={(shiftKey, cursorOffset) => void handleTab(shiftKey, cursorOffset)}
-            onArrowUpAtStart={() => (props.draft && !realNode ? focusPreviousFromDraft() : row.moveFocus(-1))}
-            onArrowDownAtEnd={() => row.moveFocus(1)}
-            onShiftArrow={() => void exitToSelection()}
-            onMove={(direction) => void moveCurrentNode(direction)}
-            onUndo={() => void props.run(() => api.undo())}
-            onRedo={() => void props.run(() => api.redo())}
-            onSelectAllRows={selectAllVisibleRows}
-            onDescriptionToggle={({ cursorOffset }) => {
-              descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
-              props.setUi((prev) => requestFocusState(
-                { ...prev, editingDescriptionId: targetEditId },
-                descriptionFocusTarget,
-                cursorEnd(),
-              ));
-            }}
-            onModEnter={(content) => void handleModEnter(content)}
-            onEscape={() => void exitToSelection()}
-            onSpace={dateFieldValue ? () => {
-              // Space summons the date picker only on an empty value, so a typed
-              // value (e.g. "next monday") can still contain literal spaces.
-              if (draftContentRef.current.text.trim().length > 0) return false;
-              setDateOverlayOpen(true);
-              return true;
-            } : undefined}
-            resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-            onFieldTriggerFire={suppressTextTriggers ? undefined : () => {
-              props.setTrigger(null);
-              // A draft has no real node to anchor "after"; create the field as a
-              // child of the parent (create_inline_field). A real row anchors it
-              // right after itself (create_inline_field_after_node).
-              const createField = onDraftTrigger
-                ? () => createPlaceholderInlineField(props.parentId, null, 'plain')
-                : () => createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
-              if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
-              void pendingTextPatchRef.current.then(() => props.run(createField));
-            }}
-            onCodeFenceFire={
-              !suppressTextTriggers
-                && node.type === undefined && !pendingReferenceConversion && !displayed.locked
-                ? convertRowToCodeBlock
-                : undefined
-            }
-            onTriggerChange={(nextTrigger) => {
-              // optionPicker free text feeds the options filter, not triggers.
-              if (suppressTextTriggers) return;
-              // Record trigger state synchronously so the patch callback that fires
-              // later in this same transaction can suppress eager materialization
-              // while a trigger query is open.
-              draftTriggerActiveRef.current = Boolean(nextTrigger);
-              if (nextTrigger) {
-                props.setTrigger({ nodeId: props.nodeId, ...nextTrigger });
-              } else if (props.trigger?.nodeId === props.nodeId) {
-                props.setTrigger(null);
-              }
-            }}
-            onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
-            onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
-            onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
-            onInlineReferenceClick={pendingReferenceConversion
-              ? undefined
-              : (targetId, options) => props.onRoot(targetId, {
-                focus: false,
-                newPane: options?.newPane,
-              })}
-            focusTarget={editorRequestTarget}
-            focusRequest={props.ui.focusRequest}
-            pendingInput={props.ui.pendingInputChar}
-            onFocusRequestConsumed={(request) => {
-              props.setUi((prev) => clearFocusRequestState(prev, request));
-            }}
-            onPendingInputConsumed={(input) => {
-              props.setUi((prev) => clearPendingInputState(prev, input));
-            }}
-            onCompositionHandoff={(text) => {
-              props.setUi((prev) => relayCompositionHandoffState(prev, text));
-            }}
-          />
+            rowEditorElement
           )}
           {hasTags && (
             isPlainTextRow ? (
@@ -1953,9 +1979,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               props.setUi((prev) => clearPendingInputState(prev, input));
             }}
           />
-          {imageFileRow && (
-            <ImageThumb node={imageFileRow} onOpen={() => props.onRoot(drillDownId)} />
-          )}
           {showSelectedReferenceOptionPicker && props.optionField && props.onSelectOption && (
             <SelectedReferenceOptionPicker
               anchorRef={optionAnchorRef}

@@ -287,14 +287,15 @@ the originating node view.
 ### File preview panel
 
 A file that **is** an outliner node (an `attachment` or `image` node) is not a
-`file-preview` view at all. It behaves like any node: its bullet is a file glyph,
-its text is the editable filename, the chevron expands its **children**, and
-drilling the bullet opens it as an ordinary **node page** (`NodePanel`) whose body
-is the full-size preview "hero" shown above the node's children outline. There is
-no inline preview block in the outline — the one inline affordance is a bounded
-row-level **thumbnail** for image nodes (an image's content is its identity). See
-"File node" in `ui-behavior.md`. The `file-preview` workspace view therefore
-serves only sources with **no** node.
+`file-preview` view at all. It behaves like any node: a plain node-handle bullet,
+the chevron expands its **children**, and opening it (a card/image click, its `⋯`
+menu, or drilling the bullet) shows an ordinary **node page** (`NodePanel`) whose
+body is the full-size preview "hero" above the node's children outline. Its row
+content is a uniform **file card** (file-type icon · display-only filename · meta ·
+`⋯` menu, click-to-open); an **image** is the one exception, rendering the image
+itself inline (no card, no filename, `⋯` at its top-right). There is no inline
+preview block in the outline. See "File node" in `ui-behavior.md`. The
+`file-preview` workspace view therefore serves only sources with **no** node.
 
 `file-preview` is a workspace-panel view, not an overlay and not part of the
 agent dock. It is opened for non-node sources only: outliner/agent inline

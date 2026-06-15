@@ -3,16 +3,17 @@
 ## Goal
 
 Files (`attachment` / `image` nodes) become first-class outliner nodes. In the
-outline a file is a **normal node** whose **bullet is the file-type icon** and
-whose **text is the (editable) filename**. It behaves like any node: the chevron
+outline a file is a **normal node** with a plain node-handle bullet: the chevron
 expands its **children**, and it can be moved, referenced, pinned, and opened in a
-split pane. Its preview is not inline — it is the **hero** of the file's **node
-page** (NodePanel), shown above the node's children outline. The one inline
-affordance is a bounded **row-level thumbnail for image nodes** (an image's
-content is its identity). The standalone `file-preview` panel kind is retired for
-document nodes; it now serves only non-node sources (`agent-payload` /
-`local-file` / `url`), reusing the same node-page preview body and offering "add
-to outline".
+split pane. Its row is **click-to-open** with a non-editable filename. Its row
+**content** depends on the kind: a non-image file renders a uniform **file card**
+(file-type icon · display-only filename · meta · `⋯` menu); an **image** renders
+the image **itself** inline (an image's content is its identity) with no card and
+no filename. Its preview is not inline — it is the **hero** of the file's **node
+page** (NodePanel), shown above the node's children outline. The standalone
+`file-preview` panel kind is retired for document nodes;
+it now serves only non-node sources (`agent-payload` / `local-file` / `url`),
+reusing the same node-page preview body and offering "add to outline".
 
 This subsumes the earlier "make the file-preview header match the node panel"
 ask — the back button + breadcrumb come from NodePanel for free.
@@ -21,8 +22,8 @@ ask — the back button + breadcrumb come from NodePanel for free.
 
 - No change to the `core/types.ts` protocol — `attachment` / `image` node types
   already exist with `assetId` / `originalFilename` / `mimeType` / `fileSize`.
-- No on-disk file rename. Editing the filename edits the node's display label
-  only; the stored asset is untouched.
+- No on-disk file rename. The filename is the node's display label (renamed on the
+  node-page title, not inline); the stored asset is untouched.
 - No data migration (pre-launch): a persisted layout holding a `file-preview`
   view whose target is a document asset is **sanitized**, not migrated.
 
@@ -31,21 +32,30 @@ ask — the back button + breadcrumb come from NodePanel for free.
 ### The model
 
 A file node is a normal node, with no special-casing of the chevron, children, or
-trailing draft. Its file-ness is expressed in three places:
+trailing draft. The bullet is the **plain content handle** (drilling it opens the
+node page like any node); the row is **click-to-open** and the filename is never
+edited inline. The file-ness lives in the row **content** and the node page:
 
-- **bullet** — a file-type glyph (`RowLeading` `file` variant, driven by
-  `fileNodeIconKind`); drilling it opens the node page like any node.
+- **file card** (non-image) — the row content is a uniform card: a file-type icon
+  (driven by `fileNodeIconKind`), the display-only filename on a single truncated
+  line, a `type · size · pages/duration` meta line (`fileNodeMeta`), and a `⋯`
+  menu. Clicking the card opens the node page (the preview). The leading
+  bullet/chevron stay on the row, so it is still a full node.
+- **inline image** — an image node renders the image **itself** as the row content
+  (a bounded `<img>`) instead of a card: no file-type icon, no filename. Its `⋯`
+  menu floats at the image's top-right (hover-revealed). Clicking the image
+  maximizes it (opens the node page).
+- **keyboard parity** — neither presentation has a visible editor, so the filename
+  editor still mounts, visually hidden (`sr-only`), as the row's focus target: arrow
+  nav, Enter to add a sibling, etc. keep working. (`readOnly` editors aren't
+  keyboard-focusable — focus uses `view.dom.focus()`, which needs `contenteditable`
+  — so the anchor stays editable but off-screen.)
+- **`⋯` action menu** — a type-specific primary action — **Maximize** for an image
+  (open the node page) or **Open in split** for other files (open it in a split
+  pane) — plus **Reveal in Finder** (the stored asset).
 - **node page** — the file's preview is the page **hero**: the rendered file with
-  a meta + actions strip, rendered above the node's children outline. This is the
-  single full-preview surface (plus split-pane peek). There is no inline preview
-  block in the outline.
-- **image thumbnail** — an image node additionally renders a bounded row-level
-  `<img>` under its filename (part of the row, not a child block, so it never
-  collides with the chevron's children). Clicking it opens the node page.
-
-Uniform across non-image kinds (audio / video / pdf / md / code / csv / unknown):
-they are plain icon + filename rows; their content shows on the node page or a
-split-pane peek.
+  a meta + actions strip, above the node's children outline. This is the single
+  full-preview surface (plus split-pane peek). There is no inline preview block.
 
 ### Shared preview renderers
 
@@ -60,26 +70,29 @@ consumers, reading identically:
 2. the **non-node preview pane** (`FilePreviewPanel` → `FilePreviewShell`).
 
 The light `preview/fileNode.ts` (`isFileNode`, `fileNodeTarget`,
-`fileNodeIconKind`) and `preview/ImageThumb.tsx` carry no heavy deps, so the
-outliner hot path stays cheap; `previewRenderers` (shiki / pdf.js / markdown) is
-imported only by the page body and the pane.
+`fileNodeIconKind`, `fileNodeMeta`, `formatBytes`) and the row-content components
+(`FileNodeCard`, `FileNodeImage`, shared `FileNodeActionMenu`) carry no heavy
+deps, so the outliner hot path stays cheap; `previewRenderers` (shiki / pdf.js /
+markdown) is imported only by the page body and the pane.
 
 ### Outline row (file node)
 
-- `isBlockNodeType` no longer routes `attachment` / `image` to `BlockNodeRow` +
-  card. They render through the normal row path with:
-  - a **file-type-icon bullet** (`RowLeading` `file` variant);
-  - **filename text** — the row editor shows `content.text`, falling back to
-    `originalFilename` when empty; editing writes `content.text` (display label).
+- `attachment` / `image` render through the **normal row path** (no `BlockNodeRow`
+  routing). The shared `rowEditorElement` (the row's text editor) is extracted so a
+  file node can wrap it in its card chrome while every other node renders it bare.
+  The bullet is the plain `content` leading variant; the dead `RowLeading` / `RowMarker`
+  `file` variant is removed.
+- A **non-image** file wraps `rowEditorElement` (the filename editor) in
+  `<FileNodeCard>` — icon + filename + meta + `⋯` menu. CSS keeps the filename a
+  single truncated line; editing writes `content.text` (display label only).
+- An **image** renders `<FileNodeImage>` as the row content (the bounded `<img>`,
+  read through the sandboxed preview API → object URL) plus a hidden
+  (`sr-only`) `rowEditorElement` for keyboard parity. Click → `onRoot(nodeId)`.
 - The chevron, children, and trailing draft are the **default** node behavior —
   no `previewExpandable` / leaf special-casing in `useOutlinerRowInteraction` or
-  `visualRows`. A childless file node is a leaf; a file node with children expands
-  to show them.
-- An **image** file node renders `<ImageThumb>` inside `row-content-line`, below
-  the filename. It reads bytes through the sandboxed preview API → a bounded
-  `<img>`; click → `onRoot(nodeId)` (open the node page).
+  `visualRows`. A childless file node is a leaf; a file node with children expands.
 - The old `AttachmentRow` card and always-inline `ImageRow` behavior are retired;
-  open / reveal / copy + meta move to the node-page preview hero.
+  open / reveal / copy + meta move to the node-page preview hero (and the `⋯` menu).
 
 ### Node page (file node as NodePanel root)
 
@@ -89,9 +102,11 @@ imported only by the page body and the pane.
   Title editor (filename), breadcrumb, back control, and backlinks stay.
 - The hero carries the file **action group** (open / reveal-in-Finder / copy) and
   a **meta line** (type · size · pages · duration).
-- Navigation: the file row's bullet and the image thumbnail call
-  `onRoot(nodeId, { newPane? })` — never `dispatchPreviewTargetOpen`. All node
-  navigation (panes, history, breadcrumb) then works for free.
+- Navigation: the file row's bullet, the card body / inline image click, and the
+  `⋯` menu's primary action all call `onRoot(nodeId, { newPane? })` — never
+  `dispatchPreviewTargetOpen`. The image's **Maximize** and the card click open in
+  the current panel; the card's **Open in split** passes `{ newPane: true }`. All
+  node navigation (panes, history, breadcrumb) then works for free.
 
 ### Retiring file-preview for document nodes
 
@@ -133,9 +148,10 @@ This is one complete feature; the steps are build-order within the PR
 
 1. Extract shared `preview/previewRenderers` + `FilePreviewShell`.
 2. NodePanel renders a file root's preview hero above its children outline.
-3. File-node row: file-icon bullet + editable filename; retire the card;
-   navigation → node page; image row-level thumbnail.
+3. File-node row content: a uniform `FileNodeCard` (icon + filename + meta + `⋯`
+   menu) for non-image files; `FileNodeImage` (inline image) for images; plain
+   bullet; navigation → node page.
 4. Non-node `FilePreviewPanel` reuses the node-page body + "add to outline".
 5. Layout sanitize; tests (row interaction, NodePanel file body, navigation,
-   add-to-outline, image thumbnail, guards); spec sync (`workspace-layout.md`,
-   `ui-behavior.md`).
+   add-to-outline, file card + inline image, guards); spec sync
+   (`workspace-layout.md`, `ui-behavior.md`).
