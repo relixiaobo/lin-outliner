@@ -13,7 +13,7 @@ import type {
   AgentDebugUsage,
   Usage,
 } from '../core/agentTypes';
-import type { AgentEvent, AgentPersistedContent } from '../core/agentEventLog';
+import type { AgentEvent, AgentPersistedContent, DebugRunToolSchema } from '../core/agentEventLog';
 import type { AgentRunMetaProjection } from './agentEventStore';
 
 // Run-grounded debug derivation ([[agent-debug-run-grounded]]): pure transforms
@@ -201,6 +201,68 @@ export function deriveDebugConversation(
   }
   totals.queries = runs.filter((run) => run.kind === 'turn').length;
   return { conversationId, shape, members, runs, totals };
+}
+
+/**
+ * The once-per-run request context the ledger lacks: the agent's outbound system
+ * prompt + tool schemas, pulled from the raw provider payload at capture time
+ * ([[agent-debug-run-grounded]]). The message window is already event-sourced, so
+ * we keep only system + tools. Tolerant of Anthropic / OpenAI payload shapes.
+ */
+export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt: string; tools: DebugRunToolSchema[] } {
+  if (!isRecord(payload)) return { systemPrompt: '', tools: [] };
+  const systemPrompt = firstNonEmpty([
+    extractSystemPrompt(payload.system),
+    extractSystemPrompt(payload.instructions),
+    extractSystemPrompt(payload.systemPrompt),
+  ]);
+  return { systemPrompt, tools: extractTools(payload.tools) };
+}
+
+function extractSystemPrompt(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (!isRecord(item)) return '';
+        if (typeof item.text === 'string') return item.text;
+        if (typeof item.content === 'string') return item.content;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  if (isRecord(value)) {
+    if (typeof value.text === 'string') return value.text;
+    if (typeof value.content === 'string') return value.content;
+  }
+  return '';
+}
+
+function extractTools(value: unknown): DebugRunToolSchema[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((rawTool, index): DebugRunToolSchema => {
+    const tool = isRecord(rawTool) ? rawTool : {};
+    const fn = isRecord(tool.function) ? tool.function : {};
+    const name = stringValue(tool.name) || stringValue(fn.name) || `tool_${index + 1}`;
+    const description = stringValue(tool.description) || stringValue(fn.description) || '';
+    const schemaValue = tool.input_schema ?? tool.parameters ?? fn.parameters ?? tool.schema ?? {};
+    return { name, description, schema: stableJson(schemaValue) };
+  });
+}
+
+function firstNonEmpty(values: string[]): string {
+  for (const value of values) if (value) return value;
+  return '';
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // --- helpers ---------------------------------------------------------------

@@ -265,7 +265,8 @@ export type AgentRunLogEventType =
   | 'user_question.requested'
   | 'user_question.answered'
   | 'user_question.cancelled'
-  | 'widget_state.updated';
+  | 'widget_state.updated'
+  | 'debug.run_snapshot.created';
 
 export interface AgentRunEventBase {
   v: typeof AGENT_EVENT_VERSION;
@@ -589,6 +590,7 @@ export type AgentEventType =
   | 'conversation.renamed'
   | 'conversation.settings_changed'
   | 'debug.snapshot.created'
+  | 'debug.run_snapshot.created'
   | 'branch.selected'
   | 'member.added'
   | 'member.removed'
@@ -696,6 +698,30 @@ export interface DebugSnapshotCreatedEvent extends AgentEventBase {
     api?: string;
     contextWindow?: number | null;
   };
+}
+
+/** One tool's schema as captured for the run-grounded debug view. */
+export interface DebugRunToolSchema {
+  name: string;
+  description: string;
+  /** The tool's argument JSON Schema, pretty-printed. */
+  schema: string;
+}
+
+/**
+ * A once-per-run capture of the agent's outbound system prompt + tool schemas
+ * ([[agent-debug-run-grounded]]). Written to the run's OWN stream, hash-deduped
+ * so it re-emits only when the system prompt or tools change mid-run. The
+ * message window the model saw is already in the ledger; this fills the only
+ * request context the ledger lacks. Replay-neutral.
+ */
+export interface DebugRunSnapshotCreatedEvent extends AgentEventBase {
+  type: 'debug.run_snapshot.created';
+  runId: string;
+  systemPrompt: string;
+  systemHash: string;
+  tools: DebugRunToolSchema[];
+  toolsHash: string;
 }
 
 export interface BranchSelectedEvent extends AgentEventBase {
@@ -1073,6 +1099,7 @@ export type AgentEvent =
   | ConversationSettingsChangedEvent
   | MemberChangedEvent
   | DebugSnapshotCreatedEvent
+  | DebugRunSnapshotCreatedEvent
   | BranchSelectedEvent
   | UserMessageCreatedEvent
   | UserMessageEditedEvent
@@ -1613,6 +1640,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       return;
     }
     case 'debug.snapshot.created':
+    case 'debug.run_snapshot.created':
       return;
     case 'user_message.created':
       addMessage(state, {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
-import { deriveDebugRounds } from '../../src/main/agentDebugView';
+import { deriveDebugRounds, extractRunSnapshotFromPayload } from '../../src/main/agentDebugView';
 
 // Round derivation ([[agent-debug-run-grounded]]): a run's own event stream ->
 // the rounds the debug surface renders. Boundaries come from
@@ -128,6 +128,34 @@ describe('deriveDebugRounds', () => {
     expect(rounds[0]!.toolExchanges[0]).toMatchObject({ toolCallId: 'call-1', result: 'slim output', isError: true });
   });
 
+});
+
+describe('extractRunSnapshotFromPayload', () => {
+  test('reads an Anthropic-shaped payload (system array + input_schema tools)', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      system: [{ type: 'text', text: 'You are Tenon.' }, { type: 'text', text: 'Be concise.' }],
+      tools: [{ name: 'list_files', description: 'List files', input_schema: { type: 'object' } }],
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(snapshot.systemPrompt).toBe('You are Tenon.\n\nBe concise.');
+    expect(snapshot.tools).toEqual([{ name: 'list_files', description: 'List files', schema: '{\n  "type": "object"\n}' }]);
+  });
+
+  test('reads an OpenAI-shaped payload (instructions + tools.function)', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      instructions: 'You are Tenon.',
+      tools: [{ type: 'function', function: { name: 'read_file', description: 'Read', parameters: { type: 'object' } } }],
+    });
+    expect(snapshot.systemPrompt).toBe('You are Tenon.');
+    expect(snapshot.tools[0]).toMatchObject({ name: 'read_file', description: 'Read' });
+  });
+
+  test('degrades to empty on a non-record payload', () => {
+    expect(extractRunSnapshotFromPayload('nope')).toEqual({ systemPrompt: '', tools: [] });
+  });
+});
+
+describe('deriveDebugRounds running-state', () => {
   test('an in-flight round (started, no completed) is reported running', () => {
     seqCounter = 0;
     const runId = 'run-live';

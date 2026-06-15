@@ -135,6 +135,7 @@ import {
   deriveAgentDebugProjectionFromEvents,
   isDebugSnapshotCreatedEvent,
 } from './agentDebugProjection';
+import { extractRunSnapshotFromPayload } from './agentDebugView';
 import {
   AgentEventStore,
   MAX_AGENT_MEMORY_FACT_CHARS,
@@ -593,6 +594,10 @@ export class AgentRuntime {
     latestSeq: number;
     totals: AgentDebugTotals;
   }>();
+  // Last emitted system/tools hash per run, so the once-per-run debug snapshot
+  // ([[agent-debug-run-grounded]]) re-emits only on a real change. Keyed by runId,
+  // session-scoped (a few bytes per run).
+  private debugRunSnapshotHashByRun = new Map<string, string>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, {
@@ -2351,6 +2356,7 @@ export class AgentRuntime {
         }, async (payload, model) => {
           try {
             await this.captureDebugPayload(conversationId, payload, model);
+            await this.captureDebugRunSnapshot(conversationId, payload);
           } catch (error) {
             this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
@@ -3079,6 +3085,36 @@ export class AgentRuntime {
       status: response.status,
       headers: response.headers,
     }, model, 'provider_response', runIdOverride);
+  }
+
+  /**
+   * Run-grounded debug capture ([[agent-debug-run-grounded]]): persist the active
+   * run's outbound system prompt + tool schemas once, re-emitting only when they
+   * change (hash-deduped). The message window is already event-sourced; this fills
+   * the request context the ledger lacks. The event carries the run id, so the
+   * conversation append path splits it into the run's own stream. Additive and
+   * best-effort — a capture failure never perturbs the run.
+   */
+  private async captureDebugRunSnapshot(conversationId: string, payload: unknown) {
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation) return;
+    const runId = this.activeRunId(conversation);
+    if (!runId) return;
+    const { systemPrompt, tools } = extractRunSnapshotFromPayload(payload);
+    const systemHash = createHash('sha256').update(systemPrompt).digest('hex');
+    const toolsHash = createHash('sha256').update(JSON.stringify(tools)).digest('hex');
+    const combined = `${systemHash}:${toolsHash}`;
+    if (this.debugRunSnapshotHashByRun.get(runId) === combined) return;
+    this.debugRunSnapshotHashByRun.set(runId, combined);
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'debug.run_snapshot.created',
+      actor: systemActor(),
+      runId,
+      systemPrompt,
+      systemHash,
+      tools,
+      toolsHash,
+    }]);
   }
 
   private getRuntimeDebugSnapshot(conversationId: string, conversation: AgentConversationState) {
