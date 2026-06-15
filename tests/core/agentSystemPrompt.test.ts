@@ -18,7 +18,9 @@ describe('agent system prompt', () => {
 
   test('the identity section is the Neva persona, not environment or tool conventions', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('You are Neva.');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Be still water');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('still water');
+    // Anti-sycophancy is the load-bearing trait of the persona — pin it.
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('agree in order to be agreeable');
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Tenon Agent');
     // Environment ("what Tenon is", structure taste) is NOT identity — it rides
     // the conversation-start reminder, never the cached identity prompt.
