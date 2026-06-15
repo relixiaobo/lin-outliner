@@ -1308,7 +1308,7 @@ describe('agent event store', () => {
     await withStore(async (store) => {
       await store.writeAgentIdentity({
         agentId: 'built-in:tenon:assistant',
-        displayName: 'Tenon Assistant',
+        displayName: 'Neva',
         model: 'test-model',
         systemPrompt: 'You are Tenon.',
         skills: ['skill-a'],
@@ -1317,7 +1317,7 @@ describe('agent event store', () => {
       await expect(readFile(store.agentPaths('built-in:tenon:assistant').identityPath, 'utf8')).resolves.toContain('test-model');
       await expect(store.readAgentIdentity('built-in:tenon:assistant')).resolves.toMatchObject({
         agentId: 'built-in:tenon:assistant',
-        displayName: 'Tenon Assistant',
+        displayName: 'Neva',
         model: 'test-model',
         skills: ['skill-a'],
       });

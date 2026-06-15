@@ -167,7 +167,7 @@ test.describe('agent composer controls', () => {
     await expect(menu.getByText('Direct Messages')).toBeVisible();
     await expect(menu.getByRole('button', { name: 'New agent' })).toBeVisible();
     await expect(menu.getByRole('button', { name: 'New Channel' })).toBeVisible();
-    await expect(menu.getByRole('button', { name: /Tenon Assistant/ })).toBeVisible();
+    await expect(menu.getByRole('button', { name: /Neva/ })).toBeVisible();
     await expect(menu.getByRole('button', { name: /self/ })).toBeVisible();
     await expect(menu.getByText('Planning Channel')).toBeVisible();
     const headerBorders = await menu.locator('.agent-conversation-menu-header').evaluateAll((headers) => (
@@ -314,7 +314,7 @@ test.describe('agent composer controls', () => {
     await page.goto('/?surface=channel-config&mode=configure&conversation=mock-agent-channel-planning');
     const config = page.locator('.channel-config-window');
     await expect(config.getByLabel('Channel name')).toHaveValue('Planning Channel');
-    await expect(config.getByText('Tenon Assistant', { exact: true })).toBeVisible();
+    await expect(config.getByText('Neva', { exact: true })).toBeVisible();
     await expect(config.getByText('self', { exact: true })).toBeVisible();
     await config.getByRole('button', { name: /Add reviewer/ }).click();
     await expect(config.getByText('reviewer', { exact: true })).toBeVisible();
@@ -807,7 +807,7 @@ test.describe('agent composer controls', () => {
     const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-user-with-attachments',
@@ -1499,7 +1499,7 @@ test.describe('agent composer controls', () => {
     });
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-user-with-ref',
@@ -1547,7 +1547,7 @@ test.describe('agent composer controls', () => {
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
         nodeId: 'agent-assistant-inline-ref',
@@ -1673,7 +1673,7 @@ test.describe('agent composer controls', () => {
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
         id: 'active-compact-1',
@@ -1689,7 +1689,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {
@@ -1794,7 +1794,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         {
@@ -1847,7 +1847,7 @@ test.describe('agent composer controls', () => {
 
     await expect(page.locator('.agent-message-time-separator')).toHaveCount(1);
     const coordinatorRow = page.locator('.agent-message-row.assistant', { hasText: 'Coordinator result.' });
-    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('Tenon Assistant');
+    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('Neva');
     await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('@assistant');
     await expect(coordinatorRow.locator('.agent-identity-avatar')).toBeVisible();
 
@@ -1885,7 +1885,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -1993,7 +1993,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -2026,7 +2026,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -2055,7 +2055,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -2085,7 +2085,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -2116,7 +2116,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
@@ -2562,7 +2562,7 @@ test.describe('agent composer controls', () => {
         {
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
           mention: 'assistant',
-          displayName: 'Tenon Assistant',
+          displayName: 'Neva',
           coordinator: true,
         },
         {
@@ -2630,7 +2630,7 @@ test.describe('agent composer controls', () => {
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
       thinkingLevel: 'medium',
@@ -2688,7 +2688,7 @@ test.describe('agent composer controls', () => {
     };
 
     await emitAgentProjection(page, 'mock-agent-conversation', {
-      conversationTitle: 'Tenon Assistant',
+      conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
         {

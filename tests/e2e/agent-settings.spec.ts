@@ -236,11 +236,11 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
     await expect(settings.locator('.agent-editor')).toHaveCount(0);
-    await expect(settings.getByRole('button', { name: 'Tenon Assistant' })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Neva' })).toBeVisible();
     await expect(settings.getByRole('switch', { name: 'Toggle assistant' })).toHaveCount(0);
     await expect(settings.getByRole('switch', { name: 'Toggle self' })).toBeVisible();
 
-    await settings.getByRole('button', { name: 'Tenon Assistant' }).click();
+    await settings.getByRole('button', { name: 'Neva' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
@@ -258,10 +258,10 @@ test.describe('agent settings window', () => {
 
   test('opens the built-in Tenon agent config as a view-only profile', async ({ page }) => {
     const config = await openAgentConfig(page, 'built-in%3Atenon%3Aassistant');
-    await expect(config.getByRole('heading', { name: 'Tenon Assistant' })).toBeVisible();
+    await expect(config.getByRole('heading', { name: 'Neva' })).toBeVisible();
     await expect(config.getByText('Default Tenon assistant profile.')).toBeVisible();
     await expect(config.getByText('Built-in agents are view-only')).toBeVisible();
-    await expect(config.getByLabel('Name')).toHaveValue('Tenon Assistant');
+    await expect(config.getByLabel('Name')).toHaveValue('Neva');
     await expect(config.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await expect(config.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
     await expect(config.getByRole('button', { name: 'Duplicate to my agents' })).toBeVisible();
