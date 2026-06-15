@@ -1,7 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -33,8 +33,16 @@ export interface AgentLocalWorkspaceContext {
   // it is a co-trusted read root (see `resolveWorkspacePath`) so the agent can read what the
   // app places there. Defaults to `<root>/tmp` when no explicit scratch root is supplied.
   scratchRoot: string;
+  // User-handed folders from remembered `Scope(read|write:...)` permission grants.
+  // These widen file-tool containment without changing the relative-path base.
+  permissionRoots: AgentLocalPermissionRoot[];
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
+}
+
+export interface AgentLocalPermissionRoot {
+  access: 'read' | 'write';
+  root: string;
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -551,6 +559,7 @@ function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillR
   return {
     root: path.resolve(localRoot ?? process.cwd()),
     scratchRoot: scratchRootForWorkdir(localRoot, scratchRoot),
+    permissionRoots: [],
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
   };
@@ -558,6 +567,15 @@ function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillR
 
 export function createAgentLocalWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
   return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
+}
+
+export function setAgentLocalPermissionRoots(
+  workspace: AgentLocalWorkspaceContext,
+  roots: readonly AgentLocalPermissionRoot[],
+): void {
+  workspace.permissionRoots = roots
+    .map((entry) => ({ access: entry.access, root: path.resolve(entry.root) }))
+    .filter((entry) => permissionRootPath(entry.root) !== null);
 }
 
 export async function restorePostCompactReadFiles(
@@ -1108,8 +1126,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       try {
         const params = normalizeFileDeleteParams(rawParams);
         const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
-        const root = path.resolve(workspace.root);
-        if (path.resolve(filePath) === root) {
+        if (isFileAreaRoot(workspace, filePath)) {
           throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the allowed file area root.', 'Delete a specific file or subdirectory instead.');
         }
         const trashRoot = agentTrashRoot(workspace);
@@ -2431,11 +2448,11 @@ function countOccurrences(content: string, needle: string): number {
   }
 }
 
-// The allowed file area is asymmetric: the agent may WRITE only under the workdir, but may READ
-// the workdir AND the app-owned scratch root (materialized attachments, fetched binaries,
-// overflow logs the app places there). `access` selects which rule applies, so both this layer
-// and the permission engine (`agentPermissions.ts`) enforce the same "write→workdir, read→
-// workdir∪scratch" boundary.
+// The allowed file area is asymmetric: the agent may WRITE under the workdir and handed
+// write-scope roots, but may READ the workdir, handed read/write roots, and the app-owned
+// scratch root (materialized attachments, fetched binaries, overflow logs the app places
+// there). `access` selects which rule applies, so both this layer and the permission engine
+// (`agentPermissions.ts`) enforce the same boundary.
 type FileAccess = 'read' | 'write';
 
 function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, access: FileAccess): string {
@@ -2449,9 +2466,6 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
   const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
   const existingPath = nearestExistingPath(requestedPath);
   const existingRealPath = realpathSync.native(existingPath);
-  if (!isInsideAnyRoot(allowedRoots, existingRealPath)) {
-    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
-  }
   const suffix = path.relative(existingPath, requestedPath);
   const resolvedPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
   if (!isInsideAnyRoot(allowedRoots, resolvedPath)) {
@@ -2460,11 +2474,19 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
   return requestedPath;
 }
 
-// The real paths a file tool may touch for the given access: the workdir always, plus — for
-// reads — the scratch root when it resolves to a distinct, existing location (scratch is
-// `<root>/tmp` by default, already covered by the workdir).
+// The real paths a file tool may touch for the given access: the workdir always, handed
+// permission roots whose access covers the requested operation, plus — for reads — the
+// scratch root when it resolves to a distinct, existing location (scratch is `<root>/tmp`
+// by default, already covered by the workdir).
 function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, access: FileAccess): string[] {
   const roots = [rootRealPath];
+  for (const entry of workspace.permissionRoots) {
+    if (access === 'write' && entry.access !== 'write') continue;
+    const permissionRoot = permissionRootPath(entry.root);
+    if (permissionRoot && !roots.some((root) => isResolvedPathInside(root, permissionRoot))) {
+      roots.push(permissionRoot);
+    }
+  }
   if (access === 'read') {
     const scratchReal = safeRealPath(workspace.scratchRoot);
     if (scratchReal && !isResolvedPathInside(rootRealPath, scratchReal)) {
@@ -2478,6 +2500,19 @@ function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
   return roots.some((root) => isResolvedPathInside(root, candidate));
 }
 
+function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  const rootRealPath = safeRealPath(workspace.root);
+  const candidateRealPath = permissionRootPath(resolved);
+  if (!rootRealPath || !candidateRealPath) return false;
+  if (rootRealPath === candidateRealPath) return true;
+  return workspace.permissionRoots.some((entry) => {
+    if (entry.access !== 'write') return false;
+    const permissionRoot = permissionRootPath(entry.root);
+    return Boolean(permissionRoot && permissionRoot === candidateRealPath && isDirectoryPath(permissionRoot));
+  });
+}
+
 function safeRealPath(target: string): string | null {
   try {
     const resolved = realpathSync.native(path.resolve(target));
@@ -2487,6 +2522,25 @@ function safeRealPath(target: string): string | null {
     return resolved;
   } catch {
     return null;
+  }
+}
+
+function permissionRootPath(target: string): string | null {
+  const requestedPath = path.resolve(target);
+  const existingPath = nearestExistingPath(requestedPath);
+  const existingRealPath = safeRealPath(existingPath);
+  if (!existingRealPath) return null;
+  const suffix = path.relative(existingPath, requestedPath);
+  const resolvedRoot = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
+  if (path.parse(resolvedRoot).root === resolvedRoot) return null;
+  return resolvedRoot;
+}
+
+function isDirectoryPath(target: string): boolean {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
   }
 }
 

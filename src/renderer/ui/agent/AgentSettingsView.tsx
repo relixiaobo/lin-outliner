@@ -21,6 +21,7 @@ import {
   CheckIcon,
   CloseIcon,
   DatabaseIcon,
+  FolderIcon,
   ICON_SIZE,
   LoaderIcon,
   PasswordIcon,
@@ -249,6 +250,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // applies immediately, persisted by main, no Save step. Default off.
   const [osNotificationsEnabled, setOsNotificationsEnabled] = useState(false);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<null | 'reveal' | 'export'>(null);
+  const [scopeFolderBusy, setScopeFolderBusy] = useState(false);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
@@ -557,6 +559,25 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       ...base,
       grants: base.grants.filter((candidate) => candidate !== grant),
     });
+  }
+
+  async function handScopeFolder() {
+    const base = permissionDraft ?? permissionSettings ?? { grants: [], diagnostics: [] };
+    setScopeFolderBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.agentPickScopeFolder({ grants: base.grants });
+      if (!mountedRef.current || result.canceled) return;
+      setPermissionSettings(result.settings);
+      setPermissionDraft(result.settings);
+      setNotice(t.settings.permissions.handedFolderNotice({ path: result.path ?? '' }));
+      await onApplied();
+    } catch (caught) {
+      if (mountedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (mountedRef.current) setScopeFolderBusy(false);
+    }
   }
 
   // The footer Save persists ONLY what this pane owns — runtime (permissions /
@@ -961,6 +982,22 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   ariaLabel={t.settings.permissions.grantsAriaLabel}
                   label={t.settings.permissions.grantsGroup}
                 >
+                  <InsetRow
+                    label={t.settings.permissions.handFolderLabel}
+                    leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
+                    sublabel={t.settings.permissions.handFolderSublabel}
+                    trailing={(
+                      <Button
+                        disabled={saving || scopeFolderBusy}
+                        onClick={() => void handScopeFolder()}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        {scopeFolderBusy ? t.settings.permissions.handingFolderAction : t.settings.permissions.handFolderAction}
+                      </Button>
+                    )}
+                    wrap
+                  />
                   {permissionGrants.length > 0 ? permissionGrants.map((grant) => (
                     <InsetRow
                       key={grant}

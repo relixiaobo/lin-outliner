@@ -1915,6 +1915,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_get_tool_permission_settings') {
           return clone(agentToolPermissions) as T;
         }
+        if (cmd === 'agent_pick_scope_folder') {
+          const next = args.settings as { grants?: string[] };
+          agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : agentToolPermissions.grants;
+          const path = '/mock/handoff-folder';
+          const grant = `Scope(write:${path})`;
+          if (!agentToolPermissions.grants.includes(grant)) {
+            agentToolPermissions.grants.push(grant);
+          }
+          return clone({
+            canceled: false,
+            path,
+            grant,
+            settings: agentToolPermissions,
+          }) as T;
+        }
         if (cmd === 'agent_list_all_skills') {
           return clone(agentSkills) as T;
         }

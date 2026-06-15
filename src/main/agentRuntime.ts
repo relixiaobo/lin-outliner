@@ -226,6 +226,7 @@ import {
 import {
   createAgentLocalWorkspaceContext,
   scratchRootForWorkdir,
+  setAgentLocalPermissionRoots,
   type AgentLocalWorkspaceContext,
 } from './agentLocalTools';
 import {
@@ -286,6 +287,7 @@ import {
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
 import { shouldFireDateSchedule } from '../core/dateSchedule';
+import type { AgentPermissionGrant } from '../core/agentPermissionModel';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -8281,6 +8283,21 @@ function createConfiguredAgent(
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
+      const syncLocalPermissionRoots = (extraGrant?: AgentPermissionGrant) => {
+        if (!options.localWorkspace) return;
+        setAgentLocalPermissionRoots(
+          options.localWorkspace,
+          [
+            ...globalPermissions.grants.flatMap((rule) => (
+              rule.grant.kind === 'scope'
+                ? [{ access: rule.grant.access, root: rule.grant.root }]
+                : []
+            )),
+            ...(extraGrant?.kind === 'scope' ? [{ access: extraGrant.access, root: extraGrant.root }] : []),
+          ],
+        );
+      };
+      syncLocalPermissionRoots();
       const decision = evaluateAgentToolPermission({
         toolName: toolCall.name,
         args,
@@ -8368,7 +8385,10 @@ function createConfiguredAgent(
               deniedReason: approval.approved ? undefined : deniedReason,
             },
           });
-          if (approval.approved) return undefined;
+          if (approval.approved) {
+            syncLocalPermissionRoots(decision.descriptor?.effect.grant);
+            return undefined;
+          }
           return { block: true, reason: approvalDeniedToolResultMessage(toolCall.name, approval) };
         }
         await options.permissionEventHandler?.({

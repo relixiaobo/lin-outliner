@@ -1,8 +1,9 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -70,6 +71,7 @@ import {
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
+import { grantRuleValue } from './agentToolPermissionRules';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -1197,9 +1199,9 @@ function openChannelConfigWindow(conversationId: string, mode: ChannelConfigMode
 }
 
 function registerIpc() {
-  ipcMain.handle('lin:invoke', async (_event, command: string, args?: Record<string, unknown>) => {
+  ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {
-      if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
+      if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
       if (isPreviewCommand(command)) {
         return handlePreviewCommand(command, args ?? {}, {
@@ -1843,6 +1845,54 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
   };
 }
 
+async function pickAgentScopeFolder(
+  event: IpcMainInvokeEvent,
+  draftSettings: { grants?: unknown } | undefined,
+) {
+  const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
+  const defaultPath = safeAppPath('documents') ?? safeAppPath('home') ?? undefined;
+  const dialogStrings = getMessages(effectiveLocale()).window;
+  const options: Electron.OpenDialogOptions = {
+    ...(defaultPath ? { defaultPath } : {}),
+    title: dialogStrings.handScopeFolderTitle,
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  const result = window
+    ? await dialog.showOpenDialog(window, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) {
+    return {
+      canceled: true,
+      settings: await readAgentToolPermissionSettingsView(),
+    };
+  }
+
+  const root = await canonicalDirectoryPath(result.filePaths[0]);
+  const grant = grantRuleValue({ kind: 'scope', access: 'write', root });
+  const draftGrants = draftSettings?.grants;
+  const baseGrantInput = Array.isArray(draftGrants) ? draftGrants : (await readAgentToolPermissionSettingsView()).grants;
+  const baseGrants = stringList(baseGrantInput);
+  const grants = baseGrants.includes(grant) ? baseGrants : [...baseGrants, grant];
+  const settings = await writeAgentToolPermissionSettingsView({ grants });
+  return {
+    canceled: false,
+    path: root,
+    grant,
+    settings,
+  };
+}
+
+async function canonicalDirectoryPath(inputPath: string): Promise<string> {
+  const resolved = await realpath(inputPath);
+  const info = await stat(resolved);
+  if (!info.isDirectory()) throw new Error('Selected path is not a folder.');
+  return resolved;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -2308,7 +2358,7 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.txt',
 ]);
 
-async function handleAgentCommand(command: AgentCommand, args: Record<string, unknown>) {
+async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   const conversationId = () => String(args.conversationId);
   switch (command) {
     case 'agent_restore_latest_conversation':
@@ -2437,6 +2487,8 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return readAgentToolPermissionSettingsView();
     case 'agent_update_tool_permission_settings':
       return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown });
+    case 'agent_pick_scope_folder':
+      return pickAgentScopeFolder(event, args.settings as { grants?: unknown } | undefined);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

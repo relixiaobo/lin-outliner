@@ -8,6 +8,7 @@ import {
   createLocalTools,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
+  setAgentLocalPermissionRoots,
   visibleBash,
   visibleFileGlob,
   visibleFileGrep,
@@ -206,6 +207,71 @@ describe('agent local tools', () => {
         expect(denied.error?.code).toBe('path_outside_local_root');
       } finally {
         await rm(scratchRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('remembered scope grants widen file-tool containment without changing the relative base', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const handedRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-handed-'));
+      try {
+        const handedFile = path.join(handedRoot, 'notes.txt');
+        await writeFile(handedFile, 'handed notes', 'utf8');
+        const workspace = createAgentLocalWorkspaceContext(workspaceRoot);
+        setAgentLocalPermissionRoots(workspace, [{ access: 'read', root: handedRoot }]);
+        const tools = createLocalTools({ workspace });
+        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+        const read = (await (fileRead.execute as any)('call', { file_path: handedFile })).details as ToolEnvelope<{
+          type: 'text';
+          file: { content: string };
+        }>;
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.content).toBe('handed notes');
+
+        const readOnlyWrite = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(handedRoot, 'created.txt'),
+          content: 'no',
+        })).details as ToolEnvelope<unknown>;
+        expect(readOnlyWrite.ok).toBe(false);
+        expect(readOnlyWrite.error?.code).toBe('path_outside_local_root');
+
+        const exactNewFile = path.join(handedRoot, 'exact-new.txt');
+        setAgentLocalPermissionRoots(workspace, [{ access: 'write', root: exactNewFile }]);
+        const exactWrite = (await (fileWrite.execute as any)('call', {
+          file_path: exactNewFile,
+          content: 'exact',
+        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
+        expect(exactWrite.ok).toBe(true);
+        const siblingWrite = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(handedRoot, 'sibling.txt'),
+          content: 'no',
+        })).details as ToolEnvelope<unknown>;
+        expect(siblingWrite.ok).toBe(false);
+        expect(siblingWrite.error?.code).toBe('path_outside_local_root');
+
+        setAgentLocalPermissionRoots(workspace, [{ access: 'write', root: handedRoot }]);
+        const write = (await (fileWrite.execute as any)('call', {
+          file_path: path.join(handedRoot, 'created.txt'),
+          content: 'yes',
+        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
+        expect(write.ok).toBe(true);
+        expect(await readFile(path.join(handedRoot, 'created.txt'), 'utf8')).toBe('yes');
+
+        const rootDelete = (await (tools.find((tool) => tool.name === 'file_delete')!.execute as any)('call', {
+          file_path: handedRoot,
+        })).details as ToolEnvelope<unknown>;
+        expect(rootDelete.ok).toBe(false);
+        expect(rootDelete.error?.code).toBe('root_delete_forbidden');
+
+        const relativeWrite = (await (fileWrite.execute as any)('call', {
+          file_path: 'relative.txt',
+          content: 'relative stays in workdir',
+        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
+        expect(relativeWrite.ok).toBe(true);
+        expect(relativeWrite.data!.filePath).toBe(path.join(workspaceRoot, 'relative.txt'));
+      } finally {
+        await rm(handedRoot, { recursive: true, force: true });
       }
     });
   });

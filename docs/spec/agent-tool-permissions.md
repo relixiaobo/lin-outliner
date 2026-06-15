@@ -38,22 +38,32 @@ catalog metadata. They are not the decision key.
 
 ## Allowed File Area
 
-The agent has two app-owned roots:
+The agent starts with two app-owned roots:
 
 - **workdir**: the cwd and write root. Relative file-tool paths resolve here.
 - **scratch**: app-owned materialized attachments, web-fetch binaries, overflow
   logs, and PDF page images.
 
+Users may also hand Tenon real folders from Settings -> Security. That gesture
+adds a remembered `Scope(write:/absolute/folder)` grant. The runtime projects
+remembered scope grants into the file-tool execution layer before each tool call,
+so granted roots are enforced by the same realpath containment as the app-owned
+roots rather than by permission UI alone.
+
 The boundary is asymmetric:
 
-- Reads may touch workdir and scratch.
-- Writes may touch only workdir.
+- Reads may touch workdir, scratch, and handed `read` / `write` scope roots.
+- Writes may touch workdir and handed `write` scope roots.
+- Relative file-tool paths still resolve against workdir; handed folders are
+  reached through explicit absolute paths.
 
 File tools enforce the boundary through `resolveWorkspacePath`, using realpath
 containment. The permission gate mirrors the same policy lexically so scope
 escapes are caught before execution. `file_glob` and `file_grep` default to the
-workdir, so scratch is reached only through explicit absolute paths the app
-hands to the agent.
+workdir, so scratch and handed folders are reached only through explicit
+absolute paths the app or user hands to the agent. `file_delete` refuses the
+workdir, handed roots, and the agent trash root themselves; delete only moves
+specific descendants to `.agent-trash`.
 
 ## Reversible Local Work
 
@@ -167,6 +177,8 @@ Skill content-hash ratification is separate from permission grants.
 Settings -> Security has no mode selector. It shows:
 
 - one delegated-operator row explaining the default policy,
+- a folder-handoff row that opens a native directory picker and records a
+  `Scope(write:/folder)` grant for the selected realpath,
 - remembered grants,
 - accepted skill hashes,
 - diagnostics for ignored permission-rule strings.
