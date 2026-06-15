@@ -1575,6 +1575,9 @@ test.describe('agent composer controls', () => {
       }],
     });
 
+    // The interim text + lone tool produced no final answer, so the result-first
+    // process block auto-expands (a resultless turn) — the narration markdown and,
+    // below, the tool are already reachable without toggling it open.
     await expect(page.locator('.agent-markdown [data-inline-ref="node-alpha"]')).toHaveText(['Alpha', 'Alpha']);
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).toHaveText('Referenced node');
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).not.toContainText('node-missing');
@@ -1590,7 +1593,7 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount + 1);
     await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Alpha');
 
-    await page.getByRole('button', { name: /Read node/ }).click();
+    await page.locator('.agent-tool-call-toggle').click();
     await expect(page.locator('.agent-tool-call-section [data-inline-ref="node-alpha"]')).toHaveText('Alpha');
   });
 
@@ -1755,8 +1758,11 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-user-bubble', { hasText: 'Conversation compacted.' })).toHaveCount(0);
     await expect(page.getByText('Primary Request and Intent')).toHaveCount(0);
     await expect(page.getByText('Previous user request before compact.')).toBeVisible();
+    // The pre-compact assistant text + lone tool produced no final answer, so the
+    // result-first process block auto-expands (a resultless turn) — the narration
+    // and the tool result below are reachable without toggling it open.
     await expect(page.getByText('Previous assistant response before compact.')).toBeVisible();
-    await page.getByRole('button', { name: /Read node/ }).click();
+    await page.locator('.agent-tool-call-toggle').click();
     await expect(page.getByText(/Previous tool result before compact/)).toBeVisible();
 
     await compactToggle.click();
@@ -2730,13 +2736,12 @@ test.describe('agent composer controls', () => {
       }],
     });
 
-    // A main-agent-spawned child run renders as an inline boundary in the
-    // transcript (the conversation's permanent record of the run), not as a
-    // tool-call block inside the assistant bubble. The bubble is suppressed.
-    const boundary = page.getByRole('region', { name: 'Agent task · Inspect child run UI' });
-    await expect(boundary).toBeVisible();
-    await expect(boundary.getByText('Running…')).toBeVisible();
-    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toHaveCount(0);
+    // A DM main-agent child run folds into its spawning turn's process: the Agent
+    // tool-call row renders the child-run summary inline (turn-anchored, so editing
+    // the turn removes it), NOT a free-floating conversation-level boundary. So there
+    // is no boundary region, and the run surfaces as a process row in the bubble.
+    await expect(page.getByRole('region', { name: 'Agent task · Inspect child run UI' })).toHaveCount(0);
+    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Open task panel' }).click();
     const tasks = page.getByRole('complementary', { name: 'Agent tasks' });

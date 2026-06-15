@@ -35,7 +35,6 @@ import {
 } from './AgentProcessBlock';
 import { IconButton } from '../primitives/IconButton';
 import { AgentMarkdown } from './AgentMarkdown';
-import { AgentToolCallBlock } from './AgentToolCallBlock';
 import { looksLikeRawAgentErrorPayload, parseAgentErrorMessage } from './agentErrorParse';
 import { AgentBranchNavigator } from './AgentBranchNavigator';
 import {
@@ -84,7 +83,8 @@ interface AgentMessageRowProps {
   streaming?: boolean;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
-  turnEnded?: boolean;
+  /** True in a multi-agent Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
+  isMultiAgentChannel?: boolean;
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
@@ -473,7 +473,9 @@ function renderAssistantBlocks(
   childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity> | undefined,
   toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
-  turnEnded: boolean,
+  turnInterrupted: boolean,
+  isChannel: boolean,
+  workedForMs: number | null,
 ) {
   const rendered: ReactNode[] = [];
   const isError = !!message.errorMessage && message.stopReason !== 'aborted';
@@ -485,108 +487,105 @@ function renderAssistantBlocks(
       if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
       return block.text.trim().length > 0 || streaming;
     }
-    // A child-run-spawn tool call is surfaced as its own inline transcript boundary
-    // (AgentChildRunBoundary) right after this turn — drop its tool-call block here
-    // so the run isn't shown twice (no "Used tools" header, no tool row).
-    if (block.type === 'toolCall' && childRunsByParentToolCallId?.has(block.id)) return false;
+    // A child-run-spawn tool call: in a multi-agent Channel the run surfaces as its
+    // own inline transcript boundary (AgentChildRunBoundary) right after this turn,
+    // so drop its tool-call block here to avoid showing it twice. In a DM the run
+    // folds into THIS turn's process instead — the tool-call row renders the
+    // child-run summary + result inline, turn-anchored so an edit removes it — so it
+    // stays. The projection's insertChildRunRows skips the DM boundary in lockstep.
+    if (block.type === 'toolCall' && isChannel && childRunsByParentToolCallId?.has(block.id)) return false;
     return true;
   });
-  const turnHasProse = visibleBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0);
-  const turnFailedWithoutProse = turnEnded && !turnHasProse;
-
-  let blockIndex = 0;
-  while (blockIndex < visibleBlocks.length) {
-    const block = visibleBlocks[blockIndex]!;
-    if (block.type === 'thinking' || block.type === 'toolCall') {
-      const runStart = blockIndex;
-      const segmentBlocks: AgentProcessSegmentBlock[] = [];
-      while (blockIndex < visibleBlocks.length) {
-        const candidate = visibleBlocks[blockIndex]!;
-        if (candidate.type === 'thinking') {
-          const hasLaterVisibleBlock = visibleBlocks
-            .slice(blockIndex + 1)
-            .some((later) => later.type === 'thinking' || later.type === 'toolCall' || later.type === 'text');
-          segmentBlocks.push({
-            kind: 'thinking',
-            sourceIndex: blockIndex,
-            streaming: streaming && !hasLaterVisibleBlock,
-            text: candidate.thinking,
-          });
-          blockIndex += 1;
-          continue;
-        }
-        if (candidate.type === 'toolCall') {
-          segmentBlocks.push({ kind: 'toolCall', toolCall: candidate });
-          blockIndex += 1;
-          continue;
-        }
-        break;
-      }
-
-      const thinkingCount = segmentBlocks.filter((candidate) => candidate.kind === 'thinking').length;
-      const toolCount = segmentBlocks.length - thinkingCount;
-      const segmentSealed = visibleBlocks
-        .slice(blockIndex)
-        .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
-
-      if (thinkingCount === 0 && toolCount === 1) {
-        const toolCall = (segmentBlocks[0] as Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }>).toolCall;
-        const toolId = `tool:${toolCall.id}`;
-        rendered.push(
-          <AgentToolCallBlock
-            expanded={expandState.isExpanded(toolId, false)}
-            index={documentIndex}
-            key={toolId}
-            onToggle={() => expandState.toggle(toolId, expandState.isExpanded(toolId, false))}
-            onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
-            pendingToolCallIds={pendingToolCallIds}
-            result={toolResults.get(toolCall.id)}
-            conversationId={conversationId}
-            childRun={childRunsByParentToolCallId?.get(toolCall.id)}
-            toolCall={toolCall}
-            turnActive={turnActive}
-          />,
-        );
-      } else if (segmentBlocks.length > 0) {
-        const segmentId = `process:${contentKey}:${runStart}`;
-        rendered.push(
-          <AgentProcessBlock
-            blocks={segmentBlocks}
-            expandState={expandState}
-            id={segmentId}
-            index={documentIndex}
-            key={segmentId}
-            onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
-            pendingToolCallIds={pendingToolCallIds}
-            results={toolResults}
-            sealed={segmentSealed}
-            conversationId={conversationId}
-            childRunsByParentToolCallId={childRunsByParentToolCallId}
-            turnActive={turnActive}
-            turnFailedWithoutProse={turnFailedWithoutProse}
-          />,
-        );
-      }
-      continue;
+  // Result-first turn: the final answer is the trailing text after the last
+  // thinking/toolCall block. Everything before it — thinking, tool calls, AND
+  // interim narration text — folds into ONE process disclosure; the trailing
+  // text renders as the visible answer. A turn with no thinking/tools is a
+  // direct answer and renders without a fold.
+  let lastProcessIndex = -1;
+  for (let i = visibleBlocks.length - 1; i >= 0; i -= 1) {
+    const candidate = visibleBlocks[i]!;
+    if (candidate.type === 'thinking' || candidate.type === 'toolCall') {
+      lastProcessIndex = i;
+      break;
     }
+  }
+  // The trailing answer prose, after the last process block. `finalIsProse` gates
+  // the result-first layout: WITH trailing prose the process collapses to
+  // "Worked for …" behind the answer; WITHOUT it the turn produced no result.
+  //
+  // Two SEPARATE concerns, both keyed off this — decoupled so a Channel never
+  // mislabels:
+  //  • `turnFailedWithoutProse` (the alarming RED "Interrupted" label + error
+  //    styling) fires ONLY when the run actually failed/was cancelled/crashed
+  //    (`turnInterrupted`, derived in core from the run's REAL status — never from
+  //    block structure). A cleanly `completed` resultless turn is NEVER red.
+  //  • `surfaceResultlessProcess` (auto-expand the process so its interim work
+  //    isn't buried) fires for a genuine interruption in EITHER mode, AND — per
+  //    the #240 result-first design — for a sealed resultless **DM** turn, where
+  //    the user watched it 1:1. A Channel delivers atomically (its process lives
+  //    in the activity detail view, not inline), so a cleanly-completed resultless
+  //    Channel turn folds to "Worked for …" instead of dumping its process inline.
+  // (The old `turnEnded && !finalIsProse` conflated these: because a Channel turn
+  // is always `turnPhase: idle`, it fired on every result-less turn regardless of
+  // outcome — the recurring Channel mislabel.)
+  const finalBlocks = visibleBlocks.slice(lastProcessIndex + 1);
+  const finalProseBlocks = finalBlocks.filter(
+    (block): block is Extract<(typeof visibleBlocks)[number], { type: 'text' }> => block.type === 'text',
+  );
+  const finalIsProse = finalProseBlocks.some((block) => block.text.trim().length > 0);
+  const turnFailedWithoutProse = turnInterrupted && !finalIsProse;
+  const surfaceResultlessProcess = !finalIsProse && (turnInterrupted || (!isChannel && !turnActive));
 
-    const hasLaterText = visibleBlocks
-      .slice(blockIndex + 1)
-      .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
+  if (lastProcessIndex >= 0) {
+    const processBlocks = visibleBlocks.slice(0, lastProcessIndex + 1);
+    const segmentBlocks: AgentProcessSegmentBlock[] = processBlocks.map((candidate, sourceIndex) => {
+      const hasLater = sourceIndex < processBlocks.length - 1 || finalIsProse;
+      if (candidate.type === 'thinking') {
+        return { kind: 'thinking', sourceIndex, streaming: streaming && !hasLater, text: candidate.thinking };
+      }
+      if (candidate.type === 'toolCall') {
+        return { kind: 'toolCall', toolCall: candidate };
+      }
+      return { kind: 'narration', sourceIndex, streaming: streaming && !hasLater, text: candidate.text };
+    });
+    const segmentId = `process:${contentKey}`;
+    rendered.push(
+      <AgentProcessBlock
+        blocks={segmentBlocks}
+        expandState={expandState}
+        id={segmentId}
+        index={documentIndex}
+        key={segmentId}
+        onNodeReferenceOpen={onNodeReferenceOpen}
+        onOpenChildRunTranscript={onOpenChildRunTranscript}
+        pendingToolCallIds={pendingToolCallIds}
+        results={toolResults}
+        sealed={finalIsProse}
+        conversationId={conversationId}
+        childRunsByParentToolCallId={childRunsByParentToolCallId}
+        turnActive={turnActive}
+        turnFailedWithoutProse={turnFailedWithoutProse}
+        surfaceResultlessProcess={surfaceResultlessProcess}
+        workedForMs={workedForMs}
+      />,
+    );
+  }
+
+  // Trailing answer prose. `finalProseBlocks` is already narrowed to text — the
+  // last process block is the fold boundary, so no thinking/tool survives past it.
+  finalProseBlocks.forEach((block, i) => {
+    const hasLaterText = finalProseBlocks.slice(i + 1).some((candidate) => candidate.text.trim().length > 0);
     rendered.push(
       <AgentMarkdown
         index={documentIndex}
-        key={`text-${blockIndex}`}
-        keyPrefix={`${contentKey}-text-${blockIndex}`}
+        key={`text-${i}`}
+        keyPrefix={`${contentKey}-text-${i}`}
         onNodeReferenceOpen={onNodeReferenceOpen}
         streaming={streaming && !hasLaterText}
         text={block.text}
       />,
     );
-    blockIndex += 1;
-  }
+  });
 
   return rendered;
 }
@@ -612,7 +611,7 @@ export function AgentMessageRow({
   streaming: streamingOverride,
   childRunsByParentToolCallId,
   toolResults,
-  turnEnded = false,
+  isMultiAgentChannel = false,
   turnPhase = 'idle',
   speakerLabel = null,
   speakerMention = null,
@@ -836,7 +835,9 @@ export function AgentMessageRow({
     childRunsByParentToolCallId,
     toolResults,
     turnActive,
-    turnEnded,
+    entry.turnInterrupted,
+    isMultiAgentChannel,
+    entry.runDurationMs,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
 
@@ -848,10 +849,24 @@ export function AgentMessageRow({
   return (
     <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
       {actorLabel ? (
-        <AgentIdentityAvatar
-          label={actorLabel}
-          mention={actorMention}
-        />
+        // Channel attribution header: avatar + speaker name on ONE line. The body
+        // below spans the full row width (aligned to the avatar's left edge) rather
+        // than being indented into an avatar gutter, so a Channel reply reclaims the
+        // horizontal space a per-message avatar column would cost. (A DM renders no
+        // actorLabel, so it has no header and its content is full-width already.)
+        <div
+          className="agent-message-actor-header"
+          title={actorMention ? `@${actorMention}` : undefined}
+        >
+          <AgentIdentityAvatar
+            label={actorLabel}
+            mention={actorMention}
+          />
+          <div className="agent-message-actor">
+            <span>{actorLabel}</span>
+            {actorMention ? <small>{`@${actorMention}`}</small> : null}
+          </div>
+        </div>
       ) : null}
       <AgentAssistantContent>
         {replyAnchor ? (
@@ -863,15 +878,6 @@ export function AgentMessageRow({
             <span aria-hidden>↩</span>
             <span>{`"${replyAnchor.quote}"`}</span>
           </ButtonControl>
-        ) : null}
-        {actorLabel ? (
-          <div
-            className="agent-message-actor"
-            title={actorMention ? `@${actorMention}` : undefined}
-          >
-            <span>{actorLabel}</span>
-            {actorMention ? <small>{`@${actorMention}`}</small> : null}
-          </div>
         ) : null}
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}

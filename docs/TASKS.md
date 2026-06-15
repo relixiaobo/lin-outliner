@@ -41,13 +41,12 @@ They are **mutually independent** (three different subsystems — file model / t
 parsing / Channel runtime) and differ only in their remaining PM gate. Highest
 build-readiness first:
 
-1. **`agent-file-model`** (P1, *Files & media*) — **no gate left**: the 4 decisions
-   are PM-ratified (2026-06-13). Ships as a SET of independent PRs (F1→F4); **F1
-   (render agent file outputs — the reported bug) shipped (#224)** — file outputs
-   now render as a previewable local-file chip + inspectable diff, not raw JSON —
-   **F2 (app-owned workdir + relocated scratch) shipped (#229)**, and **F3
-   (materialize bridge — referenced outliner files become agent-readable) shipped
-   (#237)**. F4 (ingest bridge) follows as an independent PR. → F4 ready to dispatch now.
+1. ~~**`agent-file-model`**~~ — **fully shipped (F1 #224 + F2 #229 + F3 #237 + F4
+   #238)**; see Recently completed. The SET of independent PRs is complete: file
+   outputs render as a previewable local-file chip + inspectable diff (F1), the
+   agent lives in an app-owned workdir with relocated scratch (F2), and the two
+   symmetric bridges — materialize handle→path on reference-in (F3) and ingest
+   path→handle on save-to-outliner (F4) — both landed. Plan archived `done`.
 2. ~~**`channel-async-message-bus`**~~ — **shipped (PR #231, cc)**; see Recently
    completed. Channel send now returns on acceptance; the `isStreaming`→mode-specific
    projection split (`dmRunActive`/`channelRunsActive` + per-run `streamingText`)
@@ -256,6 +255,22 @@ data-gated — see § memory above). The remaining *active* build work is the sk
 (`agent-skills-authoring`: NL save-as-skill + diff/preview), **cross-agent consultation**
 (`ungate-contact` — see the agent-program list), and the standalone draft items below.
 
+- **agent-permission-redesign** (P1, `draft` — **PM-ratified direction 2026-06-15**;
+  security-sensitive) — replace the prompt-heavy `enum × 3 safety modes × dead LLM
+  classifier × shell allowlist` permission model with **one pure `decide(effect)` over an
+  operation's consequence**: three outcomes (`WORK→allow` silent · `COMMIT→confirm`-once-or-
+  remember · `FORBIDDEN→block` floor). Inverts shell from default-deny-whitelist to
+  floor-blocklist + commit-confirm (so `which soffice` and any unknown *static* command are
+  WORK by construction); makes delete reversible (agent-trash) to widen silent-allow; reduces
+  "scope" to one role whose grant gesture *is* the folder handoff; one credential carve-out
+  (read = confirm, read+sink = block). PM ratified: full reversal · unknown-static-shell =
+  silent allow · folder-handoff gesture in this round · credential-read = confirm.
+  **Shape (b) — a SET of independent complete PRs:** PR-1 model core (the reversal; lands as
+  shared-interface-first for the `/research` read-only partition on `agentPermissionModel.ts`,
+  A7) → PR-2 folder-handoff gesture (scope grant; lets the agent see the user's real files)
+  → PR-3 typed `file_convert` tool. **Supersedes** the `delegated-scope` draft (PR #249,
+  closed `superseded`). See `docs/plans/agent-permission-redesign.md`. Ready for a dev agent
+  to claim PR-1.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
@@ -288,6 +303,17 @@ data-gated — see § memory above). The remaining *active* build work is the sk
     "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
     contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
     the transport only when consulting agents outside the trust domain.
+- **channel-group-chat-semantics** (P1, agent-program / Channel; SET-level design staged in
+  `tmp/`, folds in with PR 2 — no committed plan yet) — make a Channel read like a group
+  chat: members are told how to communicate (lead with the result, keep intermediate
+  thinking/tool steps private), and the human-side thread renders each member's turn under
+  its identity with a per-agent action bar. Ships as a SET of two independent PRs.
+  - **SHIPPED — PR 1 agent side (PR #239, cc-2, 2026-06-14)** — Channel/DM framing moves
+    from the (now identity-only) member system prompt to a per-turn `<conversation-environment>`
+    reminder keyed off conversation identity (`isCanonicalDmConversationId`), carrying the
+    member roster + the new "only your final message is shared" norm. See Recently completed.
+  - **PR 2 — human-side render fold + per-agent action bar** (next) — the renderer half;
+    commit the SET design as a `docs/plans/` file when this lands.
 - **research = a base read-only capability of every agent** (**PM + codex re-decided
   2026-06-14; no separate agent**) — research is *not* a standalone agent; it is a
   foundational read-only investigation capability that **all agents** share (like
@@ -477,19 +503,19 @@ Standalone agent items (not part of the program):
 
 ### Files & media
 
-- **agent-file-model** (P1, plan file, **in-progress — F1 (#224) + F2 (#229) + F3 (#237)
-  shipped; F4 remains. PM-ratified 4 decisions 2026-06-13; supersedes the closed #218, ships via
-  #220**) — give agent file
+- **agent-file-model** (P1, plan file, **shipped — F1 (#224) + F2 (#229) + F3 (#237)
+  + F4 (#238); plan archived `done`**; see Recently completed. PM-ratified 4 decisions
+  2026-06-13; superseded the closed #218, shipped via #220) — give agent file
   handling one shape: the agent lives in a path-addressed working directory, the
   document in the handle-addressed asset store (`asset://`), joined by two symmetric
   bridges (materialize handle→path on reference-in, ingest path→handle on
-  save-to-outliner). Deletes #218's parallel `<userData>/artifacts` store +
-  `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixes the lossy
+  save-to-outliner). Deleted #218's parallel `<userData>/artifacts` store +
+  `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixed the lossy
   input path (a referenced outliner file reaches the agent today as a node with no
   readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
   reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation
-  (**shipped #229**) · F3 materialize bridge (**shipped #237**) · F4 ingest bridge — F4 next. See
-  `docs/plans/archive/agent-file-artifact-model.md`.
+  (**shipped #229**) · F3 materialize bridge (**shipped #237**) · F4 ingest bridge
+  (**shipped #238**). See `docs/plans/archive/agent-file-artifact-model.md`.
 - **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
   (feature); see Recently completed. Plan archived `done`
   (`docs/plans/archive/file-attachments.md`).
@@ -640,6 +666,138 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **A DM child run folds into its spawning turn's process**
+  (cc, PR #247, fast-track) — fixes two bugs on a DM "Agent task" child run (an `agent` tool-call
+  delegation): it rendered as a conversation-level child-run **boundary row** that (1) orphaned to the
+  transcript end and **persisted after re-editing** the message that started the turn (child runs carry no
+  message/branch anchor), and (2) had **broken style** (label wrapped, description overflowed). Reframe: in a
+  DM a child run is the agent's own **implicit** behavior, so it now **folds into the turn's process** rather
+  than standing as a divider — the in-process `agent` tool-call block already renders the "Agent task · …"
+  summary + expand-to-result + open-transcript via `childRunsByParentToolCallId`. Fix = two coordinated gates
+  on the **same** multi-agent flag (projection **skips** the boundary, renderer **keeps** the tool-call block
+  in a non-multi-agent conversation), making the "child run vanishes" failure provably impossible; the folded
+  run is turn-anchored so an edit prunes it cleanly. Multi-agent Channel boundary + parentless command-fire
+  rows unchanged; the surviving boundary's CSS shrink chain hardened (`min-width: 0` + ellipsis). Gate (main):
+  typecheck + `docs:check` + `test:core` 1025 + `test:renderer` 483 (DM-fold vs Channel-keeps-boundary tests)
+  + agent-composer e2e 55/55 + focused adversarial review (same-flag lockstep CONFIRMED, vanish impossible);
+  **visual verified light + dark**. Spec: `docs/spec/agent-event-log-rendering.md`.
+- **The agent surfaces a produced file inline — `[[file:…]]` marker emit**
+  (cc, PR #246, fast-track) — closes a scope gap the PM flagged: the agent-file-model only surfaced
+  **text** files (via `file_write`/`file_edit` tool-call chips); a **binary** deliverable (e.g. a `.pptx`,
+  which text-only `file_write` cannot author) had to go through `bash` and then had no message-flow
+  representation, so it just landed on disk as a raw path. Fix = a one-line system-prompt instruction;
+  the parse→render→trusted-gate pipeline already existed end to end (`[[file:…]]` shares the
+  `referenceMarkup` parser with `[[node:…]]`, `AgentMarkdown` renders the chip, clicks resolve via
+  `resolveTrustedLocalFileReference`). The agent was never told to **emit** the marker for its own output;
+  the convention is now bidirectional. Emit policy: deliverables only. Gate (main): typecheck +
+  `test:core` 1024 + `test:renderer` 483 (new `inlineFilePreviewData` href round-trip guard) + focused
+  adversarial review (syntax-matches-parser + security-gate-independence both CONFIRMED clean). Spec:
+  `docs/spec/agent-tool-design.md`.
+- **Colored identity avatars + icon-free "Worked for" header**
+  (cc, PR #245, fast-track) — visual polish realizing already-ratified design-system intent. An agent's
+  avatar carries a per-identity hue from a dedicated `--identity-tint-0..7` palette (its own decorative
+  category, distinct from functional state B3 / status B4), deterministically assigned by an identity
+  hash (`agentAvatarColor.ts`, byte-identical murmur to `tagColors.ts`) and mixed toward `--surface` for
+  a soft theme-aware tint; the hairline same-hue ring ships as the tokenized `--avatar-tint-ring` (B11 —
+  `box-shadow` stays a `var()`). The result-first process header drops its leading status glyph for a
+  single trailing chevron slot (codex-style), spinner swapped in while live so the title never shifts.
+  Gate (main): typecheck + `test:renderer` 478 + `test:e2e` typography-tokens 8/8 + agent-chat/settings
+  33/33; **visual verified light + dark**. A focused review flagged one defect — the avatar ring
+  `box-shadow` tripped the token guard — fixed by tokenizing (B11), not relaxing the guard. Spec:
+  `docs/spec/design-system.md`.
+- **Channel "Interrupted" verdict tied to the run's real status — root fix**
+  (cc, PR #244, plan-track) — the root cause behind the recurring Channel mislabel that #240 and #242
+  only patched: the "interrupted" verdict was a render heuristic (`turnEnded && !finalIsProse`) that
+  never consulted the run's real outcome, so a Channel (always `turnPhase: idle` → `turnEnded` always
+  true) painted **every** result-less turn red "Interrupted". The core projection now stamps an
+  authoritative `turnInterrupted` from the producing run's real status (failed/cancelled/crash-orphaned),
+  and the renderer decouples the RED label (genuine interruption only) from surfacing a resultless
+  process (mode-aware `surfaceResultlessProcess`): DM keeps #240's surface-the-work unchanged, a
+  cleanly-completed resultless **Channel** turn folds to neutral "Worked for …". Gate (main):
+  typecheck + `test:core` 1024 + `test:renderer` 478 + `test:e2e` 363 (the four #240 DM tests pass
+  unchanged; one pre-existing unrelated `agent-settings` failure on `main`) + two review passes;
+  **visual verified light + dark**. Spec: `docs/spec/agent-event-log-rendering.md`.
+- **Compact Channel attribution — avatar+name header over a full-width reply**
+  (cc-2, PR #243, fast-track) — a Channel assistant row stops indenting its body into an avatar
+  gutter: the row is now a column with an attribution **header** (avatar + speaker name on one line)
+  over a **full-width reply body** aligned to the avatar's left edge, reclaiming the horizontal space
+  the per-message avatar column cost. The actor-name block moves from beneath the reply into the
+  header (the old negative-`margin-bottom` hack drops; the row gap owns the spacing). A DM row has no
+  header, so its full-width content is unchanged. Renderer/CSS only — no protocol/shared surface.
+  Gate (main): `bun run test:renderer` + e2e agent-composer green; **visual verified light + dark**
+  (avatar+name on one line, reply flush to the avatar's left edge). Spec: `docs/spec/design-system.md`.
+- **Channel turns deliver atomically — suppress in-progress turns from the transcript**
+  (cc-2, PR #242, plan-track) — realizes the spec's atomic Channel delivery and fixes the false
+  **"Interrupted after thinking"** label that #240's result-first fold surfaced on actively-working
+  turns. `buildTranscriptRows` suppresses every message whose producing run is **live** in a
+  multi-agent Channel — keyed off the in-memory active-run set (`options.activeRuns`), NOT persisted
+  `status === 'running'`, so a run left `running` by a crash/quit still renders its interrupted turn
+  instead of vanishing. A spawned child run is held back the same way (its boundary row never orphans
+  to the transcript end), and a shared `isRunRunning` predicate replaces the inline status checks.
+  Gated on `isMultiAgentConversation`, so a DM streams its active turn live. Gate (main):
+  `/code-review max` (9 finder angles) caught — on the first cut — that keying off persisted
+  `running` would hide a crash-interrupted turn forever and orphan child-run rows; cc-2 re-keyed to
+  the live active-run set, mirrored the child-run suppression, added the shared helper, and de-flaked
+  the test (`.find()` → exactly-one assertion). Re-review + adversarial verify clean; typecheck +
+  `test:core` (1020/0) green. Spec: `docs/spec/agent-event-log-rendering.md`.
+- **Result-first turn fold for DM and Channel (channel-group-chat-semantics PR 2)**
+  (cc-2, PR #240, plan-track) — the human-side render fold that pairs with #239's
+  agent-side environment reminder. Every agent turn now renders **result-first**: the
+  final answer is the message; thinking, tool calls, and interim narration fold behind a
+  collapsed `Worked for {duration}` disclosure. Unifies DM and Channel onto one fold
+  mechanism (deletes the Channel text-only path and the single-tool inline block) and makes
+  `isLastInTurn` actor-aware, so each Channel agent's final message gets its own
+  copy/regenerate action bar. `Worked for {duration}` is the producing run's
+  `updatedAt − startedAt` (new `runDurationMs` on the message entity), with the descriptive
+  "Thought · used N tools" summary as the fallback when the run wall-clock is unknown. Pure
+  row-building logic extracted into `agentConversationRows.ts` for unit testing. Gate (main):
+  `/code-review xhigh` (9 finder angles) → cc-2 fixed the result-first content-hiding edge (a
+  resultless tool-ending turn now auto-expands so its interim text stays visible, keyed on
+  trailing prose not any text), the multi-run "Worked for" sum (reactive-compaction retry),
+  the running-run 0-vs-null duration (undefined → descriptive fallback, never a fake "<1s"),
+  and the third duplicate duration formatter (now one shared `formatRunDuration`); product-call
+  items (e.g. wall-clock includes approval-wait) deferred with rationale. typecheck + docs:check
+  + test:core (1018/0) + test:renderer (477/0) + e2e (agent-process + agent-composer, 65) green;
+  visual verified light + dark (collapsed + expanded). Spec:
+  `docs/spec/agent-event-log-rendering.md`, `docs/spec/agent-architecture.md`.
+- **Channel/DM framing → per-turn environment reminder (channel-group-chat-semantics PR 1)**
+  (cc-2, PR #239, plan-track) — the agent-side foundation (A7) of Channel group-chat
+  semantics. A member's stable system prompt is now **identity only** (one
+  `buildAgentMemberSystemPrompt` replacing the split channel/DM builders), so the same
+  agent's prompt is identical and cacheable across its DM and any Channel. DM-vs-Channel
+  framing + member roster + Channel norms move to a new per-turn `<conversation-environment>`
+  reminder (`buildConversationEnvironmentReminder`, assembled in `deriveRuntimePiMessages`
+  next to the memory reminder, POV-correct for the executing member), which adds the missing
+  norm — *only your final message is shared; thinking/tool steps stay private* — so members
+  lead with the result instead of narrating into the thread. Gate (main): `/code-review`
+  caught a DM/Channel authority regression (decided by `isMultiAgentConversation` headcount,
+  not conversation identity, so a coordinator-only Channel got the DM block) — cc-2 re-keyed
+  it to `isChannel: !isCanonicalDmConversationId(conversationId)`, restored the DM
+  self-identity/stay-in-scope rules, and shared one `agentMemberMentionLabel` (escapeXml
+  moved to `src/core/reminderXml.ts`); a coordinator-only-Channel runtime regression test now
+  pins the real wiring. typecheck + `test:core` (1016/0) + `docs:check` green. Spec:
+  `docs/spec/agent-pi-mono-implementation.md`. PR 2 (human-side render fold + per-agent action
+  bar) follows.
+- **agent-file-model F4 — ingest bridge (save a conversation file into the outliner)**
+  (cc, PR #238, plan-track) — the last item of `agent-file-model`; the `working →
+  committed` inverse of F3's materialize bridge. An "Insert into outliner" icon button
+  on a `file_write`/`file_edit` chip promotes the agent's working file into a
+  first-class image/attachment node — identical to a user-added one. The chip fires
+  `requestInsertFileIntoOutliner(path)` on a decoupled module channel
+  (`agentFileInsert.ts`, mirroring `agentReveal`); App's registered bridge runs the new
+  `ingest_local_file` asset command (path → `AssetMetadata`, gated by
+  `resolveTrustedLocalFileReference` over the agent workdir/scratch roots — the same
+  gate that backs previewing these chips, so it does **not** reopen the
+  arbitrary-local-file read that `ingest_asset`'s buffer-only rule guards), then the
+  shared `createAssetNode` helper (mime-sniffed image vs attachment, reused by
+  paste/drop). Placement uses `insertionTargetFor`: a sibling right after the focused
+  row (never buried under a media/code leaf), else appended into the current outline
+  root; focus is not stolen from the agent panel. Gate (main): xhigh `/code-review`
+  surfaced 11 findings across two rounds — cc fixed the 5 real ones (commands.md spec
+  drift, leaf-node insertion target, clipboard-image routing revert, removed the buggy
+  failure-rollback, negative-test robustness); re-review confirmed each resolved.
+  typecheck + `test:renderer` (466) + `test:core` (1009) + `docs:check` green. Design
+  folded into `docs/spec/agent-tool-design.md` + `commands.md`; plan archived.
 - **UI quality L2 — button-primitive + input-primitive + feedback-states**
   (codex, PR #234, plan-track) — the three Layer-2 lanes of the UI-quality suite shipped together as
   shared renderer primitives. `<Button variant>` (primary/secondary/ghost/danger + sm/md, solid danger

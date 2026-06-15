@@ -49,6 +49,15 @@ export interface AgentMessageEntry {
   actor: AgentActor | null;
   /** Run that produced this message, when known. */
   runId: string | null;
+  /** Wall-clock the producing run took, for the collapsed "Worked for …" header; null when unknown. */
+  runDurationMs: number | null;
+  /**
+   * Authoritative interrupted verdict from the producing run's real status (core
+   * stamps it). Drives the "Interrupted" process header; a cleanly `completed`
+   * turn is never interrupted even without trailing prose. Never inferred from
+   * block structure — see the projection's `turnInterrupted`.
+   */
+  turnInterrupted: boolean;
   /** The message that addressed this reply, when the projection can derive it. */
   addressedByMessageId: string | null;
 }
@@ -224,6 +233,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming,
       actor: entity.actor,
       runId: entity.runId ?? null,
+      runDurationMs: entity.runDurationMs ?? null,
+      turnInterrupted: entity.turnInterrupted ?? false,
       addressedByMessageId: entity.addressedByMessageId ?? null,
     });
   }
@@ -284,6 +295,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming: true,
       actor: null,
       runId: null,
+      runDurationMs: null,
+      turnInterrupted: false,
       addressedByMessageId: null,
     });
   }

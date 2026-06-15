@@ -87,7 +87,19 @@
 }
 
 .agent-message-row.assistant {
-  justify-content: flex-start;
+  /* Stack a Channel attribution header (avatar + name) over a full-width body so
+     the reply aligns to the avatar's left edge instead of indenting into an avatar
+     gutter. A DM assistant row has no header — just the full-width content. */
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.agent-message-actor-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .agent-message-stopped {
@@ -214,7 +226,12 @@
   display: grid;
   width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  /* The middle (control) column is content-sized but MUST be allowed to shrink
+     below its content — `minmax(0, auto)`, not `auto` — so a long run description
+     ellipsizes within the panel instead of overflowing the right edge / forcing the
+     label to wrap. The min-width:0 chain on the controls + toggle below carries that
+     shrink down to the description. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-4);
   color: var(--text-faint);
@@ -228,12 +245,14 @@
 
 .agent-child-run-controls {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: var(--space-2);
 }
 
 .agent-child-run-toggle {
   display: inline-flex;
+  min-width: 0;
   max-width: 100%;
   height: 28px;
   align-items: center;
@@ -243,6 +262,13 @@
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: 0 var(--space-3);
+}
+
+/* The "Agent task" label is a fixed leading element — never let it shrink or wrap
+   onto a second line; the description (below) is the single ellipsizing element. */
+.agent-child-run-toggle > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .agent-child-run-toggle:hover,
@@ -270,7 +296,13 @@
   transform: rotate(180deg);
 }
 
+/* Icons (chevron, command glyph, spinner) are fixed leading elements. */
+.agent-child-run-toggle > svg {
+  flex: 0 0 auto;
+}
+
 .agent-child-run-toggle .agent-child-run-desc {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -279,6 +311,7 @@
 }
 
 .agent-child-run-toggle small {
+  flex: 0 0 auto;
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
 }

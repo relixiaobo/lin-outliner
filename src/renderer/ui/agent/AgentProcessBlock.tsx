@@ -2,25 +2,20 @@ import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentT
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import {
+  ChevronDownIcon,
   ICON_SIZE,
   LoaderIcon,
-  ThinkingIcon,
-  UsedToolsIcon,
-  WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
-import { firstLine, previewText } from './agentProcessTypes';
+import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 
 export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
-
-const PROCESS_STATUS_ICON_SIZE = 13;
 
 // The latest thinking block that has streamed any text — drives the live status
 // line during the thinking phase (before/between tool calls).
@@ -47,7 +42,18 @@ interface AgentProcessBlockProps {
   conversationId?: string | null;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
+  /** Run actually failed/cancelled/crashed with no result → RED "Interrupted" label + error styling. */
   turnFailedWithoutProse: boolean;
+  /**
+   * Show this resultless turn's process expanded (and skip the "Worked for …"
+   * resting header) so its interim work isn't buried. True for a genuine
+   * interruption in either mode, and — per the #240 result-first design — for a
+   * sealed resultless DM turn. A cleanly-completed resultless Channel turn is
+   * false here: it folds to "Worked for …" (atomic delivery, no inline process).
+   */
+  surfaceResultlessProcess: boolean;
+  /** Wall-clock the run took; surfaced as "Worked for …" once sealed. Null when unknown. */
+  workedForMs: number | null;
 }
 
 export function summarizeProcess({
@@ -60,6 +66,8 @@ export function summarizeProcess({
   turnActive,
   liveCollapsed,
   turnFailedWithoutProse,
+  surfaceResultlessProcess,
+  workedForMs,
   process,
   toolCallLabels,
   thinkingLabel,
@@ -73,6 +81,8 @@ export function summarizeProcess({
   liveCollapsed: boolean;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
+  surfaceResultlessProcess: boolean;
+  workedForMs: number | null;
   process: Messages['agent']['process'];
   toolCallLabels: Messages['agent']['toolCall'];
   thinkingLabel: string;
@@ -98,6 +108,19 @@ export function summarizeProcess({
     if (thinkingCount > 0 && toolCount > 0) return process.interruptedAfterThinking;
     if (thinkingCount > 0) return process.thoughtInterrupted;
     return process.interrupted;
+  }
+
+  // Result-first resting state: a SEALED turn (not active) collapses to
+  // "Worked for {duration}" (codex-style). While the turn is still active the
+  // duration is partial, so the live/descriptive header stands — this is the
+  // single gate for that (the caller passes the raw run wall-clock). A resultless
+  // turn we're deliberately surfacing (a sealed DM turn, per #240) is excluded:
+  // "Worked for …" would read as a clean unit of work and hide that there is no
+  // answer, so it falls through to the descriptive summary instead. The
+  // descriptive summaries below are also the fallback when the run's wall-clock is
+  // unknown (e.g. legacy records with no run timing).
+  if (!turnActive && workedForMs !== null && !surfaceResultlessProcess) {
+    return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
 
   if (thinkingCount === 0 && toolCount === 1) {
@@ -139,6 +162,8 @@ export function AgentProcessBlock({
   childRunsByParentToolCallId,
   turnActive,
   turnFailedWithoutProse,
+  surfaceResultlessProcess,
+  workedForMs,
 }: AgentProcessBlockProps) {
   const t = useT();
   const thinkingBlocks = blocks.filter(
@@ -150,23 +175,19 @@ export function AgentProcessBlock({
   const firstThinkingText = firstLine(thinkingBlocks[0]?.text ?? '');
   const lastThinkingText = lastNonEmptyThinking(thinkingBlocks);
   const liveSegment = turnActive && !sealed;
-  // Default collapsed in every steady state. Only a turn that failed without any
-  // prose auto-expands, so the error context is visible. A live, in-progress block
-  // stays collapsed by default — its header shows the live status — and once a
-  // user opens it, the sticky override keeps it open: it never auto-collapses when
-  // the turn seals.
-  const defaultExpanded = turnFailedWithoutProse;
+  // Codex-style live disclosure: a DM turn auto-expands **while it is working**
+  // (`liveSegment` — thinking/tools streaming) so the process is visible, then
+  // auto-collapses to "Worked for …" the moment it seals (final text begins) or
+  // the turn ends. A resultless turn we're surfacing (`surfaceResultlessProcess` —
+  // a genuine interruption in either mode, or a sealed resultless DM turn per #240)
+  // also auto-expands so its interim work / error context stays visible. Everything
+  // else defaults collapsed — including a cleanly-completed resultless Channel turn,
+  // which folds to "Worked for …" (atomic delivery, process in the activity detail
+  // view, not inline). The sticky override wins over the default: once a user
+  // toggles the block it keeps their choice and never auto-collapses on seal.
+  const defaultExpanded = surfaceResultlessProcess || liveSegment;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
-  // The spinner appears in exactly one place: the collapsed live header, or — once
-  // expanded — the running tool row inside the timeline. Never both at once.
-  const processIcon = liveCollapsed
-    ? <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
-    : turnFailedWithoutProse
-      ? <WarningIcon size={PROCESS_STATUS_ICON_SIZE} />
-      : toolCalls.length > 0
-        ? <UsedToolsIcon size={PROCESS_STATUS_ICON_SIZE} />
-        : <ThinkingIcon size={PROCESS_STATUS_ICON_SIZE} />;
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
@@ -175,12 +196,14 @@ export function AgentProcessBlock({
         className="agent-process-toggle"
         onClick={() => expandState.toggle(id, expanded)}
       >
-        <AgentDisclosureIndicator
-          className="agent-process-indicator"
-          expanded={expanded}
-          icon={processIcon}
-          statusPersistent={liveCollapsed}
-        />
+        {/* The "Worked for …" header is icon-free (codex-style): the summary text
+            carries the state (it already reads "Worked for 13s" / "Thought · used N
+            tools" / an interrupted label) at the row's left edge, no leading glyph.
+            A single TRAILING slot holds the disclosure chevron, swapped for the live
+            spinner while the turn is actively working and collapsed — one slot, so
+            the title never shifts across the loading→sealed transition (the
+            "labels don't move" rule). Once expanded the spinner moves to the
+            running tool row in the timeline. */}
         <span className="agent-process-title">
           {summarizeProcess({
             firstThinkingText,
@@ -192,11 +215,22 @@ export function AgentProcessBlock({
             turnActive,
             liveCollapsed,
             turnFailedWithoutProse,
+            surfaceResultlessProcess,
+            workedForMs,
             process: t.agent.process,
             toolCallLabels: t.agent.toolCall,
             thinkingLabel: t.agent.thinking.thinking,
           })}
         </span>
+        {liveCollapsed ? (
+          <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+        ) : (
+          <ChevronDownIcon
+            aria-hidden
+            className={`agent-process-chevron${expanded ? ' is-expanded' : ''}`}
+            size={14}
+          />
+        )}
       </ButtonControl>
       {expanded ? (
         <AgentProcessTimeline

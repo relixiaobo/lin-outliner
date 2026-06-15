@@ -1,15 +1,7 @@
-// Shared XML escaping for the hidden reminder/briefing blocks the runtime injects. These
-// blocks are pseudo-XML the model reads (not a strict parser target), so we escape the
-// structural characters that could break a tag boundary while leaving prose readable.
-// Apostrophes are intentionally left untouched — they are common in prose and need no
-// escaping inside double-quoted attributes or element text.
-export function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// `escapeXml` now lives in core (`src/core/reminderXml.ts`) so the POV flatten can
+// share it; re-exported here so the main-process reminder builders keep their import.
+export { escapeXml } from '../core/reminderXml';
+import { escapeXml } from '../core/reminderXml';
 
 // Serialize a leading ` key="value" ...` attribute string for the reminder blocks.
 // Null / undefined / empty values are dropped; the rest are escaped verbatim — values

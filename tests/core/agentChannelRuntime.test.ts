@@ -19,11 +19,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { replayAgentEvents } from '../../src/core/agentEventLog';
 import type { AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
+import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { ASK_USER_QUESTION_TOOL_NAME } from '../../src/main/agentAskUserQuestionTool';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
-import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderActiveRun } from '../../src/core/agentRenderProjection';
 
 const MAIN_AGENT_ID = 'built-in:tenon:assistant';
 
@@ -353,6 +355,13 @@ describe('agent channel runtime', () => {
     // M3-B: agent co-member pools are visible by membership; non-member pools are not.
     expect(calls[0]!.serialized).toContain('Assistant tracks architecture seams for handoffs.');
     expect(calls[0]!.serialized).not.toContain('Outsider memory must not enter member briefings.');
+    // Channel framing + communication norms ride the per-turn environment
+    // reminder, never the identity-only system prompt (kept cacheable across DM
+    // and Channel).
+    expect(calls[0]!.systemPrompt).not.toContain('# Channel rules');
+    expect(calls[0]!.systemPrompt).not.toContain('shared multi-agent conversation');
+    expect(calls[0]!.serialized).toContain('conversation-environment');
+    expect(calls[0]!.serialized).toContain('Only your final message is shared with the other members');
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
     expect(state.conversation?.members).toEqual([
@@ -398,6 +407,35 @@ describe('agent channel runtime', () => {
     expect(refreshed.povInspectors[reviewerAgentId]?.memoryBriefing).toContain('Assistant tracks refreshed architecture seams.');
     expect(await memoryAccessEventCount(store, agentPrincipal(reviewerAgentId))).toBe(reviewerAccessCount);
     expect(await memoryAccessEventCount(store, agentPrincipal(MAIN_AGENT_ID))).toBe(mainAccessCount);
+  });
+
+  test('a coordinator-only Channel still serializes the Channel environment block, not the DM block', async () => {
+    // Regression the gate flagged: DM-vs-Channel is conversation identity (the
+    // `lin-agent-channel-` id prefix), NOT live agent headcount. A Channel
+    // created with no extra agents has only its coordinator as an agent member —
+    // `isMultiAgentConversation` is false — yet must still be framed as a Channel.
+    // The old headcount-keyed code wrongly served such a room the DM block.
+    const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('On it.'))]);
+    const { runtime, calls, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ title: 'Solo room' });
+    await runtime.sendMessage(channel.conversationId, 'kick things off');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    // The no-@ turn ran the coordinator (the only agent member), once.
+    expect(calls).toHaveLength(1);
+    // It carried the Channel environment block — keyed off identity, so a
+    // coordinator-only room is still a Channel — never the DM 1:1 framing.
+    expect(calls[0]!.serialized).toContain('conversation-environment');
+    expect(calls[0]!.serialized).toContain('Only your final message is shared with the other members');
+    expect(calls[0]!.serialized).not.toContain('direct 1:1 conversation');
+
+    // It really is coordinator-only: the user plus the coordinator, no other agent.
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: MAIN_AGENT_ID },
+    ]);
   });
 
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {
@@ -532,6 +570,62 @@ describe('agent channel runtime', () => {
       expect.stringContaining('REVIEWER_FAST'),
       expect.stringContaining('MAIN_SLOW'),
     ]);
+  });
+
+  test('an in-progress Channel turn is suppressed only while its run is LIVE, never when orphaned', async () => {
+    // Atomic delivery (spec): a running Channel turn is "never a transcript row".
+    // Suppression is keyed off the LIVE active-run set, NOT persisted status — so a
+    // turn hides while genuinely in flight, but a run orphaned `running` by a crash
+    // still renders (its interrupted turn must not silently vanish).
+    const reply = (context: Context) => fauxAssistantMessage(fauxText(
+      (context.systemPrompt ?? '').includes('REVIEWER_AGENT_BODY') ? 'REVIEWER_ANSWER.' : 'MAIN_ANSWER.',
+    ));
+    const fixture = await setupChannelFixture([reply, reply]);
+    const { runtime, reviewerAgentId, dataRoot } = fixture;
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Atomic delivery' });
+    await runtime.sendMessage(channel.conversationId, '@assistant @reviewer answer independently');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+
+    const events = await new AgentEventStore(dataRoot).readEvents(channel.conversationId);
+    const sealed = replayAgentEvents(events);
+    const transcriptText = (
+      state: ReturnType<typeof replayAgentEvents>,
+      activeRuns: AgentRenderActiveRun[] = [],
+    ) => {
+      const projection = buildAgentRenderProjection(state, { revision: 1, activeRuns });
+      return projection.transcriptRows
+        .filter((row) => row.kind === 'message')
+        .map((row) => JSON.stringify(projection.entities.messages[row.messageId]?.content ?? ''))
+        .join('\n');
+    };
+
+    // Exactly one reviewer run (don't take an arbitrary one).
+    const reviewerRuns = Object.values(sealed.runs).filter((run) => run.agentId === reviewerAgentId);
+    expect(reviewerRuns).toHaveLength(1);
+    const reviewerRun = reviewerRuns[0]!;
+
+    // No live runs → both turns are transcript rows.
+    expect(transcriptText(sealed)).toContain('MAIN_ANSWER');
+    expect(transcriptText(sealed)).toContain('REVIEWER_ANSWER');
+
+    // Reviewer run marked LIVE → its whole turn drops out; the coordinator stays.
+    const liveText = transcriptText(sealed, [{
+      runId: reviewerRun.id,
+      agentId: reviewerAgentId,
+      addressedByMessageId: reviewerRun.addressedByMessageId ?? null,
+      startedAt: reviewerRun.startedAt,
+    }]);
+    expect(liveText).toContain('MAIN_ANSWER');
+    expect(liveText).not.toContain('REVIEWER_ANSWER');
+
+    // Regression guard (crash/quit): a run orphaned `running` — status running but
+    // NOT in the live set — must STILL render rather than vanish.
+    const orphaned = replayAgentEvents(
+      events.filter((event) => !(event.type === 'run.completed' && event.runId === reviewerRun.id)),
+    );
+    expect(orphaned.runs[reviewerRun.id]?.status).toBe('running');
+    expect(transcriptText(orphaned)).toContain('REVIEWER_ANSWER');
   });
 
   test('one addressee failing leaves its trace and never skips siblings', async () => {
@@ -1132,11 +1226,16 @@ describe('agent channel runtime', () => {
     await runtime.sendMessage(dm.conversationId, 'hello @reviewer');
 
     expect(calls).toHaveLength(1);
+    // Identity stays in the system prompt; DM framing moves to the per-turn
+    // environment reminder, so the prompt is identical (and cacheable) in a DM
+    // and a Channel.
     expect(calls[0]!.systemPrompt).toContain('REVIEWER_AGENT_BODY');
-    expect(calls[0]!.systemPrompt).toContain('# Direct message rules');
-    expect(calls[0]!.systemPrompt).toContain('direct 1:1 conversation');
+    expect(calls[0]!.systemPrompt).not.toContain('# Direct message rules');
+    expect(calls[0]!.systemPrompt).not.toContain('direct 1:1 conversation');
     expect(calls[0]!.systemPrompt).not.toContain('# Channel rules');
     expect(calls[0]!.systemPrompt).not.toContain('shared multi-agent conversation');
+    expect(calls[0]!.serialized).toContain('conversation-environment');
+    expect(calls[0]!.serialized).toContain('direct 1:1 conversation with the user');
     expect(calls[0]!.serialized).not.toContain('the human user) said:');
 
     const state = await new AgentEventStore(dataRoot).replay(dm.conversationId);

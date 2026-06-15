@@ -84,6 +84,18 @@ export interface AgentRenderMessageEntity {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
+  runDurationMs?: number;
+  /**
+   * Authoritative "this turn was interrupted" verdict, derived from the
+   * producing run's REAL terminal status — never from whether the visible
+   * blocks end on answer prose. A cleanly `completed` run is never interrupted
+   * even when it produced no trailing text (it folds to "Worked for …"); only a
+   * `failed` / `cancelled` run, or a run left `running` by a crash (orphaned —
+   * absent from the live active set), is. The renderer must consume this rather
+   * than re-deriving interruption from block structure.
+   */
+  turnInterrupted?: boolean;
 }
 
 /** A conversation member as the renderer needs it: principal + mention + label. */
@@ -337,9 +349,34 @@ export function buildAgentRenderProjection(
 
   const activePath = getAgentEventActivePath(state);
   const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
-  const rows = buildActiveRows(state, activePath, entities);
-  const transcriptRows = buildTranscriptRows(state, entities);
   const multiAgent = isMultiAgentConversation(state.conversation.members);
+  // The runs that are LIVE right now (in-memory active runs the runtime passes in),
+  // NOT every run whose persisted status is `running`. A run left `running` by a
+  // crash/quit is absent here, so its interrupted turn is never mistaken for an
+  // in-flight one — see the Channel suppression in buildTranscriptRows.
+  const activeRunIds = new Set((options.activeRuns ?? []).map((run) => run.runId));
+  const rows = buildActiveRows(state, activePath, entities);
+  const transcriptRows = buildTranscriptRows(state, entities, multiAgent, activeRunIds);
+
+  // Stamp the authoritative interrupted verdict on every assistant message from
+  // the producing run's real status. This is the single fix for the recurring
+  // Channel mislabel: the renderer used to infer "interrupted" from "the turn
+  // ended without trailing prose", which — because a Channel turn is always
+  // `turnPhase: idle` (so the row's `turnEnded` is always true) — fired on EVERY
+  // result-less turn regardless of whether it actually failed. A `completed`
+  // run that simply ended on a tool/thought is NOT interrupted; only a `failed`
+  // / `cancelled` run, or a crash-orphaned `running` run (not in the live set),
+  // is. A live in-flight run is still working, never interrupted.
+  for (const message of Object.values(entities.messages)) {
+    if (message.role !== 'assistant' || !message.runId) continue;
+    const run = state.runs[message.runId];
+    const interrupted = run
+      ? run.status === 'failed'
+        || run.status === 'cancelled'
+        || (run.status === 'running' && !activeRunIds.has(message.runId))
+      : message.status === 'failed';
+    if (interrupted) message.turnInterrupted = true;
+  }
 
   // The streaming tail drives only the DM composer/transcript; a multi-agent
   // Channel nulls dmStreaming, so skip the active-path scan there entirely.
@@ -424,6 +461,13 @@ function applyMessageAddressing(
   }
 }
 
+// One predicate for "this run has not reached a terminal event", mirrored by the
+// sealed-duration gate (`!isRunRunning`). Centralized so the run-lifecycle meaning
+// changes in one place.
+function isRunRunning(run: { status: AgentRunStatus } | undefined): boolean {
+  return run?.status === 'running';
+}
+
 function buildDerivedActivityEntries(
   state: AgentEventReplayState,
   options: BuildAgentRenderProjectionOptions,
@@ -433,7 +477,7 @@ function buildDerivedActivityEntries(
   if (!activeRunId || !options.activeRunAddressedByMessageId) return [];
   const activeRun = state.runs[activeRunId];
   const activeAgentId = activeRun?.agentId;
-  if (!activeAgentId || activeRun.status !== 'running') return [];
+  if (!activeAgentId || !isRunRunning(activeRun)) return [];
 
   const addressedByMessageId = options.activeRunAddressedByMessageId;
   const addressingMessage = state.messages[addressedByMessageId];
@@ -449,14 +493,14 @@ function buildDerivedActivityEntries(
       if (message.role !== 'assistant' || !message.runId) continue;
       const run = state.runs[message.runId];
       if (!run?.agentId || !pendingAgentIds.has(run.agentId)) continue;
-      if (run.status === 'running') continue;
+      if (isRunRunning(run)) continue;
       if (message.createdAt < addressingMessage.createdAt) continue;
       pendingAgentIds.delete(run.agentId);
     }
     for (const run of Object.values(state.runs)) {
       if (!run.agentId || !pendingAgentIds.has(run.agentId)) continue;
       if (run.addressedByMessageId !== addressedByMessageId) continue;
-      if (run.status === 'running') continue;
+      if (isRunRunning(run)) continue;
       pendingAgentIds.delete(run.agentId);
     }
   }
@@ -560,9 +604,27 @@ function buildActiveRows(
 function buildTranscriptRows(
   state: AgentEventReplayState,
   entities: AgentRenderEntities,
+  multiAgent: boolean,
+  activeRunIds: ReadonlySet<string>,
 ): AgentRenderRow[] {
   const rows: AgentRenderRow[] = [];
   for (const entry of getAgentEventVisibleTranscript(state)) {
+    // Atomic Channel delivery (spec: a running Channel turn is "never a transcript
+    // row"): in a multi-agent Channel, a turn whose producing run is LIVE right now
+    // is suppressed from the transcript — its progress shows only in
+    // channelActivityEntries. The whole turn appears once its run seals (leaves the
+    // live set), rendered result-first. Keyed off the live active-run set, NOT
+    // persisted `status === running`: a run orphaned `running` by a crash is not
+    // live, so its interrupted turn still renders instead of vanishing. A DM streams
+    // its active turn live, so this is gated on `multiAgent`.
+    // NOTE: this lives in the shared consumer (DM + Channel) rather than the
+    // visibility producer (getAgentEventVisibleTranscriptPath); the live active-run
+    // set is a render-time input not available there. Unifying this with the DM
+    // `dmStreaming` tail-suppression into one "in-flight turn" model is a deferred
+    // pass, not a drive-by — see PR #242 review finding 3.
+    if (multiAgent && entry.message.runId && activeRunIds.has(entry.message.runId)) {
+      continue;
+    }
     const compaction = compactionForMessage(state, entry.message);
     if (compaction) {
       appendCompactionRow(rows, entities, state, entry.message, compaction, entry.archived);
@@ -575,7 +637,7 @@ function buildTranscriptRows(
     }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
-  return insertChildRunRows(rows, entities, state);
+  return insertChildRunRows(rows, entities, state, multiAgent, activeRunIds);
 }
 
 function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCallId: string): boolean {
@@ -619,12 +681,30 @@ function insertChildRunRows(
   rows: AgentRenderRow[],
   entities: AgentRenderEntities,
   state: AgentEventReplayState,
+  multiAgent: boolean,
+  activeRunIds: ReadonlySet<string>,
 ): AgentRenderRow[] {
   const runs = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
   if (runs.length === 0) return rows;
   const result = [...rows];
   for (const run of runs) {
+    // A DM (non-multi-agent) child run spawned by a tool call folds into its
+    // spawning turn's process: the tool-call row renders the child-run summary +
+    // result inline (AgentMessageRow keeps the block; AgentProcessTimeline attaches
+    // the child run), so it gets NO conversation-level boundary row. The boundary
+    // would both DOUBLE it and orphan it on an edit — the boundary is
+    // conversation-anchored, while the turn's tool call is branch-pruned with its
+    // message. The boundary stays for a multi-agent Channel turn (a visible
+    // participant turn, below) and for a parentless command fire (no tool call to
+    // fold into). The renderer's tool-call drop in AgentMessageRow gates on the same
+    // multi-agent flag, in lockstep.
+    if (!multiAgent && run.parentToolCallId) continue;
+    // Mirror the parent turn's suppression: a child run spawned by a Channel turn
+    // whose run is still LIVE is held back too, so its boundary row never orphans
+    // to the transcript end (its anchor message is suppressed) while the parent is
+    // hidden. It reappears, anchored, once the parent turn lands.
+    if (multiAgent && run.parentRunId && activeRunIds.has(run.parentRunId)) continue;
     const row: AgentRenderRow = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
     const insertAt = childRunInsertIndex(result, entities, run);
     if (insertAt < 0) result.push(row);
@@ -729,6 +809,7 @@ function toRenderMessageEntity(
   state: AgentEventReplayState,
   message: AgentEventMessageRecord,
 ): AgentRenderMessageEntity {
+  const run = message.runId ? state.runs[message.runId] : undefined;
   return {
     id: message.id,
     role: message.role,
@@ -751,6 +832,13 @@ function toRenderMessageEntity(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
     isError: message.isError,
+    // Only a SEALED run has a meaningful wall-clock: `run.updatedAt` is bumped
+    // at start and at the terminal event, never in between, so a still-`running`
+    // run (live, or a top-level run left `running` after a crash/quit) has
+    // `updatedAt === startedAt` → a misleading "<1s". Leave it undefined there so
+    // the header falls back to its descriptive summary instead of faking 0ms.
+    runDurationMs:
+      run && !isRunRunning(run) ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
   };
 }
 

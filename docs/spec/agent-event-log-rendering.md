@@ -833,7 +833,23 @@ Rules:
   `kind` is never stored.
 - A running Channel agent's live `message_update` text rides on
   `channelActivityEntries[].streamingText` (the per-run detail view), never as a
-  transcript row — the Channel message stream is whole-utterance only.
+  transcript row — the Channel message stream is whole-utterance only (**delivery**
+  is atomic: the whole turn appears on completion). This is enforced in the
+  projection: `buildTranscriptRows` **suppresses any message whose producing run is
+  in the live active-run set** in a multi-agent Channel, so an in-flight turn (its
+  thinking, interim narration, AND tool-call/segment events — not just streamed
+  text) is kept out of the transcript until the run leaves that set, at which point
+  its whole turn appears at once. The suppression is keyed off the **live**
+  in-memory active runs the runtime passes in (`options.activeRuns`), NOT the
+  persisted `status === 'running'`: a run orphaned `running` by a crash/quit is
+  absent from the live set, so its interrupted turn still renders rather than
+  silently vanishing. A child run anchored to a live parent turn is held back the
+  same way, so its boundary row never orphans to the transcript end while the
+  parent is hidden. (A DM streams its active turn live, so the suppression is gated
+  on `isMultiAgentConversation`.) On completion the turn renders through the same
+  **result-first fold** as a DM (final answer as prose, process collapsed behind
+  "Worked for …"); only the live-drill-in vs. inline-stream split differs between
+  the two modes.
 - Render flushes are coalesced to at most one per animation frame.
 - `compaction.completed` events become dedicated compaction rows keyed by the
   compact root message, with summary and trigger metadata in
@@ -844,28 +860,92 @@ Rules:
   hidden anchor message, with status, processed counts, and memory-change counts
   in `entities.dreams`. Active manual `/dream` runs append a transient
   `activeDream` row until the marker is written.
-- `child_run.*` events become dedicated **child-run boundary rows** in
-  `transcriptRows` (kind `'child-run'`, keyed by run id, backed by
-  `entities.childRuns`). They are the conversation's permanent record of a run —
-  every child run's final result lands inline in its own DM/channel as an
-  expandable summary with a "View full run" link into the full transcript. A
-  parented run (a main-agent spawn, `parentToolCallId` set) anchors right after
-  its tool-result row, else after the assistant message that issued the call, and
-  **suppresses that tool-call block** so the run reads as one boundary, not a tool
-  interaction (an assistant turn left with no other blocks is dropped). A
-  parentless run (a scheduled command fire) is ordered by start time among the
-  messages. A running row shows a live status line and is not yet expandable; once
-  it seals it expands to the result (or error) and the full-run link. These rows
-  live only in `transcriptRows`, never in the active `rows` path.
+- `child_run.*` events back `entities.childRuns` — the conversation's permanent
+  record of a run, whose final result is an expandable summary with a "View full
+  run" link into the full transcript. **Where** that record renders depends on who
+  spawned the run:
+  - **DM fold (non-multi-agent conversation, `parentToolCallId` set).** In a DM a
+    child run is the agent's own implicit behavior — it quietly delegated a slice
+    of the current turn — so it gets **no conversation-level boundary row**.
+    Instead it folds into the spawning turn's process: the `agent` tool-call block
+    is **kept** (not suppressed) and renders the child-run summary inline
+    (`childRunsByParentToolCallId` → "Agent task · {description}", expandable to the
+    result with the same "View full run" link). Because it lives inside the turn's
+    own message, it is turn-anchored and branch-pruned with that message — editing
+    the user message that started the turn removes it, with no orphan left at the
+    transcript end.
+  - **Boundary row (multi-agent Channel, or a parentless run).** A run in a
+    multi-agent channel, or a parentless run (a scheduled command fire), becomes a
+    dedicated **child-run boundary row** in `transcriptRows` (kind `'child-run'`,
+    keyed by run id). A parented channel run anchors right after its tool-result
+    row, else after the assistant message that issued the call, and **suppresses
+    that tool-call block** so the run reads as one boundary, not a tool interaction
+    (an assistant turn left with no other blocks is dropped); a parentless run is
+    ordered by start time among the messages.
+  - The projection skip (no boundary row) and the renderer keep (tool-call block
+    stays) are gated on the **same** multi-agent flag, so a single-agent channel
+    never loses its child run to a dropped-but-not-folded gap. A running row shows a
+    live status line and is not yet expandable; once it seals it expands to the
+    result (or error) and the full-run link. Boundary rows live only in
+    `transcriptRows`, never in the active `rows` path.
 - Long output rows are collapsed by default.
-- The thinking/tool **process block is collapsed by default** in every steady
-  state. While its turn is live, the collapsed header acts as a status line: it
-  shows the currently running tool (with status), else the latest streaming
-  thought, and carries the single activity spinner. Expanding the block moves the
-  spinner to the running tool row inside the timeline and reverts the header to
-  the static group summary (e.g. "Thought · used N tools"). A user-expanded block
-  never auto-collapses when the turn seals; only a turn that failed without any
-  prose auto-expands so the error context stays visible.
+- **Result-first turn fold (DM and Channel alike).** Every assistant turn renders
+  result-first: the **final answer is the trailing text** after the turn's last
+  thinking/tool block and shows as prose; **everything before it — thinking, tool
+  calls, AND interim narration text** ("let me check X first") — folds into ONE
+  collapsed process block. A turn with no thinking/tools is a direct answer and
+  renders without a fold. This is one mechanism, not two: there is no
+  channel-specific text-only path (a Channel turn renders the same fold once its
+  utterance lands) and no single-tool inline special case.
+- **Codex-style live disclosure.** A DM turn's process block **auto-expands while
+  it is working** (thinking/tools streaming live, `liveSegment`) so the process is
+  visible, then **auto-collapses the moment it seals** — when the final answer
+  begins streaming or the turn ends. A Channel turn is delivered atomically (its
+  rows are `idle`, never `liveSegment`), so it lands already collapsed.
+  - A **resultless** turn (last visible block is a thought/tool — no trailing
+    answer prose) drives two SEPARATE decisions, decoupled so a Channel never
+    mislabels:
+    - **The red "Interrupted" label + error styling** fire ONLY when the run was
+      **genuinely interrupted** — its producing run `failed`, was `cancelled`, or
+      was left `running` by a crash. This is the authoritative **`turnInterrupted`**,
+      stamped on the message entity by the core projection from the run's *real*
+      status, NEVER inferred from block structure. A cleanly `completed` resultless
+      turn is **never** red, in either mode.
+    - **Surfacing the process** (auto-expand so its interim work / error context
+      isn't buried — `surfaceResultlessProcess`) fires for a genuine interruption
+      in **either** mode, AND — per the result-first design — for a sealed
+      resultless **DM** turn, where the user watched it 1:1. A cleanly-completed
+      resultless **Channel** turn does NOT surface: it folds to the neutral
+      "Worked for …" header like any other sealed turn (atomic delivery — its
+      process lives in the activity detail view, not inline). A surfaced resultless
+      turn also suppresses the "Worked for …" resting header (which would read as a
+      clean unit of work and hide that there is no answer), falling back to the
+      descriptive group summary.
+  - (Tying the *label* to the run's real status — not to the mere absence of
+    trailing prose — is what fixed the recurring Channel mislabel: a Channel turn
+    is always `idle`, so the old `turnEnded && !finalIsProse` rule painted every
+    result-less turn red regardless of outcome. Keying the result-first *split* off
+    the *trailing* answer, not *any* text in the turn, still stops a surfaced
+    resultless turn from burying interim narration behind a collapsed header.)
+  - Every other steady state defaults collapsed. The **sticky override wins**: once
+  a user toggles the block it keeps that choice and never auto-collapses on seal.
+- The collapsed header carries the single activity spinner and, while a turn is
+  live **and the user has collapsed it**, acts as a status line (current running
+  tool with status, else the latest streaming thought). Once the turn **seals**,
+  the collapsed header reads **"Worked for {duration}"** (codex-style; duration =
+  the producing run's `updatedAt − startedAt`, threaded as `runDurationMs` on the
+  message entity **only once the run is sealed** — a still-`running` run, whether
+  live or left running after a crash, has `updatedAt === startedAt` and so no
+  meaningful wall-clock, and is left unknown rather than shown as "<1s"; a multi-run
+  turn sums each run's wall-clock). When the duration is unknown the header falls
+  back to the static group summary (e.g. "Thought · used N tools"). Expanding the
+  block moves the spinner to the running tool row inside the timeline. A
+  **genuinely interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
+  `turnInterrupted` — with no trailing answer) keeps the "Interrupted…" label,
+  never a duration. A cleanly `completed` resultless turn never shows "Interrupted":
+  in a Channel it folds to "Worked for {duration}"; in a DM it surfaces its process
+  (per the result-first design) under the descriptive group summary rather than the
+  "Worked for …" resting header.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it

@@ -67,6 +67,114 @@ describe('agent render projection', () => {
     });
   });
 
+  test('threads the producing run wall-clock onto the message entity as runDurationMs', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Worked for' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(5, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Answer.' }],
+      },
+      { ...base(9, 'run.completed'), runId: 'run-1' },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    const run = state.runs['run-1'];
+    expect(run).toBeDefined();
+    expect(run!.updatedAt - run!.startedAt).toBeGreaterThan(0);
+    expect(projection.entities.messages['assistant-1']?.runDurationMs).toBe(run!.updatedAt - run!.startedAt);
+  });
+
+  test('leaves runDurationMs undefined while the producing run is still running', () => {
+    // `run.updatedAt` only moves at start and at the terminal event, so a run left
+    // `running` (a crash/quit before run.completed, or simply mid-flight) has
+    // updatedAt === startedAt. That is unknown timing, NOT a 0ms "<1s" turn, so the
+    // entity must omit the duration and let the header fall back to its summary.
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Worked for' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(5, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Partial answer.' }],
+      },
+      // No run.completed/failed/cancelled — the run stays 'running'.
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(state.runs['run-1']?.status).toBe('running');
+    expect(projection.entities.messages['assistant-1']?.runDurationMs).toBeUndefined();
+  });
+
+  test('a DM streams its active turn into the transcript (no Channel suppression)', () => {
+    // Single-agent DM: even with the run still running, the active turn stays a
+    // transcript row — DM turns stream live; suppression is Channel-only.
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'DM' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Question' }],
+      },
+      { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+        providerId: 'p',
+        modelId: 'm',
+      },
+      {
+        ...base(5, 'assistant_message.delta', agentActor),
+        messageId: 'assistant-1',
+        delta: { type: 'text_delta', text: 'Streaming…' },
+        providerChunkCount: 1,
+        startedAt: 10,
+        endedAt: 11,
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+    expect(state.runs['run-1']?.status).toBe('running');
+    expect(projection.transcriptRows.filter((row) => row.kind === 'message').map((row) => row.messageId))
+      .toContain('assistant-1');
+  });
+
   test('keeps branch state on message entities without persisting a tree', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Branches' },
@@ -454,7 +562,7 @@ describe('agent render projection', () => {
     expect(projection.entities.tasks['child-run:sub-1']?.status).toBe('stopped');
   });
 
-  test('places a main-agent child run right after the turn that spawned it', () => {
+  test('folds a DM main-agent child run into its spawning turn — no boundary row', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {
@@ -495,8 +603,77 @@ describe('agent render projection', () => {
 
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
+    // A DM child run spawned by a tool call folds into its spawning turn's process
+    // (the tool-call row renders the child-run summary + result inline), so it gets
+    // NO conversation-level boundary row — that would orphan to the transcript end
+    // on an edit. The child-run entity stays available (keyed by its parent tool
+    // call) for the renderer to fold into the process.
     expect(projection.transcriptRows.map((row) => row.id))
-      .toEqual(['user:user-1', 'assistant:assistant-1', 'child-run:sub-1']);
+      .toEqual(['user:user-1', 'assistant:assistant-1']);
+    expect(projection.transcriptRows.some((row) => row.kind === 'child-run')).toBe(false);
+    expect(projection.entities.childRuns['sub-1']).toMatchObject({
+      id: 'sub-1',
+      parentToolCallId: 'tc-1',
+      result: 'done',
+    });
+  });
+
+  test('keeps a multi-agent Channel child run as a boundary row (a visible participant turn)', () => {
+    const state = replayAgentEvents([
+      {
+        ...base(1, 'conversation.created'),
+        title: 'Channel',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+        ],
+      },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'do it' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'tool_use',
+        content: [{ type: 'toolCall', id: 'tc-1', name: 'Task', arguments: {} }],
+      },
+      // Seal the parent run so the Channel live-suppression rule does not hold the
+      // boundary back — we are asserting the resting (sealed) Channel placement.
+      { ...base(5, 'run.completed'), runId: 'run-1' },
+      {
+        ...base(6, 'child_run.started', agentActor),
+        childRunId: 'sub-1',
+        parentRunId: 'run-1',
+        parentToolCallId: 'tc-1',
+        description: 'do the subtask',
+        prompt: 'Do the subtask.',
+        agentType: 'researcher',
+        contextMode: 'fork',
+      },
+      {
+        ...base(7, 'child_run.updated', agentActor),
+        childRunId: 'sub-1',
+        status: 'completed',
+        completedAt: 1_700_000_000_900,
+        result: 'done',
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    // In a multi-agent Channel a delegated child run is a visible participant turn,
+    // so it keeps its conversation-level boundary row (unchanged behavior).
+    expect(projection.transcriptRows.some((row) => row.kind === 'child-run' && row.id === 'child-run:sub-1')).toBe(true);
   });
 
   test('derives Channel activity entries from an active addressed run', () => {
@@ -730,5 +907,84 @@ describe('agent render projection', () => {
 
     expect(projection.channelActivityEntries).toEqual(activityEntries);
     expect(projection.channelActivityEntries).not.toBe(activityEntries);
+  });
+
+  // The authoritative interrupted verdict — derived from the producing run's REAL
+  // status, never from whether the visible blocks end on answer prose. This is the
+  // single source of truth that stops the recurring Channel mislabel where a
+  // cleanly-completed turn that ended on a tool was painted red "Interrupted".
+  describe('turnInterrupted', () => {
+    // A turn that ended on a tool call with NO trailing answer prose — the exact
+    // shape the old `turnEnded && !finalIsProse` heuristic mislabeled. With a
+    // `completed` run it must NOT be interrupted.
+    function resultlessTurn(runTerminal: 'completed' | 'failed' | 'cancelled' | null) {
+      const events: AgentEvent[] = [
+        { ...base(1, 'conversation.created'), title: 'Interrupted verdict' } as AgentEvent,
+        {
+          ...base(2, 'user_message.created', userActor),
+          messageId: 'user-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Shanghai weather?' }],
+        } as AgentEvent,
+        { ...base(3, 'run.started'), runId: 'run-1', agentId: 'agent-1' } as AgentEvent,
+        {
+          ...base(4, 'assistant_message.started', agentActor),
+          runId: 'run-1',
+          messageId: 'assistant-1',
+          parentMessageId: 'user-1',
+          providerId: 'p',
+          modelId: 'm',
+        } as AgentEvent,
+        {
+          ...base(5, 'assistant_message.completed', agentActor),
+          messageId: 'assistant-1',
+          stopReason: 'stop',
+          // Ends on a tool call — no trailing answer prose.
+          content: [
+            { type: 'thinking', thinking: 'Fetching Shanghai weather' },
+            { type: 'toolCall', id: 'call-1', name: 'web_fetch', input: { url: 'https://weather' } },
+          ],
+        } as AgentEvent,
+      ];
+      if (runTerminal === 'completed') events.push({ ...base(6, 'run.completed'), runId: 'run-1' } as AgentEvent);
+      if (runTerminal === 'failed') events.push({ ...base(6, 'run.failed'), runId: 'run-1', errorMessage: 'boom' } as AgentEvent);
+      if (runTerminal === 'cancelled') events.push({ ...base(6, 'run.cancelled'), runId: 'run-1' } as AgentEvent);
+      return replayAgentEvents(events);
+    }
+
+    test('a completed turn that ended on a tool is NOT interrupted (the core fix)', () => {
+      const state = resultlessTurn('completed');
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      expect(state.runs['run-1']?.status).toBe('completed');
+      expect(projection.entities.messages['assistant-1']?.turnInterrupted).toBeFalsy();
+    });
+
+    test('a failed turn is interrupted', () => {
+      const state = resultlessTurn('failed');
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      expect(projection.entities.messages['assistant-1']?.turnInterrupted).toBe(true);
+    });
+
+    test('a cancelled turn is interrupted', () => {
+      const state = resultlessTurn('cancelled');
+      const projection = buildAgentRenderProjection(state, { revision: 1 });
+      expect(projection.entities.messages['assistant-1']?.turnInterrupted).toBe(true);
+    });
+
+    test('a live in-flight run is NOT interrupted; the same run orphaned (not live) is', () => {
+      const state = resultlessTurn(null);
+      expect(state.runs['run-1']?.status).toBe('running');
+
+      // Live: the run is in the active set → still working, not interrupted.
+      const live = buildAgentRenderProjection(state, {
+        revision: 1,
+        activeRuns: [{ runId: 'run-1', agentId: 'agent-1', addressedByMessageId: 'user-1', startedAt: 1 }],
+      });
+      expect(live.entities.messages['assistant-1']?.turnInterrupted).toBeFalsy();
+
+      // Crash-orphaned: persisted `running` but absent from the live set → interrupted.
+      const orphaned = buildAgentRenderProjection(state, { revision: 1 });
+      expect(orphaned.entities.messages['assistant-1']?.turnInterrupted).toBe(true);
+    });
   });
 });

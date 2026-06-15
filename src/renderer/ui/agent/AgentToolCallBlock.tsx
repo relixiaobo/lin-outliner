@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import { basenameForPath } from '../../../core/referenceMarkup';
+import { formatRunDuration } from './agentProcessTypes';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { InlineFileReference } from '../editor/InlineFileReference';
@@ -214,17 +215,9 @@ function formatChildRunMode(childRun: AgentRenderChildRunEntity): string {
 }
 
 function formatChildRunDuration(childRun: AgentRenderChildRunEntity): string {
-  const end = childRun.completedAt ?? childRun.updatedAt;
-  const elapsed = Math.max(0, end - childRun.startedAt);
-  if (elapsed < 1000) return '<1s';
-  const seconds = Math.round(elapsed / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const minuteRest = minutes % 60;
-  return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`;
+  // Same wall-clock ladder as the "Worked for …" process header — one source of
+  // truth so the child-run row never drifts from it.
+  return formatRunDuration((childRun.completedAt ?? childRun.updatedAt) - childRun.startedAt);
 }
 
 function childRunSummary(childRun: AgentRenderChildRunEntity, labels: Messages['agent']['childRun']): string {

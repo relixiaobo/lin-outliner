@@ -3173,6 +3173,8 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       providerId: message.provider,
       modelId: message.model,
       runId: entry.runId ?? message.runId,
+      runDurationMs: entry.runDurationMs ?? message.runDurationMs,
+      turnInterrupted: entry.turnInterrupted ?? message.turnInterrupted,
       stopReason: message.stopReason,
       usage: message.usage,
       errorMessage: message.errorMessage,
@@ -3258,17 +3260,6 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     }
     return index < 0 ? -1 : index + 1;
   };
-  const childRunRows = [...rows];
-  const orderedRuns = Object.values(childRuns).sort(
-    (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
-  );
-  for (const run of orderedRuns as any[]) {
-    const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
-    const insertAt = childRunInsertIndex(childRunRows, run);
-    if (insertAt < 0) childRunRows.push(row);
-    else childRunRows.splice(insertAt, 0, row);
-  }
-
   const projectionMembers = state.members ?? [
     { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
     {
@@ -3280,6 +3271,22 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   ];
   const projectionMultiAgent = projectionMembers
     .filter((member: any) => member.principal?.type === 'agent').length >= 2;
+
+  const childRunRows = [...rows];
+  const orderedRuns = Object.values(childRuns).sort(
+    (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
+  );
+  for (const run of orderedRuns as any[]) {
+    // Mirror insertChildRunRows: a DM (non-multi-agent) child run spawned by a tool
+    // call folds into its spawning turn's process (the tool-call row renders it
+    // inline), so it gets NO conversation-level boundary row. The boundary stays for
+    // a multi-agent Channel turn and a parentless command fire.
+    if (!projectionMultiAgent && run.parentToolCallId) continue;
+    const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
+    const insertAt = childRunInsertIndex(childRunRows, run);
+    if (insertAt < 0) childRunRows.push(row);
+    else childRunRows.splice(insertAt, 0, row);
+  }
   const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
   await emitAgentEvent(page, {
     type: 'projection',
