@@ -457,6 +457,64 @@ describe('agent runtime skill integration', () => {
     expect(compactRootText).toContain('- auto-skill');
   });
 
+  test('loads skillify for explicit natural-language save-as-skill requests', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-nl-skillify-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-nl-skillify-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const contextTexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('Prepared the Skillify review.')),
+      ],
+      (_model, context) => {
+        contextTexts.push(JSON.stringify(context.messages));
+      },
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: true,
+          compactEnabled: false,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+          providerTimeoutMs: null,
+          providerMaxRetries: null,
+          providerMaxRetryDelayMs: 60_000,
+          providerCacheRetention: 'short',
+          disabledSkills: [],
+          disabledAgents: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Save this workflow as a reusable skill');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(script.pendingCount()).toBe(0);
+    const context = contextTexts.join('\n');
+    expect(context).toContain('<skill-name>skillify</skill-name>');
+    expect(context).toContain('Skillify v2 workflow');
+    expect(context).toContain('Save this workflow as a reusable skill');
+    expect(context).not.toContain('The following skills are available for use with the skill tool');
+  });
+
   test('accepts unratified automatic skills from the interrupt card and then loads them', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-trust-card-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-trust-card-data-'));

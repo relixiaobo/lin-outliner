@@ -17,7 +17,11 @@ conversation, chooses a Tenon skill path, drafts a complete `SKILL.md` or focuse
 update diff, previews it in the assistant message, and confirms through
 `ask_user_question` when that interaction is available. Its `when_to_use` gates
 it to explicit user save/update requests, so a conversational "save this as a
-skill" routes through curated guidance instead of ad-hoc file writes.
+skill" routes through curated guidance instead of ad-hoc file writes. The
+runtime also treats explicit natural-language authoring requests such as "save
+this as a skill" or "update the import skill with this workflow" as direct
+`/skillify` user invocations when slash skills are enabled; ordinary questions
+about whether a skill exists or how skills work remain normal conversation.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated child run of the current agent with
@@ -163,7 +167,7 @@ permission at call time.
 Isolated skill results stay on the normal tool-call disclosure path because they
 carry a real child-run result or error for the parent turn.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified. Explicit natural-language save/update/fix skill requests are normalized to the same direct `/skillify` prompt path, so they work even when automatic skill listing is disabled, but only while slash skills are enabled. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
 
 Path-conditional mutable skills remain hidden until a touched file matches
 `paths`. Directory patterns such as `src` match files under that directory,

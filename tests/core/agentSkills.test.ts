@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import {
   AgentSkillRuntime,
   createSlashSkillPrompt,
+  parseNaturalLanguageSkillifyRequest,
   parseSkillSlashCommand,
   resolveBuiltInSkillResourceRoot,
   resolveSkillContentTarget,
@@ -576,6 +577,24 @@ describe('agent skills', () => {
     expect(text).not.toContain('built-in/skillify/SKILL.md');
     expect(text).toContain('Skillify v2 workflow');
     expect(text).toContain('born unratified');
+  });
+
+  test('recognizes only explicit natural-language skillify requests', () => {
+    expect(parseNaturalLanguageSkillifyRequest('Save this as a skill')).toEqual({
+      skill: 'skillify',
+      args: 'Save this as a skill',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Please update the importer skill with what we just learned')).toEqual({
+      skill: 'skillify',
+      args: 'Please update the importer skill with what we just learned',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Skillify this debugging workflow')).toEqual({
+      skill: 'skillify',
+      args: 'Skillify this debugging workflow',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Do we have a skill for this?')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('How do I save this as a skill?')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('/skillify this workflow')).toBeNull();
   });
 
   test('pins skillify v2 Tenon authoring invariants', async () => {

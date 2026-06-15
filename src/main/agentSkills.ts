@@ -884,6 +884,53 @@ export async function createSlashSkillPrompt(
   return runtime.createSlashPromptMessage(input, invocation, turnReminder);
 }
 
+export async function createUserSkillPrompt(
+  runtime: AgentSkillRuntime,
+  input: string,
+  turnReminder?: string | null,
+): Promise<UserMessage | null> {
+  const slashPrompt = await createSlashSkillPrompt(runtime, input, turnReminder);
+  if (slashPrompt || input.trim().startsWith('/')) return slashPrompt;
+
+  const naturalLanguageSkill = parseNaturalLanguageSkillifyRequest(input);
+  if (!naturalLanguageSkill) return null;
+
+  const invocation = await runtime.invokeSkill({
+    skill: naturalLanguageSkill.skill,
+    args: naturalLanguageSkill.args,
+    trigger: 'slash',
+  });
+  if (!invocation.ok) {
+    throw new Error(invocation.message);
+  }
+  return runtime.createSlashPromptMessage(input, invocation, turnReminder);
+}
+
+export function parseNaturalLanguageSkillifyRequest(input: string): { skill: 'skillify'; args: string } | null {
+  const args = input.trim();
+  if (!args || args.startsWith('/')) return null;
+
+  const normalized = args.toLowerCase().replace(/\s+/g, ' ');
+  if (!/\bskills?\b/.test(normalized) && !/\bskillify\b/.test(normalized)) return null;
+  if (isSkillQuestion(normalized)) return null;
+
+  const explicitSkillAuthoring = [
+    /\bskillify\b/,
+    /\b(?:save|capture|record|preserve)\b.{0,120}\bas\s+(?:a\s+)?(?:reusable\s+)?skill\b/,
+    /\bturn\b.{0,120}\binto\s+(?:a\s+)?(?:reusable\s+)?skill\b/,
+    /\b(?:create|make|write|draft|author)\b.{0,80}\b(?:a\s+)?(?:reusable\s+)?skill\b/,
+    /\b(?:update|patch|amend|revise|improve)\b.{0,80}\bskills?\b/,
+    /\b(?:fix|repair)\b.{0,80}\bskills?\b/,
+  ].some((pattern) => pattern.test(normalized));
+
+  return explicitSkillAuthoring ? { skill: 'skillify', args } : null;
+}
+
+function isSkillQuestion(input: string): boolean {
+  return /^(?:how|what|why|when|where|which)\b/.test(input)
+    || /\b(?:how do i|how can i|what is|what are|do we have|is there|are there)\b.{0,120}\bskills?\b/.test(input);
+}
+
 class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
