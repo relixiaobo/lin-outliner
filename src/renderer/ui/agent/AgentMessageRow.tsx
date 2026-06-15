@@ -487,10 +487,13 @@ function renderAssistantBlocks(
       if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
       return block.text.trim().length > 0 || streaming;
     }
-    // A child-run-spawn tool call is surfaced as its own inline transcript boundary
-    // (AgentChildRunBoundary) right after this turn — drop its tool-call block here
-    // so the run isn't shown twice (no "Used tools" header, no tool row).
-    if (block.type === 'toolCall' && childRunsByParentToolCallId?.has(block.id)) return false;
+    // A child-run-spawn tool call: in a multi-agent Channel the run surfaces as its
+    // own inline transcript boundary (AgentChildRunBoundary) right after this turn,
+    // so drop its tool-call block here to avoid showing it twice. In a DM the run
+    // folds into THIS turn's process instead — the tool-call row renders the
+    // child-run summary + result inline, turn-anchored so an edit removes it — so it
+    // stays. The projection's insertChildRunRows skips the DM boundary in lockstep.
+    if (block.type === 'toolCall' && isChannel && childRunsByParentToolCallId?.has(block.id)) return false;
     return true;
   });
   // Result-first turn: the final answer is the trailing text after the last

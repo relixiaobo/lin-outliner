@@ -562,7 +562,7 @@ describe('agent render projection', () => {
     expect(projection.entities.tasks['child-run:sub-1']?.status).toBe('stopped');
   });
 
-  test('places a main-agent child run right after the turn that spawned it', () => {
+  test('folds a DM main-agent child run into its spawning turn — no boundary row', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {
@@ -603,8 +603,77 @@ describe('agent render projection', () => {
 
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
+    // A DM child run spawned by a tool call folds into its spawning turn's process
+    // (the tool-call row renders the child-run summary + result inline), so it gets
+    // NO conversation-level boundary row — that would orphan to the transcript end
+    // on an edit. The child-run entity stays available (keyed by its parent tool
+    // call) for the renderer to fold into the process.
     expect(projection.transcriptRows.map((row) => row.id))
-      .toEqual(['user:user-1', 'assistant:assistant-1', 'child-run:sub-1']);
+      .toEqual(['user:user-1', 'assistant:assistant-1']);
+    expect(projection.transcriptRows.some((row) => row.kind === 'child-run')).toBe(false);
+    expect(projection.entities.childRuns['sub-1']).toMatchObject({
+      id: 'sub-1',
+      parentToolCallId: 'tc-1',
+      result: 'done',
+    });
+  });
+
+  test('keeps a multi-agent Channel child run as a boundary row (a visible participant turn)', () => {
+    const state = replayAgentEvents([
+      {
+        ...base(1, 'conversation.created'),
+        title: 'Channel',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+        ],
+      },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'do it' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: 'user-1',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'tool_use',
+        content: [{ type: 'toolCall', id: 'tc-1', name: 'Task', arguments: {} }],
+      },
+      // Seal the parent run so the Channel live-suppression rule does not hold the
+      // boundary back — we are asserting the resting (sealed) Channel placement.
+      { ...base(5, 'run.completed'), runId: 'run-1' },
+      {
+        ...base(6, 'child_run.started', agentActor),
+        childRunId: 'sub-1',
+        parentRunId: 'run-1',
+        parentToolCallId: 'tc-1',
+        description: 'do the subtask',
+        prompt: 'Do the subtask.',
+        agentType: 'researcher',
+        contextMode: 'fork',
+      },
+      {
+        ...base(7, 'child_run.updated', agentActor),
+        childRunId: 'sub-1',
+        status: 'completed',
+        completedAt: 1_700_000_000_900,
+        result: 'done',
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    // In a multi-agent Channel a delegated child run is a visible participant turn,
+    // so it keeps its conversation-level boundary row (unchanged behavior).
+    expect(projection.transcriptRows.some((row) => row.kind === 'child-run' && row.id === 'child-run:sub-1')).toBe(true);
   });
 
   test('derives Channel activity entries from an active addressed run', () => {

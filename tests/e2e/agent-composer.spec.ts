@@ -2736,13 +2736,12 @@ test.describe('agent composer controls', () => {
       }],
     });
 
-    // A main-agent-spawned child run renders as an inline boundary in the
-    // transcript (the conversation's permanent record of the run), not as a
-    // tool-call block inside the assistant bubble. The bubble is suppressed.
-    const boundary = page.getByRole('region', { name: 'Agent task · Inspect child run UI' });
-    await expect(boundary).toBeVisible();
-    await expect(boundary.getByText('Running…')).toBeVisible();
-    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toHaveCount(0);
+    // A DM main-agent child run folds into its spawning turn's process: the Agent
+    // tool-call row renders the child-run summary inline (turn-anchored, so editing
+    // the turn removes it), NOT a free-floating conversation-level boundary. So there
+    // is no boundary region, and the run surfaces as a process row in the bubble.
+    await expect(page.getByRole('region', { name: 'Agent task · Inspect child run UI' })).toHaveCount(0);
+    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Open task panel' }).click();
     const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
