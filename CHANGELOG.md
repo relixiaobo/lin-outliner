@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Bundled built-in skill resources (PR #269, codex)** — app-shipped `built-in` skills can now use the
+  **standard Agent Skills folder shape** (`SKILL.md` plus adjacent `references/`/`scripts/`/`assets/`)
+  instead of a single monolithic prompt string. Resource-backed built-in folders load from
+  `src/main/builtInSkills` (copied to packaged `Resources/built-in-skills` via electron-builder
+  `extraResources`, with the dev README excluded) **before** the inline code-registered built-ins and
+  before mutable skill directories. They get a real base directory so `Base directory for this skill:`
+  and `${AGENT_SKILL_DIR}` resolve and progressive disclosure works, while keeping the `built-in:<name>`
+  compact/listing identity (a new `<skill-path>` loaded-message tag keeps post-compact restore on
+  `built-in:<name>` rather than leaking the directory). Inline built-ins (`/skillify`, `/research`) are
+  unchanged — no base directory, no pseudo editable path. Duplicate built-in names now **fail loudly**;
+  bundled files stay out of the mutable skill write-target resolver (immutable even when also configured
+  as an additional skill dir); `name:` aliases and `paths:`-gating are ignored for built-ins so they
+  remain the always-on floor; and the registry shares a single in-flight load across concurrent callers.
+  This is the structural loader/resource capability only — it ships no `/presentation`/`/document`
+  content. Spec: `docs/spec/agent-skills.md`.
 - **Agent folder handoff + typed `file_convert` tool (PR #266, codex-3)** — Settings → Security gains a
   **"hand Tenon a folder"** action: a native directory picker records a remembered `Scope(write:/folder)`
   grant, and the runtime **projects remembered scope grants into the local file-tool layer** so handed

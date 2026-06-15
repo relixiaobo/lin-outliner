@@ -434,18 +434,8 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   **Skillify v2 body shipped (#230)** — the structured authoring workflow on the
   built-in `/skillify` skill; remaining active work is the **NL save-as-skill +
   diff/preview creative-UX**. See `docs/plans/agent-skills-authoring.md`.
-- **bundled-built-in-skill-resources** (P1, plan ratified 2026-06-15 / PR #268,
-  not started) — give app-shipped `built-in` skills the **standard Anthropic
-  Agent Skills shape**: a real `SKILL.md` + `references/`/`scripts/`/`assets/`
-  base directory so `${AGENT_SKILL_DIR}` resolves and a built-in can use
-  progressive disclosure instead of one monolithic prompt body. ONE complete
-  capability in one PR (load · list · invoke · compact-restore · `${AGENT_SKILL_DIR}`),
-  preserving the immutable built-in floor; `/presentation` is the first intended
-  consumer in a *later* content PR. Structural standard-conformance only — the
-  `name:` frontmatter conformance + third-party import tolerance is the separate
-  item below. Implementation should rebase after #266 (spec-language overlap
-  only) and align spec terminology on "extracted reference files." See
-  `docs/plans/bundled-built-in-skill-resources.md`.
+- **bundled-built-in-skill-resources** (P1) **merged as PR #269** (codex) — see
+  Recently completed; plan archived `done`.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
   `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
@@ -719,6 +709,26 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Bundled built-in skill resources** (codex, PR #269) — completes the
+  `bundled-built-in-skill-resources` plan (**shape (a)**, one PR). App-shipped `built-in` skills can
+  now use the **standard Agent Skills folder shape** (`SKILL.md` + `references/`/`scripts/`/`assets/`):
+  resource-backed built-in folders load from `src/main/builtInSkills` (copied to packaged
+  `Resources/built-in-skills` via electron-builder `extraResources`, README excluded) **before** the
+  inline code-registered built-ins and before mutable directories, parsed through the existing
+  `SKILL.md`/frontmatter loader. Resource-backed built-ins get a real `rootDir`/`skillFile` so the
+  `Base directory for this skill:` prefix and `${AGENT_SKILL_DIR}` substitution work, while preserving
+  `built-in:<name>` compact/listing identity (a new `<skill-path>` loaded-message tag keeps post-compact
+  restore on `built-in:<name>` instead of leaking the directory). Inline built-ins are unchanged (no base
+  directory, no pseudo-path). Duplicate built-in names **fail loudly**; bundled files are excluded from
+  the mutable skill write-target resolver (immutable even if also configured as an additional dir); `name:`
+  frontmatter aliases and `paths:`-gating are ignored for built-ins (they stay the always-on floor).
+  **Gate (main):** xhigh `/code-review` surfaced 4 correctness findings + cleanups (half-load on
+  duplicate-throw, post-compact path leak, `paths:`→hidden, `name:` alias); codex fixed all, **and the
+  half-load fix introduced a concurrent-load regression** (two first-time skill accesses spuriously threw
+  `Duplicate built-in skill` — reproduced by main) which codex then fixed with an in-flight `loadPromise`
+  guard + `loadGeneration` invalidation. Re-verified by main on `f90357ca`: typecheck + `test:core`
+  1026/0 + `docs:check`; independent concurrency repro green over stress rounds. Design folded into
+  `docs/spec/agent-skills.md`; plan archived `done`.
 - **Connection-only providers; agent profile owns model + effort** (cc, PR #267) — completes the
   `provider-connection-model-ownership` plan (**shape (a)**, one PR). A provider config is now a
   **connection record only** (`{ providerId; baseUrl?; enabled }`) — `modelId` / `reasoningLevel`
