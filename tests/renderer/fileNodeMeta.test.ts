@@ -103,16 +103,19 @@ describe('fileNodeTitle', () => {
     expect(fileNodeTitle(node)).toBe('report.pdf');
   });
 
-  test('falls back to the image source identity when no display name exists', () => {
+  test('falls back to a remote image source identity when no display name exists', () => {
     expect(fileNodeTitle(fileNode({
       type: 'image',
       mediaUrl: 'https://example.com/diagram.png',
       content: { text: '', marks: [], inlineRefs: [] },
     }))).toBe('https://example.com/diagram.png');
+  });
+
+  test('does not expose internal image asset ids as titles', () => {
     expect(fileNodeTitle(fileNode({
       type: 'image',
       assetId: 'asset-image',
       content: { text: '', marks: [], inlineRefs: [] },
-    }))).toBe('asset-image');
+    }))).toBe('');
   });
 });

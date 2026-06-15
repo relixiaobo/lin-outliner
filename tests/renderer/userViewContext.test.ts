@@ -142,6 +142,60 @@ describe('agent user view context', () => {
       },
     ]);
   });
+
+  test('treats an ingested file-preview panel as a visible node panel', () => {
+    const index = buildIndex(projection([
+      node('workspace', 'Workspace', { children: ['root'] }),
+      node('root', 'Library', { parentId: 'workspace', children: ['daily-notes'] }),
+      node('daily-notes', 'Daily Notes', { parentId: 'root', children: ['today'] }),
+      node('today', '2026-05-19', { parentId: 'daily-notes', children: ['file-1'] }),
+      node('file-1', '', {
+        parentId: 'today',
+        type: 'attachment',
+        assetId: 'asset-file',
+        mimeType: 'application/pdf',
+        originalFilename: 'report.pdf',
+        fileSize: 1024,
+        children: ['file-note'],
+      }),
+      node('file-note', 'Note inside file', { parentId: 'file-1' }),
+    ]));
+
+    const context = buildAgentUserViewContext({
+      activePanelId: 'panel-file',
+      panels: [{
+        id: 'panel-file',
+        type: 'workspace',
+        view: { kind: 'file-preview', nodeId: 'file-1', target: { kind: 'asset', assetId: 'asset-file', label: 'report.pdf' } },
+        size: 1,
+        backStack: [],
+        forwardStack: [],
+      }],
+      index,
+      ui: ui({ focusedPanelId: 'panel-file' }),
+    });
+
+    expect(context.nodePanels.map((panel) => ({
+      panelId: panel.panelId,
+      rootNodeId: panel.rootNodeId,
+      rootTitle: panel.rootTitle,
+      active: panel.active,
+      focused: panel.focused,
+      childCount: panel.childCount,
+      visibleOutline: panel.visibleOutline,
+    }))).toEqual([{
+      panelId: 'panel-file',
+      rootNodeId: 'file-1',
+      rootTitle: 'report.pdf',
+      active: true,
+      focused: true,
+      childCount: 1,
+      visibleOutline: [
+        { nodeId: 'file-1', title: 'report.pdf', depth: 0 },
+        { nodeId: 'file-note', title: 'Note inside file', depth: 1 },
+      ],
+    }]);
+  });
 });
 
 // composerCurrentNodeId is the shared resolver for "the node this conversation is
@@ -233,6 +287,37 @@ describe('insertionTargetFor', () => {
   test('appends into the active panel root when nothing is focused', () => {
     expect(insertionTargetFor(contextFor({ activePanelId: 'panel-2' }), index))
       .toEqual({ parentId: 'root', index: null });
+  });
+
+  test('appends into the active ingested file-preview root when nothing is focused', () => {
+    const fileIndex = buildIndex(projection([
+      node('workspace', 'Workspace', { children: ['root'] }),
+      node('root', 'Library', { parentId: 'workspace', children: ['today'] }),
+      node('today', '2026-05-19', { parentId: 'root', children: ['file-1'] }),
+      node('file-1', '', {
+        parentId: 'today',
+        type: 'attachment',
+        assetId: 'asset-file',
+        mimeType: 'application/pdf',
+        originalFilename: 'report.pdf',
+        fileSize: 1024,
+      }),
+    ]));
+    const context = buildAgentUserViewContext({
+      activePanelId: 'panel-file',
+      panels: [{
+        id: 'panel-file',
+        type: 'workspace',
+        view: { kind: 'file-preview', nodeId: 'file-1', target: { kind: 'asset', assetId: 'asset-file', label: 'report.pdf' } },
+        size: 1,
+        backStack: [],
+        forwardStack: [],
+      }],
+      index: fileIndex,
+      ui: ui(),
+    });
+
+    expect(insertionTargetFor(context, fileIndex)).toEqual({ parentId: 'file-1', index: null });
   });
 
   test('appends into today when there are no outliner panels', () => {

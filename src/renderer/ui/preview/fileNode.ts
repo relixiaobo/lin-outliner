@@ -24,7 +24,7 @@ export function fileNodeTitle(node: FileNode): string {
   if (node.type === 'attachment') return node.originalFilename?.trim() ?? '';
   if (node.mediaUrl) return node.mediaUrl.trim();
   if (node.mediaAlt) return node.mediaAlt.trim();
-  return node.assetId?.trim() ?? '';
+  return '';
 }
 
 /** The preview target a file node resolves to (a local asset, or a remote image URL). */

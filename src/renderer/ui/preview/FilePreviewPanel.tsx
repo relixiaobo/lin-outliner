@@ -93,6 +93,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const [titleDocked, setTitleDocked] = useState(false);
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
   const targetKey = useMemo(() => previewTargetFallbackKey(props.target), [props.target]);
+  const resetStateRef = useRef<{ nodeId: NodeId | null; targetKey: string } | null>(null);
   const uiRef = useRef(props.ui);
   uiRef.current = props.ui;
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
@@ -121,12 +122,23 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   }, []);
 
   useEffect(() => {
-    const panel = mainPanelRef.current;
-    if (panel) panel.scrollTop = 0;
-    setBreadcrumbExpanded(false);
-    setTitleDocked(false);
+    const previous = resetStateRef.current;
+    const next = { nodeId: fileRoot?.id ?? props.nodeId ?? null, targetKey };
+    resetStateRef.current = next;
+    // Add-to-outline intentionally rebinds a loose source into an ingested node
+    // without a visual jump. Other identity changes, including node A -> node B
+    // with the same asset target, reset scroll and expanded breadcrumbs.
+    const looseToIngested = previous
+      && previous.nodeId === null
+      && next.nodeId !== null;
+    if (!looseToIngested) {
+      const panel = mainPanelRef.current;
+      if (panel) panel.scrollTop = 0;
+      setBreadcrumbExpanded(false);
+      setTitleDocked(false);
+    }
     window.requestAnimationFrame(updateTitleDockedState);
-  }, [targetKey, updateTitleDockedState]);
+  }, [fileRoot?.id, props.nodeId, targetKey, updateTitleDockedState]);
 
   useEffect(() => {
     window.requestAnimationFrame(updateTitleDockedState);
@@ -259,7 +271,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
               {looseBreadcrumbSegments.map((segment) => (
                 <span className="panel-breadcrumb-segment file-preview-path-segment" key={segment.key}>
                   <span className="panel-breadcrumb-divider">/</span>
-                  <span className="panel-breadcrumb-button">{segment.label}</span>
+                  <span className="file-preview-path-label">{segment.label}</span>
                 </span>
               ))}
               {titleDocked && (

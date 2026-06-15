@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
-import { parseIsoLocalDate, todayIsoLocalDate, type FocusHint, type NodeId } from '../api/types';
+import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
@@ -222,10 +222,12 @@ export function App() {
     if (!currentIndex) return;
     const persistedRootIds = new Set<NodeId>();
     for (const panel of panels) {
-      if (panel.type !== 'workspace' || panel.view.kind !== 'outliner') continue;
-      if (persistedRootIds.has(panel.view.rootId)) continue;
-      persistedRootIds.add(panel.view.rootId);
-      persistOutlineViewState(panel.view.rootId, currentIndex.byId, {
+      const rootId = panel.type === 'workspace'
+        ? panel.view.kind === 'outliner' ? panel.view.rootId : panel.view.nodeId ?? null
+        : null;
+      if (!rootId || persistedRootIds.has(rootId)) continue;
+      persistedRootIds.add(rootId);
+      persistOutlineViewState(rootId, currentIndex.byId, {
         expanded: ui.expanded,
         expandedHiddenFields: ui.expandedHiddenFields,
       });
@@ -286,13 +288,23 @@ export function App() {
     return isFileNode(node) ? fileNodeTarget(node) : null;
   }, [index]);
 
-  const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+  const openFilePreviewForNode = useCallback((
+    nodeId: NodeId,
+    options?: NavigateRootOptions & { panelId?: string },
+  ): boolean => {
     const fileTarget = filePreviewTargetForNode(nodeId);
-    if (fileTarget) {
+    if (!fileTarget) return false;
+    if (options?.panelId) {
+      setPanelPreview(options.panelId, fileTarget, { newPane: options.newPane, nodeId });
+    } else {
       openPreview(fileTarget, { newPane: options?.newPane, nodeId });
-      restoreNodeInOutliner(nodeId);
-      return;
     }
+    restoreNodeInOutliner(nodeId);
+    return true;
+  }, [filePreviewTargetForNode, openPreview, restoreNodeInOutliner, setPanelPreview]);
+
+  const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+    if (openFilePreviewForNode(nodeId, options)) return;
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -300,7 +312,7 @@ export function App() {
     }
     setActivePanelRoot(nodeId, options);
     restoreNodeInOutliner(nodeId);
-  }, [filePreviewTargetForNode, openPanel, openPreview, restoreNodeInOutliner, setActivePanelRoot]);
+  }, [openFilePreviewForNode, openPanel, restoreNodeInOutliner, setActivePanelRoot]);
 
   const ensureTodayNode = useCallback(async (): Promise<NodeId | null> => {
     const today = parseIsoLocalDate(todayIsoLocalDate());
@@ -331,12 +343,7 @@ export function App() {
   }), [openPreview]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
-    const fileTarget = filePreviewTargetForNode(nodeId);
-    if (fileTarget) {
-      setPanelPreview(panelId, fileTarget, { newPane: options?.newPane, nodeId });
-      restoreNodeInOutliner(nodeId);
-      return;
-    }
+    if (openFilePreviewForNode(nodeId, { ...options, panelId })) return;
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -344,7 +351,7 @@ export function App() {
     }
     setPanelRoot(panelId, nodeId, options);
     restoreNodeInOutliner(nodeId);
-  }, [filePreviewTargetForNode, openPanel, restoreNodeInOutliner, setPanelPreview, setPanelRoot]);
+  }, [openFilePreviewForNode, openPanel, restoreNodeInOutliner, setPanelRoot]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
     setPanelPreview(panelId, target, options);
@@ -373,15 +380,10 @@ export function App() {
   }, [navigatePanelForward, pageHistoryPanel]);
 
   const openRootInPanel = useCallback((nodeId: NodeId) => {
-    const fileTarget = filePreviewTargetForNode(nodeId);
-    if (fileTarget) {
-      openPreview(fileTarget, { newPane: true, nodeId });
-      restoreNodeInOutliner(nodeId);
-      return;
-    }
+    if (openFilePreviewForNode(nodeId, { newPane: true })) return;
     openPanel(nodeId);
     restoreNodeInOutliner(nodeId);
-  }, [filePreviewTargetForNode, openPanel, openPreview, restoreNodeInOutliner]);
+  }, [openFilePreviewForNode, openPanel, restoreNodeInOutliner]);
 
   const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     navigateRoot(nodeId, { focus: false, newPane: options?.newPane });
@@ -508,7 +510,8 @@ export function App() {
     const result = await createAssetNode(run, todayId, null, asset, { applyFocus: false });
     const newNodeId = result && 'focus' in result ? result.focus?.nodeId ?? null : null;
     if (!newNodeId) return false;
-    bindPreviewPanelNode(panelId, newNodeId);
+    const nextTarget = previewTargetForAsset(asset);
+    if (!bindPreviewPanelNode(panelId, newNodeId, nextTarget, target)) return false;
     return true;
   }), [bindPreviewPanelNode, run]);
 
@@ -647,4 +650,12 @@ export function App() {
       <InlineFilePreviewLayer />
     </div>
   );
+}
+
+function previewTargetForAsset(asset: AssetMetadata): PreviewTarget {
+  return {
+    kind: 'asset',
+    assetId: asset.id,
+    ...(asset.originalFilename ? { label: asset.originalFilename } : {}),
+  };
 }

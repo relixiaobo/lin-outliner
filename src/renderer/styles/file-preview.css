@@ -12,6 +12,17 @@
   pointer-events: none;
 }
 
+.file-preview-path-label {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  font-weight: 500;
+  padding: 0 var(--space-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file-preview-message {
   display: grid;
   min-height: 180px;
