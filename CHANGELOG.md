@@ -863,6 +863,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **A DM child run folds into its spawning turn's process — no orphan boundary, no broken style (PR #247, cc)** —
+  a child run spawned by an `agent` tool call inside a **DM** (a non-multi-agent conversation) used to render
+  as a conversation-level **child-run boundary row** (a centered divider between two rules), which surfaced
+  two bugs from the reported screenshot: (1) the row **persisted after re-editing** the message that started
+  the turn — child runs carry no message/branch anchor, so `insertChildRunRows` appended the orphan at the
+  transcript end once the parent tool call left the active branch; and (2) **broken style** — the "Agent task"
+  label wrapped to a second line and the description overflowed the panel's right edge. The reframe: in a DM a
+  child run is the agent's own **implicit** behavior — it quietly delegated a slice of the current turn — so it
+  now **folds into that turn's process** instead of standing as a first-class divider. The in-process `agent`
+  tool-call block already renders full parity (summary "Agent task · {description}", expand-to-result, open
+  full transcript) via `childRunsByParentToolCallId`; the fix is two coordinated gates on the **same**
+  multi-agent flag — the projection **skips** the boundary row (`!multiAgent && parentToolCallId`) and the
+  renderer **keeps** (does not suppress) the tool-call block in a non-multi-agent conversation. Same-flag
+  lockstep is load-bearing: it makes the "child run vanishes" failure (no boundary AND no fold) provably
+  impossible, including for a single-agent channel. Because the folded run lives inside the turn's own message,
+  it is turn-anchored and branch-pruned with that message — an edit removes it cleanly, no orphan. The
+  **multi-agent Channel** boundary row and the **parentless command-fire** row are unchanged; the surviving
+  boundary's CSS shrink chain (`min-width: 0` + ellipsis) is hardened so it single-lines and ellipsizes instead
+  of wrapping/overflowing. Spec: `docs/spec/agent-event-log-rendering.md`.
+
 - **Channel "Interrupted" verdict tied to the run's real status — the root fix (PR #244, cc)** —
   the recurring multi-agent Channel mislabel (a coordinator turn shown red **"Interrupted after thinking"**
   while it looked unfinished) that #240 and #242 both only patched. Root cause: the "interrupted" verdict

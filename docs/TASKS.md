@@ -641,6 +641,21 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **A DM child run folds into its spawning turn's process**
+  (cc, PR #247, fast-track) — fixes two bugs on a DM "Agent task" child run (an `agent` tool-call
+  delegation): it rendered as a conversation-level child-run **boundary row** that (1) orphaned to the
+  transcript end and **persisted after re-editing** the message that started the turn (child runs carry no
+  message/branch anchor), and (2) had **broken style** (label wrapped, description overflowed). Reframe: in a
+  DM a child run is the agent's own **implicit** behavior, so it now **folds into the turn's process** rather
+  than standing as a divider — the in-process `agent` tool-call block already renders the "Agent task · …"
+  summary + expand-to-result + open-transcript via `childRunsByParentToolCallId`. Fix = two coordinated gates
+  on the **same** multi-agent flag (projection **skips** the boundary, renderer **keeps** the tool-call block
+  in a non-multi-agent conversation), making the "child run vanishes" failure provably impossible; the folded
+  run is turn-anchored so an edit prunes it cleanly. Multi-agent Channel boundary + parentless command-fire
+  rows unchanged; the surviving boundary's CSS shrink chain hardened (`min-width: 0` + ellipsis). Gate (main):
+  typecheck + `docs:check` + `test:core` 1025 + `test:renderer` 483 (DM-fold vs Channel-keeps-boundary tests)
+  + agent-composer e2e 55/55 + focused adversarial review (same-flag lockstep CONFIRMED, vanish impossible);
+  **visual verified light + dark**. Spec: `docs/spec/agent-event-log-rendering.md`.
 - **The agent surfaces a produced file inline — `[[file:…]]` marker emit**
   (cc, PR #246, fast-track) — closes a scope gap the PM flagged: the agent-file-model only surfaced
   **text** files (via `file_write`/`file_edit` tool-call chips); a **binary** deliverable (e.g. a `.pptx`,
