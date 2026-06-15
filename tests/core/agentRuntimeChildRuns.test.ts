@@ -25,6 +25,7 @@ import { AgentPastChatsService } from '../../src/main/agentPastChats';
 import { createPostCompactMessage } from '../../src/main/agentCompaction';
 import type { AgentEvent } from '../../src/core/agentEventLog';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { AGENT_L0_FIRMWARE_PROMPT } from '../../src/main/agentSystemPrompt';
 
 const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
 
@@ -51,6 +52,19 @@ const EMPTY_USAGE: Usage = {
     cacheWrite: 0,
     total: 0,
   },
+};
+
+const ANTHROPIC_TEST_MODEL: Model<Api> = {
+  id: 'claude-test',
+  name: 'Claude Test',
+  provider: 'anthropic',
+  api: 'anthropic-messages',
+  baseUrl: 'https://api.anthropic.com',
+  reasoning: false,
+  input: ['text'],
+  contextWindow: 200_000,
+  maxTokens: 8_192,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-child-run-test-user-data');
@@ -255,6 +269,23 @@ function textFromContext(context: Context): string {
   });
 }
 
+function providerPayloadForSystemPrompt(systemPrompt: string) {
+  const cacheControl = () => ({ type: 'ephemeral' });
+  return {
+    system: [{ type: 'text', text: systemPrompt, cache_control: cacheControl() }],
+    tools: [{ name: 'node_read', cache_control: cacheControl() }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', cache_control: cacheControl() }] }],
+  };
+}
+
+function countCacheControls(value: unknown): number {
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countCacheControls(item), 0);
+  if (!value || typeof value !== 'object') return 0;
+  const record = value as Record<string, unknown>;
+  return ('cache_control' in record ? 1 : 0)
+    + Object.values(record).reduce((total, item) => total + countCacheControls(item), 0);
+}
+
 describe('agent runtime childRuns', () => {
   let roots: string[] = [];
 
@@ -348,6 +379,85 @@ describe('agent runtime childRuns', () => {
     expect(childContext).not.toContain('"recall"');
     expect(childContext).not.toContain('memory-parent-only');
     expect(childContext).not.toContain('prefers amber planning notes');
+  });
+
+  test('enables the Anthropic L0 cache breakpoint for fresh child runs only', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-l0-cache-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-l0-cache-data-'));
+    roots.push(localRoot, dataRoot);
+
+    await createAgent(localRoot, 'reviewer', [
+      '---',
+      'description: Reviews architecture changes.',
+      '---',
+      'REVIEWER_AGENT_BODY: validate cache breakpoint wiring.',
+    ].join('\n'));
+
+    const sentPayloads: unknown[] = [];
+    const payloadReturns: unknown[] = [];
+    const streamFn = respondingStream(async (context, options, model) => {
+      const payload = providerPayloadForSystemPrompt(context.systemPrompt ?? '');
+      const payloadResult = await options?.onPayload?.(
+        payload,
+        model,
+      );
+      sentPayloads.push(payload);
+      payloadReturns.push(payloadResult);
+
+      const text = textFromContext(context);
+      if (text.includes('Spawn reviewer') && !text.includes('tool-agent-cache-breakpoint')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'review cache breakpoint wiring',
+            prompt: 'Review cache breakpoints.',
+            agent_type: 'reviewer',
+          }, { id: 'tool-agent-cache-breakpoint' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('Review cache breakpoints.')) {
+        return fauxAssistantMessage(fauxText('Reviewer checked cache breakpoints.'));
+      }
+      return fauxAssistantMessage(fauxText('Parent final after reviewer.'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'anthropic',
+          modelId: ANTHROPIC_TEST_MODEL.id,
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        providerModelResolver: () => ANTHROPIC_TEST_MODEL,
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn reviewer for this check.', sink);
+
+    expect(payloadReturns[0]).toBeUndefined();
+    expect((sentPayloads[0] as { system?: unknown[] }).system).toHaveLength(1);
+    const childPayload = sentPayloads.find((payload) => {
+      const system = payload && typeof payload === 'object'
+        ? (payload as { system?: unknown }).system
+        : undefined;
+      return Array.isArray(system)
+        && system.length === 2
+        && (system[0] as { text?: unknown }).text === AGENT_L0_FIRMWARE_PROMPT;
+    }) as { system: Array<{ text?: unknown; cache_control?: unknown }> } | undefined;
+    expect(childPayload).toBeDefined();
+    expect(childPayload?.system[0]).toHaveProperty('cache_control');
+    expect(childPayload?.system[1]).toHaveProperty('cache_control');
+    expect(String(childPayload?.system[1]?.text)).toContain('REVIEWER_AGENT_BODY');
+    expect(countCacheControls(childPayload)).toBe(4);
   });
 
   test('dispatches the built-in assistant when selected as a fresh child agent type', async () => {

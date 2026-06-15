@@ -121,7 +121,9 @@ import {
 } from './agentReferencedAssets';
 import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
-import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
+import { agentDefinitionDisplayName } from './agentDefinitionDisplay';
+import { DEFAULT_AGENT_SYSTEM_PROMPT, composeAgentPrompt } from './agentSystemPrompt';
+import { applyAgentPromptCacheBreakpoints } from './agentProviderCacheBreakpoints';
 import {
   cloneDebug,
   createAgentDebugPayloadEnvelope,
@@ -2188,7 +2190,7 @@ export class AgentRuntime {
           return this.createChildPiAgent(conversationId, conversationRef, providerConfig, input);
         },
         getParentMessages: () => this.currentRuntimeAgent(agentRef.current)?.state.messages as AgentMessage[] ?? activePath,
-        getParentSystemPrompt: () => this.currentRuntimeAgent(agentRef.current)?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
+        getParentSystemPrompt: () => this.currentRuntimeAgent(agentRef.current)?.state.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT,
         getParentAgentId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.executingAgentId ?? defaultAgentId,
         getParentMemoryOwnerAgentId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.executingAgentId ?? defaultAgentId,
         getActiveRunId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null,
@@ -2587,6 +2589,7 @@ export class AgentRuntime {
         return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal, requestedByAgentId) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
+      l0CacheBreakpointEnabled: input.l0CacheBreakpointEnabled,
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
@@ -6362,6 +6365,7 @@ export class AgentRuntime {
       ),
       allowedTools: definition?.tools,
       disallowedTools: definition?.disallowedTools,
+      l0CacheBreakpointEnabled: isMultiAgentConversation(conversation.eventState.conversation?.members ?? []),
     }, async (payload, model) => {
       try {
         await this.captureDebugPayload(conversationId, payload, model, 'provider_payload', getScopedConversation().activeRun?.id);
@@ -6425,7 +6429,11 @@ export class AgentRuntime {
       ? resolveSkillEffortOverride(definition.effort, model, providerConfig.reasoningLevel)
       : providerConfig.reasoningLevel;
     const skillSections = await this.memberSkillSections(skillRuntime, definition);
-    const systemPrompt = buildAgentMemberSystemPrompt(definition, agentMentionToken(agentId), skillSections);
+    const systemPrompt = composeAgentPrompt(definition, {
+      mode: 'member',
+      mention: agentMentionToken(agentId),
+      profileSkillSections: skillSections,
+    });
     const identity: AgentIdentityRecord = {
       agentId: agentId as AgentId,
       displayName: agentDefinitionDisplayName(definition),
@@ -8051,7 +8059,7 @@ function createDefaultAgentIdentity(): AgentIdentityRecord {
     agentId: 'built-in:tenon:assistant',
     displayName: 'Neva',
     model: 'unknown',
-    systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
+    systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
     skills: [],
   };
 }
@@ -8066,36 +8074,6 @@ function hashJson(value: unknown): string {
 
 /** Cap on inlined profile-skill bodies in a DM/Channel member's system prompt. */
 const MEMBER_SKILL_PROMPT_BUDGET = 24_000;
-
-function agentDefinitionDisplayName(definition: AgentDefinition): string {
-  return definition.displayName?.trim() || definition.name;
-}
-
-/**
- * A Channel/DM member's stable system prompt is **identity only** — description,
- * authored instructions, profile skills. DM-vs-Channel framing, the member
- * roster, and the Channel communication norms are dynamic environment and ride
- * the per-turn reminder stack (`buildConversationEnvironmentReminder`), never
- * the prompt — so the same agent's prompt is identical (and cacheable) in a DM
- * and a Channel. A member speaks in the shared thread as itself: this is NOT the
- * child run prompt (a peer is a conversation participant, not a headless worker
- * reporting to a parent).
- */
-function buildAgentMemberSystemPrompt(
-  definition: AgentDefinition,
-  mention: string,
-  skillSections: readonly string[],
-): string {
-  const displayName = agentDefinitionDisplayName(definition);
-  return [
-    [
-      `You are "${displayName}" (@${mention}).`,
-      `Agent description: ${definition.description}`,
-    ].join('\n'),
-    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
-    skillSections.length > 0 ? `# Profile skills\n${skillSections.join('\n\n')}` : null,
-  ].filter(Boolean).join('\n\n');
-}
 
 /** Final visible text of the run's last assistant message (hand-off mention source). */
 function latestAssistantTextForRun(eventState: AgentEventReplayState, runId: string): string {
@@ -8225,6 +8203,7 @@ function createConfiguredAgent(
     allowedTools?: string[];
     disallowedTools?: string[];
     preapprovedToolRules?: string[];
+    l0CacheBreakpointEnabled?: boolean;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
     permissionNoticeHandler?: (input: {
       requestId: string;
@@ -8248,12 +8227,13 @@ function createConfiguredAgent(
   const model = options.model ?? resolveModel(providerConfig);
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
+  const systemPrompt = options.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT;
   let activeLoopModel = model;
   let activeThinkingLevel = options.thinkingLevel ?? providerConfig.reasoningLevel;
   let agent: Agent;
   agent = new Agent({
     initialState: {
-      systemPrompt: options.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
+      systemPrompt,
       model,
       thinkingLevel: activeThinkingLevel,
       tools: createAgentTools(outlinerToolHost, {
@@ -8271,7 +8251,15 @@ function createConfiguredAgent(
       messages,
     },
     streamFn: createProviderConfiguredStreamFn(options.streamFn ?? streamSimple as StreamFn, options.runtimeSettingsLoader),
-    onPayload: async (payload, payloadModel) => onPayload?.(payload, payloadModel),
+    onPayload: async (payload, payloadModel) => {
+      const payloadWithBreakpoints = applyAgentPromptCacheBreakpoints(payload, payloadModel, {
+        enabled: options.l0CacheBreakpointEnabled ?? false,
+        systemPrompt,
+      });
+      const payloadForCallback = payloadWithBreakpoints ?? payload;
+      const callbackPayload = await onPayload?.(payloadForCallback, payloadModel);
+      return callbackPayload ?? payloadWithBreakpoints;
+    },
     onResponse: async (response, responseModel) => onResponse?.(response, responseModel),
     getApiKey: async (provider) => {
       if (provider === providerConfig.providerId) {
@@ -8594,7 +8582,7 @@ function escapeXml(value: string): string {
 function createConfigurationErrorAgent(conversationId: string, message: string, messages: AgentMessage[] = []) {
   return new Agent({
     initialState: {
-      systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
+      systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
       model: CONFIGURATION_ERROR_MODEL,
       thinkingLevel: 'off',
       tools: [],

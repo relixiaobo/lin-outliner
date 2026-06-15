@@ -19,6 +19,7 @@ import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
+import { normalizeAgentToolNames } from './agentToolRules';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
@@ -43,7 +44,7 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
-import { LIN_AGENT_SYSTEM_PROMPT, LIN_CHILD_AGENT_CORE_PROMPT } from './agentSystemPrompt';
+import { NEVA_AGENT_PERSONA, composeAgentPrompt } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
@@ -173,6 +174,7 @@ export interface AgentChildAgentCreateInput {
   allowedTools?: string[];
   disallowedTools?: string[];
   preapprovedToolRules?: string[];
+  l0CacheBreakpointEnabled?: boolean;
   /**
    * Run with no interactive approval channel (unattended). A tool needing
    * approval is denied + surfaced instead of waiting for a human; globally
@@ -815,7 +817,7 @@ export class AgentDelegationRuntime {
     childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const systemPrompt = input.contextMode === 'fork'
       ? this.host.getParentSystemPrompt()
-      : buildFreshAgentSystemPrompt(input.definition);
+      : composeAgentPrompt(input.definition, { mode: 'child' });
     childAgent = this.host.createChildAgent({
       conversationId: childConversationId,
       messages: input.initialMessages,
@@ -835,6 +837,7 @@ export class AgentDelegationRuntime {
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
+      l0CacheBreakpointEnabled: input.contextMode === 'fresh',
       unattended: input.unattended,
       afterToolResult: input.afterToolResult,
     });
@@ -1362,13 +1365,7 @@ export function buildForkContextMessages(parentMessages: readonly AgentMessage[]
   return messages;
 }
 
-export function normalizeAgentToolNames(rules: readonly string[] | undefined): string[] | undefined {
-  if (!rules) return undefined;
-  const names = rules
-    .map((rule) => normalizeToolRuleName(rule))
-    .filter((name): name is string => Boolean(name));
-  return names.includes('*') ? ['*'] : [...new Set(names)];
-}
+export { normalizeAgentToolNames } from './agentToolRules';
 
 function restrictAgentDefinitionTools(definition: AgentDefinition, allowedTools: readonly string[] | undefined): AgentDefinition {
   if (!allowedTools) return definition;
@@ -1475,7 +1472,7 @@ export function createTenonAssistantAgentDefinition(): AgentDefinition {
     description: 'Default Tenon assistant profile.',
     tools: ['*'],
     model: 'inherit',
-    body: LIN_AGENT_SYSTEM_PROMPT,
+    body: NEVA_AGENT_PERSONA,
   };
 }
 
@@ -1568,33 +1565,6 @@ export function createAgentDefinition(input: {
 // The AGENT.md parser exists exactly ONCE — `core/agentMarkdown.ts` (the
 // pre-release architecture sweep's consolidation, landed with run unification).
 export { parseAgentMarkdownDocument as parseAgentMarkdown } from '../core/agentMarkdown';
-
-// A fresh child run is the SAME Tenon agent in headless mode, not a separate
-// dumbed-down persona: it reuses the shared-core system prompt (perception +
-// conduct/safety — `LIN_CHILD_AGENT_CORE_PROMPT`) and layers a child run
-// identity + directive on top, then the definition's own persona body. A custom
-// definition's body is the additive specialization. (Fork takes a different path
-// — it reuses the parent's full prompt + a fork directive.)
-export function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
-  const header = [
-    'You are a Tenon child agent — a focused worker the main Tenon agent spawned to complete one task and report back.',
-    '',
-    `Agent type: ${definition.name}`,
-    `Agent description: ${definition.description}`,
-    '',
-    '# Child run rules',
-    '- Complete only the assigned task and return a concise final result to the parent agent.',
-    '- You run headless: never ask the user questions. If a required decision is missing, make a reasonable assumption and state it in your result.',
-    '- Use tools directly when useful. Keep intermediate reasoning and tool chatter out of the final result unless the parent asked for it.',
-    '- Stay inside the assigned scope; note adjacent work briefly instead of expanding into it.',
-    '- Do not claim work that you did not do.',
-  ].join('\n');
-  return [
-    header,
-    LIN_CHILD_AGENT_CORE_PROMPT,
-    definition.body.trim() ? `# Agent instructions\n${definition.body.trim()}` : null,
-  ].filter(Boolean).join('\n\n');
-}
 
 function buildForkDirective(directive: string): string {
   return [
@@ -1934,21 +1904,6 @@ function normalizeAgentName(name: string): string {
   const normalized = name.trim().replace(/^\//, '');
   if (!normalized) return '';
   return normalized.replace(/\s+/g, '-');
-}
-
-function normalizeToolRuleName(rule: string): string | null {
-  const raw = rule.trim();
-  if (!raw) return null;
-  if (raw === '*') return '*';
-  const name = raw.split('(')[0]!.trim().toLowerCase().replace(/-/g, '_');
-  const aliases: Record<string, string> = {
-    read: 'file_read',
-    glob: 'file_glob',
-    grep: 'file_grep',
-    edit: 'file_edit',
-    write: 'file_write',
-  };
-  return aliases[name] ?? name;
 }
 
 function extractDescriptionFromMarkdown(body: string): string | undefined {

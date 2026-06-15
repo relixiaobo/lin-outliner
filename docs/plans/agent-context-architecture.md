@@ -155,9 +155,9 @@ than duplicated in her persona.
 
 Every agent — including built-ins — has the same shape: identity metadata + capability
 declarations + persona `body`. Firmware (L0) and capability modules (L1) are framework
-code, never part of a stored definition. (Whether built-ins literally become read-only
-bundled AGENT.md files, removing the constant/file asymmetry entirely, is an Open
-question — the composer works either way.)
+code, never part of a stored definition. Built-ins may still be authored as in-code
+definitions for now; the important representation boundary is that they enter the composer
+as the same `AgentDefinition` shape as user/project agents.
 
 ### Cache discipline
 
@@ -166,9 +166,13 @@ agent (within the TTL) hit the firmware segment another agent already warmed; fr
 down it caches per-agent**; the tail stays uncached (today's invariant, kept). Honest
 bound: under Anthropic's 4-breakpoint budget the **cross-agent shared segment is L0
 only** — L1/L2 ride the per-agent cache. The L0-end breakpoint is redundant in a
-single-agent DM (firmware is already cached per-agent via the L2-end point) and only pays
-off in multi-agent / floor-switching contexts, so emit it **gated on multi-agent**, and
-**measure with the existing probe before/after** (A9) rather than assuming the win.
+single-agent DM (firmware is already cached per-agent via the L2-end point), so emit it
+only where it can reuse a warmed firmware segment: multi-agent Channel runs and fresh
+child runs. The deterministic acceptance surface is request shape: the provider payload
+must contain L0 + rest-of-stable-prompt system blocks while preserving the last-tool and
+last-user breakpoints. Live Anthropic `cacheRead` / `cacheWrite` deltas remain observable
+through the existing debug usage pipeline, but are not a correctness condition for this
+refactor.
 
 ### The hard wall (kept as an enforced invariant)
 
@@ -191,40 +195,29 @@ shippable and verifiable alone — not a scaffold-then-fill slice.
   sync (`agent-pi-mono-implementation.md` § System Prompt). Behavior-preserving for Neva +
   children; closes the safety/consistency gap for custom agents. Complete on its own.
 - **PR 2 — cross-agent cache breakpoint (optimization).** Emit the L0-end `cache_control`
-  in multi-agent contexts; **measure** prefix-cache hit rate / token cost before and after
-  (A9). Pure performance, depends on PR 1, shippable alone.
-  - **Interface prerequisite:** this requires an engine that lets the caller place a
-    `cache_control` breakpoint *inside* the system prompt. Today Tenon hands the engine a
-    single `systemPrompt` string and the engine auto-places the one `cache_control` over it
-    (`agent-conversation-model` §cache notes) — there is no L0-split seam — so PR 2 is
-    contingent on that engine capability plus a measured win.
+  where it can share a warmed firmware prefix. Pure performance, depends on PR 1,
+  shippable alone.
+  - **Implementation seam:** Tenon keeps pi-agent's single `systemPrompt` state shape, then
+    rewrites the Anthropic provider payload in `onPayload` by splitting the system block
+    into `L0 firmware` + `rest of stable prompt`. The two system blocks keep the L0-end and
+    per-agent-end breakpoints; the existing last-tool and last-user breakpoints remain, so
+    the request stays within Anthropic's 4-breakpoint budget. The rewrite is gated to
+    multi-agent Channel runs and fresh child runs; single-agent DMs, forked children, and
+    non-Anthropic providers keep the provider payload unchanged.
 
-## Open questions
+## Decisions
 
-- **Built-in representation.** Make built-ins read-only bundled AGENT.md files (one
-  representation, zero asymmetry), or keep the in-code constant (simpler, but built-in
-  stays a special case)? The composer is agnostic.
-- **L1 module boundaries.** Exactly which cross-tool framings are L1 modules (memory: yes;
-  delegation, web, files?) vs. folded into L0 as universal? Draw the line.
-- **Persona primacy.** Accept firmware-first (cache-optimal; fine for capable models), or
-  put a single `"You are X."` orientation line at the very top (primacy) at the cost of
-  the L0 cross-agent share? *Recommendation: firmware-first; expose the one-line option as
-  a tunable, default off.*
-- **Firmware escape hatch.** Is L0 strictly non-removable, or is there a narrow,
-  explicitly-declared escape for advanced authors? *Recommendation: the safety lines are
-  non-removable; perception lines could be advisory-overridable if a real need appears.*
-- **Breakpoint spend.** Always emit the L0 breakpoint, or only when multi-agent? Tie to
-  the PR 2 measurement.
-
-## Implementation checklist (PR 1)
-
-- [ ] `composeAgentPrompt(agentDef, context)` — the single entry; tag-derived ordering.
-- [ ] L0 firmware module (perception + conduct/safety floor), framework-owned.
-- [ ] L1 capability modules (memory framing relocated here; child-directive as a module).
-- [ ] L2 persona = the stored `body`; Neva's in-code body slimmed to persona-only.
-- [ ] Route built-in / custom / child through the composer; delete `LIN_AGENT_SYSTEM_PROMPT`
-      direct use, `buildAgentMemberSystemPrompt`, `buildFreshAgentSystemPrompt`.
-- [ ] Tests: each agent kind's effective prompt; **custom agents now include L0 firmware**;
-      ordering is firmware → capability → persona; the tail never enters the prefix.
-- [ ] Spec sync (`agent-pi-mono-implementation.md` § System Prompt; cross-ref the
-      [[agent-self-modification]] firmware boundary).
+- **Built-in representation.** Keep built-ins as in-code definitions for now. The composer
+  removes the prompt-assembly asymmetry; moving built-ins to bundled read-only AGENT.md
+  files would be a storage/packaging cleanup, not part of this architecture.
+- **L1 module boundaries.** Ship only shared cross-tool framing with a current consumer:
+  memory framing and the fresh-child directive. Web/files/delegation modules can be added
+  later only when they remove real duplication across tools or agent kinds.
+- **Persona primacy.** Keep firmware-first. The cache-optimal order is the architecture;
+  no tunable orientation line ships until a measured model-quality issue justifies it.
+- **Firmware escape hatch.** None. L0 is framework-owned and non-removable. Advanced
+  authors can specialize persona/capabilities, but they cannot remove the perception and
+  conduct floor.
+- **Breakpoint spend.** Gate L0 breakpoint emission to multi-agent Channel runs and fresh
+  child runs. Single-agent DMs, fork children, non-Anthropic providers, and non-composer
+  prompts keep the provider payload unchanged.
