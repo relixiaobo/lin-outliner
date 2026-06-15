@@ -244,8 +244,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -317,8 +315,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -387,10 +383,23 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
+        }),
+        // The provider connection owns no model now; the built-in assistant's
+        // default model is the connection's resolved model. Pin it for a stable
+        // assertion (the real catalog's ranked-first model drifts as pi-ai updates).
+        providerModelResolver: () => ({
+          id: 'gpt-4.1',
+          name: 'gpt-4.1',
+          provider: 'openai',
+          api: 'openai-completions',
+          baseUrl: '',
+          reasoning: false,
+          input: ['text'],
+          contextWindow: 1_000_000,
+          maxTokens: 32_000,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         }),
         streamFn: script.streamFn,
         completeSimpleFn: async (model, context) => {
@@ -410,6 +419,10 @@ describe('agent runtime skill integration', () => {
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(script.pendingCount()).toBe(0);
+    // First turn runs on the pinned connection model; the skill's `model: gpt-5.2`
+    // frontmatter override resolves through the REAL pi-ai catalog (there is no
+    // injected catalog-by-id seam), so `gpt-5.2` must remain a live catalog id — this
+    // assertion tracks catalog drift, like the base-model note on the resolver above.
     expect(callModels).toEqual(['gpt-4.1', 'gpt-5.2']);
     expect(contextTexts.join('\n')).toContain('AUTO_SKILL_BODY');
     expect(contextTexts.join('\n')).toContain(`Base directory for this skill: ${skillDir}`);
@@ -479,8 +492,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -552,8 +563,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -627,8 +636,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -694,8 +701,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -777,8 +782,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -844,8 +847,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -927,8 +928,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -982,8 +981,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1043,8 +1040,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1138,8 +1133,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1229,8 +1222,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1305,8 +1296,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1378,8 +1367,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1443,8 +1430,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1514,8 +1499,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1595,8 +1578,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1659,8 +1640,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1743,8 +1722,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1811,8 +1788,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1891,8 +1866,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1981,8 +1954,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2048,8 +2019,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2168,8 +2137,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2226,8 +2193,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2287,8 +2252,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2342,8 +2305,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2411,8 +2372,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),

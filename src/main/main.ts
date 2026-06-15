@@ -2522,7 +2522,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_test_provider_connection':
       return testProviderConnection({
         providerId: String(args.providerId),
-        modelId: String(args.modelId),
         baseUrl: args.baseUrl ? String(args.baseUrl) : undefined,
         apiKey: args.apiKey ? String(args.apiKey) : undefined,
       });

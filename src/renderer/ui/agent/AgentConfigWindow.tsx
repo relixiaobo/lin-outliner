@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type {
   AgentAuthoringInput,
   AgentDefinitionView,
+  AgentProviderSettingsView,
   AgentStorageLocation,
   SkillDefinition,
 } from '../../api/types';
@@ -23,6 +24,7 @@ export function AgentConfigWindow() {
   const { agentId, mode } = agentConfigParamsFromSearch(window.location.search);
   const [agents, setAgents] = useState<AgentDefinitionView[]>([]);
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
+  const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,11 +39,13 @@ export function AgentConfigWindow() {
     void Promise.all([
       api.agentListAllDefinitions(WORKSPACE_CONVERSATION_ID),
       api.agentListAllSkills(WORKSPACE_CONVERSATION_ID).catch(() => [] as SkillDefinition[]),
+      api.agentGetProviderSettings().catch(() => null),
     ])
-      .then(([nextAgents, nextSkills]) => {
+      .then(([nextAgents, nextSkills, nextProviders]) => {
         if (!active) return;
         setAgents(nextAgents);
         setSkills(nextSkills);
+        setProviderSettings(nextProviders);
       })
       .catch((caught) => {
         if (active) setError(caught instanceof Error ? caught.message : String(caught));
@@ -144,6 +148,7 @@ export function AgentConfigWindow() {
           key={selectedAgent?.agentId ?? 'agent-create-new'}
           agent={mode === 'create' ? null : selectedAgent}
           availableSkills={skills}
+          providerSettings={providerSettings}
           busy={busy}
           onCreate={createAgent}
           onUpdate={updateAgent}

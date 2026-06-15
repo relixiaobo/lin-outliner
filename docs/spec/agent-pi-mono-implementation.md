@@ -261,7 +261,8 @@ TypeScript:
 agent-providers.json
   -> activeProviderId
   -> agent: runtime agent settings
-  -> providers: providerId, modelId, baseUrl, enabled
+  -> providers: providerId, baseUrl, enabled        // connection only
+  -> builtInAgentProfiles: agentId -> { model?, effort? }  // built-in default overlay
 
 agent-secrets.json
   -> credentials: providerId -> AuthCredential
@@ -277,6 +278,62 @@ descriptor (`authKind`, `credentialed`, `hasStoredKey`, oauth `connected` /
 credential, or ADC material itself. Runtime provider resolution happens through
 Electron AgentRuntime or the TypeScript tool/provider gateway — see
 [Provider Authentication](#provider-authentication).
+
+### Connection-only providers; the agent profile owns model + effort
+
+A provider row is a **connection** (credentials + endpoint), not a model choice.
+`AgentProviderConfig` is `{ providerId; baseUrl?; enabled }` — it neither requires
+nor semantically owns `modelId` / `reasoningLevel`. The provider config window is
+correspondingly connection-only: credential or provider-specific auth, optional
+Base URL, `Test connection`, and Save / remove — no model or thinking-level
+picker, for catalog and custom OpenAI-compatible providers alike.
+
+Model and effort are owned by the agent identity that actually runs:
+
+- **User / project agents** keep `AgentDefinition.model` / `AgentDefinition.effort`
+  (persisted to the agent's `.md` / `.json`).
+- **The built-in assistant** is a read-only definition, so its model/effort live in
+  a settings-owned overlay keyed by `agentId` (`builtInAgentProfiles` above),
+  reachable via `getBuiltInAgentProfile` / `setBuiltInAgentProfile`. Editing the
+  built-in's model/effort in its profile editor persists to this overlay (a real
+  Save), while name / tools / persona stay read-only (Duplicate for a full copy).
+
+The profile selector is **capability-driven**: pick a provider, then a model; the
+effort options are derived from that model's `supportedThinkingLevels`. Saved
+values are the canonical model id (provider-qualified `providerId/modelId`) and the
+adapter's canonical effort, never a display label. The provider→model string is
+parsed by one shared `core/agentModelId` helper (renderer + runtime), so a model id
+that itself contains `:` (Bedrock `amazon.nova-lite-v1:0`, Vertex inference
+profiles) is never mis-split — `/` is the canonical qualifier and `:` only splits
+when its prefix is a known provider.
+
+**`agentTestProviderConnection` validates reachability, not a chosen model.** Probe
+order: if the connection has a **custom base URL** (a proxy/gateway that may not
+host the catalog's first model), list the endpoint's own models first
+(`GET {baseUrl}/models`, `listOpenAiCompatibleModels`) — any model proves
+reachability. Otherwise (or if listing is unsupported but a catalog exists), send a
+1-token completion against the first ranked catalog model
+(`firstRankedModel`/`rankedModels`). If neither proves reachable, return an honest
+"endpoint reached but no usable model" error. A listing failure with no catalog
+model to fall back to surfaces its status (401/404/timeout) directly. The probe is
+bounded: short timeout, tiny output budget, cancellable UI.
+
+**Runtime model resolution** (`agentRuntime.ts`):
+
+1. Resolve the active usable provider connection.
+2. Resolve the running agent's model/effort: user/project override → built-in
+   assistant overlay default → catalog first-ranked fallback (last-resort first-run
+   default), through one shared `resolveAgentModelEffort` helper. When the profile
+   sets no effort, the default is **`medium`** coerced to the model's nearest
+   supported level (a non-reasoning model that supports only `off` stays `off`) —
+   a reasoning-capable model reasons by default rather than silently running off.
+   The catalog fallback is resolved lazily, so an explicit, resolvable model never
+   triggers a catalog ranking sort.
+3. Build the provider `Model` object with the connection's auth / base URL.
+
+Assistant events still record the actual `providerId`, `modelId`, `usage`, and
+thinking level so Details / debug stay faithful — the connection-only storage
+change does not strip per-message model metadata.
 
 ## Provider Authentication
 

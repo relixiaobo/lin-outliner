@@ -80,7 +80,7 @@ paper palettes, or feature concepts Tenon does not own.
 | Menus and overlays | `MenuSurface.tsx`, `MenuItem.tsx`, `AnchoredOverlay.tsx`, `Dialog.tsx`, `PopoverList.tsx`, `NodeContextMenu.tsx`, `TriggerPopover.tsx`, `ReferenceSelector.tsx`, `SlashCommandMenu.tsx` | Overlay semantics, positioning, elevation, dismissal, and item rows. |
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | Persistent dock, chat scroll, debug surface, settings entry. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentIdentityAvatar.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, speaker identity, metadata details, process disclosure, thinking, tool calls, status slots. |
-| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx` | Textarea, attachments, model display/navigation chip, send/stop slot. |
+| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx` | Textarea, attachments, send/stop slot. No model identity control (model lives on the agent profile). |
 | Attachment rows | `AttachmentRow.tsx`, `BlockNodeRow.tsx`, `inlineFileIcon.tsx` | File attachment block rows, PDF thumbnails, file-kind glyphs, media controls, and safe system-action buttons. |
 | Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `AgentConfigWindow.tsx`, `ChannelConfigWindow.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + right-pane toolbar title, constrained inset grouped content, per-row `⋯` menu, and provider / agent / Channel configuration as their own native child windows. See "Settings window" below. |
 | Primitives | `Button.tsx`, `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `SelectControl.tsx`, `FeedbackState.tsx` | Shared semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
@@ -423,7 +423,7 @@ Use these default desktop tokens before adding component-specific values:
   *flush*, not a nested card, so it reuses the rail's own `--panel-radius` on its
   top corners (see Components → Agent) rather than a concentric inset.
 - **Interactive controls are capsules, not links in the concentric chain (B6).**
-  Icon buttons and the composer's send / attach / model controls are *fully
+  Icon buttons and the composer's send / attach controls are *fully
   rounded* via `--radius-pill`: a square control renders as a circle, a wide one
   as a stadium, so every control of the same height shows the same corner arc
   (= half its height) and they line up regardless of which surface they float in.
@@ -431,7 +431,7 @@ Use these default desktop tokens before adding component-specific values:
   surface (with padding all around it) does not share that surface's corner, so it
   does NOT derive `parent − inset`. Never give such a control a small
   rounded-square radius — the failure mode is a 2px box sitting next to a circle
-  (the composer send/model controls had exactly this bug).
+  (the composer send/attach controls had exactly this bug).
 - **The 24pt window corner needs the native addon compiled (`bun run
   build:native`); once built it renders in `dev:*`, not only in a packaged
   build.** The OS owns the window's outer corner; the native addon
@@ -1119,7 +1119,13 @@ category history; see "Settings window".)
   editors inline. Agent and Channel config windows use the same native child
   dimensions, each starts with an explicit title header, and each keeps its
   Cancel / Save action bar fixed to the bottom edge while content scrolls behind
-  it. Agent config reuses the shared AgentEditor surface. Channel config uses the
+  it. Agent config reuses the shared AgentEditor surface, which hosts the
+  capability-driven model/effort selector (pick a Provider, then a Model; the
+  effort options derive from that model's supported thinking levels — see
+  `agent-pi-mono-implementation.md`). The built-in Tenon assistant is read-only
+  except for that model/effort: it keeps an editable selector and a real Save
+  (persisting to the settings-owned overlay) alongside Duplicate, while name /
+  tools / persona stay disabled. Channel config uses the
   same settings sheet/inset-list language for name, optional opening message,
   current members, and add-member actions.
 - Agent UI uses Tenon foundations: neutral text, translucent chrome, opaque content
@@ -1172,12 +1178,13 @@ category history; see "Settings window".)
   transcript (B10); its own padding re-insets the text to the shared
   `--agent-content-x` column.
 - Composer toolbar remains visually unified with the textarea; no internal
-  divider. Its footer controls (attach / model / send) are capsules (B6).
-- The model chip is display + navigation, not an inline picker. It shows the
-  active provider/model and reasoning label. In a canonical agent DM, clicking
-  opens that agent's profile, including the view-only built-in Tenon assistant
-  profile; otherwise it opens the owning provider config. It never mutates
-  provider/model settings from the chat surface.
+  divider. Its footer controls (attach / send) are capsules (B6).
+- The composer footer carries **no model identity control**. A DM talks to an
+  agent identity and a channel to a roster — not to one model — so model/provider
+  is never a primary chat affordance there (it would imply a single global model
+  and mislead in channels). Model/provider/effort surface only where they are
+  diagnostic or configuration-relevant: the message Details popover, the run/debug
+  panel, ledger metadata, and the agent profile editor (where the model is chosen).
 - Settings opens as a standalone window (the `?surface=settings` route), not an
   in-app modal. See "Settings window" below.
 - Runtime approval/tool preview types exist, but no renderer approval overlay is
@@ -1353,7 +1360,7 @@ not Apple chrome. We borrow the interaction, not the chrome.
   `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu tier
   (B10). Rows are memoized + fed stable handlers, so opening one provider's sheet
   never re-renders the list.
-- **Per-provider config — its OWN native window, connection + global model.** Clicking a row
+- **Per-provider config — its OWN native window, connection only.** Clicking a row
   (or "Configure…") opens the config as a real native window, NOT an in-renderer
   overlay: a frameless **modal child of the settings window** (`?surface=provider-config`,
   opened by the main process via `lin:open-provider-config`) — the macOS System
@@ -1362,12 +1369,14 @@ not Apple chrome. We borrow the interaction, not the chrome.
   `ProviderConfigWindow.tsx` → `ProviderConfigForm.tsx`): opaque, filling the frame,
   no traffic lights (closed by its own Cancel / Save or Escape), no backdrop (the OS
   dims the parent). It has a brand-avatar + title/subtitle head and a SINGLE inset
-  card holding the connection plus the built-in assistant's global model/reasoning:
-  a label-less credential row (a key glyph + the field, native password-dialog
-  style), catalog model select, thinking-level select, and the base URL inline
-  (the lone advanced setting — no disclosure). Custom (OpenAI-compatible)
-  providers additionally enter a provider id and a model id in the same card,
-  since there is no catalog to default from. It fetches its own
+  card holding the **connection only** — no model or thinking-level picker (model
+  and effort are owned by the agent profile; see Components → Agent and
+  `agent-pi-mono-implementation.md`): a label-less credential row (a key glyph +
+  the field, native password-dialog style) and the base URL inline (the lone
+  advanced setting — no disclosure). `Test connection` validates reachability with
+  an internally-chosen probe model, never a user-picked one. Custom
+  (OpenAI-compatible) providers additionally enter a provider id in the same card.
+  It fetches its own
   provider settings and commits via the existing agent IPC, then calls
   `notifySettingsChanged` so the main process broadcasts a settings-changed to BOTH
   the settings list (which refetches — `onSettingsChanged`) and the main window. It

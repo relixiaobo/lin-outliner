@@ -139,8 +139,6 @@ function defaultRuntimeOptions(localRoot: string, dataRoot: string, assetResolve
     assetResolver: assetResolver as never,
     providerConfigLoader: async () => ({
       providerId: 'openai',
-      modelId: 'gpt-4.1',
-      reasoningLevel: 'low' as const,
       enabled: true,
       apiKey: 'test-key',
     }),

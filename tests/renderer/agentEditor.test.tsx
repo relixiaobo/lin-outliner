@@ -85,19 +85,25 @@ function skill(name: string): SkillDefinition {
 }
 
 describe('AgentEditor', () => {
-  test('built-in renders through the same editor, view-only, with a Duplicate action', async () => {
+  test('built-in renders through the same editor: read-only except an editable model/effort + Save', async () => {
     let duplicated: AgentDefinitionView | null = null;
     const rendered = renderComponent(
-      <AgentEditor agent={builtIn()} availableSkills={[]} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
+      <AgentEditor agent={builtIn()} availableSkills={[]} providerSettings={null} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
     );
-    expect(rendered.container.textContent).toContain('Built-in agents are view-only');
+    expect(rendered.container.textContent).toContain('read-only except for the model');
     // Same Form editor as a user agent — the Name field exists and is pre-filled;
-    // the controls are read-only (the tool toggles render natively disabled).
+    // the definition controls are read-only (the tool toggles render natively disabled).
     const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
     expect(nameInput?.value).toBe('Neva');
     expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
-    // The only action is Duplicate (no Save / Delete).
-    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(false);
+    // ...but the model/effort selector stays editable (it persists to the settings
+    // overlay), so the built-in gets a real Save alongside Duplicate. The Provider
+    // select is the always-present entry point (the Model select only appears once a
+    // provider is chosen), so assert it is enabled.
+    const providerSelect = rendered.document.querySelector('select[aria-label="Provider"]') as HTMLSelectElement | null;
+    expect(providerSelect).not.toBeNull();
+    expect(providerSelect?.hasAttribute('disabled')).toBe(false);
+    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(true);
     await click(rendered, textButton(rendered, 'Duplicate to my agents'));
     expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('built-in:tenon:assistant');
   });

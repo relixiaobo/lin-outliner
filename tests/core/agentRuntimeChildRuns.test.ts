@@ -355,8 +355,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -497,8 +495,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -561,8 +557,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -635,8 +629,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -726,8 +718,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -809,8 +799,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -871,8 +859,6 @@ describe('agent runtime childRuns', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1004,8 +990,6 @@ describe('agent runtime childRuns', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1188,8 +1172,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1249,8 +1231,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1381,8 +1361,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1608,8 +1586,6 @@ describe('agent runtime childRuns', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -1829,8 +1805,6 @@ describe('agent runtime childRuns', () => {
         dreamMemoryExtractionEnabled: true,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2018,8 +1992,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2071,8 +2043,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2155,8 +2125,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2230,8 +2198,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2336,8 +2302,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2379,8 +2343,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2425,8 +2387,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2535,8 +2495,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2580,8 +2538,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2647,8 +2603,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2677,8 +2631,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2745,8 +2697,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2772,8 +2722,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2806,8 +2754,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2877,8 +2823,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),
@@ -2951,8 +2895,6 @@ describe('agent runtime childRuns', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
           providerId: 'openai',
-          modelId: 'gpt-4.1',
-          reasoningLevel: 'low',
           enabled: true,
           apiKey: 'test-key',
         }),

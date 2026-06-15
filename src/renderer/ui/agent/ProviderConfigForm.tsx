@@ -1,21 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { AgentModelOption, AgentReasoningLevel } from '../../api/types';
 import { CheckIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
-import { SelectControl } from '../primitives/SelectControl';
-import { coerceReasoningLevel } from './settingsReasoning';
 
 // The draft committed by Save. `apiKey` empty means "leave the saved key
-// unchanged"; a non-empty value replaces it. The provider-config surface owns
-// model/reasoning for the built-in assistant's global provider; user/project
-// agents keep their overrides in Agent Profile settings.
+// unchanged"; a non-empty value replaces it. A provider is a CONNECTION only —
+// credentials + endpoint. The model/effort that runs is chosen on the agent
+// profile (built-in assistant default or a user/project agent), never here.
 export interface ProviderConfigDraft {
   providerId: string;
-  modelId: string;
-  reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   apiKey: string;
 }
@@ -38,8 +33,7 @@ interface ProviderConfigFormProps {
   avatar: ReactNode;
   defaultBaseUrl?: string;
   baseUrlPlaceholder: string;
-  initial: { providerId: string; modelId: string; reasoningLevel: AgentReasoningLevel; baseUrl: string };
-  modelOptions?: AgentModelOption[];
+  initial: { providerId: string; baseUrl: string };
   hasSavedKey: boolean;
   isActive: boolean;
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
@@ -58,11 +52,12 @@ type FormStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
 
 // The per-provider connection form. Rendered as the whole content of the native
 // provider-config window (a modal child of Settings — the macOS idiom where a list
-// row opens a real dialog, not an in-renderer overlay). It hosts the connection
-// plus model/reasoning ownership for the built-in assistant's global provider.
-// Custom providers enter a provider id + model id (no catalog to default from).
-// Selection / focus stay neutral (B3/B4); Save is a single neutral-strong primary,
-// never a system-blue accent (B4); validation uses status colour only (B4).
+// row opens a real dialog, not an in-renderer overlay). It proves a CONNECTION:
+// credentials, optional base URL, and a Test connection probe. The model/effort
+// that runs is chosen on the agent profile, never here. Custom providers enter a
+// provider id (no catalog to default from). Selection / focus stay neutral (B3/B4);
+// Save is a single neutral-strong primary, never a system-blue accent (B4);
+// validation uses status colour only (B4).
 export function ProviderConfigForm({
   mode,
   providerName,
@@ -71,7 +66,6 @@ export function ProviderConfigForm({
   defaultBaseUrl,
   baseUrlPlaceholder,
   initial,
-  modelOptions = [],
   hasSavedKey,
   isActive,
   authNote,
@@ -90,8 +84,6 @@ export function ProviderConfigForm({
   const isCustom = mode === 'custom';
 
   const [providerId, setProviderId] = useState(initial.providerId);
-  const [modelId, setModelId] = useState(initial.modelId);
-  const [reasoningLevel, setReasoningLevel] = useState<AgentReasoningLevel>(initial.reasoningLevel);
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
@@ -112,21 +104,14 @@ export function ProviderConfigForm({
   const showKeyField = !authNote;
   const draft: ProviderConfigDraft = {
     providerId: isCustom ? trimmedProviderId : initial.providerId,
-    modelId: modelId.trim(),
-    reasoningLevel,
     baseUrl: baseUrl.trim(),
     apiKey: apiKey.trim(),
   };
-  const selectedModel = modelOptions.find((model) => model.id === draft.modelId);
-  const reasoningOptions = selectedModel?.supportedThinkingLevels.length
-    ? selectedModel.supportedThinkingLevels
-    : [reasoningLevel];
   // A managed provider (authNote) persists a row with nothing to fill in; an
   // api-key / custom provider needs a credential or a base URL, or the saved row is
   // a keyless no-op the startup reconcile prunes — a confusing "saved, then gone".
   const hasConnection = Boolean(draft.apiKey) || hasSavedKey || Boolean(draft.baseUrl);
   const canSave = Boolean(draft.providerId)
-    && Boolean(draft.modelId)
     && (authNote ? true : hasConnection)
     && !busy;
   const canValidate = Boolean(draft.providerId) && !busy;
@@ -160,16 +145,6 @@ export function ProviderConfigForm({
     validationToken.current += 1;
     setStatus('idle');
     setMessage('');
-  }
-
-  function selectCatalogModel(nextModelId: string) {
-    const nextModel = modelOptions.find((model) => model.id === nextModelId);
-    const supportedLevels = nextModel?.supportedThinkingLevels.length
-      ? nextModel.supportedThinkingLevels
-      : [reasoningLevel];
-    setModelId(nextModelId);
-    setReasoningLevel(coerceReasoningLevel(reasoningLevel, supportedLevels));
-    clearResult();
   }
 
   async function runSave() {
@@ -255,50 +230,6 @@ export function ProviderConfigForm({
                 </button>
               </div>
             </div>
-          ) : null}
-          {isCustom ? (
-            <label className="settings-sheet-row">
-              <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
-              <Input
-                className="settings-sheet-row-input"
-                label={t.providerConfig.modelLabel}
-                onChange={(event) => { setModelId(event.target.value); clearResult(); }}
-                placeholder={t.providerConfig.modelPlaceholder}
-                value={modelId}
-                variant="bare"
-              />
-            </label>
-          ) : modelOptions.length > 0 ? (
-            <>
-              <label className="settings-sheet-row">
-                <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
-                <SelectControl
-                  className="settings-sheet-row-input"
-                  label={t.providerConfig.modelLabel}
-                  onChange={(event) => selectCatalogModel(event.target.value)}
-                  value={modelId}
-                  variant="popup"
-                >
-                  {modelOptions.map((model) => (
-                    <option key={model.id} value={model.id}>{model.name || model.id}</option>
-                  ))}
-                </SelectControl>
-              </label>
-              <label className="settings-sheet-row">
-                <span className="settings-sheet-row-label">{t.agent.composer.thinkingLevel}</span>
-                <SelectControl
-                  className="settings-sheet-row-input"
-                  label={t.agent.composer.thinkingLevel}
-                  onChange={(event) => { setReasoningLevel(event.target.value as AgentReasoningLevel); clearResult(); }}
-                  value={reasoningOptions.includes(reasoningLevel) ? reasoningLevel : reasoningOptions[0]}
-                  variant="popup"
-                >
-                  {reasoningOptions.map((level) => (
-                    <option key={level} value={level}>{t.agent.composer.reasoningLevels[level === 'xhigh' ? 'max' : level]}</option>
-                  ))}
-                </SelectControl>
-              </label>
-            </>
           ) : null}
           <label className="settings-sheet-row">
             <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>

@@ -20,22 +20,18 @@ import {
 import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import { agentMentionToken } from '../../../core/agentChannel';
 import type {
-  AgentModelOption,
-  AgentProviderConfigView,
   AgentProviderSettingsView,
-  AgentReasoningLevel,
   AgentSlashCommandView,
   NodeId,
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
   AgentComposerAttachmentButton,
-  AgentComposerModelButton,
   AgentComposerPrimaryAction,
   AgentComposerToolbar,
   AgentQueuedSteer,
 } from './AgentComposerControls';
-import { isProviderUsable, resolveUsableActiveProvider } from './providerCatalog';
+import { resolveUsableActiveProvider } from './providerCatalog';
 import {
   AgentComposerEditor,
   type AgentComposerDraft,
@@ -78,26 +74,12 @@ interface AgentComposerProps {
     scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
   onResolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
-  onOpenModelSettings: () => void;
   pendingApproval: AgentApprovalRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   settings: AgentProviderSettingsView | null;
   slashCommands: AgentSlashCommandView[];
   steeringNote: string | null;
 }
-
-const VENDOR_PREFIXES = [
-  'Anthropic: ',
-  'OpenAI: ',
-  'Claude ',
-  'Google ',
-  'DeepSeek ',
-  'MiniMax ',
-  'Mistral ',
-  'xAI ',
-  'Kimi ',
-  'Grok ',
-];
 
 const MAX_ATTACHMENTS = 6;
 // Attachment errors are a transient hint, not a persistent banner — they fade
@@ -152,10 +134,6 @@ type ComposerAttachment = AgentMessageAttachmentInput & {
   thumbnailDataUrl?: string;
 };
 
-interface ComposerModelChoice extends AgentModelOption {
-  providerId: string;
-}
-
 interface PreparedPathlessAttachmentBytes {
   bytes: ArrayBuffer;
   sha256: string;
@@ -188,7 +166,6 @@ export function AgentComposer({
   members,
   queueSends = false,
   onNodeReferenceOpen,
-  onOpenModelSettings,
   onCancelSteer,
   onResolveApproval,
   onResolveUserQuestion,
@@ -254,18 +231,6 @@ export function AgentComposer({
   const canSubmit = (pendingApproval || pendingUserQuestion ? false : steering
     ? hasDraft && !hasAttachments
     : !sending && (hasDraft || hasAttachments)) && !providerBlocksSend;
-  const modelOptions = getModelChoices(settings, activeProvider);
-  const selectedModel = modelOptions.find(
-    (model) => model.providerId === activeProvider?.providerId && model.id === activeProvider?.modelId,
-  );
-  const reasoningOptions: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
-    ? selectedModel.supportedThinkingLevels
-    : activeProvider ? [activeProvider.reasoningLevel] : ['off'];
-  const selectedReasoning = activeProvider && reasoningOptions.includes(activeProvider.reasoningLevel)
-    ? activeProvider.reasoningLevel
-    : reasoningOptions[0] ?? 'off';
-  const supportsReasoning = !!selectedModel?.reasoning || reasoningOptions.some((level) => level !== 'off');
-  const reasoningEnabled = selectedReasoning !== 'off';
 
   useEffect(() => {
     let canceled = false;
@@ -366,12 +331,6 @@ export function AgentComposer({
     editorRef.current?.setPlainText(steeringNote);
   }
 
-  const modelLabel = selectedModel
-    ? shortenModelName(selectedModel.name || selectedModel.id)
-    : activeProvider?.modelId
-      ? shortenModelName(activeProvider.modelId)
-      : t.agent.composer.noModelConfigured;
-
   function handleDraftChange(nextDraft: AgentComposerDraft) {
     if (!sendingRef.current) pruneUnreferencedAttachments(nextDraft);
     draftRef.current = nextDraft;
@@ -455,19 +414,6 @@ export function AgentComposer({
               fileInputRef={fileInputRef}
               onAttachmentClick={() => void handleAttachmentClick()}
               onFileInputChange={handleFileInputChange}
-              modelControl={(
-                <div className="agent-composer-model">
-                  <AgentComposerModelButton
-                    disabled={false}
-                    modelLabel={modelLabel}
-                    modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : t.agent.composer.noModelConfigured}
-                    onOpenSettings={onOpenModelSettings}
-                    reasoningEnabled={reasoningEnabled}
-                    selectedReasoning={selectedReasoning}
-                    supportsReasoning={supportsReasoning}
-                  />
-                </div>
-              )}
               primaryAction={(
                 <AgentComposerPrimaryAction
                   canSubmit={canSubmit}
@@ -1579,50 +1525,4 @@ function formatBytes(bytes: number): string {
     unitIndex += 1;
   }
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
-}
-
-function getModelChoices(
-  settings: AgentProviderSettingsView | null,
-  activeProvider: AgentProviderConfigView | null,
-): ComposerModelChoice[] {
-  if (!settings) return [];
-  const usableProviderIds = new Set(
-    settings.providers
-      .filter((provider) => isProviderUsable(settings, provider))
-      .map((provider) => provider.providerId),
-  );
-  const choices = settings.availableProviders
-    .filter((provider) => usableProviderIds.has(provider.providerId))
-    .flatMap((provider) =>
-      provider.models.map((model) => ({ ...model, providerId: provider.providerId })),
-    );
-  if (!activeProvider) return choices;
-  if (choices.some((model) => model.providerId === activeProvider.providerId && model.id === activeProvider.modelId)) {
-    return choices;
-  }
-  return [{
-    id: activeProvider.modelId,
-    name: activeProvider.modelId,
-    providerId: activeProvider.providerId,
-    reasoning: activeProvider.reasoningLevel !== 'off',
-    supportedThinkingLevels: [activeProvider.reasoningLevel],
-    contextWindow: 0,
-    maxTokens: 0,
-  }, ...choices];
-}
-
-function shortenModelName(name: string): string {
-  let result = name;
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const prefix of VENDOR_PREFIXES) {
-      if (result.startsWith(prefix)) {
-        result = result.slice(prefix.length);
-        changed = true;
-        break;
-      }
-    }
-  }
-  return result;
 }

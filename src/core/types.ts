@@ -788,6 +788,12 @@ export interface AgentMemoryEntryView {
 }
 
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+/**
+ * The reasoning ladder, lowest → highest. The single ordered source for effort
+ * option ordering (renderer) and nearest-supported-level coercion (runtime), so the
+ * two sides never drift. `AgentReasoningLevel` is exactly the union of its members.
+ */
+export const AGENT_REASONING_LADDER: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentDelegationPermissionMode = 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';
@@ -900,10 +906,15 @@ export interface AgentSlashCommandView {
   insertText: string;
 }
 
+/**
+ * A provider is a CONNECTION, not a model choice. It proves credentials and an
+ * endpoint are reachable; which model/effort actually runs is owned by the agent
+ * profile that runs (see `AgentDefinition.model` / `effort` and the built-in
+ * assistant's settings-owned default). Provider config therefore carries no
+ * `modelId` / `reasoningLevel`.
+ */
 export interface AgentProviderConfigInput {
   providerId: string;
-  modelId: string;
-  reasoningLevel?: AgentReasoningLevel;
   baseUrl?: string | null;
   enabled?: boolean;
 }
@@ -928,8 +939,6 @@ export interface ProviderAuthView {
 
 export interface AgentProviderConfigView {
   providerId: string;
-  modelId: string;
-  reasoningLevel: AgentReasoningLevel;
   baseUrl?: string;
   enabled: boolean;
   hasApiKey: boolean;
