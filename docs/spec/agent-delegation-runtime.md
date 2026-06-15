@@ -686,7 +686,7 @@ shared for metrics or parent notification.
 Loads built-in, user, workspace, settings, and future plugin agent definitions.
 The built-in Tenon assistant is a real definition with stable id
 `built-in:tenon:assistant`, internal name `assistant`, display name
-`Tenon Assistant`, and a view-only profile body sourced from the main Tenon
+`Neva`, and a view-only profile body sourced from the main Tenon
 system prompt. It is visible in Agent Profiles / Agent Config but is never a
 write target.
 
@@ -736,7 +736,7 @@ delete surface:
   writable authoring roots such as `additionalAgentDirectories`) renders through
   this same editor but **read-only** (every control disabled; the mode toggle
   stays live so Raw is viewable; the only action is "Duplicate to my agents") —
-  so opening Tenon Assistant, an external-directory agent, and a writable user
+  so opening Neva, an external-directory agent, and a writable user
   agent use the same viewing surface; the difference is only editability. A
   **new** agent seeds a
   **scaffold** (real defaults — `permission-mode: restricted`, `effort: medium`,

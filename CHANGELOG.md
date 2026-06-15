@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **The built-in agent is named Neva; the system prompt slims to identity-only (PR #248, cc-2)** —
+  the built-in agent now presents as **Neva**, a thinking-partner persona with a load-bearing
+  anti-sycophancy stance (challenges weak reasoning, won't flatter, hard on the idea and reverent
+  with the user's voice/work). The rename is **display-name-only** — the identity string
+  `built-in:tenon:assistant` is unchanged, so there is no userData wipe. The stable system prompt is
+  re-homed by how often each fact changes: it now carries only what holds on every turn — identity,
+  perception (`<system-reminder>` handling), memory framing, and conduct/safety — and **drops the
+  `outliner` / `local-tools` / `web` sections**. Tool-operating conventions (`%%node:id%%` edit
+  handles, `[[node:Display^id]]` / `[[file:Display^/path]]` references, canonical date formats, the
+  "create under today's journal when no `parent_id`" default, prefer-file-tools-over-`bash`, web tool
+  usage) now ride with each tool's own description, present exactly when that tool is in hand. Result:
+  the cached prompt prefix is identical across every conversation, DM, and Channel, and fresh child
+  runs (the `shared` subset) inherit perception + conduct but not the user-facing persona/memory.
+  Spec: `docs/spec/agent-pi-mono-implementation.md`, `docs/spec/agent-delegation-runtime.md`.
 - **The agent surfaces a produced file inline — `[[file:…]]` marker emit (PR #246, cc)** —
   closes a scope gap in the agent-file-model: "output a file into the message flow" previously covered
   only **text** files written via `file_write`/`file_edit` (which render a tool-call file chip). A
