@@ -399,11 +399,10 @@
   min-width: 0;
 }
 
-/* A file node's row content is a uniform card — a file-type icon, the editable
-   filename, a meta line, and a ⋯ action menu — identical across every file kind
-   (an image shows the file-type icon, never a thumbnail). It sits in the row's
-   content column; the leading bullet/chevron stay outside it, so a file is still a
-   full node (chevron → children, bullet → node page). */
+/* A non-image file node's row content is a uniform card — a file-type icon, the
+   read-only filename, a meta line, and a ⋯ action menu. It sits in the row's content
+   column; the leading bullet/chevron stay outside it, so a file is still a full node
+   (chevron → children, bullet → node page). */
 .file-node-card {
   display: grid;
   width: min(560px, 100%);

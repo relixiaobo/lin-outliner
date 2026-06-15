@@ -17,17 +17,28 @@ export function isFileNode(node: NodeProjection | undefined): node is FileNode {
   return false;
 }
 
+/** The read-only filename/title used by file rows and file-node pages. */
+export function fileNodeTitle(node: FileNode): string {
+  const displayName = node.content.text.trim();
+  if (displayName) return displayName;
+  if (node.type === 'attachment') return node.originalFilename?.trim() ?? '';
+  if (node.mediaUrl) return node.mediaUrl.trim();
+  if (node.mediaAlt) return node.mediaAlt.trim();
+  return node.assetId?.trim() ?? '';
+}
+
 /** The preview target a file node resolves to (a local asset, or a remote image URL). */
 export function fileNodeTarget(node: FileNode): PreviewTarget | null {
+  const label = fileNodeTitle(node);
   if (node.assetId) {
     return {
       kind: 'asset',
       assetId: node.assetId,
-      ...(node.content.text ? { label: node.content.text } : {}),
+      ...(label ? { label } : {}),
     };
   }
   if (node.type === 'image' && node.mediaUrl) {
-    return { kind: 'url', url: node.mediaUrl };
+    return { kind: 'url', url: node.mediaUrl, ...(label ? { label } : {}) };
   }
   return null;
 }

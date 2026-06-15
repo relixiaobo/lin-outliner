@@ -290,10 +290,11 @@ A file that **is** an outliner node (an `attachment` or `image` node) is not a
 `file-preview` view at all. It behaves like any node: a plain node-handle bullet,
 the chevron expands its **children**, and opening it (a card/image click, its `⋯`
 menu, or drilling the bullet) shows an ordinary **node page** (`NodePanel`) whose
-body is the full-size preview "hero" above the node's children outline. Its row
-content is a uniform **file card** (file-type icon · display-only filename · meta ·
-`⋯` menu, click-to-open); an **image** is the one exception, rendering the image
-itself inline (no card, no filename, `⋯` at its top-right). There is no inline
+title is a read-only filename and whose body is the full-size preview "hero"
+above the node's children outline. Its row content is a uniform **file card**
+(file-type icon · display-only filename · meta · `⋯` menu, click-to-open); an
+**image** is the one exception, rendering the image itself inline (no card, no
+filename, `⋯` at its top-right). There is no inline
 preview block in the outline. See "File node" in `ui-behavior.md`. The
 `file-preview` workspace view therefore serves only sources with **no** node.
 

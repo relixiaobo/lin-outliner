@@ -11,9 +11,9 @@ type ImageNode = Extract<FileNode, { type: 'image' }>;
  * An image file node's outliner row content: the image itself, rendered inline as a
  * bounded preview — an image's content is its identity, so it shows directly instead
  * of a file-type icon + filename (other file kinds use FileNodeCard). The filename is
- * edited on the node page, not in the row. A ⋯ menu sits at the image's top-right,
- * revealed on hover or keyboard focus, offering Maximize (open the node page) plus the
- * asset actions (Open / Reveal / Copy). Clicking the image also maximizes it; the
+ * displayed read-only on the node page, not in the row. A ⋯ menu sits at the image's
+ * top-right, revealed on hover or keyboard focus, offering Maximize (open the node page)
+ * plus the asset actions (Open / Reveal / Copy). Clicking the image also maximizes it; the
  * leading bullet/chevron still drill / expand children.
  *
  * Loads through the streaming `asset://` protocol (the same path the node-page image
@@ -36,7 +36,7 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
   const [needsFallback, setNeedsFallback] = useState(false);
   useEffect(() => { setNeedsFallback(false); }, [sourceKey]);
   // The asset read is keyed by assetId/mediaUrl, so re-memo only when those change
-  // (a rename only updates the target's cosmetic label, not which bytes are fetched).
+  // (a display-name-only update changes the target's cosmetic label, not the bytes).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const target = useMemo(() => fileNodeTarget(node), [node.assetId, node.mediaUrl, node.type]);
   const fallback = usePreviewObjectUrl(target, { enabled: needsFallback });

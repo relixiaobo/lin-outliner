@@ -35,9 +35,26 @@ test.describe('file attachments', () => {
       return node?.type ?? null;
     }).toBe('attachment');
 
+    // Simulate old saved data where the file node has a source filename but an empty
+    // node title. The row and node page should still render the filename, not
+    // "Untitled".
+    await page.evaluate((nodeId) => {
+      const win = window as typeof window & {
+        __LIN_E2E__?: {
+          emitDocumentEvent: (event: unknown) => void;
+          projection: () => { nodes: Array<{ id: string; content: { text: string; marks?: unknown[]; inlineRefs: unknown[] } }> };
+        };
+      };
+      const projection = win.__LIN_E2E__!.projection();
+      const node = projection.nodes.find((entry) => entry.id === nodeId);
+      if (!node) throw new Error('missing attachment node');
+      node.content = { text: '', marks: [], inlineRefs: [] };
+      win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
+    }, attachmentId);
+
     // A non-image file renders a uniform card: a file-type icon, the display-only
-    // filename (a single truncated line — renamed on the node page, not inline), and a
-    // meta line. The bullet stays a plain node handle (the file-type icon is on the card).
+    // filename (a single truncated line), and a meta line. The bullet stays a plain
+    // node handle (the file-type icon is on the card).
     const attachmentRow = row(page, attachmentId!);
     const card = attachmentRow.locator('.file-node-card');
     await expect(card).toBeVisible();
@@ -63,9 +80,12 @@ test.describe('file attachments', () => {
     }).toBe(1);
 
     // Clicking the card opens the file as a node page: the preview is the page hero,
-    // with the child-notes outline below it.
+    // with a read-only filename title and the child-notes outline below it.
     await card.locator('.file-node-card-name').click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
+    await expect(nodePage.locator('.panel-title-file-heading')).toContainText('picked-report.pdf');
+    await expect(nodePage.locator('.panel-title-file-heading')).not.toContainText('Untitled');
+    await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toHaveCount(0);
     await expect(nodePage.locator('.file-node-meta')).toContainText('PDF');
     await expect(nodePage.locator('.file-node-meta')).toContainText('1 page');
     await expect(nodePage.getByText('a note on this file')).toBeVisible();
@@ -197,8 +217,8 @@ test.describe('file attachments', () => {
     });
     expect(focused).toBe(true);
 
-    // The name is display-only: typing on the focused file row neither renames the file
-    // nor fires the slash/tag triggers (rename happens on the node page).
+    // The name is display-only: typing on the focused file row neither changes the file
+    // title nor fires the slash/tag triggers.
     await page.keyboard.type('renamed/#tag');
     await expect(page.getByRole('listbox', { name: 'Slash commands' })).toHaveCount(0);
     await expect(cardName).toContainText('picked-report.pdf');

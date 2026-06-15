@@ -67,7 +67,7 @@ import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
 import { FilePreviewBody } from './preview/FilePreviewBody';
-import { isFileNode } from './preview/fileNode';
+import { fileNodeTitle, isFileNode } from './preview/fileNode';
 import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
@@ -161,10 +161,11 @@ export function NodePanel(props: NodePanelProps) {
     ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
     : props.rootId;
   const rootNode = props.index.byId.get(resolvedRootId);
-  // A file root (attachment/image) renders its preview as the page "hero" above its
-  // children outline; the title editor holds the (editable) filename. A file node is
-  // a normal node, so it keeps its children — the preview is extra, not a substitute.
+  // A file root (attachment/image) renders its read-only filename plus a preview
+  // "hero" above its children outline. It remains a normal node, so the preview is
+  // extra, not a substitute for children.
   const fileRoot = isFileNode(rootNode) ? rootNode : null;
+  const fileTitleLabel = fileRoot ? fileNodeTitle(fileRoot) || t.common.untitled : null;
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const [titleContentRevision, setTitleContentRevision] = useState(0);
@@ -317,6 +318,7 @@ export function NodePanel(props: NodePanelProps) {
     () => (dayTitleLabel != null ? plainText(dayTitleLabel) : null),
     [dayTitleLabel],
   );
+  const currentPageTitle = fileTitleLabel ?? dayTitleLabel ?? (rootNode?.content.text || t.common.untitled);
   const dateNoteCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const node of props.index.byId.values()) {
@@ -607,7 +609,7 @@ export function NodePanel(props: NodePanelProps) {
               <span className="panel-breadcrumb-segment panel-breadcrumb-current">
                 <span className="panel-breadcrumb-divider">/</span>
                 <span className="panel-breadcrumb-current-label" data-current-page-title>
-                  {dayTitleLabel ?? (rootNode.content.text || t.common.untitled)}
+                  {currentPageTitle}
                 </span>
               </span>
             )}
@@ -636,68 +638,78 @@ export function NodePanel(props: NodePanelProps) {
             </div>
           )}
           <div className="panel-title-row" ref={titleRowRef}>
-            <div className="panel-title-editor" aria-label={t.nodePanel.pageTitleAriaLabel} onContextMenu={openHeaderContextMenu}>
+            <div
+              className={`panel-title-editor ${fileTitleLabel ? 'panel-title-editor--file' : ''}`}
+              aria-label={t.nodePanel.pageTitleAriaLabel}
+              onContextMenu={openHeaderContextMenu}
+            >
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox
                   checked={Boolean(rootNode.completedAt)}
                   onToggle={() => void props.run(() => api.toggleDone(resolvedRootId))}
                 />
               )}
-              <RichTextEditor
-                nodeId={resolvedRootId}
-                content={dayTitleContent ?? titleContent}
-                contentRevision={titleContentRevision}
-                placeholder={t.common.untitled}
-                readOnly={rootNode?.locked}
-                completed={Boolean(rootNode?.completedAt)}
-                onFocus={selectHeader}
-                onChange={handleTitleChange}
-                onPatch={applyTitlePatch}
-                onCommit={(content) => void commitTitle(content)}
-                onEnter={handleTitleEnter}
-                onBackspaceAtStart={() => undefined}
-                onTab={() => undefined}
-                onArrowUpAtStart={() => undefined}
-                onArrowDownAtEnd={focusFirstVisibleRowOrTrailing}
-                onUndo={() => void props.run(() => api.undo())}
-                onRedo={() => void props.run(() => api.redo())}
-                onDescriptionToggle={({ cursorOffset }) => {
-                  descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
-                  props.setUi((prev) => requestFocusState(
-                    { ...prev, editingDescriptionId: resolvedRootId },
-                    descriptionFocusTarget,
-                    cursorEnd(),
-                  ));
-                }}
-                onModEnter={(content) => void handleTitleModEnter(content)}
-                resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-                onInlineReferenceClick={(targetId, options) => props.onRoot(targetId, {
-                  focus: false,
-                  newPane: options?.newPane,
-                })}
-                onEscape={() => {
-                  replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
-                  setTitleTrigger(null);
-                  blurActiveElement();
-                  clearHeaderFocus();
-                }}
-                onTriggerChange={(nextTrigger) => {
-                  setTitleTrigger(nextTrigger);
-                }}
-                focusTarget={titleFocusTarget}
-                focusRequest={props.ui.focusRequest}
-                pendingInput={props.ui.pendingInputChar}
-                onFocusRequestConsumed={(request) => {
-                  props.setUi((prev) => clearFocusRequestState(prev, request));
-                }}
-                onPendingInputConsumed={(input) => {
-                  props.setUi((prev) => clearPendingInputState(prev, input));
-                }}
-                onCompositionHandoff={(text) => {
-                  props.setUi((prev) => relayCompositionHandoffState(prev, text));
-                }}
-              />
-              {titleTrigger && (
+              {fileTitleLabel ? (
+                <h1 className="panel-title-file-heading" title={fileTitleLabel}>
+                  {fileTitleLabel}
+                </h1>
+              ) : (
+                <RichTextEditor
+                  nodeId={resolvedRootId}
+                  content={dayTitleContent ?? titleContent}
+                  contentRevision={titleContentRevision}
+                  placeholder={t.common.untitled}
+                  readOnly={rootNode?.locked}
+                  completed={Boolean(rootNode?.completedAt)}
+                  onFocus={selectHeader}
+                  onChange={handleTitleChange}
+                  onPatch={applyTitlePatch}
+                  onCommit={(content) => void commitTitle(content)}
+                  onEnter={handleTitleEnter}
+                  onBackspaceAtStart={() => undefined}
+                  onTab={() => undefined}
+                  onArrowUpAtStart={() => undefined}
+                  onArrowDownAtEnd={focusFirstVisibleRowOrTrailing}
+                  onUndo={() => void props.run(() => api.undo())}
+                  onRedo={() => void props.run(() => api.redo())}
+                  onDescriptionToggle={({ cursorOffset }) => {
+                    descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
+                    props.setUi((prev) => requestFocusState(
+                      { ...prev, editingDescriptionId: resolvedRootId },
+                      descriptionFocusTarget,
+                      cursorEnd(),
+                    ));
+                  }}
+                  onModEnter={(content) => void handleTitleModEnter(content)}
+                  resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+                  onInlineReferenceClick={(targetId, options) => props.onRoot(targetId, {
+                    focus: false,
+                    newPane: options?.newPane,
+                  })}
+                  onEscape={() => {
+                    replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
+                    setTitleTrigger(null);
+                    blurActiveElement();
+                    clearHeaderFocus();
+                  }}
+                  onTriggerChange={(nextTrigger) => {
+                    setTitleTrigger(nextTrigger);
+                  }}
+                  focusTarget={titleFocusTarget}
+                  focusRequest={props.ui.focusRequest}
+                  pendingInput={props.ui.pendingInputChar}
+                  onFocusRequestConsumed={(request) => {
+                    props.setUi((prev) => clearFocusRequestState(prev, request));
+                  }}
+                  onPendingInputConsumed={(input) => {
+                    props.setUi((prev) => clearPendingInputState(prev, input));
+                  }}
+                  onCompositionHandoff={(text) => {
+                    props.setUi((prev) => relayCompositionHandoffState(prev, text));
+                  }}
+                />
+              )}
+              {!fileTitleLabel && titleTrigger && (
                 <TriggerPopover
                   trigger={{ nodeId: resolvedRootId, ...titleTrigger }}
                   index={props.index}

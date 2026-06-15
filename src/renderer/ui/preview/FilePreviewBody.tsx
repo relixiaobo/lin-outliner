@@ -33,9 +33,9 @@ export function FilePreviewBody({ node, onOpenTarget }: FilePreviewBodyProps) {
   const target = useMemo(
     () => fileNodeTarget(node),
     // Intentionally excludes node.content.text: the filename feeds only the target's
-    // `label`, which the node page never renders (its title is the page title). Keying
-    // on it would rebuild the target and re-resolve usePreviewSource — reloading the
-    // PDF/image/media renderer from scratch — on every rename keystroke.
+    // cosmetic `label`; the node page renders its title separately. Keying on it
+    // would rebuild the target and re-resolve usePreviewSource, reloading the
+    // PDF/image/media renderer from scratch on display-name-only updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [node.assetId, node.type, node.type === 'image' ? node.mediaUrl : undefined],
   );

@@ -82,6 +82,19 @@
   min-height: 36px;
 }
 
+.panel-title-file-heading {
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--title-display);
+  font-weight: 600;
+  line-height: var(--line-panel-title);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel-header > .node-description {
   margin: var(--space-2) 0 0;
 }

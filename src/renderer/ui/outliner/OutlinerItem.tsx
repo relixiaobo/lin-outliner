@@ -70,7 +70,7 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
-import { isFileNode } from '../preview/fileNode';
+import { fileNodeTitle, isFileNode } from '../preview/fileNode';
 import { FileNodeCard } from '../preview/FileNodeCard';
 import { FileNodeImage } from '../preview/FileNodeImage';
 import { CodeBlockRow } from './CodeBlockRow';
@@ -205,9 +205,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // A file node is a full node — the chevron expands its children, and the bullet
   // drills to its node page (where the full preview lives). Its row content depends on
   // the kind: a non-image file renders a uniform card (FileNodeCard: file-type icon,
-  // editable filename, meta, ⋯ menu); an image renders the image itself inline
-  // (FileNodeImage: an image's content is its identity), with the filename edited only
-  // on the node page.
+  // read-only filename, meta, ⋯ menu); an image renders the image itself inline
+  // (FileNodeImage: an image's content is its identity), with the filename displayed
+  // read-only on the node page.
   // A reference whose target is a file node must still render as a reference row,
   // not as the file's own card/image: `displayed` resolves to the target only when
   // `referenceTargetId` is set, so guard on `!referenceTargetId`. Otherwise an
@@ -1689,9 +1689,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
 
-  // The row's text editor — the editable filename for a file node, plain content
-  // otherwise. Extracted so a file node can wrap it in its card chrome (FileNodeCard)
-  // while every other node renders it bare.
+  // The row's text editor for ordinary nodes. File nodes skip it and render a
+  // card/image plus a visually hidden keyboard anchor instead.
   const rowEditorElement = isCodeBlock ? (
     <CodeBlockRow
       nodeId={props.nodeId}
@@ -1900,8 +1899,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 />
               )}
               <FileNodeKeyboardAnchor
-                label={fileNodeRow.content.text
-                  || (fileNodeRow.type === 'attachment' ? fileNodeRow.originalFilename : undefined)}
+                label={fileNodeTitle(fileNodeRow)}
                 onFocus={() => row.updateSelection()}
                 onArrowUp={() => row.moveFocus(-1)}
                 onArrowDown={() => row.moveFocus(1)}
