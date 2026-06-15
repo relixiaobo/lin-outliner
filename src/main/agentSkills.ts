@@ -2,9 +2,12 @@ import { coerceString, parseBoolean } from '../core/agentMarkdown';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, TextContent, UserMessage } from '../core/agentTypes';
@@ -23,6 +26,8 @@ import {
 export const SKILL_TOOL_NAME = 'skill';
 
 const SKILL_FILE_NAME = 'SKILL.md';
+const BUILT_IN_SKILL_RESOURCE_DIR_NAME = 'built-in-skills';
+const BUILT_IN_SKILL_SOURCE_DIR = 'src/main/builtInSkills';
 const SKILL_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_SKILL_LISTING_CHAR_BUDGET = 8_000;
@@ -32,6 +37,7 @@ const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000;
 const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000;
 const SKILL_LISTING_STATE_MARKER = 'The following skills have already been listed to the agent in this session:';
 const execFile = promisify(execFileCallback);
+const requireForElectron = createRequire(import.meta.url);
 const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   name: 'skillify',
   description: 'Create or update a local agent skill from an explicit user workflow request.',
@@ -178,6 +184,7 @@ export interface SkillLoadOptions {
   localRoot?: string;
   includeUserSkills?: boolean;
   additionalSkillDirectories?: string[];
+  builtInSkillDirectories?: string[];
   builtInSkills?: BuiltInSkillInput[];
   conversationId?: string;
   permissionScopeProvider?: () => string | null;
@@ -185,6 +192,12 @@ export interface SkillLoadOptions {
   executeIsolatedSkill?: SkillIsolatedExecutor;
   skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   provenanceStore?: AgentSkillProvenanceStore;
+}
+
+export interface BuiltInSkillResourceRootOptions {
+  isPackaged?: boolean;
+  resourcesPath?: string;
+  moduleDir?: string;
 }
 
 /**
@@ -874,6 +887,7 @@ export async function createSlashSkillPrompt(
 class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
+  private readonly builtInSkillDirectories: string[];
   private readonly builtInSkills: BuiltInSkillInput[];
   private readonly builtInReadOnlyIsolatedSkills: Set<string>;
   private additionalSkillDirectories: string[];
@@ -882,6 +896,8 @@ class SkillRegistry {
   private readonly conditionalSkills = new Map<string, SkillDefinition>();
   private readonly checkedDynamicSkillDirs = new Set<string>();
   private readonly seenSkillFileIds = new Set<string>();
+  private loadPromise: Promise<void> | null = null;
+  private loadGeneration = 0;
   // Per-skill trust records: agent-write provenance, user acceptance, one undo
   // version. Ratification is derived from these in addLoadedSkill, never stored.
   private readonly provenance = new Map<string, AgentSkillProvenanceRecord>();
@@ -891,6 +907,10 @@ class SkillRegistry {
   constructor(options: SkillLoadOptions) {
     this.root = path.resolve(options.localRoot ?? process.cwd());
     this.includeUserSkills = options.includeUserSkills ?? true;
+    this.builtInSkillDirectories = normalizeBuiltInSkillDirectories(
+      options.builtInSkillDirectories ?? [resolveBuiltInSkillResourceRoot()],
+      this.root,
+    );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
     this.builtInReadOnlyIsolatedSkills = new Set(
       this.builtInSkills
@@ -1090,11 +1110,13 @@ class SkillRegistry {
       root: this.root,
       includeUserSkills: this.includeUserSkills,
       additionalSkillDirectories: this.additionalSkillDirectories,
+      builtInSkillDirectories: this.builtInSkillDirectories,
     });
   }
 
   reloadAll(): void {
     this.loaded = false;
+    this.loadGeneration += 1;
     this.skills.clear();
     this.conditionalSkills.clear();
     this.checkedDynamicSkillDirs.clear();
@@ -1152,25 +1174,63 @@ class SkillRegistry {
   }
 
   private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-    this.loaded = true;
-    await this.ensureProvenanceLoaded();
-    this.seenSkillFileIds.clear();
-    for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
-      await this.addLoadedSkill(skill);
+    while (!this.loaded) {
+      const loadPromise = this.loadPromise ?? this.performLoad(this.loadGeneration);
+      this.loadPromise = loadPromise;
+      try {
+        await loadPromise;
+      } finally {
+        if (this.loadPromise === loadPromise) {
+          this.loadPromise = null;
+        }
+      }
     }
-    const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
-    for (const { dir, source } of roots) {
-      const loaded = await loadSkillsFromDir(dir, source);
-      for (const skill of loaded) {
+  }
+
+  private async performLoad(loadGeneration: number): Promise<void> {
+    await this.ensureProvenanceLoaded();
+    this.skills.clear();
+    this.conditionalSkills.clear();
+    this.checkedDynamicSkillDirs.clear();
+    this.seenSkillFileIds.clear();
+    try {
+      for (const dir of this.builtInSkillDirectories) {
+        const loaded = await loadSkillsFromDir(dir, 'built-in');
+        for (const skill of loaded) {
+          await this.addLoadedSkill(skill);
+        }
+      }
+      for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
         await this.addLoadedSkill(skill);
       }
+      const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
+      for (const { dir, source } of roots) {
+        const loaded = await loadSkillsFromDir(dir, source);
+        for (const skill of loaded) {
+          await this.addLoadedSkill(skill);
+        }
+      }
+      if (this.loadGeneration === loadGeneration) {
+        this.loaded = true;
+      }
+    } catch (error) {
+      this.loaded = false;
+      this.skills.clear();
+      this.conditionalSkills.clear();
+      this.checkedDynamicSkillDirs.clear();
+      this.seenSkillFileIds.clear();
+      throw error;
     }
   }
 
   private async addLoadedSkill(skill: SkillDefinition): Promise<boolean> {
     const existing = this.skills.get(skill.name) ?? this.conditionalSkills.get(skill.name);
-    if (existing?.source === 'built-in') return false;
+    if (existing?.source === 'built-in') {
+      if (skill.source === 'built-in') {
+        throw new Error(`Duplicate built-in skill "${skill.name}" from ${skillPathForPrompt(existing)} and ${skillPathForPrompt(skill)}.`);
+      }
+      return false;
+    }
     const fileId = skill.source === 'built-in'
       ? skillPathForPrompt(skill)
       : await skillFileIdentity(skill.skillFile);
@@ -1191,7 +1251,7 @@ class SkillRegistry {
         && record.agentHash !== undefined
         && record.agentHash === skill.contentHash,
     };
-    if (skill.paths?.length) {
+    if (skill.paths?.length && skill.source !== 'built-in') {
       this.conditionalSkills.set(skill.name, skillWithIdentity);
     } else {
       this.skills.set(skill.name, skillWithIdentity);
@@ -1241,6 +1301,28 @@ function deriveSkillTrust(
   return { ratified: !agentAuthoredCurrent, accepted: false };
 }
 
+export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRootOptions = {}): string {
+  const isPackaged = options.isPackaged ?? appIsPackaged();
+  if (isPackaged) {
+    const resourcesPath = options.resourcesPath ?? (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    if (!resourcesPath) {
+      throw new Error('Cannot resolve packaged built-in skill resources without process.resourcesPath.');
+    }
+    return path.join(resourcesPath, BUILT_IN_SKILL_RESOURCE_DIR_NAME);
+  }
+  const moduleDir = options.moduleDir ?? fileURLToPath(new URL('.', import.meta.url));
+  return path.resolve(moduleDir, '../../', BUILT_IN_SKILL_SOURCE_DIR);
+}
+
+function appIsPackaged(): boolean {
+  try {
+    const electron = requireForElectron('electron') as typeof import('electron');
+    return Boolean(electron.app?.isPackaged);
+  } catch {
+    return false;
+  }
+}
+
 function skillSearchDirs(
   root: string,
   includeUserSkills: boolean,
@@ -1280,6 +1362,7 @@ export interface SkillDirConfig {
   root: string;
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
+  builtInSkillDirectories?: readonly string[];
 }
 
 function targetInsideSkillsDir(
@@ -1313,6 +1396,11 @@ export function resolveSkillContentTarget(
   config: SkillDirConfig,
 ): AgentSkillContentTarget | null {
   const filePath = path.resolve(filePathInput);
+  const filePathIdentity = canonicalDirectoryIdentity(filePath);
+  for (const dir of config.builtInSkillDirectories ?? []) {
+    const builtInDir = path.resolve(dir);
+    if (filePathIdentity === builtInDir || isPathInside(filePathIdentity, builtInDir)) return null;
+  }
   // 1. The configured skill-dir set the loader enumerates (defaults + additional dirs).
   for (const { dir, source } of skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories)) {
     const target = targetInsideSkillsDir(filePath, dir, source);
@@ -1405,7 +1493,7 @@ function createSkillDefinition(input: {
     ?? coerceString(input.frontmatter['when-to-use']);
   return {
     name: input.name,
-    displayName: coerceString(input.frontmatter.name),
+    displayName: input.source === 'built-in' ? undefined : coerceString(input.frontmatter.name),
     source: input.source,
     rootDir: input.rootDir,
     skillFile: input.skillFile,
@@ -1514,15 +1602,20 @@ async function renderSkillContent(
 }
 
 function skillDirectoryForPrompt(skill: SkillDefinition): string | null {
-  return skill.source === 'built-in'
-    ? null
-    : normalizePathForPrompt(skill.rootDir);
+  if (skill.source !== 'built-in') return normalizePathForPrompt(skill.rootDir);
+  return isResourceBackedBuiltInSkill(skill)
+    ? normalizePathForPrompt(skill.rootDir)
+    : null;
 }
 
 function skillPathForPrompt(skill: SkillDefinition): string {
   return skill.source === 'built-in'
     ? `built-in:${skill.name}`
     : normalizePathForPrompt(skill.skillFile);
+}
+
+function isResourceBackedBuiltInSkill(skill: SkillDefinition): boolean {
+  return skill.source === 'built-in' && skill.contentHash !== undefined;
 }
 
 async function executeShellCommandsInSkillContent(
@@ -1580,11 +1673,13 @@ function collectSkillShellMatches(content: string): Array<{ raw: string; command
 }
 
 function createSkillLoadedMessage(skill: SkillDefinition, renderedContent: string, includeMetadata: boolean): UserMessage {
-  if (!includeMetadata) return createHiddenUserMessage(renderedContent);
+  const includeIdentityMetadata = includeMetadata || isResourceBackedBuiltInSkill(skill);
+  if (!includeIdentityMetadata) return createHiddenUserMessage(renderedContent);
   const metadata = [
-    `<skill-message>${skill.name}</skill-message>`,
+    ...(includeMetadata ? [`<skill-message>${skill.name}</skill-message>`] : []),
     `<skill-name>${skill.name}</skill-name>`,
-    '<skill-format>true</skill-format>',
+    ...(includeMetadata ? ['<skill-format>true</skill-format>'] : []),
+    `<skill-path>${skillPathForPrompt(skill)}</skill-path>`,
   ].join('\n');
   return createHiddenUserMessage(`${metadata}\n\n${renderedContent}`);
 }
@@ -1724,13 +1819,14 @@ function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
   const body = unwrapSystemReminder(text);
   if (body.includes('<skill-result>')) return null;
   const explicitName = /<skill-name>([^<]+)<\/skill-name>/.exec(body)?.[1]?.trim();
+  const explicitPath = /<skill-path>([^<]+)<\/skill-path>/.exec(body)?.[1]?.trim();
   const baseDir = /^Base directory for this skill:\s*(.+)$/m.exec(body)?.[1]?.trim();
   if (!explicitName && !baseDir) return null;
   const skillName = normalizeSkillName(explicitName || (baseDir ? path.basename(baseDir) : ''));
   if (!skillName) return null;
   return {
     skillName,
-    skillPath: baseDir ?? `built-in:${skillName}`,
+    skillPath: explicitPath || baseDir || `built-in:${skillName}`,
     content: body.trim(),
     invokedAt: Date.now(),
   };
@@ -1831,6 +1927,29 @@ function normalizeAdditionalSkillDirectories(value: readonly string[] | undefine
     dirs.push(expanded);
   }
   return dirs;
+}
+
+function normalizeBuiltInSkillDirectories(value: readonly string[] | undefined, root: string): string[] {
+  if (!value?.length) return [];
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const item of value) {
+    const expanded = expandConfiguredPath(item, root);
+    if (!expanded) continue;
+    const normalized = canonicalDirectoryIdentity(expanded);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    dirs.push(normalized);
+  }
+  return dirs;
+}
+
+function canonicalDirectoryIdentity(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {

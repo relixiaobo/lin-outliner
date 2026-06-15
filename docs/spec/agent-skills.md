@@ -4,9 +4,12 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 
 ## Search Paths
 
-Code-registered `built-in` skills load first. They are immutable, ship with the
-app, and cannot be shadowed by mutable local skills with the same name. The
-current built-in skills are `/skillify` and `/research`.
+`built-in` skills load first. They are immutable, ship with the app, and cannot
+be shadowed by mutable local skills with the same name. Resource-backed
+built-in skill folders load before code-registered inline built-ins; a duplicate
+built-in name is a product bug and fails loudly instead of being silently
+dropped. The current user-visible built-in skills are `/skillify` and
+`/research`.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
 local skills through normal file tools. Its Skillify v2 body analyzes the current
@@ -25,11 +28,25 @@ cc-2.1 Explore's research loop: strict no-modification framing, broad-to-narrow
 codebase search, explicit file/nodes/read tool selection, caller-scaled
 thoroughness (`quick`, `medium`, `very thorough`), parallel independent
 read/search calls, and a compact evidence-backed report.
-Built-ins are code-registered instructions, not local `SKILL.md` files. Like
-cc-2.1 bundled skills, they only receive a `Base directory` prefix when they have
-real extracted reference files. Current built-ins have no extracted files, so
-their prompts contain only the skill body; post-compact bookkeeping records them
-as `built-in:<name>` rather than a readable file path.
+Built-ins can be either resource-backed app folders or code-registered inline
+instructions. Resource-backed built-ins use the standard skill folder shape:
+
+```text
+<skill-name>/
+  SKILL.md
+  references/
+  scripts/
+  assets/
+```
+
+The Electron package copies the source-controlled built-in skill root into
+`Resources/built-in-skills`, and the runtime resolves that packaged resource
+path instead of depending on the current working directory. Like cc-2.1 bundled
+skills, built-ins only receive a `Base directory` prefix when they have real
+extracted reference files. Inline built-ins such as `/skillify` and `/research`
+have no extracted files, so their prompts contain only the skill body.
+Post-compact bookkeeping records all built-ins as `built-in:<name>` rather than
+an editable file path.
 
 Default mutable skill directories are always enabled:
 
@@ -56,7 +73,12 @@ Supported frontmatter fields:
 - `shell`: optional shell for embedded command expansion. Lin currently supports `bash`.
 - `execution`: `inline` by default; `isolated` runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context.
 - `agent`: optional agent definition for `execution: isolated` skills. If omitted, Lin forks the current conversation context. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
-- `paths`: path-conditional activation patterns.
+- `paths`: path-conditional activation patterns for mutable skills.
+
+Lin uses directory-name identity for skills. `name:` frontmatter is tolerated for
+mutable skills as a display alias, but built-ins ignore it so an app-shipped
+folder cannot create an extra slash alias or bypass the built-in duplicate-name
+guard.
 
 `execution` is the skill-level execution mode. `inline` means the rendered body
 is injected into the parent model turn; `isolated` means the rendered body is
@@ -66,7 +88,7 @@ same-agent isolated skills. Legacy `context: fork` frontmatter is still accepted
 as an alias for `execution: isolated`, but Skillify and built-ins no longer
 author it.
 
-Mutable skill bodies are loaded with:
+Mutable skills and resource-backed built-ins are loaded with:
 
 ```text
 Base directory for this skill: <skill-directory>
@@ -74,21 +96,28 @@ Base directory for this skill: <skill-directory>
 <SKILL.md body>
 ```
 
-Built-in skill bodies with no extracted reference files are loaded without a
-directory prefix:
+Inline built-in skill bodies with no extracted reference files are loaded
+without a directory prefix:
 
 ```text
 <skill body>
 ```
 
 Argument placeholders are `$ARGUMENTS`, `$ARGUMENTS[n]`, `$0`, `$name`, `${AGENT_SKILL_DIR}`, and `${AGENT_CONVERSATION_ID}`.
-For mutable skills, `${AGENT_SKILL_DIR}` resolves to the skill directory. For
-built-in skills without extracted reference files, `${AGENT_SKILL_DIR}` is not
-substituted because there is no real directory to read from.
+For mutable skills and resource-backed built-ins, `${AGENT_SKILL_DIR}` resolves
+to the skill directory. For built-in skills without extracted reference files,
+`${AGENT_SKILL_DIR}` is not substituted because there is no real directory to
+read from.
 
 Skill bodies may include embedded shell commands using fenced blocks that start with ```` ```! ```` or inline `!` command spans. Commands are expanded only when the skill is invoked, after argument and environment placeholder substitution. They execute through the same local bash runner and permission policy used by normal agent tool calls; in `restricted` mode the skill must grant a matching `allowed-tools` rule such as `Bash(git status:*)`.
 
-Additional files inside a mutable skill directory are not inserted automatically. Skills should refer to them with `${AGENT_SKILL_DIR}` and ask the agent to read or execute only the specific files needed for the task. This keeps the default context small while still supporting progressive disclosure for reference Markdown files, scripts, and assets. Built-in skills without extracted reference files have no adjacent files to read.
+Additional files inside a mutable or resource-backed built-in skill directory
+are not inserted automatically. Skills should refer to them with
+`${AGENT_SKILL_DIR}` and ask the agent to read or execute only the specific files
+needed for the task. This keeps the default context small while still supporting
+progressive disclosure for reference Markdown files, scripts, and assets.
+Built-in skills without extracted reference files have no adjacent files to
+read.
 
 ## Runtime Flow
 
@@ -136,7 +165,13 @@ carry a real child-run result or error for the parent turn.
 
 Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
 
-Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
+Path-conditional mutable skills remain hidden until a touched file matches
+`paths`. Directory patterns such as `src` match files under that directory,
+glob patterns such as `src/**/*.ts` use glob semantics, and dynamically
+discovered nested `.agents/skills` directories are skipped when they are ignored
+by the workspace gitignore rules. Built-ins keep their `paths` metadata for
+inspection and future policy use, but they load immediately as the immutable
+app-shipped floor.
 
 File writes into any skill directory are treated as skill-content writes, not
 generic local file edits after the ordinary `file_write` / `file_edit` permission
@@ -267,7 +302,8 @@ Lin tracks the stable local-skill path from the cc-2.1 reference. cc-2.1 is the
 primary reference for invocation semantics and skillify UX; OpenClaw and Hermes
 are supplemental references for safety, recovery, provenance, and curation.
 
-- immutable code-registered built-in skills plus directory skills as `<skill-name>/SKILL.md`;
+- immutable built-in skills from resource-backed app folders or code-registered
+  inline instructions, plus mutable directory skills as `<skill-name>/SKILL.md`;
 - one model-facing skill invocation tool;
 - user slash invocation for user-invocable skills;
 - `allowed-tools` as run-scoped permission metadata;
@@ -316,14 +352,14 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Capability | Lin decision |
 | --- | --- |
 | Directory skills | Supported as `<skill-name>/SKILL.md`. Single-file legacy command skills are intentionally not supported. |
-| Built-in skills | Supported as immutable code-registered skills loaded before mutable skill directories. Mutable local skills cannot shadow a built-in skill with the same name. |
+| Built-in skills | Supported as immutable app-shipped skills. Resource-backed built-in folders load before code-registered inline built-ins, and both load before mutable skill directories. Mutable local skills cannot shadow a built-in skill with the same name. |
 | Automatic listing | Supported. New model-invocable **ratified** skills are listed once per conversation and persisted across compact restore; unratified agent-authored and workspace-borne skills stay out of the model listing. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, permissions, model, and effort handling. |
 | Embedded shell | Supported for `bash` only, at invocation time, after argument and placeholder substitution. |
 | Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. |
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
-| `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
+| `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
 | `execution: isolated` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Isolated skill bodies run in a sidechain child run and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts the exact bytes from the in-flow `skill_trust` card or Settings. User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |

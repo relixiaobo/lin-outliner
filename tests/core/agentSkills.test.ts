@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -8,6 +8,7 @@ import {
   AgentSkillRuntime,
   createSlashSkillPrompt,
   parseSkillSlashCommand,
+  resolveBuiltInSkillResourceRoot,
   resolveSkillContentTarget,
   skillContentHash,
   type AgentSkillProvenanceRecord,
@@ -639,6 +640,234 @@ describe('agent skills', () => {
     expect(text).not.toContain('built-in/skillify/SKILL.md');
   });
 
+  test('loads bundled built-in skills with real resource directories', async () => {
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+      frontmatter: [
+        'description: Bundled demo skill',
+        'when_to_use: Use for bundled resource tests',
+        'allowed-tools: file_read',
+        'arguments: target',
+      ],
+      body: 'Read ${AGENT_SKILL_DIR}/references/details.md for $target.',
+    });
+    await mkdir(path.join(skillDir, 'references'), { recursive: true });
+    await writeFile(path.join(skillDir, 'references', 'details.md'), 'Bundled reference.', 'utf8');
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    const skill = await runtime.getSkill('bundled-demo');
+    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const invocation = await runtime.invokeSkill({
+      skill: 'bundled-demo',
+      args: 'deck.md',
+      trigger: 'agent',
+    });
+
+    expect(skill).toMatchObject({
+      name: 'bundled-demo',
+      source: 'built-in',
+      rootDir: skillDir,
+      skillFile: path.join(skillDir, 'SKILL.md'),
+      modelInvocable: true,
+      userInvocable: true,
+      ratified: true,
+      accepted: false,
+      canUndoLastAgentEdit: false,
+      allowedTools: ['file_read'],
+    });
+    expect(typeof skill?.contentHash).toBe('string');
+    expect(listing).toContain('- bundled-demo: Bundled demo skill - Use for bundled resource tests');
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain(`Base directory for this skill: ${skillDir}`);
+    expect(invocation.renderedContent).toContain(`Read ${skillDir}/references/details.md for deck.md.`);
+
+    const reminder = runtime.createInvokedSkillsReminder();
+    const reminderText = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+    expect(reminderText).toContain('### Skill: bundled-demo');
+    expect(reminderText).toContain('Path: built-in:bundled-demo');
+    expect(reminderText).toContain(`Base directory for this skill: ${skillDir}`);
+    expect(reminderText).not.toContain(path.join(skillDir, 'SKILL.md'));
+  });
+
+  test('restores resource-backed built-in skill identity from loaded messages', async () => {
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+      frontmatter: ['description: Bundled demo skill'],
+      body: 'Use bundled instructions from ${AGENT_SKILL_DIR}.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+    const invocation = await runtime.invokeSkill({ skill: 'bundled-demo', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+
+    const restored = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+    restored.restoreInvokedSkillsFromMessages([invocation.message]);
+    const reminder = restored.createInvokedSkillsReminder();
+    const reminderText = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+
+    expect(reminderText).toContain('Path: built-in:bundled-demo');
+    expect(reminderText).toContain(`Base directory for this skill: ${skillDir}`);
+    expect(reminderText).not.toContain(`Path: ${skillDir}`);
+  });
+
+  test('does not resolve bundled built-in files as writable skill targets', async () => {
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+      frontmatter: ['description: Bundled demo skill'],
+      body: 'Use bundled instructions.',
+    });
+
+    expect(
+      resolveSkillContentTarget(path.join(skillDir, 'SKILL.md'), {
+        root: path.dirname(path.dirname(skillDir)),
+        includeUserSkills: false,
+        additionalSkillDirectories: [],
+        builtInSkillDirectories: [skillsDir],
+      }),
+    ).toBeNull();
+  });
+
+  test('keeps built-in resource directories immutable even if also configured as additional skill dirs', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-root-'));
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+      frontmatter: ['description: Bundled demo skill'],
+      body: 'Use bundled instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+      additionalSkillDirectories: [skillsDir],
+    });
+
+    expect(runtime.resolveSkillTarget(path.join(skillDir, 'SKILL.md'))).toBeNull();
+    expect((await runtime.getSkill('bundled-demo'))?.source).toBe('built-in');
+  });
+
+  test('loads bundled built-in skills before mutable local skills', async () => {
+    const root = await createSkillFixture('floor-skill', {
+      frontmatter: ['description: Mutable shadow skill'],
+      body: 'Use mutable instructions.',
+    });
+    const { skillsDir } = await createBundledBuiltInSkillFixture('floor-skill', {
+      frontmatter: ['description: Bundled floor skill'],
+      body: 'Use bundled instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    const skill = await runtime.getSkill('floor-skill');
+    const listing = await runtime.buildSkillListingReminderText(200_000);
+
+    expect(skill).toMatchObject({
+      name: 'floor-skill',
+      source: 'built-in',
+    });
+    expect(skill?.body).toContain('Use bundled instructions.');
+    expect(listing).toContain('Bundled floor skill');
+    expect(listing).not.toContain('Mutable shadow skill');
+  });
+
+  test('keeps path-scoped bundled built-ins available as the immutable floor', async () => {
+    const { skillsDir } = await createBundledBuiltInSkillFixture('path-built-in', {
+      frontmatter: [
+        'description: Path built-in skill',
+        'paths:',
+        '  - docs/**/*.md',
+      ],
+      body: 'Use bundled path instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    const skill = await runtime.getSkill('path-built-in');
+    const listing = await runtime.buildSkillListingReminderText(200_000);
+
+    expect(skill).toMatchObject({
+      name: 'path-built-in',
+      source: 'built-in',
+      paths: ['docs/**/*.md'],
+    });
+    expect(listing).toContain('path-built-in');
+  });
+
+  test('ignores name frontmatter aliases for bundled built-ins', async () => {
+    const { skillsDir } = await createBundledBuiltInSkillFixture('canonical-name', {
+      frontmatter: [
+        'name: alias-name',
+        'description: Bundled canonical skill',
+      ],
+      body: 'Use canonical instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    const skill = await runtime.getSkill('canonical-name');
+    const alias = await runtime.getSkill('alias-name');
+
+    expect(skill).toMatchObject({
+      name: 'canonical-name',
+      source: 'built-in',
+      displayName: undefined,
+    });
+    expect(alias).toBeNull();
+  });
+
+  test('fails loudly when bundled and inline built-ins share a name', async () => {
+    const { skillsDir } = await createBundledBuiltInSkillFixture('skillify', {
+      frontmatter: ['description: Bundled duplicate skill'],
+      body: 'This duplicate must not be silently ignored.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    await expect(runtime.getSkill('skillify')).rejects.toThrow('Duplicate built-in skill "skillify"');
+    await expect(runtime.buildSkillListingReminderText(200_000)).rejects.toThrow('Duplicate built-in skill "skillify"');
+  });
+
+  test('shares the first skill load across concurrent callers', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const results = await Promise.allSettled([
+      runtime.getSkill('skillify'),
+      runtime.getSkill('research'),
+      runtime.listAllSkills(),
+      runtime.buildSkillListingReminderText(200_000),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+    expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
+    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
+    const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
+    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['research', 'skillify']);
+  });
+
+  test('resolves bundled built-in resource roots for dev and packaged modes', () => {
+    const repoRoot = path.join(path.sep, 'repo');
+    const moduleDir = path.join(repoRoot, 'out', 'main');
+    const resourcesPath = path.join(path.sep, 'Applications', 'Tenon.app', 'Contents', 'Resources');
+
+    expect(resolveBuiltInSkillResourceRoot({ isPackaged: false, moduleDir }))
+      .toBe(path.join(repoRoot, 'src', 'main', 'builtInSkills'));
+    expect(resolveBuiltInSkillResourceRoot({ isPackaged: true, resourcesPath }))
+      .toBe(path.join(resourcesPath, 'built-in-skills'));
+  });
+
   test('ships research as a built-in read-only isolated skill', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
@@ -1169,6 +1398,19 @@ describe('agent skills', () => {
     expect(text).toContain('late-dynamic');
   });
 });
+
+async function createBundledBuiltInSkillFixture(
+  name: string,
+  options: { frontmatter: string[]; body: string },
+): Promise<{ skillsDir: string; skillDir: string }> {
+  const root = await mkdtemp(path.join(tmpdir(), 'lin-bundled-skills-'));
+  const skillsDir = path.join(root, 'built-in-skills');
+  const skillDir = await createSkillInRoot(root, name, options, skillsDir);
+  return {
+    skillsDir: await realpath(skillsDir),
+    skillDir: await realpath(skillDir),
+  };
+}
 
 async function createSkillFixture(
   name: string,
