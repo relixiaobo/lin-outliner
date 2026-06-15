@@ -524,7 +524,9 @@
   border-radius: var(--radius-md);
   background: transparent;
   padding: 0;
-  cursor: zoom-in;
+  /* Clicking opens the file's node page (maximize), not an in-place zoom, and a
+     native app does not hand-cursor clickable content (B10) — keep the arrow. */
+  cursor: default;
   -webkit-app-region: no-drag;
 }
 
@@ -585,6 +587,7 @@
 }
 
 .file-node-image:hover .file-node-image-actions,
+.file-node-image-actions:focus-within,
 .file-node-image-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
   opacity: 1;
 }
@@ -600,10 +603,11 @@
   color: var(--text-main);
 }
 
-/* The filename editor still mounts for keyboard parity, but a file row shows no
-   editable filename — hide it visually while keeping it focusable (sr-only).
-   position: absolute takes the anchor out of flow, so the canonical sr-only
-   `margin: -1px` is redundant here — width/height 1px + clip + overflow hide it. */
+/* A file row has no inline filename editor; this focusable, visually-hidden anchor
+   carries the row's keyboard parity (arrow nav, Enter, etc.). Hide it (sr-only) while
+   keeping it focusable. position: absolute takes the anchor out of flow, so the
+   canonical sr-only `margin: -1px` is redundant — width/height 1px + clip + overflow
+   hide it. */
 .file-node-keyboard-anchor {
   position: absolute;
   width: 1px;

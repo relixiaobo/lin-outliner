@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { assetUrl } from '../../../core/assets';
-import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { FileNodeActionMenu } from './FileNodeActionMenu';
 import { fileNodeTarget, type FileNode } from './fileNode';
+import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type ImageNode = Extract<FileNode, { type: 'image' }>;
 
@@ -12,8 +12,9 @@ type ImageNode = Extract<FileNode, { type: 'image' }>;
  * bounded preview — an image's content is its identity, so it shows directly instead
  * of a file-type icon + filename (other file kinds use FileNodeCard). The filename is
  * edited on the node page, not in the row. A ⋯ menu sits at the image's top-right,
- * revealed on hover, offering Maximize (open the node page) + Reveal. Clicking the
- * image also maximizes it; the leading bullet/chevron still drill / expand children.
+ * revealed on hover or keyboard focus, offering Maximize (open the node page) plus the
+ * asset actions (Open / Reveal / Copy). Clicking the image also maximizes it; the
+ * leading bullet/chevron still drill / expand children.
  *
  * Loads through the streaming `asset://` protocol (the same path the node-page image
  * preview uses): Chromium-cached, lazy, range-served and uncapped, so large images
@@ -26,48 +27,24 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
   const ta = useT().outliner.field.attachment;
   const labels = useT().shell.filePreview;
   const directSrc = node.assetId ? assetUrl(node.assetId) : node.mediaUrl ?? null;
-  const [fallbackSrc, setFallbackSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const objectUrlRef = useRef<string | null>(null);
-
-  // Reset the fallback/error state when the backing source changes, and revoke any
-  // object URL we created on unmount or before re-resolving.
   const sourceKey = node.assetId ?? node.mediaUrl ?? null;
-  useEffect(() => {
-    setFallbackSrc(null);
-    setFailed(false);
-    return () => {
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-    };
-  }, [sourceKey]);
 
-  const handleError = () => {
-    // The direct source (asset:// or a remote URL) failed to load. Try a sandboxed
-    // byte read once; if that also fails, settle on the unavailable state.
-    if (fallbackSrc) {
-      setFailed(true);
-      return;
-    }
-    const target = fileNodeTarget(node);
-    if (!target) {
-      setFailed(true);
-      return;
-    }
-    void api.readPreviewBytes(target)
-      .then((result) => {
-        if (!result.bytes) {
-          setFailed(true);
-          return;
-        }
-        const url = URL.createObjectURL(new Blob([result.bytes], { type: result.mimeType }));
-        objectUrlRef.current = url;
-        setFallbackSrc(url);
-      })
-      .catch(() => setFailed(true));
-  };
+  // Prefer the cached asset:// (or remote) URL; read bytes only if that <img> errors —
+  // an environment without the asset:// handler (the browser test harness) or a
+  // transient protocol error. The shared hook carries the cancel/revoke guard, so a
+  // late resolve never paints onto a changed node or leaks its object URL.
+  const [needsFallback, setNeedsFallback] = useState(false);
+  useEffect(() => { setNeedsFallback(false); }, [sourceKey]);
+  // The asset read is keyed by assetId/mediaUrl, so re-memo only when those change
+  // (a rename only updates the target's cosmetic label, not which bytes are fetched).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const target = useMemo(() => fileNodeTarget(node), [node.assetId, node.mediaUrl, node.type]);
+  const fallback = usePreviewObjectUrl(target, { enabled: needsFallback });
+
+  const handleError = () => setNeedsFallback(true);
+
+  const src = fallback.src ?? directSrc;
+  const failed = !src || (needsFallback && fallback.error !== undefined && !fallback.src);
 
   const menu = (
     <div className="file-node-image-actions" data-preserve-selection>
@@ -75,7 +52,6 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
     </div>
   );
 
-  const src = fallbackSrc ?? directSrc;
   if (!src || failed) {
     return (
       <div className="file-node-image file-node-image--missing">
@@ -91,8 +67,8 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
       <button
         aria-label={labels.open}
         className="file-node-image-button"
-        // A click maximizes the image (its node page); keep it off the row, where it
-        // would otherwise move edit focus into the hidden filename anchor.
+        // A click maximizes the image (its node page); stop the mousedown from
+        // reaching the row so it does not also run row pointer-selection.
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();

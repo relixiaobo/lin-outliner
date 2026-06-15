@@ -27,6 +27,7 @@ import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { IconButton } from '../primitives/IconButton';
 import { wantsNewPaneFromClick } from '../shared';
 import { formatBytes } from './fileNode';
+import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
 
@@ -223,49 +224,19 @@ function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {
 
 function ImagePreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
-  const initialSrc = source.streamUrl ?? source.thumbnailDataUrl ?? null;
-  const [state, setState] = useState<
-    | { status: 'loading'; src: string | null }
-    | { status: 'ready'; src: string }
-    | { status: 'error'; error?: string; src: string | null }
-  >(initialSrc ? { status: 'ready', src: initialSrc } : { status: 'loading', src: null });
-
-  useEffect(() => {
-    if (source.streamUrl) {
-      setState({ status: 'ready', src: source.streamUrl });
-      return undefined;
-    }
-    let cancelled = false;
-    let objectUrl: string | null = null;
-    setState(source.thumbnailDataUrl
-      ? { status: 'loading', src: source.thumbnailDataUrl }
-      : { status: 'loading', src: null });
-    void api.readPreviewBytes(source.target)
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.bytes) {
-          setState({ status: 'error', error: result.error, src: source.thumbnailDataUrl ?? null });
-          return;
-        }
-        objectUrl = URL.createObjectURL(new Blob([result.bytes], { type: result.mimeType ?? source.mimeType }));
-        setState({ status: 'ready', src: objectUrl });
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setState({ status: 'error', error: error instanceof Error ? error.message : undefined, src: source.thumbnailDataUrl ?? null });
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [source]);
-
-  const src = state.src;
+  // Prefer the stream URL; otherwise read bytes (shared cancel/revoke machine). The
+  // thumbnail data URL is the placeholder while the read is in flight or on failure.
+  const bytes = usePreviewObjectUrl(source.target, {
+    enabled: !source.streamUrl,
+    mimeType: source.mimeType,
+  });
+  const src = source.streamUrl ?? bytes.src ?? source.thumbnailDataUrl ?? null;
+  const isError = !source.streamUrl && bytes.error !== undefined && !bytes.src;
   if (!src) return <PreviewMessage>{labels.loading}</PreviewMessage>;
   return (
     <figure className="file-preview-image">
       <img alt={labels.imageAlt({ name: source.name })} src={src} />
-      {state.status === 'error' ? <figcaption>{labels.tooLarge}</figcaption> : null}
+      {isError ? <figcaption>{labels.tooLarge}</figcaption> : null}
     </figure>
   );
 }
@@ -276,37 +247,11 @@ function ImagePreview({ source }: PreviewRendererProps) {
  * to a bounded byte read → object URL for non-asset sources that have no stream URL.
  */
 function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; error?: string } {
-  const [state, setState] = useState<{ src: string | null; error?: string }>(
-    source.streamUrl ? { src: source.streamUrl } : { src: null },
-  );
-  useEffect(() => {
-    if (source.streamUrl) {
-      setState({ src: source.streamUrl });
-      return undefined;
-    }
-    let cancelled = false;
-    let objectUrl: string | null = null;
-    setState({ src: null });
-    void api.readPreviewBytes(source.target)
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.bytes) {
-          setState({ src: null, error: result.error });
-          return;
-        }
-        objectUrl = URL.createObjectURL(new Blob([result.bytes], { type: result.mimeType ?? source.mimeType }));
-        setState({ src: objectUrl });
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setState({ src: null, error: error instanceof Error ? error.message : undefined });
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [source]);
-  return state;
+  const bytes = usePreviewObjectUrl(source.target, {
+    enabled: !source.streamUrl,
+    mimeType: source.mimeType,
+  });
+  return source.streamUrl ? { src: source.streamUrl } : bytes;
 }
 
 function AudioPreview({ source }: PreviewRendererProps) {

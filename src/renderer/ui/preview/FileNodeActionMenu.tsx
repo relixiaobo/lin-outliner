@@ -1,13 +1,23 @@
 import { useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { FolderIcon, ICON_SIZE, MoreIcon, ShowIcon } from '../icons';
+import { CopyIcon, FolderIcon, ICON_SIZE, MoreIcon, OpenIcon, ShowIcon } from '../icons';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import type { FileNode } from './fileNode';
+import {
+  fileNodeAssetActions,
+  type FileNodeAssetAction,
+  type FileNodeAssetActionKey,
+} from './fileNodeActions';
+
+const ASSET_ACTION_ICON: Record<FileNodeAssetActionKey, typeof OpenIcon> = {
+  open: OpenIcon,
+  reveal: FolderIcon,
+  copy: CopyIcon,
+};
 
 interface FileNodeActionMenuProps {
   node: FileNode;
@@ -18,10 +28,11 @@ interface FileNodeActionMenuProps {
 
 /**
  * The `⋯` action menu shared by both file-node row presentations (the icon card and
- * the inline image): a primary open action (Maximize for an image, Open in split for
- * other files) and Reveal in Finder. The trigger is an icon-only chrome control;
- * its `aria-expanded` lets the owning row keep the menu visible while open (CSS
- * `:has`).
+ * the inline image): a type-specific primary action (Maximize for an image, Open in
+ * split for other files), then the stored asset's Open / Reveal in Finder / Copy file
+ * actions (the shared `fileNodeAssetActions` descriptor, also used by the node-page
+ * hero). The trigger is an icon-only chrome control; its `aria-expanded` lets the
+ * owning row keep the menu visible while open (CSS `:has`).
  */
 export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeActionMenuProps) {
   const ta = useT().outliner.field.attachment;
@@ -56,11 +67,10 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
         <FloatingActionMenu
           anchorRef={anchorRef}
           ariaLabel={ta.menuLabel}
+          assetActions={assetId ? fileNodeAssetActions(assetId, ta) : []}
           onClose={() => setOpen(false)}
           onPrimary={onPrimary}
-          onReveal={assetId ? () => void api.revealAsset(assetId) : undefined}
           primaryLabel={primaryLabel}
-          revealLabel={ta.reveal}
         />
       ) : null}
     </>
@@ -70,19 +80,17 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
 function FloatingActionMenu({
   anchorRef,
   ariaLabel,
+  assetActions,
   onClose,
   onPrimary,
-  onReveal,
   primaryLabel,
-  revealLabel,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   ariaLabel: string;
+  assetActions: FileNodeAssetAction[];
   onClose: () => void;
   onPrimary: () => void;
-  onReveal?: () => void;
   primaryLabel: string;
-  revealLabel: string;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const style = useAnchoredOverlay(menuRef, {
@@ -117,18 +125,22 @@ function FloatingActionMenu({
         }}
         role="menuitem"
       />
-      {onReveal ? (
-        <MenuItem
-          className="node-context-item"
-          icon={<FolderIcon size={ICON_SIZE.menu} />}
-          label={revealLabel}
-          onClick={() => {
-            onClose();
-            onReveal();
-          }}
-          role="menuitem"
-        />
-      ) : null}
+      {assetActions.map((action) => {
+        const Icon = ASSET_ACTION_ICON[action.key];
+        return (
+          <MenuItem
+            key={action.key}
+            className="node-context-item"
+            icon={<Icon size={ICON_SIZE.menu} />}
+            label={action.label}
+            onClick={() => {
+              onClose();
+              action.run();
+            }}
+            role="menuitem"
+          />
+        );
+      })}
     </MenuSurface>,
     document.body,
   );

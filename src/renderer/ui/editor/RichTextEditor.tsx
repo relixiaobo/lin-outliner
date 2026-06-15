@@ -68,13 +68,6 @@ interface RichTextEditorProps {
   /** Extra class appended to the editor element (e.g. a field-value or block class). */
   className?: string;
   readOnly?: boolean;
-  /**
-   * Keep a readOnly editor programmatically focusable (it is `contenteditable=false`,
-   * so not focusable by default). Used by file-node rows, whose filename is display-
-   * only but must still serve as the row's keyboard anchor — focus requests land,
-   * arrow/Enter navigation drives the row, and edits stay blocked.
-   */
-  focusableWhenReadOnly?: boolean;
   completed?: boolean;
   onFocus: () => void;
   onChange: (content: RichText) => void;
@@ -997,18 +990,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const view = viewRef.current;
     if (!view) return;
     view.setProps({ editable: () => !props.readOnly });
-    // A readOnly editor is contenteditable=false, hence not focusable by default.
-    // When it must still serve as a keyboard anchor (a file-node row), make it
-    // programmatically focusable so focus requests land and the structural keymap
-    // (Enter to add a sibling, arrows to move between rows) keeps working; edits stay
-    // blocked (contenteditable=false drops typing, and the pendingInput effect bails
-    // on readOnly).
-    if (props.readOnly && props.focusableWhenReadOnly) {
-      view.dom.setAttribute('tabindex', '-1');
-    } else {
-      view.dom.removeAttribute('tabindex');
-    }
-  }, [props.readOnly, props.focusableWhenReadOnly]);
+  }, [props.readOnly]);
 
   // The inline tag slot appears/disappears (node <-> null) when tags are added or
   // removed — events that don't dispatch a transaction to THIS editor. Force a

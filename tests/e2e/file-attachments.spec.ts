@@ -174,7 +174,7 @@ test.describe('file attachments', () => {
     await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
   });
 
-  test('a file node filename is display-only: its row editor is a focusable but read-only keyboard anchor', async ({ page }) => {
+  test('a file row is a focusable keyboard anchor: display-only name, but arrow/Enter nav works', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -186,22 +186,30 @@ test.describe('file attachments', () => {
     const cardName = attachmentRow.locator('.file-node-card-name');
     await expect(cardName).toContainText('picked-report.pdf');
 
-    // The filename editor mounts hidden as the row's keyboard anchor. It must stay
-    // FOCUSABLE (so arrow nav / Enter still drive the row) — a readOnly ProseMirror is
-    // contenteditable=false and not focusable without the tabindex the anchor adds.
-    const anchor = attachmentRow.locator('.file-node-keyboard-anchor .ProseMirror');
+    // A file row carries no inline editor — just a visually hidden, focusable anchor
+    // (a lightweight div, NOT a ProseMirror) that drives the row by keyboard.
+    const anchor = attachmentRow.locator('.file-node-keyboard-anchor');
     await expect(anchor).toHaveCount(1);
+    await expect(anchor.locator('.ProseMirror')).toHaveCount(0);
     const focused = await anchor.evaluate((element) => {
       (element as HTMLElement).focus();
       return element === document.activeElement;
     });
     expect(focused).toBe(true);
 
-    // …but it is read-only: typing on the focused file row neither renames the file
-    // nor fires the slash/tag triggers (the filename is renamed on the node page only).
+    // The name is display-only: typing on the focused file row neither renames the file
+    // nor fires the slash/tag triggers (rename happens on the node page).
     await page.keyboard.type('renamed/#tag');
     await expect(page.getByRole('listbox', { name: 'Slash commands' })).toHaveCount(0);
     await expect(cardName).toContainText('picked-report.pdf');
     await expect(cardName).not.toContainText('renamed');
+
+    // …but structural keyboard nav DOES drive the row. This is the regression we fixed:
+    // the old read-only ProseMirror anchor swallowed these (ProseMirror gates
+    // handleKeyDown behind view.editable). Enter on the focused file row adds a sibling.
+    const countBeforeEnter = (await todayChildren(page)).length;
+    await anchor.evaluate((element) => (element as HTMLElement).focus());
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(countBeforeEnter + 1);
   });
 });

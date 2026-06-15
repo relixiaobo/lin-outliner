@@ -24,6 +24,7 @@ import {
 } from '../../state/document';
 import { deriveRowMemoState, rowMemoStateEqual } from '../../state/rowUiState';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
+import { FileNodeKeyboardAnchor } from './FileNodeKeyboardAnchor';
 import {
   deleteRichTextRange,
   markWholeTextAsHeading,
@@ -207,7 +208,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // editable filename, meta, ⋯ menu); an image renders the image itself inline
   // (FileNodeImage: an image's content is its identity), with the filename edited only
   // on the node page.
-  const fileNodeRow = isFileNode(displayed) ? displayed : null;
+  // A reference whose target is a file node must still render as a reference row,
+  // not as the file's own card/image: `displayed` resolves to the target only when
+  // `referenceTargetId` is set, so guard on `!referenceTargetId`. Otherwise an
+  // agent-created reference→file (the agent's add_reference does no type-check)
+  // would render inline and a click would drill to the target instead of selecting
+  // the reference. Only a row that IS the file node gets the file presentation.
+  const fileNodeRow = !referenceTargetId && isFileNode(displayed) ? displayed : null;
   const imageFileRow = fileNodeRow?.type === 'image' ? fileNodeRow : null;
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
@@ -1534,6 +1541,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
 
+    if (fileNodeRow) {
+      // A file row has no inline editor: a click in the empty area beside the
+      // card/image selects the row (the card/image own their own open/maximize
+      // clicks) instead of dropping a caret into the hidden keyboard anchor.
+      event.preventDefault();
+      event.stopPropagation();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      selectRow(props.nodeId);
+      return;
+    }
+
     if (displayed.locked) return;
 
     const editor = event.currentTarget.querySelector<HTMLElement>('.ProseMirror');
@@ -1706,11 +1726,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       content={draftContent}
       contentRevision={editorContentRevision}
       inlineSlotEl={inlineTagSlot}
-      // A file node's filename is display-only (renamed on the node page), so its row
-      // editor is readOnly — but it stays the row's keyboard anchor (focusableWhenReadOnly),
-      // so arrow/Enter navigation works while typing can't rename the file.
-      readOnly={displayed.locked || Boolean(fileNodeRow)}
-      focusableWhenReadOnly={Boolean(fileNodeRow)}
+      readOnly={displayed.locked}
       completed={Boolean(displayed.completedAt)}
       placeholder={fieldValueDraft
         ? props.fieldValue?.placeholder
@@ -1866,12 +1882,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             />
           )}
           {fileNodeRow ? (
-            // A file node is click-to-open with a non-editable filename: an image
+            // A file node is click-to-open with a display-only filename: an image
             // renders inline as the image itself, every other file as a uniform card.
-            // The filename editor still mounts (visually hidden) so the row keeps full
-            // keyboard parity — arrow nav, Enter to add a sibling, etc. The leading
-            // bullet/chevron stay on the row, so it is still a full node (chevron →
-            // children, bullet → node page).
+            // It carries no inline text editor; a lightweight visually-hidden anchor
+            // gives the row full keyboard parity (arrow nav, Enter → sibling, etc.)
+            // without a read-only ProseMirror that could not even drive nav. The
+            // leading bullet/chevron stay on the row, so it is still a full node
+            // (chevron → children, bullet → node page).
             <>
               {imageFileRow ? (
                 <FileNodeImage node={imageFileRow} onMaximize={() => props.onRoot(drillDownId)} />
@@ -1882,7 +1899,26 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   onOpenSplit={() => props.onRoot(drillDownId, { newPane: true })}
                 />
               )}
-              <div className="file-node-keyboard-anchor">{rowEditorElement}</div>
+              <FileNodeKeyboardAnchor
+                label={fileNodeRow.content.text
+                  || (fileNodeRow.type === 'attachment' ? fileNodeRow.originalFilename : undefined)}
+                onFocus={() => row.updateSelection()}
+                onArrowUp={() => row.moveFocus(-1)}
+                onArrowDown={() => row.moveFocus(1)}
+                onEnter={() => void handleEnter({ atEnd: true, before: draftContentRef.current, after: EMPTY_RICH_TEXT })}
+                onBackspace={() => void handleBackspaceAtStart(true)}
+                onEscape={() => void exitToSelection()}
+                onShiftArrow={() => void exitToSelection()}
+                onTab={(shiftKey) => void handleTab(shiftKey, 0)}
+                onSelectAllRows={selectAllVisibleRows}
+                onUndo={() => void props.run(() => api.undo())}
+                onRedo={() => void props.run(() => api.redo())}
+                focusTarget={editorRequestTarget}
+                focusRequest={props.ui.focusRequest}
+                onFocusRequestConsumed={(request) => {
+                  props.setUi((prev) => clearFocusRequestState(prev, request));
+                }}
+              />
             </>
           ) : (
             rowEditorElement
