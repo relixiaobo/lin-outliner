@@ -549,6 +549,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent permission model — consequence-based `decide(effect)` core (PR #252, codex)** — the agent
+  tool permission gate is rebuilt around an operation's **consequence** rather than a mode/action/
+  classifier matrix. `decideAgentOperationEffect(effect)` yields three outcomes: local reversible
+  **WORK → allow** silently, **COMMIT** (irreversible / external / credential / outside-scope)
+  **→ ask** (approve once or remember as a narrow grant), and a **FORBIDDEN** safety **floor → deny**
+  that trust settings cannot bypass. The old **3 safety modes, the LLM bash classifier, Full Access,
+  the shell allowlist, and the renderer exception editor are removed**; shell inverts to a
+  floor-blocklist (an unknown *static* command is WORK by construction). `file_delete` is a new
+  reversible tool that moves content to `.agent-trash`. Grants are narrow and typed —
+  `Scope(read|write:root)` (path-containment matched; a read grant never authorizes a write),
+  `External(target)`, `Command(form)` — and revocable from Settings ▸ Security. Floors cover host
+  destruction, disk format, raw-disk / persistence (incl. `crontab`) / git-internal / permission-config
+  writes, credential exfiltration, and obfuscated remote-code execution, scanning the `bash -c` inner
+  command and splitting on `\n` / lone `&` (redirections preserved). PR-1 of the
+  `agent-permission-redesign` set; folder-handoff and `file_convert` follow. Specs:
+  `docs/spec/agent-tool-permissions.md`, `agent-pi-mono-implementation.md`, `agent-skills.md`.
 - **Colored identity avatars + icon-free "Worked for" header (PR #245, cc)** —
   an agent's avatar now carries a per-identity hue instead of one neutral fill: a dedicated
   `--identity-tint-0..7` palette — its own decorative category, kept distinct from functional state

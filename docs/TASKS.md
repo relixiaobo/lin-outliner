@@ -255,7 +255,7 @@ data-gated — see § memory above). The remaining *active* build work is the sk
 (`agent-skills-authoring`: NL save-as-skill + diff/preview), **cross-agent consultation**
 (`ungate-contact` — see the agent-program list), and the standalone draft items below.
 
-- **agent-permission-redesign** (P1, `draft` — **PM-ratified direction 2026-06-15**;
+- **agent-permission-redesign** (P1, `in-progress` — **PM-ratified direction 2026-06-15**;
   security-sensitive) — replace the prompt-heavy `enum × 3 safety modes × dead LLM
   classifier × shell allowlist` permission model with **one pure `decide(effect)` over an
   operation's consequence**: three outcomes (`WORK→allow` silent · `COMMIT→confirm`-once-or-
@@ -267,10 +267,11 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   silent allow · folder-handoff gesture in this round · credential-read = confirm.
   **Shape (b) — a SET of independent complete PRs:** PR-1 model core (the reversal; lands as
   shared-interface-first for the `/research` read-only partition on `agentPermissionModel.ts`,
-  A7) → PR-2 folder-handoff gesture (scope grant; lets the agent see the user's real files)
-  → PR-3 typed `file_convert` tool. **Supersedes** the `delegated-scope` draft (PR #249,
-  closed `superseded`). See `docs/plans/agent-permission-redesign.md`. Ready for a dev agent
-  to claim PR-1.
+  A7) — **SHIPPED (PR #252, codex, 2026-06-15)**; see Recently completed → PR-2 folder-handoff
+  gesture (scope grant; lets the agent see the user's real files) → PR-3 typed `file_convert`
+  tool. **Supersedes** the `delegated-scope` draft (PR #249, closed `superseded`). See
+  `docs/plans/agent-permission-redesign.md`. **PR-1 shipped; PR-2 (folder-handoff) + PR-3
+  (`file_convert`) remain**, ready for a dev agent to claim.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
@@ -682,6 +683,22 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Agent permission redesign — model core (PR-1)**
+  (codex, PR #252) — replaces the `enum × 3 safety modes × dead LLM classifier × shell allowlist`
+  permission model with **one pure `decide(effect)` over an operation's consequence** (`WORK→allow`
+  silent · `COMMIT→confirm`-once-or-remember · `FORBIDDEN→block` floor); shell inverts to a
+  floor-blocklist (unknown static command = WORK); `file_delete` is reversible via `.agent-trash`;
+  grants are narrow (`Scope(read|write:root)` / `External` / `Command`). Gate (main): `/code-review max`
+  over **two rounds** — round 1 surfaced (all verified against the live evaluator) a grant read→write/
+  delete over-match, multiple floor bypasses (`bash -c "…"` wrapping, newline/lone-`&` segment splitting,
+  `diskutil eraseDisk`, plain `curl` GET, `crontab -`, `rm -rf -- /`, `curl -F @secret`, `curl|xargs sh`),
+  a bare-`$HOME` scope gap, an inert folder grant, and a grant that could be created but never revoked.
+  Round 2 (force-pushed `df0a0fc6`) fixed all: scope grants carry `access:read|write` with path
+  containment (read no longer covers write; folder grants cover descendants; sibling-prefix guarded),
+  floor checks rescan the `bash -c` inner command, the operator splitter handles `\n`/lone `&` while
+  preserving `2>&1`/`&>`, and the Security pane gained a per-grant **Revoke**. Re-verified: typecheck +
+  `test:core` 1002/0, every bypass now `DENY`/`ask`. **Shape (b)** — PR-2 folder-handoff + PR-3
+  `file_convert` remain (board still `in-progress`; plan kept active, not archived).
 - **Files become first-class outliner nodes — file-as-node**
   (cc, PR #241) — an `attachment` / `image` node is now a normal outliner node: a non-image file is a
   click-to-open **file card** (icon · display-only filename · `type · size · pages/duration` meta · `⋯`),
