@@ -18,7 +18,7 @@ import {
   type AgentEventType,
   type AgentPayloadRef,
 } from '../core/agentEventLog';
-import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
 import type { AgentSkillRuntime } from './agentSkills';
 import type { AgentLocalWorkspaceContext } from './agentLocalTools';
 import { restorePostCompactReadFiles } from './agentLocalTools';
@@ -393,7 +393,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
     const model = this.host.resolveProviderModel(providerConfig);
     const threshold = autoCompactThreshold(model);
     if (!Number.isFinite(threshold) || threshold <= 0) return false;
-    const tokens = estimateAgentMessagesTokens(messages, LIN_AGENT_SYSTEM_PROMPT);
+    const tokens = estimateAgentMessagesTokens(messages, DEFAULT_AGENT_SYSTEM_PROMPT);
     return tokens >= threshold;
   }
 
