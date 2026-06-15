@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Data Profile Report",
+  "type": "object",
+  "required": ["file", "ok", "errors", "warnings", "row_count", "column_count", "columns"],
+  "properties": {
+    "file": { "type": "string" },
+    "ok": { "type": "boolean" },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "format": { "type": ["string", "null"] },
+    "row_count": { "type": "integer" },
+    "column_count": { "type": "integer" },
+    "columns": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": false
+}

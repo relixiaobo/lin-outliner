@@ -8,8 +8,8 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
-dropped. The current user-visible built-in skills are `/skillify` and
-`/research`.
+dropped. The current user-visible built-in skills are `/skillify`, `/research`,
+`/presentation`, `/document`, and `/data-analysis`.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
 local skills through normal file tools. Its Skillify v2 body analyzes the current
@@ -28,6 +28,25 @@ cc-2.1 Explore's research loop: strict no-modification framing, broad-to-narrow
 codebase search, explicit file/nodes/read tool selection, caller-scaled
 thoroughness (`quick`, `medium`, `very thorough`), parallel independent
 read/search calls, and a compact evidence-backed report.
+
+`/presentation`, `/document`, and `/data-analysis` are resource-backed built-ins
+that ship as portable skill folders under `src/main/builtInSkills`. They are
+goal-oriented skills rather than file-extension adapters:
+
+- `/presentation` covers slide decks, talks, PPTX inspection, browser HTML
+  decks, PDF handouts, speaker outlines, and deck verification.
+- `/document` covers professional written documents, DOCX inspection, Markdown
+  drafts, review notes, comments, redlines, and document verification.
+- `/data-analysis` covers data profiling, workbook inspection, analytical
+  planning, reproducible transformations, chart/report output, and analytical
+  verification.
+
+Each of these built-ins includes its own `SKILL.md`, route-specific references,
+portable scripts, schemas, and lightweight templates. The app does not inject
+those support files automatically; the skill body points the model at
+`${AGENT_SKILL_DIR}` so the agent can load or execute only the resources relevant
+to the current task.
+
 Built-ins can be either resource-backed app folders or code-registered inline
 instructions. Resource-backed built-ins use the standard skill folder shape:
 
@@ -368,6 +387,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated child run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
+| `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins with portable `references/`, `scripts/`, and `assets/`. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 

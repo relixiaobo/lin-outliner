@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Presentation</title>
+  <style>
+    :root {
+      --bg: #f7f5f2;
+      --ink: #171717;
+      --muted: #67615b;
+      --accent: #b33951;
+      --rule: rgba(23, 23, 23, 0.18);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .deck {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .slide {
+      width: min(100%, 1280px);
+      aspect-ratio: 16 / 9;
+      display: none;
+      padding: 64px;
+      border: 1px solid var(--rule);
+      background: #fffdfa;
+    }
+    .slide[aria-current="true"] { display: grid; }
+    .kicker {
+      color: var(--accent);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 14px;
+    }
+    h1 {
+      margin: 16px 0 0;
+      max-width: 900px;
+      font-size: 72px;
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+    p {
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 26px;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" data-deck>
+    <section class="slide" data-slide="1" aria-current="true">
+      <div>
+        <div class="kicker">Section</div>
+        <h1>Replace with a sharp audience-facing claim</h1>
+        <p>Replace with one supporting point. Remove all placeholder copy before delivery.</p>
+      </div>
+    </section>
+  </main>
+  <script>
+    const slides = [...document.querySelectorAll('[data-slide]')];
+    let index = 0;
+    function show(next) {
+      index = Math.max(0, Math.min(slides.length - 1, next));
+      slides.forEach((slide, i) => slide.setAttribute('aria-current', String(i === index)));
+    }
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === ' ') show(index + 1);
+      if (event.key === 'ArrowLeft') show(index - 1);
+    });
+  </script>
+</body>
+</html>
