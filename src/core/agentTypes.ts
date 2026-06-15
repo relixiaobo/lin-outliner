@@ -354,6 +354,7 @@ export interface AgentDebugRun {
   provider: string | null;
   modelId: string | null;
   usage: AgentDebugUsage | null;
+  createdAt: number;
   /** The agent's system prompt for this run (per-run snapshot), if captured. */
   systemPrompt: string | null;
   /** The agent's tool schemas for this run (per-run snapshot), if captured. */
@@ -361,21 +362,28 @@ export interface AgentDebugRun {
   rounds: AgentDebugRound[];
 }
 
-/** A per-run node in the conversation tree (no rounds — those load lazily per run). */
-export interface AgentDebugRunSummary {
-  runId: string;
-  agentId: string;
-  kind: string;
-  status: AgentDebugTurnStatus;
-  parentRunId: string | null;
-  parentToolCallId: string | null;
-  addressedByMessageId: string | null;
-  triggerMessageId: string | null;
-  provider: string | null;
-  modelId: string | null;
-  usage: AgentDebugUsage | null;
+/**
+ * A per-run node in the conversation tree (no rounds — those load lazily per
+ * run). A pure projection of {@link AgentDebugRun}: same fields by `Pick` so the
+ * summary can never drift from the full run, plus a cheap `roundCount`.
+ */
+export interface AgentDebugRunSummary
+  extends Pick<
+    AgentDebugRun,
+    | 'runId'
+    | 'agentId'
+    | 'kind'
+    | 'status'
+    | 'parentRunId'
+    | 'parentToolCallId'
+    | 'addressedByMessageId'
+    | 'triggerMessageId'
+    | 'provider'
+    | 'modelId'
+    | 'usage'
+    | 'createdAt'
+  > {
   roundCount: number;
-  createdAt: number;
 }
 
 /** The conversation tree summary: shape, per-run nodes (ordered), and rolled-up totals. */

@@ -31,15 +31,30 @@ export interface AgentDebugRunSnapshot {
 interface DerivedRunContext {
   meta: AgentRunMetaProjection;
   snapshot?: AgentDebugRunSnapshot | null;
+  /**
+   * The parent tool call this run answers, read from the PARENT stream's
+   * `child_run.started`. It is never in the child's own ledger, so the caller
+   * (which holds both streams) supplies it; null for top-level runs.
+   */
+  parentToolCallId?: string | null;
 }
 
 export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRound[] {
   const rounds: AgentDebugRound[] = [];
   let pendingWindow: AgentDebugMessageRow[] = [];
   let current: AgentDebugRound | null = null;
+  // Rounds begin only after the run's OWN `run.started`. A child run's ledger
+  // opens with the fork prefix (the inherited transcript), whose assistant
+  // messages emit `assistant_message.started` BEFORE `run.started` — those are
+  // context, not provider rounds, so we fold them into the first round's window.
+  let sawRunStart = false;
 
   for (const event of events) {
     switch (event.type) {
+      case 'run.started': {
+        sawRunStart = true;
+        break;
+      }
       case 'user_message.created': {
         // New context entering the next round (the triggering / follow-up message).
         pendingWindow.push(messageRow(event.messageId, 'user', persistedParts(event.content)));
@@ -47,26 +62,22 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
       }
       case 'tool_result.created': {
         const result = persistedText(event.content) || event.outputSummary || '';
-        if (current) {
-          const exchange = current.toolExchanges.find((entry) => entry.toolCallId === event.toolCallId);
-          if (exchange) {
-            exchange.result = result;
-            exchange.isError = event.isError === true;
-          } else {
-            current.toolExchanges.push({
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              args: '',
-              result,
-              isError: event.isError === true,
-            });
-          }
-        }
+        recordToolResult(rounds, current, event.toolCallId, event.toolName, result, event.isError === true);
         // The same result is the next round's visible context.
-        pendingWindow.push(toolResultRow(event.messageId, event.toolName, result, event.isError === true));
+        pendingWindow.push(toolResultRow(event.messageId, event.toolCallId, event.toolName, result, event.isError === true));
+        break;
+      }
+      case 'tool_result.replaced': {
+        // Output slimming: what the model actually saw on its next turn. Patch the
+        // exchange wherever it lives — by now `current` may be a later round. Keep
+        // the original isError (a replacement doesn't restate success/failure).
+        const result = persistedText(event.content) || event.outputSummary || '';
+        recordToolResult(rounds, current, event.toolCallId, undefined, result, undefined);
         break;
       }
       case 'assistant_message.started': {
+        // Fork-prefix assistant messages precede run.started; skip them as rounds.
+        if (!sawRunStart) break;
         current = {
           index: rounds.length,
           messageId: event.messageId,
@@ -89,6 +100,11 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
         break;
       }
       case 'assistant_message.completed': {
+        if (!sawRunStart) {
+          // Fork-prefix assistant message: inherited context for the first round.
+          pendingWindow.push(messageRow(event.messageId, 'assistant', persistedParts(event.content)));
+          break;
+        }
         if (current && current.messageId === event.messageId) {
           current.responseParts = persistedParts(event.content);
           current.stopReason = event.stopReason ?? null;
@@ -136,33 +152,39 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     kind: meta.kind,
     status: runStatus(meta.status),
     parentRunId: meta.parentRunId ?? null,
-    parentToolCallId: parentToolCallId(events),
+    parentToolCallId: context.parentToolCallId ?? null,
     addressedByMessageId: addressedByMessageId(events),
     triggerMessageId: triggerMessageId(meta),
     provider: lastRound?.provider ?? null,
     modelId: lastRound?.modelId ?? null,
     usage: usageToDebugUsage(meta.usage),
+    createdAt: meta.createdAt,
     systemPrompt: context.snapshot?.systemPrompt ?? null,
     tools: context.snapshot?.tools ?? [],
     rounds,
   };
 }
 
-export function summarizeDebugRun(meta: AgentRunMetaProjection, roundCount: number, lastRound?: AgentDebugRound): AgentDebugRunSummary {
+/**
+ * Project a fully-derived run into its tree node. A pure projection — every field
+ * is copied from the run, so the summary can never disagree with the detail (this
+ * is why the anchors are sourced once, in {@link deriveDebugRun}, not twice).
+ */
+export function summarizeDebugRun(run: AgentDebugRun): AgentDebugRunSummary {
   return {
-    runId: meta.id,
-    agentId: meta.agentId,
-    kind: meta.kind,
-    status: runStatus(meta.status),
-    parentRunId: meta.parentRunId ?? null,
-    parentToolCallId: null,
-    addressedByMessageId: null,
-    triggerMessageId: triggerMessageId(meta),
-    provider: lastRound?.provider ?? null,
-    modelId: lastRound?.modelId ?? null,
-    usage: usageToDebugUsage(meta.usage),
-    roundCount,
-    createdAt: meta.createdAt,
+    runId: run.runId,
+    agentId: run.agentId,
+    kind: run.kind,
+    status: run.status,
+    parentRunId: run.parentRunId,
+    parentToolCallId: run.parentToolCallId,
+    addressedByMessageId: run.addressedByMessageId,
+    triggerMessageId: run.triggerMessageId,
+    provider: run.provider,
+    modelId: run.modelId,
+    usage: run.usage,
+    createdAt: run.createdAt,
+    roundCount: run.rounds.length,
   };
 }
 
@@ -187,9 +209,12 @@ function persistedParts(content: readonly AgentPersistedContent[]): AgentDebugMe
   return content.map((part): AgentDebugMessagePart => {
     if (part.type === 'text') return { kind: 'text', body: part.text, isReminder: part.text.startsWith('<system-reminder>') };
     if (part.type === 'thinking') return { kind: 'thinking', body: part.redacted ? '[redacted thinking]' : part.thinking };
-    if (part.type === 'toolCall') return { kind: 'toolCall', name: part.name, toolUseId: part.id, body: stableJson(part.arguments) };
+    // Tool-call arguments can carry credentials (api_key, authorization, …); the
+    // debug view is read-only but still on screen, so redact before rendering.
+    if (part.type === 'toolCall') return { kind: 'toolCall', name: part.name, toolUseId: part.id, body: sanitizedJson(part.arguments) };
     if (part.type === 'image') return { kind: 'image', body: part.alt ?? '[image]' };
-    return { kind: 'json', body: stableJson(part) };
+    if (part.type === 'payload_ref') return { kind: 'json', body: part.label ?? `[payload ${part.payload.id}]` };
+    return { kind: 'json', body: sanitizedJson(part) };
   });
 }
 
@@ -205,9 +230,41 @@ function messageRow(id: string, role: string, parts: AgentDebugMessagePart[]): A
   return { id, role, summary: summarize(role, parts), json, bytes: byteLength(json), parts };
 }
 
-function toolResultRow(id: string, toolName: string, body: string, isError: boolean): AgentDebugMessageRow {
-  const parts: AgentDebugMessagePart[] = [{ kind: 'toolResult', toolUseId: id, body, isError }];
-  return { id, role: 'tool', summary: `tool: ${toolName}`, json: stableJson(parts), bytes: byteLength(body), parts };
+function toolResultRow(messageId: string, toolCallId: string, toolName: string, body: string, isError: boolean): AgentDebugMessageRow {
+  // toolUseId must be the tool CALL id (so the result links to its call), not the
+  // result message id — those are distinct ids on a tool_result event.
+  const parts: AgentDebugMessagePart[] = [{ kind: 'toolResult', toolUseId: toolCallId, body, isError }];
+  return { id: messageId, role: 'tool', summary: `tool: ${toolName}`, json: stableJson(parts), bytes: byteLength(body), parts };
+}
+
+/**
+ * Attach a tool result to its exchange. A `tool_result.created` lands on the
+ * round still in flight; a `tool_result.replaced` (output slimming) can arrive
+ * after the next round opened, so we search every round, newest first. `isError`
+ * is left untouched when undefined (replacements don't restate it).
+ */
+function recordToolResult(
+  rounds: readonly AgentDebugRound[],
+  current: AgentDebugRound | null,
+  toolCallId: string,
+  toolName: string | undefined,
+  result: string,
+  isError: boolean | undefined,
+): void {
+  const search = current ? [current, ...rounds.filter((round) => round !== current)] : rounds;
+  for (const round of search) {
+    const exchange = round.toolExchanges.find((entry) => entry.toolCallId === toolCallId);
+    if (exchange) {
+      exchange.result = result;
+      if (isError !== undefined) exchange.isError = isError;
+      return;
+    }
+  }
+  // No seeded exchange (result before the round's .completed): open one on the
+  // round in flight. A replacement with no live round has nowhere to land.
+  if (current) {
+    current.toolExchanges.push({ toolCallId, toolName: toolName ?? '', args: '', result, isError: isError === true });
+  }
 }
 
 function usageToDebugUsage(usage: Usage | undefined): AgentDebugUsage | null {
@@ -263,13 +320,6 @@ function triggerMessageId(meta: AgentRunMetaProjection): string | null {
   return meta.trigger.type === 'message' ? meta.trigger.messageId : null;
 }
 
-function parentToolCallId(events: readonly AgentEvent[]): string | null {
-  for (const event of events) {
-    if (event.type === 'child_run.started' && typeof event.parentToolCallId === 'string') return event.parentToolCallId;
-  }
-  return null;
-}
-
 function addressedByMessageId(events: readonly AgentEvent[]): string | null {
   for (const event of events) {
     if (event.type === 'run.started' && typeof event.addressedByMessageId === 'string') return event.addressedByMessageId;
@@ -295,6 +345,25 @@ function stableJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+// Keys whose values are credentials — redacted before anything reaches the
+// (read-only but on-screen) debug view. Mirrors the old agentDebug sanitizer.
+const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|secret|password|token/i;
+
+/** Pretty-print a value with secret-bearing keys redacted, recursively. */
+function sanitizedJson(value: unknown): string {
+  return stableJson(redactSecrets(value));
+}
+
+function redactSecrets(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = SECRET_KEY_PATTERN.test(key) ? '[redacted]' : redactSecrets(item);
+  }
+  return output;
 }
 
 function byteLength(value: string): number {
