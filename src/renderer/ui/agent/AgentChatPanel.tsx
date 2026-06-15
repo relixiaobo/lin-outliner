@@ -1223,10 +1223,8 @@ export function AgentChatPanel({
     approved: boolean,
     scope: AgentApprovalResolutionScope = 'once',
   ) => {
-    const resolved = await resolveApproval(requestId, approved, scope);
-    if (resolved && scope === 'full_access') void loadProviderSettings();
-    return resolved;
-  }, [loadProviderSettings, resolveApproval]);
+    return await resolveApproval(requestId, approved, scope);
+  }, [resolveApproval]);
 
   function openComposerModelSettings() {
     if (dmAgentDefinition) {

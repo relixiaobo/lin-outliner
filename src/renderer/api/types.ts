@@ -4,7 +4,6 @@ export type {
   AgentProviderConfigView,
   AgentPermissionMode,
   AgentDelegationPermissionMode,
-  AgentSafetyMode,
   AgentModelOption,
   AgentProviderOption,
   AgentReasoningLevel,
@@ -73,17 +72,16 @@ export type {
 } from '../../core/agentTypes';
 
 export interface AgentToolPermissionSettingsView {
-  permissions: {
-    allow: string[];
-    ask: string[];
-    deny: string[];
-  };
+  grants: string[];
   diagnostics: Array<{
     ruleValue: string;
-    decision: 'allow' | 'ask' | 'deny';
     code: string;
     message: string;
   }>;
+}
+
+export interface AgentToolPermissionSettingsInput {
+  grants: string[];
 }
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';

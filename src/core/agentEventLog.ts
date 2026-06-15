@@ -15,38 +15,27 @@ export const AGENT_EVENT_VERSION = 1;
 export type AgentPermissionDeniedReason =
   | 'configured_deny'
   | 'policy_denied'
-  | 'classifier_blocked'
-  | 'classifier_unavailable'
   | 'platform_hard_block'
   | 'run_aborted'
   | 'runtime'
   | 'user_denied';
 
 export type AgentToolPermissionEventSource =
-  | 'global_rule'
-  | 'action_default'
-  | 'safety_mode_profile'
+  | 'default'
   | 'trust_ledger'
   | 'configured_deny'
   | 'policy_denied'
-  | 'classifier'
-  | 'classifier_unavailable'
-  | 'safe_allowlist'
   | 'user'
   | 'platform_hard_block'
   | 'runtime';
 
 export type AgentToolPermissionResolvedBy =
-  | 'classifier'
-  | 'safe_allowlist'
-  | 'safety_mode_profile'
+  | 'default'
   | 'trust_ledger'
   | 'user_once'
   | 'allow_rule_update'
-  | 'global_rule'
   | 'configured_deny'
   | 'policy_denied'
-  | 'classifier_unavailable'
   | 'platform_hard_block'
   | 'runtime'
   | 'system_abort';
@@ -386,12 +375,6 @@ export type AgentRunLogEvent =
       actionKinds: string[];
       outcome: 'allow' | 'ask' | 'blocked';
       source: AgentToolPermissionEventSource;
-      classifierResult?: {
-        outcome: 'allow' | 'block';
-        reason: string;
-        model?: string;
-        unavailable?: boolean;
-      };
       descriptorRef?: AgentPayloadRef;
     })
   | (AgentRunEventBase & {
@@ -853,12 +836,6 @@ export interface ToolPermissionCheckedEvent extends AgentEventBase {
   actionKinds: string[];
   outcome: 'allow' | 'ask' | 'blocked';
   source: AgentToolPermissionEventSource;
-  classifierResult?: {
-    outcome: 'allow' | 'block';
-    reason: string;
-    model?: string;
-    unavailable?: boolean;
-  };
   descriptorRef?: AgentPayloadRef;
 }
 

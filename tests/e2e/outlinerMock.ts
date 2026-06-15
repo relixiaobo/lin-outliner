@@ -45,6 +45,8 @@ interface MockFixtureOptions {
   commandNode?: boolean;
   /** Adds an agent loaded from an additional directory outside writable authoring roots. */
   additionalAgentDirectoryAgent?: boolean;
+  /** Preloads remembered permission grants for settings/security specs. */
+  permissionGrants?: string[];
 }
 
 type E2EWindow = Window & {
@@ -282,7 +284,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentSettings = {
       activeProviderId: 'openai',
       agent: {
-        safetyMode: 'balanced',
         automaticSkillsEnabled: true,
         slashSkillsEnabled: true,
         compactEnabled: true,
@@ -395,8 +396,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
     }
     const agentToolPermissions = {
-      permissions: { allow: [] as string[], ask: [] as string[], deny: [] as string[] },
-      diagnostics: [] as Array<{ ruleValue: string; decision: 'allow' | 'ask' | 'deny'; code: string; message: string }>,
+      grants: [...(options.permissionGrants ?? [])] as string[],
+      diagnostics: [{
+        ruleValue: 'Action(file.read.outside_allowed_file_area)',
+        code: 'unsupported_grant',
+        message: 'Broad action grants are not supported. Approve a narrow scope, external system, or command-form boundary instead.',
+      }] as Array<{ ruleValue: string; code: string; message: string }>,
     };
     const agentSkills = [{
       name: 'workspace-review',
@@ -1857,7 +1862,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_update_runtime_settings') {
           const settings = args.settings as {
-            safetyMode?: string;
             automaticSkillsEnabled?: boolean;
             slashSkillsEnabled?: boolean;
             compactEnabled?: boolean;
@@ -1869,9 +1873,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             providerCacheRetention?: string;
           };
           agentSettings.agent = {
-            safetyMode: ['ask_first', 'balanced', 'full_access'].includes(settings.safetyMode ?? '')
-              ? settings.safetyMode
-              : agentSettings.agent.safetyMode,
             automaticSkillsEnabled: settings.automaticSkillsEnabled ?? agentSettings.agent.automaticSkillsEnabled,
             slashSkillsEnabled: settings.slashSkillsEnabled ?? agentSettings.agent.slashSkillsEnabled,
             compactEnabled: settings.compactEnabled ?? agentSettings.agent.compactEnabled,
@@ -1953,12 +1954,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(entry) as T;
         }
         if (cmd === 'agent_update_tool_permission_settings') {
-          const next = args.settings as { permissions?: { allow?: string[]; ask?: string[]; deny?: string[] } };
-          agentToolPermissions.permissions = {
-            allow: next.permissions?.allow ?? [],
-            ask: next.permissions?.ask ?? [],
-            deny: next.permissions?.deny ?? [],
-          };
+          const next = args.settings as { grants?: string[] };
+          agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : [];
           return clone(agentToolPermissions) as T;
         }
         if (cmd === 'agent_test_provider_connection') {

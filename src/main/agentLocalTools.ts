@@ -2,7 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -178,6 +178,16 @@ interface FileWriteData {
   structuredPatch: Hunk[];
   originalFile: string | null;
   skillWrite?: AgentSkillWriteAudit;
+}
+
+interface FileDeleteParams {
+  file_path: string;
+}
+
+interface FileDeleteData {
+  filePath: string;
+  trashPath: string;
+  kind: 'file' | 'directory' | 'other';
 }
 
 interface Hunk {
@@ -365,7 +375,7 @@ const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
 const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
-const IGNORED_DIRECTORIES = new Set(['.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
+const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
@@ -442,6 +452,15 @@ const FILE_WRITE_PARAMETERS = {
   },
 };
 
+const FILE_DELETE_PARAMETERS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['file_path'],
+  properties: {
+    file_path: { type: 'string', minLength: 1, description: 'The absolute path to the file or directory to move to agent trash.' },
+  },
+};
+
 const BASH_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
@@ -479,6 +498,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
     createFileWriteTool(workspace),
+    createFileDeleteTool(workspace),
     createBashTool(workspace),
     createTaskStopTool(),
   ];
@@ -1072,13 +1092,61 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
   };
 }
 
+function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileDeleteData>> {
+  return {
+    name: 'file_delete',
+    label: 'File Delete',
+    description: [
+      'Moves a local file or directory to agent trash instead of permanently deleting it.',
+      'Use this for reversible cleanup inside the allowed file area. It cannot delete the file area root.',
+      'The result includes the trash path so the item can be recovered if needed.',
+    ].join('\n'),
+    parameters: FILE_DELETE_PARAMETERS,
+    executionMode: 'sequential',
+    execute: async (_toolCallId, rawParams: unknown) => {
+      const started = Date.now();
+      try {
+        const params = normalizeFileDeleteParams(rawParams);
+        const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
+        const root = path.resolve(workspace.root);
+        if (path.resolve(filePath) === root) {
+          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the allowed file area root.', 'Delete a specific file or subdirectory instead.');
+        }
+        const trashRoot = agentTrashRoot(workspace);
+        if (isResolvedPathInside(trashRoot, path.resolve(filePath))) {
+          throw new LocalToolFailure('trash_delete_forbidden', 'Cannot delete the agent trash directory with file_delete.', 'Leave trash cleanup to the app or delete a specific non-trash path.');
+        }
+        const fileStat = await stat(filePath).catch((error: unknown) => {
+          throw localFsError(error, filePath);
+        });
+        const trashPath = await nextTrashPath(workspace, filePath);
+        await mkdir(path.dirname(trashPath), { recursive: true });
+        await rename(filePath, trashPath);
+        clearReadStateForDeletedPath(workspace, filePath);
+        const data: FileDeleteData = {
+          filePath,
+          trashPath,
+          kind: fileStat.isFile() ? 'file' : fileStat.isDirectory() ? 'directory' : 'other',
+        };
+        await notifySuccessfulFileTouch(workspace, filePath);
+        return agentToolResult(successEnvelope('file_delete', data, {
+          instructions: `Moved to agent trash at ${trashPath}. Move it back from trash to recover it.`,
+          metrics: metrics(started, data),
+        }), visibleFileDelete(data));
+      } catch (error) {
+        return localErrorResult('file_delete', error, started);
+      }
+    },
+  };
+}
+
 function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<BashData>> {
   return {
     name: 'bash',
     label: 'Bash',
     description: [
       'Executes a shell command in the default file area.',
-      'Use file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.',
+      'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
@@ -1219,6 +1287,13 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
   return {
     file_path: requiredString(input.file_path, 'file_path'),
     content: normalizeLineEndings(input.content),
+  };
+}
+
+function normalizeFileDeleteParams(rawParams: unknown): FileDeleteParams {
+  const input = asRecord(rawParams);
+  return {
+    file_path: requiredString(input.file_path, 'file_path'),
   };
 }
 
@@ -1377,6 +1452,29 @@ function relativeTarget(workspace: WorkspaceContext, target: string): string {
 function relativeToWorkspace(workspace: WorkspaceContext, filePath: string): string {
   const relative = path.relative(workspace.root, filePath);
   return normalizePathSeparators(relative || path.basename(filePath));
+}
+
+function agentTrashRoot(workspace: WorkspaceContext): string {
+  return path.join(path.resolve(workspace.root), '.agent-trash');
+}
+
+async function nextTrashPath(workspace: WorkspaceContext, filePath: string): Promise<string> {
+  const root = path.resolve(workspace.root);
+  const relative = path.relative(root, filePath);
+  const normalizedRelative = !relative || relative.startsWith('..') || path.isAbsolute(relative)
+    ? path.basename(filePath)
+    : relative;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return path.resolve(agentTrashRoot(workspace), `${stamp}-${randomUUID()}`, normalizedRelative);
+}
+
+function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: string): void {
+  const resolved = path.resolve(filePath);
+  for (const cachedPath of [...workspace.readFileState.keys()]) {
+    if (isResolvedPathInside(resolved, path.resolve(cachedPath))) {
+      workspace.readFileState.delete(cachedPath);
+    }
+  }
 }
 
 async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000): Promise<ProcessResult> {
@@ -2276,6 +2374,13 @@ export function visibleBash(data: BashData): unknown {
   if (data.taskStatus) visible.taskStatus = data.taskStatus;
   if (data.persistedOutputPath) visible.persistedOutputPath = data.persistedOutputPath;
   return visible;
+}
+
+export function visibleFileDelete(data: FileDeleteData): unknown {
+  return {
+    trashPath: data.trashPath,
+    kind: data.kind,
+  };
 }
 
 export function visibleTaskStop(data: TaskStopData) {

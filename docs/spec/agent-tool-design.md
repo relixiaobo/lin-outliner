@@ -2494,7 +2494,6 @@ Runtime control tools are not file tools:
 - `config` writes are ask-gated, whitelisted, audited changes through
   runtime-owned write paths. The current write whitelist is:
   `agent.runtime.compactEnabled`, `agent.runtime.memoryIsolation`,
-  `agent.runtime.safetyMode`,
   `agent.runtime.automaticSkillsEnabled`, `agent.runtime.slashSkillsEnabled`,
   `agent.runtime.disabledSkills`, `agent.runtime.disabledAgents`,
   provider retry/timeout/cache settings. Review/approval cards are UI around the
@@ -2542,7 +2541,7 @@ agents than only `merge_node_into_previous`.
 ## Approval Policy
 
 The permission **policy** — the allow/ask/deny model, platform hard blocks, the
-bash classifier, ask resolution, sensitive-data redlines, the global store, and
+bash projection, ask resolution, sensitive-data redlines, the global store, and
 events — is specified in `agent-tool-permissions.md`. This section only
 classifies each tool as read-only vs mutating (the input that policy acts on).
 

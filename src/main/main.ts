@@ -2408,7 +2408,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         conversationId(),
         String(args.requestId),
         args.approved === true,
-        args.scope === 'full_access' ? 'full_access' : args.scope === 'always' ? 'always' : 'once',
+        args.scope === 'always' ? 'always' : 'once',
       );
     case 'agent_resolve_user_question':
       return agentRuntime.resolveUserQuestion(
@@ -2436,7 +2436,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
     case 'agent_get_tool_permission_settings':
       return readAgentToolPermissionSettingsView();
     case 'agent_update_tool_permission_settings':
-      return writeAgentToolPermissionSettingsView(args.settings as { permissions?: { allow?: unknown; ask?: unknown; deny?: unknown } });
+      return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown });
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

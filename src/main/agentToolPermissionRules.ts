@@ -1,11 +1,17 @@
 import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
+  type AgentOperationEffect,
+  type AgentPermissionGrant,
+  type AgentPermissionScopeAccess,
   type AgentToolActionKind,
   type GlobalToolPermissionDecision,
 } from '../core/agentPermissionModel';
+import path from 'node:path';
 
 export {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
+  type AgentOperationEffect,
+  type AgentPermissionGrant,
   type AgentToolActionKind,
   type GlobalToolPermissionDecision,
 } from '../core/agentPermissionModel';
@@ -18,7 +24,6 @@ export type AgentToolCapability =
 
 export type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
 export type AskResolverOutcome = 'allow' | 'block' | 'needs_user';
-export type ToolPermissionClassifierOutcome = 'allow' | 'block';
 export type ToolAccessScope =
   | 'allowed_file_area'
   | 'outside_allowed_file_area'
@@ -33,65 +38,37 @@ export interface ToolActionDescriptor {
   title: string;
   summary: string;
   consequence: string;
-  defaultDecision: GlobalToolPermissionDecision;
   reversible: boolean;
   externalEffect: boolean;
   highConsequence: boolean;
-  classifierAutoAllowEligible: boolean;
+  effect: AgentOperationEffect;
   command?: string;
   capabilities?: readonly AgentToolCapability[];
   code?: string;
   platformHardBlock?: boolean;
 }
 
-export interface ToolPermissionClassifierResult {
-  outcome: ToolPermissionClassifierOutcome;
-  reason: string;
-  model: string;
-  unavailable?: boolean;
-}
-
 export interface GlobalToolPermissionRule {
   ruleValue: string;
-  decision: GlobalToolPermissionDecision;
+  grant: AgentPermissionGrant;
   updatedAt?: number;
-}
-
-export type ParsedGlobalToolPermissionRuleTarget =
-  | { kind: 'action'; value: AgentToolActionKind }
-  | { kind: 'tool'; value: string }
-  | { kind: 'bash'; value: string }
-  | { kind: 'capability'; value: AgentToolCapability };
-
-export interface ParsedGlobalToolPermissionRule extends GlobalToolPermissionRule {
-  target: ParsedGlobalToolPermissionRuleTarget;
 }
 
 export interface GlobalToolPermissionRuleDiagnostic {
   ruleValue: string;
-  decision: GlobalToolPermissionDecision;
-  code: 'invalid_rule' | 'unsupported_rule' | 'forbidden_allow_rule' | 'forbidden_capability_rule';
+  code: 'invalid_grant' | 'unsupported_grant';
   message: string;
 }
 
 export interface GlobalToolPermissionConfig {
-  rules: ParsedGlobalToolPermissionRule[];
+  grants: GlobalToolPermissionRule[];
   diagnostics: GlobalToolPermissionRuleDiagnostic[];
 }
 
 export interface GlobalToolPermissionSettings {
-  permissions?: {
-    allow?: unknown;
-    ask?: unknown;
-    deny?: unknown;
-  };
-}
-
-export interface GlobalToolPermissionResolution {
-  decision: GlobalToolPermissionDecision;
-  source: 'configured_deny' | 'configured_ask' | 'configured_allow' | 'default';
-  descriptor: ToolActionDescriptor;
-  rule?: ParsedGlobalToolPermissionRule;
+  grants?: unknown;
+  /** Legacy pre-redesign setting. Ignored and normalized away on the next write. */
+  permissions?: unknown;
 }
 
 export interface ToolPermissionResolutionPriorityInput {
@@ -154,147 +131,52 @@ export const OUTWARD_FACING_SHELL_PREFIXES: readonly string[] = [
   'wrangler',
 ];
 
-export const SAFE_AUTO_ALLOW_TOOL_NAMES: readonly string[] = [
-  'file_read',
-  'file_glob',
-  'file_grep',
-  'node_read',
-  'node_search',
-  'recall',
-  'task_stop',
-  'web_search',
-];
-
-const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
-const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_AGENT_TOOL_CAPABILITIES);
-const BASH_ALLOW_FORBIDDEN_PREFIX_SET = new Set<string>([
-  ...ARBITRARY_CODE_SHELL_PREFIXES,
-  'bun',
-  'bunx',
-  'npm',
-  'npx',
-  'pnpm',
-  'ssh',
-  'tsx',
-  'yarn',
-]);
-const SAFE_TOOL_SET = new Set<string>(SAFE_AUTO_ALLOW_TOOL_NAMES);
-const KNOWN_TOOL_NAMES = new Set<string>([
-  ...SAFE_AUTO_ALLOW_TOOL_NAMES,
-  'agent',
-  'agent_send',
-  'agent_status',
-  'agent_stop',
-  'ask_user_question',
-  'bash',
-  'config',
-  'doctor',
-  'dream',
-  'file_edit',
-  'file_write',
-  'recall',
-  'runtime_status',
-  'node_create',
-  'node_delete',
-  'node_edit',
-  'operation_history',
-  'skill',
-  'web_fetch',
-]);
-
-const PLATFORM_HARD_BLOCK_ACTIONS = new Set<AgentToolActionKind>([
-  'agent.permission.modify',
-  'payment.purchase',
-]);
-
-const ALLOW_FORBIDDEN_ACTIONS = new Set<AgentToolActionKind>([
-  ...PLATFORM_HARD_BLOCK_ACTIONS,
-  'agent.config.write',
-  'agent.memory.dream',
-  'agent.delegate.spawn',
-  'shell.unknown',
-]);
-
-const BEHAVIOR_ORDER: readonly GlobalToolPermissionDecision[] = ['deny', 'ask', 'allow'];
+const GRANT_KINDS = new Set(['scope', 'external', 'command']);
 
 export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPermissionConfig {
-  if (isGlobalToolPermissionConfig(input)) return parsePrevalidatedGlobalToolPermissionConfig(input);
+  if (isParsedGlobalToolPermissionConfig(input)) return input;
   const settings = isRecord(input) ? input as GlobalToolPermissionSettings : {};
-  const permissions = isRecord(settings.permissions) ? settings.permissions : {};
-  const rules: ParsedGlobalToolPermissionRule[] = [];
+  const entries = Array.isArray(settings.grants) ? settings.grants : [];
+  const grants: GlobalToolPermissionRule[] = [];
   const diagnostics: GlobalToolPermissionRuleDiagnostic[] = [];
 
-  for (const decision of BEHAVIOR_ORDER) {
-    const entries = Array.isArray(permissions[decision]) ? permissions[decision] : [];
-    for (const entry of entries) {
-      if (typeof entry !== 'string') {
-        diagnostics.push({
-          ruleValue: String(entry),
-          decision,
-          code: 'invalid_rule',
-          message: 'Permission rule entries must be strings.',
-        });
-        continue;
-      }
-      const parsed = parseGlobalToolPermissionRule(entry, decision);
-      if ('diagnostic' in parsed) diagnostics.push(parsed.diagnostic);
-      else rules.push(parsed.rule);
-    }
-  }
-
-  return { rules, diagnostics };
-}
-
-function parsePrevalidatedGlobalToolPermissionConfig(input: GlobalToolPermissionConfig): GlobalToolPermissionConfig {
-  const rules: ParsedGlobalToolPermissionRule[] = [];
-  const diagnostics: GlobalToolPermissionRuleDiagnostic[] = [];
-  for (const candidate of input.rules) {
-    if (!isRecord(candidate) || typeof candidate.ruleValue !== 'string' || !isGlobalToolPermissionDecision(candidate.decision)) {
+  for (const entry of entries) {
+    if (typeof entry !== 'string') {
       diagnostics.push({
-        ruleValue: isRecord(candidate) && 'ruleValue' in candidate ? String(candidate.ruleValue) : String(candidate),
-        decision: isRecord(candidate) && 'decision' in candidate && isGlobalToolPermissionDecision(candidate.decision)
-          ? candidate.decision
-          : 'ask',
-        code: 'invalid_rule',
-        message: 'Permission rule entries must be parsed from a valid rule string.',
+        ruleValue: String(entry),
+        code: 'invalid_grant',
+        message: 'Permission grants must be strings.',
       });
       continue;
     }
-    const parsed = parseGlobalToolPermissionRule(candidate.ruleValue, candidate.decision);
-    if ('diagnostic' in parsed) {
-      diagnostics.push(parsed.diagnostic);
-    } else {
-      rules.push({
-        ...parsed.rule,
-        updatedAt: typeof candidate.updatedAt === 'number' ? candidate.updatedAt : undefined,
-      });
-    }
+    const parsed = parseGlobalToolPermissionGrant(entry);
+    if ('diagnostic' in parsed) diagnostics.push(parsed.diagnostic);
+    else grants.push(parsed.rule);
   }
-  return { rules, diagnostics };
+
+  return { grants, diagnostics };
 }
 
-export function globalToolPermissionConfigToSettings(config: GlobalToolPermissionConfig): Required<GlobalToolPermissionSettings> {
-  const permissions: { allow: string[]; ask: string[]; deny: string[] } = {
-    allow: [],
-    ask: [],
-    deny: [],
-  };
-  for (const rule of config.rules) {
-    permissions[rule.decision].push(rule.ruleValue);
-  }
-  return { permissions };
+export function globalToolPermissionConfigToSettings(config: GlobalToolPermissionConfig): Required<Pick<GlobalToolPermissionSettings, 'grants'>> {
+  return { grants: config.grants.map((grant) => grant.ruleValue) };
 }
 
-export function resolveGlobalToolPermissionDecision(
-  descriptors: readonly ToolActionDescriptor[],
+export function grantRuleValue(grant: AgentPermissionGrant): string {
+  if (grant.kind === 'scope') return `Scope(${grant.access}:${grant.root})`;
+  if (grant.kind === 'external') return `External(${grant.target})`;
+  return `Command(${grant.form})`;
+}
+
+export function matchingGrantForEffect(
+  effect: AgentOperationEffect,
   configInput?: unknown,
-): GlobalToolPermissionResolution | null {
-  const config = parseGlobalToolPermissionSettings(configInput);
-  const descriptorResolutions = descriptors.map((descriptor) => resolveDescriptorDecision(descriptor, config.rules));
-  descriptorResolutions.sort((left, right) => (
-    compareToolPermissionResolutionPriority(left, right, (resolution) => sourceRank(resolution.source))
-  ));
-  return descriptorResolutions[0] ?? null;
+): GlobalToolPermissionRule | null {
+  if (!effect.grant || effect.floor) return null;
+  const grant = effect.grant;
+  const config = isParsedGlobalToolPermissionConfig(configInput)
+    ? configInput
+    : parseGlobalToolPermissionSettings(configInput);
+  return config.grants.find((rule) => grantsEqual(rule.grant, grant)) ?? null;
 }
 
 export function compareToolPermissionResolutionPriority<T extends ToolPermissionResolutionPriorityInput>(
@@ -303,138 +185,83 @@ export function compareToolPermissionResolutionPriority<T extends ToolPermission
   resolveSourceRank: (source: T) => number = (source) => source.sourceRank ?? 0,
 ): number {
   return decisionRank(right.decision) - decisionRank(left.decision)
-    || descriptorRiskRank(right.descriptor) - descriptorRiskRank(left.descriptor)
-    || resolveSourceRank(right) - resolveSourceRank(left);
-}
-
-export function isSafeAutoAllowToolName(toolName: string): boolean {
-  return SAFE_TOOL_SET.has(normalizePermissionToolName(toolName));
+    || resolveSourceRank(right) - resolveSourceRank(left)
+    || descriptorRiskRank(right.descriptor) - descriptorRiskRank(left.descriptor);
 }
 
 export function alwaysAllowRuleForDescriptor(descriptor: ToolActionDescriptor): string | undefined {
-  const ruleValue = `Action(${descriptor.actionKind})`;
-  const config = parseGlobalToolPermissionSettings({ permissions: { allow: [ruleValue] } });
-  return config.rules.length === 1 && config.rules[0]?.decision === 'allow' ? ruleValue : undefined;
+  return descriptor.effect.floor || !descriptor.effect.grant
+    ? undefined
+    : grantRuleValue(descriptor.effect.grant);
 }
 
 export function normalizePermissionToolName(value: string): string {
   return value.trim().replace(/-/g, '_').toLowerCase();
 }
 
-function resolveDescriptorDecision(
-  descriptor: ToolActionDescriptor,
-  rules: readonly ParsedGlobalToolPermissionRule[],
-): GlobalToolPermissionResolution {
-  const denyRule = rules.find((rule) => rule.decision === 'deny' && ruleMatchesDescriptor(rule, descriptor));
-  if (denyRule) return { decision: 'deny', source: 'configured_deny', descriptor, rule: denyRule };
-
-  const askRule = rules.find((rule) => rule.decision === 'ask' && ruleMatchesDescriptor(rule, descriptor));
-  if (askRule) return { decision: 'ask', source: 'configured_ask', descriptor, rule: askRule };
-
-  const allowRule = rules.find((rule) => rule.decision === 'allow' && ruleMatchesDescriptor(rule, descriptor));
-  if (allowRule) return { decision: 'allow', source: 'configured_allow', descriptor, rule: allowRule };
-
-  return { decision: descriptor.defaultDecision, source: 'default', descriptor };
-}
-
-function ruleMatchesDescriptor(rule: ParsedGlobalToolPermissionRule, descriptor: ToolActionDescriptor): boolean {
-  switch (rule.target.kind) {
-    case 'action':
-      return descriptor.actionKind === rule.target.value;
-    case 'tool':
-      return normalizePermissionToolName(descriptor.toolName) === rule.target.value;
-    case 'bash':
-      return descriptor.toolName === 'bash'
-        && typeof descriptor.command === 'string'
-        && wildcardMatches(rule.target.value, descriptor.command);
-    case 'capability':
-      return descriptor.capabilities?.includes(rule.target.value) ?? false;
-  }
-}
-
-function parseGlobalToolPermissionRule(
+function parseGlobalToolPermissionGrant(
   ruleValueInput: string,
-  decision: GlobalToolPermissionDecision,
-): { rule: ParsedGlobalToolPermissionRule } | { diagnostic: GlobalToolPermissionRuleDiagnostic } {
+): { rule: GlobalToolPermissionRule } | { diagnostic: GlobalToolPermissionRuleDiagnostic } {
   const ruleValue = ruleValueInput.trim();
   const match = /^([A-Za-z][A-Za-z0-9_-]*)\(([\s\S]*)\)$/.exec(ruleValue);
   if (!match) {
-    return diagnostic(ruleValue, decision, 'invalid_rule', 'Permission rules must use Kind(value) syntax.');
+    return diagnostic(ruleValue, 'invalid_grant', 'Permission grants must use Kind(value) syntax.');
   }
 
   const kind = normalizePermissionToolName(match[1] ?? '');
   const rawValue = (match[2] ?? '').trim();
   if (!rawValue || rawValue === '*') {
-    return diagnostic(ruleValue, decision, decision === 'allow' ? 'forbidden_allow_rule' : 'unsupported_rule', 'Broad or empty permission rules are not supported.');
+    return diagnostic(ruleValue, 'unsupported_grant', 'Broad or empty permission grants are not supported.');
+  }
+  if (!GRANT_KINDS.has(kind)) {
+    return diagnostic(ruleValue, 'unsupported_grant', `Unsupported permission grant kind: ${kind}.`);
   }
 
-  if (kind === 'action') {
-    if (!SUPPORTED_ACTION_KIND_SET.has(rawValue)) {
-      return diagnostic(ruleValue, decision, 'unsupported_rule', `Unsupported action kind: ${rawValue}.`);
+  if (kind === 'scope') {
+    const scope = parseScopeGrantValue(rawValue);
+    if (!scope) {
+      return diagnostic(ruleValue, 'unsupported_grant', 'Scope grants must be explicit read: or write: boundaries.');
     }
-    const actionKind = rawValue as AgentToolActionKind;
-    if (decision === 'allow' && ALLOW_FORBIDDEN_ACTIONS.has(actionKind)) {
-      return diagnostic(ruleValue, decision, 'forbidden_allow_rule', `Action ${actionKind} cannot be globally allowed.`);
-    }
-    return { rule: { ruleValue, decision, target: { kind: 'action', value: actionKind } } };
+    return { rule: { ruleValue, grant: { kind: 'scope', ...scope } } };
   }
+  if (kind === 'external') return { rule: { ruleValue, grant: { kind: 'external', target: rawValue } } };
+  return { rule: { ruleValue, grant: { kind: 'command', form: rawValue } } };
+}
 
-  if (kind === 'capability') {
-    const capability = normalizePermissionToolName(rawValue);
-    if (!SUPPORTED_CAPABILITY_SET.has(capability)) {
-      return diagnostic(ruleValue, decision, 'unsupported_rule', `Unsupported capability: ${rawValue}.`);
-    }
-    if (decision !== 'deny') {
-      return diagnostic(ruleValue, decision, 'forbidden_capability_rule', 'Capability rules are deny-only.');
-    }
-    return { rule: { ruleValue, decision, target: { kind: 'capability', value: capability as AgentToolCapability } } };
+function grantsEqual(left: AgentPermissionGrant, right: AgentPermissionGrant): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'scope' && right.kind === 'scope') {
+    return scopeAccessCovers(left.access, right.access) && isPathInside(left.root, right.root);
   }
+  if (left.kind === 'external' && right.kind === 'external') return left.target === right.target;
+  return left.kind === 'command' && right.kind === 'command' && left.form === right.form;
+}
 
-  if (kind === 'tool') {
-    const toolName = normalizePermissionToolName(rawValue);
-    if (!KNOWN_TOOL_NAMES.has(toolName)) {
-      return diagnostic(ruleValue, decision, 'unsupported_rule', `Unsupported tool name: ${rawValue}.`);
-    }
-    if (decision === 'allow' && !SAFE_TOOL_SET.has(toolName)) {
-      return diagnostic(ruleValue, decision, 'forbidden_allow_rule', `Tool ${toolName} cannot be broadly allowed; use an Action(...) rule.`);
-    }
-    return { rule: { ruleValue, decision, target: { kind: 'tool', value: toolName } } };
-  }
+function parseScopeGrantValue(value: string): { access: AgentPermissionScopeAccess; root: string } | null {
+  const match = /^(read|write):([\s\S]+)$/i.exec(value);
+  if (!match) return null;
+  const access = (match[1] ?? '').toLowerCase() as AgentPermissionScopeAccess;
+  const root = (match[2] ?? '').trim();
+  return root ? { access, root } : null;
+}
 
-  if (kind === 'bash') {
-    const value = rawValue.trim();
-    const prefix = bashRulePrefix(value);
-    if (!prefix) {
-      return diagnostic(ruleValue, decision, 'unsupported_rule', 'Bash rules must be exact commands or safe command-prefix patterns.');
-    }
-    if (decision === 'allow' && BASH_ALLOW_FORBIDDEN_PREFIX_SET.has(prefix)) {
-      return diagnostic(ruleValue, decision, 'forbidden_allow_rule', `Bash ${prefix} rules cannot be globally allowed.`);
-    }
-    // `prefix` is normalized (dashes → underscores), so match the normalized spelling.
-    if (decision === 'allow' && (prefix === 'agent' || prefix === 'child_run')) {
-      return diagnostic(ruleValue, decision, 'forbidden_allow_rule', 'Agent spawn rules cannot be globally allowed.');
-    }
-    return { rule: { ruleValue, decision, target: { kind: 'bash', value } } };
-  }
+function scopeAccessCovers(granted: AgentPermissionScopeAccess, requested: AgentPermissionScopeAccess): boolean {
+  return granted === requested || granted === 'write';
+}
 
-  return diagnostic(ruleValue, decision, 'unsupported_rule', `Unsupported permission rule kind: ${kind}.`);
+function isPathInside(rootInput: string, filePathInput: string): boolean {
+  const root = path.resolve(rootInput);
+  const filePath = path.resolve(filePathInput);
+  const relative = path.relative(root, filePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function diagnostic(
   ruleValue: string,
-  decision: GlobalToolPermissionDecision,
   code: GlobalToolPermissionRuleDiagnostic['code'],
   message: string,
 ): { diagnostic: GlobalToolPermissionRuleDiagnostic } {
-  return { diagnostic: { ruleValue, decision, code, message } };
-}
-
-function bashRulePrefix(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === '*') return null;
-  const source = trimmed.endsWith(':*') ? trimmed.slice(0, -2).trim() : trimmed;
-  const head = /^([A-Za-z0-9_.-]+)/.exec(source)?.[1];
-  return head ? normalizePermissionToolName(head) : null;
+  return { diagnostic: { ruleValue, code, message } };
 }
 
 function decisionRank(decision: GlobalToolPermissionDecision): number {
@@ -445,42 +272,28 @@ function decisionRank(decision: GlobalToolPermissionDecision): number {
 
 function descriptorRiskRank(descriptor: ToolActionDescriptor): number {
   let rank = 0;
+  if (descriptor.effect.floor) rank += 10;
   if (descriptor.externalEffect) rank += 4;
   if (descriptor.highConsequence) rank += 2;
-  if (descriptor.accessScope === 'sensitive_local_path') rank += 2;
+  if (descriptor.effect.touchesCredentials) rank += 2;
   if (descriptor.accessScope === 'outside_allowed_file_area') rank += 1;
   if (!descriptor.reversible) rank += 1;
   if (descriptor.actionKind.includes('unknown')) rank += 5;
   return rank;
 }
 
-function sourceRank(source: GlobalToolPermissionResolution['source']): number {
-  return source === 'default' ? 0 : 1;
-}
-
-function isGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {
-  return isRecord(value) && Array.isArray(value.rules) && Array.isArray(value.diagnostics);
-}
-
-function isGlobalToolPermissionDecision(value: unknown): value is GlobalToolPermissionDecision {
-  return value === 'allow' || value === 'ask' || value === 'deny';
+function isParsedGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {
+  return isRecord(value)
+    && Array.isArray(value.grants)
+    && Array.isArray(value.diagnostics)
+    && value.grants.every((grant) => (
+      isRecord(grant)
+      && typeof grant.ruleValue === 'string'
+      && isRecord(grant.grant)
+      && typeof grant.grant.kind === 'string'
+    ));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function wildcardMatches(pattern: string, value: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern.endsWith(':*')) {
-    const commandPrefix = pattern.slice(0, -2).trim().toLowerCase();
-    const command = value.trim().toLowerCase();
-    return commandPrefix.length > 0 && (command === commandPrefix || command.startsWith(`${commandPrefix} `));
-  }
-  const regex = new RegExp(`^${escapeRegExp(pattern).replace(/\\\*/g, '.*')}$`, 'i');
-  return regex.test(value.trim());
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[|\\{}()[\]^$+?.*]/g, '\\$&');
 }

@@ -1,6 +1,6 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
-import type { AgentPermissionMode, AgentSafetyMode } from '../core/types';
+import type { AgentPermissionMode } from '../core/types';
 import type { AgentApprovalResolutionScope } from '../core/agentTypes';
 import {
   evaluateAgentToolPermission,
@@ -47,7 +47,6 @@ export interface AgentSkillShellCommandInput {
   localRoot?: string;
   scratchRoot?: string;
   permissionMode?: AgentPermissionMode;
-  safetyMode?: AgentSafetyMode;
   allowedTools?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
@@ -79,7 +78,6 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     args: { command: input.command },
     policy: {
       mode: input.permissionMode,
-      safetyMode: input.safetyMode,
       workspaceRoot: input.localRoot,
       scratchRoot: input.scratchRoot,
       preapprovedToolRules: input.allowedTools ?? [],
@@ -115,9 +113,8 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   }
   if (decision.behavior === 'ask') {
     await appendPermissionEvent({ outcome: 'ask' });
-    // Route through the same ask resolver as the main runtime so the
-    // safe-allowlist, classifier-eligibility veto, and — critically — the
-    // unattended fail-safe (no approval channel ⇒ deny) apply consistently here.
+    // Route through the same ask resolver as the main runtime so the unattended
+    // fail-safe (no approval channel => deny) applies consistently here.
     const resolution = await resolveAgentPermissionAsk({
       decision,
       interactionAvailable: Boolean(input.approvalHandler),
@@ -130,17 +127,6 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
         reason: resolution.reason,
         message: resolution.message,
       }));
-    }
-    if (resolution.outcome === 'allow') {
-      await appendPermissionEvent({
-        outcome: 'allow',
-        includeChecked: false,
-        source: resolution.source,
-        resolved: {
-          status: 'approved',
-          resolvedBy: resolution.source,
-        },
-      });
     }
     if (resolution.outcome === 'needs_user') {
       if (!input.approvalHandler) {
@@ -182,7 +168,6 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
         }));
       }
     }
-    // resolution.outcome === 'allow' ⇒ safe-allowlist/classifier cleared it; run.
   } else if (decision.behavior !== 'allow') {
     const reason = permissionDeniedReasonForDecision(decision);
     await appendDeniedPermissionEvent(reason);

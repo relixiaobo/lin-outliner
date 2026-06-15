@@ -19,7 +19,6 @@ import type {
   AgentProviderConfigView,
   AgentProviderOption,
   AgentReasoningLevel,
-  AgentSafetyMode,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   ProviderAuthView,
@@ -66,8 +65,8 @@ interface SecretEnvelope {
   credentials?: Record<string, AuthCredential>;
 }
 
-// pi-ai inlines `'amazon-bedrock'` / `'google-vertex'` in getEnvApiKey and
-// exports no classifier, so we mirror that one small set here.
+// pi-ai inlines `'amazon-bedrock'` / `'google-vertex'` in getEnvApiKey, so we
+// mirror that one small managed-provider set here.
 const MANAGED_PROVIDERS = new Set<string>(['amazon-bedrock', 'google-vertex']);
 
 function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
@@ -77,11 +76,9 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 }
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
-const AGENT_SAFETY_MODES = ['ask_first', 'balanced', 'full_access'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 const AGENT_MEMORY_ISOLATIONS = ['global', 'read-only-global'] as const;
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
-  safetyMode: 'balanced',
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
@@ -354,7 +351,6 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
-    safetyMode: normalizeSafetyMode(input),
     automaticSkillsEnabled: booleanOrDefault(input?.automaticSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.automaticSkillsEnabled),
     slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
     compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
@@ -375,13 +371,6 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     disabledSkills: normalizeStringList(input?.disabledSkills),
     disabledAgents: normalizeStringList(input?.disabledAgents),
   };
-}
-
-function normalizeSafetyMode(input?: StoredAgentRuntimeSettings | null): AgentSafetyMode {
-  if (isAgentSafetyMode(input?.safetyMode)) return input.safetyMode;
-  if (input?.permissionMode === 'restricted') return 'ask_first';
-  if (input?.permissionMode === 'trusted') return 'balanced';
-  return DEFAULT_AGENT_RUNTIME_SETTINGS.safetyMode;
 }
 
 function booleanOrDefault(value: unknown, fallback: boolean): boolean {
@@ -560,10 +549,6 @@ function findKnownModel(providerId: string, modelId: string): Model<Api> | null 
 
 function isAgentReasoningLevel(value: unknown): value is AgentReasoningLevel {
   return typeof value === 'string' && (AGENT_REASONING_LEVELS as readonly string[]).includes(value);
-}
-
-function isAgentSafetyMode(value: unknown): value is AgentSafetyMode {
-  return typeof value === 'string' && (AGENT_SAFETY_MODES as readonly string[]).includes(value);
 }
 
 function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['providerCacheRetention'] {

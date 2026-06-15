@@ -6,7 +6,6 @@ import type {
   AgentProviderOption,
   AgentProviderSettingsView,
   AgentReasoningLevel,
-  AgentSafetyMode,
   AgentDefinitionView,
   AgentMemoryEntryView,
   AgentToolPermissionSettingsView,
@@ -34,12 +33,6 @@ import {
 import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
-import {
-  effectiveActionDecision,
-  explicitActionDecision,
-  safetyModeDefaultActionDecision,
-  type GlobalToolPermissionDecision,
-} from '../../../core/agentPermissionModel';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { Button } from '../primitives/Button';
@@ -59,15 +52,6 @@ import {
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { defaultReasoningLevel } from './settingsReasoning';
-import {
-  COMMON_PERMISSION_RULES,
-  buildPermissionExceptionRows,
-  permissionDecisionLabel,
-  permissionRuleCopy,
-  permissionSettingsWithDecision,
-  permissionSettingsWithoutRule,
-  safetyModeLabel,
-} from './permissionSettingsModel';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -86,7 +70,6 @@ interface DraftConfig {
   reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   enabled: boolean;
-  safetyMode: AgentSafetyMode;
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
@@ -173,7 +156,6 @@ const EMPTY_DRAFT: DraftConfig = {
   reasoningLevel: 'off',
   baseUrl: '',
   enabled: true,
-  safetyMode: 'balanced',
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
@@ -197,7 +179,6 @@ const SETTINGS_CATEGORY_ICONS = {
 } satisfies Record<SettingsCategory, AppIcon>;
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
-const EMPTY_PERMISSION_RULES: AgentToolPermissionSettingsView['permissions'] = { allow: [], ask: [], deny: [] };
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   if (target?.agentCreate || target?.agentId?.trim()) return { type: 'category', category: 'agents' };
@@ -556,10 +537,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   );
 
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
-  const permissionRules = permissionDraft?.permissions ?? EMPTY_PERMISSION_RULES;
-  const permissionExceptions = buildPermissionExceptionRows(permissionRules, draft.safetyMode);
-  const permissionModeLabel = safetyModeLabel(draft.safetyMode, t);
-  const permissionCustomCount = permissionExceptions.length;
+  const permissionGrants = permissionDraft?.grants ?? permissionSettings?.grants ?? [];
   const acceptedSkillTrustGrants = allSkills.filter((skill) => skill.accepted);
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const permissionDraftDirty = permissionDraft !== permissionSettings;
@@ -567,34 +545,18 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     ? permissionDraftDirty || runtimeDraftDirty
     : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
 
-  function setPermissionDecision(ruleValue: string, decision: GlobalToolPermissionDecision | 'default') {
-    setPermissionDraft((current) => {
-      const base = current ?? emptyPermissionSettings();
-      return permissionSettingsWithDecision(base, ruleValue, decision, draft.safetyMode);
-    });
-    setNotice(null);
-    setError(null);
-  }
-
-  function revertPermissionException(ruleValue: string) {
-    setPermissionDraft((current) => permissionSettingsWithoutRule(current ?? emptyPermissionSettings(), ruleValue));
-    setNotice(null);
-    setError(null);
-  }
-
-  function resetPermissionExceptions() {
-    setPermissionDraft((current) => ({
-      ...(current ?? emptyPermissionSettings()),
-      permissions: { allow: [], ask: [], deny: [] },
-    }));
-    setNotice(null);
-    setError(null);
-  }
-
   // Custom (OpenAI-compatible) providers are configured in the same native window,
   // in 'custom' mode (the window enters the provider id + model itself).
   function startCustomProvider() {
     void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
+  }
+
+  function revokePermissionGrant(grant: string) {
+    const base = permissionDraft ?? permissionSettings ?? { grants: [], diagnostics: [] };
+    setPermissionDraft({
+      ...base,
+      grants: base.grants.filter((candidate) => candidate !== grant),
+    });
   }
 
   // The footer Save persists ONLY what this pane owns — runtime (permissions /
@@ -610,7 +572,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     setNotice(null);
     try {
       await api.agentUpdateRuntimeSettings({
-        safetyMode: draft.safetyMode,
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
         compactEnabled: draft.compactEnabled,
@@ -620,7 +581,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         disabledAgents: draft.disabledAgents,
       });
       const nextPermissions = permissionDraft && permissionDraft !== permissionSettings
-        ? await api.agentUpdateToolPermissionSettings(permissionDraft)
+        ? await api.agentUpdateToolPermissionSettings({ grants: permissionDraft.grants })
         : null;
 
       const next = await api.agentGetProviderSettings();
@@ -990,129 +951,36 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                 >
                   <InsetRow
                     className="settings-permission-mode-row"
-                    label={permissionCustomCount > 0 ? (
-                      <>
-                        {t.settings.permissions.customModeLabel}
-                        <span className="settings-chip">{t.settings.permissions.basedOnMode({ mode: permissionModeLabel })}</span>
-                        <span className="settings-chip">{t.settings.permissions.changedCount({ count: permissionCustomCount })}</span>
-                      </>
-                    ) : permissionModeLabel}
-                    sublabel={t.settings.permissions.trustLevelSublabel}
-                    trailing={(
-                      <div className="settings-permission-mode-controls">
-                        <SegmentedControl<AgentSafetyMode>
-                          label={t.settings.permissions.trustLevelLabel}
-                          onChange={(value) => {
-                            setDraft((current) => ({ ...current, safetyMode: value }));
-                            setNotice(null);
-                            setError(null);
-                          }}
-                          options={[
-                            { value: 'ask_first', label: t.settings.permissions.askFirstMode },
-                            { value: 'balanced', label: t.settings.permissions.balancedMode },
-                            { value: 'full_access', label: t.settings.permissions.fullAccessMode },
-                          ]}
-                          value={draft.safetyMode}
-                        />
-                        {permissionCustomCount > 0 ? (
-                          <Button
-                            onClick={resetPermissionExceptions}
-                            size="sm"
-                            variant="ghost"
-                          >
-                            {t.settings.permissions.resetToMode({ mode: permissionModeLabel })}
-                          </Button>
-                        ) : null}
-                      </div>
-                    )}
+                    label={t.settings.permissions.delegatedOperatorLabel}
+                    sublabel={t.settings.permissions.delegatedOperatorSublabel}
                     wrap
                   />
                 </InsetGroup>
 
                 <InsetGroup
-                  ariaLabel={t.settings.permissions.exceptionsAriaLabel({ mode: permissionModeLabel })}
-                  label={t.settings.permissions.exceptionsGroup({ mode: permissionModeLabel })}
+                  ariaLabel={t.settings.permissions.grantsAriaLabel}
+                  label={t.settings.permissions.grantsGroup}
                 >
-                  {permissionExceptions.length > 0 ? permissionExceptions.map((exception) => {
-                    const ruleCopy = permissionRuleCopy(exception.ruleValue, t);
-                    return (
-                      <InsetRow
-                        key={`${exception.decision}:${exception.ruleValue}`}
-                        label={(
-                          <>
-                            {ruleCopy.label}
-                            <span className="settings-chip">{permissionDecisionLabel(exception.decision, t)}</span>
-                            <span className="settings-chip">{t.settings.permissions.modifiedChip}</span>
-                            {exception.kind === 'raw' ? <span className="settings-chip">{t.settings.permissions.advancedRuleChip}</span> : null}
-                          </>
-                        )}
-                        sublabel={(
-                          <>
-                            <span>{ruleCopy.description}</span>
-                            <span className="inset-row-code">{exception.ruleValue}</span>
-                          </>
-                        )}
-                        trailing={(
-                          <Button
-                            onClick={() => revertPermissionException(exception.ruleValue)}
-                            size="sm"
-                            variant="ghost"
-                          >
-                            {t.settings.permissions.revertException}
-                          </Button>
-                        )}
-                        wrap
-                      />
-                    );
-                  }) : (
-                    <InsetRow disabled label={t.settings.permissions.noExceptions} />
+                  {permissionGrants.length > 0 ? permissionGrants.map((grant) => (
+                    <InsetRow
+                      key={grant}
+                      label={grantLabel(grant, t)}
+                      sublabel={<span className="inset-row-code">{grant}</span>}
+                      trailing={(
+                        <Button
+                          onClick={() => revokePermissionGrant(grant)}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          {t.settings.permissions.revokeGrant}
+                        </Button>
+                      )}
+                      wrap
+                    />
+                  )) : (
+                    <InsetRow disabled label={t.settings.permissions.noGrants} />
                   )}
                 </InsetGroup>
-
-                <details className="settings-permission-add">
-                  <summary>{t.settings.permissions.addExceptionSummary}</summary>
-                  <InsetGroup ariaLabel={t.settings.permissions.commonActionsAriaLabel} label={t.settings.permissions.commonActionsGroup}>
-                    {COMMON_PERMISSION_RULES.map((rule) => {
-                      const decision = effectiveActionDecision(rule.actionKind, draft.safetyMode, permissionRules);
-                      const defaultDecision = safetyModeDefaultActionDecision(rule.actionKind, draft.safetyMode);
-                      const explicitDecision = explicitActionDecision(rule.actionKind, permissionRules);
-                      const modified = explicitDecision !== null && explicitDecision !== defaultDecision;
-                      const ruleCopy = t.settings.permissions.rules[rule.id];
-                      return (
-                        <InsetRow
-                          key={rule.ruleValue}
-                          label={(
-                            <>
-                              {ruleCopy.label}
-                              <span className="settings-chip">{permissionDecisionLabel(decision, t)}</span>
-                              {modified ? <span className="settings-chip">{t.settings.permissions.modifiedChip}</span> : null}
-                            </>
-                          )}
-                          sublabel={ruleCopy.description}
-                          trailing={(
-                            <SelectControl
-                              label={t.settings.permissions.decisionAriaLabel({ rule: ruleCopy.label })}
-                              onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as GlobalToolPermissionDecision | 'default')}
-                              value={modified ? decision : 'default'}
-                              variant="popup"
-                            >
-                              <option value="default">
-                                {t.settings.permissions.followModeOption({
-                                  mode: permissionModeLabel,
-                                  decision: permissionDecisionLabel(defaultDecision, t),
-                                })}
-                              </option>
-                              <option value="ask">{t.settings.permissions.askOption}</option>
-                              <option value="allow">{t.settings.permissions.allowOption}</option>
-                              <option value="deny">{t.settings.permissions.denyOption}</option>
-                            </SelectControl>
-                          )}
-                          wrap
-                        />
-                      );
-                    })}
-                  </InsetGroup>
-                </details>
 
                 {acceptedSkillTrustGrants.length > 0 ? (
                   <InsetGroup ariaLabel={t.settings.permissions.acceptedSkillsAriaLabel} label={t.settings.permissions.acceptedSkillsGroup}>
@@ -1142,7 +1010,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     {permissionDiagnostics.map((diagnostic) => (
                       <InsetRow
                         disabled
-                        key={`${diagnostic.decision}:${diagnostic.ruleValue}:${diagnostic.code}`}
+                        key={`${diagnostic.ruleValue}:${diagnostic.code}`}
                         label={(
                           <>
                             {diagnostic.ruleValue}
@@ -1565,6 +1433,13 @@ function memoryPoolLabel(entry: AgentMemoryEntryView, t: Messages): string {
   return entry.principal.type === 'user' ? t.settings.memory.poolUserLabel : t.settings.memory.poolAgentLabel;
 }
 
+function grantLabel(grant: string, t: Messages): string {
+  if (grant.startsWith('Scope(')) return t.settings.permissions.scopeGrantLabel;
+  if (grant.startsWith('External(')) return t.settings.permissions.externalGrantLabel;
+  if (grant.startsWith('Command(')) return t.settings.permissions.commandGrantLabel;
+  return t.settings.permissions.unknownGrantLabel;
+}
+
 function formatSettingsDate(timestamp: number): string {
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -1596,10 +1471,9 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
 
 function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
   DraftConfig,
-  'safetyMode' | 'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText' | 'additionalAgentDirectoriesText'
+  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText' | 'additionalAgentDirectoriesText'
 > {
   return {
-    safetyMode: settings.agent.safetyMode ?? 'balanced',
     automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
     slashSkillsEnabled: settings.agent.slashSkillsEnabled,
     compactEnabled: settings.agent.compactEnabled,
@@ -1610,8 +1484,7 @@ function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
 
 function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSettingsView): boolean {
   const runtime = runtimeSettingsToDraft(settings);
-  return draft.safetyMode !== (runtime.safetyMode ?? 'balanced')
-    || draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
+  return draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
     || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
     || draft.compactEnabled !== runtime.compactEnabled
     || draft.additionalSkillDirectoriesText !== runtime.additionalSkillDirectoriesText
@@ -1632,8 +1505,4 @@ function parseDirectoryListInput(value: string): string[] {
     .map((item) => item.trim())
     .filter(Boolean))]
     .slice(0, 20);
-}
-
-function emptyPermissionSettings(): AgentToolPermissionSettingsView {
-  return { permissions: { allow: [], ask: [], deny: [] }, diagnostics: [] };
 }

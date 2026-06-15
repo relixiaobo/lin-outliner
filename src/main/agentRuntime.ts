@@ -164,7 +164,7 @@ import {
   providerStreamOptionsFromRuntimeSettings,
   type AgentProviderRuntimeConfig,
 } from './agentSettings';
-import { appendAgentToolPermissionAllowRule, readAgentToolPermissionConfig } from './agentToolPermissionStore';
+import { appendAgentToolPermissionGrant, readAgentToolPermissionConfig } from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
 import { buildConversationEnvironmentReminder } from './agentConversationEnvironmentReminder';
@@ -204,19 +204,13 @@ import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   approvalNoticeForDeniedDecision,
   evaluateAgentToolPermission,
-  toPermissionClassifierInput,
   type AgentPermissionAskDecision,
   type AgentPermissionDenyDecision,
 } from './agentPermissions';
 import {
   resolveAgentPermissionAsk,
-  type AgentPermissionClassifier,
   type PermissionDeniedReason,
 } from './agentPermissionAskResolver';
-import {
-  buildPermissionClassifierContextRecords,
-  createDefaultPermissionClassifier,
-} from './agentPermissionClassifier';
 import {
   permissionActionKinds,
   permissionDeniedReasonForDecision,
@@ -381,7 +375,6 @@ interface AgentRuntimeOptions {
   providerConfigLoader?: () => Promise<AgentProviderRuntimeConfig | null>;
   providerModelResolver?: (providerConfig: AgentProviderRuntimeConfig) => Model<Api>;
   streamFn?: StreamFn;
-  permissionClassifier?: AgentPermissionClassifier;
   dreamMemoryExtractionEnabled?: boolean;
   errorReporter?: ErrorReporter;
 }
@@ -1171,23 +1164,12 @@ export class AgentRuntime {
     if (approved && scope === 'always' && !alwaysAllowRule) {
       resolvedScope = 'once';
     }
-    if (approved && scope === 'full_access') {
-      try {
-        await updateAgentRuntimeSettings({ safetyMode: 'full_access' });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.emitError(conversationId, `Failed to switch to Full Access. ${message}`);
-        resolvedApproved = false;
-        deniedReason = 'runtime';
-        resolvedScope = 'once';
-      }
-    }
     if (alwaysAllowRule) {
       try {
-        await appendAgentToolPermissionAllowRule(alwaysAllowRule);
+        await appendAgentToolPermissionGrant(alwaysAllowRule);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.emitError(conversationId, `Failed to persist always-allow rule; approved once instead. ${message}`);
+        this.emitError(conversationId, `Failed to persist permission grant; approved once instead. ${message}`);
         resolvedScope = 'once';
         alwaysAllowRule = undefined;
       }
@@ -2154,7 +2136,6 @@ export class AgentRuntime {
           localRoot: this.options.localFileRoot,
           scratchRoot: this.scratchRoot(),
           permissionMode: this.options.permissionMode,
-          safetyMode: activeSettings.safetyMode,
           allowedTools: skill.allowedTools,
           globalPermissions,
           permissionEventHandler: (input) => {
@@ -2294,7 +2275,6 @@ export class AgentRuntime {
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
-          permissionClassifier: this.options.permissionClassifier,
           permissionEventHandler: (input) => {
             const current = conversationRef.current;
             return current ? this.appendToolPermissionEvent(conversationId, current, input) : Promise.resolve();
@@ -2598,7 +2578,6 @@ export class AgentRuntime {
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
-      permissionClassifier: this.options.permissionClassifier,
       permissionEventHandler: (eventInput) => {
         const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
         return parentConversation ? this.appendToolPermissionEvent(parentConversationId, parentConversation, eventInput) : Promise.resolve();
@@ -6375,7 +6354,6 @@ export class AgentRuntime {
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
-      permissionClassifier: this.options.permissionClassifier,
       permissionEventHandler: (input) => this.appendToolPermissionEvent(conversationId, getScopedConversation(), input),
       permissionNoticeHandler: (input, signal) => this.showPermissionNotice(conversationId, getScopedConversation(), input, signal),
       approvalHandler: (input, signal) => this.requestToolApproval(conversationId, getScopedConversation(), input, signal),
@@ -8218,8 +8196,6 @@ function approvalDeniedMessage(reason: PermissionDeniedReason): string {
       return 'Permission request was cancelled before approval. The requested tool call was not executed.';
     case 'configured_deny':
     case 'policy_denied':
-    case 'classifier_blocked':
-    case 'classifier_unavailable':
     case 'platform_hard_block':
     case 'runtime':
       return 'Permission request was not approved. The requested tool call was not executed.';
@@ -8258,7 +8234,6 @@ function createConfiguredAgent(
     }, signal?: AbortSignal) => Promise<void>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
-    permissionClassifier?: AgentPermissionClassifier;
     permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
     afterToolResult?: (
       toolCallId: string,
@@ -8275,14 +8250,6 @@ function createConfiguredAgent(
   const skillRuntime = options.skillRuntime;
   let activeLoopModel = model;
   let activeThinkingLevel = options.thinkingLevel ?? providerConfig.reasoningLevel;
-  const permissionClassifier = options.permissionClassifier ?? createDefaultPermissionClassifier({
-    conversationId,
-    model: () => activeLoopModel,
-    providerConfig,
-    providerApiKeyLoader: options.providerApiKeyLoader,
-    runtimeSettingsLoader: options.runtimeSettingsLoader,
-    completeSimpleFn: options.completeSimpleFn,
-  });
   let agent: Agent;
   agent = new Agent({
     initialState: {
@@ -8313,14 +8280,12 @@ function createConfiguredAgent(
       return options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
-      const runtimeSettings = await options.runtimeSettingsLoader?.();
       const globalPermissions = await readAgentToolPermissionConfig();
       const decision = evaluateAgentToolPermission({
         toolName: toolCall.name,
         args,
         policy: {
           mode: options.permissionMode,
-          safetyMode: runtimeSettings?.safetyMode,
           workspaceRoot: localFileRoot,
           scratchRoot: options.localWorkspace?.scratchRoot,
           globalPermissions,
@@ -8351,32 +8316,11 @@ function createConfiguredAgent(
           decision,
           outcome: 'ask',
         });
-        const classifierProjection = toPermissionClassifierInput(toolCall.name, args);
         const askResolution = await resolveAgentPermissionAsk({
           decision,
-          classifier: permissionClassifier,
-          classifierProjection,
-          classifierContextRecords: classifierProjection
-            ? buildPermissionClassifierContextRecords(agent.state.messages as AgentMessage[], classifierProjection)
-            : undefined,
           interactionAvailable: Boolean(options.approvalHandler),
           signal,
         });
-        if (askResolution.outcome === 'allow') {
-          await options.permissionEventHandler?.({
-            requestId: permissionRequestId,
-            toolCall,
-            decision,
-            outcome: 'allow',
-            includeChecked: false,
-            source: askResolution.source,
-            resolved: {
-              status: 'approved',
-              resolvedBy: askResolution.source,
-            },
-          });
-          return undefined;
-        }
         if (askResolution.outcome === 'block') {
           await options.permissionEventHandler?.({
             requestId: permissionRequestId,
