@@ -284,16 +284,15 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   cites the dead safety-mode/`#250` framing — must be rewritten before it boards as a real
   PR; left DRAFT). Depends on #252 (shipped) and sequences **after** `agent-context-architecture`
   PR-1 (shared prompt/identity assembly). Escalate the exact clamp semantics before building.
-- **agent-context-architecture** (P1, `in-progress` — realizes agent-program decision **C3**,
-  PM-ratified 2026-06-15) — **one** run-context composer layered by **scope × volatility**
+- **agent-context-architecture** (P1, **SHIPPED (PR #263, codex, 2026-06-15)** — realizes
+  agent-program decision **C3**) — **one** run-context composer layered by **scope × volatility**
   (L0 shared foundation → … → per-turn volatile), replacing the ad-hoc per-call prompt
-  assembly. This **is** the C3 "unify run-context assembly" that agent-program ratified-but-
-  deferred ("not a standalone PR") — #254 is adopted as its realization. **Shape (b):**
-  **PR-1** the unified composer (`composeAgentPrompt`, L0-tagged layers) — **ready to build,
-  the deliverable** → **PR-2** cross-agent cache breakpoint **DEFERRED** (not buildable on
-  today's single-`systemPrompt`-string interface; the engine auto-places the one
-  `cache_control` — contingent on engine support + a measured win). See
-  `docs/plans/agent-context-architecture.md`. Plan merged (#254).
+  assembly. **Shape (b)** shipped in one PR: **PR-1** the unified composer (`composeAgentPrompt`,
+  L0-tagged layers) **and PR-2** the cross-agent cache breakpoint — the PR-2 deferral was lifted by
+  rewriting the **Anthropic provider payload** in `onPayload` (split the stable system block into
+  `L0 firmware` + `rest`, both cache-marked, within Anthropic's 4-breakpoint budget) rather than
+  waiting on engine support for the single-`systemPrompt`-string interface. See Recently completed;
+  plan archived `done`. Plan merged (#254).
 - **provider-connection-model-ownership** (P2, `draft`, **GO** 2026-06-15) — clarify who owns
   a provider connection vs. the model selection on an agent profile (the model-onto-profile
   seam). Orthogonal to the permission/context work; **rebase-aware of #252** (settings surface
@@ -716,6 +715,26 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Unified agent prompt composition + Anthropic L0 cache breakpoints**
+  (codex, PR #263) — collapses the four ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`,
+  `LIN_CHILD_AGENT_CORE_PROMPT`, `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) into
+  one `composeAgentPrompt(definition, context)` whose blocks are layered by **scope × volatility**
+  (universal L0 firmware → capability modules → per-agent persona/skills). The **L0 firmware**
+  (perception + conduct/safety) is now universal across Neva, custom DM/Channel agents, and fresh
+  child runs; memory and child-run behavior move into capability modules that follow effective tool
+  capability. PR-2's previously-**deferred** cross-agent cache breakpoint is realized by
+  `applyAgentPromptCacheBreakpoints`: for multi-agent Channel member runs and fresh child runs it
+  rewrites the **Anthropic provider payload** in `onPayload`, splitting the stable system block into
+  `L0 firmware` + `rest` (both cache-marked) while preserving the provider's last-tool/last-user
+  breakpoints inside Anthropic's 4-breakpoint budget; single-agent DMs, fork child runs, and
+  non-Anthropic providers are untouched. Gate (main): `/code-review high` over **two rounds** —
+  round 1 surfaced 7 findings (a fragile exact-string/`sanitizeSurrogates` match that silently
+  no-op'd the split, tool-rule matching forked from the canonical normalizer, an O(n²) payload
+  re-walk, a misleading no-cache-control split, plus reuse/simplification cleanups); codex fixed all
+  7 (shared `agentToolRules.ts` + `agentDefinitionDisplay.ts`, sanitized-domain prefix match,
+  single-pass breakpoint trim, cache_control-gated split). Round 2: typecheck + 70/70 across the five
+  affected core suites green. Plan archived `done`; design folded into
+  `docs/spec/agent-pi-mono-implementation.md` + `docs/spec/agent-delegation-runtime.md`.
 - **Agent dock remembers the last-selected conversation across reload** (fast-track)
   (codex-4, PR #261) — opening the dock after a renderer remount/reload restored the *latest* conversation
   instead of the DM/Channel the user last had open (the selection only lived in memory). The renderer runtime
