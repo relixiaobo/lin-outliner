@@ -906,6 +906,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **The agent dock reopens the conversation you last selected, not always the latest (PR #261, codex-4)** —
+  opening the agent dock after a renderer remount/reload restored the *latest* conversation rather than the
+  DM or Channel the user last had open: the selected conversation only lived in memory, and the initial
+  restore path always picked latest. The renderer runtime store now **persists the last-selected conversation
+  id** (`AgentRuntimeStore` gains an injectable `AgentConversationPreferenceStore`; the browser impl is
+  localStorage-backed under `lin-outliner:agent-last-conversation:v1`, best-effort so a failed write never
+  blocks chat) and **restores it before falling back to latest** — startup tries the remembered DM/Channel via
+  `restoreConversation(id)`, and on failure clears the remembered id and falls back to `restoreLatestConversation`
+  (the `requestVersion` guard blocks stale writes from a superseded restore). The preference is written at the
+  single choke point `hydrateConversation` (select / new / reload / restore all funnel through it) and cleared
+  when the active conversation is closed; the injectable store keeps tests independent of browser localStorage.
 - **A DM child run folds into its spawning turn's process — no orphan boundary, no broken style (PR #247, cc)** —
   a child run spawned by an `agent` tool call inside a **DM** (a non-multi-agent conversation) used to render
   as a conversation-level **child-run boundary row** (a centered divider between two rules), which surfaced

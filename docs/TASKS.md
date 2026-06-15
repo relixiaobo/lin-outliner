@@ -716,6 +716,16 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Agent dock remembers the last-selected conversation across reload** (fast-track)
+  (codex-4, PR #261) — opening the dock after a renderer remount/reload restored the *latest* conversation
+  instead of the DM/Channel the user last had open (the selection only lived in memory). The renderer runtime
+  store now persists the last-selected conversation id (injectable `AgentConversationPreferenceStore`,
+  localStorage-backed under `lin-outliner:agent-last-conversation:v1`, best-effort) and restores it before
+  falling back to latest; on a missing/closed remembered id it clears the preference and falls back to
+  `restoreLatestConversation`. Written at the single `hydrateConversation` choke point, cleared on close;
+  `requestVersion` guard blocks stale writes. Gate (main): `/code-review` (medium) — no blocking findings
+  (the two "critical" candidates were refuted/self-healing); typecheck + `agentRuntimeStore.test.ts` 24/24 +
+  `test:renderer` 479/479 green. No plan file (fast-track UI fix).
 - **Agent permission redesign — model core (PR-1)**
   (codex, PR #252) — replaces the `enum × 3 safety modes × dead LLM classifier × shell allowlist`
   permission model with **one pure `decide(effect)` over an operation's consequence** (`WORK→allow`
