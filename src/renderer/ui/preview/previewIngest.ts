@@ -5,7 +5,7 @@ import { api } from '../../api/client';
 // "Save this previewed non-node source into the outline." A non-node file preview
 // (agent payload / local file / url) can be turned into a first-class file node:
 // copy its bytes into the asset store, then create an attachment/image node. After
-// that it IS a node, with the node-page preview, and every node operation.
+// that it is the ingested state of the same unified file surface.
 
 /**
  * True when a non-node source can be copied into the asset store: a trusted local
@@ -45,18 +45,23 @@ export async function ingestPreviewTargetToAsset(target: PreviewTarget): Promise
 
 // The bridge: the preview pane has no path to App's document state (command runner,
 // projection, navigation), so — like `agentFileInsert` — it fires a request and App
-// runs ingest + create-node + navigate. Single-handler: the request returns App's
-// promise so the button confirms only on a real insert.
-type AddToOutlineHandler = (target: PreviewTarget) => Promise<boolean>;
+// runs ingest + create-node + in-place panel bind. Single-handler: the request
+// returns App's promise so the button confirms only on a real insert.
+interface AddToOutlineRequest {
+  panelId: string;
+  target: PreviewTarget;
+}
+
+type AddToOutlineHandler = (request: AddToOutlineRequest) => Promise<boolean>;
 
 let handler: AddToOutlineHandler | null = null;
 
 /** Save the previewed source into the outline. Resolves to `true` when a node was
  *  created, `false` when nothing was inserted (no bridge yet, or the source is gone /
  *  too large / unsupported). The button confirms only on `true`. */
-export function requestAddPreviewTargetToOutline(target: PreviewTarget): Promise<boolean> {
+export function requestAddPreviewTargetToOutline(request: AddToOutlineRequest): Promise<boolean> {
   if (!handler) return Promise.resolve(false);
-  return handler(target);
+  return handler(request);
 }
 
 /** Register the ingest bridge (App). Returns an unsubscribe; last registration wins. */

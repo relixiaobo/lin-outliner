@@ -43,9 +43,9 @@ type TextState =
 
 /**
  * Resolve a PreviewTarget to its source descriptor (loading → ready/missing).
- * Shared by the standalone preview panel, the file-node page body, and the
- * inline preview block. Pass a referentially-stable `target` (useMemo) so the
- * resolve effect does not re-fire every render.
+ * Shared by the unified file preview body and inline preview block. Pass a
+ * referentially-stable `target` (useMemo) so the resolve effect does not re-fire
+ * every render.
  */
 export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
   const [state, setState] = useState<PreviewSourceState>({ status: 'loading' });
@@ -120,8 +120,8 @@ export function PreviewRenderer({
 
 /**
  * The shared body of a file preview: a `meta · actions` toolbar over the rendered
- * content. Both surfaces reuse it so a non-node pane preview is visually identical
- * to a file node's node-page body — same toolbar, same content render, same CSS
+ * content. Both lifecycle states reuse it so a loose preview is visually identical
+ * to an ingested file-node preview — same toolbar, same content render, same CSS
  * (`.file-node-*`). Callers supply their own meta string and action buttons (a node
  * carries open/reveal/copy; a non-node source carries open / add-to-outline); only
  * the resolved-source rendering is common.

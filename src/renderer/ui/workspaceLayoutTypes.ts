@@ -15,6 +15,7 @@ export interface OutlinerPanelView {
 
 export interface FilePreviewPanelView {
   kind: 'file-preview';
+  nodeId?: NodeId;
   target: PreviewTarget;
 }
 

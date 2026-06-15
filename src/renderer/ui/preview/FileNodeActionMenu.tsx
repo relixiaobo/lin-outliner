@@ -30,7 +30,7 @@ interface FileNodeActionMenuProps {
  * The `⋯` action menu shared by both file-node row presentations (the icon card and
  * the inline image): a type-specific primary action (Maximize for an image, Open in
  * split for other files), then the stored asset's Open / Reveal in Finder / Copy file
- * actions (the shared `fileNodeAssetActions` descriptor, also used by the node-page
+ * actions (the shared `fileNodeAssetActions` descriptor, also used by the preview
  * hero). The trigger is an icon-only chrome control; its `aria-expanded` lets the
  * owning row keep the menu visible while open (CSS `:has`).
  */

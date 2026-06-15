@@ -114,18 +114,18 @@ children section appears in place.
 
 ## Shape & build order
 
-**Shape (b): a SET of independent complete PRs.** Each is independently
-reviewable and shippable.
+**Shape (a): one complete feature in one PR.** PR-1 and PR-2 below are build
+steps inside the same reviewable change, not separate shipped slices.
 
-- **PR-1 — read-only filename title + fix `Untitled`.** Converge the file-node
+- **Step 1 — read-only filename title + fix `Untitled`.** Converge the file-node
   title to a read-only real filename across both surfaces; drop the editable
-  title for file nodes. Small, low-risk, removes the visible `Untitled` bug on its
-  own. Ships first.
+  title for file nodes. Small, low-risk, removes the visible `Untitled` bug and
+  gives the unified surface its stable title behavior.
   - Files: `src/renderer/ui/NodePanel.tsx` (title region), the file-node title
     derivation (`src/renderer/ui/preview/fileNode.ts`, `FilePreviewBody.tsx`),
     `FilePreviewPanel.tsx` (already uses `sourceTitle` — confirm parity), i18n if
     copy changes, renderer tests.
-- **PR-2 — unify into one subject-keyed `FileView` + in-place loose↔ingested
+- **Step 2 — unify into one subject-keyed `FileView` + in-place loose↔ingested
   transition.** Extract the shared `FileView`; route both the outliner file-node
   navigation and the agent `file-preview` view to it; add the path breadcrumb
   source; mount children only when ingested; make "add to outline" an in-place
@@ -150,14 +150,11 @@ agent outputs into delegated roots is `agent-permission-redesign.md` PR-3 (typed
 plan does not depend on them landing, but the end-to-end "open the PPT Neva made"
 experience does.
 
-## Open questions
+## Decisions
 
-- **Loose breadcrumb format** — full absolute path segments, directory-only, or a
-  collapsed form (hide the `userData`/home prefix)? (Leaning: directory segments,
-  collapsed prefix.)
-- **Subject identity mapping** — confirm a loose file's identity (realpath/asset)
-  maps to the created node's asset on ingest, so the same `FileView` instance
-  survives the transition.
-- **Rename entry point** — with the title read-only, where does an explicit
-  rename live (context menu / meta action), or is rename simply out of scope for
-  now?
+- **Loose breadcrumb format** — collapsed absolute path/source segments. Long
+  paths keep the first segment, an ellipsis, and the final three segments.
+- **Subject identity mapping** — the mounted `file-preview` view is preserved by
+  mutating its optional `nodeId` from absent to present. The preview target stays
+  stable during Add to outline, so the hero does not remount.
+- **Rename entry point** — out of scope. File titles are display-only here.

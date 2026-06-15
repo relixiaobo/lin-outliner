@@ -16,8 +16,8 @@ export interface FileNodeAssetAction {
 
 /**
  * The system actions for a file node's stored asset — open (default app), reveal in
- * Finder, copy the file — as one descriptor list, so the node-page action strip and the
- * row ⋯ menu stay in sync (one place to add or change an asset action). The descriptor
+ * Finder, copy the file — as one descriptor list, so the preview action strip and
+ * the row ⋯ menu stay in sync (one place to add or change an asset action). The descriptor
  * carries the api call; each consumer only chooses the presentation (button vs menu
  * item) and the icon size.
  */

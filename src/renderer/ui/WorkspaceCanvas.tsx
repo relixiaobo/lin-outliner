@@ -21,7 +21,7 @@ interface WorkspaceCanvasProps {
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
-  onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
   onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
   onPanelResizeStart: (
@@ -85,10 +85,25 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               />
             ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
               <FilePreviewPanel
+                panelId={panel.id}
                 canGoBack={Boolean(panel.backStack.length)}
+                dragId={props.dragId}
+                index={props.index}
+                isNodePinned={props.isNodePinned}
+                nodeId={panel.view.nodeId}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
+                onClose={() => props.onClosePanel(panel.id)}
                 onOpenTarget={(target, options) => props.onNavigatePanelPreview(panel.id, target, options)}
+                onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
+                onTogglePin={props.onTogglePin}
+                run={props.run}
+                setDragId={props.setDragId}
+                setTrigger={props.setTrigger}
+                setUi={props.setUi}
+                showClose={activePanels.length > 1}
                 target={panel.view.target}
+                trigger={props.trigger}
+                ui={props.ui}
               />
             ) : panel.type === 'agent-debug' ? (
               <AgentDebugPanel conversationId={panel.conversationId} />
