@@ -1831,6 +1831,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     <OutlinerRowShell
       hasChildren={row.hasChildren}
       expanded={row.expanded}
+      level={props.depth + 1}
+      selected={row.selected}
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName([
         referenceLikeRow ? 'reference-row' : '',

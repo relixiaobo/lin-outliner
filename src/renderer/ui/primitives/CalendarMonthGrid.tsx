@@ -1,5 +1,5 @@
-import { useMemo, type MouseEventHandler } from 'react';
-import { addLocalDays, isoLocalDate } from '../../api/types';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEventHandler } from 'react';
+import { addLocalDays, isoLocalDate, parseIsoLocalDate } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 import { ButtonControl } from './ButtonControl';
@@ -25,6 +25,8 @@ interface CalendarMonthGridProps {
   year: number;
 }
 
+const DAYS_PER_WEEK = 7;
+
 export function CalendarMonthGrid({
   className,
   getDayAriaLabel,
@@ -42,6 +44,104 @@ export function CalendarMonthGrid({
   const { locale } = useI18n();
   const calendarDays = useMemo(() => buildCalendarMonthDays(year, month), [month, year]);
   const selectedDates = useMemo(() => new Set(selectedIsoDates.filter(Boolean)), [selectedIsoDates]);
+  const weeks = useMemo(() => {
+    const rows: CalendarMonthDay[][] = [];
+    for (let i = 0; i < calendarDays.length; i += DAYS_PER_WEEK) {
+      rows.push(calendarDays.slice(i, i + DAYS_PER_WEEK));
+    }
+    return rows;
+  }, [calendarDays]);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  // The roving day: which cell is the single tab stop (tabIndex 0). `null` until
+  // the user moves with the keyboard, so the default tab stop is the selected day,
+  // else today, else the first in-month day.
+  const [focusIso, setFocusIso] = useState<string | null>(null);
+  // When true, focus the roving cell after the next render (a keyboard move, which
+  // may have crossed a month boundary, so the cell only exists post-render).
+  const pendingFocus = useRef(false);
+
+  const defaultRovingIso = useMemo(() => {
+    const firstSelected = calendarDays.find((day) => selectedDates.has(day.isoDate));
+    if (firstSelected) return firstSelected.isoDate;
+    const today = calendarDays.find((day) => day.isoDate === todayIsoDate && day.inMonth);
+    if (today) return today.isoDate;
+    return calendarDays.find((day) => day.inMonth)?.isoDate ?? calendarDays[0]?.isoDate ?? null;
+  }, [calendarDays, selectedDates, todayIsoDate]);
+
+  // A keyboard target that fell outside the current month window resolves to the
+  // default once the new month renders (graceful fallback if the overlap missed).
+  const rovingIso = focusIso && calendarDays.some((day) => day.isoDate === focusIso)
+    ? focusIso
+    : defaultRovingIso;
+
+  useEffect(() => {
+    if (!pendingFocus.current) return;
+    pendingFocus.current = false;
+    const grid = gridRef.current;
+    if (!grid || !rovingIso) return;
+    grid.querySelector<HTMLElement>(`[data-iso="${rovingIso}"]`)?.focus();
+  }, [rovingIso]);
+
+  function moveRovingTo(targetIso: string) {
+    setFocusIso(targetIso);
+    pendingFocus.current = true;
+    if (!calendarDays.some((day) => day.isoDate === targetIso)) {
+      // One arrow/page step is always within a month of the view, so a single
+      // month shift brings the target into the new window.
+      const before = calendarDays[0]?.isoDate ?? targetIso;
+      onMoveMonth(targetIso < before ? -1 : 1);
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const focusedIso = (event.target as HTMLElement | null)?.closest('[data-iso]')?.getAttribute('data-iso')
+      ?? rovingIso;
+    const current = focusedIso ? parseIsoLocalDate(focusedIso) : null;
+    if (!current) return;
+
+    switch (event.key) {
+      case 'ArrowRight':
+        event.preventDefault();
+        moveRovingTo(isoLocalDate(addLocalDays(current, 1)));
+        return;
+      case 'ArrowLeft':
+        event.preventDefault();
+        moveRovingTo(isoLocalDate(addLocalDays(current, -1)));
+        return;
+      case 'ArrowDown':
+        event.preventDefault();
+        moveRovingTo(isoLocalDate(addLocalDays(current, DAYS_PER_WEEK)));
+        return;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveRovingTo(isoLocalDate(addLocalDays(current, -DAYS_PER_WEEK)));
+        return;
+      case 'Home': {
+        // Start of the week (Monday-based, matching the grid layout).
+        event.preventDefault();
+        const weekday = (current.getDay() + 6) % 7;
+        moveRovingTo(isoLocalDate(addLocalDays(current, -weekday)));
+        return;
+      }
+      case 'End': {
+        event.preventDefault();
+        const weekday = (current.getDay() + 6) % 7;
+        moveRovingTo(isoLocalDate(addLocalDays(current, DAYS_PER_WEEK - 1 - weekday)));
+        return;
+      }
+      case 'PageUp':
+        event.preventDefault();
+        moveRovingTo(shiftIsoByMonths(current, -1));
+        return;
+      case 'PageDown':
+        event.preventDefault();
+        moveRovingTo(shiftIsoByMonths(current, 1));
+        return;
+      default:
+        return;
+    }
+  }
 
   return (
     <div className={cx('calendar-month', className)}>
@@ -67,33 +167,52 @@ export function CalendarMonthGrid({
           <span key={`${day}-${index}`}>{day}</span>
         ))}
       </div>
-      <div className="calendar-month-grid">
-        {calendarDays.map((day) => {
-          const handleMouseEnter: MouseEventHandler<HTMLButtonElement> | undefined = onDayMouseEnter
-            ? () => onDayMouseEnter(day)
-            : undefined;
-          const handleMouseLeave: MouseEventHandler<HTMLButtonElement> | undefined = onDayMouseLeave
-            ? () => onDayMouseLeave(day)
-            : undefined;
-          return (
-            <ButtonControl
-              aria-label={getDayAriaLabel?.(day) ?? t.calendar.selectDate({ isoDate: day.isoDate })}
-              className={cx(
-                'calendar-month-day',
-                !day.inMonth && 'is-outside-month',
-                day.isoDate === todayIsoDate && 'is-today',
-                selectedDates.has(day.isoDate) && 'is-selected',
-                getDayClassName?.(day),
-              )}
-              key={day.isoDate}
-              onClick={() => onSelectDate(day.isoDate)}
-              onMouseEnter={handleMouseEnter}
-              onMouseLeave={handleMouseLeave}
-            >
-              <span>{day.date.getDate()}</span>
-            </ButtonControl>
-          );
-        })}
+      <div
+        className="calendar-month-grid"
+        ref={gridRef}
+        role="grid"
+        aria-label={calendarMonthLabel(year, month, locale)}
+        onKeyDown={handleKeyDown}
+      >
+        {weeks.map((week, weekIndex) => (
+          <div className="calendar-month-week" role="row" key={week[0]?.isoDate ?? weekIndex}>
+            {week.map((day) => {
+              const handleMouseEnter: MouseEventHandler<HTMLButtonElement> | undefined = onDayMouseEnter
+                ? () => onDayMouseEnter(day)
+                : undefined;
+              const handleMouseLeave: MouseEventHandler<HTMLButtonElement> | undefined = onDayMouseLeave
+                ? () => onDayMouseLeave(day)
+                : undefined;
+              const isSelected = selectedDates.has(day.isoDate);
+              return (
+                <ButtonControl
+                  aria-current={day.isoDate === todayIsoDate ? 'date' : undefined}
+                  aria-label={getDayAriaLabel?.(day) ?? t.calendar.selectDate({ isoDate: day.isoDate })}
+                  aria-selected={isSelected}
+                  className={cx(
+                    'calendar-month-day',
+                    !day.inMonth && 'is-outside-month',
+                    day.isoDate === todayIsoDate && 'is-today',
+                    isSelected && 'is-selected',
+                    getDayClassName?.(day),
+                  )}
+                  data-iso={day.isoDate}
+                  key={day.isoDate}
+                  onClick={() => {
+                    setFocusIso(day.isoDate);
+                    onSelectDate(day.isoDate);
+                  }}
+                  onMouseEnter={handleMouseEnter}
+                  onMouseLeave={handleMouseLeave}
+                  role="gridcell"
+                  tabIndex={day.isoDate === rovingIso ? 0 : -1}
+                >
+                  <span>{day.date.getDate()}</span>
+                </ButtonControl>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -122,4 +241,13 @@ export function buildCalendarMonthDays(year: number, monthIndex: number): Calend
       isoDate: isoLocalDate(date),
     };
   });
+}
+
+// Same day-of-month in another month, clamped to that month's last day (so
+// PageUp/PageDown from the 31st lands on the 28th/30th rather than rolling over).
+function shiftIsoByMonths(date: Date, deltaMonths: number): string {
+  const year = date.getFullYear();
+  const month = date.getMonth() + deltaMonths;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return isoLocalDate(new Date(year, month, Math.min(date.getDate(), lastDay)));
 }

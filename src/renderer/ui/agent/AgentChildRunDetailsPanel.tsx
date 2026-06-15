@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type {
   AgentMessage,
   AgentToolResultWithPayloads,
@@ -363,6 +363,9 @@ export function AgentChildRunDetailsPanel({
 }: AgentChildRunDetailsPanelProps) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<'timeline' | 'result' | 'metadata'>('timeline');
+  const tablistRef = useRef<HTMLElement>(null);
+  const TABPANEL_ID = 'agent-child-run-tabpanel';
+  const tabButtonId = (tab: string) => `agent-child-run-tab-${tab}`;
   const [followUpDraft, setFollowUpDraft] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState<'send' | 'stop' | null>(null);
@@ -443,6 +446,22 @@ export function AgentChildRunDetailsPanel({
     ['metadata', t.agent.childRun.tabMetadata],
   ] as const;
 
+  // Roving tab navigation (automatic activation): Arrow/Home/End move + select the
+  // active tab, matching the ARIA tabs pattern.
+  function onTabsKeyDown(event: KeyboardEvent<HTMLElement>) {
+    const keys = tabs.map(([tab]) => tab);
+    const index = keys.indexOf(activeTab);
+    let next = index;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % keys.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + keys.length) % keys.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = keys.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveTab(keys[next]!);
+    tablistRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+  }
+
   async function sendFollowUp() {
     const message = followUpDraft.trim();
     if (!conversationId || !childRun || !message || !canSendFollowUp || actionPending) return;
@@ -502,17 +521,30 @@ export function AgentChildRunDetailsPanel({
           variant="panel"
         />
       </header>
-      <nav className="agent-child-run-tabs" aria-label={t.agent.childRun.detailTabsAriaLabel}>
-        {tabs.map(([tab, label]) => (
-          <ButtonControl
-            aria-pressed={activeTab === tab}
-            className={activeTab === tab ? 'agent-child-run-tab is-active' : 'agent-child-run-tab'}
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-          >
-            {label}
-          </ButtonControl>
-        ))}
+      <nav
+        className="agent-child-run-tabs"
+        aria-label={t.agent.childRun.detailTabsAriaLabel}
+        onKeyDown={onTabsKeyDown}
+        ref={tablistRef}
+        role="tablist"
+      >
+        {tabs.map(([tab, label]) => {
+          const active = activeTab === tab;
+          return (
+            <ButtonControl
+              aria-controls={TABPANEL_ID}
+              aria-selected={active}
+              className={active ? 'agent-child-run-tab is-active' : 'agent-child-run-tab'}
+              id={tabButtonId(tab)}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              role="tab"
+              tabIndex={active ? 0 : -1}
+            >
+              {label}
+            </ButtonControl>
+          );
+        })}
       </nav>
       <section className="agent-child-run-actions" aria-label={t.agent.childRun.actionsAriaLabel}>
         <div className="agent-child-run-followup">
@@ -560,7 +592,13 @@ export function AgentChildRunDetailsPanel({
           </div>
         ) : null}
       </section>
-      <div className="agent-child-run-details-body">
+      <div
+        className="agent-child-run-details-body"
+        role="tabpanel"
+        id={TABPANEL_ID}
+        aria-labelledby={tabButtonId(activeTab)}
+        tabIndex={0}
+      >
         {activeTab === 'timeline' ? (
           <TranscriptTimeline
             error={error}

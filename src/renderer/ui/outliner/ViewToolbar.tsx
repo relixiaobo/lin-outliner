@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -38,6 +39,7 @@ import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
 import { collectViewFieldChoices, type ViewConfig } from './row-model';
 import {
@@ -249,16 +251,21 @@ export function ViewToolbar({
       if (menuRef.current?.contains(target)) return;
       setOpen(null);
     };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(null);
-    };
     document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('keydown', onKeyDown, true);
     };
   }, [open]);
+
+  // Focus-in / trap / Escape-to-close / focus-restore to the toolbar pill that
+  // opened the popover (its content is heterogeneous form controls → dialog kind).
+  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: () => setOpen(null),
+    kind: 'dialog',
+    active: open !== null,
+    getRestoreTarget: () => (open ? buttonRefs[open].current : null),
+  });
 
   const toggle = (section: ToolbarSection) => {
     setOpen((current) => (current === section ? null : section));
@@ -326,6 +333,7 @@ export function ViewToolbar({
           aria-label={titles[open]}
           className="view-toolbar-popover"
           role="dialog"
+          onKeyDown={onMenuKeyDown}
           style={menuStyle}
         >
           <div className="view-toolbar-popover-title">{titles[open]}</div>
@@ -442,7 +450,7 @@ function GroupSection({
   const groups = bySection(groupable);
   const current = view.groupField ?? '';
   return (
-    <div className="view-toolbar-options">
+    <RadioOptionGroup className="view-toolbar-options" label={t.outliner.viewToolbar.groupBy}>
       <OptionRow
         label={t.outliner.viewToolbar.noGrouping}
         selected={current === ''}
@@ -464,7 +472,7 @@ function GroupSection({
           ))}
         </div>
       ))}
-    </div>
+    </RadioOptionGroup>
   );
 }
 
@@ -718,7 +726,7 @@ function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRu
     ? [tv.booleanDone, tv.booleanNotDone]
     : [tv.booleanYes, tv.booleanNo];
   return (
-    <div className="view-toolbar-options">
+    <RadioOptionGroup className="view-toolbar-options" label={tv.filterValuesLabel}>
       <OptionRow
         label={onLabel}
         selected={selected === 'true'}
@@ -731,7 +739,7 @@ function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRu
         variant="radio"
         onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['false'] }))}
       />
-    </div>
+    </RadioOptionGroup>
   );
 }
 
@@ -834,7 +842,8 @@ function OptionRow({
 }) {
   return (
     <ButtonControl
-      aria-pressed={selected}
+      role={variant === 'checkbox' ? 'checkbox' : 'radio'}
+      aria-checked={selected}
       className={`view-toolbar-option ${selected ? 'is-selected' : ''}`}
       onClick={onSelect}
     >
@@ -846,6 +855,57 @@ function OptionRow({
       {icon}
       <span className="view-toolbar-option-label">{label}</span>
     </ButtonControl>
+  );
+}
+
+// A radiogroup wrapper for single-select OptionRows: roving tabindex (only the
+// checked option is a tab stop) + Arrow keys that move-and-select across the
+// radios, matching SegmentedControl. The radios may be interleaved with section
+// headers (GroupSection), so navigation queries `[role="radio"]` descendants
+// rather than assuming flat siblings.
+function RadioOptionGroup({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const group = ref.current;
+    if (!group) return;
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')];
+    const checkedIndex = radios.findIndex((radio) => radio.getAttribute('aria-checked') === 'true');
+    const tabIndex = checkedIndex >= 0 ? checkedIndex : 0;
+    radios.forEach((radio, index) => { radio.tabIndex = index === tabIndex ? 0 : -1; });
+  });
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isImeComposingEvent(event)) return;
+    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+    const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft';
+    if (!forward && !backward) return;
+    const group = ref.current;
+    if (!group) return;
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])')];
+    if (radios.length === 0) return;
+    event.preventDefault();
+    const currentIndex = radios.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = forward
+      ? (currentIndex + 1) % radios.length
+      : (currentIndex <= 0 ? radios.length - 1 : currentIndex - 1);
+    const next = radios[nextIndex];
+    next?.focus();
+    next?.click();
+  };
+
+  return (
+    <div aria-label={label} className={className} onKeyDown={onKeyDown} ref={ref} role="radiogroup">
+      {children}
+    </div>
   );
 }
 

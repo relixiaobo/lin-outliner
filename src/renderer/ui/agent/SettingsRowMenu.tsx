@@ -5,6 +5,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 
 export interface RowMenuAction {
   label: string;
@@ -78,6 +79,15 @@ function FloatingRowMenu({
     placement: 'bottom-end',
     width: 208,
   });
+  // focus-in, roving Arrow/Home/End, Escape-to-close, and focus-restore to the
+  // trigger — Escape is owned here, so the outside-close effect below stays
+  // pointer-only.
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -85,16 +95,9 @@ function FloatingRowMenu({
       if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
       onClose();
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    }
     document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [anchorRef, onClose]);
 
@@ -102,6 +105,7 @@ function FloatingRowMenu({
     <MenuSurface
       aria-label={t.settings.providers.rowMenuAriaLabel}
       className="settings-row-menu"
+      onKeyDown={onKeyDown}
       ref={menuRef}
       role="menu"
       style={style}

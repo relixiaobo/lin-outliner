@@ -80,6 +80,7 @@ import { IconButton } from '../primitives/IconButton';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 
 const TRANSCRIPT_ROW_GAP_PX = 14;
@@ -212,6 +213,14 @@ function FloatingConversationRowMenu({
     placement: 'bottom-end',
     width: 196,
   });
+  // focus-in, roving Arrow/Home/End, Escape-to-close, focus-restore to the
+  // trigger; the effect below stays pointer-only since the hook owns Escape.
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -219,16 +228,9 @@ function FloatingConversationRowMenu({
       if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
       onClose();
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    }
     document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [anchorRef, onClose]);
 
@@ -237,6 +239,7 @@ function FloatingConversationRowMenu({
       aria-label={menuLabel}
       className="agent-conversation-row-menu"
       data-agent-conversation-row-menu="true"
+      onKeyDown={onKeyDown}
       ref={menuRef}
       role="menu"
       style={style}
@@ -1469,6 +1472,19 @@ export function AgentChatPanel({
     maxHeight: 420,
     placement: 'bottom-start',
   });
+  // Heterogeneous popover (lists + actions + rename inputs): focus-trap rather than
+  // roving menu-nav, plus the Escape-to-close this menu previously lacked, and
+  // focus-restore to the title button on close.
+  const { onKeyDown: onHistoryMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: historyMenuRef,
+    onClose: () => {
+      setHistoryOpen(false);
+      setRowActionMenu(null);
+    },
+    kind: 'dialog',
+    active: historyOpen,
+    getRestoreTarget: () => historyButtonRef.current,
+  });
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
       <header className="agent-dock-header" ref={headerRef}>
@@ -1541,6 +1557,7 @@ export function AgentChatPanel({
             className="agent-conversation-menu"
             role="dialog"
             aria-label={t.agent.chat.conversations}
+            onKeyDown={onHistoryMenuKeyDown}
             style={historyMenuStyle}
           >
             <div className="agent-conversation-menu-header">

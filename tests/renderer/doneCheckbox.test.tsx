@@ -22,9 +22,20 @@ describe('DoneCheckbox', () => {
 
     const box = rendered.document.querySelector('.done-checkbox');
     expect(box?.tagName).toBe('BUTTON');
+    // The interactive variant announces as a checkbox (matching its read-only twin),
+    // not a toggle button — role + aria-checked, never aria-pressed.
+    expect(box?.getAttribute('role')).toBe('checkbox');
+    expect(box?.getAttribute('aria-checked')).toBe('false');
+    expect(box?.hasAttribute('aria-pressed')).toBe(false);
 
     await click(rendered, box);
     expect(toggles).toEqual([1]);
+  });
+
+  test('the interactive checkbox reflects checked state via aria-checked', () => {
+    const rendered = render({ checked: true, onToggle: () => undefined });
+    const box = rendered.document.querySelector('.done-checkbox');
+    expect(box?.getAttribute('aria-checked')).toBe('true');
   });
 
   test('a locked owner renders the state read-only and inert', async () => {

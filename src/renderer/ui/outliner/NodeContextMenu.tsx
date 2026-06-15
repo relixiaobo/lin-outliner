@@ -46,6 +46,7 @@ import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner, NavigateRootOptions } from '../shared';
 import { textOf } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
@@ -198,7 +199,18 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       .slice(0, 10);
   }, [activeMoveToIds, props.index, query, t.common.untitled]);
 
-  useDismissibleOverlay(menuRef, props.onClose);
+  // Outside-pointer dismissal only — Escape is owned by `useMenuKeyboard` (below),
+  // which scopes it to the focused surface and keeps the in-menu keyboard model.
+  useDismissibleOverlay(menuRef, props.onClose, { escape: false });
+  // `main` is a true menu (roving Arrow/Home/End); the tag / move submodes are
+  // heterogeneous search popovers (focus-trap). The menu carries
+  // `data-preserve-selection`, so focusing an item never trips the
+  // selection-clearing path and the workspace keyboard handler stays out of the way.
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: props.onClose,
+    kind: mode === 'main' ? 'menu' : 'dialog',
+  });
 
   const applyExistingTag = (tagId: NodeId) => {
     if (activeTargetIds.length === 0) return;
@@ -428,6 +440,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       preserveSelection
       role={mode === 'main' ? 'menu' : 'dialog'}
       style={menuStyle}
+      onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
     >
       {mode === 'main'

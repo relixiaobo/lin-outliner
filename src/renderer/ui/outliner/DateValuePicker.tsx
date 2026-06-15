@@ -23,6 +23,7 @@ import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
 
 interface DateValuePickerProps {
@@ -110,19 +111,22 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
       if (target instanceof Node && popoverRef.current?.contains(target)) return;
       onOpenChange(false);
     };
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        onOpenChange(false);
-      }
-    };
     document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [open, anchorRef, onOpenChange]);
+
+  // Focus-in / trap / Escape-to-close / focus-restore to the value row. Arrow keys
+  // pass through to the calendar grid's own roving navigation (dialog kind only
+  // traps Tab + handles Escape).
+  const { onKeyDown: onPopoverKeyDown } = useMenuKeyboard({
+    surfaceRef: popoverRef,
+    onClose: () => onOpenChange(false),
+    kind: 'dialog',
+    active: open,
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
 
   const commitDate = (
     nextIncludeEnd = includeEnd,
@@ -315,6 +319,7 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
       className="typed-field-date-popover"
       role="dialog"
       aria-label={td.title}
+      onKeyDown={onPopoverKeyDown}
       style={popoverStyle}
     >
       <div className="typed-field-date-summary">

@@ -425,3 +425,58 @@ are protected as focus *targets* by the gate but do not register their own
 compositions; an echo landing while composing inside a textarea can still
 force-commit there. Plain (non-IME) characters typed inside the echo window are
 a separate, milder stranding class — tracked outside this section.
+
+## Accessibility (ARIA & Focus)
+
+The sighted keyboard model above is unchanged; this section records the
+**announced** ARIA structure and focus management that assistive tech relies on.
+
+**Anchored overlay keyboard** (`primitives/useMenuKeyboard.ts`). Floating menus
+and popovers built on `useAnchoredOverlay` (not the modal `Dialog`) opt into one
+shared hook that mirrors what `Dialog` already does for modals: focus-in on open,
+focus-restore to the trigger on close, Escape-to-close scoped to the surface, and
+either roving Arrow/Home/End navigation (`kind: 'menu'`) or a Tab focus-trap
+(`kind: 'dialog'`). It is IME-guarded (`isImeComposingEvent`) so CJK composition
+keystrokes are never hijacked, and it makes the surface programmatically focusable
+(`tabindex=-1`) without per-call wiring. Escape ownership moves to this hook, so
+`useDismissibleOverlay` is invoked pointer-only (`{ escape: false }`) where the
+two compose. Adopted by: `NodeContextMenu` (menu in `main` mode, dialog in
+tag/move submodes), `SettingsRowMenu`, the agent conversation row menu and the
+agent history/session menu (which previously had **no** Escape), the view-toolbar
+section popovers, and the date-value picker. Surfaces already on `Dialog`
+(Command Palette, Confirm, Launcher) are unchanged.
+
+**Outliner tree** (`PanelChildrenOutline`, `OutlinerRowShell`). The outline
+container is `role="tree"` + `aria-multiselectable="true"` + `aria-label`. Each
+row wrapper (`.row-wrap`) is `role="treeitem"` carrying `aria-level` (1-based
+depth), `aria-selected`, and `aria-expanded` **only when the row has children**
+(leaf rows omit it so no phantom toggle is announced). The two virtualization
+wrappers (`.outliner-flat`, `.outliner-flat-row`) are `role="presentation"` so the
+windowed treeitems read as direct tree descendants. This is additive structure —
+no tabindex is added to the tree (focus lives in the contentEditable model), and
+`useWorkspaceKeyboard` is untouched. `aria-setsize`/`aria-posinset` under
+virtualization are a deferred follow-up.
+
+**Calendar month grid** (`primitives/CalendarMonthGrid.tsx`). `role="grid"` with
+one `role="row"` per week and `role="gridcell"` day cells. Exactly one day is a
+tab stop (roving tabindex: the selected day, else today, else the first in-month
+day); Arrow keys move ±1 day / ±1 week, `Home`/`End` to week ends, and
+`PageUp`/`PageDown` by month, calling `onMoveMonth` to cross month boundaries when
+navigation runs off the rendered window. The selected day(s) carry
+`aria-selected`, the today cell `aria-current="date"`.
+
+**Corrected role mappings** (announced role now matches the control):
+- Interactive `DoneCheckbox` → `role="checkbox"` + `aria-checked` (matching its
+  read-only twin), not `aria-pressed`.
+- View-toolbar single-select options → a `role="radiogroup"` wrapper
+  (`RadioOptionGroup`) with `role="radio"` + `aria-checked` options, roving
+  tabindex and Arrow move-select; multi-select option lists stay
+  `role="checkbox"`.
+- Child-run details tabs → `role="tablist"` / `role="tab"` (`aria-selected`,
+  `aria-controls`, roving Arrow/Home/End) with the body as `role="tabpanel"`.
+- Command Palette input → `role="combobox"` + `aria-expanded` +
+  `aria-autocomplete="list"` (it already had `aria-activedescendant` /
+  `aria-controls`), mirroring the Launcher.
+
+Live keyboard + VoiceOver verification of focus-in / trap / restore is the gate
+for this surface set; jsdom focus semantics do not cover focus reality.
