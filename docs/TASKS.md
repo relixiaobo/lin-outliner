@@ -255,23 +255,14 @@ data-gated — see § memory above). The remaining *active* build work is the sk
 (`agent-skills-authoring`: NL save-as-skill + diff/preview), **cross-agent consultation**
 (`ungate-contact` — see the agent-program list), and the standalone draft items below.
 
-- **agent-permission-redesign** (P1, `in-progress` — **PM-ratified direction 2026-06-15**;
-  security-sensitive) — replace the prompt-heavy `enum × 3 safety modes × dead LLM
-  classifier × shell allowlist` permission model with **one pure `decide(effect)` over an
-  operation's consequence**: three outcomes (`WORK→allow` silent · `COMMIT→confirm`-once-or-
-  remember · `FORBIDDEN→block` floor). Inverts shell from default-deny-whitelist to
-  floor-blocklist + commit-confirm (so `which soffice` and any unknown *static* command are
-  WORK by construction); makes delete reversible (agent-trash) to widen silent-allow; reduces
-  "scope" to one role whose grant gesture *is* the folder handoff; one credential carve-out
-  (read = confirm, read+sink = block). PM ratified: full reversal · unknown-static-shell =
-  silent allow · folder-handoff gesture in this round · credential-read = confirm.
-  **Shape (b) — a SET of independent complete PRs:** PR-1 model core (the reversal; lands as
-  shared-interface-first for the `/research` read-only partition on `agentPermissionModel.ts`,
-  A7) — **SHIPPED (PR #252, codex, 2026-06-15)**; see Recently completed → PR-2 folder-handoff
-  gesture (scope grant; lets the agent see the user's real files) → PR-3 typed `file_convert`
-  tool. **Supersedes** the `delegated-scope` draft (PR #249, closed `superseded`). See
-  `docs/plans/agent-permission-redesign.md`. **PR-1 shipped; PR-2 (folder-handoff) + PR-3
-  (`file_convert`) remain**, ready for a dev agent to claim. Sibling primitive:
+- **agent-permission-redesign** (P1, `done`, PR #252 + #266) — the consequence-model permission
+  redesign: **one pure `decide(effect)`** (`WORK→allow` silent · `COMMIT→confirm`-once-or-remember ·
+  `FORBIDDEN→block` floor), shell inverted to a floor-blocklist (unknown static command = WORK),
+  reversible `file_delete` via `.agent-trash`, and narrow `Scope(read|write)` / `External` / `Command`
+  grants. **Shape (b)** complete: PR-1 model core (#252) → PR-2 folder-handoff gesture + PR-3 typed
+  `file_convert` tool (both shipped in #266). Supersedes the `delegated-scope` draft (#249,
+  `superseded`). See Recently completed; plan archived `done`
+  (`docs/plans/archive/agent-permission-redesign.md`). Sibling primitive:
   **agent-capability-ceiling** (below) bounds what a *delegated* child may do — orthogonal to
   this global-ledger redesign and sequenced after it.
 - **agent-capability-ceiling** (P2, `draft` — security-sensitive; **no plan file yet**,
@@ -711,6 +702,25 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Agent folder handoff + typed `file_convert` tool** (codex-3, PR #266) — completes the
+  `agent-permission-redesign` plan (**Shape (b)**, after PR-1 #252). Settings → Security gains a
+  **"hand Tenon a folder"** gesture: the native directory picker records a remembered
+  `Scope(write:/folder)` grant, and the runtime **projects remembered scope grants into the local
+  file-tool layer** so handed roots are enforced by the same realpath containment as the app-owned
+  workdir/scratch (not UI state alone). A new typed **`file_convert`** local tool replaces shell-driven
+  conversions: office/presentation → PDF (`soffice`/`libreoffice`), PDF pages → PNG/JPEG (`pdftoppm`),
+  image → PDF/PNG/JPEG (`sips`), all via `spawn(file, argv, { shell: false })` with a structured audit
+  payload and overwrite-refusal; new `file.convert.*` audit kinds evaluate the input as a read boundary
+  and the output path/dir as a write boundary. Gate (main): `/code-review high` — round 1 surfaced 10
+  findings (a `file_read` page-cap leaking into convert so >10-page PDFs could not convert; dropped
+  password/corrupt-PDF error mapping; per-tool-call realpath FS work on the hot path; a ~90-line
+  permission-descriptor clone; duplicated canonicalize/root-detection helpers; a dead `sips` format
+  ternary; scattered param validation). codex-3 fixed all in the review-response commit (shared
+  `derivePathDescriptor` + `resolveCanonicalPath`, memoized + file-tool-gated root sync, a
+  `pdfPageRenderFailure` helper, centralized normalization). Re-verified by main on the merged tree:
+  typecheck + `test:core` 1009/0 + the four permission/local-tool suites 68/0; one trivial `systemPrompt`
+  merge conflict resolved in-gate. Design folded into `docs/spec/agent-tool-design.md` +
+  `docs/spec/agent-tool-permissions.md` + `docs/spec/agent-skills.md`.
 - **Unified file preview surface** (codex-2, PR #262) — collapses the file-node *node page* and the
   loose agent/local-file *standalone pane* into one `nodeId`-keyed `FilePreviewPanel` with two
   lifecycle states (`loose` → `ingested`) over a single mounted frame: read-only filename title
@@ -776,7 +786,7 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
   floor checks rescan the `bash -c` inner command, the operator splitter handles `\n`/lone `&` while
   preserving `2>&1`/`&>`, and the Security pane gained a per-grant **Revoke**. Re-verified: typecheck +
   `test:core` 1002/0, every bypass now `DENY`/`ask`. **Shape (b)** — PR-2 folder-handoff + PR-3
-  `file_convert` remain (board still `in-progress`; plan kept active, not archived).
+  `file_convert` shipped together in #266; plan now archived `done`.
 - **Files become first-class outliner nodes — file-as-node**
   (cc, PR #241) — an `attachment` / `image` node is now a normal outliner node: a non-image file is a
   click-to-open **file card** (icon · display-only filename · `type · size · pages/duration` meta · `⋯`),

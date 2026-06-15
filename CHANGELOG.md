@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent folder handoff + typed `file_convert` tool (PR #266, codex-3)** — Settings → Security gains a
+  **"hand Tenon a folder"** action: a native directory picker records a remembered `Scope(write:/folder)`
+  grant, and the runtime **projects remembered scope grants into the local file-tool layer** so handed
+  folders become real read/write roots enforced by the same realpath containment as the app-owned
+  workdir/scratch (not UI state alone). A new typed **`file_convert`** tool replaces shell-driven
+  conversions — office / presentation → PDF (`soffice`/`libreoffice`), PDF pages → PNG/JPEG (`pdftoppm`),
+  and image → PDF/PNG/JPEG (`sips`) — run via `spawn(file, argv, { shell: false })` with a structured
+  audit payload and overwrite-refusal; new `file.convert.*` audit kinds evaluate the conversion input as
+  a read boundary and the output path/dir as a write boundary. Completes the `agent-permission-redesign`
+  plan (after PR-1 #252). Spec: `docs/spec/agent-tool-design.md` + `docs/spec/agent-tool-permissions.md`
+  + `docs/spec/agent-skills.md`.
 - **Files become first-class outliner nodes — file-as-node (PR #241, cc)** — an `attachment` /
   `image` node is now a normal outliner node, not a special row. A non-image file renders as a
   click-to-open **file card** (file-type icon · display-only filename · `type · size · pages/duration`
