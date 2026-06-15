@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -692,8 +692,34 @@ describe('agent skills', () => {
     expect(reminderText).not.toContain(path.join(skillDir, 'SKILL.md'));
   });
 
+  test('restores resource-backed built-in skill identity from loaded messages', async () => {
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+      frontmatter: ['description: Bundled demo skill'],
+      body: 'Use bundled instructions from ${AGENT_SKILL_DIR}.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+    const invocation = await runtime.invokeSkill({ skill: 'bundled-demo', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+
+    const restored = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+    restored.restoreInvokedSkillsFromMessages([invocation.message]);
+    const reminder = restored.createInvokedSkillsReminder();
+    const reminderText = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+
+    expect(reminderText).toContain('Path: built-in:bundled-demo');
+    expect(reminderText).toContain(`Base directory for this skill: ${skillDir}`);
+    expect(reminderText).not.toContain(`Path: ${skillDir}`);
+  });
+
   test('does not resolve bundled built-in files as writable skill targets', async () => {
-    const { skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
       frontmatter: ['description: Bundled demo skill'],
       body: 'Use bundled instructions.',
     });
@@ -703,8 +729,26 @@ describe('agent skills', () => {
         root: path.dirname(path.dirname(skillDir)),
         includeUserSkills: false,
         additionalSkillDirectories: [],
+        builtInSkillDirectories: [skillsDir],
       }),
     ).toBeNull();
+  });
+
+  test('keeps built-in resource directories immutable even if also configured as additional skill dirs', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-root-'));
+    const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
+      frontmatter: ['description: Bundled demo skill'],
+      body: 'Use bundled instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+      additionalSkillDirectories: [skillsDir],
+    });
+
+    expect(runtime.resolveSkillTarget(path.join(skillDir, 'SKILL.md'))).toBeNull();
+    expect((await runtime.getSkill('bundled-demo'))?.source).toBe('built-in');
   });
 
   test('loads bundled built-in skills before mutable local skills', async () => {
@@ -734,6 +778,55 @@ describe('agent skills', () => {
     expect(listing).not.toContain('Mutable shadow skill');
   });
 
+  test('keeps path-scoped bundled built-ins available as the immutable floor', async () => {
+    const { skillsDir } = await createBundledBuiltInSkillFixture('path-built-in', {
+      frontmatter: [
+        'description: Path built-in skill',
+        'paths:',
+        '  - docs/**/*.md',
+      ],
+      body: 'Use bundled path instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    const skill = await runtime.getSkill('path-built-in');
+    const listing = await runtime.buildSkillListingReminderText(200_000);
+
+    expect(skill).toMatchObject({
+      name: 'path-built-in',
+      source: 'built-in',
+      paths: ['docs/**/*.md'],
+    });
+    expect(listing).toContain('path-built-in');
+  });
+
+  test('ignores name frontmatter aliases for bundled built-ins', async () => {
+    const { skillsDir } = await createBundledBuiltInSkillFixture('canonical-name', {
+      frontmatter: [
+        'name: alias-name',
+        'description: Bundled canonical skill',
+      ],
+      body: 'Use canonical instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [skillsDir],
+    });
+
+    const skill = await runtime.getSkill('canonical-name');
+    const alias = await runtime.getSkill('alias-name');
+
+    expect(skill).toMatchObject({
+      name: 'canonical-name',
+      source: 'built-in',
+      displayName: undefined,
+    });
+    expect(alias).toBeNull();
+  });
+
   test('fails loudly when bundled and inline built-ins share a name', async () => {
     const { skillsDir } = await createBundledBuiltInSkillFixture('skillify', {
       frontmatter: ['description: Bundled duplicate skill'],
@@ -745,6 +838,7 @@ describe('agent skills', () => {
     });
 
     await expect(runtime.getSkill('skillify')).rejects.toThrow('Duplicate built-in skill "skillify"');
+    await expect(runtime.buildSkillListingReminderText(200_000)).rejects.toThrow('Duplicate built-in skill "skillify"');
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
@@ -1292,11 +1386,14 @@ describe('agent skills', () => {
 async function createBundledBuiltInSkillFixture(
   name: string,
   options: { frontmatter: string[]; body: string },
-): Promise<{ root: string; skillsDir: string; skillDir: string }> {
+): Promise<{ skillsDir: string; skillDir: string }> {
   const root = await mkdtemp(path.join(tmpdir(), 'lin-bundled-skills-'));
   const skillsDir = path.join(root, 'built-in-skills');
   const skillDir = await createSkillInRoot(root, name, options, skillsDir);
-  return { root, skillsDir, skillDir };
+  return {
+    skillsDir: await realpath(skillsDir),
+    skillDir: await realpath(skillDir),
+  };
 }
 
 async function createSkillFixture(

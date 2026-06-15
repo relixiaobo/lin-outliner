@@ -90,7 +90,11 @@
       },
       {
         "from": "src/main/builtInSkills",
-        "to": "built-in-skills"
+        "to": "built-in-skills",
+        "filter": [
+          "**/*",
+          "!README.md"
+        ]
       }
     ],
     "mac": {

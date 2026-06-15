@@ -2,6 +2,7 @@ import { coerceString, parseBoolean } from '../core/agentMarkdown';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -906,6 +907,7 @@ class SkillRegistry {
     this.includeUserSkills = options.includeUserSkills ?? true;
     this.builtInSkillDirectories = normalizeBuiltInSkillDirectories(
       options.builtInSkillDirectories ?? [resolveBuiltInSkillResourceRoot()],
+      this.root,
     );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
     this.builtInReadOnlyIsolatedSkills = new Set(
@@ -1106,6 +1108,7 @@ class SkillRegistry {
       root: this.root,
       includeUserSkills: this.includeUserSkills,
       additionalSkillDirectories: this.additionalSkillDirectories,
+      builtInSkillDirectories: this.builtInSkillDirectories,
     });
   }
 
@@ -1169,24 +1172,36 @@ class SkillRegistry {
 
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
     await this.ensureProvenanceLoaded();
+    this.skills.clear();
+    this.conditionalSkills.clear();
+    this.checkedDynamicSkillDirs.clear();
     this.seenSkillFileIds.clear();
-    for (const dir of this.builtInSkillDirectories) {
-      const loaded = await loadSkillsFromDir(dir, 'built-in');
-      for (const skill of loaded) {
+    try {
+      for (const dir of this.builtInSkillDirectories) {
+        const loaded = await loadSkillsFromDir(dir, 'built-in');
+        for (const skill of loaded) {
+          await this.addLoadedSkill(skill);
+        }
+      }
+      for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
         await this.addLoadedSkill(skill);
       }
-    }
-    for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
-      await this.addLoadedSkill(skill);
-    }
-    const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
-    for (const { dir, source } of roots) {
-      const loaded = await loadSkillsFromDir(dir, source);
-      for (const skill of loaded) {
-        await this.addLoadedSkill(skill);
+      const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
+      for (const { dir, source } of roots) {
+        const loaded = await loadSkillsFromDir(dir, source);
+        for (const skill of loaded) {
+          await this.addLoadedSkill(skill);
+        }
       }
+      this.loaded = true;
+    } catch (error) {
+      this.loaded = false;
+      this.skills.clear();
+      this.conditionalSkills.clear();
+      this.checkedDynamicSkillDirs.clear();
+      this.seenSkillFileIds.clear();
+      throw error;
     }
   }
 
@@ -1218,7 +1233,7 @@ class SkillRegistry {
         && record.agentHash !== undefined
         && record.agentHash === skill.contentHash,
     };
-    if (skill.paths?.length) {
+    if (skill.paths?.length && skill.source !== 'built-in') {
       this.conditionalSkills.set(skill.name, skillWithIdentity);
     } else {
       this.skills.set(skill.name, skillWithIdentity);
@@ -1329,6 +1344,7 @@ export interface SkillDirConfig {
   root: string;
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
+  builtInSkillDirectories?: readonly string[];
 }
 
 function targetInsideSkillsDir(
@@ -1362,6 +1378,11 @@ export function resolveSkillContentTarget(
   config: SkillDirConfig,
 ): AgentSkillContentTarget | null {
   const filePath = path.resolve(filePathInput);
+  const filePathIdentity = canonicalDirectoryIdentity(filePath);
+  for (const dir of config.builtInSkillDirectories ?? []) {
+    const builtInDir = path.resolve(dir);
+    if (filePathIdentity === builtInDir || isPathInside(filePathIdentity, builtInDir)) return null;
+  }
   // 1. The configured skill-dir set the loader enumerates (defaults + additional dirs).
   for (const { dir, source } of skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories)) {
     const target = targetInsideSkillsDir(filePath, dir, source);
@@ -1454,7 +1475,7 @@ function createSkillDefinition(input: {
     ?? coerceString(input.frontmatter['when-to-use']);
   return {
     name: input.name,
-    displayName: coerceString(input.frontmatter.name),
+    displayName: input.source === 'built-in' ? undefined : coerceString(input.frontmatter.name),
     source: input.source,
     rootDir: input.rootDir,
     skillFile: input.skillFile,
@@ -1634,11 +1655,13 @@ function collectSkillShellMatches(content: string): Array<{ raw: string; command
 }
 
 function createSkillLoadedMessage(skill: SkillDefinition, renderedContent: string, includeMetadata: boolean): UserMessage {
-  if (!includeMetadata) return createHiddenUserMessage(renderedContent);
+  const includeIdentityMetadata = includeMetadata || isResourceBackedBuiltInSkill(skill);
+  if (!includeIdentityMetadata) return createHiddenUserMessage(renderedContent);
   const metadata = [
-    `<skill-message>${skill.name}</skill-message>`,
+    ...(includeMetadata ? [`<skill-message>${skill.name}</skill-message>`] : []),
     `<skill-name>${skill.name}</skill-name>`,
-    '<skill-format>true</skill-format>',
+    ...(includeMetadata ? ['<skill-format>true</skill-format>'] : []),
+    `<skill-path>${skillPathForPrompt(skill)}</skill-path>`,
   ].join('\n');
   return createHiddenUserMessage(`${metadata}\n\n${renderedContent}`);
 }
@@ -1778,13 +1801,14 @@ function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
   const body = unwrapSystemReminder(text);
   if (body.includes('<skill-result>')) return null;
   const explicitName = /<skill-name>([^<]+)<\/skill-name>/.exec(body)?.[1]?.trim();
+  const explicitPath = /<skill-path>([^<]+)<\/skill-path>/.exec(body)?.[1]?.trim();
   const baseDir = /^Base directory for this skill:\s*(.+)$/m.exec(body)?.[1]?.trim();
   if (!explicitName && !baseDir) return null;
   const skillName = normalizeSkillName(explicitName || (baseDir ? path.basename(baseDir) : ''));
   if (!skillName) return null;
   return {
     skillName,
-    skillPath: baseDir ?? `built-in:${skillName}`,
+    skillPath: explicitPath || baseDir || `built-in:${skillName}`,
     content: body.trim(),
     invokedAt: Date.now(),
   };
@@ -1887,19 +1911,27 @@ function normalizeAdditionalSkillDirectories(value: readonly string[] | undefine
   return dirs;
 }
 
-function normalizeBuiltInSkillDirectories(value: readonly string[] | undefined): string[] {
+function normalizeBuiltInSkillDirectories(value: readonly string[] | undefined, root: string): string[] {
   if (!value?.length) return [];
   const seen = new Set<string>();
   const dirs: string[] = [];
   for (const item of value) {
-    const trimmed = item.trim();
-    if (!trimmed) continue;
-    const normalized = path.resolve(trimmed);
+    const expanded = expandConfiguredPath(item, root);
+    if (!expanded) continue;
+    const normalized = canonicalDirectoryIdentity(expanded);
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     dirs.push(normalized);
   }
   return dirs;
+}
+
+function canonicalDirectoryIdentity(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {

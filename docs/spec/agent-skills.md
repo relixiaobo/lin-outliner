@@ -73,7 +73,12 @@ Supported frontmatter fields:
 - `shell`: optional shell for embedded command expansion. Lin currently supports `bash`.
 - `execution`: `inline` by default; `isolated` runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context.
 - `agent`: optional agent definition for `execution: isolated` skills. If omitted, Lin forks the current conversation context. If provided, the agent definition must resolve; Lin fails the skill invocation instead of silently falling back to another agent.
-- `paths`: path-conditional activation patterns.
+- `paths`: path-conditional activation patterns for mutable skills.
+
+Lin uses directory-name identity for skills. `name:` frontmatter is tolerated for
+mutable skills as a display alias, but built-ins ignore it so an app-shipped
+folder cannot create an extra slash alias or bypass the built-in duplicate-name
+guard.
 
 `execution` is the skill-level execution mode. `inline` means the rendered body
 is injected into the parent model turn; `isolated` means the rendered body is
@@ -160,7 +165,13 @@ carry a real child-run result or error for the parent turn.
 
 Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are still born unratified. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
 
-Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
+Path-conditional mutable skills remain hidden until a touched file matches
+`paths`. Directory patterns such as `src` match files under that directory,
+glob patterns such as `src/**/*.ts` use glob semantics, and dynamically
+discovered nested `.agents/skills` directories are skipped when they are ignored
+by the workspace gitignore rules. Built-ins keep their `paths` metadata for
+inspection and future policy use, but they load immediately as the immutable
+app-shipped floor.
 
 File writes into any skill directory are treated as skill-content writes, not
 generic local file edits after the ordinary `file_write` / `file_edit` permission
@@ -348,7 +359,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. |
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
-| `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
+| `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
 | `execution: isolated` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Isolated skill bodies run in a sidechain child run and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are born unratified: slash-invocable immediately, model-invocable only after the user accepts the exact bytes from the in-flow `skill_trust` card or Settings. User-source hand-edits still self-ratify; project-source content always needs exact-byte acceptance. |
