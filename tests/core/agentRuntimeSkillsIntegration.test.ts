@@ -419,6 +419,10 @@ describe('agent runtime skill integration', () => {
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(script.pendingCount()).toBe(0);
+    // First turn runs on the pinned connection model; the skill's `model: gpt-5.2`
+    // frontmatter override resolves through the REAL pi-ai catalog (there is no
+    // injected catalog-by-id seam), so `gpt-5.2` must remain a live catalog id — this
+    // assertion tracks catalog drift, like the base-model note on the resolver above.
     expect(callModels).toEqual(['gpt-4.1', 'gpt-5.2']);
     expect(contextTexts.join('\n')).toContain('AUTO_SKILL_BODY');
     expect(contextTexts.join('\n')).toContain(`Base directory for this skill: ${skillDir}`);

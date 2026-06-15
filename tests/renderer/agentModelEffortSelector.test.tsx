@@ -180,6 +180,44 @@ describe('AgentModelEffortSelector', () => {
     expect(savedEffort).toBe('');
   });
 
+  test('selecting a custom (no-catalog) provider keeps it selected and shows the free-text model input', async () => {
+    const view = settings();
+    // A configured, credentialed connection with no catalog entry — a custom endpoint.
+    view.providers.push({
+      providerId: 'my-proxy',
+      enabled: true,
+      hasApiKey: true,
+      auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
+    });
+    let savedModel = 'sentinel';
+    const rendered = renderComponent(
+      <AgentModelEffortSelector
+        settings={view} model="" effort="" disabled={false}
+        {...LABELS} onModelChange={(v) => { savedModel = v; }} onEffortChange={NOOP}
+      />,
+    );
+    await changeSelect(rendered, 'Provider', 'my-proxy');
+    // The provider stays selected (does not collapse back to Inherit), so the model
+    // field is reachable as a free-text input rather than a catalog dropdown.
+    expect(rendered.document.querySelector('input[aria-label="Model"]')).not.toBeNull();
+    expect(rendered.document.querySelector('select[aria-label="Model"]')).toBeNull();
+    // No model id is emitted yet — it is empty until the user types one.
+    expect(savedModel).toBe('');
+  });
+
+  test('a saved effort the model no longer supports is reconciled to inherit on mount', () => {
+    let savedEffort = 'unchanged';
+    renderComponent(
+      <AgentModelEffortSelector
+        settings={settings()} model="openai/gpt-5.4-mini" effort="high" disabled={false}
+        {...LABELS} onModelChange={NOOP} onEffortChange={(v) => { savedEffort = v; }}
+      />,
+    );
+    // gpt-5.4-mini supports only 'off'; the stored 'high' is corrected to inherit at
+    // mount, so Save can never persist a hidden, unsupported effort.
+    expect(savedEffort).toBe('');
+  });
+
   test('a saved model the catalog no longer lists still renders as a selectable option', () => {
     const rendered = renderComponent(
       <AgentModelEffortSelector

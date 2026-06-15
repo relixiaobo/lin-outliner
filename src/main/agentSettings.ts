@@ -687,19 +687,24 @@ export async function testProviderConnection(input: {
     const catalogModel = firstRankedModel(providerId);
 
     // A custom base URL means the connection points at a proxy/gateway, which may
-    // not host the catalog's first-ranked model — so prove reachability by listing
-    // the endpoint's own models first (validate the connection, not a chosen model).
+    // not host the catalog's first-ranked model — so discover the endpoint's own
+    // models first (validate the connection, not a chosen model). Listing alone is
+    // not enough (some gateways expose /models unauthenticated): prove the credential
+    // too with a 1-token completion against a DISCOVERED (hosted) model.
     if (baseUrl) {
       try {
         const models = await listOpenAiCompatibleModels(baseUrl, apiKey);
         if (models.length > 0) {
+          await completeSimple(openAiCompatibleProbeModel(providerId, models[0], baseUrl), {
+            messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
+          }, { apiKey, timeoutMs: 8000, maxTokens: 1 });
           return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
         }
       } catch (listError) {
-        // With no catalog model to fall back to, the listing error IS the result
-        // (its status maps to the auth/endpoint message below). With a catalog
+        // With no catalog model to fall back to, the listing/probe error IS the
+        // result (its status maps to the auth/endpoint message below). With a catalog
         // model, the gateway may simply not expose /models — fall through and prove
-        // reachability with a completion probe instead.
+        // reachability with a catalog completion probe instead.
         if (!catalogModel) throw listError;
       }
     }
@@ -739,6 +744,26 @@ export async function testProviderConnection(input: {
 
     return { success: false, message, statusCode };
   }
+}
+
+/**
+ * A minimal OpenAI-compatible `Model` for a custom endpoint's connection probe —
+ * mirrors the runtime's `createOpenAICompatibleModel` shape (kept local to avoid an
+ * agentRuntime→agentSettings import cycle), enough for a bounded 1-token completion.
+ */
+function openAiCompatibleProbeModel(providerId: string, modelId: string, baseUrl: string): Model<'openai-completions'> {
+  return {
+    id: modelId,
+    name: modelId,
+    api: 'openai-completions',
+    provider: providerId,
+    baseUrl,
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 8192,
+  };
 }
 
 /**

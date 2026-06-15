@@ -254,6 +254,7 @@ import {
   type AgentRuntimeContextEventInput,
 } from './agentRuntimeContext';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
+import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
   AgentDefinition,
   AgentPermissionMode,
@@ -2269,8 +2270,11 @@ export class AgentRuntime {
     });
     delegationRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     delegationRuntime.restoreListedAgentsFromMessages(activePath);
+    // null when the agent's model can't resolve yet (e.g. a custom endpoint with no
+    // catalog and the profile still on 'inherit') — surfaced below as the same
+    // configuration-error agent the built-in path produces, not a thrown open.
     const defaultAgentProfile = providerConfig && defaultAgentId !== this.agentIdentity.agentId
-      ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, { providerConfig })
+      ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, { providerConfig }).catch(() => null)
       : null;
     // The built-in assistant owns its model/effort through a settings overlay, not
     // the provider connection — resolve it the same way a profile agent resolves
@@ -6396,7 +6400,9 @@ export class AgentRuntime {
     if (!providerConfig) throw new Error('No enabled agent provider is configured.');
     const runtimeSettings = await this.refreshRuntimeSettings(conversation);
     const isMainAgent = targetAgentId === this.coordinatorAgentId();
-    const profile = isMainAgent ? null : await this.resolveChannelPeerProfile(conversation, targetAgentId);
+    // null when a peer's model can't resolve (custom endpoint, profile on 'inherit')
+    // — degrades to the configuration-error agent below, not a thrown channel turn.
+    const profile = isMainAgent ? null : await this.resolveChannelPeerProfile(conversation, targetAgentId).catch(() => null);
     if (profile) await this.getEventStore().writeAgentIdentity(profile.identity);
     // The built-in coordinator owns its model/effort through the settings overlay,
     // resolved the same way as a peer profile; its base system prompt is unchanged.
@@ -8582,10 +8588,9 @@ function createConfiguredAgent(
   return agent;
 }
 
-// The reasoning ladder, lowest → highest. `AGENT_REASONING_LEVELS` membership and
-// `nearestSupportedLevel` distance both derive from this single ordered source.
-const REASONING_LADDER: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(REASONING_LADDER);
+// `AGENT_REASONING_LEVELS` membership and `nearestSupportedLevel` distance both
+// derive from the single shared ordered ladder in core (`AGENT_REASONING_LADDER`).
+const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(AGENT_REASONING_LADDER);
 // The default effort an agent runs at when it has not chosen one. `medium` keeps a
 // reasoning-capable model actually reasoning by default (a provider connection no
 // longer carries a global reasoning level), coerced to the model's nearest level.
@@ -8705,13 +8710,13 @@ function nearestSupportedLevel(
   supported: readonly AgentReasoningLevel[],
 ): AgentReasoningLevel {
   if (supported.includes(target)) return target;
-  const targetIndex = REASONING_LADDER.indexOf(target);
+  const targetIndex = AGENT_REASONING_LADDER.indexOf(target);
   let best = supported[0];
   let bestDistance = Infinity;
   for (const level of supported) {
-    const distance = Math.abs(REASONING_LADDER.indexOf(level) - targetIndex);
+    const distance = Math.abs(AGENT_REASONING_LADDER.indexOf(level) - targetIndex);
     if (distance < bestDistance
-      || (distance === bestDistance && REASONING_LADDER.indexOf(level) < REASONING_LADDER.indexOf(best))) {
+      || (distance === bestDistance && AGENT_REASONING_LADDER.indexOf(level) < AGENT_REASONING_LADDER.indexOf(best))) {
       best = level;
       bestDistance = distance;
     }

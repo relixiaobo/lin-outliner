@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
+import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type { AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { Field } from '../primitives/Field';
@@ -11,9 +13,8 @@ import { isProviderUsable } from './providerUsability';
 // chosen HERE, on the profile. Select a provider, then a model; the effort options
 // are derived from that model's supported thinking levels. The saved value is the
 // canonical model id from the catalog surface (provider-qualified `providerId/modelId`),
-// never a display label.
-
-const REASONING_ORDER: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+// never a display label. Effort ordering comes from the shared `AGENT_REASONING_LADDER`
+// (core/types), the single source the runtime also ranks/coerces against.
 
 interface ModelSelection {
   providerId: string;
@@ -77,6 +78,13 @@ export function AgentModelEffortSelector({
   const isKnownProvider = (providerId: string) => knownProviderIds.has(providerId);
   const selection = parseModelSelection(model, activeProviderId, isKnownProvider);
 
+  // A custom (no-catalog) provider takes a free-text model id, so until one is typed
+  // the saved `model` is empty and `selection.providerId` is blank. Remember the chosen
+  // provider locally so the control keeps it selected (and the free-text input reachable)
+  // instead of collapsing back to Inherit. A saved/qualified id always wins.
+  const [pendingProvider, setPendingProvider] = useState('');
+  const providerId = selection.providerId || pendingProvider;
+
   // Providers the agent can actually run on: configured + credentialed connections.
   const usableProviders = (settings?.providers ?? [])
     .filter((provider) => isProviderUsable(settings!, provider))
@@ -87,26 +95,26 @@ export function AgentModelEffortSelector({
 
   // Keep an already-saved provider visible even if it is not currently usable, so an
   // existing selection never silently disappears from the dropdown.
-  if (selection.providerId && !usableProviders.some((provider) => provider.providerId === selection.providerId)) {
+  if (providerId && !usableProviders.some((provider) => provider.providerId === providerId)) {
     usableProviders.push({
-      providerId: selection.providerId,
-      models: settings?.availableProviders.find((option) => option.providerId === selection.providerId)?.models ?? [],
+      providerId,
+      models: settings?.availableProviders.find((option) => option.providerId === providerId)?.models ?? [],
     });
   }
 
-  const selectedProvider = usableProviders.find((provider) => provider.providerId === selection.providerId);
+  const selectedProvider = usableProviders.find((provider) => provider.providerId === providerId);
   const catalogModels = selectedProvider?.models ?? [];
   const selectedModelOption = catalogModels.find((option) => option.id === selection.modelId);
   // Catalog providers list ranked models; a custom OpenAI-compatible connection has
   // no catalog, so its model is entered as free text.
-  const useFreeTextModel = Boolean(selection.providerId) && catalogModels.length === 0;
+  const useFreeTextModel = Boolean(providerId) && catalogModels.length === 0;
   // A saved model the catalog no longer lists must still appear (and stay selected),
   // or the <select> would silently render an unrelated first option as if chosen.
   const savedModelMissing = Boolean(selection.modelId)
     && !catalogModels.some((option) => option.id === selection.modelId);
 
   const supportedLevelsFor = (option?: { supportedThinkingLevels: AgentReasoningLevel[] }): readonly AgentReasoningLevel[] => (
-    option?.supportedThinkingLevels.length ? option.supportedThinkingLevels : REASONING_ORDER
+    option?.supportedThinkingLevels.length ? option.supportedThinkingLevels : AGENT_REASONING_LADDER
   );
   const supportedLevels = supportedLevelsFor(selectedModelOption);
 
@@ -118,12 +126,35 @@ export function AgentModelEffortSelector({
     }
   }
 
+  // Reconcile a stale effort on mount too: a saved model+effort pair can arrive with an
+  // effort the model no longer supports (e.g. the model's levels changed). The effort
+  // control already displays Inherit in that case, so persist that — otherwise Save
+  // would write back the hidden, unsupported value. Only act when the model is a known
+  // catalog option (a free-text/custom model has no declared levels to validate against).
+  useEffect(() => {
+    if (effort && selectedModelOption && !supportedLevelsFor(selectedModelOption).includes(effort as AgentReasoningLevel)) {
+      onEffortChange('');
+    }
+    // `onEffortChange` is intentionally excluded: it is a fresh closure each render and
+    // including it would re-fire the effect in a loop.
+  }, [model, effort, selectedModelOption?.id]);
+
   function changeProvider(nextProviderId: string) {
     if (!nextProviderId) {
+      setPendingProvider('');
       onModelChange('');
       return;
     }
     const nextModels = usableProviders.find((provider) => provider.providerId === nextProviderId)?.models ?? [];
+    if (nextModels.length === 0) {
+      // A custom connection has no catalog: remember the provider and clear the model so
+      // the free-text input appears, instead of emitting an empty (→ Inherit) value.
+      setPendingProvider(nextProviderId);
+      reconcileEffort(undefined);
+      onModelChange('');
+      return;
+    }
+    setPendingProvider('');
     const nextModelId = nextModels.some((option) => option.id === selection.modelId)
       ? selection.modelId
       : nextModels[0]?.id ?? '';
@@ -133,7 +164,7 @@ export function AgentModelEffortSelector({
 
   function changeModel(nextModelId: string) {
     reconcileEffort(catalogModels.find((option) => option.id === nextModelId));
-    onModelChange(composeProviderQualifiedModel(selection.providerId, nextModelId));
+    onModelChange(composeProviderQualifiedModel(providerId, nextModelId));
   }
 
   return (
@@ -144,7 +175,7 @@ export function AgentModelEffortSelector({
           disabled={disabled}
           label={providerLabel}
           onChange={(event) => changeProvider(event.target.value)}
-          value={selection.providerId}
+          value={providerId}
           variant="popup"
         >
           <option value="">{inheritLabel}</option>
@@ -154,7 +185,7 @@ export function AgentModelEffortSelector({
         </SelectControl>
       </Field>
 
-      {selection.providerId ? (
+      {providerId ? (
         <Field as="label" className="settings-sheet-row" label={modelLabel} labelClassName="settings-sheet-row-label">
           {useFreeTextModel ? (
             <Input
@@ -196,7 +227,7 @@ export function AgentModelEffortSelector({
           variant="popup"
         >
           <option value="">{inheritLabel}</option>
-          {REASONING_ORDER.filter((level) => supportedLevels.includes(level)).map((level) => (
+          {AGENT_REASONING_LADDER.filter((level) => supportedLevels.includes(level)).map((level) => (
             <option key={level} value={level}>{reasoningLabel(level)}</option>
           ))}
         </SelectControl>
