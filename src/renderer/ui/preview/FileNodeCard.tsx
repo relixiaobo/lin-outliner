@@ -29,13 +29,19 @@ export function FileNodeCard({ node, onOpen, onOpenSplit }: FileNodeCardProps) {
   return (
     <div
       className="file-node-card"
-      // A card click opens the file (its node page); keep mousedown off the row so it
-      // never moves edit focus into the hidden filename anchor.
+      // A plain card click opens the file (its node page); the bubble-phase swallow
+      // keeps that click from moving edit focus into the hidden filename anchor. Row
+      // selection runs in the capture phase (OutlinerRowShell), so modifier-clicks
+      // still reach it — they must NOT also open, hence the onClick guard below.
       onMouseDown={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         event.stopPropagation();
       }}
-      onClick={onOpen}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        onOpen();
+      }}
     >
       <span
         aria-hidden="true"

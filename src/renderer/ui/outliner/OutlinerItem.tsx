@@ -366,14 +366,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // rows have no inline text editor, so they keep the tag bar as a sibling below.
   const isPlainTextRow = !isCodeBlock;
   const hasTags = displayed.tags.length > 0;
+  // A file node renders its editor visually hidden (the sr-only keyboard anchor), so
+  // the inline tag slot inside that editor would be invisible — route a file node's
+  // tags to the sibling TagBar (the same place code rows use) instead.
+  const useInlineTagSlot = isPlainTextRow && !fileNodeRow;
   const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
-  if (isPlainTextRow && hasTags && inlineTagSlotRef.current === null) {
+  if (useInlineTagSlot && hasTags && inlineTagSlotRef.current === null) {
     const el = document.createElement('span');
     el.className = 'row-inline-tag-slot';
     el.contentEditable = 'false';
     inlineTagSlotRef.current = el;
   }
-  const inlineTagSlot = isPlainTextRow && hasTags ? inlineTagSlotRef.current : null;
+  const inlineTagSlot = useInlineTagSlot && hasTags ? inlineTagSlotRef.current : null;
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
     : draftContentRevision;
@@ -1702,7 +1706,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       content={draftContent}
       contentRevision={editorContentRevision}
       inlineSlotEl={inlineTagSlot}
-      readOnly={displayed.locked}
+      // A file node's filename is display-only (renamed on the node page), so its row
+      // editor is readOnly — but it stays the row's keyboard anchor (focusableWhenReadOnly),
+      // so arrow/Enter navigation works while typing can't rename the file.
+      readOnly={displayed.locked || Boolean(fileNodeRow)}
+      focusableWhenReadOnly={Boolean(fileNodeRow)}
       completed={Boolean(displayed.completedAt)}
       placeholder={fieldValueDraft
         ? props.fieldValue?.placeholder
@@ -1880,7 +1888,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             rowEditorElement
           )}
           {hasTags && (
-            isPlainTextRow ? (
+            useInlineTagSlot ? (
               // Portal the chips into the editor's inline slot so they sit in the
               // text flow (after the last word, wrapping with it). The slot node
               // lives inside this row's editor DOM, so it stays within the row.

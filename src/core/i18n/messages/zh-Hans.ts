@@ -397,6 +397,7 @@ export const zhHans: PartialMessages = {
       unsupported: '没有可用预览',
       tooLarge: '此文件过大，无法预览。',
       open: '打开',
+      openInBrowser: '在浏览器中打开',
       reveal: '显示',
       copyFile: '拷贝文件',
       addToOutline: '加入大纲',
@@ -681,14 +682,6 @@ commandPalette: {
         command: '命令',
       },
       // 图片块工具栏 + 缺失状态。
-      image: {
-        unavailable: '图片不可用',
-        addCaption: '添加说明',
-        editCaption: '编辑说明',
-        expand: '放大图片',
-        openOriginal: '打开原图',
-        openInBrowser: '在浏览器中打开',
-      },
       // 附件块工具栏 + 元数据标签。
       attachment: {
         unavailable: '附件不可用',

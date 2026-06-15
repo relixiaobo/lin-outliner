@@ -25,7 +25,12 @@ interface FilePreviewBodyProps {
 export function FilePreviewBody({ node, onOpenTarget }: FilePreviewBodyProps) {
   const target = useMemo(
     () => fileNodeTarget(node),
-    [node.assetId, node.type, node.type === 'image' ? node.mediaUrl : undefined, node.content.text],
+    // Intentionally excludes node.content.text: the filename feeds only the target's
+    // `label`, which the node page never renders (its title is the page title). Keying
+    // on it would rebuild the target and re-resolve usePreviewSource — reloading the
+    // PDF/image/media renderer from scratch — on every rename keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node.assetId, node.type, node.type === 'image' ? node.mediaUrl : undefined],
   );
   if (!target) {
     return <FilePreviewShell meta={null} state={{ status: 'missing' }} onOpenTarget={onOpenTarget} />;
@@ -78,6 +83,16 @@ function FilePreviewBodyResolved({
         <CopyIcon size={ICON_SIZE.toolbar} />
       </ButtonControl>
     </>
+  ) : target.kind === 'url' ? (
+    // A remote (mediaUrl-only) image has no stored asset to open/reveal/copy, but it
+    // can still be opened in the browser.
+    <ButtonControl
+      aria-label={labels.openInBrowser}
+      className="file-node-action"
+      onClick={() => void api.openExternalUrl(target.url)}
+    >
+      <OpenIcon size={ICON_SIZE.toolbar} />
+    </ButtonControl>
   ) : null;
 
   return (

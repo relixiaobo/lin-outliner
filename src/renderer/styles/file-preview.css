@@ -130,6 +130,23 @@
   line-height: var(--line-ui-sm);
 }
 
+/* Audio / video players on a media file node's page. */
+.file-preview-media {
+  display: block;
+  margin: var(--space-4) auto;
+}
+
+.file-preview-audio {
+  width: min(480px, 100%);
+}
+
+.file-preview-video {
+  max-width: 100%;
+  max-height: calc(100vh - 160px);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
 .file-preview-markdown {
   max-width: var(--panel-content-max);
   color: var(--text-primary);
@@ -401,6 +418,14 @@
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
 }
 
+/* The card's opaque background sits above the row's selection highlight (painted
+   behind row children at z-index 0), so without this a selected file row reads as
+   unselected. Carry the neutral selection treatment onto the card itself. */
+.row.selected .file-node-card {
+  border-color: color-mix(in srgb, var(--row-selection-border) 34%, transparent);
+  background: var(--row-selection-bg);
+}
+
 .file-node-card-icon {
   width: 20px;
   height: 20px;
@@ -505,12 +530,37 @@
 
 .file-node-image-button img {
   display: block;
+  /* auto overrides the intrinsic width/height attributes (set to reserve layout and
+     avoid load-time shift) so the box scales aspect-correctly under the max bounds,
+     rather than letterboxing inside the raw attribute dimensions. */
+  width: auto;
+  height: auto;
   max-width: min(320px, 100%);
   max-height: 240px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface);
   object-fit: contain;
+}
+
+/* The image could not be loaded (missing asset, or no asset:// handler + byte read
+   also failed): a bounded neutral placeholder that still carries the ⋯ menu. */
+.file-node-image--missing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 160px;
+  min-height: var(--control-size-lg, 40px);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.file-node-image-fallback {
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
 }
 
 .file-node-image-button:focus-visible {
@@ -551,12 +601,13 @@
 }
 
 /* The filename editor still mounts for keyboard parity, but a file row shows no
-   editable filename — hide it visually while keeping it focusable (sr-only). */
+   editable filename — hide it visually while keeping it focusable (sr-only).
+   position: absolute takes the anchor out of flow, so the canonical sr-only
+   `margin: -1px` is redundant here — width/height 1px + clip + overflow hide it. */
 .file-node-keyboard-anchor {
   position: absolute;
   width: 1px;
   height: 1px;
-  margin: -1px;
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;

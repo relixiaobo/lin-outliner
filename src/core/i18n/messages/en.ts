@@ -435,6 +435,7 @@ export const en = {
       unsupported: 'No preview available',
       tooLarge: 'This file is too large to preview.',
       open: 'Open',
+      openInBrowser: 'Open in browser',
       reveal: 'Reveal',
       copyFile: 'Copy file',
       addToOutline: 'Add to outline',
@@ -741,14 +742,6 @@ commandPalette: {
         command: 'Command',
       },
       // Image block toolbar + missing state.
-      image: {
-        unavailable: 'Image unavailable',
-        addCaption: 'Add caption',
-        editCaption: 'Edit caption',
-        expand: 'Expand image',
-        openOriginal: 'Open original',
-        openInBrowser: 'Open in browser',
-      },
       // Attachment block toolbar + metadata labels.
       attachment: {
         unavailable: 'Attachment unavailable',

@@ -173,4 +173,35 @@ test.describe('file attachments', () => {
     await page.locator('.outline-panel-surface.active-panel .panel-page-back-button').click();
     await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
   });
+
+  test('a file node filename is display-only: its row editor is a focusable but read-only keyboard anchor', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('/attachment');
+    await expect(page.getByRole('option', { name: /Attachment/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const attachmentId = (await todayChildren(page)).at(-1)!;
+    const attachmentRow = row(page, attachmentId);
+    const cardName = attachmentRow.locator('.file-node-card-name');
+    await expect(cardName).toContainText('picked-report.pdf');
+
+    // The filename editor mounts hidden as the row's keyboard anchor. It must stay
+    // FOCUSABLE (so arrow nav / Enter still drive the row) — a readOnly ProseMirror is
+    // contenteditable=false and not focusable without the tabindex the anchor adds.
+    const anchor = attachmentRow.locator('.file-node-keyboard-anchor .ProseMirror');
+    await expect(anchor).toHaveCount(1);
+    const focused = await anchor.evaluate((element) => {
+      (element as HTMLElement).focus();
+      return element === document.activeElement;
+    });
+    expect(focused).toBe(true);
+
+    // …but it is read-only: typing on the focused file row neither renames the file
+    // nor fires the slash/tag triggers (the filename is renamed on the node page only).
+    await page.keyboard.type('renamed/#tag');
+    await expect(page.getByRole('listbox', { name: 'Slash commands' })).toHaveCount(0);
+    await expect(cardName).toContainText('picked-report.pdf');
+    await expect(cardName).not.toContainText('renamed');
+  });
 });

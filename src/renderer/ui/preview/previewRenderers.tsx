@@ -94,6 +94,8 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
   { id: 'directory', match: (source) => source.entryKind === 'directory', component: DirectoryPreview },
   { id: 'image', match: isImageSource, component: ImagePreview },
   { id: 'pdf', match: isPdfSource, component: PdfPreview },
+  { id: 'audio', match: isAudioSource, component: AudioPreview },
+  { id: 'video', match: isVideoSource, component: VideoPreview },
   { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
   { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
   { id: 'text', match: isTextSource, component: TextPreview },
@@ -266,6 +268,59 @@ function ImagePreview({ source }: PreviewRendererProps) {
       {state.status === 'error' ? <figcaption>{labels.tooLarge}</figcaption> : null}
     </figure>
   );
+}
+
+/**
+ * Resolve a playable media URL for an audio/video source: prefer the streaming
+ * `asset://` URL (uncapped, Chromium-cached, range-request friendly), falling back
+ * to a bounded byte read → object URL for non-asset sources that have no stream URL.
+ */
+function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; error?: string } {
+  const [state, setState] = useState<{ src: string | null; error?: string }>(
+    source.streamUrl ? { src: source.streamUrl } : { src: null },
+  );
+  useEffect(() => {
+    if (source.streamUrl) {
+      setState({ src: source.streamUrl });
+      return undefined;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setState({ src: null });
+    void api.readPreviewBytes(source.target)
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.bytes) {
+          setState({ src: null, error: result.error });
+          return;
+        }
+        objectUrl = URL.createObjectURL(new Blob([result.bytes], { type: result.mimeType ?? source.mimeType }));
+        setState({ src: objectUrl });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setState({ src: null, error: error instanceof Error ? error.message : undefined });
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [source]);
+  return state;
+}
+
+function AudioPreview({ source }: PreviewRendererProps) {
+  const labels = useT().shell.filePreview;
+  const { src, error } = useMediaSourceUrl(source);
+  if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
+  return <audio className="file-preview-media file-preview-audio" controls preload="metadata" src={src} />;
+}
+
+function VideoPreview({ source }: PreviewRendererProps) {
+  const labels = useT().shell.filePreview;
+  const { src, error } = useMediaSourceUrl(source);
+  if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
+  return <video className="file-preview-media file-preview-video" controls preload="metadata" src={src} />;
 }
 
 function MarkdownPreview({ source }: PreviewRendererProps) {
@@ -620,6 +675,14 @@ export function targetTitleFallback(target: PreviewTarget): string {
 
 function isImageSource(source: PreviewFileSource): boolean {
   return source.mimeType.toLowerCase().startsWith('image/');
+}
+
+function isAudioSource(source: PreviewFileSource): boolean {
+  return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('audio/');
+}
+
+function isVideoSource(source: PreviewFileSource): boolean {
+  return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('video/');
 }
 
 function isPdfSource(source: PreviewFileSource): boolean {

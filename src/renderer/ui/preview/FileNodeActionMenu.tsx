@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
@@ -6,6 +6,7 @@ import { FolderIcon, ICON_SIZE, MoreIcon, ShowIcon } from '../icons';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import type { FileNode } from './fileNode';
 
 interface FileNodeActionMenuProps {
@@ -35,8 +36,13 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
         aria-haspopup="menu"
         aria-label={ta.menuLabel}
         className="file-node-card-menu-trigger"
-        // Don't let the trigger steal focus or select / open the row.
-        onMouseDown={(event) => event.preventDefault()}
+        // Don't let the trigger steal focus or select / open the row, and keep the
+        // mousedown off the document so the dismiss listener doesn't fire on the same
+        // click that toggles the menu.
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         onClick={(event) => {
           event.stopPropagation();
           setOpen((value) => !value);
@@ -85,28 +91,22 @@ function FloatingActionMenu({
     placement: 'bottom-end',
     width: 200,
   });
-
-  useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    }
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [anchorRef, onClose]);
+  // Outside-mousedown + Escape dismissal (the trigger stops its own mousedown, so a
+  // click on it toggles rather than dismisses).
+  useDismissibleOverlay(menuRef, onClose);
 
   return createPortal(
-    <MenuSurface aria-label={ariaLabel} className="node-context-menu" ref={menuRef} role="menu" style={style}>
+    <MenuSurface
+      aria-label={ariaLabel}
+      className="node-context-menu"
+      // The menu is portaled to <body>; without this the document pointerdown handler
+      // would clear the active row selection when the menu (or an item) is clicked.
+      preserveSelection
+      onMouseDown={(event) => event.stopPropagation()}
+      ref={menuRef}
+      role="menu"
+      style={style}
+    >
       <MenuItem
         className="node-context-item"
         icon={<ShowIcon size={ICON_SIZE.menu} />}
