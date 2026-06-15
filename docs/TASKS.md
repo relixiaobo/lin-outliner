@@ -284,11 +284,6 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   `L0 firmware` + `rest`, both cache-marked, within Anthropic's 4-breakpoint budget) rather than
   waiting on engine support for the single-`systemPrompt`-string interface. See Recently completed;
   plan archived `done`. Plan merged (#254).
-- **provider-connection-model-ownership** (P2, `draft`, **GO** 2026-06-15) — clarify who owns
-  a provider connection vs. the model selection on an agent profile (the model-onto-profile
-  seam). Orthogonal to the permission/context work; **rebase-aware of #252** (settings surface
-  moved). Ready for a dev agent to claim. See `docs/plans/provider-connection-model-ownership.md`.
-  Plan merged (#256).
 - **agent-debug-run-grounded** (P2, `draft`, **GO** 2026-06-15) — recast agent debug as a
   **view over the run truth source** (the three run-log families) rather than a parallel debug
   channel. **Shape (b):** **PR-1** re-scope the settle checkpoint to the run log (do this
@@ -724,6 +719,28 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Connection-only providers; agent profile owns model + effort** (cc, PR #267) — completes the
+  `provider-connection-model-ownership` plan (**shape (a)**, one PR). A provider config is now a
+  **connection record only** (`{ providerId; baseUrl?; enabled }`) — `modelId` / `reasoningLevel`
+  dropped from storage and from the `AgentProviderConfigView` / `AgentProviderConfigInput` protocol
+  surface. Model/effort move onto the agent that runs: user/project agents keep
+  `AgentDefinition.model` / `effort`; the read-only built-in assistant gets a **settings-owned
+  overlay** keyed by `agentId` (`builtInAgentProfiles`). Provider-config window → connection-only;
+  `Test connection` validates reachability with an internally chosen probe (first-ranked catalog
+  model → `GET {baseUrl}/models` discovery → honest "no usable model"). Composer **drops the model
+  chip**; a new capability-driven `AgentModelEffortSelector` (Provider → Model → effort) saves the
+  canonical provider-qualified id via one shared `core/agentModelId` parser. **Gate (main):** xhigh
+  `/code-review` surfaced 7 findings (an uncaught custom-endpoint/inherit-model DM+channel throw, a
+  custom provider that collapsed out of the selector, a stale-effort save divergence, a
+  `/models`-only false "connection successful", ladder duplication, a catalog-drift assertion, and an
+  untested built-in overlay round-trip); cc fixed all in the follow-up commit (DM/peer `.catch` →
+  config-error agent, `pendingProvider` keeps custom providers selectable, on-mount effort reconcile,
+  a credentialed completion probe against a discovered model, shared `AGENT_REASONING_LADDER`, and a
+  new `agentBuiltInProfile` round-trip test). Re-verified by main on `e382f297`: typecheck +
+  `test:core` 1016/0 + `test:renderer` 484/0 + `docs:check`. The #263 overlap resolved (it merged
+  first; this merged clean). Design folded into `docs/spec/agent-pi-mono-implementation.md` +
+  `agent-event-log-rendering.md` + `agent-delegation-runtime.md` + `design-system.md`; plan archived
+  `done`.
 - **Agent folder handoff + typed `file_convert` tool** (codex-3, PR #266) — completes the
   `agent-permission-redesign` plan (**Shape (b)**, after PR-1 #252). Settings → Security gains a
   **"hand Tenon a folder"** gesture: the native directory picker records a remembered

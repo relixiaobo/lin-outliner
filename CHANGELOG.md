@@ -560,6 +560,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Providers own the connection, the agent profile owns model + effort (PR #267, cc)** — a provider
+  config is now a **connection record only** (`{ providerId; baseUrl?; enabled }`); `modelId` /
+  `reasoningLevel` are dropped from the stored config and from the `AgentProviderConfigView` /
+  `AgentProviderConfigInput` protocol surface. Which model/effort actually runs is owned by the agent
+  that runs: user/project agents keep `AgentDefinition.model` / `effort`, and the read-only built-in
+  assistant gets a **settings-owned overlay** keyed by `agentId` (`builtInAgentProfiles`, via
+  `getBuiltInAgentProfile` / `setBuiltInAgentProfile`). The provider-config window becomes
+  connection-only (credential/auth, optional Base URL, `Test connection`, Save/remove — no model or
+  thinking-level picker), and `Test connection` validates **reachability** with an internally chosen
+  probe (first-ranked catalog model → `GET {baseUrl}/models` discovery for custom endpoints →
+  honest "endpoint reached but no usable model"). The composer footer **drops the model chip** — a DM
+  talks to an agent identity and a channel to a roster, not to one model; model/provider/effort stay
+  visible only in the Details popover, run/debug, ledger, and the profile editor. A new
+  **capability-driven `AgentModelEffortSelector`** (Provider → Model → effort, effort options derived
+  from the model's `supportedThinkingLevels`) saves the canonical provider-qualified id, parsed by one
+  shared `core/agentModelId` helper so a colon-bearing model id (Bedrock `amazon.nova-lite-v1:0`,
+  Ollama `qwen2:7b`) is never mis-split. Runtime resolution: request override → agent-owned model →
+  catalog first-ranked fallback, coercing effort to the model's supported ladder (default `medium`).
+  Two review rounds (xhigh + follow-up): round 2 fixed a custom-endpoint inherit-model DM/channel turn
+  that threw instead of degrading to a configuration-error agent, a custom (no-catalog) provider that
+  collapsed out of the selector, a stale-effort save divergence, a `/models`-only false "connection
+  successful", and folded the reasoning ladder into a shared `AGENT_REASONING_LADDER`. Implements the
+  `provider-connection-model-ownership` plan (#256, shape (a)). Spec:
+  `docs/spec/agent-pi-mono-implementation.md` + `agent-event-log-rendering.md` +
+  `agent-delegation-runtime.md` + `design-system.md`.
 - **Unified file preview surface (PR #262, codex-2)** — file-node previews and loose
   agent/local-file previews collapse into one `nodeId`-keyed `FilePreviewPanel` with two lifecycle
   states (`loose` → `ingested`) over a single mounted frame: a **read-only filename title** (fixing
