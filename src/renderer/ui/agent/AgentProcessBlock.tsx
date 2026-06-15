@@ -2,14 +2,11 @@ import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentT
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import {
+  ChevronDownIcon,
   ICON_SIZE,
   LoaderIcon,
-  ThinkingIcon,
-  UsedToolsIcon,
-  WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
@@ -19,8 +16,6 @@ import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 
 export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
-
-const PROCESS_STATUS_ICON_SIZE = 13;
 
 // The latest thinking block that has streamed any text — drives the live status
 // line during the thinking phase (before/between tool calls).
@@ -193,15 +188,6 @@ export function AgentProcessBlock({
   const defaultExpanded = surfaceResultlessProcess || liveSegment;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
-  // The spinner appears in exactly one place: the collapsed live header, or — once
-  // expanded — the running tool row inside the timeline. Never both at once.
-  const processIcon = liveCollapsed
-    ? <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
-    : turnFailedWithoutProse
-      ? <WarningIcon size={PROCESS_STATUS_ICON_SIZE} />
-      : toolCalls.length > 0
-        ? <UsedToolsIcon size={PROCESS_STATUS_ICON_SIZE} />
-        : <ThinkingIcon size={PROCESS_STATUS_ICON_SIZE} />;
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
@@ -210,12 +196,14 @@ export function AgentProcessBlock({
         className="agent-process-toggle"
         onClick={() => expandState.toggle(id, expanded)}
       >
-        <AgentDisclosureIndicator
-          className="agent-process-indicator"
-          expanded={expanded}
-          icon={processIcon}
-          statusPersistent={liveCollapsed}
-        />
+        {/* The "Worked for …" header is icon-free (codex-style): the summary text
+            carries the state (it already reads "Worked for 13s" / "Thought · used N
+            tools" / an interrupted label) at the row's left edge, no leading glyph.
+            A single TRAILING slot holds the disclosure chevron, swapped for the live
+            spinner while the turn is actively working and collapsed — one slot, so
+            the title never shifts across the loading→sealed transition (the
+            "labels don't move" rule). Once expanded the spinner moves to the
+            running tool row in the timeline. */}
         <span className="agent-process-title">
           {summarizeProcess({
             firstThinkingText,
@@ -234,6 +222,15 @@ export function AgentProcessBlock({
             thinkingLabel: t.agent.thinking.thinking,
           })}
         </span>
+        {liveCollapsed ? (
+          <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+        ) : (
+          <ChevronDownIcon
+            aria-hidden
+            className={`agent-process-chevron${expanded ? ' is-expanded' : ''}`}
+            size={14}
+          />
+        )}
       </ButtonControl>
       {expanded ? (
         <AgentProcessTimeline

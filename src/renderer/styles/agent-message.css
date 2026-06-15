@@ -214,6 +214,27 @@
   user-select: none;
 }
 
+/* A keyed avatar carries its per-agent identity hue (--avatar-accent, bound by the
+   is-tint-* class below). The hue is the initial; the fill is the same hue mixed
+   toward the live --surface, so it reads as a soft light tint in light mode and a
+   soft dark tint in dark mode (never a baked box that glares against a dark panel)
+   — the theme-aware treatment shared with the tag chips. A hairline ring of the
+   same hue gives the small pill definition without a hard border. */
+.agent-identity-avatar[class*="is-tint-"] {
+  background: color-mix(in srgb, var(--avatar-accent) 18%, var(--surface));
+  color: var(--avatar-accent);
+  box-shadow: var(--avatar-tint-ring);
+}
+
+.agent-identity-avatar.is-tint-0 { --avatar-accent: var(--identity-tint-0); }
+.agent-identity-avatar.is-tint-1 { --avatar-accent: var(--identity-tint-1); }
+.agent-identity-avatar.is-tint-2 { --avatar-accent: var(--identity-tint-2); }
+.agent-identity-avatar.is-tint-3 { --avatar-accent: var(--identity-tint-3); }
+.agent-identity-avatar.is-tint-4 { --avatar-accent: var(--identity-tint-4); }
+.agent-identity-avatar.is-tint-5 { --avatar-accent: var(--identity-tint-5); }
+.agent-identity-avatar.is-tint-6 { --avatar-accent: var(--identity-tint-6); }
+.agent-identity-avatar.is-tint-7 { --avatar-accent: var(--identity-tint-7); }
+
 .agent-identity-avatar.is-xs {
   width: var(--icon-size-md);
   height: var(--icon-size-md);
