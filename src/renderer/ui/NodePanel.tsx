@@ -41,8 +41,6 @@ import {
   selectFocusState,
 } from './focus/focusModel';
 import {
-  ChevronLeftIcon,
-  CloseIcon,
   HashIcon,
   ICON_SIZE,
   FilterIcon,
@@ -56,8 +54,6 @@ import { FieldTypeIcon } from './outliner/fieldTypePresentation';
 import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
-import { OutlinerView } from './outliner/OutlinerView';
-import { FLAT_OUTLINER_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
 import { buildOutlinerRows } from './outliner/row-model';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { ButtonControl } from './primitives/ButtonControl';
@@ -71,6 +67,7 @@ import { fileNodeTitle, isFileNode } from './preview/fileNode';
 import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
+import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from './PanelShared';
 import { useT } from '../i18n/I18nProvider';
 import { referenceSummaryForIndex } from '../state/referenceSummary';
 
@@ -172,15 +169,19 @@ export function NodePanel(props: NodePanelProps) {
   const [titleTrigger, setTitleTrigger] = useState<EditorTrigger | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
-  const [titleDocked, setTitleDocked] = useState(false);
   const [searchQueryOpen, setSearchQueryOpen] = useState(false);
-  const mainPanelRef = useRef<HTMLElement | null>(null);
+  const {
+    mainPanelRef,
+    resetPanelViewport,
+    stickyBreadcrumbRef,
+    titleDocked,
+    titleRowRef,
+    updateTitleDockedState,
+  } = usePanelTitleDock();
   // Always-current ui for row handlers. NodePanel re-renders on every ui change,
   // so this ref stays live even for rows whose per-row memo skips re-render.
   const uiRef = useRef(props.ui);
   uiRef.current = props.ui;
-  const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
-  const titleRowRef = useRef<HTMLDivElement | null>(null);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
@@ -329,32 +330,10 @@ export function NodePanel(props: NodePanelProps) {
     return counts;
   }, [props.index.byId]);
 
-  const updateTitleDockedState = useCallback(() => {
-    const panel = mainPanelRef.current;
-    const breadcrumbEl = stickyBreadcrumbRef.current;
-    const titleRow = titleRowRef.current;
-    if (!panel || !breadcrumbEl || !titleRow) {
-      setTitleDocked(false);
-      return;
-    }
-    const threshold = Math.max(0, titleRow.offsetTop - breadcrumbEl.offsetHeight - 1);
-    const nextDocked = panel.scrollTop >= threshold;
-    setTitleDocked((prev) => (prev === nextDocked ? prev : nextDocked));
-  }, []);
-
   useEffect(() => {
-    const panel = mainPanelRef.current;
-    if (panel) panel.scrollTop = 0;
     setBreadcrumbExpanded(false);
-    setTitleDocked(false);
-    window.requestAnimationFrame(updateTitleDockedState);
-  }, [resolvedRootId, updateTitleDockedState]);
-
-  useEffect(() => {
-    const handleResize = () => updateTitleDockedState();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [updateTitleDockedState]);
+    resetPanelViewport();
+  }, [resolvedRootId, resetPanelViewport]);
 
   const selectHeader = () => {
     props.setUi((prev) => selectFocusState(prev, titleFocusTarget));
@@ -553,21 +532,12 @@ export function NodePanel(props: NodePanelProps) {
   return (
     <main className="main-panel" ref={mainPanelRef} onScroll={updateTitleDockedState}>
       {rootNode && (
-        <div className="panel-sticky-breadcrumb" ref={stickyBreadcrumbRef}>
-          <div className="panel-breadcrumb-leading">
-            {/* Per-pane back only. Forward (and the active-pane back) live in the
-                global window chrome next to the sidebar toggle (Cmd+[ / Cmd+]) —
-                see WindowChrome. */}
-            <IconButton
-              className="panel-page-back-button"
-              disabled={!props.canGoBack}
-              icon={ChevronLeftIcon}
-              iconSize={14}
-              label={t.nodePanel.previousPage}
-              onClick={props.onBack}
-              title={t.nodePanel.previousPage}
-              variant="panel"
-            />
+        <PanelStickyBreadcrumb
+          breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
+          canGoBack={props.canGoBack}
+          closeLabel={t.nodePanel.closePanel}
+          currentTitle={currentPageTitle}
+          origin={(
             <ButtonControl
               aria-label={t.nodePanel.openLibrary}
               className="panel-breadcrumb-origin"
@@ -575,60 +545,43 @@ export function NodePanel(props: NodePanelProps) {
             >
               <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
             </ButtonControl>
-          </div>
-          <nav className="panel-breadcrumb" aria-label={t.nodePanel.breadcrumbAriaLabel}>
-            {breadcrumbNodes.map((node, index) => {
-              const label = node.content.text || t.common.untitled;
-              const showCollapsedMarker = breadcrumb.collapsed && !breadcrumbExpanded && index === 1;
-              return (
-                <span className="panel-breadcrumb-segment" key={node.id}>
-                  <span className="panel-breadcrumb-divider">/</span>
-                  {showCollapsedMarker && (
-                    <>
-                      <ButtonControl
-                        className="panel-breadcrumb-ellipsis"
-                        aria-label={t.nodePanel.showHiddenBreadcrumbLevels({ count: breadcrumb.hiddenNodes.length })}
-                        onClick={() => setBreadcrumbExpanded(true)}
-                        title={t.nodePanel.showHiddenBreadcrumbLevelsTitle}
-                      >
-                        <MoreIcon size={ICON_SIZE.rowGlyph} />
-                      </ButtonControl>
-                      <span className="panel-breadcrumb-divider">/</span>
-                    </>
-                  )}
-                  <ButtonControl
-                    className="panel-breadcrumb-button"
-                    onClick={() => props.onRoot(node.id)}
-                  >
-                    {label}
-                  </ButtonControl>
-                </span>
-              );
-            })}
-            {titleDocked && (
-              <span className="panel-breadcrumb-segment panel-breadcrumb-current">
-                <span className="panel-breadcrumb-divider">/</span>
-                <span className="panel-breadcrumb-current-label" data-current-page-title>
-                  {currentPageTitle}
-                </span>
-              </span>
-            )}
-          </nav>
-          {/* Close lives INSIDE the breadcrumb (the pane's toolbar row): it is a no-drag
-              DOM descendant of the breadcrumb's drag region — the only reliable carve-out
-              on macOS (see breadcrumb.css) — and aligns to the same --panel-content-x as
-              the content on the right. */}
-          {props.showClose && (
-            <IconButton
-              className="panel-breadcrumb-close"
-              icon={CloseIcon}
-              label={t.nodePanel.closePanel}
-              onClick={props.onClose}
-              title={t.nodePanel.closePanel}
-              variant="panel"
-            />
           )}
-        </div>
+          onBack={props.onBack}
+          onClose={props.onClose}
+          previousPageLabel={t.nodePanel.previousPage}
+          showClose={props.showClose}
+          stickyRef={stickyBreadcrumbRef}
+          titleDocked={titleDocked}
+        >
+          {breadcrumbNodes.map((node, index) => {
+            const label = node.content.text || t.common.untitled;
+            const showCollapsedMarker = breadcrumb.collapsed && !breadcrumbExpanded && index === 1;
+            return (
+              <span className="panel-breadcrumb-segment" key={node.id}>
+                <span className="panel-breadcrumb-divider">/</span>
+                {showCollapsedMarker && (
+                  <>
+                    <ButtonControl
+                      className="panel-breadcrumb-ellipsis"
+                      aria-label={t.nodePanel.showHiddenBreadcrumbLevels({ count: breadcrumb.hiddenNodes.length })}
+                      onClick={() => setBreadcrumbExpanded(true)}
+                      title={t.nodePanel.showHiddenBreadcrumbLevelsTitle}
+                    >
+                      <MoreIcon size={ICON_SIZE.rowGlyph} />
+                    </ButtonControl>
+                    <span className="panel-breadcrumb-divider">/</span>
+                  </>
+                )}
+                <ButtonControl
+                  className="panel-breadcrumb-button"
+                  onClick={() => props.onRoot(node.id)}
+                >
+                  {label}
+                </ButtonControl>
+              </span>
+            );
+          })}
+        </PanelStickyBreadcrumb>
       )}
       <div className="panel-inner">
         <header className="panel-header">
@@ -833,61 +786,33 @@ export function NodePanel(props: NodePanelProps) {
           />
         )}
         {showOutliner && (
-          <div
-            className={`outliner ${rootDefinitionKind ? 'definition-template-outliner' : ''}`}
+          <PanelChildrenOutline
+            className={rootDefinitionKind ? 'definition-template-outliner' : undefined}
+            dragId={props.dragId}
+            draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
+            index={props.index}
+            isNodePinned={props.isNodePinned}
+            label={definitionTemplateLabel ? (
+              <div className="definition-template-label">{definitionTemplateLabel}</div>
+            ) : null}
             onDragOver={handleOutlinerDragOver}
             onDrop={handleOutlinerDrop}
-          >
-            {definitionTemplateLabel && (
-              <div className="definition-template-label">{definitionTemplateLabel}</div>
-            )}
-            {FLAT_OUTLINER_ENABLED ? (
-              <OutlinerFlatView
-                panelId={props.panelId}
-                parentId={resolvedRootId}
-                rootId={resolvedRootId}
-                onRoot={props.onRoot}
-                index={props.index}
-                isNodePinned={props.isNodePinned}
-                ui={props.ui}
-                uiRef={uiRef}
-                setUi={props.setUi}
-                run={props.run}
-                onTogglePin={props.onTogglePin}
-                trigger={props.trigger}
-                setTrigger={props.setTrigger}
-                dragId={props.dragId}
-                setDragId={props.setDragId}
-                trailingDraft={showTrailingInput ? 'always' : 'none'}
-                draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
-                scrollParentRef={mainPanelRef}
-              />
-            ) : (
-              <OutlinerView
-                panelId={props.panelId}
-                parentId={resolvedRootId}
-                rootId={resolvedRootId}
-                onRoot={props.onRoot}
-                depth={0}
-                index={props.index}
-                isNodePinned={props.isNodePinned}
-                ui={props.ui}
-                uiRef={uiRef}
-                setUi={props.setUi}
-                run={props.run}
-                onTogglePin={props.onTogglePin}
-                trigger={props.trigger}
-                setTrigger={props.setTrigger}
-                dragId={props.dragId}
-                setDragId={props.setDragId}
-                rows={panelRows}
-                // The body always offers a place to add a node; the trailing draft
-                // (eager materialization) subsumes the old body TrailingInput.
-                trailingDraft={showTrailingInput ? 'always' : 'none'}
-                draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
-              />
-            )}
-          </div>
+            onRoot={props.onRoot}
+            onTogglePin={props.onTogglePin}
+            panelId={props.panelId}
+            parentId={resolvedRootId}
+            rootId={resolvedRootId}
+            rows={panelRows}
+            run={props.run}
+            scrollParentRef={mainPanelRef}
+            setDragId={props.setDragId}
+            setTrigger={props.setTrigger}
+            setUi={props.setUi}
+            trailingDraft={showTrailingInput ? 'always' : 'none'}
+            trigger={props.trigger}
+            ui={props.ui}
+            uiRef={uiRef}
+          />
         )}
         {rootNode && (
           <BacklinksSection

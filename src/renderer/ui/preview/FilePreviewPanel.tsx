@@ -15,14 +15,12 @@ import { useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
-import { AddChildIcon, CheckIcon, ChevronLeftIcon, CloseIcon, FolderIcon, ICON_SIZE, LibraryIcon, LoaderIcon, MoreIcon, OpenIcon } from '../icons';
-import { FLAT_OUTLINER_ENABLED, OutlinerFlatView } from '../outliner/OutlinerFlatView';
-import { OutlinerView } from '../outliner/OutlinerView';
+import { AddChildIcon, CheckIcon, FolderIcon, ICON_SIZE, LibraryIcon, LoaderIcon, MoreIcon, OpenIcon } from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { IconButton } from '../primitives/IconButton';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
+import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from '../PanelShared';
 import { canAddPreviewTargetToOutline, requestAddPreviewTargetToOutline } from './previewIngest';
 import { fileNodeTarget, fileNodeTitle, isFileNode } from './fileNode';
 import {
@@ -87,10 +85,15 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const title = fileRoot ? fileNodeTitle(fileRoot) || previewTitle : previewTitle;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
   const canAdd = canAddPreviewTargetToOutline(props.target);
-  const mainPanelRef = useRef<HTMLElement | null>(null);
-  const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
-  const titleRowRef = useRef<HTMLDivElement | null>(null);
-  const [titleDocked, setTitleDocked] = useState(false);
+  const {
+    mainPanelRef,
+    requestTitleDockMeasure,
+    resetPanelViewport,
+    stickyBreadcrumbRef,
+    titleDocked,
+    titleRowRef,
+    updateTitleDockedState,
+  } = usePanelTitleDock();
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
   const targetKey = useMemo(() => previewTargetFallbackKey(props.target), [props.target]);
   const resetStateRef = useRef<{ nodeId: NodeId | null; targetKey: string } | null>(null);
@@ -108,19 +111,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     void openPreviewSource(state.source);
   }, [state]);
 
-  const updateTitleDockedState = useCallback(() => {
-    const panel = mainPanelRef.current;
-    const breadcrumbEl = stickyBreadcrumbRef.current;
-    const titleRow = titleRowRef.current;
-    if (!panel || !breadcrumbEl || !titleRow) {
-      setTitleDocked(false);
-      return;
-    }
-    const threshold = Math.max(0, titleRow.offsetTop - breadcrumbEl.offsetHeight - 1);
-    const nextDocked = panel.scrollTop >= threshold;
-    setTitleDocked((prev) => (prev === nextDocked ? prev : nextDocked));
-  }, []);
-
   useEffect(() => {
     const previous = resetStateRef.current;
     const next = { nodeId: fileRoot?.id ?? props.nodeId ?? null, targetKey };
@@ -132,23 +122,16 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       && previous.nodeId === null
       && next.nodeId !== null;
     if (!looseToIngested) {
-      const panel = mainPanelRef.current;
-      if (panel) panel.scrollTop = 0;
       setBreadcrumbExpanded(false);
-      setTitleDocked(false);
+      resetPanelViewport();
+      return;
     }
-    window.requestAnimationFrame(updateTitleDockedState);
-  }, [fileRoot?.id, props.nodeId, targetKey, updateTitleDockedState]);
+    requestTitleDockMeasure();
+  }, [fileRoot?.id, props.nodeId, requestTitleDockMeasure, resetPanelViewport, targetKey]);
 
   useEffect(() => {
-    window.requestAnimationFrame(updateTitleDockedState);
-  }, [fileRoot?.id, updateTitleDockedState]);
-
-  useEffect(() => {
-    const handleResize = () => updateTitleDockedState();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [updateTitleDockedState]);
+    requestTitleDockMeasure();
+  }, [fileRoot?.id, requestTitleDockMeasure]);
 
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId || !fileRoot) return;
@@ -200,102 +183,73 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       aria-label={title}
       onScroll={updateTitleDockedState}
     >
-      <div className="panel-sticky-breadcrumb" ref={stickyBreadcrumbRef}>
-        <div className="panel-breadcrumb-leading">
-          <IconButton
-            className="panel-page-back-button"
-            disabled={!props.canGoBack}
-            icon={ChevronLeftIcon}
-            iconSize={14}
-            label={t.nodePanel.previousPage}
-            onClick={props.onBack}
-            title={t.nodePanel.previousPage}
-            variant="panel"
-          />
-          {fileRoot ? (
-            <ButtonControl
-              aria-label={t.nodePanel.openLibrary}
-              className="panel-breadcrumb-origin"
-              onClick={() => props.onRoot(props.index.projection.libraryId)}
-            >
-              <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
-            </ButtonControl>
-          ) : (
-            <span className="panel-breadcrumb-origin file-preview-path-origin" aria-hidden="true">
-              <FolderIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
-            </span>
-          )}
-        </div>
-        <nav className="panel-breadcrumb" aria-label={t.nodePanel.breadcrumbAriaLabel}>
-          {fileRoot ? (
-            <>
-              {ingestedBreadcrumbNodes.map((node, index) => {
-                const label = node.content.text || t.common.untitled;
-                const showCollapsedMarker = ingestedBreadcrumb?.collapsed && !breadcrumbExpanded && index === 1;
-                return (
-                  <span className="panel-breadcrumb-segment" key={node.id}>
-                    <span className="panel-breadcrumb-divider">/</span>
-                    {showCollapsedMarker && (
-                      <>
-                        <ButtonControl
-                          className="panel-breadcrumb-ellipsis"
-                          aria-label={t.nodePanel.showHiddenBreadcrumbLevels({ count: ingestedBreadcrumb.hiddenNodes.length })}
-                          onClick={() => setBreadcrumbExpanded(true)}
-                          title={t.nodePanel.showHiddenBreadcrumbLevelsTitle}
-                        >
-                          <MoreIcon size={ICON_SIZE.rowGlyph} />
-                        </ButtonControl>
-                        <span className="panel-breadcrumb-divider">/</span>
-                      </>
-                    )}
-                    <ButtonControl
-                      className="panel-breadcrumb-button"
-                      onClick={() => props.onRoot(node.id)}
-                    >
-                      {label}
-                    </ButtonControl>
-                  </span>
-                );
-              })}
-              {titleDocked && (
-                <span className="panel-breadcrumb-segment panel-breadcrumb-current">
-                  <span className="panel-breadcrumb-divider">/</span>
-                  <span className="panel-breadcrumb-current-label" data-current-page-title>
-                    {title}
-                  </span>
-                </span>
-              )}
-            </>
-          ) : (
-            <>
-              {looseBreadcrumbSegments.map((segment) => (
-                <span className="panel-breadcrumb-segment file-preview-path-segment" key={segment.key}>
-                  <span className="panel-breadcrumb-divider">/</span>
-                  <span className="file-preview-path-label">{segment.label}</span>
-                </span>
-              ))}
-              {titleDocked && (
-                <span className="panel-breadcrumb-segment panel-breadcrumb-current">
-                  <span className="panel-breadcrumb-divider">/</span>
-                  <span className="panel-breadcrumb-current-label" data-current-page-title>
-                    {title}
-                  </span>
-                </span>
-              )}
-            </>
-          )}
-        </nav>
-        {props.showClose && (
-          <IconButton
-            className="panel-breadcrumb-close"
-            icon={CloseIcon}
-            label={t.nodePanel.closePanel}
-            onClick={props.onClose}
-            title={t.nodePanel.closePanel}
-            variant="panel"
-          />
+      <PanelStickyBreadcrumb
+        breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
+        canGoBack={props.canGoBack}
+        closeLabel={t.nodePanel.closePanel}
+        currentTitle={title}
+        origin={fileRoot ? (
+          <ButtonControl
+            aria-label={t.nodePanel.openLibrary}
+            className="panel-breadcrumb-origin"
+            onClick={() => props.onRoot(props.index.projection.libraryId)}
+          >
+            <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
+          </ButtonControl>
+        ) : (
+          <span className="panel-breadcrumb-origin file-preview-path-origin" aria-hidden="true">
+            <FolderIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
+          </span>
         )}
-      </div>
+        onBack={props.onBack}
+        onClose={props.onClose}
+        previousPageLabel={t.nodePanel.previousPage}
+        showClose={props.showClose}
+        stickyRef={stickyBreadcrumbRef}
+        titleDocked={titleDocked}
+      >
+        {fileRoot ? (
+          <>
+            {ingestedBreadcrumbNodes.map((node, index) => {
+              const label = node.content.text || t.common.untitled;
+              const showCollapsedMarker = ingestedBreadcrumb?.collapsed && !breadcrumbExpanded && index === 1;
+              return (
+                <span className="panel-breadcrumb-segment" key={node.id}>
+                  <span className="panel-breadcrumb-divider">/</span>
+                  {showCollapsedMarker && (
+                    <>
+                      <ButtonControl
+                        className="panel-breadcrumb-ellipsis"
+                        aria-label={t.nodePanel.showHiddenBreadcrumbLevels({ count: ingestedBreadcrumb.hiddenNodes.length })}
+                        onClick={() => setBreadcrumbExpanded(true)}
+                        title={t.nodePanel.showHiddenBreadcrumbLevelsTitle}
+                      >
+                        <MoreIcon size={ICON_SIZE.rowGlyph} />
+                      </ButtonControl>
+                      <span className="panel-breadcrumb-divider">/</span>
+                    </>
+                  )}
+                  <ButtonControl
+                    className="panel-breadcrumb-button"
+                    onClick={() => props.onRoot(node.id)}
+                  >
+                    {label}
+                  </ButtonControl>
+                </span>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {looseBreadcrumbSegments.map((segment) => (
+              <span className="panel-breadcrumb-segment file-preview-path-segment" key={segment.key}>
+                <span className="panel-breadcrumb-divider">/</span>
+                <span className="file-preview-path-label">{segment.label}</span>
+              </span>
+            ))}
+          </>
+        )}
+      </PanelStickyBreadcrumb>
       <div className="panel-inner file-preview-content">
         <header className="panel-header">
           <div className="panel-title-row" ref={titleRowRef}>
@@ -312,50 +266,28 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         />
         {fileRoot && (
           <>
-            <div className="outliner" onDragOver={handleOutlinerDragOver} onDrop={handleOutlinerDrop}>
-              {FLAT_OUTLINER_ENABLED ? (
-                <OutlinerFlatView
-                  panelId={props.panelId}
-                  parentId={fileRoot.id}
-                  rootId={fileRoot.id}
-                  onRoot={props.onRoot}
-                  index={props.index}
-                  isNodePinned={props.isNodePinned}
-                  ui={props.ui}
-                  uiRef={uiRef}
-                  setUi={props.setUi}
-                  run={props.run}
-                  onTogglePin={props.onTogglePin}
-                  trigger={props.trigger}
-                  setTrigger={props.setTrigger}
-                  dragId={props.dragId}
-                  setDragId={props.setDragId}
-                  trailingDraft="always"
-                  scrollParentRef={mainPanelRef}
-                />
-              ) : (
-                <OutlinerView
-                  panelId={props.panelId}
-                  parentId={fileRoot.id}
-                  rootId={fileRoot.id}
-                  onRoot={props.onRoot}
-                  depth={0}
-                  index={props.index}
-                  isNodePinned={props.isNodePinned}
-                  ui={props.ui}
-                  uiRef={uiRef}
-                  setUi={props.setUi}
-                  run={props.run}
-                  onTogglePin={props.onTogglePin}
-                  trigger={props.trigger}
-                  setTrigger={props.setTrigger}
-                  dragId={props.dragId}
-                  setDragId={props.setDragId}
-                  rows={panelRows}
-                  trailingDraft="always"
-                />
-              )}
-            </div>
+            <PanelChildrenOutline
+              dragId={props.dragId}
+              index={props.index}
+              isNodePinned={props.isNodePinned}
+              onDragOver={handleOutlinerDragOver}
+              onDrop={handleOutlinerDrop}
+              onRoot={props.onRoot}
+              onTogglePin={props.onTogglePin}
+              panelId={props.panelId}
+              parentId={fileRoot.id}
+              rootId={fileRoot.id}
+              rows={panelRows}
+              run={props.run}
+              scrollParentRef={mainPanelRef}
+              setDragId={props.setDragId}
+              setTrigger={props.setTrigger}
+              setUi={props.setUi}
+              trailingDraft="always"
+              trigger={props.trigger}
+              ui={props.ui}
+              uiRef={uiRef}
+            />
             <BacklinksSection
               targetId={fileRoot.id}
               index={props.index}
