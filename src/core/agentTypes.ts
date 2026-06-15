@@ -190,15 +190,7 @@ export interface AgentChildRunActionResult {
   instructions?: string;
 }
 
-export type AgentDebugSnapshotSource = 'provider_payload' | 'provider_response' | 'runtime_state';
 export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted' | 'interrupted';
-
-export interface AgentDebugWirePayload {
-  bytes: number;
-  hash: string;
-  json?: string;
-  payloadRef?: AgentPayloadRef;
-}
 
 export type AgentDebugMessagePart =
   | { kind: 'text'; body: string; isReminder?: boolean }
@@ -224,11 +216,6 @@ export interface AgentDebugToolEntry {
   bytes: number;
 }
 
-export interface AgentDebugReminderSection {
-  body: string;
-  bytes: number;
-}
-
 export interface AgentDebugUsage {
   input: number;
   output: number;
@@ -247,50 +234,10 @@ export interface AgentDebugTotals extends AgentDebugUsage {
   rounds: number;
 }
 
-export interface AgentDebugTokenEstimate {
-  systemPrompt: number;
-  tools: number;
-  messages: number;
-  total: number;
-  contextWindow: number | null;
-  usagePercent: number | null;
-}
-
-export interface AgentDebugSnapshot {
-  id: string;
-  source: AgentDebugSnapshotSource;
-  conversationId: string;
-  conversationTitle: string | null;
-  turnIndex: number;
-  queryIndex: number;
-  capturedAt: number;
-  modelId: string;
-  provider: string;
-  status: AgentDebugTurnStatus;
-  wire: AgentDebugWirePayload;
-  systemPrompt: string;
-  systemPromptBytes: number;
-  systemPromptHash: string;
-  reminders: AgentDebugReminderSection[];
-  remindersBytes: number;
-  remindersHash: string;
-  tools: AgentDebugToolEntry[];
-  toolsBytes: number;
-  toolsHash: string;
-  messages: AgentDebugMessageRow[];
-  messageCount: number;
-  messagesBytes: number;
-  tokenEstimate: AgentDebugTokenEstimate;
-  usage: AgentDebugUsage | null;
-  responseParts: AgentDebugMessagePart[];
-  errorMessage: string | null;
-}
-
 // --- Run-grounded debug surface ([[agent-debug-run-grounded]]) -------------
 // A read-only view over the execution tree: conversation -> runs -> rounds ->
 // request / response / tool-exchange, derived from the run ledgers that are
-// already the system's truth. Replaces the seq-matched debug-snapshot model
-// (AgentDebugSnapshot above, removed once the surface is rebuilt).
+// already the system's truth. (Replaced the seq-matched debug-snapshot model.)
 
 export type AgentDebugConversationShape = 'dm' | 'channel';
 

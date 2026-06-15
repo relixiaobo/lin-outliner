@@ -859,7 +859,7 @@ Currently emitted event categories:
 - `conversation.created`
 - `conversation.renamed`
 - `payload.created`
-- `debug.snapshot.created`
+- `debug.run_snapshot.created`
 - `branch.selected`
 - `user_message.created`
 - `user_message.edited`
@@ -1074,8 +1074,8 @@ Current coverage should stay focused on the Tenon-owned boundary:
 - Event schema, replay, active path, branch selection, pi-ai message derivation,
   render projection, event store append ordering, checkpoint replay, corrupt
   checkpoint recovery, index rebuild, payload refs, and large-session behavior.
-- Debug projection restore from `debug.snapshot.created` events plus debug
-  payload refs.
+- Run-grounded debug derivation (`agentDebugView`) from per-run streams + the
+  `debug.run_snapshot.created` per-run system/tools capture.
 - Tool argument validation, local path boundaries, bash timeout/output caps,
   node tool behavior, web tool normalization, and tool-result envelope mapping.
 - Renderer runtime hydration, projection events, branch actions, streaming view

@@ -496,7 +496,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       costCacheReadUsd: 0,
       costCacheWriteUsd: 0,
     };
-    const debugPayloadJson = '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}';
     // Replayed transcript for the delegated run's own ledger — served whole by
     // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
     const childRunTranscriptMessages = [
@@ -563,76 +562,68 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
         },
       ];
-    const debugSnapshot = {
-      id: 'debug-snapshot-1',
-      source: 'provider_payload',
-      conversationId: 'mock-agent-conversation',
-      conversationTitle: 'conversation',
-      turnIndex: 1,
-      queryIndex: 1,
-      capturedAt: 1_800_000_000_100,
-      modelId: 'gpt-5.4',
-      provider: 'openai',
+    // Run-grounded debug view ([[agent-debug-run-grounded]]): the conversation
+    // tree (a single DM turn run) + that run's full detail, served by
+    // agent_debug_view / agent_debug_run.
+    const debugRunSummary = {
+      runId: 'mock-run-1',
+      agentId: MAIN_AGENT_ID,
+      kind: 'turn',
       status: 'completed',
-      wire: {
-        bytes: 86,
-        hash: 'wireabc',
-        payloadRef: {
-          kind: 'payload_ref',
-          id: 'debug-payload-1',
-          storage: 'file',
-          mimeType: 'application/json',
-          byteLength: 86,
-          sha256: 'debug-sha',
-          role: 'debug',
-          summary: 'Provider payload round 1',
-        },
-      },
+      parentRunId: null,
+      parentToolCallId: null,
+      addressedByMessageId: null,
+      triggerMessageId: 'msg-1',
+      provider: 'openai',
+      modelId: 'gpt-5.4',
+      usage: debugUsage,
+      createdAt: 1_800_000_000_000,
+      roundCount: 1,
+    };
+    const debugView = {
+      conversationId: 'mock-agent-conversation',
+      shape: 'dm',
+      members: [MAIN_AGENT_ID],
+      runs: [debugRunSummary],
+      totals: { ...debugUsage, queries: 1, rounds: 1 },
+    };
+    const debugRun = {
+      ...debugRunSummary,
       systemPrompt: 'You are Lin agent.',
-      systemPromptBytes: 18,
-      systemPromptHash: 'sysabc',
-      reminders: [],
-      remindersBytes: 0,
-      remindersHash: '',
       tools: [{
         name: 'node_read',
         description: 'Read node context',
         schema: '{"type":"object","properties":{"nodeId":{"type":"string"}}}',
         bytes: 58,
       }],
-      toolsBytes: 58,
-      toolsHash: 'toolsabc',
-      messages: [{
-        id: 'debug-message-user',
-        role: 'user',
-        summary: 'Summarize current outline.',
-        json: '{"role":"user","content":"Summarize current outline."}',
-        bytes: 56,
-        parts: [{ kind: 'text', body: 'Summarize current outline.' }],
+      rounds: [{
+        index: 0,
+        messageId: 'a1',
+        provider: 'openai',
+        modelId: 'gpt-5.4',
+        api: 'responses',
+        status: 'completed',
+        requestWindow: [{
+          id: 'msg-1',
+          role: 'user',
+          summary: 'user: Summarize current outline.',
+          json: '{"role":"user","content":"Summarize current outline."}',
+          bytes: 56,
+          parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
+        }],
+        responseParts: [
+          { kind: 'thinking', body: 'Identify relevant outline nodes.' },
+          { kind: 'toolCall', name: 'node_read', toolUseId: 'tool-1', body: '{"nodeId":"today"}' },
+          { kind: 'text', body: 'Current outline focuses on UI work.', isReminder: false },
+        ],
+        stopReason: 'stop',
+        usage: debugUsage,
+        toolExchanges: [{ toolCallId: 'tool-1', toolName: 'node_read', args: '{"nodeId":"today"}', result: 'Daily note content.', isError: false }],
+        transport: null,
+        wire: null,
+        startedAt: 1_799_999_999_800,
+        completedAt: 1_800_000_000_000,
       }],
-      messageCount: 1,
-      messagesBytes: 56,
-      tokenEstimate: {
-        systemPrompt: 39,
-        tools: 766,
-        messages: 11000,
-        total: 12000,
-        contextWindow: 256000,
-        usagePercent: 4.7,
-      },
-      usage: debugUsage,
-      responseParts: [
-        { kind: 'thinking', body: 'Identify relevant outline nodes.' },
-        { kind: 'toolCall', name: 'node_read', toolUseId: 'tool-1', body: '{"nodeId":"today"}' },
-        { kind: 'toolResult', toolUseId: 'tool-1', body: 'Daily note content.', isError: false },
-        { kind: 'text', body: 'Current outline focuses on UI work.' },
-      ],
-      errorMessage: null,
-    };
-    const debugTotals = {
-      ...debugUsage,
-      queries: 1,
-      rounds: 1,
     };
     const agentConversations = [
       {
@@ -2045,17 +2036,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (pending) { oauthPending.delete(providerId); pending.reject(new Error('cancelled')); }
           return undefined as T;
         }
-        if (cmd === 'agent_debug_snapshot') {
-          return clone(String(args.conversationId) === 'mock-agent-conversation' ? debugSnapshot : null) as T;
+        if (cmd === 'agent_debug_view') {
+          return clone(String(args.conversationId) === 'mock-agent-conversation'
+            ? debugView
+            : { conversationId: String(args.conversationId), shape: 'dm', members: [], runs: [], totals: { ...debugUsage, queries: 0, rounds: 0 } }) as T;
         }
-        if (cmd === 'agent_debug_history') {
-          return clone(String(args.conversationId) === 'mock-agent-conversation' ? [debugSnapshot] : []) as T;
-        }
-        if (cmd === 'agent_debug_totals') {
-          return clone(debugTotals) as T;
-        }
-        if (cmd === 'agent_debug_payload') {
-          return clone(String(args.payloadId) === 'debug-payload-1' ? debugPayloadJson : null) as T;
+        if (cmd === 'agent_debug_run') {
+          return clone(String(args.runId) === 'mock-run-1' ? debugRun : null) as T;
         }
         if (cmd === 'agent_payload_text') {
           const payloadId = String(args.payloadId);

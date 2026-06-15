@@ -289,7 +289,7 @@ describe('agent runtime skill integration', () => {
     });
   });
 
-  test('keeps manual compact debug capture separate from the next user request', async () => {
+  test('exposes each user request as its own turn run in the debug view (compaction is not a run)', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-debug-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-debug-data-'));
     roots.push(localRoot, dataRoot);
@@ -334,9 +334,13 @@ describe('agent runtime skill integration', () => {
     await runtime.sendMessage(created.conversationId, '/compact');
     await runtime.sendMessage(created.conversationId, 'Second request after manual compact.');
 
-    const payloadSnapshots = (await runtime.debugHistory(created.conversationId))
-      .filter((snapshot) => snapshot.source === 'provider_payload');
-    expect(payloadSnapshots.map((snapshot) => snapshot.queryIndex)).toEqual([1, 2, 3]);
+    // Run-grounded debug view ([[agent-debug-run-grounded]]): each user request is
+    // its own turn run; the manual /compact is a summary call, not a run, so it
+    // never appears as a turn in the tree.
+    const view = await runtime.agentDebugView(created.conversationId);
+    const turnRuns = view.runs.filter((run) => run.kind === 'turn');
+    expect(turnRuns.length).toBe(2);
+    expect(view.totals.rounds).toBeGreaterThanOrEqual(2);
   });
 
   test('runs automatic skill loading through a real pi agent conversation and keeps compact replay short', async () => {

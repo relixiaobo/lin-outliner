@@ -2391,14 +2391,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.updateMemory(String(args.memoryId), String(args.fact ?? ''));
     case 'agent_forget_memory':
       return agentRuntime.forgetMemory(String(args.memoryId));
-    case 'agent_debug_snapshot':
-      return agentRuntime.debugSnapshot(conversationId());
-    case 'agent_debug_history':
-      return agentRuntime.debugHistory(conversationId());
-    case 'agent_debug_totals':
-      return agentRuntime.debugTotals(conversationId());
-    case 'agent_debug_payload':
-      return agentRuntime.debugPayload(conversationId(), String(args.payloadId));
     case 'agent_debug_view':
       return agentRuntime.agentDebugView(conversationId());
     case 'agent_debug_run':

@@ -589,7 +589,6 @@ export type AgentEventType =
   | 'conversation.created'
   | 'conversation.renamed'
   | 'conversation.settings_changed'
-  | 'debug.snapshot.created'
   | 'debug.run_snapshot.created'
   | 'branch.selected'
   | 'member.added'
@@ -679,25 +678,6 @@ export interface ConversationSettingsChangedEvent extends AgentEventBase {
 export interface MemberChangedEvent extends AgentEventBase {
   type: 'member.added' | 'member.removed';
   member: AgentPrincipal;
-}
-
-export interface DebugSnapshotCreatedEvent extends AgentEventBase {
-  type: 'debug.snapshot.created';
-  debugId: string;
-  source: 'provider_payload' | 'provider_response' | 'runtime_state';
-  queryIndex: number;
-  turnIndex: number;
-  payloadRef: AgentPayloadRef;
-  wire: {
-    bytes: number;
-    hash: string;
-  };
-  model: {
-    id: string;
-    provider: string;
-    api?: string;
-    contextWindow?: number | null;
-  };
 }
 
 /** One tool's schema as captured for the run-grounded debug view. */
@@ -1098,7 +1078,6 @@ export type AgentEvent =
   | ConversationRenamedEvent
   | ConversationSettingsChangedEvent
   | MemberChangedEvent
-  | DebugSnapshotCreatedEvent
   | DebugRunSnapshotCreatedEvent
   | BranchSelectedEvent
   | UserMessageCreatedEvent
@@ -1639,7 +1618,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       conversation.updatedAt = event.createdAt;
       return;
     }
-    case 'debug.snapshot.created':
     case 'debug.run_snapshot.created':
       return;
     case 'user_message.created':
