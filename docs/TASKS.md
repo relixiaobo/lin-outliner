@@ -19,60 +19,43 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (authored outline-syntax-unification plan #219; built + shipped by codex as PR #222) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (delegation-record-convergence C1+C2 merged, PR #225) |
-| Codex | `lin-outliner-codex/` | — | idle (outline-syntax-unification merged, PR #222) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (responsive-robustness merged, PR #223) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (main JSON store unification merged, PR #226) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (agent authoring cleanups merged, PR #213) |
+| Claude Code | `lin-outliner-cc/` | — | idle (shipped ungate-contact #236, channel async-bus #231) |
+| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/agent-debug-run-grounded` · `cc-2/conversational-agent-authoring` | `agent-debug-run-grounded` (#264, rebasing after review) + `conversational-agent-authoring` (#251, DRAFT/redirect) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/three-built-in-skills` | `three-built-in-skills` (#270, DRAFT) |
 | Anti | `lin-outliner-anti/` | — | idle |
+
+*(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-06-13):** `plan-status-single-source` (main) — the doc-system fix
-that makes `docs/TASKS.md` the **single source** of plan status/priority (plan files
-become frontmatter-free pure design), adds a `bun run docs:check` guard (C1 link
-integrity · C2 no orphan plans), and reverses the "catalog = frontmatter" rule in
-`AGENTS.md`. See `docs/plans/plan-status-single-source.md`. Otherwise the queue is
-clear for the next batch.
+**In flight (2026-06-16).**
 
-**Next batch — the three recent draft plans (dependency-reviewed 2026-06-13).**
-They are **mutually independent** (three different subsystems — file model / text
-parsing / Channel runtime) and differ only in their remaining PM gate. Highest
-build-readiness first:
+1. **`agent-debug-run-grounded`** (cc-2, PR #264) — recast agent debug as a view over the
+   run truth source. Plan merged (#257); main reviewed the implementation and handed back to
+   cc-2, who is addressing review + rebasing onto current `main` (the branch was ~18 commits
+   behind; conflicts expected on `agentRuntime.ts` / `client.ts` — the runtime-trio hot files).
+   Last open item of the 2026-06-15 portfolio wave.
+2. **`conversational-agent-authoring`** (cc-2, PR #251, DRAFT) — REDIRECT: rewrite to drop the
+   dead "clamp to the creator's grants" framing (grants are a single **global** ledger post-#252;
+   `agent-capability-ceiling` was verified **unnecessary** and dropped — see Backlog § Agent
+   capabilities). Its safety then rests on human ratification of the new agent + the universal
+   floor/`decide(effect)` model. Unblocked once rewritten.
+3. **`three-built-in-skills`** (codex-4, PR #270, DRAFT) — goal-oriented built-in skills on top
+   of the shipped `bundled-built-in-skill-resources` (#269).
 
-1. ~~**`agent-file-model`**~~ — **fully shipped (F1 #224 + F2 #229 + F3 #237 + F4
-   #238)**; see Recently completed. The SET of independent PRs is complete: file
-   outputs render as a previewable local-file chip + inspectable diff (F1), the
-   agent lives in an app-owned workdir with relocated scratch (F2), and the two
-   symmetric bridges — materialize handle→path on reference-in (F3) and ingest
-   path→handle on save-to-outliner (F4) — both landed. Plan archived `done`.
-2. ~~**`channel-async-message-bus`**~~ — **shipped (PR #231, cc)**; see Recently
-   completed. Channel send now returns on acceptance; the `isStreaming`→mode-specific
-   projection split (`dmRunActive`/`channelRunsActive` + per-run `streamingText`)
-   landed with the runtime async bus and the per-run detail live view.
-3. ~~**`outline-syntax-unification`**~~ — **shipped (PR #222, codex)**; see Recently
-   completed. The canonical `core/textSyntax.ts` token grammar now backs all
-   consumers.
-
-**Collision map — no blocking overlap.** `channel-async-message-bus` touches a
-disjoint renderer set. (`outline-syntax-unification` already landed; its only
-shared file `agentNodeToolProjection.ts` `tagLabel → formatTag` is now on `main`,
-so agent-file F3's asset projection rebases on top.) The remaining lanes can run
-in parallel on separate clones.
-
-**Recommended sequence (WIP cap = 2 significant in review):** `agent-file-model`
-(F1 first) + `channel-async-message-bus` (after ratify) as the two significant
-lanes; boarded fast-tracks (`focus-and-selection-polish`, `renderer-state-hygiene`)
-as uncapped background fill. Clone assignment is the PM's dispatch call.
-
-**Just merged:** #217 Agent dock + channel config refinement (codex — child-window
-agent/channel create-edit flows, deep-link fixes, built-in-assistant dispatch +
-deleted-definition recovery, config-window unification), #215 Security Settings IA
-Redesign (codex-3), #216 Compact loaded-skill tool calls (codex-2 + main polish),
-#214 Skillify built-in path fix + skill-write permission simplification (codex-2),
-#208 Tana-style references experience (codex-3), and #213 Agent authoring cleanups
-(codex-4) — see Recently completed.
+**The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
+redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
+prompt composition + Anthropic L0 cache breakpoints (#263), unified file preview (#262),
+connection-only providers + profile-owned model/effort (#267), bundled built-in skill resources
+(#269), the `default-#General-channel` **plan** (#265, feature still `draft`), remember-selected-
+conversation (#261), and the **Channel group-chat render set** (#240 result-first fold · #242
+atomic delivery · #243 avatar+name header · #244 Interrupted verdict · #245 colored identity
+avatars) + `[[file:]]` deliverable markers (#246) + DM child-run process fold (#247). **The agent
+subsystem portfolio is essentially complete;** the active build frontier now shifts to the
+command-surface / performance / UI-quality lanes in the Backlog.
 
 **Known-flaky core test (pre-existing, *not* a #217 regression; fast-track fix
 welcome):** `agentRuntimeSkillsIntegration.test.ts` › *"clears pending permission
@@ -103,13 +86,10 @@ file as small fast-track items when a clone is free):
   Tenon · floats over another app's fullscreen · summon doesn't steal focus · dock
   icon · light+dark).
 
-Everything from the 2026-06-05…06-12 batches has **merged** and is logged under
-**Recently completed**: the agent-program M0–M3 spine (M3 sequence complete —
-#179/#200/#202/#212), the memory-theory realignment (all units #183/#195/#199/#211,
-plan archived `done`), the pre-release architecture sweep (structural-debt list
-closed), and the per-clone feature lanes (#201/#203/#204/#205/#206/#207/#208/#210/#213). Only the
-explicitly **deferred** automatic associative retrieval (memory) remains gated — see
-Backlog § memory. No other change is mid-build.
+The earlier 2026-06-05…06-12 batches (agent-program M0–M3 spine #179/#200/#202/#212, the
+memory-theory realignment #183/#195/#199/#211, the pre-release architecture sweep, the per-clone
+feature lanes) are all merged and logged under **Recently completed**. The one explicitly
+**deferred** item is automatic associative retrieval (memory, data-gated — see Backlog § memory).
 
 ## Backlog
 
@@ -262,19 +242,20 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   grants. **Shape (b)** complete: PR-1 model core (#252) → PR-2 folder-handoff gesture + PR-3 typed
   `file_convert` tool (both shipped in #266). Supersedes the `delegated-scope` draft (#249,
   `superseded`). See Recently completed; plan archived `done`
-  (`docs/plans/archive/agent-permission-redesign.md`). Sibling primitive:
-  **agent-capability-ceiling** (below) bounds what a *delegated* child may do — orthogonal to
-  this global-ledger redesign and sequenced after it.
-- **agent-capability-ceiling** (P2, `draft` — security-sensitive; **no plan file yet**,
-  extracted from the closed `delegated-scope` draft PR #251) — a spawner must not be able to
-  hand a child *more* than it holds. The #252 redesign made grants a single **global ledger**
-  (not per-agent), so the real escalation lever is **not** a grant clamp but the child agent
-  **definition** (`tools` allow-list + `permissionMode: 'trusted'`). The ceiling primitive
-  therefore clamps a delegated child's effective `tools` ⊆ creator's `tools` and forbids a
-  child `permissionMode` stronger than the creator's. **Redirect from #251** (its plan still
-  cites the dead safety-mode/`#250` framing — must be rewritten before it boards as a real
-  PR; left DRAFT). Depends on #252 (shipped) and sequences **after** `agent-context-architecture`
-  PR-1 (shared prompt/identity assembly). Escalate the exact clamp semantics before building.
+  (`docs/plans/archive/agent-permission-redesign.md`). (A proposed `agent-capability-ceiling`
+  sibling was verified **unnecessary** and dropped — see the next entry.)
+- **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary in code, dropped
+  (not built).** The premise — a spawner could hand a child *more* than it holds — does **not
+  hold** after #252/#266: (1) capability is a single **global** model (`decide(effect)` + the
+  non-configurable floor + a global grants ledger), **not per-agent**, so no agent has private
+  authority for a child to exceed; (2) a delegated/authored agent definition's `permissionMode`
+  is **type-locked to `'restricted'`** (`AgentDelegationPermissionMode`, `src/core/types.ts:798`)
+  — it can never be `'trusted'`, so there is no permission-mode escalation lever; (3) `tools`
+  only filters which tools are *wired*, and every call still passes the same global gate. There
+  is therefore no per-agent ceiling to enforce. `conversational-agent-authoring` (#251) safety
+  rests on **human ratification** of the new agent + the **universal floor/`decide(effect)`**
+  model. **Don't re-propose a per-agent clamp.** (Originated as the misframed clamp in the closed
+  `delegated-scope` draft PR #251.)
 - **agent-context-architecture** (P1, **SHIPPED (PR #263, codex, 2026-06-15)** — realizes
   agent-program decision **C3**) — **one** run-context composer layered by **scope × volatility**
   (L0 shared foundation → … → per-turn volatile), replacing the ad-hoc per-call prompt
@@ -284,12 +265,12 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   `L0 firmware` + `rest`, both cache-marked, within Anthropic's 4-breakpoint budget) rather than
   waiting on engine support for the single-`systemPrompt`-string interface. See Recently completed;
   plan archived `done`. Plan merged (#254).
-- **agent-debug-run-grounded** (P2, `draft`, **GO** 2026-06-15) — recast agent debug as a
+- **agent-debug-run-grounded** (P2, `in-progress`) — recast agent debug as a
   **view over the run truth source** (the three run-log families) rather than a parallel debug
-  channel. **Shape (b):** **PR-1** re-scope the settle checkpoint to the run log (do this
-  first) → **PR-2** the debug view over it. Orthogonal to `agent-context-architecture`;
-  **rebase onto #252**. Ready for a dev agent to claim PR-1. See
-  `docs/plans/agent-debug-run-grounded.md`. Plan merged (#257).
+  channel. **Shape (b):** **PR-1** re-scope the settle checkpoint to the run log → **PR-2** the
+  debug view over it. Plan merged (#257); **implementation in flight as PR #264 (cc-2)** —
+  reviewed by main, cc-2 addressing review + rebasing onto current `main` (conflicts expected on
+  `agentRuntime.ts` / `client.ts`). See `docs/plans/agent-debug-run-grounded.md`.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
@@ -322,17 +303,19 @@ data-gated — see § memory above). The remaining *active* build work is the sk
     "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
     contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
     the transport only when consulting agents outside the trust domain.
-- **channel-group-chat-semantics** (P1, agent-program / Channel; SET-level design staged in
-  `tmp/`, folds in with PR 2 — no committed plan yet) — make a Channel read like a group
-  chat: members are told how to communicate (lead with the result, keep intermediate
-  thinking/tool steps private), and the human-side thread renders each member's turn under
-  its identity with a per-agent action bar. Ships as a SET of two independent PRs.
-  - **SHIPPED — PR 1 agent side (PR #239, cc-2, 2026-06-14)** — Channel/DM framing moves
-    from the (now identity-only) member system prompt to a per-turn `<conversation-environment>`
-    reminder keyed off conversation identity (`isCanonicalDmConversationId`), carrying the
-    member roster + the new "only your final message is shared" norm. See Recently completed.
-  - **PR 2 — human-side render fold + per-agent action bar** (next) — the renderer half;
-    commit the SET design as a `docs/plans/` file when this lands.
+- **channel-group-chat-semantics** (P1, agent-program / Channel, **DONE — both PRs shipped**) —
+  a Channel reads like a group chat: members are told how to communicate (lead with the result,
+  keep intermediate thinking/tool steps private), and the human-side thread renders each member's
+  turn under its identity. Shipped as a SET (no committed plan file; fast-tracked across PRs):
+  - **PR 1 — agent side (PR #239, cc-2)** — Channel/DM framing moved from the (now identity-only)
+    member system prompt to a per-turn `<conversation-environment>` reminder keyed off conversation
+    identity (`isCanonicalDmConversationId`), carrying the member roster + the "only your final
+    message is shared" norm.
+  - **PR 2 — human-side render (shipped across #240/#242/#243/#244/#245)** — result-first turn
+    fold for DM + Channel (#240), atomic Channel delivery suppressing in-progress turns (#242),
+    compact avatar+name header over a full-width reply (#243), Interrupted verdict tied to real
+    run status (#244), and colored identity avatars + icon-free "Worked for" header (#245). See
+    Recently completed.
 - **research = a base read-only capability of every agent** (**PM + codex re-decided
   2026-06-14; no separate agent**) — research is *not* a standalone agent; it is a
   foundational read-only investigation capability that **all agents** share (like
@@ -718,6 +701,11 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Plan status single-source** (main, shipped `9d6cd7f`, 2026-06-13) — `docs/TASKS.md` is the
+  single source of plan status/priority; plan files are frontmatter-free pure design; the
+  `bun run docs:check` guard enforces C1 (every plan link resolves) + C2 (no orphan plans).
+  Design folded into `AGENTS.md`; plan archived `done`. *(Recorded 2026-06-16 during a board
+  reconciliation — the work had shipped but its board entry had drifted as "in flight".)*
 - **Bundled built-in skill resources** (codex, PR #269) — completes the
   `bundled-built-in-skill-resources` plan (**shape (a)**, one PR). App-shipped `built-in` skills can
   now use the **standard Agent Skills folder shape** (`SKILL.md` + `references/`/`scripts/`/`assets/`):
