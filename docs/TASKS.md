@@ -641,6 +641,18 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **The agent surfaces a produced file inline — `[[file:…]]` marker emit**
+  (cc, PR #246, fast-track) — closes a scope gap the PM flagged: the agent-file-model only surfaced
+  **text** files (via `file_write`/`file_edit` tool-call chips); a **binary** deliverable (e.g. a `.pptx`,
+  which text-only `file_write` cannot author) had to go through `bash` and then had no message-flow
+  representation, so it just landed on disk as a raw path. Fix = a one-line system-prompt instruction;
+  the parse→render→trusted-gate pipeline already existed end to end (`[[file:…]]` shares the
+  `referenceMarkup` parser with `[[node:…]]`, `AgentMarkdown` renders the chip, clicks resolve via
+  `resolveTrustedLocalFileReference`). The agent was never told to **emit** the marker for its own output;
+  the convention is now bidirectional. Emit policy: deliverables only. Gate (main): typecheck +
+  `test:core` 1024 + `test:renderer` 483 (new `inlineFilePreviewData` href round-trip guard) + focused
+  adversarial review (syntax-matches-parser + security-gate-independence both CONFIRMED clean). Spec:
+  `docs/spec/agent-tool-design.md`.
 - **Colored identity avatars + icon-free "Worked for" header**
   (cc, PR #245, fast-track) — visual polish realizing already-ratified design-system intent. An agent's
   avatar carries a per-identity hue from a dedicated `--identity-tint-0..7` palette (its own decorative

@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **The agent surfaces a produced file inline — `[[file:…]]` marker emit (PR #246, cc)** —
+  closes a scope gap in the agent-file-model: "output a file into the message flow" previously covered
+  only **text** files written via `file_write`/`file_edit` (which render a tool-call file chip). A
+  **binary** deliverable — e.g. a `.pptx`, which the text-only `file_write` cannot author — had to be
+  produced via `bash`, and a bash-written file had no message-flow representation at all (nothing scans
+  the workdir; chips come only from `file_write`/`file_edit` results), so it just landed on disk and the
+  agent could only report a raw path. The fix is a one-line system-prompt instruction, because the rest
+  of the pipeline already existed end to end: `[[file:Label^/path]]` shares the unified `referenceMarkup`
+  parser with `[[node:…]]`; `AgentMarkdown` already turns a file marker into a `#lin-file:` link rendered
+  as an inline `InlineFileReference` chip; and clicking it resolves through the trusted-local-file gate
+  (`resolveTrustedLocalFileReference`) for preview / save / insert-into-outliner. The agent was simply
+  never told to **emit** the marker for its own output — only to parse incoming user attachments; the
+  marker convention is now **bidirectional**. Emit policy: **deliverables only** (a file the user asked
+  for or should review, not an intermediate/scratch file). The trusted gate independently enforces the
+  root boundary, so the prompt cannot widen file access. Spec: `docs/spec/agent-tool-design.md`.
+
 - **Save a conversation file into the outliner — agent-file-model F4 ingest bridge (PR #238, cc)** —
   an "Insert into outliner" icon button on an agent file chip (`file_write`/`file_edit`) promotes the
   agent's working file into a first-class image/attachment node, identical to a user-added one — the
