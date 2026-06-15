@@ -689,6 +689,17 @@ function insertChildRunRows(
   if (runs.length === 0) return rows;
   const result = [...rows];
   for (const run of runs) {
+    // A DM (non-multi-agent) child run spawned by a tool call folds into its
+    // spawning turn's process: the tool-call row renders the child-run summary +
+    // result inline (AgentMessageRow keeps the block; AgentProcessTimeline attaches
+    // the child run), so it gets NO conversation-level boundary row. The boundary
+    // would both DOUBLE it and orphan it on an edit — the boundary is
+    // conversation-anchored, while the turn's tool call is branch-pruned with its
+    // message. The boundary stays for a multi-agent Channel turn (a visible
+    // participant turn, below) and for a parentless command fire (no tool call to
+    // fold into). The renderer's tool-call drop in AgentMessageRow gates on the same
+    // multi-agent flag, in lockstep.
+    if (!multiAgent && run.parentToolCallId) continue;
     // Mirror the parent turn's suppression: a child run spawned by a Channel turn
     // whose run is still LIVE is held back too, so its boundary row never orphans
     // to the transcript end (its anchor message is suppressed) while the parent is

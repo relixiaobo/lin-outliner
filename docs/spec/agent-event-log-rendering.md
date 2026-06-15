@@ -860,19 +860,34 @@ Rules:
   hidden anchor message, with status, processed counts, and memory-change counts
   in `entities.dreams`. Active manual `/dream` runs append a transient
   `activeDream` row until the marker is written.
-- `child_run.*` events become dedicated **child-run boundary rows** in
-  `transcriptRows` (kind `'child-run'`, keyed by run id, backed by
-  `entities.childRuns`). They are the conversation's permanent record of a run —
-  every child run's final result lands inline in its own DM/channel as an
-  expandable summary with a "View full run" link into the full transcript. A
-  parented run (a main-agent spawn, `parentToolCallId` set) anchors right after
-  its tool-result row, else after the assistant message that issued the call, and
-  **suppresses that tool-call block** so the run reads as one boundary, not a tool
-  interaction (an assistant turn left with no other blocks is dropped). A
-  parentless run (a scheduled command fire) is ordered by start time among the
-  messages. A running row shows a live status line and is not yet expandable; once
-  it seals it expands to the result (or error) and the full-run link. These rows
-  live only in `transcriptRows`, never in the active `rows` path.
+- `child_run.*` events back `entities.childRuns` — the conversation's permanent
+  record of a run, whose final result is an expandable summary with a "View full
+  run" link into the full transcript. **Where** that record renders depends on who
+  spawned the run:
+  - **DM fold (non-multi-agent conversation, `parentToolCallId` set).** In a DM a
+    child run is the agent's own implicit behavior — it quietly delegated a slice
+    of the current turn — so it gets **no conversation-level boundary row**.
+    Instead it folds into the spawning turn's process: the `agent` tool-call block
+    is **kept** (not suppressed) and renders the child-run summary inline
+    (`childRunsByParentToolCallId` → "Agent task · {description}", expandable to the
+    result with the same "View full run" link). Because it lives inside the turn's
+    own message, it is turn-anchored and branch-pruned with that message — editing
+    the user message that started the turn removes it, with no orphan left at the
+    transcript end.
+  - **Boundary row (multi-agent Channel, or a parentless run).** A run in a
+    multi-agent channel, or a parentless run (a scheduled command fire), becomes a
+    dedicated **child-run boundary row** in `transcriptRows` (kind `'child-run'`,
+    keyed by run id). A parented channel run anchors right after its tool-result
+    row, else after the assistant message that issued the call, and **suppresses
+    that tool-call block** so the run reads as one boundary, not a tool interaction
+    (an assistant turn left with no other blocks is dropped); a parentless run is
+    ordered by start time among the messages.
+  - The projection skip (no boundary row) and the renderer keep (tool-call block
+    stays) are gated on the **same** multi-agent flag, so a single-agent channel
+    never loses its child run to a dropped-but-not-folded gap. A running row shows a
+    live status line and is not yet expandable; once it seals it expands to the
+    result (or error) and the full-run link. Boundary rows live only in
+    `transcriptRows`, never in the active `rows` path.
 - Long output rows are collapsed by default.
 - **Result-first turn fold (DM and Channel alike).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
