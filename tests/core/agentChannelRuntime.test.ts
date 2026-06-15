@@ -471,7 +471,7 @@ describe('agent channel runtime', () => {
     expect(calls[0]!.serialized).toContain('Reviewer watches for brittle hand-off assumptions.');
     // Hand-off context: the reviewer sees the coordinator's reply as a preambled user block.
     expect(calls[1]!.serialized).toContain('@assistant (agent');
-    expect(calls[1]!.serialized).toContain('Tenon Assistant');
+    expect(calls[1]!.serialized).toContain('Neva');
     expect(calls[1]!.serialized).not.toContain('\\"role\\":\\"assistant\\"');
 
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);

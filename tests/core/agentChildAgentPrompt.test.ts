@@ -26,12 +26,12 @@ describe('buildFreshAgentSystemPrompt', () => {
     expect(prompt).toContain('# Child run rules');
     expect(prompt).toContain('never ask the user questions');
     expect(prompt).toContain('Agent type: researcher');
-    // The shared base capabilities (not a stripped-down persona).
-    expect(prompt).toContain('# Outliner');
-    expect(prompt).toContain('node_edit');
-    expect(prompt).toContain('file_read');
-    // But NOT the main chat agent's user-facing identity / memory framing.
-    expect(prompt).not.toContain('You are Tenon Agent');
+    // The shared base (perception + conduct/safety), not a stripped-down persona.
+    expect(prompt).toContain('# System context');
+    expect(prompt).toContain('# Communication and safety');
+    expect(prompt).toContain('<system-reminder>');
+    // But NOT the main chat agent's user-facing persona / memory framing.
+    expect(prompt).not.toContain('You are Neva');
     expect(prompt).not.toContain('# Memory');
   });
 
@@ -45,6 +45,6 @@ describe('buildFreshAgentSystemPrompt', () => {
     expect(prompt).toContain('# Agent instructions');
     expect(prompt).toContain('Specialize in citation chasing.');
     // Still on top of the shared base.
-    expect(prompt).toContain('# Outliner');
+    expect(prompt).toContain('# System context');
   });
 });

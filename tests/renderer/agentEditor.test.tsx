@@ -40,13 +40,13 @@ function builtIn(): AgentDefinitionView {
   return {
     agentId: 'built-in:tenon:assistant',
     name: 'assistant',
-    displayName: 'Tenon Assistant',
+    displayName: 'Neva',
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/assistant',
     writable: false,
     description: 'Default Tenon assistant profile',
-    body: 'You are Tenon Assistant.',
+    body: 'You are Neva.',
   };
 }
 
@@ -94,7 +94,7 @@ describe('AgentEditor', () => {
     // Same Form editor as a user agent — the Name field exists and is pre-filled;
     // the controls are read-only (the tool toggles render natively disabled).
     const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
-    expect(nameInput?.value).toBe('Tenon Assistant');
+    expect(nameInput?.value).toBe('Neva');
     expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
     // The only action is Duplicate (no Save / Delete).
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(false);

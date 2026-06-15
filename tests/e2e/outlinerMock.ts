@@ -421,14 +421,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       {
         agentId: MAIN_AGENT_ID,
         name: 'assistant',
-        displayName: 'Tenon Assistant',
+        displayName: 'Neva',
         source: 'built-in',
         rootDir: 'built-in',
         agentFile: 'built-in/assistant',
         writable: false,
         description: 'Default Tenon assistant profile.',
         model: 'inherit',
-        body: 'You are Tenon Assistant, the built-in default agent for Tenon.',
+        body: 'You are Neva, the built-in default agent for Tenon.',
         tools: ['*'],
         maxTurns: null,
       },
@@ -634,7 +634,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentConversations = [
       {
         id: ASSISTANT_DM_ID,
-        title: 'Tenon Assistant',
+        title: 'Neva',
         members: [
           { type: 'user', userId: 'local-user' },
           { type: 'agent', agentId: MAIN_AGENT_ID },
@@ -1573,7 +1573,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
     const agentLabel = (agentId: string) => {
-      if (agentId === MAIN_AGENT_ID) return 'Tenon Assistant';
+      if (agentId === MAIN_AGENT_ID) return 'Neva';
       if (agentId === USER_AGENT_ID) return 'self';
       return 'reviewer';
     };
@@ -1593,7 +1593,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             '<self>',
             '- Prefers terse launch-risk notes.',
             '</self>',
-            '<principal name="Tenon Assistant">',
+            '<principal name="Neva">',
             '- Tracks architecture seams for handoffs.',
             '</principal>',
             '</memory>',
@@ -1610,7 +1610,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               sourceRole: 'user',
               sourceActor: { type: 'user', userId: 'local-user' },
             }, {
-              preamble: '@assistant (agent "Tenon Assistant") said:',
+              preamble: '@assistant (agent "Neva") said:',
               text: '@self please review launch risk.',
               sourceMessageId: 'assistant-planning-e2e',
               sourceRole: 'assistant',
@@ -1660,7 +1660,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const title = options.title ?? (
         conversationId === USER_DM_ID ? 'self'
           : conversationId === PLANNING_CHANNEL_ID ? 'Planning Channel'
-            : 'Tenon Assistant'
+            : 'Neva'
       );
       const rows: Array<{ id: string; kind: 'message'; messageId: string }> = [];
       const messages: Record<string, unknown> = {};
@@ -3244,7 +3244,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     {
       principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
       mention: 'assistant',
-      displayName: 'Tenon Assistant',
+      displayName: 'Neva',
       coordinator: true,
     },
   ];

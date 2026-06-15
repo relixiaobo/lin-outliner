@@ -8071,7 +8071,7 @@ function addUsage(left: Usage, right: Usage): Usage {
 function createDefaultAgentIdentity(): AgentIdentityRecord {
   return {
     agentId: 'built-in:tenon:assistant',
-    displayName: 'Tenon Assistant',
+    displayName: 'Neva',
     model: 'unknown',
     systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
     skills: [],

@@ -2,44 +2,50 @@ import { describe, expect, test } from 'bun:test';
 import { LIN_AGENT_SYSTEM_PROMPT, LIN_AGENT_SYSTEM_PROMPT_SECTIONS, LIN_CHILD_AGENT_CORE_PROMPT } from '../../src/main/agentSystemPrompt';
 
 describe('agent system prompt', () => {
-  test('is organized as stable lightweight sections', () => {
+  test('is four always-on sections — identity + perception + memory + conduct, no tool manuals', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT_SECTIONS.map((section) => section.id)).toEqual([
       'identity',
       'system-context',
       'memory',
-      'outliner',
-      'local-tools',
-      'web',
       'communication-and-safety',
     ]);
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('# Outliner');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('# Web');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Working in Lin Outliner');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Lin Outliner');
+    // Tool-operating conventions ride each tool's own description, never the
+    // always-on prompt — these section headers must not come back.
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Outliner');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Web');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Local files and shell');
   });
 
-  test('defines Tenon-specific behavior and tool boundaries', () => {
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Tenon Agent');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('local-first outliner');
+  test('the identity section is the Neva persona, not environment or tool conventions', () => {
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('You are Neva.');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('still water');
+    // Anti-sycophancy is the load-bearing trait of the persona — pin it.
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('agree in order to be agreeable');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Tenon Agent');
+    // Environment ("what Tenon is", structure taste) is NOT identity — it rides
+    // the conversation-start reminder, never the cached identity prompt.
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('second brain');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('atomic nodes');
+    // Tool-call conventions have moved out to the tool descriptions.
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('node_read');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('node_edit');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('%%node:id%%');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('file_read');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('web_search');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('YYYY-MM-DD');
+  });
+
+  test('keeps perception, memory framing, and conduct that hold every turn', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<system-reminder>');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_read');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_edit');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Never show %%node:id%% markers');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[node:Display^id]]');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[node:^id]]');
-    // The agent surfaces a produced deliverable inline as a file chip (file-marker emit).
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[file:Display^/absolute/path]]');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('YYYY-MM-DDTHH:mm');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Do not use ".." for date ranges');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_read');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_edit');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_search');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_fetch');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Use recall for durable facts');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<memory>');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('do not claim you saved, updated, or forgot memory');
+    // Cross-tool behavioral rules lifted out of the deleted tool sections.
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('until the tool result confirms');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Permission-denied or out-of-boundary');
+    // The produced-deliverable output convention stays (file-marker emit).
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[file:Display^/absolute/path]]');
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Use past_chats');
-    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Text attachments are included');
   });
 
   test('keeps dynamic state out of the stable prompt', () => {
@@ -59,26 +65,18 @@ describe('agent system prompt', () => {
       identity: 'main',
       'system-context': 'shared',
       memory: 'main',
-      outliner: 'shared',
-      'local-tools': 'shared',
-      web: 'shared',
       'communication-and-safety': 'shared',
     });
   });
 
-  test('the child run core reuses the shared capabilities but not the main-only framing', () => {
-    // Same tool-convention + safety guidance the main agent carries…
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Outliner');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Web');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Local files and shell');
+  test('the child run core reuses the shared base but not the main-only framing', () => {
+    // The shared perception + conduct/safety guidance the main agent carries…
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# System context');
     expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('# Communication and safety');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('node_edit');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('file_read');
     expect(LIN_CHILD_AGENT_CORE_PROMPT).toContain('<system-reminder>');
-    // …minus the user-facing identity + memory sections.
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('You are Tenon Agent');
+    // …minus the user-facing persona + memory sections.
+    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('You are Neva');
     expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('# Memory');
-    expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('Use recall for durable facts');
     expect(LIN_CHILD_AGENT_CORE_PROMPT).not.toContain('<memory>');
   });
 });

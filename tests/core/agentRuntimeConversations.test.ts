@@ -141,13 +141,13 @@ describe('agent runtime conversations', () => {
     expect(assistant).toMatchObject({
       agentId: ASSISTANT_AGENT_ID,
       name: 'assistant',
-      displayName: 'Tenon Assistant',
+      displayName: 'Neva',
       source: 'built-in',
       rootDir: 'built-in',
       agentFile: 'built-in/assistant',
       description: 'Default Tenon assistant profile.',
     });
-    expect(assistant?.body).toContain('You are Tenon Agent.');
+    expect(assistant?.body).toContain('You are Neva.');
   });
 
   test('previews run-scoped tool output payloads only with the owning run id', async () => {
@@ -235,7 +235,7 @@ describe('agent runtime conversations', () => {
     expect(assistantRow?.id).toBe(first.conversationId);
     expect(selfRow?.id).toMatch(/^lin-agent-dm-/);
     expect(selfRow?.messageCount).toBe(0);
-    expect(state.conversation?.title).toBe('Tenon Assistant');
+    expect(state.conversation?.title).toBe('Neva');
     expect(state.conversation?.goal).toBeUndefined();
     expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
@@ -283,7 +283,7 @@ describe('agent runtime conversations', () => {
 
     await runtime.deleteConversation(channel.conversationId);
     expect((await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId)).toEqual([]);
-    expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).conversation?.title).toBe('Tenon Assistant');
+    expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).conversation?.title).toBe('Neva');
   });
 
   test('Channel creation requires a name and allows optional invited agents', async () => {

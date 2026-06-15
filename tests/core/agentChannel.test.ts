@@ -202,7 +202,7 @@ describe('member events replay', () => {
 
     const options = {
       mainAgentId: MAIN_AGENT_ID,
-      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Tenon Assistant' },
+      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' },
     };
     const shared = deriveAgentPovProjection(state, PEER_AGENT_ID, options);
     const projection = buildAgentRenderProjection(state, {
@@ -339,7 +339,7 @@ describe('§8 POV flatten', () => {
     const state = channelTranscriptState();
     const projection = deriveAgentPovProjection(state, PEER_AGENT_ID, {
       mainAgentId: MAIN_AGENT_ID,
-      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Tenon Assistant' },
+      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' },
     });
     const steps = projection.steps;
 
@@ -353,13 +353,13 @@ describe('§8 POV flatten', () => {
     // toolUse assistant message and the tool result never cross the POV boundary.
     expect(foreign.parts.map((part) => part.record.id)).toEqual(['user-1', 'assistant-main-final']);
     expect(foreign.parts[0]!.preamble).toBe('@user (the human user) said:');
-    expect(foreign.parts[1]!.preamble).toBe('@assistant (agent "Tenon Assistant") said:');
+    expect(foreign.parts[1]!.preamble).toBe('@assistant (agent "Neva") said:');
     expect(own.record.id).toBe('assistant-peer');
   });
 
   test('shared POV projection is the same derivation the direct flatten uses', () => {
     const state = channelTranscriptState();
-    const options = { mainAgentId: MAIN_AGENT_ID, displayNameByAgentId: { [MAIN_AGENT_ID]: 'Tenon Assistant' } };
+    const options = { mainAgentId: MAIN_AGENT_ID, displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' } };
     expect(deriveAgentPovProjection(state, PEER_AGENT_ID, options).steps).toEqual(
       flattenAgentPathForPov(
         getAgentEventRuntimeTranscriptPath(state),
