@@ -335,9 +335,9 @@
 
 /* Channel "working" indicator: an in-flow status row above the composer. The
    collapsed row occupies its own height so it never overlaps the transcript; the
-   detail list is an OPAQUE popover that opens upward on hover/focus. The opaque
-   background is deliberate — the old translucent material let transcript text
-   bleed through the floating list. */
+   detail list is an OPAQUE popover that opens (on click) upward via the anchored-
+   overlay primitive. The opaque background is deliberate — the old translucent
+   material let transcript text bleed through the floating list. */
 .agent-channel-working {
   position: relative;
   display: flex;
@@ -442,15 +442,14 @@
   }
 }
 
+/* Portaled to document.body; position/left/top/width/maxHeight come from
+   useAnchoredOverlay (position: fixed) so the popover flips and clamps to the
+   viewport instead of running off a short window. Opaque --overlay-bg is
+   deliberate: the old translucent material let transcript text bleed through. */
 .agent-channel-working-detail {
-  position: absolute;
-  right: var(--agent-content-x);
-  bottom: calc(100% + var(--space-1));
   z-index: var(--z-popover);
   display: flex;
-  width: min(calc(var(--control-size-xl) * 9), calc(100vw - var(--space-8)));
-  max-width: calc(100vw - var(--space-8));
-  max-height: calc(var(--control-size-xl) * 6);
+  min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
   border-radius: var(--radius-overlay-sm);
@@ -459,6 +458,7 @@
     var(--overlay-shadow-level-1),
     var(--outline-subtle);
   padding: var(--space-2);
+  overflow: hidden;
 }
 
 .agent-channel-working-detail-header {

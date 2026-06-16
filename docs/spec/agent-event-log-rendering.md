@@ -818,7 +818,7 @@ interface AgentRenderProjection {
   dmRunActive: boolean;                              // DM/single-agent run in flight (composer stop/steer)
   dmStreaming: AgentStreamingRenderState | null;     // DM streaming tail (null for multi-agent Channels)
   channelRunsActive: boolean;                        // any addressed Channel run active or pending
-  channelActivityEntries: AgentRenderActivityEntry[]; // per-run Channel activity (overlay + per-run detail view)
+  channelActivityEntries: AgentRenderActivityEntry[]; // per-run Channel activity (in-flow working row + per-run detail view)
   model: Record<string, unknown>;
   thinkingLevel: string;
   pendingToolCallIds: string[];

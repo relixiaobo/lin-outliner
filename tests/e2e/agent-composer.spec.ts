@@ -1940,18 +1940,21 @@ test.describe('agent composer controls', () => {
     // transcript (the old corner pill).
     await expect(working).toHaveCSS('position', 'relative');
     // Collapsed: a generic "working" summary only (≤2 names, ≥3 count); never the
-    // per-agent state, which lives in the detail list.
+    // per-agent state, which lives in the detail menu.
     const trigger = working.locator('.agent-channel-working-trigger');
     await expect(trigger).toContainText('working');
     await expect(trigger).not.toContainText('using tools');
     expect(await working.locator('.agent-channel-working-avatars .agent-identity-avatar').count()).toBe(3);
     await expect(working.locator('.agent-channel-working-overflow')).toHaveText('+4');
-    // The detail popover is closed until hover/focus.
-    await expect(working.locator('.agent-channel-working-detail')).toHaveCount(0);
+    // The detail menu is closed until the trigger is clicked.
+    await expect(page.locator('.agent-channel-working-detail')).toHaveCount(0);
 
-    await working.hover();
-    const detail = working.locator('.agent-channel-working-detail');
+    await trigger.click();
+    // Portaled to <body> and anchored via useAnchoredOverlay (position: fixed) so
+    // it flips/clamps to the viewport instead of running off-screen.
+    const detail = page.locator('.agent-channel-working-detail');
     await expect(detail).toBeVisible();
+    await expect(detail).toHaveCSS('position', 'fixed');
     // Opaque level-1 popover — NOT the old translucent material that let transcript
     // text bleed through it (穿模).
     const detailPaint = await detail.evaluate((node) => {
@@ -1979,12 +1982,11 @@ test.describe('agent composer controls', () => {
     const alphaDot = await alphaItem.locator('.agent-channel-working-item-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
     const betaDot = await betaItem.locator('.agent-channel-working-item-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
     expect(alphaDot).not.toBe(betaDot);
-    const stopAlpha = alphaItem.getByRole('button', { name: 'Stop Alpha' });
+    const stopAlpha = alphaItem.getByRole('menuitem', { name: 'Stop Alpha' });
     await expect(stopAlpha).toBeVisible();
-    await expect(detail.getByRole('button', { name: 'Stop all' })).toBeVisible();
+    await expect(detail.getByRole('menuitem', { name: 'Stop all' })).toBeVisible();
 
-    // Snapshot-freeze: a thinner projection does not reshuffle the list while the
-    // pointer is inside it.
+    // No snapshot freeze: a thinner projection updates the live list in place.
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
@@ -2001,7 +2003,7 @@ test.describe('agent composer controls', () => {
         { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: 'assistant-streaming', addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300 },
       ],
     }, 2);
-    await expect(detail.locator('.agent-channel-working-item')).toHaveCount(7);
+    await expect(detail.locator('.agent-channel-working-item')).toHaveCount(1);
 
     // Per-run stop dispatches agent_stop_run for that run.
     await stopAlpha.click();
@@ -2014,9 +2016,8 @@ test.describe('agent composer controls', () => {
       ));
     }).toBe(true);
 
-    // Drill into the running agent: the per-run detail reuses the DM message row.
-    await working.hover();
-    await working.getByRole('button', { name: 'Alpha using tools' }).click();
+    // Drill into the running agent from the menu (which then closes).
+    await detail.getByRole('menuitem', { name: 'Alpha using tools' }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
     await expect(details).toContainText('Alpha · using tools');
@@ -2093,8 +2094,8 @@ test.describe('agent composer controls', () => {
     // only): it is not in the transcript and the detail view starts closed.
     await expect(page.getByText('Composing a live reply token by token.')).toHaveCount(0);
     // It is surfaced in the per-run detail view, reached from the activity entry.
-    await working.hover();
-    await working.getByRole('button', { name: 'Alpha using tools' }).click();
+    await working.locator('.agent-channel-working-trigger').click();
+    await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: 'Alpha using tools' }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
     await expect(details).toContainText('Composing a live reply token by token.');

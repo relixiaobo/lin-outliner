@@ -1150,18 +1150,26 @@ category history; see "Settings window".)
   body is NOT indented into an avatar gutter, so a Channel reply reclaims that
   horizontal space. (A DM assistant row carries no attribution header, so its
   content is full-width already.)
-- Channel activity is a floating presence marker above the composer, not a
-  transcript row or bottom toolbar. It is out of layout flow, never changes the
-  transcript scroll height or composer position, and defaults to a compact stack
-  of working agent avatars in a liquid-glass capsule with a subtle neutral edge
-  highlight. The collapsed capsule contains only overlapping avatars; if more
-  agents are working than fit, a same-size overlapping `+n` count chip replaces
-  extra visible chrome. Hover or keyboard focus freezes the visible working set
-  until the overlay is dismissed, then expands a small scrollable level-1 overlay
-  with a compact title, stable rows, detail entry points, and stop controls for
-  active runs. Each row keeps avatar + agent name on one line, a quiet state
-  label on the next line with a small semantic status dot, and a fixed trailing
-  stop column when stopping is available. Row hover remains neutral fill.
+- Channel activity is an in-flow presence row directly above the composer, not a
+  transcript row, bottom toolbar, or floating corner pill. It lives in normal
+  layout flow (it occupies its own row, so it never overlaps — 穿模 — the last
+  transcript message), and it is removed entirely when nothing is in flight. The
+  collapsed row is a single quiet trigger: a compact stack of up to three working
+  agent avatars (a same-size overlapping `+n` count chip stands in for any
+  beyond), a generic working summary (≤2 working → names, ≥3 → count; never the
+  per-agent state), and an animated typing-dots affordance. The trigger is a real
+  `menu` button (`aria-haspopup="menu"`, `aria-expanded`, `aria-controls`) and
+  carries no hover layout change (B7) and no system accent (B3/B4). Clicking it
+  opens an opaque level-1 menu — NOT translucent material (so transcript text can
+  never bleed through it) — built on the shared overlay primitives
+  (`MenuSurface` + `useAnchoredOverlay` for viewport flip/clamp +
+  `useMenuKeyboard` for Escape / roving / focus-restore), portaled to `<body>`
+  and anchored to the trigger so it can never run off-screen. The menu shows the
+  live working set (no frozen snapshot), a compact title with a "Stop all" action
+  for runs that can be stopped, and one row per agent: avatar + name on one line,
+  a quiet state label with a small semantic status dot on the next, and a fixed
+  trailing per-run stop column when stopping is available. Clicking a row drills
+  into that run's detail view and closes the menu. Row hover remains neutral fill.
 - Message metadata is quiet by default. Time separators appear only at meaningful
   transcript gaps; right-click opens the native message menu, whose Details action
   shows timestamp, speaker, model, and token usage in a small anchored popover.

@@ -56,21 +56,27 @@ agent compose" — one mental model, not two.
 
 ### Expanded detail — a proper overlay, also fixes 穿模
 
-- On hover **or** focus/click, open an anchored popover built on the existing
-  `MenuSurface` + `useAnchoredOverlay` (same basis as `AnchoredActionMenu`),
-  portaled to `document.body`, `placement: 'top-end'`. Because it is a real
-  level-1 overlay (`--overlay-shadow-level-1`, solid `--overlay-bg`, central
+- **Clicking** the trigger (not hover) toggles an anchored `menu` popover built on
+  the existing `MenuSurface` + `useAnchoredOverlay` + `useMenuKeyboard` (same basis
+  as `AnchoredActionMenu`), portaled to `document.body`, `placement: 'top-end'`.
+  Click — not hover — is the only model that composes cleanly with focus management
+  and lets the menu be *pinned*: a hover-opened menu can't be entered to click a
+  row without a hover-bridge hack, and offers no stable target for Escape /
+  focus-restore. The trigger is a real `menu` button (`aria-haspopup="menu"`,
+  `aria-expanded`, `aria-controls`). Because it is a real level-1 overlay
+  (`--overlay-shadow-level-1`, solid `--overlay-bg`, central
   `prefers-reduced-transparency` opaque fallback) it never bleeds through content
-  the way the current bespoke `opacity`-toggled absolute `div` does.
+  the way the old bespoke `opacity`-toggled absolute `div` did.
 - Each row: avatar + name + **per-agent state** (thinking / using tools /
   received, reusing `activityStates.*`) + a per-run **Stop** button (only rows
   with a `runId` are stoppable).
 - A header **"Stop all"** action stops every running run of the round.
 - Clicking a row body (not Stop) opens that agent's run-details drill-in (existing
-  `setSelectedActivityEntryId`). Keep the snapshot-freeze so the list does not
-  shift while the pointer is inside it.
+  `setSelectedActivityEntryId`) and closes the menu. No snapshot-freeze: the list
+  is the **live** working set (a frozen snapshot would go stale and is unnecessary
+  once the menu is click-pinned rather than hover-tracked).
 - Keyboard accessible for free via `useMenuKeyboard` (roving, Escape, focus
-  restore to the row).
+  restore to the trigger).
 
 ### Optimistic light-up — projection change
 
@@ -173,9 +179,11 @@ So the work is **renderer + CSS + i18n only**.
   `AgentIdentityAvatar`, `IconButton` + `StopIcon`, `AgentMessageRow`.
 - Core/main: **no change expected** (verify the data suffices; only touch
   `AgentRenderActivityEntry` if a field is genuinely missing).
-- Tests: renderer test for the working row (collapsed summary copy 1 / N, expand
-  opens detail, Stop / Stop-all wiring, drill-in renders `AgentMessageRow`);
-  update existing activity-area tests/e2e to the new DOM.
+- Tests: e2e for the working row (collapsed summary copy 1 / N, click opens the
+  menu, opaque/portaled/anchored detail, per-run Stop / Stop-all wiring, live list
+  on re-emit, drill-in opens the per-run live-text detail); update existing
+  activity-area tests/e2e to the new DOM. (Full `AgentMessageRow` drill-in reuse is
+  the follow-up — see Decisions.)
 
 ## Risks
 
@@ -183,15 +191,17 @@ So the work is **renderer + CSS + i18n only**.
   carefully; re-confirm the independence cut is unaffected.
 - **Layout**: the appearing row must not cause a scroll jump; verify
   autoscroll-to-bottom and the empty→working→idle transitions.
-- **Hover overlay + a11y**: must also be focus/click reachable; must not fight the
-  outside-pointer dismissal / snapshot-freeze.
+- **Menu a11y**: click-toggled `menu` with `useMenuKeyboard` (roving, Escape,
+  focus-restore to the trigger); the outside-pointer handler ignores the trigger
+  so a click toggles rather than close-then-reopen.
 - **Visual**: verify light + dark, `prefers-reduced-motion`,
   `prefers-reduced-transparency` (the opaque fallback is the whole point).
-- **Drill-in reuse**: `AgentMessageRow` carries many props/handlers (edit, retry,
-  branch, reply anchors). In the drill-in those should be inert/omitted — render
-  it as a read-only live view, not an editable transcript row. Confirm the
-  streaming entry is still excluded from the main transcript after it is also
-  surfaced to the drill-in.
+- **Drill-in reuse** (follow-up): `AgentMessageRow` carries many props/handlers
+  (edit, retry, branch, reply anchors). In the drill-in those should be
+  inert/omitted — render it as a read-only live view, not an editable transcript
+  row. The follow-up must also confirm the streaming entry is still excluded from
+  the main transcript after it is also surfaced to the drill-in. (This PR keeps the
+  simpler `streamingText` live-text drill-in — see Decisions.)
 
 ## Shape
 
@@ -202,8 +212,13 @@ releases.
 ## Decisions (PM-ratified)
 
 - Collapsed summary: **≤2 agents → names; ≥3 → "{n} agents working"** (count).
-- Detail overlay opens on **hover or focus**; clicking a row body opens the
-  drill-in; snapshot-freeze keeps the list stable while the pointer is inside.
+- Detail menu opens on **click** (a `menu` button toggle), not hover: it is the
+  only model that composes cleanly with focus management and lets the menu be
+  pinned (the earlier hover/focus framing could not be entered to click a row, and
+  gave no stable Escape / focus-restore target). Clicking a row body opens the
+  drill-in and closes the menu; the list is the **live** working set (no
+  snapshot-freeze — a frozen snapshot goes stale and is needless once click-pinned).
+  A hover-peek refinement can come later as a follow-up if desired.
 - Drill-in DM-process reuse: **split to a follow-up PR** (PM-ratified after the
   build surfaced that the in-flight Channel message is suppressed at the
   projection source — see the constraint above). This PR keeps the working
