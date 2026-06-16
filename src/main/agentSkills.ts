@@ -884,6 +884,56 @@ export async function createSlashSkillPrompt(
   return runtime.createSlashPromptMessage(input, invocation, turnReminder);
 }
 
+export async function createUserSkillPrompt(
+  runtime: AgentSkillRuntime,
+  input: string,
+  turnReminder?: string | null,
+): Promise<UserMessage | null> {
+  const slashPrompt = await createSlashSkillPrompt(runtime, input, turnReminder);
+  if (slashPrompt || input.trim().startsWith('/')) return slashPrompt;
+
+  const naturalLanguageSkill = parseNaturalLanguageSkillifyRequest(input);
+  if (!naturalLanguageSkill) return null;
+
+  const invocation = await runtime.invokeSkill({
+    skill: naturalLanguageSkill.skill,
+    args: naturalLanguageSkill.args,
+    trigger: 'slash',
+  });
+  if (!invocation.ok) {
+    return null;
+  }
+  return runtime.createSlashPromptMessage(input, invocation, turnReminder);
+}
+
+export function parseNaturalLanguageSkillifyRequest(input: string): { skill: 'skillify'; args: string } | null {
+  const args = input.trim();
+  if (!args || args.startsWith('/')) return null;
+
+  const normalized = args.toLowerCase().replace(/\s+/g, ' ');
+  if (!/\bskills?\b/.test(normalized) && !/\bskillify\b/.test(normalized)) return null;
+  if (isSkillQuestion(normalized)) return null;
+
+  // Update/fix requires a singular skill artifact; plural "skills" is usually
+  // human capability or ordinary outline content, not a Tenon skill file.
+  const explicitSkillAuthoring = [
+    /^(?:please\s+)?skillify\b/,
+    /\b(?:can you|could you|would you|please|let's)\s+skillify\b/,
+    /\b(?:save|capture|record|preserve)\b.{0,120}\bas\s+(?:a\s+)?(?:reusable\s+)?skill\b/,
+    /\bturn\b.{0,120}\binto\s+(?:a\s+)?(?:reusable\s+)?skill\b/,
+    /\b(?:create|make|write|draft|author)\b.{0,80}\b(?:a|an|the|new|reusable|local|tenon)\s+skill\b(?!\s+(?:tree|check|list|sheet|section|node|outline|matrix|map))/,
+    /\b(?:update|patch|amend|revise|improve|fix|repair)\b.{0,80}\b(?:the|this|that|my|our|existing|current)\s+(?:[a-z0-9-]+\s+){0,4}skill\b(?!\s+(?:tree|check|list|sheet|section|node|outline|matrix|map))/,
+  ].some((pattern) => pattern.test(normalized));
+
+  return explicitSkillAuthoring ? { skill: 'skillify', args } : null;
+}
+
+function isSkillQuestion(input: string): boolean {
+  return /^(?:how|what|why|when|where|which)\b/.test(input)
+    || /\b(?:how do i|how can i|what is|what are|do we have|is there|are there)\b.{0,120}\bskills?\b/.test(input)
+    || /\b(?:tell me about|explain|describe)\b.{0,80}\b(?:skillify|skills?)\b/.test(input);
+}
+
 class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;

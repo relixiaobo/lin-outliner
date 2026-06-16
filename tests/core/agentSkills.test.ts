@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 import {
   AgentSkillRuntime,
   createSlashSkillPrompt,
+  createUserSkillPrompt,
+  parseNaturalLanguageSkillifyRequest,
   parseSkillSlashCommand,
   resolveBuiltInSkillResourceRoot,
   resolveSkillContentTarget,
@@ -576,6 +578,42 @@ describe('agent skills', () => {
     expect(text).not.toContain('built-in/skillify/SKILL.md');
     expect(text).toContain('Skillify v2 workflow');
     expect(text).toContain('born unratified');
+  });
+
+  test('recognizes only explicit natural-language skillify requests', () => {
+    expect(parseNaturalLanguageSkillifyRequest('Save this as a skill')).toEqual({
+      skill: 'skillify',
+      args: 'Save this as a skill',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Please update the importer skill with what we just learned')).toEqual({
+      skill: 'skillify',
+      args: 'Please update the importer skill with what we just learned',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Fix the skill that failed')).toEqual({
+      skill: 'skillify',
+      args: 'Fix the skill that failed',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Skillify this debugging workflow')).toEqual({
+      skill: 'skillify',
+      args: 'Skillify this debugging workflow',
+    });
+    expect(parseNaturalLanguageSkillifyRequest('Do we have a skill for this?')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('How do I save this as a skill?')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('/skillify this workflow')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('update the skills list in my outline')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('I want to improve my coding skills')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('make a skill tree for the game')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('Can you fix the skill check in my D&D sheet?')).toBeNull();
+    expect(parseNaturalLanguageSkillifyRequest('Tell me about skillify / explain skillify to me')).toBeNull();
+  });
+
+  test('natural-language skillify falls back to normal chat when the skill is disabled', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-skillify-disabled-'));
+    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    runtime.updateDisabledSkills(['skillify']);
+
+    await expect(createSlashSkillPrompt(runtime, '/skillify this workflow', null)).rejects.toThrow('currently disabled');
+    expect(await createUserSkillPrompt(runtime, 'Save this workflow as a skill', null)).toBeNull();
   });
 
   test('pins skillify v2 Tenon authoring invariants', async () => {

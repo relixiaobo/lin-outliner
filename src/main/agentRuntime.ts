@@ -175,7 +175,7 @@ import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } fro
 import { buildConversationEnvironmentReminder } from './agentConversationEnvironmentReminder';
 import {
   AgentSkillRuntime,
-  createSlashSkillPrompt,
+  createUserSkillPrompt,
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
@@ -1768,20 +1768,20 @@ export class AgentRuntime {
         outlinerContext,
         userViewReminderText,
       ]);
-      const slashSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
-        ? await createSlashSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
+      const userSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
+        ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
-      const skillListingReminder = slashSkillPrompt || multiAgent
+      const skillListingReminder = userSkillPrompt || multiAgent
         ? null
         : await this.buildSkillListingReminder(conversation);
-      const agentListingReminder = slashSkillPrompt || multiAgent
+      const agentListingReminder = userSkillPrompt || multiAgent
         ? null
         : await this.buildAgentListingReminder(conversation);
       let prompt: UserMessage;
-      if (slashSkillPrompt) {
-        // A slash-skill turn replaces the user prompt wholesale, so referenced
+      if (userSkillPrompt) {
+        // A directly invoked skill turn replaces the user prompt wholesale, so referenced
         // assets are not materialized for it (nothing would surface them).
-        prompt = slashSkillPrompt;
+        prompt = userSkillPrompt;
       } else {
         // Materialize bridge: hand the agent the bytes of any outliner image /
         // attachment node the user explicitly referenced (images also inline for
