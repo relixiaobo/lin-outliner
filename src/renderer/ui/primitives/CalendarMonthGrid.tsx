@@ -16,6 +16,9 @@ interface CalendarMonthGridProps {
   getDayAriaLabel?: (day: CalendarMonthDay) => string;
   getDayClassName?: (day: CalendarMonthDay) => string;
   month: number;
+  // True when the grid can hold more than one selected cell at a time (e.g. a
+  // date range's two endpoints), so it advertises `aria-multiselectable`.
+  multiselectable?: boolean;
   onDayMouseEnter?: (day: CalendarMonthDay) => void;
   onDayMouseLeave?: (day: CalendarMonthDay) => void;
   onMoveMonth: (delta: number) => void;
@@ -32,6 +35,7 @@ export function CalendarMonthGrid({
   getDayAriaLabel,
   getDayClassName,
   month,
+  multiselectable = false,
   onDayMouseEnter,
   onDayMouseLeave,
   onMoveMonth,
@@ -87,10 +91,15 @@ export function CalendarMonthGrid({
     setFocusIso(targetIso);
     pendingFocus.current = true;
     if (!calendarDays.some((day) => day.isoDate === targetIso)) {
-      // One arrow/page step is always within a month of the view, so a single
-      // month shift brings the target into the new window.
-      const before = calendarDays[0]?.isoDate ?? targetIso;
-      onMoveMonth(targetIso < before ? -1 : 1);
+      // Move the view by exactly enough months to land the target in its own
+      // month window. A single arrow step is ±1 month, but Page from an overflow
+      // cell (an adjacent month already shown in this window) can be ±2 — so shift
+      // by the real month difference, never a fixed ±1.
+      const target = parseIsoLocalDate(targetIso);
+      if (target) {
+        const monthDelta = (target.getFullYear() * 12 + target.getMonth()) - (year * 12 + month);
+        if (monthDelta !== 0) onMoveMonth(monthDelta);
+      }
     }
   }
 
@@ -172,6 +181,7 @@ export function CalendarMonthGrid({
         ref={gridRef}
         role="grid"
         aria-label={calendarMonthLabel(year, month, locale)}
+        aria-multiselectable={multiselectable ? true : undefined}
         onKeyDown={handleKeyDown}
       >
         {weeks.map((week, weekIndex) => (

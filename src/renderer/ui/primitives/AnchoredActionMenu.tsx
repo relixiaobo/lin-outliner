@@ -1,4 +1,4 @@
-import { useEffect, useRef, type HTMLAttributes, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { cx } from './cx';
 import { MenuItem } from './MenuItem';
@@ -24,9 +24,9 @@ interface AnchoredActionMenuProps {
   itemClassName?: string;
   itemLabelClassName?: string;
   width?: number;
-  // Extra attributes for the surface (e.g. a `data-` hook a parent's
+  // Extra `data-` attributes for the surface (e.g. a hook a parent's
   // outside-pointer handler tests against). Explicit props below always win.
-  surfaceProps?: HTMLAttributes<HTMLDivElement> & Record<`data-${string}`, string>;
+  surfaceProps?: Record<`data-${string}`, string>;
 }
 
 // A trailing `⋯`-style anchored actions menu. Owns the shared overlay behavior so
@@ -53,6 +53,8 @@ export function AnchoredActionMenu({
     placement: 'bottom-end',
     width,
   });
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const { onKeyDown } = useMenuKeyboard({
     surfaceRef: menuRef,
     onClose,
@@ -60,15 +62,17 @@ export function AnchoredActionMenu({
     getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
   });
 
+  // Subscribe once: an inline `onClose` is a fresh function every render, so
+  // depending on it would tear down and re-add the global listener on each render.
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node;
       if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
+      onCloseRef.current();
     }
     document.addEventListener('pointerdown', handlePointerDown, true);
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [anchorRef, onClose]);
+  }, [anchorRef]);
 
   return createPortal(
     <MenuSurface

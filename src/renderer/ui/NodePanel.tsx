@@ -793,7 +793,9 @@ export function NodePanel(props: NodePanelProps) {
             index={props.index}
             isNodePinned={props.isNodePinned}
             label={definitionTemplateLabel ? (
-              <div className="definition-template-label">{definitionTemplateLabel}</div>
+              // Sits inside role="tree"; presentation keeps it from masquerading
+              // as a tree item.
+              <div className="definition-template-label" role="presentation">{definitionTemplateLabel}</div>
             ) : null}
             onDragOver={handleOutlinerDragOver}
             onDrop={handleOutlinerDrop}

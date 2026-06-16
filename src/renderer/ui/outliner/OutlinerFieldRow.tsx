@@ -740,7 +740,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       hasChildren={false}
       expanded={false}
       level={props.depth + 1}
-      selected={row.selected}
+      selected={row.rowSelected}
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName([
         'field-row-inline',

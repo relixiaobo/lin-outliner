@@ -36,6 +36,11 @@ interface UseMenuKeyboardOptions {
   // The element to return focus to on close (the trigger). Falls back to whatever
   // held focus when the overlay opened. Captured by value at open time.
   getRestoreTarget?: () => HTMLElement | null;
+  // Identity of the surface's *content*. For an always-mounted surface that swaps
+  // its body in place (a menu's Back, a toolbar switching section) focus may end
+  // up outside the surface after the swap; bumping this re-runs focus-in so Escape
+  // and roving keep working. Restore (close) is unaffected — it keys on `active`.
+  focusKey?: string | number;
 }
 
 // Pure roving-navigation resolver: given the pressed key, the focused item index
@@ -68,6 +73,7 @@ export function useMenuKeyboard({
   kind,
   active = true,
   getRestoreTarget,
+  focusKey,
 }: UseMenuKeyboardOptions): { onKeyDown: (event: KeyboardEvent<HTMLElement>) => void } {
   const onCloseRef = useRef(onClose);
   const kindRef = useRef(kind);
@@ -76,16 +82,31 @@ export function useMenuKeyboard({
   kindRef.current = kind;
   getRestoreTargetRef.current = getRestoreTarget;
 
+  // Restore lifecycle: capture the pre-open focus on open, return focus to the
+  // trigger (or that fallback) on close. Keyed on `active` only, so an in-place
+  // content swap (`focusKey`) never triggers a spurious restore-then-refocus.
   useEffect(() => {
     if (!active) return undefined;
+    const restoreFallback = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => {
+      const explicit = getRestoreTargetRef.current?.() ?? null;
+      const restoreTarget = explicit && document.contains(explicit) ? explicit : restoreFallback;
+      if (restoreTarget && document.contains(restoreTarget)) {
+        restoreTarget.focus({ preventScroll: true });
+      }
+    };
+  }, [active]);
+
+  // Focus-in: pull focus into the surface on open and again whenever `focusKey`
+  // changes (content swapped in place), unless a child already holds it.
+  useEffect(() => {
+    if (!active) return;
     const surface = surfaceRef.current;
-    if (!surface) return undefined;
+    if (!surface) return;
     // A bare div surface must be programmatically focusable to receive focus-in
     // (and to be the focus-trap fallback) without forcing every call site to wire
     // `tabIndex={-1}`.
     if (!surface.hasAttribute('tabindex')) surface.setAttribute('tabindex', '-1');
-
-    const restoreFallback = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     // Respect a child that already grabbed focus (e.g. an `autoFocus` input in a
     // dialog-kind popover); only move focus in when it sits outside the surface.
@@ -95,16 +116,8 @@ export function useMenuKeyboard({
         : surface;
       target.focus({ preventScroll: true });
     }
-
-    return () => {
-      const explicit = getRestoreTargetRef.current?.() ?? null;
-      const restoreTarget = explicit && document.contains(explicit) ? explicit : restoreFallback;
-      if (restoreTarget && document.contains(restoreTarget)) {
-        restoreTarget.focus({ preventScroll: true });
-      }
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, focusKey]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (isImeComposingEvent(event)) return;

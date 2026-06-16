@@ -353,6 +353,7 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
       <CalendarMonthGrid
         getDayClassName={calendarDayClassName}
         month={viewMonth}
+        multiselectable={includeEnd}
         onDayMouseEnter={(day) => setHoveredDate(day.isoDate)}
         onDayMouseLeave={() => setHoveredDate('')}
         onMoveMonth={moveMonth}

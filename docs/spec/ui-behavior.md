@@ -436,9 +436,20 @@ and popovers built on `useAnchoredOverlay` (not the modal `Dialog`) opt into one
 shared hook that mirrors what `Dialog` already does for modals: focus-in on open,
 focus-restore to the trigger on close, Escape-to-close scoped to the surface, and
 either roving Arrow/Home/End navigation (`kind: 'menu'`) or a Tab focus-trap
-(`kind: 'dialog'`). It is IME-guarded (`isImeComposingEvent`) so CJK composition
+(`kind: 'dialog'`). Focus-in and focus-restore are **separate effects**: restore
+keys on the open↔close transition only, while focus-in also re-runs whenever the
+optional `focusKey` changes — the identity of the surface's *content*. A surface
+that swaps its body in place (a menu's Back button, the view toolbar switching
+section) bumps `focusKey` so focus is pulled back into the surface after the swap;
+without it, focus would be left on an unmounted child or the pill outside the
+surface and Escape/roving would go dead. The restore target is captured into a ref
+at open time, never read live at close (by then the open-section state is already
+cleared). It is IME-guarded (`isImeComposingEvent`) so CJK composition
 keystrokes are never hijacked, and it makes the surface programmatically focusable
-(`tabindex=-1`) without per-call wiring. Escape ownership moves to this hook, so
+(`tabindex=-1`) without per-call wiring. The roving index math is one pure
+`resolveMenuNavigation(key, index, count)` reused by the menu kind, the
+`RadioOptionGroup`, and the child-run tablist (which maps Left/Right onto it).
+Escape ownership moves to this hook, so
 `useDismissibleOverlay` is invoked pointer-only (`{ escape: false }`) where the
 two compose. Adopted by: `NodeContextMenu` (menu in `main` mode, dialog in
 tag/move submodes), `SettingsRowMenu`, the agent conversation row menu and the
@@ -451,21 +462,35 @@ Surfaces already on `Dialog` (Command Palette, Confirm, Launcher) are unchanged.
 **Outliner tree** (`PanelChildrenOutline`, `OutlinerRowShell`). The outline
 container is `role="tree"` + `aria-multiselectable="true"` + `aria-label`. Each
 row wrapper (`.row-wrap`) is `role="treeitem"` carrying `aria-level` (1-based
-depth), `aria-selected`, and `aria-expanded` **only when the row has children**
-(leaf rows omit it so no phantom toggle is announced). The two virtualization
-wrappers (`.outliner-flat`, `.outliner-flat-row`) are `role="presentation"` so the
-windowed treeitems read as direct tree descendants. This is additive structure —
-no tabindex is added to the tree (focus lives in the contentEditable model), and
-`useWorkspaceKeyboard` is untouched. `aria-setsize`/`aria-posinset` under
-virtualization are a deferred follow-up.
+*panel-relative* depth — the drilled-in root is level 1, by design), `aria-selected`,
+and `aria-expanded` **only when the row has children** (leaf rows omit it so no
+phantom toggle is announced). `aria-selected` tracks the **visible** selection
+(the `.selected` class), so a ref-click-selected row — which paints
+`.ref-click-selected`, not `.selected` — reads as unselected, matching what is seen.
+A row's nested children render inside a `role="group"` (the `.children` wrapper),
+completing the tree nesting (treeitem → group → treeitems). Non-treeitem content
+that sits inside the tree (the definition-template label banner, the empty-state
+placeholder) is `role="presentation"` so only rows are announced as tree items; the
+empty state's loading variant stays a `role="status"` live region. The two
+virtualization wrappers (`.outliner-flat`, `.outliner-flat-row`) are
+`role="presentation"` so the windowed treeitems read as direct tree descendants.
+This is additive structure — no tabindex is added to the tree (focus lives in the
+contentEditable model), and `useWorkspaceKeyboard` is untouched.
+`aria-setsize`/`aria-posinset` under virtualization, and whether field/preview rows
+should stay `treeitem`s or become `role="none"`, are deferred follow-ups for the
+live-screen-reader gate.
 
 **Calendar month grid** (`primitives/CalendarMonthGrid.tsx`). `role="grid"` with
 one `role="row"` per week and `role="gridcell"` day cells. Exactly one day is a
 tab stop (roving tabindex: the selected day, else today, else the first in-month
 day); Arrow keys move ±1 day / ±1 week, `Home`/`End` to week ends, and
-`PageUp`/`PageDown` by month, calling `onMoveMonth` to cross month boundaries when
-navigation runs off the rendered window. The selected day(s) carry
-`aria-selected`, the today cell `aria-current="date"`.
+`PageUp`/`PageDown` by month. When a keyboard move lands outside the rendered
+window the grid calls `onMoveMonth` with the **exact month difference** between the
+target and the current view (not a fixed ±1), so a Page step from an overflow cell
+already showing an adjacent month still lands the target in view. The grid is
+`aria-multiselectable` only when it can hold more than one selected cell (a date
+range's two endpoints). The selected day(s) carry `aria-selected`, the today cell
+`aria-current="date"`.
 
 **Corrected role mappings** (announced role now matches the control):
 - Interactive `DoneCheckbox` → `role="checkbox"` + `aria-checked` (matching its

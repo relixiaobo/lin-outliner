@@ -210,6 +210,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     surfaceRef: menuRef,
     onClose: props.onClose,
     kind: mode === 'main' ? 'menu' : 'dialog',
+    // Switching submode swaps the body in place; without this, returning to `main`
+    // (the Back button unmounts) drops focus to the body and kills Escape/roving.
+    focusKey: mode,
   });
 
   const applyExistingTag = (tagId: NodeId) => {

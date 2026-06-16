@@ -23,6 +23,8 @@ import {
   LoaderIcon,
   WarningIcon,
 } from '../icons';
+import { resolveMenuNavigation } from '../primitives/useMenuKeyboard';
+import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { IconButton } from '../primitives/IconButton';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -449,14 +451,14 @@ export function AgentChildRunDetailsPanel({
   // Roving tab navigation (automatic activation): Arrow/Home/End move + select the
   // active tab, matching the ARIA tabs pattern.
   function onTabsKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (isImeComposingEvent(event)) return;
     const keys = tabs.map(([tab]) => tab);
     const index = keys.indexOf(activeTab);
-    let next = index;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % keys.length;
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + keys.length) % keys.length;
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = keys.length - 1;
-    else return;
+    // A horizontal tablist also takes Left/Right; map them onto the shared
+    // vertical resolver so the wrap math lives in one place.
+    const key = event.key === 'ArrowRight' ? 'ArrowDown' : event.key === 'ArrowLeft' ? 'ArrowUp' : event.key;
+    const next = resolveMenuNavigation(key, index, keys.length);
+    if (next === null) return;
     event.preventDefault();
     setActiveTab(keys[next]!);
     tablistRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();

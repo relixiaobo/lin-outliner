@@ -12,7 +12,9 @@ interface EmptyStateProps {
   icon?: AppIcon;
   iconClassName?: string;
   loading?: boolean;
-  role?: 'status' | 'alert';
+  // 'presentation' lets a host (e.g. an empty outliner inside role="tree") keep
+  // the placeholder from being announced as structural content.
+  role?: 'status' | 'alert' | 'presentation';
   size?: FeedbackSize;
   title: ReactNode;
 }

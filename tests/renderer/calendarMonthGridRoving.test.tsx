@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 // May 2026, today the 15th, the 20th selected.
-function renderGrid(): Rendered {
+function renderGrid(opts: { multiselectable?: boolean } = {}): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   const container = document.getElementById('root');
@@ -31,6 +31,7 @@ function renderGrid(): Rendered {
       <CalendarMonthGrid
         year={2026}
         month={4}
+        multiselectable={opts.multiselectable}
         todayIsoDate="2026-05-15"
         selectedIsoDates={['2026-05-20']}
         onMoveMonth={(delta) => moves.push(delta)}
@@ -77,6 +78,22 @@ describe('CalendarMonthGrid ARIA + roving', () => {
     const r = renderGrid();
     pressKey(r, '2026-05-20', 'PageUp');
     expect(r.moves).toEqual([-1]);
+  });
+
+  test('Page from an overflow cell shifts to the target month, not a fixed ±1', () => {
+    // June 1 shows as an overflow cell in May's grid; PageDown targets July 1,
+    // two months from the May view. The shift must be 2 (so July renders and keeps
+    // the roving cell), not a fixed 1 that would strand focus on a stale grid.
+    const r = renderGrid();
+    pressKey(r, '2026-06-01', 'PageDown');
+    expect(r.moves).toEqual([2]);
+  });
+
+  test('advertises aria-multiselectable only when the grid can hold multiple', () => {
+    expect(renderGrid().document.querySelector('.calendar-month-grid')?.getAttribute('aria-multiselectable'))
+      .toBeNull();
+    expect(renderGrid({ multiselectable: true }).document.querySelector('.calendar-month-grid')
+      ?.getAttribute('aria-multiselectable')).toBe('true');
   });
 });
 

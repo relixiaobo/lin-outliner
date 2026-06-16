@@ -23,12 +23,16 @@ export function OutlinerEmptyState({
   const t = useT();
   if (!rootLevel || !parent || childCount > 0) return null;
 
+  // The outliner is a role="tree"; its empty-state placeholder is not a tree item,
+  // so it renders as presentation (the loading variant stays a `status` live
+  // region so refreshes are announced).
   if (parentId === projection.recentsId) {
     return (
       <EmptyState
         body={t.outliner.emptyState.recentsBody}
         className="outliner-empty-state"
         icon={RecentsIcon}
+        role="presentation"
         title={t.outliner.emptyState.recentsTitle}
       />
     );
@@ -40,6 +44,7 @@ export function OutlinerEmptyState({
         body={t.outliner.emptyState.trashBody}
         className="outliner-empty-state"
         icon={TrashIcon}
+        role="presentation"
         title={t.outliner.emptyState.trashTitle}
       />
     );
@@ -59,6 +64,7 @@ export function OutlinerEmptyState({
         body={t.outliner.emptyState.searchBody}
         className="outliner-empty-state"
         icon={SearchIcon}
+        role="presentation"
         title={t.outliner.emptyState.searchTitle}
       />
     );

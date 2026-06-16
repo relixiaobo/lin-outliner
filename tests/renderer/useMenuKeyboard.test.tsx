@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
@@ -112,7 +112,34 @@ describe('useMenuKeyboard', () => {
     expect(closes).toEqual([]);
     expect(event.defaultPrevented).toBe(false);
   });
+
+  test('a focusKey change re-pulls focus into the surface (in-place content swap)', () => {
+    // Models a menu that swaps its body in place (NodeContextMenu Back, ViewToolbar
+    // section switch): focus can end up outside the surface, so bumping focusKey
+    // must re-run focus-in or Escape/roving would go dead.
+    const rendered = render(<FocusKeyFixture />);
+    const focused = spyFocus(rendered);
+    // The initial focus-in ran before the spy was installed; bump focusKey now.
+    dispatchClick(rendered, 'bump');
+    expect(focused.at(-1)).toBe(0);
+  });
 });
+
+function FocusKeyFixture() {
+  const [key, setKey] = useState('a');
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const { onKeyDown } = useMenuKeyboard({ surfaceRef, onClose: () => undefined, kind: 'menu', focusKey: key });
+  return (
+    <>
+      <button data-testid="bump" onClick={() => setKey((value) => `${value}x`)} type="button">bump</button>
+      <div ref={surfaceRef} role="menu" onKeyDown={onKeyDown} data-testid="surface">
+        {[0, 1, 2].map((i) => (
+          <button key={i} data-index={i} type="button">item {i}</button>
+        ))}
+      </div>
+    </>
+  );
+}
 
 function render(node: React.ReactElement): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -149,6 +176,14 @@ function dispatchKey(rendered: Rendered, testId: string, key: string): Event & {
     element.dispatchEvent(event);
   });
   return event;
+}
+
+function dispatchClick(rendered: Rendered, testId: string) {
+  const element = rendered.document.querySelector(`[data-testid="${testId}"]`);
+  if (!element) throw new Error(`Missing element: ${testId}`);
+  act(() => {
+    element.dispatchEvent(new rendered.window.Event('click', { bubbles: true, cancelable: true }));
+  });
 }
 
 function installDomGlobals(window: Window) {

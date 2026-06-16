@@ -39,7 +39,7 @@ import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
-import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
+import { resolveMenuNavigation, useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
 import { collectViewFieldChoices, type ViewConfig } from './row-model';
 import {
@@ -257,14 +257,28 @@ export function ViewToolbar({
     };
   }, [open]);
 
+  // The pill to restore focus to on close. Captured when a section opens, because
+  // by the time `useMenuKeyboard`'s cleanup runs `open` is already null — reading
+  // it live would always yield no target.
+  const restoreTargetRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (open) restoreTargetRef.current = buttonRefs[open].current;
+    // buttonRefs is a fresh literal each render but its members are stable refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   // Focus-in / trap / Escape-to-close / focus-restore to the toolbar pill that
   // opened the popover (its content is heterogeneous form controls → dialog kind).
+  // `focusKey: open` re-pulls focus into the surface when the user switches
+  // section by clicking a different pill (focus would otherwise stay on the pill,
+  // outside the surface, so Escape/Tab-trap would not fire).
   const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
     surfaceRef: menuRef,
     onClose: () => setOpen(null),
     kind: 'dialog',
     active: open !== null,
-    getRestoreTarget: () => (open ? buttonRefs[open].current : null),
+    getRestoreTarget: () => restoreTargetRef.current,
+    focusKey: open ?? '',
   });
 
   const toggle = (section: ToolbarSection) => {
@@ -893,18 +907,16 @@ function RadioOptionGroup({
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (isImeComposingEvent(event)) return;
-    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
-    const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft';
-    if (!forward && !backward) return;
+    // Horizontal or vertical arrows both move; map onto the shared vertical
+    // resolver so the wrap math lives in one place (resolveMenuNavigation).
+    const key = event.key === 'ArrowRight' ? 'ArrowDown' : event.key === 'ArrowLeft' ? 'ArrowUp' : event.key;
+    if (key !== 'ArrowDown' && key !== 'ArrowUp') return;
     const group = ref.current;
     if (!group) return;
     const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])')];
-    if (radios.length === 0) return;
+    const nextIndex = resolveMenuNavigation(key, radios.indexOf(document.activeElement as HTMLElement), radios.length);
+    if (nextIndex === null) return;
     event.preventDefault();
-    const currentIndex = radios.indexOf(document.activeElement as HTMLElement);
-    const nextIndex = forward
-      ? (currentIndex + 1) % radios.length
-      : (currentIndex <= 0 ? radios.length - 1 : currentIndex - 1);
     // Moving selection follows focus (radio convention); the click re-renders the
     // group, which shifts the declarative tab stop onto the newly-selected option.
     const next = radios[nextIndex];
