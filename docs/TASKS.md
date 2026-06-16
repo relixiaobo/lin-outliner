@@ -93,11 +93,11 @@ has an entry here, and its status/priority live only here, never in the plan fil
 Items with no `docs/plans/*.md` file are marked *(no plan file)*. All owners are
 unassigned — future dev is not pre-committed to any clone.
 
-**Top of queue (build-ready P1s):** `agent-file-model` (4 decisions PM-ratified
-2026-06-13 — **no gate left**; F1, the reported file-output-render bug, is
-shippable today on the merged file-preview PR-1 #210) and `unified-command-surface`
-(design ratified, retrieval dep shipped — needs a dev build one-pager first). Two
-further draft plans sit one PM decision away — see *Next batch* in In progress. The agent P1s (`agent-conversation-model`,
+**Top of queue (build-ready):** `unified-command-surface` (P2, design ratified, retrieval dep
+shipped #111 — needs a dev-drafted build one-pager first) is the largest remaining product item.
+Alongside it: **performance P3** (localized O(N) cleanups, fast-track each), the **UI-quality
+Layer-3 remainder** (`icon-semantics` · `dark-mode-contrast-pass` — `keyboard-a11y` shipped #273),
+and **`agent-skills-authoring` diff/preview** (its NL save-as-skill routing shipped #271). The agent P1s (`agent-conversation-model`,
 `agent-skills-authoring`, `agent-self-modification`, `agent-ask-user-question-tool`,
 `agent-import-skill`) are now sequenced under the **`agent-program`** umbrella
 (foundation **M0** → M3). The **M0 data structure is now specified** in its own
@@ -224,9 +224,10 @@ memory + isolation gate #200 · parallel execution #202 · per-agent POV #212 �
 deferred by PM (2026-06-09):** the rest of self-mod M2 — prompt-only hooks · config recovery ·
 skill curation — plus mid-run `needs-input`; escalate the capability boundary before building.
 The one un-started future item is the **deferred automatic associative retrieval** (memory,
-data-gated — see § memory above). The remaining *active* build work is the skills creative-UX
-(`agent-skills-authoring`: NL save-as-skill + diff/preview), **cross-agent consultation**
-(`ungate-contact` — see the agent-program list), and the standalone draft items below.
+data-gated — see § memory above). Within the agent program, the remaining *active* build work is
+the skills **diff/preview creative-UX** (`agent-skills-authoring`; its NL save-as-skill routing
+shipped in #271). Cross-agent consultation already shipped (`ungate-contact` #236); only its
+surfacing / A2A items are deferred (backlog). Standalone draft items follow below.
 
 - **agent-permission-redesign** (P1, `done`, PR #252 + #266) — the consequence-model permission
   redesign: **one pure `decide(effect)`** (`WORK→allow` silent · `COMMIT→confirm`-once-or-remember ·
