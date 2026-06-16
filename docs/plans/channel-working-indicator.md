@@ -201,8 +201,12 @@ releases.
 
 ## Decisions (PM-ratified)
 
-- Drill-in reuses the DM message/process UI, **in this same PR** (one complete
-  feature: indicator + what it opens into).
 - Collapsed summary: **≤2 agents → names; ≥3 → "{n} agents working"** (count).
 - Detail overlay opens on **hover or focus**; clicking a row body opens the
   drill-in; snapshot-freeze keeps the list stable while the pointer is inside.
+- Drill-in DM-process reuse: **split to a follow-up PR** (PM-ratified after the
+  build surfaced that the in-flight Channel message is suppressed at the
+  projection source — see the constraint above). This PR keeps the working
+  `streamingText` live-text drill-in. Follow-up: expose the suppressed in-flight
+  structured Channel message (keyed by run) so the drill-in renders via
+  `AgentMessageRow` (streaming), matching DM.
