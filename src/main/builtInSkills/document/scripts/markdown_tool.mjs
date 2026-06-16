@@ -48,7 +48,8 @@ async function existingLocalReference(filePath, ref) {
 }
 
 async function inspectMarkdown(filePath, markdown) {
-  const headings = [...markdown.matchAll(/^(#{1,6})\s+(.+)$/gm)].map((match) => ({
+  const proseMarkdown = stripFencedCodeBlocks(markdown);
+  const headings = [...proseMarkdown.matchAll(/^(#{1,6})\s+(.+)$/gm)].map((match) => ({
     level: match[1].length,
     text: match[2].trim(),
   }));
@@ -61,7 +62,7 @@ async function inspectMarkdown(filePath, markdown) {
     previousLevel = heading.level;
   });
 
-  const paragraphs = markdown
+  const paragraphs = proseMarkdown
     .split(/\n{2,}/)
     .map((block) => block.trim())
     .filter((block) => {
@@ -119,6 +120,10 @@ async function inspectMarkdown(filePath, markdown) {
     placeholder_hits: placeholders,
     warnings,
   };
+}
+
+function stripFencedCodeBlocks(markdown) {
+  return markdown.replace(/^```[\s\S]*?^```/gm, '');
 }
 
 function sortedUnique(values) {

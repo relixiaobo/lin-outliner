@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import statistics
 import sys
 from collections import Counter
@@ -16,6 +17,7 @@ from typing import Any, Optional
 
 MISSING = {"", "na", "n/a", "null", "none", "nan", "-"}
 DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S")
+GROUPED_NUMBER_RE = re.compile(r"^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$")
 
 
 def is_missing(value: Any) -> bool:
@@ -33,7 +35,10 @@ def normalize_value(value: Any) -> str:
 def parse_number(value: Any) -> Optional[float]:
     if is_missing(value):
         return None
-    text = str(value).strip().replace(",", "")
+    text = str(value).strip()
+    if "," in text and not GROUPED_NUMBER_RE.match(text):
+        return None
+    text = text.replace(",", "")
     try:
         number = float(text)
     except ValueError:
@@ -45,9 +50,9 @@ def parse_boolean(value: Any) -> Optional[bool]:
     if is_missing(value):
         return None
     text = str(value).strip().lower()
-    if text in {"true", "yes", "y", "1"}:
+    if text in {"true", "yes"}:
         return True
-    if text in {"false", "no", "n", "0"}:
+    if text in {"false", "no"}:
         return False
     return None
 
@@ -298,6 +303,22 @@ def check(status: str, name: str, details: dict[str, Any]) -> dict[str, Any]:
     return {"name": name, "status": status, "details": details}
 
 
+def contract_int(value: Any, name: str, result: dict[str, Any]) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        result["checks"].append(check("failed", name, {"error": "invalid_integer", "value": value}))
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        result["checks"].append(check("failed", name, {"error": "invalid_integer", "value": value}))
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        result["checks"].append(check("failed", name, {"error": "invalid_integer", "value": value}))
+        return None
+
+
 def values_for(records: list[dict[str, Any]], field: str) -> list[Any]:
     return [row.get(field) for row in records]
 
@@ -346,18 +367,21 @@ def validate(path: Path, contract_path: Path) -> dict[str, Any]:
     except Exception as error:
         result["errors"].append(str(error))
         return result
+    if not isinstance(contract, dict):
+        result["errors"].append("contract_not_object")
+        return result
 
     profile_report = profile(path)
     columns = {column["name"]: column for column in profile_report.get("columns", [])}
     field_set = set(fields)
 
-    row_min = contract.get("rowCountMin")
-    row_max = contract.get("rowCountMax")
+    row_min = contract_int(contract.get("rowCountMin"), "rowCountMin", result)
+    row_max = contract_int(contract.get("rowCountMax"), "rowCountMax", result)
     if row_min is not None:
-        status = "passed" if len(records) >= int(row_min) else "failed"
+        status = "passed" if len(records) >= row_min else "failed"
         result["checks"].append(check(status, "rowCountMin", {"actual": len(records), "expected": row_min}))
     if row_max is not None:
-        status = "passed" if len(records) <= int(row_max) else "failed"
+        status = "passed" if len(records) <= row_max else "failed"
         result["checks"].append(check(status, "rowCountMax", {"actual": len(records), "expected": row_max}))
 
     for field_contract in contract.get("fields", []):

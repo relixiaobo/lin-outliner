@@ -274,6 +274,34 @@ describe('built-in skill helper scripts', () => {
     });
   });
 
+  test('data-analysis profiler keeps numeric ids numeric and rejects malformed grouped numbers', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-profile-types-'));
+    const input = path.join(dir, 'metrics.csv');
+    const out = path.join(dir, 'report.json');
+    await writeFile(input, [
+      'id,flag,amount',
+      '1,yes,"1,2,3"',
+      '2,no,"1,234"',
+      '3,yes,"2,345"',
+      '',
+    ].join('\n'), 'utf8');
+
+    await execFile(python, [dataTool, 'profile', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report.columns.find((column: { name: string }) => column.name === 'id')).toMatchObject({
+      type: 'number',
+      numeric: { min: 1, max: 3 },
+    });
+    expect(report.columns.find((column: { name: string }) => column.name === 'flag')).toMatchObject({
+      type: 'boolean',
+    });
+    expect(report.columns.find((column: { name: string }) => column.name === 'amount')).toMatchObject({
+      type: 'string',
+      type_counts: { number: 2, string: 1 },
+    });
+  });
+
   test('data-analysis validator reports portable contract failures', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-validate-'));
     const input = path.join(dir, 'events.csv');
@@ -309,6 +337,50 @@ describe('built-in skill helper scripts', () => {
       'field:amount:range',
       'field:status:allowedValues',
       'uniqueKey:id',
+    ]));
+  });
+
+  test('data-analysis validator reports malformed contracts without tracebacks', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-validate-contract-'));
+    const input = path.join(dir, 'events.csv');
+    const nonObjectContract = path.join(dir, 'non-object.json');
+    const invalidRowsContract = path.join(dir, 'invalid-rows.json');
+    const nonObjectOut = path.join(dir, 'non-object-report.json');
+    const invalidRowsOut = path.join(dir, 'invalid-rows-report.json');
+    await writeFile(input, 'id,amount\nA,10\n', 'utf8');
+    await writeFile(nonObjectContract, '[]', 'utf8');
+    await writeFile(invalidRowsContract, JSON.stringify({
+      fields: [],
+      rowCountMin: 'abc',
+      rowCountMax: {},
+    }), 'utf8');
+
+    try {
+      await execFile(python, [dataTool, 'validate', input, '--contract', nonObjectContract, '--out', nonObjectOut]);
+    } catch {
+      // Expected: malformed contracts produce a non-zero exit status.
+    }
+    try {
+      await execFile(python, [dataTool, 'validate', input, '--contract', invalidRowsContract, '--out', invalidRowsOut]);
+    } catch {
+      // Expected: invalid row count constraints produce a non-zero exit status.
+    }
+
+    const nonObjectReport = JSON.parse(await readFile(nonObjectOut, 'utf8'));
+    const invalidRowsReport = JSON.parse(await readFile(invalidRowsOut, 'utf8'));
+
+    expect(nonObjectReport).toMatchObject({
+      ok: false,
+      errors: ['contract_not_object'],
+      checks: [],
+    });
+    expect(invalidRowsReport).toMatchObject({
+      ok: false,
+      errors: ['rowCountMin', 'rowCountMax'],
+    });
+    expect(invalidRowsReport.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'rowCountMin', status: 'failed' }),
+      expect.objectContaining({ name: 'rowCountMax', status: 'failed' }),
     ]));
   });
 
@@ -372,6 +444,10 @@ describe('built-in skill helper scripts', () => {
       '### Skipped Level',
       '',
       longParagraph,
+      '',
+      '```',
+      '# Not A Heading Inside Code',
+      '```',
       '',
       '| A | B | C | D | E | F | G |',
       '|---|---|---|---|---|---|---|',
