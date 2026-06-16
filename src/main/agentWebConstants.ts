@@ -12,8 +12,10 @@ export const WEB_FETCH_CLIENT_HINT_UA =
 export const WEB_FETCH_CLIENT_HINT_PLATFORM = '"macOS"';
 
 export const FETCH_TIMEOUT_MS = 45_000;
-// One automatic retry with a short backoff for transient failures (network
-// drops, 429/502/503/504). One retry bounds added latency on dead URLs.
+// Backoff before the single automatic retry, which fires only for a recognized
+// transient transport fault (a dropped/reset connection or network change — see
+// isTransientNetworkError). HTTP responses (403/429/5xx, Cloudflare) are not
+// retried here; they route to the embedded-browser fallback.
 export const WEB_FETCH_RETRY_DELAY_MS = 600;
 export const WEB_FETCH_BROWSER_TIMEOUT_MS = 20_000;
 export const WEB_FETCH_RENDER_SETTLE_MS = 5_000;

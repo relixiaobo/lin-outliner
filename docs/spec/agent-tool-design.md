@@ -2243,20 +2243,26 @@ Result behavior:
   real content instead of a bot challenge. The embedded-browser fallback renders
   with the same identity.
 - Redirects are followed transparently across hosts (link shorteners, trackers,
-  regional/mobile subdomains). When the landing host differs from the requested
-  host the result still returns content plus a non-fatal
-  `data.hint.type: "redirected_host"` and a warning, with `finalUrl` reflecting
-  the landing page — the agent does not need to re-fetch. A redirect whose target
-  is a local/private host is the one case that is refused.
-- Transient failures (network drops, HTTP 429/502/503/504) are retried once with
-  a short backoff before surfacing. 403/Cloudflare/JS-shell responses skip the
-  retry and route straight to the embedded-browser render fallback.
+  regional/mobile subdomains), preserving the server's literal scheme on each hop
+  (no http→https upgrade once redirecting — that would break an http-only
+  target). When the landing host differs from the requested host the result still
+  returns content plus a non-fatal `data.hint.type: "redirected_host"` and a
+  warning, with `finalUrl` reflecting the landing page — the agent does not need
+  to re-fetch. A redirect to a local/private host is the one case that is refused,
+  on both the HTTP path (each hop is validated) and the embedded-browser fallback
+  (`will-navigate`/`will-redirect` are blocked and the landing URL is re-checked).
+- A recognized transient transport fault (a dropped/reset connection or a network
+  change) is retried once with a short backoff before surfacing; an unrecognized
+  network error is not retried by default. HTTP responses — 403/429/5xx,
+  Cloudflare, JS shells — are not network faults and are never retried at the HTTP
+  layer: they route straight to the embedded-browser render fallback.
 - Authentication walls return `login_required`; JavaScript-only shells,
   Cloudflare, or HTTP errors that might work in a live browser return
   `needs_browser` and trigger the embedded-browser render fallback. A Cloudflare
-  challenge counts only when the extracted content is thin — a full article that
-  merely embeds a Cloudflare analytics/turnstile beacon is returned as-is, not
-  flagged as a challenge.
+  challenge is detected by narrow markers (the `*cf_chl*` tokens and the visible
+  interstitial phrases) that appear only on the actual block page — a full article
+  that merely embeds a Cloudflare analytics/turnstile beacon or the
+  challenge-platform script bundle is returned as-is, not flagged as a challenge.
 - Binary content returns `binary_unsupported` unless Lin implements a binary
   persistence path. If binary persistence is added, return a file path in
   `data.metadata` and keep model-visible text short.

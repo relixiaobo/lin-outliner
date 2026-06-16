@@ -5,8 +5,9 @@ import {
   crossHostRedirectHint,
   detectBrowserChallenge,
   isPermittedWebFetchRedirect,
+  isTransientNetworkError,
   looksLikeDynamicHtmlShell,
-  shouldRetryWebFetch,
+  makeRedirectedHostHint,
 } from '../../src/main/agentWebFetchFallback';
 import {
   extractFetchedPageContent,
@@ -123,6 +124,32 @@ describe('agent web fetch fallback heuristics', () => {
     expect(assessWebFetchFallback(fetched, params, page).shouldFallback).toBe(false);
   });
 
+  test('does not treat the Cloudflare beacon host or challenge-platform path as a challenge', () => {
+    // These strings appear in ordinary Cloudflare-fronted pages (Turnstile
+    // widgets, analytics, the challenge-platform script bundle) and must NOT be
+    // markers — matching them flagged complete articles as challenges.
+    expect(detectBrowserChallenge('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>')).toBeNull();
+    expect(detectBrowserChallenge('<script src="/cdn-cgi/challenge-platform/h/b/orchestrate"></script>')).toBeNull();
+  });
+
+  test('falls back on a verbose challenge page regardless of boilerplate length', async () => {
+    const filler = 'Please wait while we verify that you are a human and not a robot. ';
+    const html = [
+      '<!doctype html><html><head><title>Just a moment...</title></head><body>',
+      '<form id="challenge-form"></form>',
+      `<noscript>${filler.repeat(60)}</noscript>`,
+      '</body></html>',
+    ].join('');
+    const params = expectParams(normalizeWebFetchParams({ url: 'https://example.com/app' }));
+    const fetched = fetchedHtml(html);
+    const page = await extractFetchedPageContent(fetched, params);
+
+    expect(assessWebFetchFallback(fetched, params, page)).toMatchObject({
+      shouldFallback: true,
+      reason: 'cloudflare',
+    });
+  });
+
   test('allows only same host or www redirects', () => {
     expect(isPermittedWebFetchRedirect('https://example.com/a', 'https://www.example.com/b')).toBe(true);
     expect(isPermittedWebFetchRedirect('https://www.example.com/a', 'https://example.com/b')).toBe(true);
@@ -142,19 +169,32 @@ describe('agent web fetch fallback heuristics', () => {
     });
   });
 
-  test('shouldRetryWebFetch retries transient faults only', () => {
-    expect(shouldRetryWebFetch('network_error', undefined)).toBe(true);
-    expect(shouldRetryWebFetch('http_error', 429)).toBe(true);
-    expect(shouldRetryWebFetch('http_error', 502)).toBe(true);
-    expect(shouldRetryWebFetch('http_error', 503)).toBe(true);
-    expect(shouldRetryWebFetch('http_error', 504)).toBe(true);
-    // Permanent / browser-routed / abort failures are not retried.
-    expect(shouldRetryWebFetch('http_error', 403)).toBe(false);
-    expect(shouldRetryWebFetch('http_error', 404)).toBe(false);
-    expect(shouldRetryWebFetch('http_error', 500)).toBe(false);
-    expect(shouldRetryWebFetch('timeout', undefined)).toBe(false);
-    expect(shouldRetryWebFetch('http_401', undefined)).toBe(false);
-    expect(shouldRetryWebFetch('aborted', undefined)).toBe(false);
+  test('isTransientNetworkError retries only recognized transient transport faults', () => {
+    // Recognized transient drops — worth one retry.
+    expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_RESET'))).toBe(true);
+    expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_CLOSED'))).toBe(true);
+    expect(isTransientNetworkError(new Error('net::ERR_NETWORK_CHANGED'))).toBe(true);
+    expect(isTransientNetworkError(new Error('net::ERR_EMPTY_RESPONSE'))).toBe(true);
+    expect(isTransientNetworkError(new Error('read ECONNRESET'))).toBe(true);
+    // Deterministic transport faults fail identically on a retry — not retried.
+    expect(isTransientNetworkError(new Error('net::ERR_NAME_NOT_RESOLVED'))).toBe(false);
+    expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_REFUSED'))).toBe(false);
+    expect(isTransientNetworkError(new Error('net::ERR_CERT_AUTHORITY_INVALID'))).toBe(false);
+    expect(isTransientNetworkError(new Error('net::ERR_UNSAFE_PORT'))).toBe(false);
+    // An unrecognized message is not retried by default (whitelist, not denylist).
+    expect(isTransientNetworkError(new Error('fetch failed'))).toBe(false);
+    expect(isTransientNetworkError('not an error object')).toBe(false);
+  });
+
+  test('makeRedirectedHostHint always labels finalHost from the landing URL', () => {
+    expect(makeRedirectedHostHint('https://t.co/x', 'https://www.wsj.com/article')).toEqual({
+      type: 'redirected_host',
+      originalUrl: 'https://t.co/x',
+      finalUrl: 'https://www.wsj.com/article',
+      finalHost: 'www.wsj.com',
+    });
+    // An unparseable landing URL keeps the raw string as the host label.
+    expect(makeRedirectedHostHint('https://t.co/x', 'not a url').finalHost).toBe('not a url');
   });
 
   test('uses browser fallback only when it improves extracted content', async () => {

@@ -303,6 +303,25 @@ export function normalizeWebUrl(rawUrl: unknown): WebParamResult<string> {
   return { ok: true, params: parsed.toString() };
 }
 
+// Validate that a URL is a public http(s) target WITHOUT rewriting it. Unlike
+// {@link normalizeWebUrl}, this never upgrades http→https — it is used on
+// redirect hops and on the browser fallback's landing URL, where the server's
+// literal scheme must be preserved (an upgrade would break an http-only target).
+// Refusing a local/private host is the one SSRF guard we keep even under the
+// local-only, success-rate-first focus: it costs no real fetch and blocks the
+// cloud-metadata / loopback redirect class outright.
+export function isPublicWebFetchUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  if (parsed.username || parsed.password) return false;
+  return validatePublicWebHost(parsed.hostname).ok;
+}
+
 function validatePublicWebHost(hostname: string): { ok: true } | { ok: false; message: string } {
   const host = hostname.toLowerCase();
   if (!host) return { ok: false, message: 'url host is required' };
@@ -370,6 +389,10 @@ export function buildWebFetchSuccessEnvelopeFromPage(
 ): ToolEnvelope<WebFetchData> {
   const metadata = page.metadata;
   const warnings = fetched.redirectedHostHint ? ['The URL redirected to a different host.'] : undefined;
+  // A success envelope carries at most one hint. A real fetch.hint (login wall /
+  // needs_browser) outranks the redirected_host note: the host change is already
+  // conveyed by the warning above plus data.finalUrl, so dropping its hint here
+  // loses no signal, whereas dropping the login/browser hint would.
   const hint = fetched.hint ?? fetched.redirectedHostHint;
 
   if (fetched.binaryFile) {
