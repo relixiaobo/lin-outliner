@@ -1175,7 +1175,10 @@ describe('agent channel runtime', () => {
     }) as StreamFn;
     const { runtime, sink } = await createRuntime(dataRoot, localRoot, throwingOnce);
 
-    const dm = await runtime.restoreLatestConversation();
+    const dmRow = (await runtime.listConversations())
+      .find((entry) => entry.canonicalDmAgentId === MAIN_AGENT_ID);
+    expect(dmRow).toBeDefined();
+    const dm = await runtime.restoreConversation(dmRow!.id);
     await runtime.sendMessage(dm.conversationId, 'first message hits the throwing stream');
     // Without recovery this second send would die on 'A run is already active'.
     await runtime.sendMessage(dm.conversationId, 'second message must still run');
@@ -1282,7 +1285,10 @@ describe('agent channel runtime', () => {
     const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('Hello from the DM.'))]);
     const { runtime, calls, dataRoot } = fixture;
 
-    const dm = await runtime.restoreLatestConversation();
+    const dmRow = (await runtime.listConversations())
+      .find((entry) => entry.canonicalDmAgentId === MAIN_AGENT_ID);
+    expect(dmRow).toBeDefined();
+    const dm = await runtime.restoreConversation(dmRow!.id);
     await runtime.sendMessage(dm.conversationId, 'hello @reviewer');
 
     expect(calls).toHaveLength(1);
@@ -1356,7 +1362,10 @@ describe('agent channel runtime', () => {
     expect(entry?.members).toContainEqual(agentPrincipal(observerAgentId));
 
     // DMs never convert or accept membership edits.
-    const dm = await runtime.restoreLatestConversation();
+    const dmRow = (await runtime.listConversations())
+      .find((entry) => entry.canonicalDmAgentId === MAIN_AGENT_ID);
+    expect(dmRow).toBeDefined();
+    const dm = await runtime.restoreConversation(dmRow!.id);
     await expect(runtime.addConversationMember(dm.conversationId, reviewerAgentId)).rejects.toThrow('DM');
     const dmState = await new AgentEventStore(dataRoot).replay(dm.conversationId);
     expect(dmState.conversation?.members).toEqual([

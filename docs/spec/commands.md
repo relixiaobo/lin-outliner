@@ -290,8 +290,17 @@ where supported, a native file URL/file-list flavor to the clipboard.
 
 The conversation surface is product-shaped around DMs and Channels:
 `agent_list_conversations` returns one immutable canonical DM row for every
-configured agent, plus named Channels. Restoring a canonical DM id is
-find-or-create; DMs are never user-created, renamed, deleted, or membership-edited.
+configured agent, plus named Channels. The reserved `#General` Channel
+(`lin-agent-channel-general`, `title/goal = General`) is ensured by the runtime,
+sorted first among Channels, and auto-includes every current durable peer agent.
+It stores no conversation `kind` and cannot be renamed, deleted, or manually
+membership-edited through ordinary conversation commands. The Agent Dock default
+selection restores a remembered valid DM/Channel first, then `#General`, and only
+then falls back to `agent_restore_latest_conversation` for the legacy coordinator
+DM. The Agent Dock conversation menu lists Channels before Direct Messages so the
+primary surface recommends `#General`/named Channels first. Restoring a canonical
+DM id is find-or-create; DMs are never user-created, renamed, deleted, or
+membership-edited.
 `agent_create_conversation` is the user-facing New Channel command: it requires a
 Channel name, with optional invited agents and an optional opening message. DMs
 never convert into Channels, and their transcript is never shared into a Channel.

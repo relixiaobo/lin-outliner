@@ -15,7 +15,7 @@ import type {
   AgentUserViewContext,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
-import { agentMentionToken } from '../../../core/agentChannel';
+import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../../../core/agentChannel';
 import type {
   AgentPovInspectorView,
   AgentRenderActivityEntry,
@@ -900,7 +900,14 @@ export function AgentChatPanel({
     [conversations],
   );
   const channelRows = useMemo(
-    () => conversations.filter((conversation) => !conversation.canonicalDmAgentId),
+    () => conversations
+      .filter((conversation) => !conversation.canonicalDmAgentId)
+      .sort((left, right) => (
+        (left.id === DEFAULT_GENERAL_CHANNEL_ID ? -1 : 0)
+        || (right.id === DEFAULT_GENERAL_CHANNEL_ID ? 1 : 0)
+        || (right.updatedAt - left.updatedAt)
+        || left.id.localeCompare(right.id)
+      )),
     [conversations],
   );
   const virtualLayout = useMemo(
@@ -1526,6 +1533,101 @@ export function AgentChatPanel({
             style={historyMenuStyle}
           >
             <div className="agent-conversation-menu-header">
+              <span>{t.agent.chat.conversations}</span>
+              <IconButton
+                className="agent-conversation-section-action"
+                disabled={dmRunActive}
+                icon={AddIcon}
+                label={t.agent.chat.newConversation}
+                onClick={() => void handleNewConversation()}
+                title={t.agent.chat.newConversation}
+                variant="message"
+              />
+            </div>
+            <div className="agent-conversation-list">
+              {conversationsLoading ? (
+                <EmptyState
+                  className="agent-conversation-empty"
+                  icon={LoaderIcon}
+                  loading
+                  role="status"
+                  size="inline"
+                  title={t.common.loading}
+                />
+              ) : channelRows.length === 0 ? (
+                <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noConversations} />
+              ) : channelRows.map((conversation) => {
+                const isCurrent = conversation.id === conversationId;
+                const isDefaultGeneral = conversation.id === DEFAULT_GENERAL_CHANNEL_ID;
+                const title = readableConversationTitle(conversation.title, t.common.untitled);
+                const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
+                const actionMenuKey = `channel:${conversation.id}`;
+                const povActions: ConversationRowMenuAction[] = isCurrent ? agentMembers.flatMap((member) => {
+                  const principal = member.principal;
+                  if (principal.type !== 'agent') return [];
+                  const { agentId } = principal;
+                  if (!povInspectors[agentId]) return [];
+                  return [{
+                    id: `inspect-pov:${agentId}`,
+                    label: t.agent.chat.inspectMemberPov({ name: member.displayName }),
+                    onSelect: () => handleInspectMemberPov(agentId),
+                  }];
+                }) : [];
+                const channelActions: ConversationRowMenuAction[] = [
+                  ...(isDefaultGeneral ? [] : [{
+                    disabled: anyRunActive,
+                    id: 'configure-channel',
+                    label: t.agent.chat.configureChannel,
+                    onSelect: () => handleConfigureChannel(conversation.id),
+                  } satisfies ConversationRowMenuAction]),
+                  ...povActions,
+                ];
+                return (
+                  <div
+                    className={isCurrent ? 'agent-conversation-row agent-conversation-compact-row is-current' : 'agent-conversation-row agent-conversation-compact-row'}
+                    key={conversation.id}
+                  >
+                    <ButtonControl
+                      className="agent-conversation-select agent-conversation-compact-select"
+                      disabled={dmRunActive}
+                      onClick={() => void handleSelectConversation(conversation.id)}
+                    >
+                      <HashIcon
+                        aria-hidden="true"
+                        className="agent-conversation-channel-icon"
+                        size={ICON_SIZE.menu}
+                      />
+                      <span className="agent-conversation-name">{title}</span>
+                      {unread > 0 ? (
+                        <span
+                          className="agent-conversation-unread"
+                          // The visible glyph caps at "99+" for width; the accessible
+                          // name + tooltip carry the exact count (more useful to AT and
+                          // disambiguates "99+" on hover).
+                          aria-label={t.agent.chat.unreadMessages({ count: unread })}
+                          title={t.agent.chat.unreadMessages({ count: unread })}
+                        >
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      ) : null}
+                    </ButtonControl>
+                    {channelActions.length > 0 ? (
+                      <div className="agent-conversation-row-actions">
+                        <ConversationRowMoreMenu
+                          actions={channelActions}
+                          disabled={dmRunActive && povActions.length === 0}
+                          label={t.agent.chat.channelOptions}
+                          menuLabel={t.agent.chat.channelOptions}
+                          onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
+                          open={rowActionMenu === actionMenuKey}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="agent-conversation-menu-header agent-conversation-section-header">
               <span>{t.agent.chat.directMessages}</span>
               <IconButton
                 className="agent-conversation-section-action"
@@ -1589,95 +1691,6 @@ export function AgentChatPanel({
                         }]}
                         label={t.agent.chat.agentOptions}
                         menuLabel={t.agent.chat.agentOptions}
-                        onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
-                        open={rowActionMenu === actionMenuKey}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="agent-conversation-menu-header agent-conversation-section-header">
-              <span>{t.agent.chat.conversations}</span>
-              <IconButton
-                className="agent-conversation-section-action"
-                disabled={dmRunActive}
-                icon={AddIcon}
-                label={t.agent.chat.newConversation}
-                onClick={() => void handleNewConversation()}
-                title={t.agent.chat.newConversation}
-                variant="message"
-              />
-            </div>
-            <div className="agent-conversation-list">
-              {conversationsLoading ? (
-                <EmptyState
-                  className="agent-conversation-empty"
-                  icon={LoaderIcon}
-                  loading
-                  role="status"
-                  size="inline"
-                  title={t.common.loading}
-                />
-              ) : channelRows.length === 0 ? (
-                <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noConversations} />
-              ) : channelRows.map((conversation) => {
-                const isCurrent = conversation.id === conversationId;
-                const title = readableConversationTitle(conversation.title, t.common.untitled);
-                const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
-                const actionMenuKey = `channel:${conversation.id}`;
-                const povActions: ConversationRowMenuAction[] = isCurrent ? agentMembers.flatMap((member) => {
-                  const principal = member.principal;
-                  if (principal.type !== 'agent') return [];
-                  const { agentId } = principal;
-                  if (!povInspectors[agentId]) return [];
-                  return [{
-                    id: `inspect-pov:${agentId}`,
-                    label: t.agent.chat.inspectMemberPov({ name: member.displayName }),
-                    onSelect: () => handleInspectMemberPov(agentId),
-                  }];
-                }) : [];
-                const channelActions: ConversationRowMenuAction[] = [{
-                  disabled: anyRunActive,
-                  id: 'configure-channel',
-                  label: t.agent.chat.configureChannel,
-                  onSelect: () => handleConfigureChannel(conversation.id),
-                }, ...povActions];
-                return (
-                  <div
-                    className={isCurrent ? 'agent-conversation-row agent-conversation-compact-row is-current' : 'agent-conversation-row agent-conversation-compact-row'}
-                    key={conversation.id}
-                  >
-                    <ButtonControl
-                      className="agent-conversation-select agent-conversation-compact-select"
-                      disabled={dmRunActive}
-                      onClick={() => void handleSelectConversation(conversation.id)}
-                    >
-                      <HashIcon
-                        aria-hidden="true"
-                        className="agent-conversation-channel-icon"
-                        size={ICON_SIZE.menu}
-                      />
-                      <span className="agent-conversation-name">{title}</span>
-                      {unread > 0 ? (
-                        <span
-                          className="agent-conversation-unread"
-                          // The visible glyph caps at "99+" for width; the accessible
-                          // name + tooltip carry the exact count (more useful to AT and
-                          // disambiguates "99+" on hover).
-                          aria-label={t.agent.chat.unreadMessages({ count: unread })}
-                          title={t.agent.chat.unreadMessages({ count: unread })}
-                        >
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      ) : null}
-                    </ButtonControl>
-                    <div className="agent-conversation-row-actions">
-                      <ConversationRowMoreMenu
-                        actions={channelActions}
-                        disabled={dmRunActive && povActions.length === 0}
-                        label={t.agent.chat.channelOptions}
-                        menuLabel={t.agent.chat.channelOptions}
                         onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
                         open={rowActionMenu === actionMenuKey}
                       />

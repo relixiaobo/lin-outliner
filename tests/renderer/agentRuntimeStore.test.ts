@@ -13,6 +13,7 @@ import type {
   UserMessage,
 } from '../../src/core/agentTypes';
 import type { AgentConversation, AgentCreateConversationOptions } from '../../src/core/types';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
@@ -219,14 +220,12 @@ function deferred<T>() {
 }
 
 async function flushMicrotasks() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 50; i += 1) await Promise.resolve();
 }
 
 function createFakeClient(options: {
   latestConversation: Promise<AgentConversation> | AgentConversation;
+  defaultConversation?: Promise<AgentConversation> | AgentConversation;
   createdConversation?: AgentConversation;
   restoreConversation?: (conversationId: string) => Promise<AgentConversation> | AgentConversation;
 }) {
@@ -257,6 +256,9 @@ function createFakeClient(options: {
     restoreConversation: async (conversationId) => {
       calls.restoreConversation.push(conversationId);
       if (options.restoreConversation) return options.restoreConversation(conversationId);
+      if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
+        return options.defaultConversation ?? options.latestConversation;
+      }
       return conversation(conversationId, projection([]));
     },
     markConversationRead: async (conversationId) => {
@@ -342,7 +344,8 @@ describe('agent runtime store', () => {
 
     await flushMicrotasks();
 
-    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(fake.calls.restoreConversation).toEqual([DEFAULT_GENERAL_CHANNEL_ID]);
+    expect(fake.calls.restoreLatestConversation).toBe(0);
     expect(store.getSnapshot().conversationId).toBe('saved');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
@@ -350,9 +353,9 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('restores the remembered conversation before falling back to latest', async () => {
+  test('restores the remembered conversation before falling back to #General', async () => {
     const preferenceStore = memoryConversationPreferenceStore('remembered-channel');
-    const fake = createFakeClient({ latestConversation: conversation('latest', projection([])) });
+    const fake = createFakeClient({ latestConversation: conversation(DEFAULT_GENERAL_CHANNEL_ID, projection([])) });
     const store = createAgentRuntimeStore(fake.client, { conversationPreferenceStore: preferenceStore });
     const unsubscribe = store.subscribe(() => {});
 
@@ -365,10 +368,10 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('falls back to latest when the remembered conversation no longer restores', async () => {
+  test('falls back to latest when remembered and #General no longer restore', async () => {
     const preferenceStore = memoryConversationPreferenceStore('deleted-channel');
     const fake = createFakeClient({
-      latestConversation: conversation('latest', projection([])),
+      latestConversation: conversation(DEFAULT_GENERAL_CHANNEL_ID, projection([])),
       restoreConversation: async (conversationId) => {
         throw new Error(`Missing conversation: ${conversationId}`);
       },
@@ -378,10 +381,10 @@ describe('agent runtime store', () => {
 
     await flushMicrotasks();
 
-    expect(fake.calls.restoreConversation).toEqual(['deleted-channel']);
+    expect(fake.calls.restoreConversation).toEqual(['deleted-channel', DEFAULT_GENERAL_CHANNEL_ID]);
     expect(fake.calls.restoreLatestConversation).toBe(1);
-    expect(store.getSnapshot().conversationId).toBe('latest');
-    expect(preferenceStore.value()).toBe('latest');
+    expect(store.getSnapshot().conversationId).toBe(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(preferenceStore.value()).toBe(DEFAULT_GENERAL_CHANNEL_ID);
     unsubscribe();
   });
 
@@ -885,7 +888,8 @@ describe('agent runtime store', () => {
     restore.resolve(restored);
     await flushMicrotasks();
 
-    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(fake.calls.restoreConversation).toEqual([DEFAULT_GENERAL_CHANNEL_ID]);
+    expect(fake.calls.restoreLatestConversation).toBe(0);
     expect(fake.calls.closeConversation).toEqual([]);
     expect(store.getSnapshot().conversationId).toBe('saved');
     expect(store.getSnapshot().entries).toHaveLength(1);
@@ -1039,7 +1043,7 @@ describe('agent runtime store', () => {
     });
     await flushMicrotasks();
 
-    expect(fake.calls.restoreConversation).toEqual(['saved']);
+    expect(fake.calls.restoreConversation).toEqual([DEFAULT_GENERAL_CHANNEL_ID, 'saved']);
     expect(store.getSnapshot().conversationId).toBe('saved');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId)).toEqual(['u1']);
     unsubscribe();
@@ -1074,7 +1078,7 @@ describe('agent runtime store', () => {
     fake.emit({ ...mismatchedPatch, revision: 4, patch: { baseRevision: 3, revision: 4 }, timestamp: 102 });
     await flushMicrotasks();
 
-    expect(fake.calls.restoreConversation).toEqual(['saved']);
+    expect(fake.calls.restoreConversation).toEqual([DEFAULT_GENERAL_CHANNEL_ID, 'saved']);
     reload.resolve(conversation('saved', restoredProjection));
     await flushMicrotasks();
     unsubscribe();
@@ -1252,7 +1256,8 @@ describe('agent runtime store', () => {
     restore.resolve(restored);
     await flushMicrotasks();
 
-    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(fake.calls.restoreConversation).toEqual([DEFAULT_GENERAL_CHANNEL_ID]);
+    expect(fake.calls.restoreLatestConversation).toBe(0);
     expect(fake.calls.createConversation).toHaveLength(1);
     expect(store.getSnapshot().conversationId).toBe('created');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))

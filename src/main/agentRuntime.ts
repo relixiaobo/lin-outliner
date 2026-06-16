@@ -98,6 +98,8 @@ import {
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
 import {
+  DEFAULT_GENERAL_CHANNEL_ID,
+  DEFAULT_GENERAL_CHANNEL_TITLE,
   agentMentionToken,
   channelAgentMembers,
   channelMessageOwner,
@@ -596,6 +598,7 @@ interface AgentRuntimeRunScope {
 
 export class AgentRuntime {
   private conversations = new Map<string, AgentConversationState>();
+  private generalChannelEnsureInFlight: Promise<AgentEventReplayState> | null = null;
   private readonly runScope = new AsyncLocalStorage<AgentRuntimeRunScope>();
   private osNotifier?: OsNotifier;
   // The conversation the user is actually VIEWING, reported by the renderer:
@@ -738,6 +741,8 @@ export class AgentRuntime {
 
   ready() {
     this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
+    void this.ensureGeneralChannelEventState()
+      .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure #General.', error));
     this.queueScheduledDream(new Date());
     // Crash recovery FIRST: reconcile any occurrence that was attempted but never
     // recorded success (the app crashed/quit/slept mid-run) — at-most-once, so it
@@ -779,6 +784,9 @@ export class AgentRuntime {
   }
 
   async restoreConversation(conversationId: string) {
+    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
+      return this.restoreOrCreateGeneralChannel();
+    }
     const eventState = await this.loadEventState(conversationId);
     if (!eventState.conversation) {
       const dmAgentId = await this.agentIdForCanonicalDmConversationId(conversationId);
@@ -860,6 +868,116 @@ export class AgentRuntime {
     return this.conversationResponse(conversationId, conversation);
   }
 
+  private async restoreOrCreateGeneralChannel() {
+    const eventState = await this.ensureGeneralChannelEventState();
+    const conversation = await this.createConversationWithEventState(eventState);
+    await this.refreshAgentTaskCache();
+    return this.conversationResponse(DEFAULT_GENERAL_CHANNEL_ID, conversation);
+  }
+
+  private async ensureGeneralChannelEventState(): Promise<AgentEventReplayState> {
+    if (this.generalChannelEnsureInFlight) return this.generalChannelEnsureInFlight;
+    const operation = this.ensureGeneralChannelEventStateOnce()
+      .finally(() => {
+        if (this.generalChannelEnsureInFlight === operation) this.generalChannelEnsureInFlight = null;
+      });
+    this.generalChannelEnsureInFlight = operation;
+    return operation;
+  }
+
+  private async ensureGeneralChannelEventStateOnce(): Promise<AgentEventReplayState> {
+    const roster = await this.listConversationRosterAgents();
+    const desiredMembers = this.generalChannelMembers(roster);
+    const liveConversation = this.conversations.get(DEFAULT_GENERAL_CHANNEL_ID);
+    const eventState = liveConversation?.eventState ?? await this.loadEventState(DEFAULT_GENERAL_CHANNEL_ID);
+    const inputs = this.generalChannelInvariantInputs(eventState, desiredMembers, {
+      removeUnavailablePeers: !liveConversation
+        || (!this.hasActiveRuns(liveConversation) && liveConversation.pendingChannelTurns.length === 0),
+    });
+    if (inputs.length === 0) return eventState;
+
+    if (liveConversation) {
+      await this.appendConversationEvents(DEFAULT_GENERAL_CHANNEL_ID, liveConversation, inputs);
+      await this.refreshMemberDisplayNames(liveConversation);
+      this.queuePovInspectorMemoryRefresh(DEFAULT_GENERAL_CHANNEL_ID, liveConversation);
+      this.emitProjection(DEFAULT_GENERAL_CHANNEL_ID, 'general_channel_updated');
+      return liveConversation.eventState;
+    }
+
+    const events = this.buildEvents(eventState, DEFAULT_GENERAL_CHANNEL_ID, inputs);
+    await this.getEventStore().appendEvents(DEFAULT_GENERAL_CHANNEL_ID, events);
+    for (const event of events) appendAgentEventToReplayState(eventState, event);
+    this.publishPersistedEvents(DEFAULT_GENERAL_CHANNEL_ID, events);
+    return eventState;
+  }
+
+  private generalChannelMembers(roster: readonly AgentRosterEntry[]): AgentPrincipal[] {
+    return mergeUniquePrincipals(
+      this.defaultConversationMembers(),
+      roster.map((agent): AgentPrincipal => ({ type: 'agent', agentId: agent.agentId as AgentId })),
+    );
+  }
+
+  private generalChannelInvariantInputs(
+    eventState: AgentEventReplayState,
+    desiredMembers: readonly AgentPrincipal[],
+    options: { removeUnavailablePeers: boolean },
+  ): AgentEventInput[] {
+    if (!eventState.conversation) {
+      for (const member of channelAgentMembers(desiredMembers)) {
+        this.assertNoMentionTokenCollision(desiredMembers.filter((candidate) => candidate !== member), member.agentId);
+      }
+      return [{
+        type: 'conversation.created',
+        actor: systemActor(),
+        title: DEFAULT_GENERAL_CHANNEL_TITLE,
+        members: desiredMembers.slice(),
+        goal: DEFAULT_GENERAL_CHANNEL_TITLE,
+      }];
+    }
+
+    const inputs: AgentEventInput[] = [];
+    if (
+      sanitizeConversationTitle(eventState.conversation.title) !== DEFAULT_GENERAL_CHANNEL_TITLE
+      || sanitizeConversationTitle(eventState.conversation.goal) !== DEFAULT_GENERAL_CHANNEL_TITLE
+    ) {
+      inputs.push({
+        type: 'conversation.renamed',
+        actor: systemActor(),
+        title: DEFAULT_GENERAL_CHANNEL_TITLE,
+        goal: DEFAULT_GENERAL_CHANNEL_TITLE,
+      });
+    }
+
+    let workingMembers = eventState.conversation.members.slice();
+    for (const member of desiredMembers) {
+      if (workingMembers.some((candidate) => samePrincipal(candidate, member))) continue;
+      if (member.type === 'agent') this.assertNoMentionTokenCollision(workingMembers, member.agentId);
+      inputs.push({
+        type: 'member.added',
+        actor: systemActor(),
+        member,
+      });
+      workingMembers = [...workingMembers, member];
+    }
+
+    if (options.removeUnavailablePeers) {
+      const desiredAgentIds = new Set(channelAgentMembers(desiredMembers).map((member) => member.agentId));
+      for (const member of channelAgentMembers(workingMembers)) {
+        if (member.agentId === this.coordinatorAgentId()) continue;
+        if (desiredAgentIds.has(member.agentId)) continue;
+        inputs.push({
+          type: 'member.removed',
+          actor: systemActor(),
+          member,
+        });
+        workingMembers = workingMembers.filter((candidate) => !samePrincipal(candidate, member));
+      }
+    }
+
+    return inputs;
+  }
+
   async createConversation(options: {
     agentIds?: string[];
     title?: string;
@@ -911,6 +1029,9 @@ export class AgentRuntime {
    * Canonical DMs are immutable; only named Channels support membership edits.
    */
   async addConversationMember(conversationId: string, agentId: string) {
+    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
+      throw new Error('#General membership is automatic.');
+    }
     const principal = await this.requireAgentMemberPrincipal(agentId);
     const conversation = await this.ensureConversationWithId(conversationId);
     if (this.isCanonicalDmConversationId(conversationId)) {
@@ -948,6 +1069,7 @@ export class AgentRuntime {
 
   async removeConversationMember(conversationId: string, agentId: string) {
     if (this.isCanonicalDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
+    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) throw new Error('#General membership is automatic.');
     if (agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
     const conversation = await this.ensureConversationWithId(conversationId);
     const principal: AgentPrincipal = { type: 'agent', agentId };
@@ -1058,6 +1180,7 @@ export class AgentRuntime {
   }
 
   async listConversations() {
+    await this.ensureGeneralChannelEventState();
     const entries = await this.getEventStore().listConversationIndexEntries();
     const entryById = new Map(entries.map((entry) => [entry.id, entry]));
     const roster = await this.listConversationRosterAgents();
@@ -1074,7 +1197,13 @@ export class AgentRuntime {
     ));
     const channelRows = entries
       .filter((entry) => !!entry.goal)
-      .map((entry) => this.conversationListMetaFromIndexEntry(entry));
+      .map((entry) => this.conversationListMetaFromIndexEntry(entry))
+      .sort((left, right) => (
+        (left.id === DEFAULT_GENERAL_CHANNEL_ID ? -1 : 0)
+        || (right.id === DEFAULT_GENERAL_CHANNEL_ID ? 1 : 0)
+        || (right.updatedAt - left.updatedAt)
+        || left.id.localeCompare(right.id)
+      ));
     const listed = [...dmRows, ...channelRows];
     // Seed cross-conversation unread badges on launch: the live conversation_attention
     // event only fires for conversations touched this run, so a conversation that went
@@ -1591,6 +1720,7 @@ export class AgentRuntime {
     for (const conversation of this.conversations.values()) {
       conversation.delegationRuntime.reloadAgentDefinitions();
     }
+    await this.ensureGeneralChannelEventState();
     return this.listAllAgentDefinitions(conversationId);
   }
 
@@ -1663,6 +1793,9 @@ export class AgentRuntime {
     if (this.isCanonicalDmConversationId(conversationId)) {
       throw new Error('The canonical agent DM cannot be renamed.');
     }
+    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
+      throw new Error('#General cannot be renamed.');
+    }
     const normalized = normalizeConversationTitle(title);
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
@@ -1692,6 +1825,9 @@ export class AgentRuntime {
   async deleteConversation(conversationId: string) {
     if (this.isCanonicalDmConversationId(conversationId)) {
       throw new Error('The canonical agent DM cannot be deleted.');
+    }
+    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
+      throw new Error('#General cannot be deleted.');
     }
     const conversation = this.conversations.get(conversationId);
     if (conversation) {

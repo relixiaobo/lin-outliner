@@ -78,6 +78,16 @@ clean-cut, no migration).
   coordinator = the default addressee, PM-ratified 2026-06-10). ✅ (M3-A #179,
   IM group-chat semantics ratified 2026-06-10) — a Channel behaves like an IM
   group, not a streaming DM:
+  - **Default `#General` Channel:** the runtime reserves
+    `lin-agent-channel-general` as a normal named Channel (`title/goal = General`,
+    no stored `kind`). `#General` is ensured on runtime ready, restore, list, and
+    agent-registry reload. It contains the user, the coordinator, and every current
+    durable peer agent; future durable peers auto-join when they appear. Fork,
+    child/delegation, headless, and transient helper agents are not members. The
+    invariant is idempotent and protected: `#General` cannot be renamed, deleted,
+    or manually membership-edited through ordinary conversation commands. It does
+    not change routing: an unaddressed `#General` turn still routes only to the
+    coordinator, while `@agent` routes only to named peers.
   - **Routing:** explicit user `@`s all run, uncounted; no `@` → the
     coordinator; an agent reply `@`-ing members hands off (the addressing is
     persisted on the reply's `assistant_message.completed.addressedTo` and the
@@ -257,7 +267,7 @@ Multi-agent does **not** re-inflate the concept count. Built on the 7 primitives
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Typed sub-agent identity + per-agent memory line (#164) | ✅ built | the groundwork multi-agent builds on |
 | `addressedTo`, `member.added/removed`, `<principal>` render hook | ✅ built | connected in M3-A (#179): `addressedTo` written on user messages + read by routing; membership events applied on replay + folded into the conversation index |
-| Create a named Channel | ✅ built | `agent_create_conversation` takes `{title, agentIds?, seedText?}` and requires only a Channel name; member management lives in the Channel header Members popover; the Channels section action opens New Channel, while DMs never convert or share history; mention-token collisions rejected at create/add |
+| Create a named Channel | ✅ built | `agent_create_conversation` takes `{title, agentIds?, seedText?}` and requires only a Channel name; member management lives in the Channel header Members popover; the Channels-first conversation menu opens New Channel above Direct Messages, while DMs never convert or share history; mention-token collisions rejected at create/add |
 | Routing / coordinator / peer-agent reply | ✅ built | IM semantics (above): `@`-mention routing, coordinator default, unbounded hand-off from the persisted reply record, independence cut, typing-model delivery, per-run Channel concurrency + completion-order append; UI: composer member typeahead, header/list member display, actor badges/avatars, typing indicator + run drill-in |
 | Conversation metadata UX | ✅ built | single-line DM/Channel header identity; timestamp gap separators; native message context menu with Details for speaker, timestamp, model/provider, and token usage |
 | Cross-agent memory sharing + isolation gate | ✅ built | M3-B: Channel co-members read each other's distilled pools by membership; raw evidence dereference is gated in the evidence service and returns typed refusal on cross-principal access |
