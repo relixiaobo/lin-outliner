@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
 import type {
@@ -76,6 +77,7 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
+import { MenuSurface } from '../primitives/MenuSurface';
 import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
@@ -521,7 +523,131 @@ function activityAgentLabel(
   return { label, mention };
 }
 
-function AgentChannelActivityArea({
+const CHANNEL_WORKING_DETAIL_ID = 'agent-channel-working-detail';
+
+type ChannelWorkingItem = {
+  canStop: boolean;
+  entry: AgentRenderActivityEntry;
+  label: string;
+  mention: string;
+  stateLabel: string;
+};
+
+// The per-agent detail menu. Built on the shared overlay primitives (portaled
+// MenuSurface + useAnchoredOverlay for viewport flip/clamp + useMenuKeyboard for
+// Escape / roving / focus-restore) so it can never get stuck open over the
+// transcript or render off-screen — it is opened by click (not hover), which is
+// the only model that composes cleanly with focus management.
+function ChannelWorkingDetail({
+  anchorRef,
+  items,
+  onClose,
+  onOpenEntry,
+  onStopEntry,
+  selectedEntryId,
+}: {
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  items: readonly ChannelWorkingItem[];
+  onClose: () => void;
+  onOpenEntry: (entryId: string) => void;
+  onStopEntry: (entry: AgentRenderActivityEntry) => void;
+  selectedEntryId: string | null;
+}) {
+  const t = useT();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const style = useAnchoredOverlay(surfaceRef, {
+    anchorRef,
+    layoutKey: items.map((item) => `${item.entry.id}:${item.entry.state}`).join('|'),
+    maxHeight: 360,
+    placement: 'top-end',
+    width: 320,
+  });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Outside-pointer dismissal that ignores the trigger (so clicking it toggles
+  // rather than close-then-reopen) — mirrors AnchoredActionMenu.
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (surfaceRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      onCloseRef.current();
+    }
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [anchorRef]);
+
+  const stoppable = items.filter((item) => item.canStop);
+  return createPortal(
+    <MenuSurface
+      aria-label={t.agent.chat.channelActivity}
+      className="agent-channel-working-detail"
+      id={CHANNEL_WORKING_DETAIL_ID}
+      onKeyDown={onKeyDown}
+      ref={surfaceRef}
+      role="menu"
+      style={style}
+    >
+      <div className="agent-channel-working-detail-header">
+        <span>{t.agent.chat.channelActivity}</span>
+        {stoppable.length > 0 ? (
+          <button
+            className="agent-channel-working-stop-all"
+            onClick={() => stoppable.forEach((item) => onStopEntry(item.entry))}
+            role="menuitem"
+            type="button"
+          >
+            {t.agent.chat.stopAll}
+          </button>
+        ) : null}
+      </div>
+      <div className="agent-channel-working-detail-list">
+        {items.map((item) => (
+          <div
+            className={`agent-channel-working-item is-${item.entry.state}${item.canStop ? ' has-stop' : ''}${selectedEntryId === item.entry.id ? ' is-selected' : ''}`}
+            key={item.entry.id}
+          >
+            <ButtonControl
+              aria-current={selectedEntryId === item.entry.id ? 'true' : undefined}
+              className="agent-channel-working-item-main"
+              onClick={() => {
+                onClose();
+                onOpenEntry(item.entry.id);
+              }}
+              role="menuitem"
+              title={`${item.label} · ${item.stateLabel}`}
+            >
+              <AgentIdentityAvatar label={item.label} mention={item.mention} size="xs" />
+              <span className="agent-channel-working-item-name">{item.label}</span>
+              <small className="agent-channel-working-item-state">
+                <span className="agent-channel-working-item-dot" aria-hidden="true" />
+                <span>{item.stateLabel}</span>
+              </small>
+            </ButtonControl>
+            {item.canStop ? (
+              <IconButton
+                className="agent-channel-working-item-stop"
+                icon={StopIcon}
+                label={t.agent.chat.stopActivityEntry({ name: item.label })}
+                onClick={() => onStopEntry(item.entry)}
+                role="menuitem"
+                variant="message"
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </MenuSurface>,
+    document.body,
+  );
+}
+
+function ChannelWorkingRow({
   agentDefinitionById,
   entries,
   memberByAgentId,
@@ -537,7 +663,9 @@ function AgentChannelActivityArea({
   selectedEntryId: string | null;
 }) {
   const t = useT();
-  const liveItems = useMemo(() => entries.map((entry) => {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const items = useMemo<ChannelWorkingItem[]>(() => entries.map((entry) => {
     const { label, mention } = activityAgentLabel(entry, memberByAgentId, agentDefinitionById);
     return {
       canStop: entry.runId !== null,
@@ -547,96 +675,62 @@ function AgentChannelActivityArea({
       stateLabel: activityStateLabel(entry, t),
     };
   }), [agentDefinitionById, entries, memberByAgentId, t]);
-  const [snapshotItems, setSnapshotItems] = useState<readonly typeof liveItems[number][] | null>(null);
-  const visibleItems = snapshotItems ?? liveItems;
-  if (visibleItems.length === 0) return null;
+  // Nothing in flight → the row unmounts entirely (which also closes the menu and
+  // drops any stale "working" rows; there is no frozen snapshot to go stale).
+  if (items.length === 0) return null;
 
-  const freezeEntries = () => {
-    if (liveItems.length === 0) return;
-    setSnapshotItems((current) => current ?? liveItems);
-  };
-  const summaryItems = visibleItems.slice(0, 4);
-  const summaryOverflowCount = visibleItems.length - summaryItems.length;
+  // Collapsed summary is the generic "working" line only (≤2 → names, ≥3 → count);
+  // per-agent state lives in the detail menu.
+  const summary = items.length === 1
+    ? t.agent.chat.working({ name: items[0]!.label })
+    : items.length === 2
+      ? t.agent.chat.workingPair({ first: items[0]!.label, second: items[1]!.label })
+      : t.agent.chat.workingMany({ count: items.length });
+  const avatarItems = items.slice(0, 3);
+  const overflowCount = items.length - avatarItems.length;
 
   return (
-    <div
-      className="agent-channel-activity"
-      aria-label={t.agent.chat.channelActivity}
-      onBlurCapture={(event) => {
-        const nextTarget = event.relatedTarget;
-        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-          setSnapshotItems(null);
-        }
-      }}
-      onFocusCapture={freezeEntries}
-      onPointerEnter={freezeEntries}
-      onPointerLeave={(event) => {
-        if (!event.currentTarget.matches(':focus-within')) {
-          setSnapshotItems(null);
-        }
-      }}
-    >
-      <div className="agent-channel-activity-summary" aria-hidden="true">
-        <span className="agent-channel-activity-avatar-stack">
-          {summaryItems.map((item) => (
+    <div className="agent-channel-working" data-open={open ? 'true' : undefined}>
+      <button
+        aria-controls={open ? CHANNEL_WORKING_DETAIL_ID : undefined}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={t.agent.chat.channelActivity}
+        className="agent-channel-working-trigger"
+        onClick={() => setOpen((value) => !value)}
+        ref={triggerRef}
+        type="button"
+      >
+        <span className="agent-channel-working-avatars" aria-hidden="true">
+          {avatarItems.map((item) => (
             <AgentIdentityAvatar key={item.entry.id} label={item.label} mention={item.mention} size="xs" />
           ))}
-          {summaryOverflowCount > 0 ? (
-            <span className="agent-channel-activity-overflow" title={t.agent.chat.activityOverflow({ count: summaryOverflowCount })}>
-              {t.agent.chat.activityOverflow({ count: summaryOverflowCount })}
+          {overflowCount > 0 ? (
+            <span className="agent-channel-working-overflow">
+              {t.agent.chat.activityOverflow({ count: overflowCount })}
             </span>
           ) : null}
         </span>
-      </div>
-      <div className="agent-channel-activity-list">
-        <div className="agent-channel-activity-list-header">
-          <span>{t.agent.chat.channelActivity}</span>
-          <span>{visibleItems.length}</span>
-        </div>
-        <div className="agent-channel-activity-list-scroll">
-          {visibleItems.map((item) => {
-            return (
-              <div
-                className={`agent-channel-activity-item-shell is-${item.entry.state}${item.canStop ? ' has-stop' : ''}${selectedEntryId === item.entry.id ? ' is-selected' : ''}`}
-                key={item.entry.id}
-              >
-                <ButtonControl
-                  aria-pressed={selectedEntryId === item.entry.id}
-                  className="agent-channel-activity-item"
-                  onClick={() => {
-                    setSnapshotItems(null);
-                    onOpenEntry(item.entry.id);
-                  }}
-                  title={`${item.label} · ${item.stateLabel}`}
-                >
-                  <span className="agent-channel-activity-copy">
-                    <span className="agent-channel-activity-agent-line">
-                      <AgentIdentityAvatar label={item.label} mention={item.mention} size="xs" />
-                      <span className="agent-channel-activity-name">{item.label}</span>
-                    </span>
-                    <small className="agent-channel-activity-state">
-                      <span className="agent-channel-activity-state-dot" aria-hidden="true" />
-                      <span>{item.stateLabel}</span>
-                    </small>
-                  </span>
-                </ButtonControl>
-                {item.canStop ? (
-                  <IconButton
-                    className="agent-channel-activity-stop"
-                    icon={StopIcon}
-                    label={t.agent.chat.stopActivityEntry({ name: item.label })}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onStopEntry(item.entry);
-                    }}
-                    variant="message"
-                  />
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+        <span className="agent-channel-working-label">{summary}</span>
+        <span className="agent-channel-working-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+      </button>
+      {open ? (
+        <ChannelWorkingDetail
+          anchorRef={triggerRef}
+          items={items}
+          onClose={() => setOpen(false)}
+          onOpenEntry={(entryId) => {
+            setOpen(false);
+            onOpenEntry(entryId);
+          }}
+          onStopEntry={onStopEntry}
+          selectedEntryId={selectedEntryId}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1104,7 +1198,10 @@ export function AgentChatPanel({
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
     scheduleScrollToBottom();
-  }, [conversationRows.length, dmRunActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
+    // channelActivityEntries.length is a dep so that mounting/unmounting the
+    // in-flow ChannelWorkingRow (which changes the composer-region height) re-pins
+    // a bottom-stuck reader instead of leaving the latest message clipped.
+  }, [channelActivityEntries.length, conversationRows.length, dmRunActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
   useEffect(() => {
     rowHeightsRef.current.clear();
@@ -1774,7 +1871,7 @@ export function AgentChatPanel({
 
       <div className="agent-composer-region">
         {isMultiAgentChannel ? (
-          <AgentChannelActivityArea
+          <ChannelWorkingRow
             agentDefinitionById={agentDefinitionById}
             entries={channelActivityEntries}
             memberByAgentId={memberByAgentId}
@@ -1842,10 +1939,11 @@ export function AgentChatPanel({
             </header>
             <div className="agent-child-run-details-body">
               {selectedActivityEntry.streamingText ? (
-                // The live token stream of the running Channel agent (PM-ratified
-                // 2026-06-13): retained per-run from message_update and surfaced
-                // ONLY here — never in the whole-utterance message flow. Tool-call
-                // progress shows in the header state label, not a transcript row.
+                // The live token stream of the running Channel agent (retained
+                // per-run from message_update and surfaced ONLY here — never in the
+                // whole-utterance message flow). Full DM-style process reuse needs
+                // the projection to expose the suppressed in-flight structured
+                // message; tracked as a follow-up (see plan).
                 <div className="agent-channel-run-live">
                   <AgentMarkdown
                     keyPrefix={`channel-run-live-${selectedActivityEntry.id}`}
