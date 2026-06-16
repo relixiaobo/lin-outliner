@@ -189,8 +189,11 @@ export function CommandPalette(props: CommandPaletteProps) {
     >
       <Input
         ref={inputRef}
+        role="combobox"
         aria-activedescendant={selectedItemId}
+        aria-autocomplete="list"
         aria-controls="command-palette-list"
+        aria-expanded={visibleItems.length > 0}
         className="command-input"
         label={t.commandPalette.inputLabel}
         value={query}

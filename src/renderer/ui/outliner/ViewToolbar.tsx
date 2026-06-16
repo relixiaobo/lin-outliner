@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -38,6 +39,7 @@ import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { resolveMenuNavigation, useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
 import { collectViewFieldChoices, type ViewConfig } from './row-model';
 import {
@@ -249,16 +251,35 @@ export function ViewToolbar({
       if (menuRef.current?.contains(target)) return;
       setOpen(null);
     };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(null);
-    };
     document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('keydown', onKeyDown, true);
     };
   }, [open]);
+
+  // The pill to restore focus to on close. Captured when a section opens, because
+  // by the time `useMenuKeyboard`'s cleanup runs `open` is already null — reading
+  // it live would always yield no target.
+  const restoreTargetRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (open) restoreTargetRef.current = buttonRefs[open].current;
+    // buttonRefs is a fresh literal each render but its members are stable refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Focus-in / trap / Escape-to-close / focus-restore to the toolbar pill that
+  // opened the popover (its content is heterogeneous form controls → dialog kind).
+  // `focusKey: open` re-pulls focus into the surface when the user switches
+  // section by clicking a different pill (focus would otherwise stay on the pill,
+  // outside the surface, so Escape/Tab-trap would not fire).
+  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: () => setOpen(null),
+    kind: 'dialog',
+    active: open !== null,
+    getRestoreTarget: () => restoreTargetRef.current,
+    focusKey: open ?? '',
+  });
 
   const toggle = (section: ToolbarSection) => {
     setOpen((current) => (current === section ? null : section));
@@ -326,6 +347,7 @@ export function ViewToolbar({
           aria-label={titles[open]}
           className="view-toolbar-popover"
           role="dialog"
+          onKeyDown={onMenuKeyDown}
           style={menuStyle}
         >
           <div className="view-toolbar-popover-title">{titles[open]}</div>
@@ -441,11 +463,16 @@ function GroupSection({
   const groupable = choices.filter((choice) => !GROUP_FIELD_DENYLIST.has(choice.id));
   const groups = bySection(groupable);
   const current = view.groupField ?? '';
+  // When the active group field is not in the visible list (denylisted/removed),
+  // no option is selected — keep "No grouping" the Tab stop so the group stays
+  // keyboard-reachable.
+  const groupedOnVisible = groupable.some((choice) => choice.id === current);
   return (
-    <div className="view-toolbar-options">
+    <RadioOptionGroup className="view-toolbar-options" label={t.outliner.viewToolbar.groupBy}>
       <OptionRow
         label={t.outliner.viewToolbar.noGrouping}
         selected={current === ''}
+        tabIndex={groupedOnVisible ? -1 : 0}
         variant="radio"
         onSelect={() => void run(() => api.setGroupField(node.id, null))}
       />
@@ -464,7 +491,7 @@ function GroupSection({
           ))}
         </div>
       ))}
-    </div>
+    </RadioOptionGroup>
   );
 }
 
@@ -718,20 +745,24 @@ function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRu
     ? [tv.booleanDone, tv.booleanNotDone]
     : [tv.booleanYes, tv.booleanNo];
   return (
-    <div className="view-toolbar-options">
+    <RadioOptionGroup className="view-toolbar-options" label={tv.filterValuesLabel}>
+      {/* A freshly-added boolean filter has neither value selected; keep the first
+          option as the Tab stop so the group stays keyboard-reachable. */}
       <OptionRow
         label={onLabel}
         selected={selected === 'true'}
+        tabIndex={selected === 'false' ? -1 : 0}
         variant="radio"
         onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['true'] }))}
       />
       <OptionRow
         label={offLabel}
         selected={selected === 'false'}
+        tabIndex={selected === 'false' ? 0 : -1}
         variant="radio"
         onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['false'] }))}
       />
-    </div>
+    </RadioOptionGroup>
   );
 }
 
@@ -825,18 +856,26 @@ function OptionRow({
   selected,
   variant,
   onSelect,
+  tabIndex,
 }: {
   label: ReactNode;
   icon?: ReactNode;
   selected: boolean;
   variant: 'checkbox' | 'radio';
   onSelect: () => void;
+  // Radio variant only: the roving tab stop. Defaults to the selected option
+  // (each radiogroup has exactly one selected); pass explicitly when a group can
+  // momentarily have none selected, so one option stays Tab-reachable.
+  tabIndex?: number;
 }) {
+  const resolvedTabIndex = variant === 'radio' ? (tabIndex ?? (selected ? 0 : -1)) : tabIndex;
   return (
     <ButtonControl
-      aria-pressed={selected}
+      role={variant === 'checkbox' ? 'checkbox' : 'radio'}
+      aria-checked={selected}
       className={`view-toolbar-option ${selected ? 'is-selected' : ''}`}
       onClick={onSelect}
+      tabIndex={resolvedTabIndex}
     >
       {variant === 'checkbox' ? (
         <CheckboxMark checked={selected} />
@@ -846,6 +885,49 @@ function OptionRow({
       {icon}
       <span className="view-toolbar-option-label">{label}</span>
     </ButtonControl>
+  );
+}
+
+// A radiogroup wrapper for single-select OptionRows. The roving tab stop is
+// declarative (each radio's `tabIndex` follows its selected state — see
+// OptionRow); this wrapper adds the group role/label and Arrow-key
+// move-and-select, matching SegmentedControl. The radios may be interleaved with
+// section headers (GroupSection), so navigation queries `[role="radio"]`
+// descendants rather than assuming flat siblings.
+function RadioOptionGroup({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isImeComposingEvent(event)) return;
+    // Horizontal or vertical arrows both move; map onto the shared vertical
+    // resolver so the wrap math lives in one place (resolveMenuNavigation).
+    const key = event.key === 'ArrowRight' ? 'ArrowDown' : event.key === 'ArrowLeft' ? 'ArrowUp' : event.key;
+    if (key !== 'ArrowDown' && key !== 'ArrowUp') return;
+    const group = ref.current;
+    if (!group) return;
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])')];
+    const nextIndex = resolveMenuNavigation(key, radios.indexOf(document.activeElement as HTMLElement), radios.length);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    // Moving selection follows focus (radio convention); the click re-renders the
+    // group, which shifts the declarative tab stop onto the newly-selected option.
+    const next = radios[nextIndex];
+    next?.focus();
+    next?.click();
+  };
+
+  return (
+    <div aria-label={label} className={className} onKeyDown={onKeyDown} ref={ref} role="radiogroup">
+      {children}
+    </div>
   );
 }
 

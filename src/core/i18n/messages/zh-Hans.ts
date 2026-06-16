@@ -454,6 +454,7 @@ commandPalette: {
   // 中心大纲：视图工具栏（显示/分组/排序/筛选）、节点右键菜单、只读系统字段值，
   // 以及字段值编辑相关界面（选择器、弹出层、日期选择器、代码块、图片）。
   outliner: {
+    treeAriaLabel: '大纲',
     emptyState: {
       searchTitle: '无结果',
       searchBody: '没有节点匹配此搜索。',

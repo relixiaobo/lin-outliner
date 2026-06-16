@@ -2,6 +2,10 @@ import { useEffect, type RefObject } from 'react';
 
 interface DismissibleOverlayOptions {
   disabled?: boolean;
+  // Leave Escape to a more specific owner (e.g. `useMenuKeyboard`, which scopes ESC
+  // to the focused surface and restores focus). When false, this hook only handles
+  // outside-pointer dismissal. Defaults to true (outside-pointer + Escape).
+  escape?: boolean;
 }
 
 export function useDismissibleOverlay(
@@ -9,6 +13,7 @@ export function useDismissibleOverlay(
   onDismiss: () => void,
   options: DismissibleOverlayOptions = {},
 ) {
+  const escape = options.escape ?? true;
   useEffect(() => {
     if (options.disabled) return undefined;
     const closeOnOutsideMouseDown = (event: globalThis.MouseEvent) => {
@@ -19,10 +24,10 @@ export function useDismissibleOverlay(
       if (event.key === 'Escape') onDismiss();
     };
     document.addEventListener('mousedown', closeOnOutsideMouseDown);
-    document.addEventListener('keydown', closeOnEscape);
+    if (escape) document.addEventListener('keydown', closeOnEscape);
     return () => {
       document.removeEventListener('mousedown', closeOnOutsideMouseDown);
-      document.removeEventListener('keydown', closeOnEscape);
+      if (escape) document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [onDismiss, options.disabled, ref]);
+  }, [escape, onDismiss, options.disabled, ref]);
 }

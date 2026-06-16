@@ -181,6 +181,9 @@ function FlatRowShell({
   return (
     <div
       className="outliner-flat-row"
+      // Transparent to assistive tech so the windowed `treeitem` rows read as
+      // direct children of the surrounding role="tree" container.
+      role="presentation"
       data-flat-row-key={rowKey}
       ref={rowRef}
       style={{ transform: `translateY(${top}px)` }}
@@ -554,7 +557,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         rootLevel={props.parentId === props.rootId}
         searchLoading={rootSearchRefreshing}
       />
-      <div className="outliner-flat" ref={listRef} style={containerStyle}>
+      <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
         {renderIndices.map((i) => {
           const row = rows[i]!;
           const item = layout.items[i]!;

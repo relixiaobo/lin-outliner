@@ -32,7 +32,8 @@ export function DoneCheckbox(props: DoneCheckboxProps) {
   return (
     <ButtonControl
       className="done-checkbox"
-      aria-pressed={props.checked}
+      role="checkbox"
+      aria-checked={props.checked}
       title={props.checked ? t.outliner.contextMenu.markNotDone : t.outliner.contextMenu.markDone}
       onMouseDown={(event) => {
         event.preventDefault();

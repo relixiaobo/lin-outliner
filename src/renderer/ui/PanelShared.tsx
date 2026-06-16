@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from 'react';
 import type { NodeId } from '../api/types';
+import { useT } from '../i18n/I18nProvider';
 import type { DocumentIndex, UiState } from '../state/document';
 import { ChevronLeftIcon, CloseIcon } from './icons';
 import { FLAT_OUTLINER_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
@@ -156,10 +157,22 @@ interface PanelChildrenOutlineProps {
 }
 
 export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
+  const t = useT();
   const className = ['outliner', props.className].filter(Boolean).join(' ');
 
+  // The node outline is an ARIA tree: `treeitem` rows carry level / expanded /
+  // selected state (see OutlinerRowShell). Multi-select is supported, so the tree
+  // is `aria-multiselectable`. Structure-only — the sighted keyboard model lives
+  // in useWorkspaceKeyboard and is unchanged.
   return (
-    <div className={className} onDragOver={props.onDragOver} onDrop={props.onDrop}>
+    <div
+      className={className}
+      role="tree"
+      aria-label={t.outliner.treeAriaLabel}
+      aria-multiselectable="true"
+      onDragOver={props.onDragOver}
+      onDrop={props.onDrop}
+    >
       {props.label}
       {FLAT_OUTLINER_ENABLED ? (
         <OutlinerFlatView

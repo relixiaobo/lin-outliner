@@ -486,6 +486,10 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     expanded,
     hasChildren,
     selected,
+    // The visible selection: excludes ref-click selection (which paints
+    // `.ref-click-selected`, not `.selected`). `aria-selected` mirrors this so AT
+    // and sighted users agree on what counts as selected.
+    rowSelected,
     focused,
     dropPosition,
     updateSelection,

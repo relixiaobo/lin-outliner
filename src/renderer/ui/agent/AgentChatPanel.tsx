@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type RefObject,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -77,9 +76,9 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
-import { MenuItem } from '../primitives/MenuItem';
-import { MenuSurface } from '../primitives/MenuSurface';
+import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 
 const TRANSCRIPT_ROW_GAP_PX = 14;
@@ -182,81 +181,20 @@ function ConversationRowMoreMenu({
         <MoreIcon size={ICON_SIZE.menu} />
       </button>
       {open ? (
-        <FloatingConversationRowMenu
+        <AnchoredActionMenu
           actions={actions}
           anchorRef={anchorRef}
-          menuLabel={menuLabel}
+          ariaLabel={menuLabel}
+          className="agent-conversation-row-menu"
+          itemClassName="agent-conversation-row-menu-item"
+          itemLabelClassName="agent-conversation-row-menu-item-label"
           onClose={() => onOpenChange(false)}
+          // The history menu's outside-pointer handler ignores clicks inside this menu.
+          surfaceProps={{ 'data-agent-conversation-row-menu': 'true' }}
+          width={196}
         />
       ) : null}
     </>
-  );
-}
-
-function FloatingConversationRowMenu({
-  actions,
-  anchorRef,
-  menuLabel,
-  onClose,
-}: {
-  actions: ConversationRowMenuAction[];
-  anchorRef: RefObject<HTMLElement | null>;
-  menuLabel: string;
-  onClose: () => void;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const style = useAnchoredOverlay(menuRef, {
-    anchorRef,
-    layoutKey: actions.map((action) => action.label).join('|'),
-    maxHeight: 320,
-    placement: 'bottom-end',
-    width: 196,
-  });
-
-  useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    }
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [anchorRef, onClose]);
-
-  return createPortal(
-    <MenuSurface
-      aria-label={menuLabel}
-      className="agent-conversation-row-menu"
-      data-agent-conversation-row-menu="true"
-      ref={menuRef}
-      role="menu"
-      style={style}
-    >
-      {actions.map((action) => (
-        <MenuItem
-          className="agent-conversation-row-menu-item"
-          disabled={action.disabled}
-          key={action.id ?? action.label}
-          label={action.label}
-          labelClassName="agent-conversation-row-menu-item-label"
-          onClick={() => {
-            onClose();
-            action.onSelect();
-          }}
-          role="menuitem"
-        />
-      ))}
-    </MenuSurface>,
-    document.body,
   );
 }
 
@@ -1469,6 +1407,19 @@ export function AgentChatPanel({
     maxHeight: 420,
     placement: 'bottom-start',
   });
+  // Heterogeneous popover (lists + actions + rename inputs): focus-trap rather than
+  // roving menu-nav, plus the Escape-to-close this menu previously lacked, and
+  // focus-restore to the title button on close.
+  const { onKeyDown: onHistoryMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: historyMenuRef,
+    onClose: () => {
+      setHistoryOpen(false);
+      setRowActionMenu(null);
+    },
+    kind: 'dialog',
+    active: historyOpen,
+    getRestoreTarget: () => historyButtonRef.current,
+  });
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
       <header className="agent-dock-header" ref={headerRef}>
@@ -1541,6 +1492,7 @@ export function AgentChatPanel({
             className="agent-conversation-menu"
             role="dialog"
             aria-label={t.agent.chat.conversations}
+            onKeyDown={onHistoryMenuKeyDown}
             style={historyMenuStyle}
           >
             <div className="agent-conversation-menu-header">

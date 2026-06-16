@@ -51,6 +51,8 @@ export function OutlinerPreviewRow({
     <OutlinerRowShell
       hasChildren={hasChildren}
       expanded={expanded}
+      level={depth + 1}
+      selected={false}
       wrapClassName="outliner-preview-wrap"
       wrapProps={wrapProps}
       rowClassName={[

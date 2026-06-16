@@ -504,6 +504,9 @@ commandPalette: {
   // node right-click context menu, read-only system-field values, and field-value
   // editing chrome (pickers, popovers, date picker, code block, images).
   outliner: {
+    // Accessible name for the node tree (role="tree"); read by assistive tech when
+    // entering the outline.
+    treeAriaLabel: 'Outline',
     emptyState: {
       searchTitle: 'No results',
       searchBody: 'No nodes match this search.',

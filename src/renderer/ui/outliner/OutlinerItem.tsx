@@ -1831,6 +1831,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     <OutlinerRowShell
       hasChildren={row.hasChildren}
       expanded={row.expanded}
+      level={props.depth + 1}
+      selected={row.rowSelected}
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName([
         referenceLikeRow ? 'reference-row' : '',
@@ -2131,7 +2133,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       )}
 
       {!props.flat && row.expanded && !props.fieldValue && (
-        <div className="children">
+        // role="group" owns the nested treeitems under this row, completing the
+        // ARIA tree nesting (treeitem → group → treeitems).
+        <div className="children" role="group">
           <OutlinerView
             panelId={props.panelId}
             parentId={childParentId}
