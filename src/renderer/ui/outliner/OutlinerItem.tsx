@@ -1260,9 +1260,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const rowIndex = siblings.indexOf(props.nodeId);
     if (!payload.atEnd) {
       await props.run(() => api.splitNode(targetEditId, payload.before, payload.after, {
+        // A file node's `expanded` means "preview open", not "children visible to
+        // type into", so Enter on a file row always adds a sibling (never a child).
         ...(node.type === 'reference'
           ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
-          : row.expanded && row.hasChildren
+          : !fileNodeRow && row.expanded && row.hasChildren
             ? { targetParentId: props.nodeId, targetIndex: 0 }
             : {}),
         focusPlacement: { kind: 'start' },
@@ -1270,7 +1272,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
     await commitDraft(payload.before);
-    if (row.expanded && row.hasChildren) {
+    if (!fileNodeRow && row.expanded && row.hasChildren) {
       await props.run(() => api.createNode(childParentId, 0, payload.after.text));
       return;
     }
@@ -1848,6 +1850,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   return (
     <OutlinerRowShell
       hasChildren={row.hasChildren}
+      // A non-image file row's chevron toggles its inline preview, so it is
+      // expandable even with no children (its `expanded` reflects the preview).
+      expandable={row.hasChildren || Boolean(nonImageFileRow)}
       expanded={row.expanded}
       level={props.depth + 1}
       selected={row.rowSelected}
@@ -2174,9 +2179,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && !props.fieldValue && (
+      {!props.flat && row.expanded && !props.fieldValue && (!nonImageFileRow || row.hasChildren) && (
         // role="group" owns the nested treeitems under this row, completing the
-        // ARIA tree nesting (treeitem → group → treeitems).
+        // ARIA tree nesting (treeitem → group → treeitems). A file row's expansion
+        // means "preview open"; it only renders this children group when it has real
+        // children, and never a trailing draft (see `trailingDraft` below), so an
+        // empty file node shows no phantom child draft under its preview.
         <div className="children" role="group">
           <OutlinerView
             panelId={props.panelId}
@@ -2199,8 +2207,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             referencePath={childReferencePath}
             // The trailing draft (eager materialization) replaces the old child
             // TrailingInput: shown for an empty child list or when nav focuses
-            // the trailing surface, unless this is a reference cycle.
-            trailingDraft={referenceCycle ? 'none' : 'auto'}
+            // the trailing surface, unless this is a reference cycle — or a file
+            // node, whose container is preview-only and never typed into.
+            trailingDraft={referenceCycle || nonImageFileRow ? 'none' : 'auto'}
           />
         </div>
       )}

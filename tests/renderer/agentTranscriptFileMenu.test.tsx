@@ -11,8 +11,9 @@ import { getMessages } from '../../src/core/i18n';
 import type { PreviewTarget } from '../../src/core/preview';
 
 // The transcript file chip's right-click menu: Add to Today / Open with default app /
-// Show in Finder. Add-to-Today resolves today's date node (ensure_date_node via the
-// bridge invoke) then fires the ingest bridge under it; the other two hit the OS seam.
+// Show in Finder. Add-to-Today fires the ingest bridge with just the file target; App
+// owns the destination (it ensures today's date node through the command runner and
+// creates the node under it). The other two actions hit the OS seam.
 
 const labels = getMessages('en').agent.filePreview;
 
@@ -24,7 +25,6 @@ interface Rendered {
 
 interface AddRequest {
   panelId?: string;
-  parentId?: string;
   target: PreviewTarget;
 }
 
@@ -63,7 +63,7 @@ describe('AgentTranscriptFileMenu', () => {
     ]);
   });
 
-  test('"Add to Today" ensures today\'s date node and ingests the file under it', async () => {
+  test('"Add to Today" fires the ingest bridge with the file target (App owns the destination)', async () => {
     const invokeCalls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const requests: AddRequest[] = [];
     detachBridge = onAddPreviewTargetToOutlineRequest(async (request) => {
@@ -73,16 +73,16 @@ describe('AgentTranscriptFileMenu', () => {
     const rendered = render(FILE, {
       invoke: (command, args) => {
         invokeCalls.push({ command, args });
-        // ensure_date_node resolves the day's node id via the command focus.
-        return Promise.resolve({ update: { kind: 'delta' }, focus: { nodeId: 'date-today' } });
+        return Promise.resolve(null);
       },
     });
 
     await clickItem(rendered, labels.addToToday);
 
-    expect(invokeCalls[0]?.command).toBe('ensure_date_node');
+    // The menu no longer ensures the date node itself — that moved to App's bridge
+    // handler (which routes through the command runner so the index stays consistent).
+    expect(invokeCalls).toHaveLength(0);
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.parentId).toBe('date-today');
     expect(requests[0]?.panelId).toBeUndefined();
     expect(requests[0]?.target).toEqual({
       kind: 'local-file',

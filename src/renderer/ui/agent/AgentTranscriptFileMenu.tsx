@@ -1,8 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../api/client';
 import type { PreviewTarget } from '../../../core/preview';
-import { parseIsoLocalDate, todayIsoLocalDate } from '../../../core/localDate';
 import { useT } from '../../i18n/I18nProvider';
 import { AddChildIcon, FolderIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { MenuItem } from '../primitives/MenuItem';
@@ -34,20 +32,6 @@ function previewTargetFor(file: AgentTranscriptFile): PreviewTarget {
   };
 }
 
-/** Create today's daily note (idempotent) and return its node id, or null when the
- *  command failed. Mirrors App's `ensureTodayNode`; `ensure_date_node` is idempotent,
- *  so calling it for an existing day just resolves the same node. */
-async function ensureTodayNodeId(): Promise<string | null> {
-  const today = parseIsoLocalDate(todayIsoLocalDate());
-  if (!today) return null;
-  const result = await api.ensureDateNode(
-    today.getFullYear(),
-    today.getMonth() + 1,
-    today.getDate(),
-  );
-  return result && 'focus' in result ? result.focus?.nodeId ?? null : null;
-}
-
 /**
  * The right-click menu for a file chip rendered inside the agent transcript. Unlike
  * an outliner file reference (which opens the in-app preview pane), a transcript chip
@@ -75,11 +59,10 @@ export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscript
   const { onKeyDown } = useMenuKeyboard({ surfaceRef: menuRef, onClose, kind: 'menu' });
 
   const addToToday = () => {
-    void (async () => {
-      const parentId = await ensureTodayNodeId();
-      if (!parentId) return;
-      await requestAddPreviewTargetToOutline({ parentId, target: previewTargetFor(file) });
-    })();
+    // App owns the destination: it ensures today's daily note exists (through the
+    // command runner, so the new node is in the index) and creates the file node
+    // under it, surfacing a failure toast on its own. Fire-and-forget here.
+    void requestAddPreviewTargetToOutline({ target: previewTargetFor(file) });
   };
 
   const openExternally = () => {

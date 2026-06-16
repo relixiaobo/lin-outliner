@@ -353,7 +353,7 @@ export const zhHans: PartialMessages = {
       reveal: '显示',
       copyFile: '拷贝文件',
       addToOutline: '加入大纲',
-      addedToOutline: '已加入大纲',
+      addToOutlineFailed: '无法将文件加入大纲。',
       directory: '文件夹',
       emptyDirectory: '空文件夹',
       modified: ({ date }) => `修改于 ${date}`,

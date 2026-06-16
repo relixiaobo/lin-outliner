@@ -91,10 +91,18 @@ export function buildVisualRows(
       out.push({ kind: 'toolbar', key: `toolbar>${prefix}`, nodeId: parentId, depth, parentId });
     }
 
+    // Inline (in an outline), a file node's expansion means "preview open" (the
+    // chevron toggles the inline preview), not "type a child here", so a descended
+    // file container never auto-spawns a trailing draft — real children still render,
+    // but an empty file node shows no phantom draft row under its preview. When the
+    // file node is itself the root (its own node page), the caller's trailing-draft
+    // mode wins, so child notes can still be added there.
+    const isInlineFileContainer = !isRoot && (parent.type === 'attachment' || parent.type === 'image');
+    const effectiveTrailingMode = isInlineFileContainer ? 'none' : trailingMode;
     const builtRows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
-    const showDraft = trailingMode === 'always'
+    const showDraft = effectiveTrailingMode === 'always'
       || (
-        trailingMode === 'auto'
+        effectiveTrailingMode === 'auto'
         && (
           builtRows.length === 0
           || options.trailingFocusedParentId === parentId

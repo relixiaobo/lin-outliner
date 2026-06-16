@@ -31,7 +31,9 @@ import type { FilePreviewMenuAction } from './FilePreviewPill';
 import {
   FilePreviewShell,
   canOpenPreviewSource,
+  canRevealPreviewSource,
   openPreviewSource,
+  revealPreviewSource,
   sourceMeta,
   sourceTitle,
   targetTitleFallback,
@@ -85,6 +87,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     : props.target.label ?? targetTitleFallback(props.target);
   const title = fileRoot ? fileNodeTitle(fileRoot) || previewTitle : previewTitle;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
+  const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
   const canAdd = canAddPreviewTargetToOutline(props.target);
   const {
     mainPanelRef,
@@ -110,6 +113,11 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const openOriginal = useCallback(() => {
     if (state.status !== 'ready') return;
     void openPreviewSource(state.source);
+  }, [state]);
+
+  const revealOriginal = useCallback(() => {
+    if (state.status !== 'ready') return;
+    void revealPreviewSource(state.source);
   }, [state]);
 
   useEffect(() => {
@@ -154,25 +162,36 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     ? fileNodePreviewMeta(fileRoot, state, attachmentLabels, previewLabels)
     : state.status === 'ready' ? sourceMeta(state.source, previewLabels) : null;
   // An ingested node carries Open-with-default + Reveal/Copy; a loose source carries
-  // Open (if openable) + Add-to-outline.
+  // Open (if openable) + Show-in-Finder (on-disk sources) + Add-to-outline.
   const fileControls = fileRoot
     ? fileNodePreviewControls(fileRoot, nodeTarget ?? props.target, attachmentLabels, previewLabels)
     : null;
   const primaryOpen = fileControls
     ? fileControls.primaryOpen
-    : canOpen ? { label: previewLabels.openWithDefault, run: openOriginal } : null;
+    : canOpen
+      // A url opens in the browser; an on-disk source opens with its default app.
+      ? {
+          label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
+          run: openOriginal,
+        }
+      : null;
   const menuActions: FilePreviewMenuAction[] = fileControls
     ? fileControls.menuActions
-    : canAdd
-      ? [{
-          key: 'add',
-          label: previewLabels.addToOutline,
-          icon: AddChildIcon,
-          run: () => {
-            void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: props.target });
-          },
-        }]
-      : [];
+    : [
+        ...(canReveal
+          ? [{ key: 'reveal', label: previewLabels.reveal, icon: FolderIcon, run: revealOriginal }]
+          : []),
+        ...(canAdd
+          ? [{
+              key: 'add',
+              label: previewLabels.addToOutline,
+              icon: AddChildIcon,
+              run: () => {
+                void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: props.target });
+              },
+            }]
+          : []),
+      ];
   const ingestedBreadcrumb = fileRoot ? buildPanelBreadcrumb(fileRoot, props.index) : null;
   const ingestedBreadcrumbNodes = ingestedBreadcrumb
     ? ingestedBreadcrumb.collapsed && breadcrumbExpanded

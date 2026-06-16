@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
@@ -170,10 +170,12 @@ export function FilePreviewShell({
   const previewRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(initialExpanded);
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
+  // A non-previewable source (metadata card) needs no collapse/expand stage, so it
+  // carries only the base class — `.collapsed` / `.expanded` are the only stage rules.
   const stageClass = [
     'file-node-preview',
-    previewable ? (expanded ? 'expanded' : 'collapsed') : 'static',
-  ].join(' ');
+    previewable ? (expanded ? 'expanded' : 'collapsed') : '',
+  ].filter(Boolean).join(' ');
   return (
     <div className="file-node-body">
       <div className={stageClass} ref={previewRef}>
@@ -428,7 +430,11 @@ function PdfPreview({ source, scrollRootRef }: PreviewRendererProps) {
 /**
  * Every PDF page stacked vertically, scrolled to navigate (no page-nav, no zoom).
  * Each page renders lazily as it nears the scroll viewport; until then a placeholder
- * sized by the first page's aspect reserves its height so mounting never jumps.
+ * reserves its height so mounting never shifts the scroll position. The placeholder
+ * uses the first page's aspect as an estimate — pages render `PDF_LAZY_ROOT_MARGIN`
+ * ahead of the viewport, so each page is rasterized at its exact height before it
+ * scrolls into view; a mixed-page-size PDF only differs in the (off-screen) scrollbar
+ * estimate, never in a visible jump.
  */
 function PdfPages({
   document: pdfDocument,
@@ -455,11 +461,22 @@ function PdfPages({
     };
   }, [pdfDocument]);
 
+  // Measure the width synchronously before the first paint so every page reserves a
+  // real placeholder height (width × aspect) immediately. Without this, the first
+  // frame has width 0 → every placeholder collapses to ~0px → all pages fall inside
+  // the IntersectionObserver's root margin at once and render together, defeating the
+  // lazy mounting. Round to whole pixels so sub-pixel ResizeObserver noise (and a
+  // live drag) doesn't re-rasterize every visible page each fractional frame.
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (element) setWidth(Math.round(element.clientWidth));
+  }, []);
+
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
     const observer = new ResizeObserver((entries) => {
-      const next = entries[0]?.contentRect.width ?? 0;
+      const next = Math.round(entries[0]?.contentRect.width ?? 0);
       if (next > 0) setWidth(next);
     });
     observer.observe(element);

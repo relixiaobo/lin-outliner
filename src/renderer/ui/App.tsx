@@ -499,26 +499,34 @@ export function App() {
   }), []);
 
   // The non-node preview "Add to outline" bridge: copy the previewed source into an
-  // asset and create a file node. The pane-driven path (`panelId`) lands it under
-  // Today and binds the requesting file surface to the new node in place; the
-  // explicit-parent path (`parentId`, e.g. a transcript chip's "Add to Today") lands
-  // it under that parent with no pane to bind. Confirms only on a real create.
-  useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, parentId, target }) => {
-    const currentIndex = indexRef.current;
-    const resolvedParentId = parentId ?? currentIndex?.projection.todayId;
-    if (!currentIndex || !resolvedParentId || !currentIndex.byId.has(resolvedParentId)) return false;
+  // asset and create a file node under Today. Both callers (the pane "Add to outline"
+  // and a transcript chip's "Add to Today") land it under today's daily note; the
+  // pane path (`panelId`) also binds the requesting file surface to the new node in
+  // place. Ensure-today goes through `run()` — App's command runner folds the create
+  // into the projection/index — so the new parent is usable immediately (a bare
+  // `api.ensureDateNode` would leave the renderer index stale until the next commit).
+  // Confirms only on a real create.
+  useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, target }) => {
+    // Surface a failure toast for both callers (the menu / pill fire-and-forget the
+    // result), so an add that can't complete is never silent.
+    const fail = () => {
+      setError(t.shell.filePreview.addToOutlineFailed);
+      return false;
+    };
+    const todayId = await ensureTodayNode();
+    if (!todayId) return fail();
     const asset = await ingestPreviewTargetToAsset(target);
-    if (!asset) return false;
-    const result = await createAssetNode(run, resolvedParentId, null, asset, { applyFocus: false });
+    if (!asset) return fail();
+    const result = await createAssetNode(run, todayId, null, asset, { applyFocus: false });
     const newNodeId = result && 'focus' in result ? result.focus?.nodeId ?? null : null;
-    if (!newNodeId) return false;
-    // No requesting pane on the explicit-parent path — nothing to bind, so a real
-    // create is the success signal on its own.
+    if (!newNodeId) return fail();
+    // No requesting pane (a transcript chip's "Add to Today") — a real create is the
+    // success signal on its own; otherwise bind the requesting pane to the new node.
     if (!panelId) return true;
     const nextTarget = previewTargetForAsset(asset);
-    if (!bindPreviewPanelNode(panelId, newNodeId, nextTarget, target)) return false;
+    if (!bindPreviewPanelNode(panelId, newNodeId, nextTarget, target)) return fail();
     return true;
-  }), [bindPreviewPanelNode, run]);
+  }), [ensureTodayNode, bindPreviewPanelNode, run, t, setError]);
 
   if (!index) {
     return (

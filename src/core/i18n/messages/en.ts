@@ -386,7 +386,7 @@ export const en = {
       reveal: 'Reveal',
       copyFile: 'Copy file',
       addToOutline: 'Add to outline',
-      addedToOutline: 'Added to outline',
+      addToOutlineFailed: "Couldn't add the file to your outline.",
       directory: 'Directory',
       emptyDirectory: 'Empty directory',
       modified: ({ date }: { date: string }) => `Modified ${date}`,
