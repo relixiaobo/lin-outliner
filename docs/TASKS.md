@@ -20,8 +20,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped ungate-contact #236, channel async-bus #231) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped `agent-debug-run-grounded` #264; `conversational-agent-authoring` #251 closed + re-planned → Backlog draft) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped `agent-debug-run-grounded` #264; re-planned `conversational-agent-authoring`, built+shipped by codex #286) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269, conversational-agent-authoring #286) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
@@ -31,15 +31,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-16).** Nothing actively building — the one prior in-flight item was
-closed and re-planned; next dispatch is from the Backlog.
-
-- **`conversational-agent-authoring`** — the old plan (PR #251) was **closed** (built on the
-  now-dead ceiling). A fresh plan (`docs/plans/conversational-agent-authoring.md`) re-grounds it as a
-  `skillify`-symmetric **skill with no new tool**: interview → confirm-in-chat → write an AGENT.md via
-  the existing `file_write`, enabled by making the agent's self-definition dirs writable + an
-  agent-registry hot-reload hook (which also fixes `skillify`'s user-scope gap). Now a `draft` on the
-  Backlog (§ Agent capabilities), awaiting PM ratification + dispatch.
+**In flight (2026-06-16).** Nothing actively building — `conversational-agent-authoring`
+shipped (#286, see Recently completed); next dispatch is from the Backlog.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
@@ -161,18 +154,6 @@ before any directional/security-sensitive build.
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
-- **conversational-agent-authoring** (P2, `draft`, plan re-drafted 2026-06-16) — the `agentify`
-  twin of `skillify`, fully symmetric and **with no new tool**: a `create-agent` bundled skill
-  interviews → drafts a full AGENT.md → confirms in chat → writes it with the **existing
-  `file_write`**. Enabled by making the agent's **self-definition dirs** (`~/.agents/{agents,skills}`
-  + project counterparts) standing writable roots + an agent-registry **hot-reload hook** (mirroring
-  skills' `notify → reloadAll`); this also fixes `skillify`'s own user-scope-write gap. Drops the
-  prior drafts' new tool / custom UI / ceiling. **Stance:** deliberately makes agent (and user-scope
-  skill) definitions model-writable — the **minimal, principled slice** of the filesystem-contract
-  change `agent-permission-blacklist-default-allow` (#277) deferred, not a general jail removal; a
-  created agent is `restricted` by type + globally gated. **Shape (a)** one PR. Old plan (PR #251)
-  closed (dead ceiling). Security-sensitive (file-boundary change) → `/security-review`. See
-  `docs/plans/conversational-agent-authoring.md`.
 - **coordinator-working-groups** (P2, `draft`) — let the user-facing **coordinator** create a
   multi-agent **working-group Channel** on the user's request ("set up a group for X with Research
   and Writing"). A Channel has **no file form** (unlike an AGENT.md), so the only mechanism is a
@@ -192,7 +173,7 @@ before any directional/security-sensitive build.
   floor + a global grants ledger); a delegated/authored agent's `permissionMode` is type-locked to
   `'restricted'` (`AgentDelegationPermissionMode`, `src/core/types.ts`); and `tools` only filters
   which tools are wired — so no agent holds private authority a child could exceed, and there is no
-  per-agent ceiling to clamp. `conversational-agent-authoring` (re-planned, Backlog draft)
+  per-agent ceiling to clamp. `conversational-agent-authoring` (shipped #286)
   safety rests on human ratification + the universal floor. **Don't re-propose a per-agent clamp.**
 - **cross-agent consultation — backlog** (design = `agent-conversation-model` §"Cross-agent help")
   — the **colleague model** is PM-ratified (2026-06-13) and shipped: `ungate-contact` (PR #236)
@@ -448,6 +429,26 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **conversational-agent-authoring** (re-planned by cc-2, built+shipped by codex, PR #286) — the
+  `agentify` twin of `skillify`, fully symmetric and **with no new tool**: a built-in `/create-agent`
+  skill interviews → drafts a full `AGENT.md` → confirms in chat → writes it with the **existing
+  `file_write` / `file_edit`**. The file-tool **self-definition gateway** now governs agent-definition
+  writes alongside skill writes: a chat-authored agent may create/edit exactly one `AGENT.md` under
+  `<workspace>/.agents/agents/<name>/` (user-scope `~/.agents/agents` only with a handed write scope),
+  must be `permission-mode: restricted`, and the agent registry **hot-reloads** (incl. child runtimes)
+  on success. A created agent is `restricted` by type + globally gated. Design folded into
+  `docs/spec/agent-skills.md`, `agent-tool-design.md`, `agent-tool-permissions.md`, and
+  `agent-delegation-runtime.md`; plan archived. **Gate (main):** `/code-review xhigh` (10 finder
+  angles + verify + sweep) → 15 findings, the headline being a **symlink write-escape** (a hostile
+  workspace's `.agents/agents` symlink redirected a restricted `AGENT.md` write outside the workspace,
+  empirically reproduced), plus built-in-name shadowing, unvalidated `background`/`max-turns`/`tools`,
+  `file_convert`/`bash` gateway bypasses, and a `file_delete` lexical-guard bypass. codex's hardening
+  commit closed them: self-definition dirs dropped as standalone write roots (writes must resolve
+  inside the workdir), a `RESERVED_AGENT_NAMES` gateway + registry guard (built-ins can't be
+  overridden), bounded frontmatter validation, a `file_convert` self-definition refusal, a bash
+  self-definition-write **redline**, and a realpath-aware delete guard — all re-verified by probe
+  (symlink write now `path_outside_local_root`; legit project writes intact). typecheck ✓ ·
+  affected `test:core` suites 218 pass / 2 skip / 0 fail.
 - **unify-agent-transcript-process-ui** (codex-2, PR #284) — extracts the assistant turn/process-fold
   renderer into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`) used by the
   DM transcript, the child-run task-detail timeline, and the Channel live-run drill-in — delivering

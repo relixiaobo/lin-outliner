@@ -12,6 +12,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Conversational agent authoring — `/create-agent` (PR #286, codex; plan re-planned by cc-2)** —
+  the `agentify` twin of `/skillify`, **with no new tool**. A built-in, user- and model-invocable
+  `/create-agent` skill interviews for missing identity/routing/tool details, drafts a complete
+  `AGENT.md` (or a focused edit diff), previews + confirms in chat, then writes exactly one file with
+  the existing `file_write` / `file_edit`. The file-tool **self-definition gateway** is extended to
+  govern agent-definition writes alongside skill writes: a chat-authored agent may create or edit one
+  `AGENT.md` under `<workspace>/.agents/agents/<name>/AGENT.md` (user-scope `~/.agents/agents` only
+  when a write scope is handed), must declare `permission-mode: restricted`, and passes bounded
+  frontmatter validation (reserved built-in names rejected; `background` disabled; `max-turns` capped
+  1–50; `model`/`effort`/`tools`/`disallowed-tools`/`skills` shape-checked, no `tools: ["*"]`).
+  Support files, deletes, trusted permission mode, secret-looking content, malformed frontmatter, and
+  oversize bodies are refused; the agent registry **hot-reloads** (including child runtimes) on a
+  successful write. Existing-file edits keep the normal freshness path (`file_read` before
+  `file_edit`/replacing `file_write`). Specs: `docs/spec/agent-skills.md`,
+  `agent-tool-design.md`, `agent-tool-permissions.md`, `agent-delegation-runtime.md`. **Gate (main):**
+  `/code-review xhigh` (10 finder angles + verify + sweep) surfaced 15 findings — a **symlink
+  write-escape** (a workspace `.agents/agents` symlink redirected a restricted write outside the
+  workdir, empirically reproduced), built-in-name shadowing of the default `assistant`, unvalidated
+  `background`/`max-turns`/`tools`, `file_convert` and `bash` gateway bypasses, and a `file_delete`
+  lexical-guard bypass. codex's hardening commit closed them all (self-definition dirs no longer
+  standalone write roots so writes must resolve inside the workdir; `RESERVED_AGENT_NAMES` gateway +
+  registry guard; bounded frontmatter; `file_convert` self-definition refusal; a bash
+  self-definition-write **redline**; realpath-aware delete guard), re-verified by probe (symlink write
+  → `path_outside_local_root`, legit project writes intact); typecheck + affected `test:core` suites
+  (218 pass / 2 skip / 0 fail) green.
 - **`web_search` image kind (PR #282, cc-2)** — the existing `web_search` agent tool gains an
   optional `kind` parameter (`"web"` default, or `"image"`); no new tool. `kind: "image"` scrapes
   Bing Images (every result is an `a.iusc[m]` JSON blob carrying the full image, thumbnail, and source
