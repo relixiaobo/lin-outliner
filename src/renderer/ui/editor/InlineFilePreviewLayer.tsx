@@ -14,9 +14,14 @@ import {
 
 // A transcript file chip points at a working file on disk: clicking it opens the OS
 // default app (not the in-app preview pane), and right-click offers the transcript
-// menu. The split is by LOCATION — a chip inside a `[data-agent-transcript-chips]`
-// render root (AgentMarkdown prose, file_write/file_edit result chips) — never a
-// node-model field, so an outliner file reference keeps its in-app preview behavior.
+// menu. The split is by LOCATION: a chip with a `[data-agent-transcript-chips]`
+// ancestor is in the live transcript. That marker is set ONCE, on the live assistant
+// message body (AgentAssistantContent), so everything it renders — answer prose,
+// interim narration, and file_write/file_edit result chips — opens externally, while
+// the same components on meta surfaces (compaction/child-run summaries, the child-run
+// details + PoV inspector panels) have no such ancestor and keep the in-app preview.
+// An outliner file reference is a node-model field, never under this marker, so it too
+// keeps its in-app preview behavior.
 const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';
 
 interface TranscriptFileMenuState {

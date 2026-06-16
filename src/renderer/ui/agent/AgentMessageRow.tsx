@@ -584,9 +584,6 @@ function renderAssistantBlocks(
         onNodeReferenceOpen={onNodeReferenceOpen}
         streaming={streaming && !hasLaterText}
         text={block.text}
-        // This is the live transcript: its prose file chips open with the OS default
-        // app + carry the transcript menu (other AgentMarkdown surfaces do not).
-        transcriptChips
       />,
     );
   });

@@ -472,10 +472,13 @@ function num(value: unknown): number {
 // references render, so input and output read identically in the stream.
 function ToolResultFileChip({ output }: { output: FileToolOutput }) {
   return (
-    // `data-agent-transcript-chips`: this chip lives in the agent transcript, so the
-    // app-wide inline-file layer opens it with the OS default app (+ transcript
-    // context menu) rather than the in-app preview pane (see AgentMarkdown).
-    <div className="agent-tool-file-output" data-agent-transcript-chips>
+    // Whether this chip opens with the OS default app (live transcript) or the in-app
+    // preview pane (child-run details panel) is decided by location, not here: the
+    // app-wide inline-file layer routes by a `[data-agent-transcript-chips]` ancestor,
+    // which the live assistant message body sets once (see AgentAssistantContent). In
+    // the child-run-details panel this same block has no such ancestor, so its result
+    // chips keep the in-app preview — matching every other meta surface.
+    <div className="agent-tool-file-output">
       <InlineFileReference
         className="agent-tool-file-chip"
         file={{

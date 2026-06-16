@@ -652,10 +652,14 @@ the in-app preview pane: a **click opens the file with the OS default app**, and
 **right-click** opens the bespoke `AgentTranscriptFileMenu` — *Add to Today* (copy
 the source into the asset store and create a file node under today's daily note),
 *Open with default app*, *Show in Finder*. The split is **by location**, not by
-node data: a chip is a transcript chip when it lives inside a
-`[data-agent-transcript-chips]` render root (AgentMarkdown prose, file_write /
-file_edit result chips). An outliner file reference is outside that root, so it
-keeps its in-app preview-pane click-to-open and native context menu unchanged.
+node data: a chip is a transcript chip when it has a `[data-agent-transcript-chips]`
+ancestor. That marker is set in exactly **one** place — the live assistant message
+body (`AgentAssistantContent`) — so every chip a live turn renders (answer prose,
+interim narration, and `file_write` / `file_edit` result chips) opens externally,
+while the **same** components on meta surfaces (compaction / child-run summaries, the
+child-run-details and PoV-inspector panels) have no such ancestor and keep the in-app
+preview. An outliner file reference is a node-model field, never under this marker, so
+it too keeps its in-app preview-pane click-to-open and native context menu unchanged.
 (The working file is path-addressed; durability is what Save-to-outliner / Export
 are for — see `docs/plans/agent-file-artifact-model.md`.)
 

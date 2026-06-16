@@ -314,6 +314,24 @@
 .file-node-preview.collapsed {
   max-height: var(--file-preview-peek-height, 260px);
   overflow: hidden;
+  /* The peek is a teaser the user expands to read in full. With long content its
+     bottom edge runs under the bottom-center pill (which floats over the peek by
+     design), so without this it would sit on sharp text. Fading that strip reads as a
+     "more below" cue instead. The fade height matches the base `padding-bottom` pill
+     clearance: short content (already clear of the pill) keeps its full last line —
+     the fade falls on the empty padding — while long, clipped content fades under the
+     pill. The pill is a SIBLING of this element (not a child), so the mask never
+     touches it. Mirrors the collapsed user-message peek in agent-message.css. */
+  mask-image: linear-gradient(
+    to bottom,
+    black calc(100% - var(--control-size-md) - var(--space-5)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black calc(100% - var(--control-size-md) - var(--space-5)),
+    transparent 100%
+  );
 }
 
 .file-node-preview.expanded {

@@ -38,13 +38,6 @@ interface AgentMarkdownProps {
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   streaming?: boolean;
   text: string;
-  // Mark this render root so a file chip in the prose opens with the OS default app
-  // (and gets the transcript context menu) instead of the in-app preview pane. Only
-  // the live transcript opts in; meta/inspector surfaces (compaction summaries, the
-  // PoV inspector, child-run details) render the same markdown but keep the safe
-  // in-app preview default — the agent-vs-outliner split is by location, and those
-  // are not the transcript.
-  transcriptChips?: boolean;
 }
 
 interface MarkdownAstNode {
@@ -352,7 +345,6 @@ export function AgentMarkdown({
   onNodeReferenceOpen,
   streaming = false,
   text,
-  transcriptChips = false,
 }: AgentMarkdownProps) {
   const renderText = useStreamingMarkdownText(text, streaming);
   const mended = useMemo(() => (streaming ? remend(renderText) : renderText), [streaming, renderText]);
@@ -360,11 +352,12 @@ export function AgentMarkdown({
   const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 
   return (
-    // `data-agent-transcript-chips` (only when this is the live transcript) marks the
-    // render root so the app-wide inline-file layer routes a file chip's click to the
-    // OS default app (and offers the transcript context menu) instead of the in-app
-    // preview pane — the agent-vs-outliner split is by location, never a node field.
-    <div className="agent-markdown" {...(transcriptChips ? { 'data-agent-transcript-chips': '' } : {})}>
+    // The file-chip open behavior (OS default app vs in-app preview) is decided by
+    // location, NOT here: a `[data-agent-transcript-chips]` ancestor (set once on the
+    // live assistant message body — see AgentAssistantContent) routes chip clicks to
+    // the OS default app. This markdown renders in both the live transcript and meta
+    // surfaces (compaction/child-run summaries, the PoV inspector), so it stays neutral.
+    <div className="agent-markdown">
       {blocks.map((block, blockIndex) => {
         const blockKey = `${keyPrefix}-block-${blockIndex}`;
         if (streaming && blockIndex === blocks.length - 1) {
