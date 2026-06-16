@@ -448,6 +448,16 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **web-search-image-kind** (cc-2, PR #282) — the `web_search` agent tool gains an optional `kind`
+  parameter (`"web"` default, or `"image"`); **no new tool**. `kind: "image"` scrapes Bing Images
+  (each result is an `a.iusc[m]` JSON blob → full image / thumbnail / source page) and returns
+  `imageUrl` (download via `web_fetch`) + `thumbnailUrl` (preview); `site` still applies. The default
+  `"web"` path is unchanged. The hidden-window lifecycle is shared by both kinds via `withSearchWindow`
+  + a `SEARCH_PROVIDERS` descriptor; the success envelope warns image results may be copyright-
+  protected. Spec folded into `docs/spec/agent-tool-design.md`. **Gate (main):** two high-effort
+  review rounds → 5 findings all addressed (Bing-block comment corrected, abort no longer mislabeled
+  `rate_limited`, non-string `record.t` title guarded, dead `width`/`height` dropped, redundant
+  per-kind `searchUrl` removed); re-verified typecheck + `test:core` 1076 pass / 0 fail.
 - **document-data-skills-upgrade** (codex-4, PR #283) — strengthens the `/document` and
   `/data-analysis` built-in skills (follow-up to #270). `/document` gains archetype/form-factor
   routing, design presets, and table gates; `docx_tool.py` now reports heading jumps, manual bullets,

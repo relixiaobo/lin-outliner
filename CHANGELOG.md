@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **`web_search` image kind (PR #282, cc-2)** — the existing `web_search` agent tool gains an
+  optional `kind` parameter (`"web"` default, or `"image"`); no new tool. `kind: "image"` scrapes
+  Bing Images (every result is an `a.iusc[m]` JSON blob carrying the full image, thumbnail, and source
+  page) and returns results with `imageUrl` (the binary to download with `web_fetch`) and
+  `thumbnailUrl` (a preview to pick by); `site` still applies via the `site:` operator. The default
+  `"web"` path is byte-for-byte unchanged. The hidden-window lifecycle (rate-limit gate, off-screen
+  window, abort wiring, teardown) is shared by both kinds via `withSearchWindow`, and a
+  `SEARCH_PROVIDERS` descriptor keeps `execute()` kind-agnostic. The success envelope warns image
+  results may be copyright-protected (treat as drafts, confirm reuse). Spec:
+  `docs/spec/agent-tool-design.md`. **Gate (main):** two high-effort review rounds → 5 findings
+  addressed (misleading Bing-block comment corrected, abort no longer mislabeled as `rate_limited`,
+  non-string `record.t` title coercion guarded, dead `width`/`height` fields dropped, redundant
+  per-kind `searchUrl` removed so each provider builds its own URL); re-verified, typecheck +
+  `test:core` (1076 pass / 0 fail) green.
 - **Document & data-analysis skill hardening (PR #283, codex-4)** — strengthens the `/document` and
   `/data-analysis` built-in skills (follow-up to #270), staying **stdlib-only** (no new dependencies;
   XLSX/DOCX parsed as zip+XML). `/document` gains archetype/form-factor routing, design presets, and
