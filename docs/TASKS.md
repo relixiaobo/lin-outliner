@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped ungate-contact #236, channel async-bus #231) |
-| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/conversational-agent-authoring` | shipped `agent-debug-run-grounded` (#264); `conversational-agent-authoring` (#251, DRAFT/redirect) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped `agent-debug-run-grounded` #264; `conversational-agent-authoring` #251 closed + re-planned → Backlog draft) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
@@ -31,13 +31,15 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-16).**
+**In flight (2026-06-16).** Nothing actively building — the one prior in-flight item was
+closed and re-planned; next dispatch is from the Backlog.
 
-1. **`conversational-agent-authoring`** (cc-2, PR #251, DRAFT) — REDIRECT: rewrite to drop the
-   dead "clamp to the creator's grants" framing (grants are a single **global** ledger post-#252;
-   `agent-capability-ceiling` was verified **unnecessary** and dropped — see Backlog § Agent
-   capabilities). Its safety then rests on human ratification of the new agent + the universal
-   floor/`decide(effect)` model. Unblocked once rewritten.
+- **`conversational-agent-authoring`** — the old plan (PR #251) was **closed** (built on the
+  now-dead ceiling). A fresh plan (`docs/plans/conversational-agent-authoring.md`) re-grounds it as a
+  `skillify`-symmetric **skill with no new tool**: interview → confirm-in-chat → write an AGENT.md via
+  the existing `file_write`, enabled by making the agent's self-definition dirs writable + an
+  agent-registry hot-reload hook (which also fixes `skillify`'s user-scope gap). Now a `draft` on the
+  Backlog (§ Agent capabilities), awaiting PM ratification + dispatch.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
@@ -165,16 +167,28 @@ before any directional/security-sensitive build.
   Membership = presence + addressability, **not** participation; unaddressed turns still route to the
   coordinator, so auto-membership never becomes auto-noise. The Agent Dock defaults to `#General`
   when there is no remembered conversation. **Shape (a)** one PR; **no stored conversation `kind`**
-  (reserved id + runtime invariant). `@all` deferred; coordinate with #251 (conversational agent
-  authoring) on the shared auto-membership path. Plan merged (#265). See
+  (reserved id + runtime invariant). `@all` deferred; coordinate with
+  `conversational-agent-authoring` on the shared auto-membership path. Plan merged (#265). See
   `docs/plans/default-general-channel.md`.
+- **conversational-agent-authoring** (P2, `draft`, plan re-drafted 2026-06-16) — the `agentify`
+  twin of `skillify`, fully symmetric and **with no new tool**: a `create-agent` bundled skill
+  interviews → drafts a full AGENT.md → confirms in chat → writes it with the **existing
+  `file_write`**. Enabled by making the agent's **self-definition dirs** (`~/.agents/{agents,skills}`
+  + project counterparts) standing writable roots + an agent-registry **hot-reload hook** (mirroring
+  skills' `notify → reloadAll`); this also fixes `skillify`'s own user-scope-write gap. Drops the
+  prior drafts' new tool / custom UI / ceiling. **Stance:** deliberately makes agent (and user-scope
+  skill) definitions model-writable — the **minimal, principled slice** of the filesystem-contract
+  change `agent-permission-blacklist-default-allow` (#277) deferred, not a general jail removal; a
+  created agent is `restricted` by type + globally gated. **Shape (a)** one PR. Old plan (PR #251)
+  closed (dead ceiling). Security-sensitive (file-boundary change) → `/security-review`. See
+  `docs/plans/conversational-agent-authoring.md`.
 - **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary, dropped (not
   built).** Post-#252/#266 capability is one **global** model (`decide(effect)` + non-configurable
   floor + a global grants ledger); a delegated/authored agent's `permissionMode` is type-locked to
   `'restricted'` (`AgentDelegationPermissionMode`, `src/core/types.ts`); and `tools` only filters
   which tools are wired — so no agent holds private authority a child could exceed, and there is no
-  per-agent ceiling to clamp. `conversational-agent-authoring` (#251) safety rests on human
-  ratification + the universal floor. **Don't re-propose a per-agent clamp.**
+  per-agent ceiling to clamp. `conversational-agent-authoring` (re-planned, Backlog draft)
+  safety rests on human ratification + the universal floor. **Don't re-propose a per-agent clamp.**
 - **agent-permission-blacklist-default-allow** (P1, `draft` — **PM-ratified direction
   2026-06-16**) — replace the consequence model's COMMIT→`ask` tier with a **default-allow +
   blocklist** model for the novice user base: ordinary agent work runs silently; a tiny
