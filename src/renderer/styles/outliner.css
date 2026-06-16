@@ -1885,7 +1885,7 @@
    tinted like a field/command glyph. The bullet still drills to the node page on click. */
 .row-bullet-shape.file {
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--font-ui-md);
 }
 
 .row-bullet-dot {
