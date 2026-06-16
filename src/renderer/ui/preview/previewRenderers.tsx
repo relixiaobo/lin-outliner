@@ -750,3 +750,19 @@ export async function openPreviewSource(source: PreviewSourceDescriptor): Promis
     await window.lin?.openLocalFile?.({ path: source.target.path });
   }
 }
+
+/** A URL source has no on-disk location to reveal; only stored assets and local files do. */
+export function canRevealPreviewSource(source: PreviewSourceDescriptor): boolean {
+  return source.kind === 'file' && (source.sourceKind === 'local-file' || source.sourceKind === 'asset');
+}
+
+export async function revealPreviewSource(source: PreviewSourceDescriptor): Promise<void> {
+  if (source.kind === 'url') return;
+  if (source.sourceKind === 'asset' && source.target.kind === 'asset') {
+    await api.revealAsset(source.target.assetId);
+    return;
+  }
+  if (source.sourceKind === 'local-file' && source.target.kind === 'local-file') {
+    await window.lin?.revealLocalFile?.({ path: source.target.path });
+  }
+}

@@ -1594,6 +1594,16 @@ function registerIpc() {
     return { opened: error.length === 0 };
   });
 
+  ipcMain.handle('lin:reveal-local-file', async (_event, rawOptions?: { path?: unknown }) => {
+    // Reveal-in-Finder never executes the file, so it carries no `isSafeLocalFileOpenTarget`
+    // gate (an app/script that can't be opened can still be revealed); the same trusted-root
+    // boundary as `lin:open-local-file` is the authority.
+    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot, agentScratchRoot]);
+    if (!file) return { revealed: false };
+    shell.showItemInFolder(file.path);
+    return { revealed: true };
+  });
+
   ipcMain.handle('lin:stage-attachment', async (_event, rawOptions?: {
     bytes?: unknown;
     mimeType?: unknown;
