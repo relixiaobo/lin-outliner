@@ -49,7 +49,7 @@ These tools are required for the first useful local agent.
 | `file_write` | local | Yes | Yes | Create files or rewrite whole files. |
 | `bash` | local | Depends | Usually yes | Run local commands with timeout and output limits. |
 | `task_stop` | local | Yes | Usually yes | Stop background commands created by `bash`. |
-| `web_search` | web | No | Depends | Search the web for current external information. |
+| `web_search` | web | No | Depends | Search the web for current external information, or for images with `kind: "image"`. |
 | `web_fetch` | web | No | Depends | Fetch and read a specific URL with pagination or snippet search. |
 
 ### P1 Agent Tools
@@ -2072,6 +2072,7 @@ Parameters:
 ```ts
 interface WebSearchParams {
   query: string; // 1..500 chars. Natural language and search operators are allowed.
+  kind?: "web" | "image"; // default "web"; "image" returns image results
   limit?: number; // default 10, max 20
   site?: string; // optional host; appended as `site:<host>`
   recency_days?: number; // optional provider hint for fresh results
@@ -2084,6 +2085,7 @@ Return data:
 interface WebSearchData {
   query: string;
   effectiveQuery: string;
+  kind: "web" | "image";
   provider: "google" | "provider" | "custom";
   finalUrl?: string;
   resultCount: number;
@@ -2096,15 +2098,28 @@ interface WebSearchData {
 
 interface WebSearchResult {
   title: string;
-  url: string;
-  snippet: string;
+  url: string; // for images: the source page the image was found on
+  snippet: string; // empty for image results
   source?: string;
   publishedAt?: string;
+  // Image-result fields (kind === "image"):
+  imageUrl?: string; // direct full-size image to download with web_fetch
+  thumbnailUrl?: string; // smaller preview
+  width?: number; // best-effort, may be absent
+  height?: number; // best-effort, may be absent
 }
 ```
 
 Result behavior:
 
+- `kind: "image"` runs an image search (Bing Images is the current provider,
+  scraped from the `a.iusc[m]` JSON; `providerName: "bing_images"`). Each result
+  carries `imageUrl` (the binary to download with `web_fetch`, which saves a
+  `binaryFile`) and `thumbnailUrl` (a preview to pick by). `site` and
+  `recency_days` still apply. The downstream "download + embed" path is
+  `web_fetch` → `file_read`/embed — image search only adds discovery. Image
+  results may be copyright-protected, so the success envelope warns to treat them
+  as drafts and confirm reuse with the user. `kind: "web"` (default) is unchanged.
 - `site` is a convenience parameter for a single host. For multiple hosts, the
   agent should issue multiple searches or put explicit search syntax in
   `query`.

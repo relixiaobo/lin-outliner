@@ -73,6 +73,21 @@ describe('agent web tools', () => {
     expect(invalidFetch.message).toContain('unsupported format');
   });
 
+  test('web_search kind defaults to web and validates the enum', () => {
+    const defaulted = normalizeWebSearchParams({ query: 'aurora' });
+    if (!defaulted.ok) throw new Error('Expected valid search params');
+    expect(defaulted.params.kind).toBe('web');
+
+    const image = normalizeWebSearchParams({ query: 'aurora', kind: 'image' });
+    if (!image.ok) throw new Error('Expected valid image search params');
+    expect(image.params.kind).toBe('image');
+
+    const invalidKind = normalizeWebSearchParams({ query: 'aurora', kind: 'video' });
+    expect(invalidKind.ok).toBe(false);
+    if (invalidKind.ok) throw new Error('Expected invalid kind');
+    expect(invalidKind.message).toContain('unsupported kind');
+  });
+
   test('upgrades http web_fetch URLs to https during normalization', () => {
     const params = expectParams(normalizeWebFetchParams({
       url: ' http://example.com/path?q=lin#section ',
@@ -274,6 +289,7 @@ describe('web tool model-visible projections', () => {
     const data: WebSearchData = {
       query: 'chengdu weather',
       effectiveQuery: 'chengdu weather',
+      kind: 'web',
       provider: 'provider',
       providerName: 'google_serp',
       finalUrl: 'https://www.google.com/search?q=chengdu+weather',
@@ -293,10 +309,49 @@ describe('web tool model-visible projections', () => {
     });
   });
 
+  test('web_search image kind surfaces imageUrl/thumbnailUrl and echoes kind', () => {
+    const data: WebSearchData = {
+      query: 'aurora',
+      effectiveQuery: 'aurora',
+      kind: 'image',
+      provider: 'provider',
+      providerName: 'bing_images',
+      resultCount: 1,
+      truncated: false,
+      results: [
+        {
+          title: 'Aurora',
+          url: 'https://example.com/aurora-article',
+          snippet: '',
+          imageUrl: 'https://cdn.example.com/aurora.jpg',
+          thumbnailUrl: 'https://tse.example.com/th?id=aurora',
+          width: 2400,
+          height: 1600,
+          source: 'example.com',
+        },
+      ],
+    };
+
+    expect(webSearchModelData(data)).toEqual({
+      kind: 'image',
+      results: [
+        {
+          title: 'Aurora',
+          url: 'https://example.com/aurora-article',
+          imageUrl: 'https://cdn.example.com/aurora.jpg',
+          thumbnailUrl: 'https://tse.example.com/th?id=aurora',
+          width: 2400,
+          height: 1600,
+        },
+      ],
+    });
+  });
+
   test('web_search omits truncated/totalResults when not truncated and keeps hints', () => {
     const data: WebSearchData = {
       query: 'q',
       effectiveQuery: 'q',
+      kind: 'web',
       provider: 'provider',
       providerName: 'google_serp',
       resultCount: 0,

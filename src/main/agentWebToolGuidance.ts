@@ -2,18 +2,22 @@ export const WEB_SOURCE_CITATION_GUIDANCE =
   'When web results inform the final answer, cite the relevant result or fetched source URLs as markdown links.';
 
 export const WEB_SEARCH_DESCRIPTION = [
-  'Searches the web for current external information and source URLs.',
+  'Searches the web for current external information and source URLs, or for images with kind "image".',
   '',
   'Usage:',
   '- Use web_search when you do not already have a specific URL, or when local/model knowledge may be stale.',
   '- Search results are source discovery, not final evidence. Use web_fetch on result URLs when you need details, exact dates, quotations, or higher confidence.',
   '- Include the current year, date, product version, place, or entity name in the query when freshness or disambiguation matters.',
   '- Use site for a single-host search. Use recency_days only as a best-effort freshness hint, then verify dates with web_fetch.',
+  '- Set kind to "image" to find images: each result adds imageUrl (the full image to download with web_fetch) and thumbnailUrl (a preview). Pick by thumbnail, then web_fetch the imageUrl to save the file for embedding. Image results may be copyright-protected, so treat them as drafts and confirm reuse with the user.',
   `- ${WEB_SOURCE_CITATION_GUIDANCE}`,
 ].join('\n');
 
 export const WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION =
   'The web search query. Natural language and search operators are allowed. Include the current year/date, product version, names, or locations when freshness or disambiguation matters.';
+
+export const WEB_SEARCH_KIND_PARAMETER_DESCRIPTION =
+  'Result kind. "web" (default) returns page results with snippets; "image" returns image results, each with imageUrl (full image to download via web_fetch) and thumbnailUrl (preview). site and recency_days still apply.';
 
 export const WEB_SEARCH_LIMIT_PARAMETER_DESCRIPTION =
   'Maximum search results to return. Use a small limit for focused lookup and a larger limit when comparing sources.';

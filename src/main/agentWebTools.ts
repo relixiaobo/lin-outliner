@@ -35,17 +35,29 @@ export type WebToolHint =
   | { type: 'search_blocked'; reason: 'captcha' | 'rate_limit' | 'unusual_traffic'; origin: string }
   | { type: 'redirected_host'; originalUrl: string; finalUrl: string; finalHost: string };
 
+export type WebSearchKind = 'web' | 'image';
+
 export interface WebSearchResult {
   title: string;
+  // For web results, the result page URL. For image results, the page the image
+  // was found on (the citation/source page), not the image binary itself.
   url: string;
   snippet: string;
   source?: string;
   publishedAt?: string;
+  // Image-result fields (kind === 'image'). imageUrl is the direct full-size
+  // image to download with web_fetch; thumbnailUrl is a smaller preview. width/
+  // height are best-effort and may be absent depending on the provider markup.
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface WebSearchData {
   query: string;
   effectiveQuery: string;
+  kind: WebSearchKind;
   provider: 'provider';
   providerName: string;
   finalUrl?: string;
@@ -123,6 +135,7 @@ export interface FetchTextResult {
 
 export interface NormalizedWebSearchParams {
   query: string;
+  kind: WebSearchKind;
   limit: number;
   effectiveQuery: string;
   searchUrl: string;
@@ -164,6 +177,11 @@ export function normalizeWebSearchParams(rawParams: unknown): WebParamResult<Nor
     return invalidParams(query.message, 'Call web_search again with a non-empty query.');
   }
 
+  const kind = optionalSearchKindParam(input.kind);
+  if (!kind.ok) {
+    return invalidParams(kind.message, 'Call web_search again with kind "web" or "image", or omit kind.');
+  }
+
   const limit = integerParam(input.limit, 'limit', 1, MAX_SEARCH_LIMIT, DEFAULT_SEARCH_LIMIT);
   if (!limit.ok) return invalidParams(limit.message, 'Call web_search again with a numeric limit.');
 
@@ -180,6 +198,7 @@ export function normalizeWebSearchParams(rawParams: unknown): WebParamResult<Nor
     ok: true,
     params: {
       query: query.value,
+      kind: kind.value,
       limit: limit.value,
       effectiveQuery,
       searchUrl: buildGoogleSearchUrl(effectiveQuery),
@@ -481,10 +500,16 @@ export function webSearchModelData(data: WebSearchData): unknown {
     results: data.results.map((result) => ({
       title: result.title,
       url: result.url,
-      snippet: result.snippet,
+      ...(result.snippet ? { snippet: result.snippet } : {}),
+      // Image results carry the binary URL the model downloads with web_fetch;
+      // without it the model cannot act on an image hit.
+      ...(result.imageUrl ? { imageUrl: result.imageUrl } : {}),
+      ...(result.thumbnailUrl ? { thumbnailUrl: result.thumbnailUrl } : {}),
+      ...(result.width && result.height ? { width: result.width, height: result.height } : {}),
       ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
     })),
   };
+  if (data.kind === 'image') visible.kind = 'image';
   if (data.truncated) {
     visible.truncated = true;
     if (data.totalResults !== undefined) visible.totalResults = data.totalResults;
@@ -591,6 +616,15 @@ function normalizeOptionalSearchSite(value: unknown): ParamValueResult<string | 
     return { ok: false, message: `invalid site host: ${site.value}` };
   }
   return { ok: true, value: host };
+}
+
+function optionalSearchKindParam(value: unknown): ParamValueResult<WebSearchKind> {
+  if (value === undefined) return { ok: true, value: 'web' };
+  if (typeof value !== 'string') return { ok: false, message: 'kind must be a string' };
+  if (value !== 'web' && value !== 'image') {
+    return { ok: false, message: `unsupported kind: ${value}` };
+  }
+  return { ok: true, value };
 }
 
 function optionalFormatParam(value: unknown): ParamValueResult<WebFetchData['format']> {

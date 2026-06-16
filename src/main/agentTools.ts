@@ -61,6 +61,7 @@ import {
   WEB_FETCH_QUERY_PARAMETER_DESCRIPTION,
   WEB_FETCH_URL_PARAMETER_DESCRIPTION,
   WEB_SEARCH_DESCRIPTION,
+  WEB_SEARCH_KIND_PARAMETER_DESCRIPTION,
   WEB_SEARCH_LIMIT_PARAMETER_DESCRIPTION,
   WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION,
   WEB_SEARCH_RECENCY_PARAMETER_DESCRIPTION,
@@ -74,11 +75,12 @@ import {
   isPermittedWebFetchRedirect,
   shouldTryBrowserFallbackForHttpFailure,
 } from './agentWebFetchFallback';
-import { googleSerpExtractorExpression } from './agentWebSearchSerp';
+import { bingImagesExtractorExpression, googleSerpExtractorExpression } from './agentWebSearchSerp';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
 const GOOGLE_SEARCH_INPUT_SELECTOR = 'textarea[name="q"], input[name="q"]';
 const GOOGLE_SEARCH_RESULT_SELECTOR = '#search, #rso';
+const BING_IMAGES_RESULT_SELECTOR = 'a.iusc';
 const WEB_SEARCH_PARTITION = 'persist:web-search';
 const SEARCH_NAV_TIMEOUT_MS = 60_000;
 const SEARCH_RATE_INTERVAL_MS = 3_000;
@@ -153,6 +155,11 @@ const WEB_SEARCH_PARAMETERS = {
       minLength: 1,
       maxLength: 500,
       description: WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION,
+    },
+    kind: {
+      type: 'string',
+      enum: ['web', 'image'],
+      description: WEB_SEARCH_KIND_PARAMETER_DESCRIPTION,
     },
     limit: {
       type: 'integer',
@@ -390,16 +397,20 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       }
 
       const params = normalized.params;
-      const { query, effectiveQuery, limit, searchUrl } = params;
+      const { query, kind, effectiveQuery, limit, searchUrl } = params;
+      const providerName = kind === 'image' ? 'bing_images' : 'google_serp';
 
       try {
-        const search = await searchGoogle(searchUrl, signal);
+        const search = kind === 'image'
+          ? await searchBingImages(effectiveQuery, signal)
+          : await searchGoogle(searchUrl, signal);
         if (search.kind === 'hint') {
           return webSearchToolResult(successEnvelope('web_search', {
             query,
             effectiveQuery,
+            kind,
             provider: 'provider',
-            providerName: 'google_serp',
+            providerName,
             finalUrl: search.finalUrl,
             resultCount: 0,
             truncated: false,
@@ -418,8 +429,9 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
             data: {
               query,
               effectiveQuery,
+              kind,
               provider: 'provider',
-              providerName: 'google_serp',
+              providerName,
               finalUrl: search.finalUrl,
               resultCount: 0,
               truncated: false,
@@ -434,15 +446,18 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
         const allResults = search.results;
         const results = allResults.slice(0, limit);
         const truncated = allResults.length > results.length;
-        const warnings = params.recencyDays
-          ? ['recency_days is best-effort with the current search provider. Verify dates with web_fetch when freshness matters.']
-          : undefined;
+        const warnings = kind === 'image'
+          ? ['Image results may be copyright-protected. Treat them as drafts and confirm licensing with the user before final use.']
+          : params.recencyDays
+            ? ['recency_days is best-effort with the current search provider. Verify dates with web_fetch when freshness matters.']
+            : undefined;
 
         return webSearchToolResult(successEnvelope('web_search', {
           query,
           effectiveQuery,
+          kind,
           provider: 'provider',
-          providerName: 'google_serp',
+          providerName,
           finalUrl: search.finalUrl,
           resultCount: results.length,
           totalResults: allResults.length,
@@ -450,7 +465,13 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
           durationMs: elapsed(started),
           results,
         }, {
-          instructions: results.length === 0 ? 'Try a broader query or remove site/recency constraints.' : undefined,
+          instructions: results.length === 0
+            ? (kind === 'image'
+              ? 'Try a broader query, drop the site filter, or retry; if it keeps failing, search the web for a source page and use web_fetch.'
+              : 'Try a broader query or remove site/recency constraints.')
+            : (kind === 'image'
+              ? 'Download a chosen imageUrl with web_fetch (it saves a binaryFile), then file_read or embed it. Use thumbnailUrl to preview which image to pick.'
+              : undefined),
           warnings,
           metrics: { durationMs: elapsed(started), truncated, outputBytes: search.htmlBytes },
         }));
@@ -857,12 +878,12 @@ function createWebFetchWindow(): BrowserWindow {
   });
 }
 
-type GoogleSearchOutcome =
+type SearchOutcome =
   | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; htmlBytes: number }
   | { kind: 'hint'; finalUrl: string; hint: WebToolHint }
   | { kind: 'error'; finalUrl?: string; code: string; message: string };
 
-async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<GoogleSearchOutcome> {
+async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<SearchOutcome> {
   const query = googleQueryFromSearchUrl(searchUrl);
   if (!query) {
     return { kind: 'error', code: 'invalid_args', message: 'missing search query', finalUrl: searchUrl };
@@ -939,6 +960,83 @@ async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<Go
     );
     if (!payload) {
       return { kind: 'error', code: 'extraction_failed', message: 'could not extract Google results', finalUrl };
+    }
+    return {
+      kind: 'ok',
+      finalUrl,
+      results: payload.results,
+      htmlBytes: payload.htmlLength,
+    };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    if (!window.isDestroyed()) {
+      window.destroy();
+    }
+  }
+}
+
+// Image search reuses the hidden-window + rate-limit + scroll machinery but
+// navigates straight to the Bing Images results page: Bing exposes every result
+// as `a.iusc[m]` JSON (full image / thumbnail / source page), so no search-box
+// dance is needed and the markup is far more scrapable than Google Images.
+function buildBingImagesSearchUrl(query: string): string {
+  const params = new URLSearchParams({ q: query });
+  return `https://www.bing.com/images/search?${params.toString()}`;
+}
+
+async function searchBingImages(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
+  if (!query) {
+    return { kind: 'error', code: 'invalid_args', message: 'missing search query' };
+  }
+
+  try {
+    await waitForSearchRateLimit(signal);
+  } catch {
+    return { kind: 'error', code: 'rate_limited', message: 'search aborted while rate-limited' };
+  }
+
+  const searchUrl = buildBingImagesSearchUrl(query);
+  const window = createWebSearchWindow();
+  const onAbort = () => {
+    try {
+      if (!window.isDestroyed()) {
+        window.webContents.stop();
+        window.destroy();
+      }
+    } catch {
+      // no-op
+    }
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    try {
+      await navigateAndWait(window.webContents, searchUrl, {
+        timeoutMs: SEARCH_NAV_TIMEOUT_MS,
+        signal,
+      });
+    } catch (error) {
+      return {
+        kind: 'error',
+        code: classifyWebError(error),
+        message: errorMessage(error),
+        finalUrl: window.webContents.getURL() || searchUrl,
+      };
+    }
+
+    const ready = await waitForSelector(window.webContents, BING_IMAGES_RESULT_SELECTOR, 8_000, signal);
+    const finalUrl = window.webContents.getURL() || searchUrl;
+    if (!ready) {
+      return { kind: 'hint', finalUrl, hint: { type: 'needs_browser', reason: 'spa_shell' } };
+    }
+
+    await gentlyScrollSearchResults(window.webContents);
+    const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
+      window.webContents,
+      bingImagesExtractorExpression(),
+    );
+    if (!payload) {
+      return { kind: 'error', code: 'extraction_failed', message: 'could not extract Bing image results', finalUrl };
     }
     return {
       kind: 'ok',

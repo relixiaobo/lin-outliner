@@ -158,3 +158,89 @@ function normalizeSerpLimit(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_SEARCH_LIMIT;
   return Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.trunc(value)));
 }
+
+export interface BingImagesExtraction {
+  htmlLength: number;
+  results: WebSearchResult[];
+}
+
+export function bingImagesExtractorExpression(maxResults = MAX_SEARCH_LIMIT): string {
+  return `(${extractBingImages.toString()})(document, ${normalizeSerpLimit(maxResults)})`;
+}
+
+/**
+ * Pure DOM extractor for a Bing Images results page. Bing puts a JSON blob on
+ * every result anchor (`a.iusc[m]`) carrying the full image url (`murl`), the
+ * thumbnail (`turl`), and the source page (`purl`) — far more reliable to scrape
+ * than Google Images, whose full-res urls are buried in lazy-loaded JS. This is
+ * serialized via {@link bingImagesExtractorExpression} and runs IN the page, so
+ * it must stay fully self-contained — no module-scope helpers.
+ */
+export function extractBingImages(document: Document, maxResults: number): BingImagesExtraction {
+  const seen = new Set<string>();
+  const results: WebSearchResult[] = [];
+  const limit = Number.isFinite(maxResults) ? Math.max(1, Math.trunc(maxResults)) : 10;
+
+  const compact = (value: unknown): string => String(value || '').replace(/\s+/g, ' ').trim();
+  const hostOf = (url: string): string | undefined => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return undefined;
+    }
+  };
+  const isHttpUrl = (value: unknown): value is string => {
+    if (typeof value !== 'string' || !value) return false;
+    try {
+      const protocol = new URL(value).protocol;
+      return protocol === 'http:' || protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+  const dimsFor = (anchor: Element): { width?: number; height?: number } => {
+    const card = anchor.closest('.iuscp') || anchor.closest('.imgpt') || anchor.parentElement;
+    const info = card?.querySelector('.fileInfo, .img_info, .b_caption');
+    const text = compact(info ? info.textContent : '');
+    const match = text.match(/(\d{2,5})\s*[x×]\s*(\d{2,5})/);
+    if (!match) return {};
+    return { width: Number(match[1]), height: Number(match[2]) };
+  };
+
+  for (const anchor of Array.from(document.querySelectorAll('a.iusc'))) {
+    if (results.length >= limit) break;
+    const raw = anchor.getAttribute('m');
+    if (!raw) continue;
+    let meta: Record<string, unknown>;
+    try {
+      meta = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const imageUrl = meta.murl;
+    const pageUrl = meta.purl;
+    if (!isHttpUrl(imageUrl) || !isHttpUrl(pageUrl) || seen.has(imageUrl)) continue;
+    seen.add(imageUrl);
+
+    const thumbnailUrl = isHttpUrl(meta.turl) ? meta.turl : undefined;
+    const ariaLabel = anchor.getAttribute('aria-label');
+    const innerAlt = anchor.querySelector('img')?.getAttribute('alt');
+    const title = compact(meta.t || ariaLabel || innerAlt) || hostOf(pageUrl) || pageUrl;
+    const dims = dimsFor(anchor);
+
+    results.push({
+      title,
+      url: pageUrl,
+      snippet: '',
+      imageUrl,
+      ...(thumbnailUrl ? { thumbnailUrl } : {}),
+      ...(dims.width && dims.height ? { width: dims.width, height: dims.height } : {}),
+      source: hostOf(pageUrl),
+    });
+  }
+
+  return {
+    htmlLength: document.documentElement?.outerHTML?.length || 0,
+    results,
+  };
+}
