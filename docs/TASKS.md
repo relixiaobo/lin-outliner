@@ -175,6 +175,25 @@ before any directional/security-sensitive build.
   which tools are wired — so no agent holds private authority a child could exceed, and there is no
   per-agent ceiling to clamp. `conversational-agent-authoring` (#251) safety rests on human
   ratification + the universal floor. **Don't re-propose a per-agent clamp.**
+- **agent-permission-blacklist-default-allow** (P1, `draft` — **PM-ratified direction
+  2026-06-16**) — replace the consequence model's COMMIT→`ask` tier with a **default-allow +
+  blocklist** model for the novice user base: ordinary agent work runs silently; a tiny
+  non-overridable **hard redline** (credential exfiltration, permission/provider/secret
+  self-mod, payment, root/home/whole-workdir host destruction) plus a small user-overridable
+  **soft-block** tier (remote-code pipes, OS-persistence writes) with an allow-once / always-allow /
+  block-now card that **defaults to block on countdown**; users add narrow blocks from the
+  execution log after the fact. **PM ratified (overriding the main-agent review push-back) that
+  irreversible external/destructive actions — `git push`, deploy, message-send, `rm -rf` outside
+  the workdir root — AND credential reads default to SILENT allow.** This consciously reverses the
+  1-day-old consequence model's `ask` tier and its `credential-read = confirm` decision
+  (#250/#252): the safety bet shifts from "interrupt before commits" to "model judgment + durable
+  audit + fast user blocklist correction." Mandatory sub-fix: **static heredoc parsing** so
+  `python3 - <<'PY' … PY` artifact generation stops false-blocking as `hidden_exec` (the motivating
+  Fable-5 PPTX bug; `hasDynamicShellConstruction` currently scans the heredoc body as shell).
+  **Shape (a)** one PR; impl requests `/security-review` + `/code-review ultra`. Implementation
+  note: the log correction surface today is the developer `AgentDebugPanel` — keep correction
+  lightweight, don't over-invest, since the PM's model is model-judgment-as-gate, not log-driven
+  consent. Plan merged (#277). See `docs/plans/agent-permission-blacklist-default-allow.md`.
 - **cross-agent consultation — backlog** (design = `agent-conversation-model` §"Cross-agent help")
   — the **colleague model** is PM-ratified (2026-06-13) and shipped: `ungate-contact` (PR #236)
   made cross-agent contact (`agent.delegate.spawn`) baseline-allow, with the consultee acting under
