@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Keyboard & ARIA semantics for menus, tree, and calendar (PR #273, cc)** — Layer-3 behavioral
+  accessibility for the renderer, no visual redesign. A shared `useMenuKeyboard` hook gives every
+  anchored overlay (not on the modal `Dialog`) focus-in on open, focus-restore to the trigger on
+  close, surface-scoped Escape, and either roving Arrow/Home/End (`menu`) or a Tab focus-trap
+  (`dialog`) — IME-guarded, with split focus-in/restore effects and a `focusKey` so a surface that
+  swaps its body in place (a menu's Back button, the view toolbar switching section) re-pulls focus
+  in. Retrofitted onto NodeContextMenu, SettingsRowMenu, the agent conversation-row and history/
+  session menus (the latter previously had no Escape), the view-toolbar popovers, and the date
+  picker; the two `⋯` row menus now share one `AnchoredActionMenu`. The outliner is a `role="tree"`
+  of `role="treeitem"` rows (`aria-level`, `aria-selected` tracking the *visible* selection,
+  `aria-expanded` only on parents) nesting children in `role="group"`. The calendar month grid is a
+  `role="grid"` of week `role="row"`/`role="gridcell"` cells with roving tabindex, Arrow/Home/End/
+  Page day navigation that crosses months by the exact month delta, and range-aware
+  `aria-multiselectable`. Role fixes: DoneCheckbox→`checkbox`, view-toolbar single-select→`radiogroup`,
+  child-run tabs→`tablist`, Command Palette input→`combobox`. The roving index math is one shared
+  `resolveMenuNavigation` reused by the menu, radiogroup, and tablist. Spec: `docs/spec/ui-behavior.md`.
 - **Natural-language Skillify routing (PR #271, codex)** — explicit natural-language skill-authoring
   requests ("save this as a skill", "turn that workflow into a skill", "update the import skill",
   "fix the skill that failed") are now normalized to the same direct `/skillify` prompt path, so

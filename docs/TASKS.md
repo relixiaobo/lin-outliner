@@ -658,10 +658,9 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 Layer 1 shipped together in PR #228 (`composition-rhythm` + `design-system-consistency`)
 and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` +
-`feedback-states`) — see Recently completed. Remaining Layer-3 lanes:
+`feedback-states`) — see Recently completed. `keyboard-a11y` (Layer 3) shipped in
+PR #273 — see Recently completed; plan archived `done`. Remaining Layer-3 lanes:
 
-- **keyboard-a11y** (P2, Layer 3, can run in parallel) — menu focus-trap/restore
-  hook, context-menu keyboard nav, outliner tree ARIA, calendar grid, role fixes.
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
   unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened).
 - **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
@@ -695,6 +694,22 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **keyboard-a11y** (cc, PR #273) — UI-quality-roadmap Layer 3. Behavioral a11y for
+  anchored overlays + outliner tree + calendar: a shared `useMenuKeyboard` hook
+  (focus-in/restore, surface-scoped Escape, roving `menu` / Tab-trap `dialog`,
+  IME-guarded, split focus-in/restore effects with a `focusKey` for in-place body
+  swaps) retrofitted onto NodeContextMenu, SettingsRowMenu, agent conversation-row +
+  history menus, view-toolbar popovers, and the date picker; outliner `role=tree`/
+  `treeitem`/`group` with `aria-level`/`-selected`(visible-selection)/`-expanded`;
+  calendar `grid`/`row`/`gridcell` roving with exact-month-delta crossing and
+  range-aware `aria-multiselectable`; role fixes (DoneCheckbox→checkbox, toolbar
+  single-select→radiogroup, child-run tabs→tablist, palette input→combobox); shared
+  `resolveMenuNavigation` reused by menu/radio/tab roving. **Gate (main):**
+  `/code-review xhigh` (15 findings) → all addressed in 6cce70e3 (11 code-fixed +
+  tests, 2 documented-by-design, 2 low deferred); typecheck ✓ · `test:renderer` 518 ✓
+  · docs:check ✓. Live keyboard + VoiceOver and light+dark visual remain as the
+  screen-reader/visual gate per plan. Design folded into `docs/spec/ui-behavior.md`;
+  plan archived `done`.
 - **agent-debug summary-oracle polish** (cc-2, PR #274) — follow-up hygiene on the already-`done`
   `agent-debug-run-grounded` (#264): comments + tests only, no behavior change. Corrects a stale
   comment (cross-run `tool_result.replaced` slimming is matched by globally-unique `toolCallId`, not
